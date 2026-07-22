@@ -35,7 +35,9 @@ const INVERSE_RELATION = {
   duplicate_of: 'duplicate_of',
 } as const;
 
-export function issueScopes(row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>) {
+export function issueScopes(
+  row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
+): string[] {
   const list = [
     scopes.organization(row.organizationId),
     scopes.team(row.teamId),
@@ -339,6 +341,58 @@ export interface UpdatedIssue {
   readonly actions: SyncAction[];
 }
 
+async function applyIssueUpdate(
+  tx: Executor,
+  principal: Principal,
+  issueId: string,
+  parsed: Partial<ReturnType<typeof issueUpdateSchema.parse>>,
+): Promise<UpdatedIssue> {
+  const current = await loadIssue(tx, principal.organizationId, issueId);
+  assertInTeam(principal, current.teamId);
+
+  const { values, changes } = collectIssueChanges(current, parsed);
+  const now = new Date();
+  if (values.stateId !== undefined) {
+    const state = await stateOf(tx, values.stateId);
+    if (state.teamId !== current.teamId) {
+      throw validationFailed('That status belongs to another team.');
+    }
+    Object.assign(values, applyStateTimestamps(current, state.category, now));
+  }
+
+  const labelsChanged = parsed.labelIds !== undefined;
+  if (changes.length === 0 && !labelsChanged) {
+    return { issue: current, changes: [], actions: [] };
+  }
+
+  const syncId = await nextSyncId(tx);
+  const actor = await principalActor(tx, principal);
+  const [updated] = await tx
+    .update(schema.issue)
+    .set({ ...values, updatedAt: now, syncId })
+    .where(eq(schema.issue.id, issueId))
+    .returning();
+  const issue = requireRow(updated, 'That issue does not exist.');
+
+  if (parsed.labelIds !== undefined) await replaceLabels(tx, issueId, parsed.labelIds);
+  if (values.assigneeId !== undefined) await subscribeUsers(tx, issueId, [values.assigneeId]);
+
+  const described = await Promise.all(
+    changes.map(async (change) => ({
+      organizationId: principal.organizationId,
+      issueId,
+      actor,
+      field: change.field,
+      from: await describeValue(tx, change.field, change.from),
+      to: await describeValue(tx, change.field, change.to),
+      syncId,
+    })),
+  );
+  await appendActivities(tx, described);
+
+  return { issue, changes, actions: [issueAction(issue, syncId, actor, 'update')] };
+}
+
 export async function updateIssue(
   principal: Principal,
   issueId: string,
@@ -346,53 +400,7 @@ export async function updateIssue(
 ): Promise<UpdatedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = pickProvided(patch, issueUpdateSchema.parse(patch));
-
-  return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
-
-    const { values, changes } = collectIssueChanges(current, parsed);
-    const now = new Date();
-    if (values.stateId !== undefined) {
-      const state = await stateOf(tx, values.stateId);
-      if (state.teamId !== current.teamId) {
-        throw validationFailed('That status belongs to another team.');
-      }
-      Object.assign(values, applyStateTimestamps(current, state.category, now));
-    }
-
-    const labelsChanged = parsed.labelIds !== undefined;
-    if (changes.length === 0 && !labelsChanged) {
-      return { issue: current, changes: [], actions: [] };
-    }
-
-    const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
-    const [updated] = await tx
-      .update(schema.issue)
-      .set({ ...values, updatedAt: now, syncId })
-      .where(eq(schema.issue.id, issueId))
-      .returning();
-    const issue = requireRow(updated, 'That issue does not exist.');
-
-    if (parsed.labelIds !== undefined) await replaceLabels(tx, issueId, parsed.labelIds);
-    if (values.assigneeId !== undefined) await subscribeUsers(tx, issueId, [values.assigneeId]);
-
-    const described = await Promise.all(
-      changes.map(async (change) => ({
-        organizationId: principal.organizationId,
-        issueId,
-        actor,
-        field: change.field,
-        from: await describeValue(tx, change.field, change.from),
-        to: await describeValue(tx, change.field, change.to),
-        syncId,
-      })),
-    );
-    await appendActivities(tx, described);
-
-    return { issue, changes, actions: [issueAction(issue, syncId, actor, 'update')] };
-  });
+  return await db.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
 }
 
 async function orderOf(executor: Executor, issueId: string | null): Promise<number | null> {
@@ -522,15 +530,18 @@ export async function bulkUpdateIssues(
   const parsed = issueBulkUpdateSchema.parse(input);
   const rawPatch =
     typeof input === 'object' && input !== null && 'patch' in input ? input.patch : parsed.patch;
+  const patch = pickProvided(rawPatch, issueUpdateSchema.parse(rawPatch));
 
-  const issues: IssueRow[] = [];
-  const actions: SyncAction[] = [];
-  for (const issueId of parsed.issueIds) {
-    const result = await updateIssue(principal, issueId, rawPatch);
-    issues.push(result.issue);
-    actions.push(...result.actions);
-  }
-  return { issues, actions };
+  return await db.transaction(async (tx) => {
+    const issues: IssueRow[] = [];
+    const actions: SyncAction[] = [];
+    for (const issueId of new Set(parsed.issueIds)) {
+      const result = await applyIssueUpdate(tx, principal, issueId, patch);
+      issues.push(result.issue);
+      actions.push(...result.actions);
+    }
+    return { issues, actions };
+  });
 }
 
 async function setArchived(

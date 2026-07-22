@@ -467,4 +467,18 @@ describe('bulkUpdateIssues', () => {
     expect(result.issues.every((issue) => issue.priority === 1)).toBe(true);
     expect(result.actions).toHaveLength(2);
   });
+
+  it('applies nothing when one issue in the batch fails', async () => {
+    const first = await newIssue('Bulk one');
+
+    await expect(
+      bulkUpdateIssues(workspace.admin, {
+        issueIds: [first.id, 'missing-issue-id'],
+        patch: { priority: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    const [unchanged] = await db.select().from(schema.issue).where(eq(schema.issue.id, first.id));
+    expect(unchanged?.priority).toBe(0);
+  });
 });
