@@ -56,6 +56,23 @@ export function DropdownMenuCheckboxItem({
   );
 }
 
+export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+
+export function DropdownMenuRadioItem({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  return (
+    <DropdownMenuPrimitive.RadioItem className={cn(itemClassName, 'pl-7', className)} {...props}>
+      <DropdownMenuPrimitive.ItemIndicator className="absolute left-2 flex items-center">
+        <Check className="size-3.5" aria-hidden="true" />
+      </DropdownMenuPrimitive.ItemIndicator>
+      {children}
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
 export function DropdownMenuLabel({
   className,
   ...props

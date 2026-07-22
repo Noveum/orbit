@@ -1,0 +1,124 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import { buildRows } from './issue-list.tsx';
+import { IssueRow } from './issue-row.tsx';
+
+function issue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: 'issue_1',
+    organizationId: 'org_1',
+    teamId: 'team_1',
+    number: 7,
+    identifier: 'ENG-7',
+    title: 'Domain auto join for verified workspace domains',
+    description: '',
+    stateId: 'state_todo',
+    priority: 3,
+    creatorId: 'user_1',
+    assigneeId: null,
+    projectId: null,
+    milestoneId: null,
+    cycleId: null,
+    parentId: null,
+    estimate: null,
+    dueDate: null,
+    sortOrder: 1024,
+    startedAt: null,
+    completedAt: null,
+    canceledAt: null,
+    stateEnteredAt: '2026-01-01T00:00:00.000Z',
+    syncId: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    archivedAt: null,
+    labelIds: [],
+    ...overrides,
+  };
+}
+
+const todo: WorkflowState = {
+  id: 'state_todo',
+  teamId: 'team_1',
+  name: 'Todo',
+  category: 'unstarted',
+  color: '#5d6272',
+  position: 2,
+};
+const done: WorkflowState = {
+  id: 'state_done',
+  teamId: 'team_1',
+  name: 'Done',
+  category: 'completed',
+  color: '#2e9e68',
+  position: 5,
+};
+
+describe('IssueRow', () => {
+  it('opens on click and toggles selection from the checkbox', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const onToggleSelected = vi.fn();
+
+    render(
+      <IssueRow
+        issue={issue()}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active={false}
+        selected={false}
+        onOpen={onOpen}
+        onToggleSelected={onToggleSelected}
+        onFocus={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText('Domain auto join for verified workspace domains'));
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByLabelText('Select ENG-7'));
+    expect(onToggleSelected).toHaveBeenCalledOnce();
+  });
+
+  it('marks the active row', () => {
+    render(
+      <IssueRow
+        issue={issue()}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active
+        selected={false}
+        onOpen={vi.fn()}
+        onToggleSelected={vi.fn()}
+        onFocus={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('issue-row-ENG-7')).toHaveAttribute('data-active', 'true');
+  });
+});
+
+describe('buildRows', () => {
+  it('emits a header per non empty group followed by its issues', () => {
+    const rows = buildRows(
+      [todo, done],
+      [
+        issue({ id: 'a', identifier: 'ENG-1', sortOrder: 2048 }),
+        issue({ id: 'b', identifier: 'ENG-2', sortOrder: 1024 }),
+        issue({ id: 'c', identifier: 'ENG-3', stateId: 'state_done' }),
+      ],
+    );
+
+    expect(rows.map((row) => row.kind)).toEqual(['header', 'issue', 'issue', 'header', 'issue']);
+    expect(rows[0]).toMatchObject({ kind: 'header', count: 2 });
+    expect(rows[1]).toMatchObject({ kind: 'issue' });
+    expect(rows[1]?.kind === 'issue' ? rows[1].issue.identifier : '').toBe('ENG-2');
+  });
+
+  it('skips groups with no issues', () => {
+    const rows = buildRows([todo, done], [issue()]);
+    expect(rows).toHaveLength(2);
+  });
+});

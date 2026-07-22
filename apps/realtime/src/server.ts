@@ -14,6 +14,7 @@ import {
 } from '@orbit/shared/events';
 import Redis from 'ioredis';
 import { type RawData, type WebSocket, WebSocketServer } from 'ws';
+import { z } from 'zod';
 import { authenticateToken, authorizeScope, type ConnectionPrincipal } from './auth.ts';
 import { Connection } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
@@ -47,6 +48,11 @@ export interface RealtimeServer {
   stats(): RealtimeStats;
   close(): Promise<void>;
 }
+
+const deltaEnvelopeSchema = z.union([
+  z.array(z.unknown()).min(1),
+  z.unknown().transform((action) => [action]),
+]);
 
 function tokenFrom(request: IncomingMessage): string {
   const url = new URL(request.url ?? '/', 'http://realtime.local');
@@ -101,14 +107,21 @@ export async function createRealtimeServer(
   const wss = new WebSocketServer({ server: httpServer });
 
   function deliverDelta(payload: string): void {
-    const parsed = syncActionSchema.safeParse(parseJson(payload));
-    if (!parsed.success) {
+    const envelope = deltaEnvelopeSchema.safeParse(parseJson(payload));
+    if (!envelope.success) {
       logger.warn('discarded malformed delta', { channel: REDIS_DELTA_CHANNEL });
       return;
     }
-    const action = parsed.data;
-    for (const connection of connections.values()) {
-      if (connection.matches(action.scopes, action.organizationId)) connection.queueDelta(action);
+    for (const entry of envelope.data) {
+      const parsed = syncActionSchema.safeParse(entry);
+      if (!parsed.success) {
+        logger.warn('discarded malformed delta action', { channel: REDIS_DELTA_CHANNEL });
+        continue;
+      }
+      const action = parsed.data;
+      for (const connection of connections.values()) {
+        if (connection.matches(action.scopes, action.organizationId)) connection.queueDelta(action);
+      }
     }
   }
 
