@@ -83,7 +83,11 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     attempt += 1;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
-      connect();
+      try {
+        connect();
+      } catch {
+        scheduleReconnect();
+      }
     }, delay);
   }
 
