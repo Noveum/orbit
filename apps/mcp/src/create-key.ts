@@ -14,6 +14,7 @@ const DAY_MS = 86_400_000;
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
+    args: process.argv.slice(2).filter((value) => value !== '--'),
     options: {
       email: { type: 'string' },
       name: { type: 'string' },
