@@ -1,8 +1,6 @@
 import { subscribe, unsubscribe } from '@orbit/core';
-import { z } from 'zod';
+import { issueSubscribeSchema } from '@orbit/shared/validators';
 import { handle, publish, readJson } from '@/lib/api/handler.ts';
-
-const subscribeSchema = z.object({ subscribed: z.boolean().default(true) });
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
@@ -12,7 +10,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   const { id } = await context.params;
   const body = await readJson(request);
   return await handle(async (principal) => {
-    const input = subscribeSchema.parse(body);
+    const input = issueSubscribeSchema.parse(body);
     const result = input.subscribed
       ? await subscribe(principal, id)
       : await unsubscribe(principal, id);

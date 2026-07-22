@@ -113,6 +113,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   useHotkey(
     'c',
     () => {
+      setCreateTeamId(null);
       setCreateOpen(true);
     },
     { label: 'Create issue', section: 'Issues' },

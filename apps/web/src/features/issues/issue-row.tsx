@@ -43,12 +43,17 @@ export function IssueRow({
         selected && 'bg-accent-soft',
       )}
     >
-      <span className="flex size-4 items-center justify-center" onPointerDown={onFocus}>
+      <span className="flex size-4 items-center justify-center">
         <Checkbox
           checked={selected}
           onCheckedChange={onToggleSelected}
+          onFocus={onFocus}
+          onPointerDown={onFocus}
           aria-label={`Select ${issue.identifier}`}
-          className={cn('opacity-0 transition-opacity', (active || selected) && 'opacity-100')}
+          className={cn(
+            'opacity-0 transition-opacity focus-visible:opacity-100',
+            (active || selected) && 'opacity-100',
+          )}
         />
       </span>
       <PriorityGlyph priority={issue.priority} />

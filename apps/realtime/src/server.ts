@@ -49,9 +49,9 @@ export interface RealtimeServer {
   close(): Promise<void>;
 }
 
-const deltaPayloadSchema = z.union([
-  z.array(syncActionSchema).min(1),
-  syncActionSchema.transform((action) => [action]),
+const deltaEnvelopeSchema = z.union([
+  z.array(z.unknown()).min(1),
+  z.unknown().transform((action) => [action]),
 ]);
 
 function tokenFrom(request: IncomingMessage): string {
@@ -107,12 +107,18 @@ export async function createRealtimeServer(
   const wss = new WebSocketServer({ server: httpServer });
 
   function deliverDelta(payload: string): void {
-    const parsed = deltaPayloadSchema.safeParse(parseJson(payload));
-    if (!parsed.success) {
+    const envelope = deltaEnvelopeSchema.safeParse(parseJson(payload));
+    if (!envelope.success) {
       logger.warn('discarded malformed delta', { channel: REDIS_DELTA_CHANNEL });
       return;
     }
-    for (const action of parsed.data) {
+    for (const entry of envelope.data) {
+      const parsed = syncActionSchema.safeParse(entry);
+      if (!parsed.success) {
+        logger.warn('discarded malformed delta action', { channel: REDIS_DELTA_CHANNEL });
+        continue;
+      }
+      const action = parsed.data;
       for (const connection of connections.values()) {
         if (connection.matches(action.scopes, action.organizationId)) connection.queueDelta(action);
       }

@@ -1,13 +1,11 @@
 import { db, desc, eq, ilike, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
-import { emailSchema } from '@orbit/shared/validators';
+import { devSignInSchema } from '@orbit/shared/validators';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { devLoginEnabled, listDevUsers } from '@/lib/api/dev-login.ts';
+import { devLoginEnabled } from '@/lib/api/dev-login.ts';
+import { listDevUsers } from '@/lib/api/dev-users.ts';
 import { errorResponse, readJson } from '@/lib/api/handler.ts';
 import { auth } from '@/lib/auth/server.ts';
-
-const signInSchema = z.object({ email: emailSchema });
 
 export async function GET(): Promise<Response> {
   if (!devLoginEnabled()) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -19,7 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   const body = await readJson(request);
 
   try {
-    const { email } = signInSchema.parse(body);
+    const { email } = devSignInSchema.parse(body);
 
     const [existing] = await db
       .select({ id: schema.user.id })

@@ -7,20 +7,17 @@ import {
   listTeams,
   listWorkflowStates,
 } from '@orbit/core';
-import { z } from 'zod';
+import { bootstrapQuerySchema } from '@orbit/shared/validators';
 import { handle, searchParamsOf } from '@/lib/api/handler.ts';
 import { attachLabels } from '@/lib/api/issues.ts';
-
-const querySchema = z.object({ team: z.string().max(16).optional() });
 
 const BOOTSTRAP_ISSUE_LIMIT = 200;
 
 export async function GET(request: Request): Promise<Response> {
   return await handle(async (principal) => {
-    const query = querySchema.parse(searchParamsOf(request));
+    const query = bootstrapQuerySchema.parse(searchParamsOf(request));
     const teams = await listTeams(principal);
-    const requested = query.team?.toUpperCase();
-    const activeTeam = teams.find((team) => team.key === requested) ?? teams[0] ?? null;
+    const activeTeam = teams.find((team) => team.key === query.team) ?? teams[0] ?? null;
 
     const [states, cycles, labels, members, projects] = await Promise.all([
       Promise.all(teams.map((team) => listWorkflowStates(principal, team.id))),

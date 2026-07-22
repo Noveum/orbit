@@ -66,6 +66,37 @@ describe('CommentComposer', () => {
     expect(button).toBeEnabled();
   });
 
+  it('picks a mention with the arrow keys and Enter, without submitting', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<CommentComposer members={members} onSubmit={onSubmit} />);
+
+    await user.click(screen.getByTestId('comment-composer'));
+    await user.keyboard('ping @a');
+    await screen.findByTestId('mention-list');
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId('comment-composer')).toHaveValue('ping @aditi ');
+  });
+
+  it('closes the mention popup on escape instead of cancelling the draft', async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<CommentComposer members={members} onSubmit={vi.fn()} onCancel={onCancel} />);
+
+    await user.click(screen.getByTestId('comment-composer'));
+    await user.keyboard('ping @sha');
+    await screen.findByTestId('mention-list');
+    await user.keyboard('{Escape}');
+
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('mention-list')).toBeNull();
+
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
   it('offers matching members after an at sign and inserts the handle', async () => {
     const user = userEvent.setup();
     render(<CommentComposer members={members} onSubmit={vi.fn()} />);

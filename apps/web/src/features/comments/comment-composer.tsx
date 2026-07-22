@@ -1,6 +1,6 @@
 'use client';
 
-import { type KeyboardEvent, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
@@ -53,7 +53,9 @@ export function CommentComposer({
 }: CommentComposerProps) {
   const [value, setValue] = useState(initialValue);
   const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [highlight, setHighlight] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentionListId = useId();
 
   const matches = useMemo(() => {
     if (mention === null) return [];
@@ -75,20 +77,43 @@ export function CommentComposer({
     setMention(null);
   };
 
+  const pickMention = (member: Member) => {
+    if (mention === null) return;
+    setValue(applyMention(value, mention, member.handle ?? member.name));
+    setMention(null);
+    setHighlight(0);
+    textareaRef.current?.focus();
+  };
+
+  const handleMentionKey = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (matches.length === 0) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const step = event.key === 'ArrowDown' ? 1 : matches.length - 1;
+      setHighlight((current) => (current + step) % matches.length);
+      return true;
+    }
+    if (event.key === 'Escape') {
+      setMention(null);
+      return true;
+    }
+    if (event.key !== 'Enter' && event.key !== 'Tab') return false;
+    const member = matches[highlight] ?? matches[0];
+    if (member === undefined) return false;
+    pickMention(member);
+    return true;
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (handleMentionKey(event)) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       submit();
       return;
     }
     if (event.key === 'Escape' && onCancel !== undefined) onCancel();
-  };
-
-  const pickMention = (member: Member) => {
-    if (mention === null) return;
-    setValue(applyMention(value, mention, member.handle ?? member.name));
-    setMention(null);
-    textareaRef.current?.focus();
   };
 
   return (
@@ -101,35 +126,44 @@ export function CommentComposer({
         placeholder={placeholder}
         value={value}
         onKeyDown={onKeyDown}
+        role="textbox"
+        aria-autocomplete="list"
+        aria-expanded={matches.length > 0}
+        aria-controls={matches.length > 0 ? mentionListId : undefined}
         onChange={(event) => {
+          const caret = event.target.selectionStart ?? event.target.value.length;
           setValue(event.target.value);
-          setMention(findMentionQuery(event.target.value, event.target.selectionStart));
+          setMention(findMentionQuery(event.target.value, caret));
+          setHighlight(0);
         }}
       />
 
       {matches.length > 0 ? (
-        <ul
+        <div
+          id={mentionListId}
           data-testid="mention-list"
-          className="absolute bottom-14 left-2 z-20 w-56 overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-pop"
+          className="absolute bottom-14 left-2 z-20 flex w-56 flex-col overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-pop"
         >
-          {matches.map((member) => (
-            <li key={member.id}>
-              <button
-                type="button"
-                onClick={() => pickMention(member)}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-dense text-muted',
-                  'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text',
-                )}
-              >
-                <span className="truncate">{member.name}</span>
-                <span className="ml-auto truncate text-2xs text-faint">
-                  @{member.handle ?? member.name}
-                </span>
-              </button>
-            </li>
+          {matches.map((member, index) => (
+            <button
+              key={member.id}
+              type="button"
+              aria-current={index === highlight}
+              onClick={() => pickMention(member)}
+              onMouseEnter={() => setHighlight(index)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-dense text-muted',
+                'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text',
+                index === highlight && 'bg-surface-2 text-text',
+              )}
+            >
+              <span className="truncate">{member.name}</span>
+              <span className="ml-auto truncate text-2xs text-faint">
+                @{member.handle ?? member.name}
+              </span>
+            </button>
           ))}
-        </ul>
+        </div>
       ) : null}
 
       <div className="flex items-center gap-2">

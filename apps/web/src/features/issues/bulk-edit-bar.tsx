@@ -25,6 +25,12 @@ export function BulkEditBar({ teamId, states, issues, onClear }: BulkEditBarProp
     for (const issue of issues) update.mutate({ issue, patch });
   };
 
+  const sharedValue = (read: (issue: Issue) => string | null): string[] => {
+    const values = new Set(issues.map((issue) => read(issue) ?? 'none'));
+    const only = [...values];
+    return values.size === 1 && only[0] !== undefined ? [only[0]] : [];
+  };
+
   return (
     <div
       data-testid="bulk-edit-bar"
@@ -39,7 +45,7 @@ export function BulkEditBar({ teamId, states, issues, onClear }: BulkEditBarProp
           label: state.name,
           icon: <StateGlyph category={state.category} color={state.color} />,
         }))}
-        selected={[]}
+        selected={sharedValue((issue) => issue.stateId)}
         onSelect={(stateId) => applyToAll({ stateId })}
       >
         <Button size="sm" variant="secondary">
@@ -54,7 +60,7 @@ export function BulkEditBar({ teamId, states, issues, onClear }: BulkEditBarProp
           label: priorityLabel(priority),
           icon: <PriorityGlyph priority={priority} />,
         }))}
-        selected={[]}
+        selected={sharedValue((issue) => String(issue.priority))}
         onSelect={(value) => applyToAll({ priority: Number(value) })}
       >
         <Button size="sm" variant="secondary">
@@ -68,7 +74,7 @@ export function BulkEditBar({ teamId, states, issues, onClear }: BulkEditBarProp
           { id: 'none', label: 'No assignee' },
           ...members.map((member) => ({ id: member.id, label: member.name })),
         ]}
-        selected={[]}
+        selected={sharedValue((issue) => issue.assigneeId)}
         onSelect={(value) => applyToAll({ assigneeId: value === 'none' ? null : value })}
       >
         <Button size="sm" variant="secondary">

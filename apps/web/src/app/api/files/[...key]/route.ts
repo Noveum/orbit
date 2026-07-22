@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { db, eq, schema } from '@orbit/db';
 import { createStorageDriver, LocalStorageDriver } from '@orbit/services/storage';
 import { notFound, validationFailed } from '@orbit/shared/errors';
+import { dispositionFor } from '@/lib/api/content-disposition.ts';
 import { apiContext, errorResponse } from '@/lib/api/handler.ts';
 
 interface RouteContext {
@@ -42,6 +43,9 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
         'content-type': record.contentType,
         'content-length': String(stat.size),
         'cache-control': 'private, max-age=300',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'x-content-type-options': 'nosniff',
+        'content-disposition': dispositionFor(record.contentType, record.fileName),
       },
     });
   } catch (error: unknown) {

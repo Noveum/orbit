@@ -4,13 +4,14 @@ import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
-import type { DevUser } from '@/lib/api/dev-login.ts';
+import type { DevUser } from '@/lib/api/dev-users.ts';
 
 export interface DevSignInProps {
   readonly users: readonly DevUser[];
+  readonly callbackUrl?: string;
 }
 
-export function DevSignIn({ users }: DevSignInProps) {
+export function DevSignIn({ users, callbackUrl = '/my-issues' }: DevSignInProps) {
   const { toast } = useToast();
   const [pending, setPending] = useState<string | null>(null);
 
@@ -23,7 +24,7 @@ export function DevSignIn({ users }: DevSignInProps) {
         body: JSON.stringify({ email }),
       });
       if (!response.ok) throw new Error('Dev sign in failed.');
-      window.location.assign('/my-issues');
+      window.location.assign(callbackUrl);
     } catch (error: unknown) {
       setPending(null);
       toast({

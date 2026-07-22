@@ -301,6 +301,21 @@ export const uploadRequestSchema = z.object({
   parentId: idSchema,
 });
 
+export const bootstrapQuerySchema = z.object({
+  team: z
+    .string()
+    .trim()
+    .max(16)
+    .transform((value) => value.toUpperCase())
+    .optional(),
+});
+
+export const devSignInSchema = z.object({ email: emailSchema });
+
+export const issueSubscribeSchema = z.object({ subscribed: z.boolean().default(true) });
+
+export const commentQuerySchema = z.object({ issueId: idSchema });
+
 export const notificationPreferenceSchema = z.object({
   channel: z.enum(NOTIFICATION_CHANNELS),
   type: z.enum(NOTIFICATION_TYPES),

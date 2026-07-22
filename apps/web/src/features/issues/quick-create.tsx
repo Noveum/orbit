@@ -1,7 +1,7 @@
 'use client';
 
 import { PRIORITIES } from '@orbit/shared/constants';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -35,16 +35,19 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const create = useCreateIssue(teamId ?? 'none');
 
+  const defaultsRef = useRef(firstTeamId);
+  defaultsRef.current = firstTeamId;
+
   useEffect(() => {
     if (!open) return;
-    setTeamId(defaultTeamId ?? teams[0]?.id ?? null);
+    setTeamId(defaultsRef.current);
     setTitle('');
     setDescription('');
     setStateId(null);
     setPriority(0);
     setAssigneeId(null);
     setLabelIds([]);
-  }, [open, defaultTeamId, teams]);
+  }, [open]);
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);

@@ -5,11 +5,11 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
-import { cn } from '@/lib/cn.ts';
 
 export interface PropertyOption {
   readonly id: string;
@@ -17,18 +17,22 @@ export interface PropertyOption {
   readonly icon?: ReactNode;
 }
 
-export interface PropertyMenuProps {
+interface PropertyMenuBaseProps {
   readonly title: string;
   readonly options: readonly PropertyOption[];
   readonly selected: readonly string[];
   readonly multiple?: boolean;
-  readonly open?: boolean;
-  readonly onOpenChange?: (open: boolean) => void;
   readonly onSelect: (id: string) => void;
   readonly children: ReactNode;
   readonly align?: 'start' | 'end';
   readonly testId?: string;
 }
+
+type ControlledProps =
+  | { readonly open: boolean; readonly onOpenChange: (open: boolean) => void }
+  | { readonly open?: undefined; readonly onOpenChange?: undefined };
+
+export type PropertyMenuProps = PropertyMenuBaseProps & ControlledProps;
 
 export function PropertyMenu({
   title,
@@ -44,8 +48,7 @@ export function PropertyMenu({
 }: PropertyMenuProps) {
   return (
     <DropdownMenu
-      {...(open === undefined ? {} : { open })}
-      {...(onOpenChange === undefined ? {} : { onOpenChange })}
+      {...(open === undefined || onOpenChange === undefined ? {} : { open, onOpenChange })}
     >
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent
@@ -54,8 +57,8 @@ export function PropertyMenu({
         {...(testId === undefined ? {} : { 'data-testid': testId })}
       >
         <DropdownMenuLabel>{title}</DropdownMenuLabel>
-        {options.map((option) =>
-          multiple ? (
+        {multiple ? (
+          options.map((option) => (
             <DropdownMenuCheckboxItem
               key={option.id}
               checked={selected.includes(option.id)}
@@ -64,25 +67,28 @@ export function PropertyMenu({
                 onSelect(option.id);
               }}
             >
-              <span className="flex min-w-0 flex-1 items-center gap-2">
-                {option.icon}
-                <span className="truncate">{option.label}</span>
-              </span>
+              <OptionLabel option={option} />
             </DropdownMenuCheckboxItem>
-          ) : (
-            <DropdownMenuItem
-              key={option.id}
-              onSelect={() => onSelect(option.id)}
-              className={cn(selected.includes(option.id) && 'text-text')}
-            >
-              <span className="flex min-w-0 flex-1 items-center gap-2">
-                {option.icon}
-                <span className="truncate">{option.label}</span>
-              </span>
-            </DropdownMenuItem>
-          ),
+          ))
+        ) : (
+          <DropdownMenuRadioGroup value={selected[0] ?? ''} onValueChange={onSelect}>
+            {options.map((option) => (
+              <DropdownMenuRadioItem key={option.id} value={option.id}>
+                <OptionLabel option={option} />
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function OptionLabel({ option }: { option: PropertyOption }) {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      {option.icon}
+      <span className="truncate">{option.label}</span>
+    </span>
   );
 }

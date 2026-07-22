@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
-import { devLoginEnabled, listDevUsers } from '@/lib/api/dev-login.ts';
+import { devLoginEnabled } from '@/lib/api/dev-login.ts';
+import { listDevUsers } from '@/lib/api/dev-users.ts';
 import { enabledSocialProviders } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 
@@ -32,7 +33,9 @@ export default async function LoginPage({
           providers={enabledSocialProviders}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
-        {devUsers.length > 0 ? <DevSignIn users={devUsers} /> : null}
+        {devUsers.length > 0 ? (
+          <DevSignIn users={devUsers} callbackUrl={callbackUrl ?? '/my-issues'} />
+        ) : null}
       </div>
     </main>
   );

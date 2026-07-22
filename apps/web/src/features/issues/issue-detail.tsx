@@ -8,10 +8,11 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
+import { useToast } from '@/components/ui/toast.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
 import { cn } from '@/lib/cn.ts';
-import { apiFetch } from '@/lib/query/fetcher.ts';
+import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
@@ -41,6 +42,7 @@ function Description({ body, html }: { body: string; html: string }) {
 }
 
 export function IssueDetailView({ identifier }: IssueDetailViewProps) {
+  const { toast } = useToast();
   const workspace = useWorkspace();
   const detail = useIssueDetail(identifier);
   const issue = detail.data?.issue;
@@ -76,13 +78,31 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
   const state = workspace.stateById.get(issue.stateId);
   const isSubscribed = subscribed ?? detail.data.subscribed;
 
+  const commitTitle = () => {
+    setEditingTitle(false);
+    const next = titleDraft.trim();
+    if (next.length === 0 || next === issue.title) return;
+    update.mutate({ issue, patch: { title: next } });
+  };
+
   const toggleSubscribe = async () => {
-    const next = !isSubscribed;
+    const previous = isSubscribed;
+    const next = !previous;
     setSubscribed(next);
-    await apiFetch(`/api/issues/${issue.id}/subscribe`, subscribedSchema, {
-      method: 'POST',
-      body: { subscribed: next },
-    });
+    try {
+      const result = await apiFetch(`/api/issues/${issue.id}/subscribe`, subscribedSchema, {
+        method: 'POST',
+        body: { subscribed: next },
+      });
+      setSubscribed(result.subscribed);
+    } catch (error: unknown) {
+      setSubscribed(previous);
+      toast({
+        title: 'Could not change your subscription',
+        description: messageOf(error),
+        tone: 'danger',
+      });
+    }
   };
 
   return (
@@ -126,16 +146,16 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
               data-testid="title-input"
               value={titleDraft}
               onChange={(event) => setTitleDraft(event.target.value)}
-              onBlur={() => {
-                update.mutate({ issue, patch: { title: titleDraft } });
-                setEditingTitle(false);
-              }}
+              onBlur={() => commitTitle()}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
-                  update.mutate({ issue, patch: { title: titleDraft } });
+                  event.currentTarget.blur();
+                  return;
+                }
+                if (event.key === 'Escape') {
+                  setTitleDraft(issue.title);
                   setEditingTitle(false);
                 }
-                if (event.key === 'Escape') setEditingTitle(false);
               }}
               className="h-10 border-0 px-0 font-medium text-xl shadow-none"
             />
