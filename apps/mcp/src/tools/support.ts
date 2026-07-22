@@ -29,9 +29,13 @@ function asDomainError(error: unknown): DomainError {
 export function failed(name: string, error: unknown): CallToolResult {
   const domain = asDomainError(error);
   logger.warn('tool failed', { tool: name, code: domain.code, ...errorFields(error) });
+  const body =
+    domain.status >= 500
+      ? { error: { code: domain.code, message: 'Something went wrong on our side.' } }
+      : domain.toJSON();
   return {
     isError: true,
-    content: [{ type: 'text', text: JSON.stringify(domain.toJSON()) }],
+    content: [{ type: 'text', text: JSON.stringify(body) }],
   };
 }
 

@@ -115,7 +115,8 @@ export async function createMcpHttpServer(
         response.end();
         return;
       }
-      sendRpcError(response, domain.status, domain.message);
+      const safe = domain.status >= 500 ? 'Something went wrong on our side.' : domain.message;
+      sendRpcError(response, domain.status, safe);
     });
   });
 
