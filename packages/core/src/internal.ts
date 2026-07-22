@@ -12,6 +12,20 @@ export function newToken(): string {
   return `${randomUUID()}${randomUUID()}`.replace(/-/g, '');
 }
 
+export function providedKeys(input: unknown): Set<string> {
+  if (input === null || typeof input !== 'object') return new Set();
+  return new Set(Object.keys(input));
+}
+
+export function pickProvided<T extends object>(input: unknown, parsed: T): Partial<T> {
+  const keys = providedKeys(input);
+  const picked: Partial<T> = {};
+  for (const key of Object.keys(parsed) as (keyof T & string)[]) {
+    if (keys.has(key)) picked[key] = parsed[key];
+  }
+  return picked;
+}
+
 export function requireRow<T>(row: T | undefined, message: string): T {
   if (row === undefined) throw notFound(message);
   return row;

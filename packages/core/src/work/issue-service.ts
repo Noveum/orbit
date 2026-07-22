@@ -18,7 +18,7 @@ import {
 } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
-import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
+import { type Executor, newId, pickProvided, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { initialStateFor } from './workflow-state-service.ts';
@@ -193,7 +193,7 @@ interface FieldChange {
 
 function collectIssueChanges(
   current: IssueRow,
-  patch: ReturnType<typeof issueUpdateSchema.parse>,
+  patch: Partial<ReturnType<typeof issueUpdateSchema.parse>>,
 ): { values: IssueValues; changes: FieldChange[] } {
   const values: IssueValues = {};
   const changes: FieldChange[] = [];
@@ -346,7 +346,7 @@ export async function updateIssue(
   patch: unknown,
 ): Promise<UpdatedIssue> {
   assertCan(principal, 'issue:update');
-  const parsed = issueUpdateSchema.parse(patch);
+  const parsed = pickProvided(patch, issueUpdateSchema.parse(patch));
 
   return await db.transaction(async (tx) => {
     const current = await loadIssue(tx, principal.organizationId, issueId);
@@ -515,11 +515,13 @@ export async function bulkUpdateIssues(
 ): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueBulkUpdateSchema.parse(input);
+  const rawPatch =
+    typeof input === 'object' && input !== null && 'patch' in input ? input.patch : parsed.patch;
 
   const issues: IssueRow[] = [];
   const actions: SyncAction[] = [];
   for (const issueId of parsed.issueIds) {
-    const result = await updateIssue(principal, issueId, parsed.patch);
+    const result = await updateIssue(principal, issueId, rawPatch);
     issues.push(result.issue);
     actions.push(...result.actions);
   }

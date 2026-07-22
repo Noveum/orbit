@@ -7,7 +7,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { milestoneCreateSchema, milestoneUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { newId, requireRow, toDateString } from '../internal.ts';
+import { newId, pickProvided, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -71,7 +71,7 @@ export async function updateMilestone(
   input: unknown,
 ): Promise<{ milestone: MilestoneRow; actions: SyncAction[] }> {
   assertCan(principal, 'milestone:manage');
-  const parsed = milestoneUpdateSchema.parse(input);
+  const parsed = pickProvided(input, milestoneUpdateSchema.parse(input));
 
   return await db.transaction(async (tx) => {
     const values: Partial<typeof schema.milestone.$inferInsert> = {};
