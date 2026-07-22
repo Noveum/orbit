@@ -2,16 +2,29 @@ import { defineConfig } from 'vitest/config';
 
 const LOCAL_TEST_DATABASE_URL = 'postgres://orbit:orbit@localhost:5434/orbit_test_mcp';
 
-function resolveTestDatabaseUrl(): string {
-  const candidate =
-    process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? LOCAL_TEST_DATABASE_URL;
-  const name = new URL(candidate).pathname.replace(/^\//, '');
+function databaseNameOf(candidate: string): string {
+  return new URL(candidate).pathname.replace(/^\//, '');
+}
+
+function assertTestDatabase(candidate: string, source: string): string {
+  const name = databaseNameOf(candidate);
   if (!name.includes('test')) {
     throw new Error(
-      `Refusing to run tests against "${name}". Point TEST_DATABASE_URL at a database whose name contains "test".`,
+      `Refusing to run tests against "${name}" from ${source}. Point it at a database whose name contains "test".`,
     );
   }
   return candidate;
+}
+
+function resolveTestDatabaseUrl(): string {
+  const explicit = process.env['TEST_DATABASE_URL'];
+  if (explicit !== undefined) return assertTestDatabase(explicit, 'TEST_DATABASE_URL');
+  const ambient = process.env['DATABASE_URL'];
+  if (ambient === undefined) return LOCAL_TEST_DATABASE_URL;
+  if (databaseNameOf(ambient).includes('test')) return ambient;
+  const url = new URL(ambient);
+  url.pathname = '/orbit_test_mcp';
+  return url.toString();
 }
 
 export default defineConfig({
