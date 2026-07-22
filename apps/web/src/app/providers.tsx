@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/components/theme-provider.tsx';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { QueryProvider } from '@/lib/query/provider.tsx';
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -14,11 +15,13 @@ export function Providers({ children }: { children: ReactNode }) {
         reducedMotion="user"
         transition={{ duration: 0.16, ease: [0.22, 0.61, 0.36, 1] }}
       >
-        <TooltipProvider>
-          <ToastProvider>
-            <HotkeyProvider>{children}</HotkeyProvider>
-          </ToastProvider>
-        </TooltipProvider>
+        <QueryProvider>
+          <TooltipProvider>
+            <ToastProvider>
+              <HotkeyProvider>{children}</HotkeyProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </QueryProvider>
       </MotionConfig>
     </ThemeProvider>
   );

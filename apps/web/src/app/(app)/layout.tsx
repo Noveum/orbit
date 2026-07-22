@@ -3,7 +3,10 @@ import { WorkspaceShell } from '@/components/layout/workspace-shell.tsx';
 import { resolveMembership } from '@/lib/auth/principal.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam } from '@/lib/navigation.ts';
+import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
+
+const DEFAULT_REALTIME_URL = 'ws://localhost:3100';
 
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {
   const session = await requireSession();
@@ -15,7 +18,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   const teams: ShellTeam[] =
     membership === null ? [] : await listTeamsForPrincipal(membership.principal);
 
-  return (
+  const shell = (
     <WorkspaceShell
       workspace={{
         name: membership?.organizationName ?? 'Orbit',
@@ -30,5 +33,19 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     >
       {children}
     </WorkspaceShell>
+  );
+
+  if (membership === null) return shell;
+
+  return (
+    <WorkspaceRealtime
+      url={process.env['NEXT_PUBLIC_REALTIME_URL'] ?? DEFAULT_REALTIME_URL}
+      token={session.session.token}
+      userId={membership.principal.userId}
+      organizationId={membership.principal.organizationId}
+      teamIds={teams.map((team) => team.id)}
+    >
+      {shell}
+    </WorkspaceRealtime>
   );
 }
