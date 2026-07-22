@@ -3,12 +3,18 @@ import { TransactionRollbackError } from 'drizzle-orm/errors';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
-const connectionString =
-  process.env['TEST_DATABASE_URL'] ??
-  process.env['DATABASE_URL'] ??
-  'postgres://orbit:orbit@localhost:5434/orbit';
+const LOCAL_TEST_DATABASE_URL = 'postgres://orbit:orbit@localhost:5434/orbit_test_svc';
 
-const pool = new Pool({ connectionString, max: 4 });
+function resolveTestDatabaseUrl(): string {
+  const explicit = process.env['TEST_DATABASE_URL'];
+  if (explicit !== undefined) return explicit;
+  const ambient = process.env['DATABASE_URL'];
+  if (ambient === undefined) return LOCAL_TEST_DATABASE_URL;
+  const name = new URL(ambient).pathname.replace(/^\//, '');
+  return name.includes('test') ? ambient : LOCAL_TEST_DATABASE_URL;
+}
+
+const pool = new Pool({ connectionString: resolveTestDatabaseUrl(), max: 4 });
 
 export const testDb = drizzle(pool, { schema, casing: 'snake_case' });
 

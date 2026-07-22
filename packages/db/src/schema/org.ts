@@ -22,6 +22,7 @@ export const organization = pgTable('organization', {
   logo: text('logo'),
   metadata: text('metadata'),
   allowedEmailDomains: jsonb('allowed_email_domains').$type<string[]>().notNull().default([]),
+  syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
