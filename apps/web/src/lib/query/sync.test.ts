@@ -141,6 +141,25 @@ describe('applyIssueDelta', () => {
 });
 
 describe('applyIssueDetailDelta', () => {
+  it('drops the rendered description when the markdown changes so the viewer sees the new text', () => {
+    const detail = { issue: issue(), descriptionHtml: '<p>old</p>' };
+    const patched = applyIssueDetailDelta(
+      detail,
+      action({ data: { id: 'issue_1', description: 'new body', syncId: 12 } }),
+    );
+    expect(patched?.issue.description).toBe('new body');
+    expect(patched?.descriptionHtml).toBe('');
+  });
+
+  it('keeps the rendered description when only other fields change', () => {
+    const detail = { issue: issue(), descriptionHtml: '<p>old</p>' };
+    const patched = applyIssueDetailDelta(
+      detail,
+      action({ data: { id: 'issue_1', priority: 1, syncId: 12 } }),
+    );
+    expect(patched?.descriptionHtml).toBe('<p>old</p>');
+  });
+
   it('patches the detail cache for the same issue only', () => {
     const detail = { issue: issue() };
     const patched = applyIssueDetailDelta(
@@ -176,7 +195,7 @@ function comment(overrides: Partial<Comment['comment']> = {}): Comment {
 }
 
 describe('applyCommentDelta', () => {
-  it('appends a comment posted by someone else', () => {
+  it('appends a comment posted by someone else with its raw body for the plain text fallback', () => {
     const next = applyCommentDelta(
       [comment()],
       action({
@@ -187,6 +206,7 @@ describe('applyCommentDelta', () => {
     );
     expect(next).toHaveLength(2);
     expect(next[1]?.comment.body).toBe('Second');
+    expect(next[1]?.bodyHtml).toBe('');
   });
 
   it('drops a comment on delete or soft delete', () => {

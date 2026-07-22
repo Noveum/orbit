@@ -28,14 +28,6 @@ export function useComments(issueId: string | null) {
   });
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
 export function useCreateComment(issueId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -69,7 +61,7 @@ export function useCreateComment(issueId: string) {
           deletedAt: null,
           syncId: 0,
         },
-        bodyHtml: `<p>${escapeHtml(input.body)}</p>`,
+        bodyHtml: '',
         reactions: [],
       };
       client.setQueryData<readonly Comment[]>(key, [...(previous ?? []), optimistic]);
@@ -107,11 +99,7 @@ export function useUpdateComment(issueId: string) {
       client.setQueryData<readonly Comment[]>(key, (current) =>
         (current ?? []).map((entry) =>
           entry.comment.id === input.id
-            ? {
-                ...entry,
-                comment: { ...entry.comment, body: input.body },
-                bodyHtml: `<p>${escapeHtml(input.body)}</p>`,
-              }
+            ? { ...entry, comment: { ...entry.comment, body: input.body }, bodyHtml: '' }
             : entry,
         ),
       );
@@ -204,9 +192,6 @@ export function useToggleReaction(issueId: string) {
     onError: (error, _input, context) => {
       if (context?.previous !== undefined) client.setQueryData(key, context.previous);
       toast({ title: 'Could not react', description: messageOf(error), tone: 'danger' });
-    },
-    onSettled: () => {
-      client.invalidateQueries({ queryKey: key });
     },
   });
 }

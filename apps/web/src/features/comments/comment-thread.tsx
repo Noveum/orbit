@@ -98,6 +98,22 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
   );
 }
 
+const bodyClassName =
+  'prose-orbit text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1';
+
+export function CommentBody({ body, bodyHtml }: { body: string; bodyHtml: string }) {
+  if (bodyHtml.length === 0) {
+    return <p className={cn(bodyClassName, 'whitespace-pre-wrap')}>{body}</p>;
+  }
+  return (
+    <div
+      className={bodyClassName}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized server side by @orbit/services/markdown
+      dangerouslySetInnerHTML={{ __html: bodyHtml }}
+    />
+  );
+}
+
 interface CommentItemProps {
   readonly issueId: string;
   readonly entry: Comment;
@@ -144,11 +160,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
             }}
           />
         ) : (
-          <div
-            className="prose-orbit text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1"
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized server side by @orbit/services/markdown
-            dangerouslySetInnerHTML={{ __html: entry.bodyHtml }}
-          />
+          <CommentBody body={entry.comment.body} bodyHtml={entry.bodyHtml} />
         )}
 
         <div className="flex flex-wrap items-center gap-1">

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { applyMention, CommentComposer, findMentionQuery } from './comment-composer.tsx';
-import { buildTimeline } from './comment-thread.tsx';
+import { buildTimeline, CommentBody } from './comment-thread.tsx';
 
 const members: readonly Member[] = [
   {
@@ -77,6 +77,19 @@ describe('CommentComposer', () => {
     expect(list).toBeInTheDocument();
     await user.click(screen.getByText('Aditi Rao'));
     expect(screen.getByTestId('comment-composer')).toHaveValue('ping @aditi ');
+  });
+});
+
+describe('CommentBody', () => {
+  it('renders the sanitized html the server produced', () => {
+    render(<CommentBody body="**bold**" bodyHtml="<p><strong>bold</strong></p>" />);
+    expect(screen.getByText('bold').tagName).toBe('STRONG');
+  });
+
+  it('falls back to plain text when a delta arrives without rendered markdown', () => {
+    render(<CommentBody body="raw <script>alert(1)</script> text" bodyHtml="" />);
+    expect(screen.getByText(/raw <script>alert\(1\)<\/script> text/)).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
   });
 });
 

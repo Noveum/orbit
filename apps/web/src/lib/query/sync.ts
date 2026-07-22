@@ -79,17 +79,25 @@ export function applyIssueDelta(
   return next;
 }
 
-export function applyIssueDetailDelta(
-  detail: { issue: Issue } | undefined,
+export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?: string }>(
+  detail: T | undefined,
   action: SyncAction,
-): { issue: Issue } | undefined {
+): T | undefined {
   if (detail === undefined) return detail;
   const parsed = partialIssueSchema.safeParse(action.data);
   if (!parsed.success || parsed.data.id !== detail.issue.id) return detail;
   if (isStale(parsed.data.syncId, detail.issue.syncId)) return detail;
+
+  const issue: Issue = {
+    ...detail.issue,
+    ...definedFields(parsed.data),
+    labelIds: detail.issue.labelIds,
+  };
+  const descriptionChanged = issue.description !== detail.issue.description;
   return {
     ...detail,
-    issue: { ...detail.issue, ...definedFields(parsed.data), labelIds: detail.issue.labelIds },
+    issue,
+    ...(descriptionChanged ? { descriptionHtml: '' } : {}),
   };
 }
 

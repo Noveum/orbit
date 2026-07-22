@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
+import { cn } from '@/lib/cn.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
@@ -21,6 +22,22 @@ import { useWorkspace } from './workspace-provider.tsx';
 
 export interface IssueDetailViewProps {
   readonly identifier: string;
+}
+
+const descriptionClassName =
+  'prose-orbit w-full text-dense text-muted leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_h2]:mt-4 [&_h2]:font-medium [&_h2]:text-text [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5';
+
+function Description({ body, html }: { body: string; html: string }) {
+  if (html.length === 0) {
+    return <p className={cn(descriptionClassName, 'whitespace-pre-wrap')}>{body}</p>;
+  }
+  return (
+    <div
+      className={descriptionClassName}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized server side by @orbit/services/markdown
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 export function IssueDetailView({ identifier }: IssueDetailViewProps) {
@@ -178,11 +195,7 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
                     Add a description
                   </span>
                 ) : (
-                  <div
-                    className="prose-orbit w-full text-dense text-muted leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_h2]:mt-4 [&_h2]:font-medium [&_h2]:text-text [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
-                    // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized server side by @orbit/services/markdown
-                    dangerouslySetInnerHTML={{ __html: detail.data.descriptionHtml }}
-                  />
+                  <Description body={issue.description} html={detail.data.descriptionHtml} />
                 )}
               </button>
             )}
