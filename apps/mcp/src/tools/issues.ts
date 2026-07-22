@@ -12,7 +12,7 @@ import {
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
 import { ISSUE_RELATION_TYPES, STATE_CATEGORIES } from '@orbit/shared/constants';
-import { notFound } from '@orbit/shared/errors';
+import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { branchName } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -337,11 +337,11 @@ async function buildIssueFilter(
     if (labelId !== undefined) filter['labelId'] = labelId;
   }
   if (args.state !== undefined) {
-    if (teamId === undefined) throw notFound('Pass a team when filtering by state name.');
+    if (teamId === undefined) throw validationFailed('Pass a team when filtering by state.');
     filter['stateId'] = await resolveStateId(principal, teamId, args.state);
   }
   if (args.cycle !== undefined) {
-    if (teamId === undefined) throw notFound('Pass a team when filtering by cycle.');
+    if (teamId === undefined) throw validationFailed('Pass a team when filtering by cycle.');
     filter['cycleId'] = (await resolveCycle(principal, teamId, args.cycle)).id;
   }
   return filter;
