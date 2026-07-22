@@ -6,8 +6,7 @@ function resolveTestDatabaseUrl(): string {
   const explicit = process.env['TEST_DATABASE_URL'];
   const ambient = process.env['DATABASE_URL'];
   const candidate =
-    explicit ??
-    (ambient?.includes('test') === true ? ambient : LOCAL_TEST_DATABASE_URL);
+    explicit ?? (ambient?.includes('test') === true ? ambient : LOCAL_TEST_DATABASE_URL);
   const name = new URL(candidate).pathname.replace(/^\//, '');
   if (!name.includes('test')) {
     throw new Error(
