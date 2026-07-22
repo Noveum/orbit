@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import { db, schema } from '@orbit/db';
 import { slugify } from '@orbit/shared/utils';
@@ -28,7 +29,7 @@ export const enabledSocialProviders: readonly string[] = Object.keys(socialProvi
 
 function handleFor(email: string, name: string): string {
   const base = slugify(name) || slugify(email.split('@')[0] ?? '') || 'member';
-  return `${base}-${Math.random().toString(36).slice(2, 7)}`;
+  return `${base}-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
 }
 
 export const auth = betterAuth({

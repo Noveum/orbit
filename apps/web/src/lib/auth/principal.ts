@@ -1,4 +1,4 @@
-import { and, db, eq, schema } from '@orbit/db';
+import { and, asc, db, eq, schema } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 
@@ -33,6 +33,7 @@ export async function resolveMembership(
         ? eq(schema.member.userId, userId)
         : and(eq(schema.member.userId, userId), eq(schema.member.organizationId, organizationId)),
     )
+    .orderBy(asc(schema.member.createdAt))
     .limit(1);
 
   const row = membership[0];
