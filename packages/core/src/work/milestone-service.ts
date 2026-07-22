@@ -7,7 +7,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { milestoneCreateSchema, milestoneUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { newId, pickProvided, requireRow, toDateString } from '../internal.ts';
+import { type Executor, newId, pickProvided, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -15,6 +15,19 @@ export type MilestoneRow = typeof schema.milestone.$inferSelect;
 
 function milestoneScopes(row: MilestoneRow): string[] {
   return [scopes.organization(row.organizationId), scopes.project(row.projectId)];
+}
+
+async function assertProjectInOrganization(
+  executor: Executor,
+  organizationId: string,
+  projectId: string,
+): Promise<void> {
+  const [row] = await executor
+    .select({ id: schema.project.id })
+    .from(schema.project)
+    .where(and(eq(schema.project.id, projectId), eq(schema.project.organizationId, organizationId)))
+    .limit(1);
+  requireRow(row, 'That project does not exist.');
 }
 
 export async function createMilestone(
@@ -25,6 +38,7 @@ export async function createMilestone(
   const parsed = milestoneCreateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await assertProjectInOrganization(tx, principal.organizationId, parsed.projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [last] = await tx
@@ -152,6 +166,7 @@ export async function listMilestones(
   projectId: string,
 ): Promise<MilestoneRow[]> {
   assertCan(principal, 'project:read');
+  await assertProjectInOrganization(db, principal.organizationId, projectId);
   return await db
     .select()
     .from(schema.milestone)
@@ -173,11 +188,13 @@ export async function reorderMilestones(
   if (orderedMilestoneIds.length === 0) throw conflict('Provide the milestones to reorder.');
 
   return await db.transaction(async (tx) => {
+    await assertProjectInOrganization(tx, principal.organizationId, projectId);
     const existing = await tx
       .select({ id: schema.milestone.id })
       .from(schema.milestone)
       .where(
         and(
+          eq(schema.milestone.organizationId, principal.organizationId),
           eq(schema.milestone.projectId, projectId),
           inArray(schema.milestone.id, [...orderedMilestoneIds]),
         ),

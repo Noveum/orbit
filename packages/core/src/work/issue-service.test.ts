@@ -2,6 +2,7 @@ import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createTeam } from '../org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -277,6 +278,25 @@ describe('moveIssue', () => {
     ).toBeGreaterThan(REBALANCE_THRESHOLD);
     expect(moved.issue.sortOrder).toBeGreaterThan(refreshedAnchor?.sortOrder ?? 0);
     expect(moved.issue.sortOrder).toBeLessThan(refreshedNeighbour?.sortOrder ?? 0);
+  });
+
+  it('reallocates the identifier when moved to another team', async () => {
+    const issue = await newIssue('Transferred');
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const target = states.find((state) => state.category === 'unstarted');
+    if (target === undefined) throw new Error('missing target state');
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      teamId: team.id,
+      stateId: target.id,
+      beforeId: null,
+      afterId: null,
+    });
+
+    expect(moved.issue.teamId).toBe(team.id);
+    expect(moved.issue.identifier).toBe('DSGN-1');
+    expect(moved.issue.number).toBe(1);
+    expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
   });
 
   it('applies state timestamps when moving across columns', async () => {

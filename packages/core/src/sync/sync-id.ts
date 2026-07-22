@@ -12,11 +12,3 @@ export async function nextSyncId(executor: Executor): Promise<number> {
   if (!Number.isSafeInteger(value)) throw internal('Allocated sync id is out of range.');
   return value;
 }
-
-export async function nextSyncIds(executor: Executor, count: number): Promise<number[]> {
-  if (count <= 0) return [];
-  const result = await executor.execute<{ sync_id: string }>(
-    sql`select nextval('sync_id_seq') as sync_id from generate_series(1, ${count})`,
-  );
-  return result.rows.map((row) => Number(row.sync_id));
-}

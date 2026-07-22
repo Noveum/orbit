@@ -1,5 +1,5 @@
 import { and, asc, count, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
-import { conflict } from '@orbit/shared/errors';
+import { conflict, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -39,6 +39,39 @@ async function allocateProjectSlug(
     if (!used.has(candidate)) return candidate;
   }
   throw conflict('Could not allocate a project address.');
+}
+
+async function assertTeamsInOrganization(
+  executor: Executor,
+  organizationId: string,
+  teamIds: readonly string[],
+): Promise<void> {
+  if (teamIds.length === 0) return;
+  const found = await executor
+    .select({ id: schema.team.id })
+    .from(schema.team)
+    .where(
+      and(
+        eq(schema.team.organizationId, organizationId),
+        inArray(schema.team.id, [...new Set(teamIds)]),
+      ),
+    );
+  if (found.length !== new Set(teamIds).size) {
+    throw notFound('Some of those teams do not exist in this workspace.');
+  }
+}
+
+async function assertProjectInOrganization(
+  executor: Executor,
+  organizationId: string,
+  projectId: string,
+): Promise<void> {
+  const [row] = await executor
+    .select({ id: schema.project.id })
+    .from(schema.project)
+    .where(and(eq(schema.project.id, projectId), eq(schema.project.organizationId, organizationId)))
+    .limit(1);
+  requireRow(row, 'That project does not exist.');
 }
 
 async function replaceProjectTeams(
@@ -85,6 +118,7 @@ export async function createProject(
       })
       .returning();
     const project = requireRow(created, 'The project could not be created.');
+    await assertTeamsInOrganization(tx, principal.organizationId, parsed.teamIds);
     await replaceProjectTeams(tx, project.id, parsed.teamIds);
 
     return {
@@ -145,7 +179,10 @@ export async function updateProject(
       )
       .returning();
     const project = requireRow(updated, 'That project does not exist.');
-    if (parsed.teamIds !== undefined) await replaceProjectTeams(tx, projectId, parsed.teamIds);
+    if (parsed.teamIds !== undefined) {
+      await assertTeamsInOrganization(tx, principal.organizationId, parsed.teamIds);
+      await replaceProjectTeams(tx, projectId, parsed.teamIds);
+    }
 
     return {
       project,
@@ -277,6 +314,8 @@ export async function addProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
+    await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    await assertTeamsInOrganization(tx, principal.organizationId, [teamId]);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     await tx
@@ -306,6 +345,7 @@ export async function removeProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
+    await assertProjectInOrganization(tx, principal.organizationId, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     await tx
@@ -333,6 +373,7 @@ export async function listProjectTeams(
   projectId: string,
 ): Promise<{ teamId: string }[]> {
   assertCan(principal, 'project:read');
+  await assertProjectInOrganization(db, principal.organizationId, projectId);
   return await db
     .select({ teamId: schema.projectTeam.teamId })
     .from(schema.projectTeam)
@@ -348,6 +389,7 @@ export async function postProjectUpdate(
   const parsed = projectUpdatePostSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await assertProjectInOrganization(tx, principal.organizationId, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [created] = await tx
@@ -401,6 +443,7 @@ export async function listProjectUpdates(
   limit = 20,
 ): Promise<ProjectUpdateRow[]> {
   assertCan(principal, 'project:read');
+  await assertProjectInOrganization(db, principal.organizationId, projectId);
   return await db
     .select()
     .from(schema.projectUpdate)
@@ -436,6 +479,7 @@ export async function projectProgress(
   projectId: string,
 ): Promise<ProjectProgress> {
   assertCan(principal, 'project:read');
+  await assertProjectInOrganization(db, principal.organizationId, projectId);
 
   const rows = await db
     .select({

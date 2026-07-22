@@ -1,7 +1,6 @@
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
-import type { StateCategory } from '@orbit/shared/constants';
 import { SORT_ORDER_STEP } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -469,7 +468,13 @@ export async function moveIssue(
     }
 
     const now = new Date();
-    const values: IssueValues = { sortOrder: sortOrderBetween(before, after), teamId };
+    const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
+    if (teamId !== current.teamId) {
+      const number = await allocateIssueNumber(tx, teamId);
+      values.teamId = teamId;
+      values.number = number;
+      values.identifier = issueIdentifier(await teamKey(tx, teamId), number);
+    }
     if (state.id !== current.stateId) {
       values.stateId = state.id;
       Object.assign(values, applyStateTimestamps(current, state.category, now));
@@ -632,7 +637,12 @@ function buildIssueFilters(
         db
           .select({ id: schema.workflowState.id })
           .from(schema.workflowState)
-          .where(eq(schema.workflowState.category, filter.stateCategory)),
+          .where(
+            and(
+              eq(schema.workflowState.organizationId, organizationId),
+              eq(schema.workflowState.category, filter.stateCategory),
+            ),
+          ),
       ),
     );
   }
@@ -791,6 +801,7 @@ export async function listIssueLabels(
   issueId: string,
 ): Promise<{ labelId: string }[]> {
   assertCan(principal, 'issue:read');
+  await loadIssue(db, principal.organizationId, issueId);
   return await db
     .select({ labelId: schema.issueLabel.labelId })
     .from(schema.issueLabel)
@@ -1016,32 +1027,9 @@ export async function listSubscribers(
   issueId: string,
 ): Promise<{ userId: string }[]> {
   assertCan(principal, 'issue:read');
+  await loadIssue(db, principal.organizationId, issueId);
   return await db
     .select({ userId: schema.issueSubscription.userId })
     .from(schema.issueSubscription)
     .where(eq(schema.issueSubscription.issueId, issueId));
-}
-
-export async function assertIssueTeam(principal: Principal, issueId: string): Promise<IssueRow> {
-  const row = await loadIssue(db, principal.organizationId, issueId);
-  assertInTeam(principal, row.teamId);
-  return row;
-}
-
-export function isOpenCategory(category: StateCategory): boolean {
-  return category !== 'completed' && category !== 'canceled';
-}
-
-export async function requireNoOpenBlockers(principal: Principal, issueId: string): Promise<void> {
-  const blockers = await db
-    .select({ id: schema.issueRelation.id })
-    .from(schema.issueRelation)
-    .where(
-      and(
-        eq(schema.issueRelation.issueId, issueId),
-        eq(schema.issueRelation.type, 'blocked_by'),
-        eq(schema.issueRelation.organizationId, principal.organizationId),
-      ),
-    );
-  if (blockers.length > 0) throw conflict('That issue is still blocked.');
 }
