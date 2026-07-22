@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ACTOR_TYPES } from '../constants/index.ts';
 
 export const SYNC_MODELS = [
+  'organization',
   'issue',
   'issue_relation',
   'comment',
