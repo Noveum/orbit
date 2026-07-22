@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SORT_ORDER_STEP } from '../constants/index.ts';
+import { IDENTIFIER_PATTERN, SORT_ORDER_STEP } from '../constants/index.ts';
 import {
   branchName,
   chunk,
@@ -45,6 +45,18 @@ describe('issue identifiers', () => {
     expect(parseIssueIdentifier('ENG-0')).toBeNull();
     expect(parseIssueIdentifier('-12')).toBeNull();
     expect(parseIssueIdentifier('TOOLONGPREFIX-1')).toBeNull();
+  });
+
+  it('rejects a one character prefix, matching the team key contract', () => {
+    expect(IDENTIFIER_PATTERN.test('A')).toBe(false);
+    expect(parseIssueIdentifier('A-1')).toBeNull();
+    expect(extractIssueIdentifiers('Refs A-1')).toEqual([]);
+  });
+
+  it('accepts the shortest and longest legal prefixes', () => {
+    expect(parseIssueIdentifier('AB-1')).toEqual({ prefix: 'AB', number: 1 });
+    expect(parseIssueIdentifier('ABCDEF-1')).toEqual({ prefix: 'ABCDEF', number: 1 });
+    expect(extractIssueIdentifiers('AB-1 and ABCDEF-2')).toEqual(['AB-1', 'ABCDEF-2']);
   });
 });
 

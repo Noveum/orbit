@@ -15,7 +15,7 @@ export function issueIdentifier(prefix: string, number: number): string {
 }
 
 export function parseIssueIdentifier(value: string): { prefix: string; number: number } | null {
-  const match = /^([A-Za-z][A-Za-z0-9]{0,5})-(\d+)$/.exec(value.trim());
+  const match = /^([A-Za-z][A-Za-z0-9]{1,5})-(\d+)$/.exec(value.trim());
   if (!match) return null;
   const [, prefix, digits] = match;
   if (prefix === undefined || digits === undefined) return null;
