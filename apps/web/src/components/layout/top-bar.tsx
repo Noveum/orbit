@@ -56,7 +56,12 @@ export function TopBar({ breadcrumbs, actions, onOpenDrawer }: TopBarProps) {
       <div className="flex shrink-0 items-center gap-1">
         {actions}
         <Tooltip label="Display options" side="bottom">
-          <Button variant="ghost" size="sm" aria-label="Display options" className="size-7 px-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Display options"
+            className="size-9 px-0 sm:size-7"
+          >
             <SlidersHorizontal className="size-4" aria-hidden="true" />
           </Button>
         </Tooltip>
