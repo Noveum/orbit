@@ -166,6 +166,26 @@
   --animate-overlay-in: fade-in var(--duration-fast) var(--ease-out-orbit);
   --animate-pop-in: pop-in 130ms var(--ease-out-orbit);
   --animate-pop-out: pop-out 100ms var(--ease-in-orbit);
+  --animate-drawer-in: drawer-in var(--duration-base) var(--ease-out-orbit);
+  --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-in-orbit);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawer-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
 }
 
 @keyframes shimmer {

@@ -102,7 +102,8 @@ export function AppShell({
           <DialogPrimitive.Overlay className={`${overlayClassName} lg:hidden`} />
           <DialogPrimitive.Content
             aria-label="Navigation"
-            className="fixed inset-y-0 left-0 z-50 w-[min(17rem,85vw)] outline-none data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in lg:hidden"
+            aria-describedby={undefined}
+            className="fixed inset-y-0 left-0 z-50 w-[min(17rem,85vw)] outline-none data-[state=closed]:animate-drawer-out data-[state=open]:animate-drawer-in lg:hidden"
           >
             <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
             {sidebar(() => setDrawerOpen(false))}

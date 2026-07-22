@@ -34,7 +34,11 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showClose={false} className="top-[12vh] max-w-xl translate-y-0 p-0">
+      <DialogContent
+        showClose={false}
+        aria-describedby={undefined}
+        className="top-[12vh] max-w-xl translate-y-0 p-0"
+      >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <Command
           loop
