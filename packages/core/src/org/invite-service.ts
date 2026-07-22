@@ -1,12 +1,12 @@
 import { and, asc, db, eq, gt, inArray, schema } from '@orbit/db';
-import { conflict, notFound } from '@orbit/shared/errors';
+import { conflict, forbidden, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, canAssignRole } from '@orbit/shared/policy';
 import { inviteBulkSchema, inviteCreateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { addUtcDays, type Executor, newToken, requireRow } from '../internal.ts';
+import { addUtcDays, type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { MemberRow } from './organization-service.ts';
@@ -94,8 +94,8 @@ export async function createInvite(
 ): Promise<{ invitation: InvitationRow; token: string; actions: SyncAction[] }> {
   assertCan(principal, 'member:invite');
   const parsed = inviteCreateSchema.parse(input);
-  if (!canAssignRole(principal.role, parsed.role) && parsed.role === 'admin') {
-    throw conflict('Only admins can invite admins.');
+  if (parsed.role === 'admin' && !canAssignRole(principal.role, parsed.role)) {
+    throw forbidden('Only admins can invite admins.');
   }
 
   return await db.transaction(async (tx) => {
@@ -271,7 +271,7 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     const [created] = await tx
       .insert(schema.member)
       .values({
-        id: newToken().slice(0, 32),
+        id: newId(),
         organizationId: invitation.organizationId,
         userId,
         role: invitation.role,
@@ -298,7 +298,7 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     if (teamIds.length > 0) {
       await tx
         .insert(schema.teamMember)
-        .values(teamIds.map((teamId) => ({ id: newToken().slice(0, 32), teamId, userId })))
+        .values(teamIds.map((teamId) => ({ id: newId(), teamId, userId })))
         .onConflictDoNothing();
     }
 

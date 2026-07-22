@@ -33,7 +33,13 @@ let client: Redis | null = null;
 function connection(): Redis | null {
   const url = process.env['REDIS_URL'];
   if (url === undefined || url.length === 0) return null;
-  client ??= new Redis(url, { maxRetriesPerRequest: 3, enableOfflineQueue: true });
+  if (client === null) {
+    const created = new Redis(url, { maxRetriesPerRequest: 3, enableOfflineQueue: true });
+    created.on('error', (error: Error) => {
+      console.error('[orbit] realtime publisher redis error:', error.message);
+    });
+    client = created;
+  }
   return client;
 }
 
