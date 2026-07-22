@@ -8,10 +8,11 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { authClient } from '@/lib/auth/client.ts';
 import { GithubMark, GoogleMark } from './provider-icons.tsx';
 
-const CALLBACK_URL = '/my-issues';
+const DEFAULT_CALLBACK_URL = '/my-issues';
 
 export interface LoginFormProps {
   readonly providers: readonly string[];
+  readonly callbackUrl?: string;
 }
 
 type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | null;
@@ -21,7 +22,7 @@ function messageOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function LoginForm({ providers }: LoginFormProps) {
+export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
   const [pending, setPending] = useState<Pending>(null);
@@ -46,19 +47,19 @@ export function LoginForm({ providers }: LoginFormProps) {
     withPending('passkey', async () => {
       const result = await authClient.signIn.passkey();
       if (result?.error) throw new Error(result.error.message ?? 'No passkey available.');
-      window.location.assign(CALLBACK_URL);
+      window.location.assign(callbackUrl);
     });
 
   const signInWithSocial = (provider: 'google' | 'github') =>
     withPending(provider, async () => {
-      const result = await authClient.signIn.social({ provider, callbackURL: CALLBACK_URL });
+      const result = await authClient.signIn.social({ provider, callbackURL: callbackUrl });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
 
   const sendMagicLink = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     withPending('magic-link', async () => {
-      const result = await authClient.signIn.magicLink({ email, callbackURL: CALLBACK_URL });
+      const result = await authClient.signIn.magicLink({ email, callbackURL: callbackUrl });
       if (result.error) throw new Error(result.error.message ?? 'Could not send the link.');
       setLinkSent(true);
       toast({

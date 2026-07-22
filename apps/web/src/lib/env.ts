@@ -5,7 +5,7 @@ const serverEnvSchema = z.object({
   BETTER_AUTH_URL: z.url().default('http://localhost:3000'),
   NEXT_PUBLIC_APP_URL: z.url().default('http://localhost:3000'),
   EMAIL_FROM: z.string().min(1).default('Orbit <auth@orbit.local>'),
-  EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
+  EMAIL_TRANSPORT: z.enum(['console', 'smtp', 'resend']).default('console'),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
