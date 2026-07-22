@@ -139,7 +139,7 @@ export async function getActiveCycleView(
   ]);
   return {
     id: cycle.id,
-    name: cycle.name,
+    name: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
     number: cycle.number,
     teamId: team.id,
     teamKey: team.key,
@@ -160,7 +160,7 @@ export async function listUpcomingCycleViews(
   const cycles = await upcomingCycles(principal, team.id, { now, limit: 6 });
   return cycles.map((cycle) => ({
     id: cycle.id,
-    name: cycle.name,
+    name: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     teamKey: team.key,

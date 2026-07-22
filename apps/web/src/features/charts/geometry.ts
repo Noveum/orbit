@@ -31,9 +31,3 @@ export function areaPath(values: readonly number[], max: number): string {
   const firstX = chartX(0, values.length).toFixed(2);
   return `${line} L${lastX} ${baseline} L${firstX} ${baseline} Z`;
 }
-
-export function niceMax(values: readonly number[]): number {
-  const peak = Math.max(1, ...values);
-  const step = 10 ** Math.max(0, Math.floor(Math.log10(peak)) - 1);
-  return Math.ceil(peak / step) * step;
-}

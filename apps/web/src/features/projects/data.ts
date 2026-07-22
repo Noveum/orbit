@@ -6,6 +6,7 @@ import {
   projectProgress,
 } from '@orbit/core';
 import { and, count, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
+import { renderPlainText } from '@orbit/services/markdown';
 import type { ProjectHealth, ProjectStatus } from '@orbit/shared/constants';
 import { PROJECT_HEALTHS, PROJECT_STATUSES } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
@@ -167,7 +168,7 @@ export async function getProjectDetail(
       issueCount: progress.scope,
       completedCount: progress.completed,
     },
-    description: project.description,
+    description: renderPlainText(project.description),
     startDate: project.startDate,
     teams,
     progress,
@@ -183,7 +184,7 @@ export async function getProjectDetail(
       .map((update) => ({
         id: update.id,
         health: toHealth(update.health),
-        body: update.body,
+        body: renderPlainText(update.body),
         createdAt: update.createdAt.toISOString(),
         author: people.get(update.authorId) ?? null,
       }))
