@@ -87,9 +87,10 @@ export async function createRealtimeServer(
 
   function handleHttp(request: IncomingMessage, response: ServerResponse): void {
     if (request.method === 'GET' && (request.url ?? '').startsWith('/health')) {
-      const body = JSON.stringify({ status: 'ok', ...stats() });
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(body);
+      const snapshot = stats();
+      const healthy = snapshot.redis === 'ready';
+      response.writeHead(healthy ? 200 : 503, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ status: healthy ? 'ok' : 'degraded', ...snapshot }));
       return;
     }
     response.writeHead(404, { 'content-type': 'application/json' });
@@ -233,6 +234,10 @@ export async function createRealtimeServer(
     if (principal === null) {
       socket.resume();
       socket.close(4001, 'unauthorized');
+      return;
+    }
+    if (socket.readyState !== socket.OPEN) {
+      socket.terminate();
       return;
     }
     const connection = register(socket, principal);
