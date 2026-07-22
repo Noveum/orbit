@@ -96,8 +96,9 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       setStatus('open');
       if (scopes.size > 0) send({ type: 'subscribe', scopes: [...scopes] });
     };
-    next.onmessage = (event: MessageEvent<unknown>) => {
-      if (typeof event.data === 'string') receive(event.data);
+    next.onmessage = (event) => {
+      const payload: unknown = event.data;
+      if (typeof payload === 'string') receive(payload);
     };
     next.onclose = () => {
       if (socket === next) socket = null;

@@ -231,6 +231,7 @@ export async function createRealtimeServer(
     socket.pause();
     const principal = await authenticateToken(tokenFrom(request));
     if (principal === null) {
+      socket.resume();
       socket.close(4001, 'unauthorized');
       return;
     }
