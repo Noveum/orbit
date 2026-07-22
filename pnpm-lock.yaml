@@ -32,6 +32,9 @@ importers:
       '@orbit/shared':
         specifier: workspace:*
         version: link:../shared
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(pg@8.22.0)
       ioredis:
         specifier: 5.9.0
         version: 5.9.0

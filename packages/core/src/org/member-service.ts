@@ -10,8 +10,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-
-export type MemberRow = typeof schema.member.$inferSelect;
+import type { MemberRow } from './organization-service.ts';
 
 export interface MemberWithUser {
   readonly member: MemberRow;

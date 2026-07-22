@@ -9,9 +9,9 @@ import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import type { MemberRow } from './organization-service.ts';
 
 export type InvitationRow = typeof schema.invitation.$inferSelect;
-export type MemberRow = typeof schema.member.$inferSelect;
 
 export const INVITE_TTL_DAYS = 14;
 

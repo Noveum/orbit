@@ -9,11 +9,11 @@ import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import type { CycleRow } from '../work/cycle-service.ts';
 import { createDefaultWorkflowStates } from '../work/workflow-state-service.ts';
 
 export type TeamRow = typeof schema.team.$inferSelect;
 export type TeamMemberRow = typeof schema.teamMember.$inferSelect;
-export type CycleRow = typeof schema.cycle.$inferSelect;
 
 export function deriveTeamKey(name: string): string {
   const letters = name.toUpperCase().replace(/[^A-Z0-9]/g, '');

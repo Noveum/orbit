@@ -13,6 +13,7 @@
   "dependencies": {
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
+    "drizzle-orm": "0.45.2",
     "ioredis": "5.9.0",
     "zod": "4.4.3"
   },
