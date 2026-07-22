@@ -1,0 +1,38 @@
+{
+  "name": "orbit",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check-comments": "node scripts/strip-comments.mjs --check",
+    "strip-comments": "node scripts/strip-comments.mjs",
+    "verify": "pnpm lint && pnpm check-comments && pnpm typecheck && pnpm test",
+    "db:generate": "pnpm --filter @orbit/db generate",
+    "db:migrate": "pnpm --filter @orbit/db migrate",
+    "db:push": "pnpm --filter @orbit/db push",
+    "db:seed": "pnpm --filter @orbit/db seed",
+    "db:studio": "pnpm --filter @orbit/db studio",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d",
+    "prepare": "lefthook install || true"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.5",
+    "@types/node": "^26.1.1",
+    "lefthook": "2.1.10",
+    "turbo": "2.10.6",
+    "typescript": "5.9.3"
+  }
+}
