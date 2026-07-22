@@ -27,3 +27,5 @@ blob-report/
 
 extras/artifacts/
 extras/recordings/
+
+.claude/worktrees/

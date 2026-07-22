@@ -17,7 +17,9 @@
       "!**/drizzle",
       "!**/pnpm-lock.yaml",
       "!extras/artifacts",
-      "!scripts/strip-comments.mjs"
+      "!scripts/strip-comments.mjs",
+      "!.claude",
+      "!**/.claude"
     ]
   },
   "formatter": {
@@ -58,9 +60,9 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "a11y": {
-        "recommended": true,
+        "preset": "recommended",
         "useSemanticElements": "error",
         "noStaticElementInteractions": "error",
         "useFocusableInteractive": "error",
@@ -68,7 +70,7 @@
         "useValidAutocomplete": "error"
       },
       "complexity": {
-        "recommended": true,
+        "preset": "recommended",
         "noExcessiveCognitiveComplexity": {
           "level": "error",
           "options": {
@@ -85,7 +87,7 @@
         "useLiteralKeys": "off"
       },
       "correctness": {
-        "recommended": true,
+        "preset": "recommended",
         "noUnusedImports": "error",
         "noUnusedVariables": "error",
         "noUnusedFunctionParameters": "error",
@@ -97,7 +99,7 @@
         "noNodejsModules": "off"
       },
       "performance": {
-        "recommended": true,
+        "preset": "recommended",
         "noAccumulatingSpread": "error",
         "noDelete": "error",
         "noReExportAll": "off",
@@ -105,10 +107,10 @@
         "noBarrelFile": "off"
       },
       "security": {
-        "recommended": true
+        "preset": "recommended"
       },
       "style": {
-        "recommended": true,
+        "preset": "recommended",
         "noNonNullAssertion": "error",
         "noParameterAssign": "error",
         "noNegationElse": "error",
@@ -160,7 +162,7 @@
         }
       },
       "suspicious": {
-        "recommended": true,
+        "preset": "recommended",
         "noExplicitAny": "error",
         "noDoubleEquals": "error",
         "noArrayIndexKey": "error",
@@ -188,7 +190,7 @@
         "noBitwiseOperators": "off"
       },
       "nursery": {
-        "recommended": false
+        "preset": "none"
       }
     }
   },
