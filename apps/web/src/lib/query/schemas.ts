@@ -104,8 +104,7 @@ export const activitySchema = z.object({
   actorId: z.string(),
   actorName: z.string(),
   field: z.string(),
-  fromValue: z.unknown(),
-  toValue: z.unknown(),
+  summary: z.string(),
   createdAt: timestamp,
 });
 

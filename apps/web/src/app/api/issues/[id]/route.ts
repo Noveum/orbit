@@ -1,5 +1,6 @@
 import {
   deleteIssue,
+  describeActivity,
   getIssue,
   listActivity,
   listIssues,
@@ -28,7 +29,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     return {
       issue,
       descriptionHtml: renderMarkdown(row.description),
-      activity,
+      activity: activity.map((entry) => ({ ...entry, summary: describeActivity(entry) })),
       subIssues: await attachLabels(subPage.issues),
       subscribed: subscribers.some((row) => row.userId === principal.userId),
     };

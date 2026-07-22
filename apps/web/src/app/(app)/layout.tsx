@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { WorkspaceShell } from '@/components/layout/workspace-shell.tsx';
+import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx';
 import { resolveMembership } from '@/lib/auth/principal.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam } from '@/lib/navigation.ts';
@@ -45,7 +46,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
       organizationId={membership.principal.organizationId}
       teamIds={teams.map((team) => team.id)}
     >
-      {shell}
+      <IssueWorkspaceProvider>{shell}</IssueWorkspaceProvider>
     </WorkspaceRealtime>
   );
 }
