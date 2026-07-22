@@ -50,6 +50,9 @@
     }
   },
   "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
     "formatter": {
       "enabled": true
     },
@@ -203,6 +206,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["apps/web/src/app/globals.css"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noImportantStyles": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["**/*.test.ts", "**/*.test.tsx", "**/tests/**", "**/e2e/**", "**/*.spec.ts"],
       "linter": {
