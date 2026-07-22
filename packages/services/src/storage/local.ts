@@ -1,6 +1,6 @@
 import { mkdir, rm, stat as statFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { MAX_UPLOAD_BYTES, validationFailed } from '@orbit/shared';
+import { internal, MAX_UPLOAD_BYTES, validationFailed } from '@orbit/shared';
 import type { StorageDriver, StoredObject, UploadTarget } from './types.ts';
 
 const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
@@ -102,8 +102,15 @@ export class LocalStorageDriver implements StorageDriver {
           'application/octet-stream',
         updatedAt: info.mtime,
       };
-    } catch {
-      return null;
+    } catch (error) {
+      if (isMissingFile(error)) return null;
+      throw internal('Could not read that file from local storage.', error);
     }
   }
+}
+
+function isMissingFile(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR';
 }

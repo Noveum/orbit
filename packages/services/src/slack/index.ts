@@ -307,10 +307,18 @@ export class SlackClient {
     if (response.status === 429) throw rateLimited('Slack is rate limiting Orbit.');
     if (!response.ok) throw internal(`Slack ${method} returned HTTP ${response.status}.`);
 
-    const parsed = schema.safeParse(await response.json());
+    const parsed = schema.safeParse(await readJson(response, method));
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
     if (!body.ok) throw internal(`Slack ${method} failed: ${body.error ?? 'unknown_error'}.`);
     return parsed.data;
+  }
+}
+
+async function readJson(response: Response, method: string): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    throw internal(`Slack ${method} returned a body that is not json.`, error);
   }
 }

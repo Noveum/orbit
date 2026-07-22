@@ -142,6 +142,12 @@ describe('LocalStorageDriver', () => {
     await expect(readFile(path.join(root, '..', 'outside.txt'))).rejects.toThrow();
   });
 
+  it('returns null when a file is missing rather than throwing', async () => {
+    const driver = new LocalStorageDriver(root);
+    expect(await driver.stat('org_1/2026/03/nope.txt')).toBeNull();
+    expect(await driver.stat('org_1')).toBeNull();
+  });
+
   it('collapses harmless traversal inside the root', () => {
     const driver = new LocalStorageDriver(root);
     expect(driver.resolve('org/sub/../file.txt')).toBe(path.join(root, 'org', 'file.txt'));

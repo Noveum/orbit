@@ -248,6 +248,13 @@ describe('SlackClient', () => {
     await expect(broken.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(/HTTP 500/);
   });
 
+  it('rejects a body that is not json', async () => {
+    const impl: typeof globalThis.fetch = () =>
+      Promise.resolve(new Response('<html>nope</html>', { status: 200 }));
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+    await expect(client.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(/not json/);
+  });
+
   it('rejects an unexpected payload shape', async () => {
     const { impl } = stubFetch(200, { ok: 'yes' });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
