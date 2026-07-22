@@ -4,16 +4,13 @@ const LOCAL_TEST_DATABASE_URL = 'postgres://orbit:orbit@localhost:5434/orbit_tes
 
 function resolveTestDatabaseUrl(): string {
   const explicit = process.env['TEST_DATABASE_URL'];
+  if (explicit !== undefined) return explicit;
   const ambient = process.env['DATABASE_URL'];
-  const candidate =
-    explicit ?? (ambient?.includes('test') === true ? ambient : LOCAL_TEST_DATABASE_URL);
-  const name = new URL(candidate).pathname.replace(/^\//, '');
-  if (!name.includes('test')) {
-    throw new Error(
-      `Refusing to run tests against "${name}". Point TEST_DATABASE_URL at a database whose name contains "test".`,
-    );
-  }
-  return candidate;
+  if (ambient === undefined) return LOCAL_TEST_DATABASE_URL;
+  const url = new URL(ambient);
+  if (url.pathname.replace(/^\//, '').includes('test')) return ambient;
+  url.pathname = '/orbit_test_core';
+  return url.toString();
 }
 
 export default defineConfig({

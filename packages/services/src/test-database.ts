@@ -10,8 +10,10 @@ function resolveTestDatabaseUrl(): string {
   if (explicit !== undefined) return explicit;
   const ambient = process.env['DATABASE_URL'];
   if (ambient === undefined) return LOCAL_TEST_DATABASE_URL;
-  const name = new URL(ambient).pathname.replace(/^\//, '');
-  return name.includes('test') ? ambient : LOCAL_TEST_DATABASE_URL;
+  const url = new URL(ambient);
+  if (url.pathname.replace(/^\//, '').includes('test')) return ambient;
+  url.pathname = '/orbit_test_svc';
+  return url.toString();
 }
 
 const pool = new Pool({ connectionString: resolveTestDatabaseUrl(), max: 4 });
