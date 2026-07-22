@@ -122,7 +122,7 @@ export async function updateOrganization(
     const syncId = await nextSyncId(tx);
     const [updated] = await tx
       .update(schema.organization)
-      .set(values)
+      .set({ ...values, syncId })
       .where(eq(schema.organization.id, principal.organizationId))
       .returning();
     const organization = requireRow(updated, 'That workspace does not exist.');

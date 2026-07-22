@@ -115,3 +115,22 @@ describe('teams', () => {
     ).rejects.toMatchObject({ code: 'forbidden' });
   });
 });
+
+describe('updateOrganization row versioning', () => {
+  it('persists the allocated sync id on the row', async () => {
+    const [before] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    const result = await updateOrganization(workspace.admin, { name: 'Noveum Labs' });
+
+    const [after] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    expect(after?.syncId).toBeGreaterThan(before?.syncId ?? 0);
+    expect(after?.syncId).toBe(result.actions[0]?.syncId);
+  });
+});

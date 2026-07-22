@@ -44,7 +44,7 @@ jobs:
         env:
           POSTGRES_USER: orbit
           POSTGRES_PASSWORD: orbit
-          POSTGRES_DB: orbit_test
+          POSTGRES_DB: orbit
         ports:
           - 5433:5432
         options: >-
@@ -62,7 +62,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit_test
+      DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
       REDIS_URL: redis://localhost:6380
       BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -81,8 +81,16 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Push database schema
-        run: pnpm db:push
+      - name: Create an isolated database per package
+        run: |
+          for db in orbit_test_core orbit_test_svc orbit_test_rt orbit_test_mcp orbit_test_web; do
+            PGPASSWORD=orbit createdb -h localhost -p 5433 -U orbit "$db"
+          done
+      - name: Push the schema to every database
+        run: |
+          for db in orbit orbit_test_core orbit_test_svc orbit_test_rt orbit_test_mcp orbit_test_web; do
+            DATABASE_URL="postgres://orbit:orbit@localhost:5433/$db" pnpm --filter @orbit/db push
+          done
       - name: Run tests
         run: pnpm test
 
