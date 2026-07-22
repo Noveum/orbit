@@ -30,7 +30,7 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <div className="flex h-full flex-col gap-1 border-border border-r bg-surface">
-      <div className="flex items-center gap-1 p-2">
+      <div className={cn('flex items-center gap-1 p-2', collapsed && 'flex-col')}>
         <div className="min-w-0 flex-1">
           <WorkspaceSwitcher workspace={workspace} user={user} collapsed={collapsed} />
         </div>
