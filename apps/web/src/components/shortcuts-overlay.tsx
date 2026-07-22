@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { ScrollArea } from '@/components/ui/scroll-area.tsx';
-import { formatBinding, useHotkeyList } from '@/lib/keyboard/index.ts';
+import { formatBinding, SEQUENCE_TIMEOUT_MS, useHotkeyList } from '@/lib/keyboard/index.ts';
 
 export interface ShortcutsOverlayProps {
   readonly open: boolean;
@@ -33,7 +33,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
         <DialogHeader>
           <DialogTitle className="font-medium text-base text-text">Keyboard shortcuts</DialogTitle>
           <DialogDescription className="text-muted text-xs">
-            Press the keys in order. Sequences must be typed within 800ms.
+            Press the keys in order. Sequences must be typed within {SEQUENCE_TIMEOUT_MS}ms.
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[60vh]">
