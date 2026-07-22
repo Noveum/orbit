@@ -18,8 +18,7 @@
       "!**/pnpm-lock.yaml",
       "!extras/artifacts",
       "!scripts/strip-comments.mjs",
-      "!.claude",
-      "!**/.claude"
+      "!.claude"
     ]
   },
   "formatter": {
