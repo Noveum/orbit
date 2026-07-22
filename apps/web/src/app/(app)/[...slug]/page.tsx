@@ -13,7 +13,7 @@ export default async function WorkspacePlaceholderPage({
   return (
     <div className="flex min-h-full flex-col">
       <EmptyState
-        icon={Inbox}
+        icon={<Inbox strokeWidth={1.75} aria-hidden="true" />}
         title="Nothing here yet"
         description={`The ${section} view is wired up to the shell. Issue views land next.`}
         action={
