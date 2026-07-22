@@ -357,6 +357,19 @@ function stateTimestamps(stateName: string): {
   return { startedAt: null, completedAt: null, canceledAt: null };
 }
 
+async function attachLabels(
+  issueId: string,
+  names: readonly string[],
+  labels: Map<string, string>,
+): Promise<void> {
+  const rows = names
+    .map((name) => labels.get(name))
+    .filter((value): value is string => value !== undefined)
+    .map((labelId) => ({ id: id(), issueId, labelId }));
+  if (rows.length === 0) return;
+  await db.insert(schema.issueLabel).values(rows);
+}
+
 async function seedIssues(
   userIds: Map<string, string>,
   teams: Map<string, TeamRecord>,
@@ -382,6 +395,7 @@ async function seedIssues(
     const identifier = `${team.key}-${nextNumber}`;
     const timestamps = stateTimestamps(entry.state);
     const project = entry.project === null ? null : projects.get(entry.project);
+    const inCycle = timestamps.startedAt !== null && timestamps.canceledAt === null;
 
     await db.insert(schema.issue).values({
       id: issueId,
@@ -396,8 +410,9 @@ async function seedIssues(
       creatorId: required(userIds.get('pulkit'), 'missing creator'),
       assigneeId: entry.assignee === null ? null : (userIds.get(entry.assignee) ?? null),
       projectId: project?.id ?? null,
-      milestoneId: null,
-      cycleId: timestamps.startedAt === null ? null : (cycles.get(entry.team) ?? null),
+      milestoneId:
+        entry.milestone === null ? null : (project?.milestones.get(entry.milestone) ?? null),
+      cycleId: inCycle ? (cycles.get(entry.team) ?? null) : null,
       parentId: null,
       estimate: entry.estimate,
       dueDate: null,
@@ -411,11 +426,7 @@ async function seedIssues(
       updatedAt: daysAgo(Math.max(1, 12 - (index % 12))),
     });
 
-    const labelRows = entry.labels
-      .map((name) => labels.get(name))
-      .filter((value): value is string => value !== undefined)
-      .map((labelId) => ({ id: id(), issueId, labelId }));
-    if (labelRows.length > 0) await db.insert(schema.issueLabel).values(labelRows);
+    await attachLabels(issueId, entry.labels, labels);
 
     issues.set(entry.title, { id: issueId, identifier, teamId: team.id });
   }

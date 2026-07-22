@@ -177,6 +177,7 @@ export interface SeedIssue {
   readonly labels: readonly string[];
   readonly estimate: number | null;
   readonly project: string | null;
+  readonly milestone: string | null;
 }
 
 export const SEED_ISSUES: readonly SeedIssue[] = [
@@ -191,6 +192,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature', 'Performance'],
     estimate: 5,
     project: 'Realtime Sync Engine',
+    milestone: 'Delta protocol',
   },
   {
     team: 'ENG',
@@ -203,6 +205,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Improvement'],
     estimate: 3,
     project: 'Realtime Sync Engine',
+    milestone: 'Client store',
   },
   {
     team: 'ENG',
@@ -215,6 +218,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Bug'],
     estimate: 2,
     project: 'Realtime Sync Engine',
+    milestone: 'Delta protocol',
   },
   {
     team: 'ENG',
@@ -227,6 +231,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Improvement'],
     estimate: 2,
     project: 'Realtime Sync Engine',
+    milestone: 'Presence and typing',
   },
   {
     team: 'ENG',
@@ -239,6 +244,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Bug'],
     estimate: 3,
     project: 'Workspace Onboarding',
+    milestone: 'Auth flows',
   },
   {
     team: 'ENG',
@@ -251,6 +257,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature'],
     estimate: 3,
     project: 'Workspace Onboarding',
+    milestone: 'Invite lifecycle',
   },
   {
     team: 'ENG',
@@ -263,6 +270,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature'],
     estimate: 5,
     project: 'Workspace Onboarding',
+    milestone: 'Invite lifecycle',
   },
   {
     team: 'ENG',
@@ -275,6 +283,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature'],
     estimate: 5,
     project: 'Docs and Attachments',
+    milestone: 'Upload pipeline',
   },
   {
     team: 'ENG',
@@ -287,6 +296,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature', 'Performance'],
     estimate: 8,
     project: 'Docs and Attachments',
+    milestone: 'Upload pipeline',
   },
   {
     team: 'ENG',
@@ -299,6 +309,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Bug'],
     estimate: 3,
     project: 'Docs and Attachments',
+    milestone: 'Editor',
   },
   {
     team: 'ENG',
@@ -311,6 +322,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Performance'],
     estimate: 5,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -323,6 +335,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Performance'],
     estimate: 3,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -335,6 +348,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Chore'],
     estimate: 2,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -347,6 +361,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Improvement'],
     estimate: 3,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -359,6 +374,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Feature'],
     estimate: 8,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -371,6 +387,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Bug'],
     estimate: null,
     project: 'Realtime Sync Engine',
+    milestone: 'Delta protocol',
   },
   {
     team: 'ENG',
@@ -382,6 +399,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Chore'],
     estimate: 3,
     project: null,
+    milestone: null,
   },
   {
     team: 'ENG',
@@ -393,6 +411,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Chore'],
     estimate: 1,
     project: null,
+    milestone: null,
   },
   {
     team: 'DES',
@@ -405,6 +424,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design'],
     estimate: 3,
     project: 'Workspace Onboarding',
+    milestone: 'Empty states',
   },
   {
     team: 'DES',
@@ -417,6 +437,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design', 'Improvement'],
     estimate: 2,
     project: null,
+    milestone: null,
   },
   {
     team: 'DES',
@@ -429,6 +450,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design'],
     estimate: 2,
     project: 'Workspace Onboarding',
+    milestone: 'Empty states',
   },
   {
     team: 'DES',
@@ -441,6 +463,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design'],
     estimate: 2,
     project: null,
+    milestone: null,
   },
   {
     team: 'DES',
@@ -453,6 +476,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design'],
     estimate: 3,
     project: null,
+    milestone: null,
   },
   {
     team: 'DES',
@@ -465,6 +489,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Chore'],
     estimate: 1,
     project: null,
+    milestone: null,
   },
   {
     team: 'DES',
@@ -476,6 +501,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Design'],
     estimate: 5,
     project: null,
+    milestone: null,
   },
   {
     team: 'MKT',
@@ -488,6 +514,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Docs'],
     estimate: 3,
     project: 'Launch Campaign',
+    milestone: 'Positioning',
   },
   {
     team: 'MKT',
@@ -499,6 +526,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Performance'],
     estimate: 5,
     project: 'Launch Campaign',
+    milestone: 'Landing page',
   },
   {
     team: 'MKT',
@@ -511,6 +539,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Docs'],
     estimate: 3,
     project: 'Launch Campaign',
+    milestone: 'Launch week',
   },
   {
     team: 'MKT',
@@ -522,6 +551,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Docs'],
     estimate: 3,
     project: 'Launch Campaign',
+    milestone: 'Positioning',
   },
   {
     team: 'MKT',
@@ -533,6 +563,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Docs'],
     estimate: 2,
     project: null,
+    milestone: null,
   },
   {
     team: 'MKT',
@@ -544,6 +575,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Docs'],
     estimate: null,
     project: 'Launch Campaign',
+    milestone: 'Launch week',
   },
   {
     team: 'MKT',
@@ -555,6 +587,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     labels: ['Chore'],
     estimate: 1,
     project: null,
+    milestone: null,
   },
 ];
 
