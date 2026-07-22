@@ -15,7 +15,9 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "e2e/**/*.ts",
     "vitest.config.ts",
+    "playwright.config.ts",
     "next.config.ts",
     ".next/types/**/*.ts"
   ],

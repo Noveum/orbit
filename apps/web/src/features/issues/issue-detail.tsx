@@ -14,7 +14,6 @@ import { apiFetch } from '@/lib/query/fetcher.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
-import { ActivityEntry } from './activity-feed.tsx';
 import { IssueProperties } from './issue-properties.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -210,20 +209,10 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
             </section>
           ) : null}
 
-          {detail.data.activity.length > 0 ? (
-            <section className="flex flex-col gap-1.5">
-              <h2 className="text-2xs text-faint uppercase tracking-wide">Activity</h2>
-              <ul className="flex flex-col gap-1.5" data-testid="activity-feed">
-                {detail.data.activity.map((entry) => (
-                  <ActivityEntry key={entry.id} entry={entry} />
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
           <CommentThread
             issueId={issue.id}
             comments={comments.data ?? []}
+            activity={detail.data.activity}
             members={workspace.members}
           />
         </div>

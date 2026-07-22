@@ -1,6 +1,7 @@
 'use client';
 
 import { STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared/constants';
+import { usePathname } from 'next/navigation';
 import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type {
@@ -70,12 +71,20 @@ export function statesForTeam(
   return orderStates(states.filter((state) => state.teamId === teamId));
 }
 
+export function teamKeyFromPath(pathname: string): string | null {
+  const match = /^\/team\/([^/]+)/.exec(pathname);
+  return match?.[1]?.toUpperCase() ?? null;
+}
+
 export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
+  const pathname = usePathname();
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   const data = bootstrap.data;
+  const routeTeamKey = teamKeyFromPath(pathname);
+  const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
 
   const value = useMemo<WorkspaceData>(() => {
     const states = data?.states ?? [];
@@ -115,7 +124,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
       <QuickCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        defaultTeamId={createTeamId}
+        defaultTeamId={createTeamId ?? routeTeamId}
       />
     </WorkspaceContext.Provider>
   );

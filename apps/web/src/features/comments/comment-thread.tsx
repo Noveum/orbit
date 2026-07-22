@@ -11,8 +11,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
+import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { Comment, Member } from '@/lib/query/schemas.ts';
+import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { summarizeReactions } from '@/lib/query/sync.ts';
 import {
   useCreateComment,
@@ -25,44 +26,68 @@ import { CommentComposer } from './comment-composer.tsx';
 
 const QUICK_EMOJI = ['👍', '🎉', '🚀', '👀', '❤️'] as const;
 
+export type TimelineEntry =
+  | { readonly kind: 'activity'; readonly at: string; readonly activity: Activity }
+  | { readonly kind: 'comment'; readonly at: string; readonly comment: Comment };
+
+export function buildTimeline(
+  activity: readonly Activity[],
+  comments: readonly Comment[],
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...activity.map((item) => ({ kind: 'activity' as const, at: item.createdAt, activity: item })),
+    ...comments
+      .filter((entry) => entry.comment.parentId === null)
+      .map((item) => ({ kind: 'comment' as const, at: item.comment.createdAt, comment: item })),
+  ];
+  return entries.sort((left, right) => left.at.localeCompare(right.at));
+}
+
 export interface CommentThreadProps {
   readonly issueId: string;
   readonly comments: readonly Comment[];
+  readonly activity: readonly Activity[];
   readonly members: readonly Member[];
 }
 
-export function CommentThread({ issueId, comments, members }: CommentThreadProps) {
+export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
   const create = useCreateComment(issueId);
   const memberById = new Map(members.map((member) => [member.id, member]));
 
-  const roots = comments.filter((entry) => entry.comment.parentId === null);
+  const timeline = buildTimeline(activity, comments);
   const repliesOf = (parentId: string) =>
     comments.filter((entry) => entry.comment.parentId === parentId);
 
   return (
     <section className="flex flex-col gap-4" data-testid="comment-thread">
-      {roots.map((entry) => (
-        <div key={entry.comment.id} className="flex flex-col gap-3">
-          <CommentItem
-            issueId={issueId}
-            entry={entry}
-            author={memberById.get(entry.comment.authorId)}
-            members={members}
-          />
-          <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4">
-            {repliesOf(entry.comment.id).map((reply) => (
+      <ul className="flex flex-col gap-4">
+        {timeline.map((item) =>
+          item.kind === 'activity' ? (
+            <ActivityEntry key={item.activity.id} entry={item.activity} />
+          ) : (
+            <li key={item.comment.comment.id} className="flex list-none flex-col gap-3">
               <CommentItem
-                key={reply.comment.id}
                 issueId={issueId}
-                entry={reply}
-                author={memberById.get(reply.comment.authorId)}
+                entry={item.comment}
+                author={memberById.get(item.comment.comment.authorId)}
                 members={members}
-                isReply
               />
-            ))}
-          </div>
-        </div>
-      ))}
+              <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4 empty:hidden">
+                {repliesOf(item.comment.comment.id).map((reply) => (
+                  <CommentItem
+                    key={reply.comment.id}
+                    issueId={issueId}
+                    entry={reply}
+                    author={memberById.get(reply.comment.authorId)}
+                    members={members}
+                    isReply
+                  />
+                ))}
+              </div>
+            </li>
+          ),
+        )}
+      </ul>
 
       <CommentComposer
         members={members}
