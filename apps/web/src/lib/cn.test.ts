@@ -21,4 +21,17 @@ describe('cn', () => {
   it('returns an empty string when nothing is passed', () => {
     expect(cn()).toBe('');
   });
+
+  it('keeps a colour token alongside the custom dense font size', () => {
+    expect(cn('text-dense text-accent-contrast')).toBe('text-dense text-accent-contrast');
+    expect(cn('text-dense text-muted')).toBe('text-dense text-muted');
+  });
+
+  it('still collapses two competing font sizes', () => {
+    expect(cn('text-dense text-xs')).toBe('text-xs');
+  });
+
+  it('still collapses two competing colours', () => {
+    expect(cn('text-muted text-danger')).toBe('text-danger');
+  });
 });
