@@ -1,7 +1,7 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
 
 const BASE = process.env['ORBIT_E2E_BASE_URL'] ?? 'http://localhost:3011';
-const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'e2e-artifacts';
+const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
