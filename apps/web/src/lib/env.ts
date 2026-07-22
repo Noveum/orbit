@@ -20,7 +20,3 @@ export function serverEnv(): ServerEnv {
   if (cached === null) cached = serverEnvSchema.parse(process.env);
   return cached;
 }
-
-export function appUrl(): string {
-  return process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
-}

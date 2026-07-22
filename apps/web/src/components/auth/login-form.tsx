@@ -51,7 +51,8 @@ export function LoginForm({ providers }: LoginFormProps) {
 
   const signInWithSocial = (provider: 'google' | 'github') =>
     withPending(provider, async () => {
-      await authClient.signIn.social({ provider, callbackURL: CALLBACK_URL });
+      const result = await authClient.signIn.social({ provider, callbackURL: CALLBACK_URL });
+      if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
 
   const sendMagicLink = (event: FormEvent<HTMLFormElement>) => {
