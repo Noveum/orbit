@@ -116,24 +116,30 @@ export class ResendTransport implements EmailTransport {
 }
 
 export function createEmailTransport(env: NodeJS.ProcessEnv = process.env): EmailTransport {
-  const from = env['EMAIL_FROM'] ?? DEFAULT_FROM;
-  const apiKey = env['RESEND_API_KEY'] ?? '';
-  const configured = env['EMAIL_TRANSPORT'];
-  const selected: string = configured ?? (apiKey.length > 0 ? 'resend' : 'console');
+  const from = readEnv(env, 'EMAIL_FROM') ?? DEFAULT_FROM;
+  const apiKey = readEnv(env, 'RESEND_API_KEY') ?? '';
+  const selected = readEnv(env, 'EMAIL_TRANSPORT') ?? (apiKey.length > 0 ? 'resend' : 'console');
 
   if (selected === 'console') return new ConsoleTransport();
   if (selected === 'resend') return new ResendTransport(apiKey, from);
   if (selected === 'smtp') {
+    const user = readEnv(env, 'SMTP_USER');
+    const pass = readEnv(env, 'SMTP_PASS');
     return new SmtpTransport({
-      host: env['SMTP_HOST'] ?? 'localhost',
-      port: Number.parseInt(env['SMTP_PORT'] ?? '1025', 10),
+      host: readEnv(env, 'SMTP_HOST') ?? 'localhost',
+      port: Number.parseInt(readEnv(env, 'SMTP_PORT') ?? '1025', 10),
       from,
       secure: env['SMTP_SECURE'] === 'true',
-      ...(env['SMTP_USER'] === undefined ? {} : { user: env['SMTP_USER'] }),
-      ...(env['SMTP_PASS'] === undefined ? {} : { pass: env['SMTP_PASS'] }),
+      ...(user === undefined ? {} : { user }),
+      ...(pass === undefined ? {} : { pass }),
     });
   }
   throw validationFailed(
     `Unknown EMAIL_TRANSPORT "${selected}". Use "console", "smtp" or "resend".`,
   );
+}
+
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
 }

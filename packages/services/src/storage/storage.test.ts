@@ -200,4 +200,11 @@ describe('createStorageDriver', () => {
   it('rejects an unknown driver', () => {
     expect(() => createStorageDriver({ STORAGE_DRIVER: 'ftp' })).toThrow(DomainError);
   });
+
+  it('reports missing s3 configuration as a domain error', () => {
+    expect(() => createStorageDriver({ STORAGE_DRIVER: 's3' })).toThrow(/S3_BUCKET is required/);
+    expect(() =>
+      createStorageDriver({ STORAGE_DRIVER: 's3', S3_BUCKET: 'b', S3_ACCESS_KEY_ID: '  ' }),
+    ).toThrow(/S3_ACCESS_KEY_ID is required/);
+  });
 });

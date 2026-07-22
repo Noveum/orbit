@@ -147,6 +147,12 @@ describe('createEmailTransport', () => {
     ).toBeInstanceOf(SmtpTransport);
   });
 
+  it('treats blank environment values as unset', () => {
+    expect(createEmailTransport({ EMAIL_TRANSPORT: '  ', RESEND_API_KEY: '' }).name).toBe(
+      'console',
+    );
+  });
+
   it('rejects an unknown transport and a resend transport without a key', () => {
     expect(() => createEmailTransport({ EMAIL_TRANSPORT: 'carrier-pigeon' })).toThrow(DomainError);
     expect(() => createEmailTransport({ EMAIL_TRANSPORT: 'resend' })).toThrow(DomainError);

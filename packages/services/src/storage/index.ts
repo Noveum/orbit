@@ -1,5 +1,5 @@
 import { validationFailed } from '@orbit/shared';
-import { LocalStorageDriver } from './local.ts';
+import { DEFAULT_LOCAL_DIR, LocalStorageDriver } from './local.ts';
 import { S3StorageDriver } from './s3.ts';
 import type { StorageDriver } from './types.ts';
 
@@ -23,16 +23,30 @@ export {
 } from './validate.ts';
 
 export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): StorageDriver {
-  const driver = env['STORAGE_DRIVER'] ?? 'local';
-  if (driver === 'local') return new LocalStorageDriver(env['STORAGE_LOCAL_DIR'] ?? './uploads');
+  const driver = readEnv(env, 'STORAGE_DRIVER') ?? 'local';
+  if (driver === 'local') {
+    return new LocalStorageDriver(readEnv(env, 'STORAGE_LOCAL_DIR') ?? DEFAULT_LOCAL_DIR);
+  }
   if (driver === 's3') {
+    const endpoint = readEnv(env, 'S3_ENDPOINT');
     return new S3StorageDriver({
-      bucket: env['S3_BUCKET'] ?? '',
-      region: env['S3_REGION'] ?? 'us-east-1',
-      accessKeyId: env['S3_ACCESS_KEY_ID'] ?? '',
-      secretAccessKey: env['S3_SECRET_ACCESS_KEY'] ?? '',
-      ...(env['S3_ENDPOINT'] === undefined ? {} : { endpoint: env['S3_ENDPOINT'] }),
+      bucket: requireEnv(env, 'S3_BUCKET'),
+      region: readEnv(env, 'S3_REGION') ?? 'us-east-1',
+      accessKeyId: requireEnv(env, 'S3_ACCESS_KEY_ID'),
+      secretAccessKey: requireEnv(env, 'S3_SECRET_ACCESS_KEY'),
+      ...(endpoint === undefined ? {} : { endpoint }),
     });
   }
   throw validationFailed(`Unknown STORAGE_DRIVER "${driver}". Use "local" or "s3".`);
+}
+
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
+  const value = readEnv(env, name);
+  if (value === undefined) throw validationFailed(`${name} is required when STORAGE_DRIVER is s3.`);
+  return value;
 }
