@@ -92,18 +92,25 @@ export const labelCreateSchema = z.object({
   teamId: idSchema.nullable().default(null),
 });
 
-export const labelUpdateSchema = labelCreateSchema.partial();
+export const labelUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(48),
+    color: colorSchema,
+    teamId: idSchema.nullable(),
+  })
+  .partial();
+
+export const prioritySchema = z
+  .number()
+  .int()
+  .refine((value): value is (typeof PRIORITIES)[number] => PRIORITIES.includes(value as 0));
 
 export const issueCreateSchema = z.object({
   teamId: idSchema,
   title: titleSchema,
   description: markdownSchema.default(''),
   stateId: idSchema.optional(),
-  priority: z
-    .number()
-    .int()
-    .refine((value): value is (typeof PRIORITIES)[number] => PRIORITIES.includes(value as 0))
-    .default(0),
+  priority: prioritySchema.default(0),
   assigneeId: idSchema.nullable().default(null),
   projectId: idSchema.nullable().default(null),
   milestoneId: idSchema.nullable().default(null),
@@ -114,13 +121,23 @@ export const issueCreateSchema = z.object({
   labelIds: z.array(idSchema).max(50).default([]),
 });
 
-export const issueUpdateSchema = issueCreateSchema
-  .partial()
-  .omit({ teamId: true, labelIds: true })
-  .extend({
-    labelIds: z.array(idSchema).max(50).optional(),
-    sortOrder: z.number().optional(),
-  });
+export const issueUpdateSchema = z
+  .object({
+    title: titleSchema,
+    description: markdownSchema,
+    stateId: idSchema,
+    priority: prioritySchema,
+    assigneeId: idSchema.nullable(),
+    projectId: idSchema.nullable(),
+    milestoneId: idSchema.nullable(),
+    cycleId: idSchema.nullable(),
+    parentId: idSchema.nullable(),
+    estimate: z.number().int().min(0).max(100).nullable(),
+    dueDate: z.coerce.date().nullable(),
+    labelIds: z.array(idSchema).max(50),
+    sortOrder: z.number(),
+  })
+  .partial();
 
 export const issueMoveSchema = z.object({
   stateId: idSchema.optional(),
@@ -182,7 +199,21 @@ export const projectCreateSchema = z.object({
   color: colorSchema.optional(),
 });
 
-export const projectUpdateSchema = projectCreateSchema.partial();
+export const projectUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    summary: z.string().max(500),
+    description: markdownSchema,
+    status: z.enum(PROJECT_STATUSES),
+    health: z.enum(PROJECT_HEALTHS),
+    leadId: idSchema.nullable(),
+    startDate: z.coerce.date().nullable(),
+    targetDate: z.coerce.date().nullable(),
+    teamIds: z.array(idSchema).max(50),
+    icon: z.string().max(32),
+    color: colorSchema,
+  })
+  .partial();
 
 export const projectUpdatePostSchema = z.object({
   health: z.enum(PROJECT_HEALTHS),
@@ -196,7 +227,13 @@ export const milestoneCreateSchema = z.object({
   targetDate: z.coerce.date().nullable().default(null),
 });
 
-export const milestoneUpdateSchema = milestoneCreateSchema.partial().omit({ projectId: true });
+export const milestoneUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    description: z.string().max(2000),
+    targetDate: z.coerce.date().nullable(),
+  })
+  .partial();
 
 export const cycleCreateSchema = z.object({
   teamId: idSchema,
@@ -205,7 +242,13 @@ export const cycleCreateSchema = z.object({
   endsAt: z.coerce.date(),
 });
 
-export const cycleUpdateSchema = cycleCreateSchema.partial().omit({ teamId: true });
+export const cycleUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    startsAt: z.coerce.date(),
+    endsAt: z.coerce.date(),
+  })
+  .partial();
 
 export const docCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -215,7 +258,15 @@ export const docCreateSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES).default('workspace'),
 });
 
-export const docUpdateSchema = docCreateSchema.partial();
+export const docUpdateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    content: markdownSchema,
+    projectId: idSchema.nullable(),
+    collectionId: idSchema.nullable(),
+    visibility: z.enum(DOC_VISIBILITIES),
+  })
+  .partial();
 
 export const viewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -225,7 +276,15 @@ export const viewCreateSchema = z.object({
   shared: z.boolean().default(false),
 });
 
-export const viewUpdateSchema = viewCreateSchema.partial();
+export const viewUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    filter: issueFilterSchema.partial(),
+    layout: z.enum(['list', 'board', 'table', 'calendar', 'timeline']),
+    groupBy: z.enum(['state', 'assignee', 'priority', 'project', 'label', 'cycle', 'none']),
+    shared: z.boolean(),
+  })
+  .partial();
 
 export const uploadRequestSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
