@@ -318,6 +318,7 @@ export async function createRealtimeServer(
       httpServer.closeAllConnections();
       httpServer.close(() => resolve());
     });
+    await Promise.allSettled([subscriber.quit(), publisher.quit()]);
     subscriber.disconnect();
     publisher.disconnect();
   }
