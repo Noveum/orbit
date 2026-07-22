@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { db, eq, schema } from '@orbit/db';
 import { createStorageDriver, LocalStorageDriver } from '@orbit/services/storage';
 import { notFound, validationFailed } from '@orbit/shared/errors';
-import { errorResponse, requirePrincipal } from '@/lib/api/handler.ts';
+import { apiContext, errorResponse } from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ key: string[] }>;
@@ -12,7 +12,7 @@ const MAX_INLINE_BYTES = 25 * 1024 * 1024;
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   try {
-    const principal = await requirePrincipal();
+    const { principal } = await apiContext();
     const { key } = await context.params;
     const storageKey = key.join('/');
 
@@ -51,7 +51,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
 
 export async function PUT(request: Request, context: RouteContext): Promise<Response> {
   try {
-    const principal = await requirePrincipal();
+    const { principal } = await apiContext();
     const { key } = await context.params;
     const storageKey = key.join('/');
 
