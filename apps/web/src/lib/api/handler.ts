@@ -1,6 +1,7 @@
 import { publishDeltas } from '@orbit/core';
 import { toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import type { Principal } from '@orbit/shared/policy';
 import { redirect } from 'next/navigation';
 import { ZodError } from 'zod';
 import type { MembershipContext } from '@/lib/auth/principal.ts';
@@ -54,6 +55,10 @@ function toResponse(error: unknown): Response {
   return Response.json(domain.toJSON(), { status: domain.status });
 }
 
+export function errorResponse(error: unknown): Response {
+  return toResponse(error);
+}
+
 export async function handleRoute(run: () => Promise<unknown>): Promise<Response> {
   try {
     const payload = await run();
@@ -62,6 +67,13 @@ export async function handleRoute(run: () => Promise<unknown>): Promise<Response
   } catch (error) {
     return toResponse(error);
   }
+}
+
+export async function handle<T>(run: (principal: Principal) => Promise<T>): Promise<Response> {
+  return await handleRoute(async () => {
+    const context = await apiContext();
+    return await run(context.principal);
+  });
 }
 
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
@@ -74,4 +86,8 @@ export async function readJson(request: Request): Promise<unknown> {
   } catch {
     return {};
   }
+}
+
+export function searchParamsOf(request: Request): Record<string, string> {
+  return Object.fromEntries(new URL(request.url).searchParams.entries());
 }

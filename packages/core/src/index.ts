@@ -1,5 +1,6 @@
 export * from './activity/activity-service.ts';
 export * from './auth/api-key.ts';
+export * from './content/comment-service.ts';
 export * from './internal.ts';
 export * from './org/invite-service.ts';
 export * from './org/member-service.ts';

@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
+import { devLoginEnabled, listDevUsers } from '@/lib/api/dev-login.ts';
 import { enabledSocialProviders } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 
@@ -21,6 +23,8 @@ export default async function LoginPage({
   const session = await getSession();
   if (session !== null) redirect(callbackUrl ?? '/my-issues');
 
+  const devUsers = devLoginEnabled() ? await listDevUsers() : [];
+
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg px-5 py-12">
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-pop sm:p-7">
@@ -28,6 +32,7 @@ export default async function LoginPage({
           providers={enabledSocialProviders}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
+        {devUsers.length > 0 ? <DevSignIn users={devUsers} /> : null}
       </div>
     </main>
   );
