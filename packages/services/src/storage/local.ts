@@ -65,14 +65,17 @@ export class LocalStorageDriver implements StorageDriver {
   }
 
   createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget> {
-    return Promise.resolve().then(() => ({
-      key: assertSafeKey(key),
-      url: `${LOCAL_FILE_ROUTE}/${key}`,
-      method: 'PUT' as const,
-      headers: { 'content-type': contentType, 'content-length': String(size) },
-      maxBytes: MAX_UPLOAD_BYTES,
-      expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_MS).toISOString(),
-    }));
+    return Promise.resolve().then(() => {
+      const safeKey = assertSafeKey(key);
+      return {
+        key: safeKey,
+        url: `${LOCAL_FILE_ROUTE}/${safeKey}`,
+        method: 'PUT' as const,
+        headers: { 'content-type': contentType, 'content-length': String(size) },
+        maxBytes: MAX_UPLOAD_BYTES,
+        expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_MS).toISOString(),
+      };
+    });
   }
 
   async put(key: string, body: Uint8Array, _contentType: string): Promise<void> {
