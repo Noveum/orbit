@@ -11,7 +11,7 @@ import {
   projectUpdateSchema,
 } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { type Executor, newId, pickProvided, requireRow, toDateString } from '../internal.ts';
+import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -162,7 +162,7 @@ export async function updateProject(
   input: unknown,
 ): Promise<{ project: ProjectRow; actions: SyncAction[] }> {
   assertCan(principal, 'project:manage');
-  const parsed = pickProvided(input, projectUpdateSchema.parse(input));
+  const parsed = projectUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
     const values = projectUpdateValues(parsed);

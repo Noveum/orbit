@@ -6,7 +6,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { viewCreateSchema, viewUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { newId, pickProvided, requireRow } from '../internal.ts';
+import { newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -80,7 +80,7 @@ export async function updateView(
   input: unknown,
 ): Promise<{ view: ViewRow; actions: SyncAction[] }> {
   assertCan(principal, 'view:manage');
-  const parsed = pickProvided(input, viewUpdateSchema.parse(input));
+  const parsed = viewUpdateSchema.parse(input);
   await loadOwnedView(principal, viewId);
 
   return await db.transaction(async (tx) => {

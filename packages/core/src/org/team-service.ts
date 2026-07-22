@@ -6,14 +6,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam } from '@orbit/shared/policy';
 import { teamCreateSchema, teamMemberSchema, teamUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import {
-  addUtcDays,
-  type Executor,
-  newId,
-  pickProvided,
-  requireRow,
-  startOfUtcDay,
-} from '../internal.ts';
+import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
@@ -179,7 +172,7 @@ export async function updateTeam(
   input: unknown,
 ): Promise<{ team: TeamRow; actions: SyncAction[] }> {
   assertCan(principal, 'team:manage');
-  const parsed = pickProvided(input, teamUpdateSchema.parse(input));
+  const parsed = teamUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
     const values: Partial<typeof schema.team.$inferInsert> = { updatedAt: new Date() };

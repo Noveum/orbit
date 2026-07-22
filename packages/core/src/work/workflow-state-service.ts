@@ -7,7 +7,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam } from '@orbit/shared/policy';
 import { workflowStateCreateSchema, workflowStateUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
-import { type Executor, newId, pickProvided, requireRow } from '../internal.ts';
+import { type Executor, newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -155,7 +155,7 @@ export async function updateWorkflowState(
   input: unknown,
 ): Promise<{ state: WorkflowStateRow; actions: SyncAction[] }> {
   assertCan(principal, 'workflow:manage');
-  const parsed = pickProvided(input, workflowStateUpdateSchema.parse(input));
+  const parsed = workflowStateUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
     const [existing] = await tx
