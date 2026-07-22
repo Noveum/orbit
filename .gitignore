@@ -25,7 +25,6 @@ playwright-report/
 test-results/
 blob-report/
 
-extras/artifacts/
-extras/recordings/
+extras/
 
 .claude/worktrees/
