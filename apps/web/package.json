@@ -12,7 +12,10 @@
   },
   "dependencies": {
     "@better-auth/passkey": "^1.6.24",
+    "@orbit/core": "workspace:*",
     "@orbit/db": "workspace:*",
+    "@orbit/realtime-client": "workspace:*",
+    "@orbit/services": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-checkbox": "^1.3.3",
