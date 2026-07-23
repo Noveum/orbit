@@ -1,6 +1,7 @@
 import { internal, MAX_UPLOAD_BYTES } from '@orbit/shared';
 import { S3Client } from 'bun';
 import { z } from 'zod';
+import { createCredentialResolver, type ResolvedCredentials } from './credentials.ts';
 import { assertSafeKey } from './key.ts';
 import type { DownloadOptions, StorageDriver, StoredObject, UploadTarget } from './types.ts';
 
@@ -23,68 +24,108 @@ const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
 
 export class S3StorageDriver implements StorageDriver {
   readonly name = 's3' as const;
-  private readonly client: S3Client;
+  private readonly base: {
+    bucket: string;
+    region: string;
+    virtualHostedStyle: boolean;
+    endpoint?: string;
+  };
+  private readonly resolveCredentials: () => Promise<ResolvedCredentials | undefined>;
+  private cached: { key: string; client: S3Client } | null = null;
 
   constructor(config: S3Config) {
     const parsed = s3ConfigSchema.parse(config);
     const { accessKeyId, secretAccessKey, sessionToken, endpoint } = parsed;
-    this.client = new S3Client({
+    this.base = {
       bucket: parsed.bucket,
       region: parsed.region,
       virtualHostedStyle: !(parsed.forcePathStyle ?? endpoint !== undefined),
       ...(endpoint === undefined ? {} : { endpoint }),
+    };
+    this.resolveCredentials = createCredentialResolver(parsed.region, {
       ...(accessKeyId === undefined ? {} : { accessKeyId }),
       ...(secretAccessKey === undefined ? {} : { secretAccessKey }),
       ...(sessionToken === undefined ? {} : { sessionToken }),
     });
-    if (accessKeyId !== undefined && secretAccessKey !== undefined && sessionToken === undefined) {
-      assertConfiguredCredentialsAreUsed(this.client);
-    }
   }
 
-  createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget> {
+  private async client(): Promise<S3Client> {
+    const credentials = await this.resolveCredentials();
+    const key =
+      credentials === undefined
+        ? 'ambient'
+        : `${credentials.accessKeyId}:${credentials.sessionToken ?? ''}`;
+    if (this.cached !== null && this.cached.key === key) return this.cached.client;
+
+    const client = new S3Client({
+      ...this.base,
+      ...(credentials === undefined
+        ? {}
+        : {
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
+            ...(credentials.sessionToken === undefined
+              ? {}
+              : { sessionToken: credentials.sessionToken }),
+          }),
+    });
+    if (credentials !== undefined && credentials.sessionToken === undefined) {
+      assertConfiguredCredentialsAreUsed(client);
+    }
+    this.cached = { key, client };
+    return client;
+  }
+
+  async createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget> {
     assertSafeKey(key);
-    const url = this.client.presign(key, {
+    const client = await this.client();
+    const url = client.presign(key, {
       expiresIn: UPLOAD_URL_TTL_SECONDS,
       method: 'PUT',
       type: contentType,
     });
-    return Promise.resolve({
+    return {
       key,
       url,
       method: 'PUT',
       headers: { 'content-type': contentType, 'content-length': String(size) },
       maxBytes: MAX_UPLOAD_BYTES,
       expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
-    });
+    };
   }
 
   async put(key: string, body: Uint8Array, contentType: string): Promise<void> {
     assertSafeKey(key);
-    await this.client.write(key, body, { type: contentType });
+    const client = await this.client();
+    await client.write(key, body, { type: contentType });
   }
 
-  getUrl(key: string, expiresInSeconds: number, options: DownloadOptions = {}): Promise<string> {
+  async getUrl(
+    key: string,
+    expiresInSeconds: number,
+    options: DownloadOptions = {},
+  ): Promise<string> {
     assertSafeKey(key);
-    return Promise.resolve(
-      this.client.presign(key, {
-        expiresIn: expiresInSeconds,
-        method: 'GET',
-        ...(options.contentType === undefined ? {} : { type: options.contentType }),
-        ...(options.disposition === undefined ? {} : { contentDisposition: options.disposition }),
-      }),
-    );
+    const client = await this.client();
+    return client.presign(key, {
+      expiresIn: expiresInSeconds,
+      method: 'GET',
+      ...(options.contentType === undefined ? {} : { type: options.contentType }),
+      ...(options.disposition === undefined ? {} : { contentDisposition: options.disposition }),
+    });
   }
 
   async delete(key: string): Promise<void> {
     assertSafeKey(key);
-    await this.client.delete(key);
+    const client = await this.client();
+    await client.delete(key);
   }
 
   async stat(key: string): Promise<StoredObject | null> {
     assertSafeKey(key);
     try {
-      const stats = await this.client.stat(key);
+      const client = await this.client();
+      const stats = await client.stat(key);
       return {
         key,
         size: stats.size,
