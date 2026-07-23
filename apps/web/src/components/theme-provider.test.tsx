@@ -1,14 +1,13 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useTheme } from 'next-themes';
 import { ThemeProvider } from './theme-provider.tsx';
 
 function ThemeProbe() {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { setTheme } = useTheme();
   return (
     <div>
-      <span data-testid="resolved">{resolvedTheme ?? 'unset'}</span>
       <button type="button" onClick={() => setTheme('dark')}>
         dark
       </button>
@@ -19,32 +18,34 @@ function ThemeProbe() {
   );
 }
 
+function hasClass(name: string): boolean {
+  return document.documentElement.classList.contains(name);
+}
+
 describe('ThemeProvider', () => {
-  it('renders the light theme and applies the light class', async () => {
-    render(
-      <ThemeProvider>
-        <ThemeProbe />
-      </ThemeProvider>,
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'light' }));
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('light');
-    });
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.className = '';
+    document.documentElement.style.colorScheme = '';
   });
 
-  it('switches to the dark theme and applies the dark class', async () => {
+  it('applies the chosen theme as a class on the document', async () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>,
     );
+
     await userEvent.click(screen.getByRole('button', { name: 'dark' }));
     await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('dark');
+      expect(hasClass('dark')).toBe(true);
     });
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(document.documentElement.classList.contains('light')).toBe(false);
+    expect(hasClass('light')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'light' }));
+    await waitFor(() => {
+      expect(hasClass('light')).toBe(true);
+    });
+    expect(hasClass('dark')).toBe(false);
   });
 });
