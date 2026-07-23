@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useTheme } from 'next-themes';
@@ -20,6 +20,12 @@ function ThemeProbe() {
 }
 
 describe('ThemeProvider', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.className = '';
+    document.documentElement.style.colorScheme = '';
+  });
+
   it('renders the light theme and applies the light class', async () => {
     render(
       <ThemeProvider>
