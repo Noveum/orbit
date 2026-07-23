@@ -5,6 +5,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import type { IssueProperty } from '@/features/filters/view-config.ts';
 import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
+import { surfaceHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member } from '@/lib/query/schemas.ts';
 import { PriorityGlyph } from './priority-glyph.tsx';
 
@@ -32,7 +33,8 @@ export function IssueCard({
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(
         'flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
-        'transition-[background-color,border-color,transform,box-shadow,opacity] ease-[var(--ease-standard)]',
+        surfaceHover,
+        'transition-[transform,box-shadow,opacity] ease-[var(--ease-standard)]',
         'duration-[var(--duration-instant)] hover:duration-[var(--duration-base)]',
         'hover:border-border-strong hover:bg-surface-2',
         dragging && '-translate-y-0.5 rotate-[0.4deg] opacity-95 shadow-pop',

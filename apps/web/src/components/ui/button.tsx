@@ -2,7 +2,7 @@
 
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
-import type { ButtonHTMLAttributes, Ref } from 'react';
+import type { ButtonHTMLAttributes, KeyboardEvent, MouseEvent, Ref } from 'react';
 import { cn } from '@/lib/cn.ts';
 
 export const buttonVariants = cva(
@@ -53,11 +53,31 @@ export function Button({
   ...props
 }: ButtonProps) {
   const Component = asChild ? Slot : 'button';
+  const inert = props['aria-disabled'] === true || props['aria-disabled'] === 'true';
+  const onClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (inert) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    props.onClick?.(event);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (inert && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    props.onKeyDown?.(event);
+  };
   return (
     <Component
       className={cn(buttonVariants({ variant, size, block }), className)}
       {...(asChild ? {} : { type })}
       {...props}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
+      {...(inert ? { tabIndex: -1 } : {})}
     />
   );
 }
