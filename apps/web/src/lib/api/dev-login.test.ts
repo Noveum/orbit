@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { devLoginEnabled } from './dev-login.ts';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEV_LOGIN_HEADER, devLoginEnabled, isDevLoginRequest } from './dev-login.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -22,5 +22,42 @@ describe('devLoginEnabled', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ORBIT_DEV_LOGIN', '1');
     expect(devLoginEnabled()).toBe(false);
+  });
+});
+
+describe('isDevLoginRequest', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
+  });
+
+  it('recognises the marker on the context headers', () => {
+    expect(isDevLoginRequest({ headers: new Headers({ [DEV_LOGIN_HEADER]: '1' }) })).toBe(true);
+  });
+
+  it('recognises the marker on a plain header record', () => {
+    expect(isDevLoginRequest({ headers: { [DEV_LOGIN_HEADER]: '1' } })).toBe(true);
+  });
+
+  it('falls back to the headers on the request', () => {
+    const request = new Request('http://localhost/api/dev/sign-in', {
+      headers: { [DEV_LOGIN_HEADER]: '1' },
+    });
+    expect(isDevLoginRequest({ request })).toBe(true);
+  });
+
+  it('is false for a request that carries no marker', () => {
+    expect(isDevLoginRequest({ headers: new Headers() })).toBe(false);
+    expect(isDevLoginRequest({})).toBe(false);
+    expect(isDevLoginRequest()).toBe(false);
+  });
+
+  it('never suppresses a send once dev login is off', () => {
+    vi.stubEnv('ORBIT_DEV_LOGIN', '');
+    expect(isDevLoginRequest({ headers: new Headers({ [DEV_LOGIN_HEADER]: '1' }) })).toBe(false);
+
+    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(isDevLoginRequest({ headers: new Headers({ [DEV_LOGIN_HEADER]: '1' }) })).toBe(false);
   });
 });
