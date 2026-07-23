@@ -14,6 +14,23 @@ import {
   SLUG_PATTERN,
   STATE_CATEGORIES,
 } from '../constants/index.ts';
+import {
+  filterPredicateListSchema,
+  GROUP_BY_FIELDS,
+  ISSUE_ORDERINGS,
+  VIEW_LAYOUTS,
+} from '../filters/index.ts';
+
+function flagSchema(fallback: boolean) {
+  return z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return fallback;
+      if (typeof value === 'boolean') return value;
+      return value === 'true' || value === '1';
+    });
+}
 
 export const idSchema = z.string().min(1).max(64);
 export const slugSchema = z
@@ -188,9 +205,10 @@ export const issueFilterSchema = z.object({
   labelId: idSchema.optional(),
   parentId: idSchema.optional(),
   query: z.string().max(200).optional(),
-  includeArchived: z.coerce.boolean().default(false),
-  includeSubIssues: z.coerce.boolean().default(true),
-  orderBy: z.enum(['manual', 'priority', 'created', 'updated', 'due']).default('manual'),
+  includeArchived: flagSchema(false),
+  includeSubIssues: flagSchema(true),
+  orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
+  predicates: filterPredicateListSchema,
 });
 
 export const issueRelationSchema = z.object({
@@ -297,8 +315,8 @@ export const docUpdateSchema = z
 export const viewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   filter: issueFilterSchema.partial(),
-  layout: z.enum(['list', 'board', 'table', 'calendar', 'timeline']).default('list'),
-  groupBy: z.enum(['state', 'assignee', 'priority', 'project', 'label', 'cycle', 'none']),
+  layout: z.enum(VIEW_LAYOUTS).default('list'),
+  groupBy: z.enum(GROUP_BY_FIELDS).default('state'),
   shared: z.boolean().default(false),
 });
 
@@ -306,8 +324,8 @@ export const viewUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     filter: issueFilterSchema.partial(),
-    layout: z.enum(['list', 'board', 'table', 'calendar', 'timeline']),
-    groupBy: z.enum(['state', 'assignee', 'priority', 'project', 'label', 'cycle', 'none']),
+    layout: z.enum(VIEW_LAYOUTS),
+    groupBy: z.enum(GROUP_BY_FIELDS),
     shared: z.boolean(),
   })
   .partial();

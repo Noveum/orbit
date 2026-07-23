@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import type { GroupContext } from '@/features/filters/grouping.ts';
+import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { buildRows } from './issue-list.tsx';
 import { IssueRow } from './issue-row.tsx';
@@ -55,6 +57,23 @@ const done: WorkflowState = {
   position: 5,
 };
 
+const groupContext: GroupContext = {
+  states: [todo, done],
+  members: [
+    {
+      id: 'user_2',
+      name: 'Aditi Rao',
+      email: 'aditi@noveum.ai',
+      image: null,
+      handle: 'aditi',
+      role: 'member',
+    },
+  ],
+  projects: [],
+  cycles: [],
+  labels: [],
+};
+
 describe('IssueRow', () => {
   it('opens on click and toggles selection from the checkbox', async () => {
     const user = userEvent.setup();
@@ -101,24 +120,58 @@ describe('IssueRow', () => {
 });
 
 describe('buildRows', () => {
-  it('emits a header per non empty group followed by its issues', () => {
-    const rows = buildRows(
-      [todo, done],
-      [
-        issue({ id: 'a', identifier: 'ENG-1', sortOrder: 2048 }),
-        issue({ id: 'b', identifier: 'ENG-2', sortOrder: 1024 }),
-        issue({ id: 'c', identifier: 'ENG-3', stateId: 'state_done' }),
-      ],
+  const stateById = new Map([
+    [todo.id, todo],
+    [done.id, done],
+  ]);
+
+  function rowsFor(issues: Issue[]) {
+    return buildRows(
+      groupIssues(issues, 'state', groupContext, { showEmptyGroups: false, ordering: 'manual' }),
+      stateById,
     );
+  }
+
+  it('emits a header per non empty group followed by its issues', () => {
+    const rows = rowsFor([
+      issue({ id: 'a', identifier: 'ENG-1', sortOrder: 2048 }),
+      issue({ id: 'b', identifier: 'ENG-2', sortOrder: 1024 }),
+      issue({ id: 'c', identifier: 'ENG-3', stateId: 'state_done' }),
+    ]);
 
     expect(rows.map((row) => row.kind)).toEqual(['header', 'issue', 'issue', 'header', 'issue']);
-    expect(rows[0]).toMatchObject({ kind: 'header', count: 2 });
-    expect(rows[1]).toMatchObject({ kind: 'issue' });
+    expect(rows[0]?.kind === 'header' ? rows[0].group.issues.length : 0).toBe(2);
     expect(rows[1]?.kind === 'issue' ? rows[1].issue.identifier : '').toBe('ENG-2');
   });
 
   it('skips groups with no issues', () => {
-    const rows = buildRows([todo, done], [issue()]);
-    expect(rows).toHaveLength(2);
+    expect(rowsFor([issue()])).toHaveLength(2);
+  });
+
+  it('keeps empty groups when asked to', () => {
+    const rows = buildRows(
+      groupIssues([issue()], 'state', groupContext, {
+        showEmptyGroups: true,
+        ordering: 'manual',
+      }),
+      stateById,
+    );
+    expect(rows.map((row) => row.kind)).toEqual(['header', 'issue', 'header']);
+  });
+
+  it('regroups by assignee', () => {
+    const rows = buildRows(
+      groupIssues(
+        [issue({ id: 'a', assigneeId: 'user_2' }), issue({ id: 'b', identifier: 'ENG-9' })],
+        'assignee',
+        groupContext,
+        { showEmptyGroups: false, ordering: 'manual' },
+      ),
+      stateById,
+    );
+    expect(rows.flatMap((row) => (row.kind === 'header' ? [row.group.title] : []))).toEqual([
+      'Aditi Rao',
+      'No assignee',
+    ]);
   });
 });

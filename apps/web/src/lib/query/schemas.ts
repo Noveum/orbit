@@ -1,3 +1,5 @@
+import { GROUP_BY_FIELDS, VIEW_LAYOUTS } from '@orbit/shared/filters';
+import { issueFilterSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 const timestamp = z.string();
@@ -175,6 +177,22 @@ export const issueDetailSchema = z.object({
 });
 
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
+
+export const viewSchema = z.object({
+  id: z.string(),
+  ownerId: z.string(),
+  name: z.string(),
+  filter: issueFilterSchema.partial().catch({}),
+  layout: z.enum(VIEW_LAYOUTS).catch('list'),
+  groupBy: z.enum(GROUP_BY_FIELDS).catch('state'),
+  shared: z.boolean(),
+  createdAt: timestamp,
+});
+
+export type View = z.infer<typeof viewSchema>;
+
+export const viewListSchema = z.object({ views: z.array(viewSchema) });
+export const viewEnvelopeSchema = z.object({ view: viewSchema });
 
 export const commentListSchema = z.object({ comments: z.array(commentSchema) });
 export const commentEnvelopeSchema = z.object({ comment: commentSchema });
