@@ -4,18 +4,22 @@ import type { Comment, Issue } from './schemas.ts';
 import {
   applyCommentDelta,
   applyIssueDelta,
+  applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
+  flattenIssuePages,
+  mapIssuePages,
   summarizeReactions,
 } from './sync.ts';
 
-const TEAM = 'team_eng';
+const TEAM_ID = 'team_eng';
+const TEAM = (issue: Issue) => issue.teamId === TEAM_ID;
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: 'issue_1',
     organizationId: 'org_1',
-    teamId: TEAM,
+    teamId: TEAM_ID,
     number: 3,
     identifier: 'ENG-3',
     title: 'Ship the board',
@@ -292,5 +296,41 @@ describe('summarizeReactions', () => {
       count: 1,
       mine: false,
     });
+  });
+});
+
+describe('issue pages', () => {
+  const pages = (...groups: Issue[][]) => ({
+    pages: groups.map((issues, index) => ({
+      issues,
+      nextCursor: index === groups.length - 1 ? null : `cursor-${index}`,
+    })),
+    pageParams: groups.map((_group, index) => (index === 0 ? null : `cursor-${index - 1}`)),
+  });
+
+  it('reads every loaded page as one list', () => {
+    const data = pages([issue({ id: 'a' })], [issue({ id: 'b' })]);
+    expect(flattenIssuePages(data).map((row) => row.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps the page structure and cursors when a mutation rewrites the list', () => {
+    const data = pages([issue({ id: 'a' }), issue({ id: 'b' })], [issue({ id: 'c' })]);
+    const next = mapIssuePages(data, (issues) => issues.filter((row) => row.id !== 'a'));
+
+    expect(next.pages).toHaveLength(2);
+    expect(flattenIssuePages(next).map((row) => row.id)).toEqual(['b', 'c']);
+    expect(next.pages[0]?.nextCursor).toBe('cursor-0');
+    expect(next.pages[1]?.nextCursor).toBeNull();
+    expect(next.pageParams).toEqual(data.pageParams);
+  });
+
+  it('applies a realtime delta across the loaded pages', () => {
+    const data = pages([issue({ id: 'a' })], [issue({ id: 'b' })]);
+    const next = applyIssueDeltaToPages(
+      data,
+      action({ data: { id: 'b', title: 'Renamed', syncId: 12 } }),
+      TEAM,
+    );
+    expect(next?.pages[1]?.issues[0]?.title).toBe('Renamed');
   });
 });

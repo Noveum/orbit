@@ -88,9 +88,14 @@ domain verified in Resend, otherwise every send fails.
 - **Errors.** Throw typed domain errors from `@orbit/shared/errors`. Route handlers map them to responses. Never swallow an error silently.
 - **Server state.** TanStack Query for fetching, with optimistic mutations. The realtime stream invalidates and patches the cache; it never triggers a full refetch of a list the user is looking at.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
-- **Auth.** better-auth. Passkeys, Google, GitHub, magic link.
+- **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
+  optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `Bun.password` (argon2id),
+  rate limited, and never a replacement for the passwordless methods.
+- **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
+  creation and on user creation, so it covers every provider. Empty means no restriction. A
+  workspace can narrow it further with its own `allowedEmailDomains`.
 - **Permissions.** All authorization goes through `packages/shared/src/policy`. Server routes enforce it. The UI reads the same policy to hide affordances, never as the only gate.
-- **Motion.** Transform and opacity only, 120 to 200ms, respect `prefers-reduced-motion`. No layout animation on the critical path.
+- **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the measured Linear behaviour does, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.
 - **Accessibility.** Keyboard operable everywhere, visible focus rings, real semantics from Radix primitives.
 
@@ -124,13 +129,20 @@ stage to `node:24-alpine`, `CMD` to `node`). Editing only the k8s manifest does
 nothing: in `oven/bun` images `node` is a symlink to `bun`, so
 `command: [..., "node", ...]` still runs Bun, silently.
 
-CodeBuild does not trigger automatically. Deploy by hand:
+Deploy by hand with:
 
-```
+```sh
 KUBE_API_SERVER=http://127.0.0.1:8080 ./extras/scripts/docker-build-push.sh -y
 ```
 
 Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
+
+The CodeBuild pipeline (`buildspec.yml`) runs the schema migration as a job at
+the deploy image tag, waits for it to complete, and only then rolls out web,
+realtime and mcp. A failed migration aborts the deploy before any new code goes
+live, so a schema change can no longer leave production querying columns that do
+not exist. The hand script above does not migrate: run `k8s/migrate.sh` after it
+when a deploy carries a schema change.
 
 ## Git
 
@@ -140,9 +152,21 @@ Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
 
 ## Review before merge
 
-Never merge a pull request while a CodeRabbit review thread is unresolved, and
-never merge while its review is still running. Green CI is not enough on its
-own: wait for the review to finish, then deal with every thread it opens.
+Two bots review this repository. **Greptile carries the most weight**: treat its
+findings as the primary gate and work through them first. CodeRabbit is
+secondary. It sometimes reports `Review rate limited`, which is not a real
+review: when that happens, re-run it and wait for it to complete rather than
+merging on the rate-limited result. Both reviews should complete before merge;
+Greptile is the one whose findings are weighted most heavily.
+
+Never merge while a review is still running, and never merge with a thread left
+open. Green CI is not enough on its own. A merge state of `UNSTABLE` means a
+review has not finished, so treat it as a block rather than a warning.
+
+Before merging, merge the current `main` into the branch and let every check run
+again against that merged state. A branch that is green against the `main` it
+forked from proves nothing about the `main` it is about to land on, and with
+several streams in flight `main` moves under all of them.
 
 Each thread ends one of two ways, and both are acceptable:
 
@@ -151,5 +175,4 @@ Each thread ends one of two ways, and both are acceptable:
   resolve it.
 
 What is not acceptable is merging with a thread left open, or resolving one
-silently without either a fix or a reply. A merge state of `UNSTABLE` means the
-review has not finished, so treat it as a block rather than a warning.
+silently without either a fix or a reply.

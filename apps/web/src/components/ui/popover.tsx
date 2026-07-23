@@ -21,6 +21,7 @@ export function PopoverContent({
         sideOffset={sideOffset}
         className={cn(
           'z-50 min-w-56 rounded-lg border border-border bg-surface p-1.5 text-dense shadow-pop',
+          'origin-[var(--radix-popover-content-transform-origin)]',
           'data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in',
           className,
         )}

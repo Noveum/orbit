@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import { removalBlockReason } from './credentials.ts';
 import type { ConnectedAccountView } from './data.ts';
 
@@ -99,7 +101,10 @@ export function ConnectedAccounts({
             <li
               key={id}
               data-testid={`provider-${id}`}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+              className={cn(
+                'flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5',
+                cardHover,
+              )}
             >
               <Mark className="size-4 shrink-0 text-text" />
               <span className="flex min-w-0 flex-1 flex-col">

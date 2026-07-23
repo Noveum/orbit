@@ -1,5 +1,5 @@
 import { ORG_ROLE_RANK, type OrgRole } from '../constants/index.ts';
-import { forbidden } from '../errors/index.ts';
+import { forbidden, notFound } from '../errors/index.ts';
 
 export const PERMISSIONS = [
   'issue:read',
@@ -11,7 +11,6 @@ export const PERMISSIONS = [
   'comment:delete:any',
   'reaction:toggle',
   'attachment:upload',
-  'attachment:delete',
   'project:read',
   'project:manage',
   'cycle:manage',
@@ -26,9 +25,6 @@ export const PERMISSIONS = [
   'member:invite',
   'member:manage',
   'org:manage',
-  'integration:manage',
-  'agent:delegate',
-  'audit:read',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -54,7 +50,6 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
   ...CONTRIBUTOR_PERMISSIONS,
   'issue:delete',
   'comment:delete:any',
-  'attachment:delete',
   'project:manage',
   'cycle:manage',
   'milestone:manage',
@@ -62,7 +57,6 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
   'label:manage',
   'doc:write',
   'doc:publish',
-  'agent:delegate',
   'member:invite',
 ];
 
@@ -71,8 +65,6 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   'team:manage',
   'member:manage',
   'org:manage',
-  'integration:manage',
-  'audit:read',
 ];
 
 const PERMISSIONS_BY_ROLE: Record<OrgRole, readonly Permission[]> = {
@@ -105,13 +97,29 @@ export function assertCan(principal: Principal, permission: Permission): void {
   }
 }
 
-export function isInTeam(principal: Principal, teamId: string): boolean {
-  return principal.role === 'admin' || principal.teamIds.includes(teamId);
+export interface TeamScope {
+  readonly id: string;
+  readonly organizationId: string;
 }
 
-export function assertInTeam(principal: Principal, teamId: string): void {
-  if (!isInTeam(principal, teamId)) {
-    throw forbidden('You are not a member of that team.', { details: { teamId } });
+export function teamScope(row: {
+  readonly teamId: string;
+  readonly organizationId: string;
+}): TeamScope {
+  return { id: row.teamId, organizationId: row.organizationId };
+}
+
+export function isInTeam(principal: Principal, team: TeamScope): boolean {
+  if (team.organizationId !== principal.organizationId) return false;
+  return principal.role === 'admin' || principal.teamIds.includes(team.id);
+}
+
+export function assertInTeam(principal: Principal, team: TeamScope): void {
+  if (team.organizationId !== principal.organizationId) {
+    throw notFound('That team does not exist.', { details: { teamId: team.id } });
+  }
+  if (!isInTeam(principal, team)) {
+    throw forbidden('You are not a member of that team.', { details: { teamId: team.id } });
   }
 }
 
