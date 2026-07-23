@@ -15,10 +15,10 @@ they are not on.
 ## Run it
 
 ```
-pnpm infra:up
-pnpm db:push
-pnpm db:seed
-pnpm --filter @orbit/mcp dev
+bun run infra:up
+bun run db:push
+bun run db:seed
+bun run --filter "@orbit/mcp" dev
 ```
 
 `MCP_PORT` sets the port and defaults to `3200`.
@@ -26,7 +26,7 @@ pnpm --filter @orbit/mcp dev
 ## Mint an API key
 
 ```
-pnpm --filter @orbit/mcp create-key -- --email pulkit@noveum.ai --name "Local agent"
+bun run --filter "@orbit/mcp" create-key --email pulkit@noveum.ai --name "Local agent"
 ```
 
 Flags: `--email` (required), `--name`, `--org <slug>` when the user belongs to several workspaces,
@@ -97,9 +97,9 @@ the process. A missing or invalid key fails the HTTP request with `401` before a
 ## Tests
 
 ```
-pnpm --filter @orbit/mcp test
+bun run --filter "@orbit/mcp" test
 ```
 
 They run against a real Postgres. Point `TEST_DATABASE_URL` at a database whose name contains `test`,
 or let it default to `postgres://orbit:orbit@localhost:5434/orbit_test_mcp`, and push the schema once
-with `DATABASE_URL=... pnpm --filter @orbit/db push`.
+with `DATABASE_URL=... bun run --filter "@orbit/db" push`.
