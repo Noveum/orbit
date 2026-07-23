@@ -13,11 +13,10 @@
       "!**/dist",
       "!**/build",
       "!**/coverage",
-      "!**/.turbo",
       "!**/drizzle",
-      "!**/pnpm-lock.yaml",
+      "!**/bun.lock",
       "!extras/artifacts",
-      "!scripts/strip-comments.mjs",
+      "!scripts/strip-comments.ts",
       "!.claude"
     ]
   },

@@ -8,18 +8,16 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "bun test"
   },
   "dependencies": {
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "ioredis": "5.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
   }
 }

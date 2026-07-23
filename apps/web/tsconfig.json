@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "types": ["bun"],
     "jsx": "preserve",
     "allowJs": true,
     "declaration": false,
@@ -16,7 +16,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "e2e/**/*.ts",
-    "vitest.config.ts",
+    "tests-preload.ts",
     "playwright.config.ts",
     "next.config.ts",
     ".next/types/**/*.ts"

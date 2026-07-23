@@ -1,10 +1,8 @@
 node_modules/
-.pnpm-store/
 dist/
 build/
 .next/
 out/
-.turbo/
 coverage/
 *.tsbuildinfo
 
@@ -18,8 +16,6 @@ uploads/
 
 .DS_Store
 *.log
-npm-debug.log*
-pnpm-debug.log*
 
 playwright-report/
 test-results/
