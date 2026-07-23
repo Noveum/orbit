@@ -46,6 +46,18 @@ async function shoot(page: Page, name: string): Promise<void> {
   await expect(page.locator('html')).not.toHaveClass(/dark/);
 }
 
+async function openNewDoc(page: Page, click: () => Promise<void>): Promise<void> {
+  const from = new URL(page.url()).pathname;
+  await click();
+  await page.waitForURL(
+    (url) =>
+      url.pathname.startsWith('/docs/') &&
+      url.pathname !== from &&
+      url.searchParams.get('edit') === '1',
+  );
+  await expect(page.getByTestId('doc-editor')).toBeVisible();
+}
+
 async function dropFiles(page: Page): Promise<void> {
   const transfer = await page.evaluateHandle((base64) => {
     const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
@@ -88,10 +100,20 @@ test('a doc is written, attached to, published, and read without a session', asy
   await author.getByTestId('doc-search').fill('');
   await expect(author.getByText('Keyboard shortcuts')).toBeVisible();
 
+  const filedTitle = `Filed doc ${Date.now() % 100000}`;
+  await openNewDoc(author, () => author.getByLabel('New doc in Engineering').click());
+  await author.getByTestId('doc-title-input').fill(filedTitle);
+  await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
+  await expect(
+    author
+      .getByTestId('docs-workspace')
+      .locator('section')
+      .filter({ hasText: 'Engineering' })
+      .getByText(filedTitle),
+  ).toBeVisible({ timeout: 30_000 });
+
   const title = `E2E doc ${Date.now() % 100000}`;
-  await author.getByTestId('new-doc').click();
-  await author.waitForURL(/\/docs\/[^/]+\?edit=1/);
-  await expect(author.getByTestId('doc-editor')).toBeVisible();
+  await openNewDoc(author, () => author.getByTestId('new-doc').click());
 
   await author.getByTestId('doc-title-input').fill(title);
   await author.getByTestId('doc-editor-input').fill(MARKDOWN);
