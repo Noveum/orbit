@@ -106,3 +106,17 @@ describe('the image tag pattern', () => {
     expect(isImportableComment(`<image-component src="${valid}" />`)).toBe(true);
   });
 });
+
+describe('attributes that only look like src', () => {
+  const valid = 'd15ef111-8cc4-45d6-9ca0-0b2adc5594a7';
+
+  it('ignores data-src', () => {
+    expect(isImportableComment(`<image-component data-src="${valid}"></image-component>`)).toBe(
+      false,
+    );
+  });
+
+  it('still matches a real src that follows another attribute', () => {
+    expect(isImportableComment(`<image-component data-id="x" src="${valid}">`)).toBe(true);
+  });
+});

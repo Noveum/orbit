@@ -6,7 +6,7 @@ import type * as schema from '../schema/index.ts';
 
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
-export const IMAGE_TAG_SOURCE = `<image-component(?=[\\s/>])[^>]*\\bsrc="(${UUID})"[^>]*>(?:</image-component>)?`;
+export const IMAGE_TAG_SOURCE = `<image-component(?=[\\s/>])[^>]*\\ssrc="(${UUID})"[^>]*>(?:</image-component>)?`;
 
 const IMAGE_TAG = new RegExp(IMAGE_TAG_SOURCE, 'g');
 
