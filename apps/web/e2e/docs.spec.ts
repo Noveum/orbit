@@ -68,6 +68,16 @@ async function dropFiles(page: Page): Promise<void> {
         type: 'application/pdf',
       }),
     );
+    data.items.add(
+      new File([new TextEncoder().encode('RIFF....WAVEfmt ')], 'standup.wav', {
+        type: 'audio/wav',
+      }),
+    );
+    data.items.add(
+      new File([new TextEncoder().encode('....ftypisom')], 'walkthrough.mp4', {
+        type: 'video/mp4',
+      }),
+    );
     return data;
   }, PNG_BASE64);
   await page.getByTestId('doc-editor-input').dispatchEvent('drop', { dataTransfer: transfer });
@@ -149,6 +159,8 @@ test('a doc is written, attached to, published, and read without a session', asy
     author.getByTestId('doc-attachments').getByText('PDF', { exact: true }),
   ).toBeVisible();
   await expect(author.getByTestId('doc-attachments').getByText('delta-protocol.pdf')).toBeVisible();
+  await expect(author.getByTestId('doc-attachments').locator('audio')).toHaveCount(1);
+  await expect(author.getByTestId('doc-attachments').locator('video')).toHaveCount(1);
   await shoot(author, 'docs-attachment');
 
   const watching = await browser.newContext({ viewport: { width: 1440, height: 900 } });
