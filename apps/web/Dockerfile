@@ -28,11 +28,19 @@ COPY --from=pruner /app/out/json/ .
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY --from=pruner /app/out/full/ .
 COPY tsconfig.base.json ./
-RUN --mount=type=secret,id=DOPPLER_TOKEN,required=true \
+RUN --mount=type=secret,id=DOPPLER_TOKEN,required=false \
     set -eu; \
-    export DOPPLER_INTERACTIVE=false; \
-    export DOPPLER_TOKEN="$(cat /run/secrets/DOPPLER_TOKEN)"; \
-    doppler run -- pnpm --filter @orbit/web run build
+    if [ -s /run/secrets/DOPPLER_TOKEN ]; then \
+      export DOPPLER_INTERACTIVE=false; \
+      export DOPPLER_TOKEN="$(cat /run/secrets/DOPPLER_TOKEN)"; \
+      doppler run -- pnpm --filter @orbit/web run build; \
+    else \
+      echo "No Doppler token supplied, building with placeholder configuration."; \
+      echo "This image is only fit for build verification, never for deployment."; \
+      DATABASE_URL="postgres://placeholder:placeholder@127.0.0.1:5432/placeholder" \
+      BETTER_AUTH_SECRET="placeholder-secret-0123456789abcdef" \
+      pnpm --filter @orbit/web run build; \
+    fi
 
 FROM base AS runner
 WORKDIR /app

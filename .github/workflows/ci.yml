@@ -68,8 +68,6 @@ jobs:
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
-      REALTIME_INTERNAL_TOKEN: ci-realtime-token
-      STORAGE_DRIVER: local
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -114,3 +112,80 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+
+  images:
+    name: Container images and manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build every service image
+        run: |
+          set -eu
+          for target in web realtime mcp; do
+            docker build -f "apps/$target/Dockerfile" -t "orbit-$target:ci" .
+          done
+          docker build -f packages/db/Dockerfile -t orbit-migrate:ci .
+
+      - name: The web image must boot and serve its health endpoint
+        run: |
+          set -eu
+          docker run -d --name orbit-web-ci -p 3000:3000 \
+            -e DATABASE_URL=postgres://ci:ci@127.0.0.1:5432/ci \
+            -e REDIS_URL=redis://127.0.0.1:6379 \
+            -e BETTER_AUTH_SECRET=ci-secret-0123456789abcdef0123456789abcdef \
+            -e BETTER_AUTH_URL=http://localhost:3000 \
+            -e NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+            --entrypoint node orbit-web:ci apps/web/server.js
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/health | grep -q '"status":"ok"'; then
+              echo "web image serves /api/health"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web image never became healthy" >&2
+          docker logs orbit-web-ci >&2
+          exit 1
+
+      - name: The migrate image must run as a non-root user
+        run: |
+          set -eu
+          USER_ID=$(docker run --rm --entrypoint id orbit-migrate:ci -u)
+          echo "migrate image uid: $USER_ID"
+          if [ "$USER_ID" = "0" ]; then
+            echo "migrate image runs as root" >&2
+            exit 1
+          fi
+
+      - name: Manifests must render with no placeholders left and validate
+        run: |
+          set -eu
+          curl -sSLo /usr/local/bin/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /usr/local/bin/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          chmod +x /usr/local/bin/kubeconform
+
+          mkdir -p rendered
+          for file in k8s/*.yaml; do
+            sed -e 's|__ECR_REGISTRY__|123456789012.dkr.ecr.us-east-1.amazonaws.com|g' \
+                -e 's|__ORBIT_S3_ROLE_ARN__|arn:aws:iam::123456789012:role/ci|g' \
+                -e 's|__ACM_CERTIFICATE_ARN__|arn:aws:acm:us-east-1:123456789012:certificate/ci|g' \
+                -e 's|__ORBIT_HOST__|orbit.example.com|g' \
+                -e 's|__ALB_GROUP__|ci-alb|g' \
+                -e 's|__IMAGE_TAG__|ci|g' \
+                "$file" > "rendered/$(basename "$file")"
+          done
+
+          if grep -rn "__[A-Z_]*__" rendered/; then
+            echo "a placeholder survived rendering" >&2
+            exit 1
+          fi
+
+          kubeconform -strict -summary -ignore-missing-schemas rendered/
+
+      - name: The deploy scripts must be syntactically valid
+        run: |
+          sh -n k8s/apply.sh
+          sh -n k8s/migrate.sh
