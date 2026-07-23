@@ -124,13 +124,20 @@ stage to `node:24-alpine`, `CMD` to `node`). Editing only the k8s manifest does
 nothing: in `oven/bun` images `node` is a symlink to `bun`, so
 `command: [..., "node", ...]` still runs Bun, silently.
 
-CodeBuild does not trigger automatically. Deploy by hand:
+Deploy by hand with:
 
-```
+```sh
 KUBE_API_SERVER=http://127.0.0.1:8080 ./extras/scripts/docker-build-push.sh -y
 ```
 
 Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
+
+The CodeBuild pipeline (`buildspec.yml`) runs the schema migration as a job at
+the deploy image tag, waits for it to complete, and only then rolls out web,
+realtime and mcp. A failed migration aborts the deploy before any new code goes
+live, so a schema change can no longer leave production querying columns that do
+not exist. The hand script above does not migrate: run `k8s/migrate.sh` after it
+when a deploy carries a schema change.
 
 ## Git
 
