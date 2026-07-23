@@ -12,7 +12,7 @@ import { authClient } from '@/lib/auth/client.ts';
 import { removalBlockReason } from './credentials.ts';
 import type { ConnectedAccountView } from './data.ts';
 
-export const SOCIAL_PROVIDERS = [
+const SOCIAL_PROVIDERS = [
   { id: 'google', label: 'Google', Mark: GoogleMark },
   { id: 'github', label: 'GitHub', Mark: GithubMark },
 ] as const;

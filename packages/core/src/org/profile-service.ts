@@ -5,6 +5,18 @@ import { requireRow } from '../internal.ts';
 
 export type UserRow = typeof schema.user.$inferSelect;
 
+const UNIQUE_VIOLATION = '23505';
+const HANDLE_TAKEN = 'That handle is already taken.';
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === UNIQUE_VIOLATION
+  );
+}
+
 export async function updateProfile(userId: string, input: unknown): Promise<UserRow> {
   const parsed = profileUpdateSchema.parse(input);
 
@@ -20,14 +32,19 @@ export async function updateProfile(userId: string, input: unknown): Promise<Use
       .from(schema.user)
       .where(and(eq(schema.user.handle, parsed.handle), ne(schema.user.id, userId)))
       .limit(1);
-    if (taken !== undefined) throw conflict('That handle is already taken.');
+    if (taken !== undefined) throw conflict(HANDLE_TAKEN);
   }
 
-  const [updated] = await db
-    .update(schema.user)
-    .set({ ...values, updatedAt: new Date() })
-    .where(eq(schema.user.id, userId))
-    .returning();
+  try {
+    const [updated] = await db
+      .update(schema.user)
+      .set({ ...values, updatedAt: new Date() })
+      .where(eq(schema.user.id, userId))
+      .returning();
 
-  return requireRow(updated, 'That account does not exist.');
+    return requireRow(updated, 'That account does not exist.');
+  } catch (error) {
+    if (isUniqueViolation(error)) throw conflict(HANDLE_TAKEN);
+    throw error;
+  }
 }

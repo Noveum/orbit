@@ -41,6 +41,16 @@ describe('updateProfile', () => {
     });
   });
 
+  it('maps a racing unique violation to the same friendly conflict', async () => {
+    const owner = await createUser('Otto Other');
+    const user = await createUser('Nia New');
+
+    await expect(updateProfile(user.id, { handle: owner.handle })).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'That handle is already taken.',
+    });
+  });
+
   it('lets a member keep their own handle', async () => {
     const user = await createUser('Nia New');
     const updated = await updateProfile(user.id, { handle: user.handle, name: 'Nia!' });
