@@ -105,7 +105,11 @@ describe('Button aria-disabled', () => {
         </a>
       </Button>,
     );
-    await userEvent.click(screen.getByText('Go'));
+    const link = screen.getByText('Go');
+    await userEvent.click(link);
+    expect(onClick).not.toHaveBeenCalled();
+    link.focus();
+    await userEvent.keyboard('{Enter}');
     expect(onClick).not.toHaveBeenCalled();
   });
 
