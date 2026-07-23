@@ -1,6 +1,6 @@
 import { newId } from '@orbit/core';
 import { db, schema } from '@orbit/db';
-import { createStorageDriver, storageKeyFor, validateUpload } from '@orbit/services/storage';
+import { storageDriver, storageKeyFor, validateUpload } from '@orbit/services/storage';
 import { assertCan } from '@orbit/shared/policy';
 import { uploadRequestSchema } from '@orbit/shared/validators';
 import { handle, readJson } from '@/lib/api/handler.ts';
@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
       size: parsed.size,
     });
 
-    const driver = createStorageDriver();
+    const driver = storageDriver();
     const key = storageKeyFor(principal.organizationId, upload.safeName);
     const target = await driver.createUploadTarget(key, upload.contentType, upload.size);
 

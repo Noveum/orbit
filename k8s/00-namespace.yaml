@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orbit
+  labels:
+    app.kubernetes.io/part-of: orbit
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orbit-app
+  namespace: orbit
+  labels:
+    app.kubernetes.io/part-of: orbit
+  annotations:
+    eks.amazonaws.com/role-arn: __ORBIT_S3_ROLE_ARN__

@@ -10,6 +10,7 @@ import {
   wrapSelection,
 } from './markdown-input.ts';
 import { outlineOf, readTimeMinutes, slugify } from './outline.ts';
+import { uploadDocFile } from './upload.ts';
 import { AUTOSAVE_DELAY_MS, useAutosave } from './use-autosave.ts';
 
 describe('outlineOf', () => {
@@ -140,5 +141,98 @@ describe('useAutosave', () => {
       await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS * 2);
     });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('uploadDocFile', () => {
+  const attachment = {
+    id: 'att_1',
+    parentType: 'doc',
+    parentId: 'doc_1',
+    fileName: 'note.png',
+    contentType: 'image/png',
+    size: 4,
+    storageKey: 'org_1/2026/07/note.png',
+    status: 'pending',
+  };
+
+  function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('presigns, uploads to the returned url, then confirms completion', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(`${init?.method ?? 'GET'} ${url}`);
+      if (url === '/api/attachments/presign') {
+        return Promise.resolve(
+          jsonResponse({
+            attachment,
+            upload: {
+              key: attachment.storageKey,
+              url: 'https://s3.example.com/signed',
+              method: 'PUT',
+              headers: { 'content-type': 'image/png' },
+            },
+          }),
+        );
+      }
+      if (url === 'https://s3.example.com/signed')
+        return Promise.resolve(new Response(null, { status: 200 }));
+      if (url === `/api/attachments/${attachment.id}/complete`) {
+        return Promise.resolve(jsonResponse({ attachment: { ...attachment, status: 'ready' } }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
+    const result = await uploadDocFile('doc_1', file);
+
+    expect(calls).toEqual([
+      'POST /api/attachments/presign',
+      'PUT https://s3.example.com/signed',
+      `POST /api/attachments/${attachment.id}/complete`,
+    ]);
+    expect(result.url).toBe('/api/files/org_1/2026/07/note.png');
+  });
+
+  it('fails when the completion call is rejected', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/attachments/presign') {
+        return Promise.resolve(
+          jsonResponse({
+            attachment,
+            upload: {
+              key: attachment.storageKey,
+              url: 'https://s3.example.com/signed',
+              method: 'PUT',
+              headers: { 'content-type': 'image/png' },
+            },
+          }),
+        );
+      }
+      if (url === 'https://s3.example.com/signed')
+        return Promise.resolve(new Response(null, { status: 200 }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ error: { code: 'not_found', message: 'gone' } }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
+    await expect(uploadDocFile('doc_1', file)).rejects.toThrow();
   });
 });
