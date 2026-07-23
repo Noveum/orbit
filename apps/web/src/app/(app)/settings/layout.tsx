@@ -5,12 +5,15 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
       <header className="flex flex-col gap-1">
-        <h1 className="font-semibold text-xl text-text">Workspace settings</h1>
+        <h1 className="font-semibold text-xl text-text">Settings</h1>
         <p className="text-muted text-xs">
-          Manage the workspace, its people, teams, and how Orbit reaches you.
+          Your account and how you sign in, then the workspace, its people, teams, and
+          notifications.
         </p>
       </header>
-      <SettingsNav />
+      <div className="border-border border-b pb-4">
+        <SettingsNav />
+      </div>
       {children}
     </div>
   );

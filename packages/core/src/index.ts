@@ -5,6 +5,7 @@ export * from './internal.ts';
 export * from './org/invite-service.ts';
 export * from './org/member-service.ts';
 export * from './org/organization-service.ts';
+export * from './org/profile-service.ts';
 export * from './org/team-service.ts';
 export * from './realtime/publisher.ts';
 export * from './sync/sync-id.ts';
