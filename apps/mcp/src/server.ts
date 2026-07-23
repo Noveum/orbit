@@ -100,6 +100,12 @@ export interface McpHttpServer {
 }
 
 const SHUTDOWN_GRACE_MS = 5_000;
+const MAX_SHUTDOWN_GRACE_MS = 120_000;
+
+function shutdownGraceOf(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return SHUTDOWN_GRACE_MS;
+  return Math.min(Math.max(Math.trunc(requested), 1), MAX_SHUTDOWN_GRACE_MS);
+}
 
 function isAlreadyStopped(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
@@ -156,7 +162,7 @@ export async function createMcpHttpServer(
         const force = setTimeout(() => {
           http.closeAllConnections();
           finish();
-        }, options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+        }, shutdownGraceOf(options.shutdownGraceMs));
         force.unref();
         http.closeIdleConnections();
         http.close((error) => {

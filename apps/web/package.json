@@ -9,7 +9,7 @@
     "start": "bun server.js",
     "typecheck": "tsc --noEmit",
     "test": "bun --env-file=../../.env test src",
-    "test:e2e": "bun --env-file=../../.env playwright test"
+    "test:e2e": "bun --env-file=../../.env --bun playwright test"
   },
   "dependencies": {
     "@better-auth/passkey": "^1.6.24",
