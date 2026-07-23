@@ -37,7 +37,8 @@
     "GITHUB_WEBHOOK_SECRET",
     "GITHUB_APP_ID",
     "GITHUB_APP_PRIVATE_KEY",
-    "MCP_PORT"
+    "MCP_PORT",
+    "PORT"
   ],
   "tasks": {
     "build": {

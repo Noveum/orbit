@@ -13,7 +13,7 @@
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push --force",
     "studio": "drizzle-kit studio",
-    "seed": "tsx src/seed/index.ts",
+    "seed": "tsx --env-file-if-exists=../../.env src/seed/index.ts",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
