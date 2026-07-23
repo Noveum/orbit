@@ -333,6 +333,16 @@ describe('listIssues', () => {
     expect(byIdentifier.issues[0]?.identifier).toBe('NOVA-1');
   });
 
+  it('leaves the description out of list rows and keeps it for an explicit full select', async () => {
+    await newIssue('Heavy issue', { description: 'A body long enough to matter on the wire.' });
+
+    const listed = await listIssues(workspace.admin, {});
+    expect(listed.issues[0]?.description).toBe('');
+
+    const full = await listIssues(workspace.admin, { select: 'full' });
+    expect(full.issues[0]?.description).toBe('A body long enough to matter on the wire.');
+  });
+
   it('hides archived issues unless asked', async () => {
     const issue = await newIssue('Old news');
     await archiveIssue(workspace.admin, issue.id);
@@ -466,6 +476,29 @@ describe('bulkUpdateIssues', () => {
 
     expect(result.issues.every((issue) => issue.priority === 1)).toBe(true);
     expect(result.actions).toHaveLength(2);
+  });
+
+  it('writes one batched update for the whole selection instead of one per issue', async () => {
+    const created: Awaited<ReturnType<typeof newIssue>>[] = [];
+    for (let index = 0; index < 25; index += 1) created.push(await newIssue(`Bulk ${index}`));
+    const done = stateNamed(workspace, 'Done');
+
+    const result = await bulkUpdateIssues(workspace.admin, {
+      issueIds: created.map((issue) => issue.id),
+      patch: { stateId: done.id },
+    });
+
+    expect(result.issues).toHaveLength(25);
+    expect(result.issues.every((issue) => issue.stateId === done.id)).toBe(true);
+    expect(new Set(result.issues.map((issue) => issue.syncId)).size).toBe(1);
+    expect(new Set(result.issues.map((issue) => issue.updatedAt.getTime())).size).toBe(1);
+
+    const activity = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.field, 'stateId'));
+    expect(activity).toHaveLength(25);
+    expect(activity.every((row) => row.toValue !== null)).toBe(true);
   });
 
   it('applies nothing when one issue in the batch fails', async () => {

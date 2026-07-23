@@ -1,10 +1,15 @@
-import { and, asc, db, eq, inArray, isNull, schema } from '@orbit/db';
+import { and, asc, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
 import { forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam } from '@orbit/shared/policy';
-import { commentCreateSchema, commentUpdateSchema, reactionSchema } from '@orbit/shared/validators';
+import {
+  commentCreateSchema,
+  commentUpdateSchema,
+  paginationSchema,
+  reactionSchema,
+} from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -63,20 +68,37 @@ async function loadComment(
   return requireRow(row, 'That comment does not exist.');
 }
 
+export interface CommentPage {
+  readonly comments: CommentWithReactions[];
+  readonly nextCursor: string | null;
+}
+
 export async function listComments(
   principal: Principal,
   issueId: string,
-): Promise<CommentWithReactions[]> {
+  input: unknown = {},
+): Promise<CommentPage> {
   assertCan(principal, 'issue:read');
   await loadIssueForComment(db, principal, issueId);
+  const page = paginationSchema.parse(input);
 
-  const comments = await db
+  const filters = [eq(schema.comment.issueId, issueId), isNull(schema.comment.deletedAt)];
+  if (page.cursor !== undefined) {
+    filters.push(
+      sql`(${schema.comment.createdAt}, ${schema.comment.id}) > (select ${schema.comment.createdAt}, ${schema.comment.id} from ${schema.comment} where ${schema.comment.id} = ${page.cursor})`,
+    );
+  }
+
+  const rows = await db
     .select()
     .from(schema.comment)
-    .where(and(eq(schema.comment.issueId, issueId), isNull(schema.comment.deletedAt)))
-    .orderBy(asc(schema.comment.createdAt));
+    .where(and(...filters))
+    .orderBy(asc(schema.comment.createdAt), asc(schema.comment.id))
+    .limit(page.limit + 1);
 
-  if (comments.length === 0) return [];
+  const comments = rows.slice(0, page.limit);
+  const nextCursor = rows.length > page.limit ? (comments.at(-1)?.id ?? null) : null;
+  if (comments.length === 0) return { comments: [], nextCursor: null };
 
   const reactions = await db
     .select()
@@ -96,10 +118,13 @@ export async function listComments(
     byComment.set(row.commentId, bucket);
   }
 
-  return comments.map((comment) => ({
-    comment,
-    reactions: byComment.get(comment.id) ?? [],
-  }));
+  return {
+    comments: comments.map((comment) => ({
+      comment,
+      reactions: byComment.get(comment.id) ?? [],
+    })),
+    nextCursor,
+  };
 }
 
 function commentAction(

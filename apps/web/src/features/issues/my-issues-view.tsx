@@ -1,13 +1,12 @@
 'use client';
 
-import { useQueries } from '@tanstack/react-query';
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
-import { teamIssuesQuery } from '@/lib/query/use-issues.ts';
+import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import { IssueRow } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
@@ -19,10 +18,7 @@ export function assignedTo(issues: readonly Issue[], userId: string | null): Iss
 export function MyIssuesView() {
   const router = useRouter();
   const workspace = useWorkspace();
-
-  const results = useQueries({
-    queries: workspace.teams.map((team) => teamIssuesQuery(team.id)),
-  });
+  const assigned = useAssignedIssues(workspace.userId);
 
   if (!workspace.ready) {
     return (
@@ -34,11 +30,8 @@ export function MyIssuesView() {
     );
   }
 
-  const loading = results.some((result) => result.isPending);
-  const mine = assignedTo(
-    results.flatMap((result) => result.data ?? []),
-    workspace.userId,
-  );
+  const loading = assigned.isPending;
+  const mine = assignedTo(assigned.data ?? [], workspace.userId);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

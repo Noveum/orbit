@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, schema } from '@orbit/db';
+import { and, asc, desc, eq, schema, sql } from '@orbit/db';
 import { PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
 import type { Actor } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -62,25 +62,61 @@ export async function appendActivity(
   return row;
 }
 
+export interface ActivityPage {
+  readonly activity: ActivityRow[];
+  readonly nextCursor: string | null;
+}
+
+export interface ActivityQuery {
+  readonly limit?: number;
+  readonly oldestFirst?: boolean;
+  readonly cursor?: string | undefined;
+}
+
+export async function listActivityPage(
+  executor: Executor,
+  principal: Principal,
+  issueId: string,
+  options: ActivityQuery = {},
+): Promise<ActivityPage> {
+  assertCan(principal, 'issue:read');
+  const ascending = options.oldestFirst === true;
+  const order = ascending ? asc : desc;
+  const limit = options.limit ?? 100;
+
+  const filters = [
+    eq(schema.issueActivity.organizationId, principal.organizationId),
+    eq(schema.issueActivity.issueId, issueId),
+  ];
+  if (options.cursor !== undefined) {
+    const comparison = ascending ? sql`>` : sql`<`;
+    filters.push(
+      sql`(${schema.issueActivity.createdAt}, ${schema.issueActivity.id}) ${comparison} (select ${schema.issueActivity.createdAt}, ${schema.issueActivity.id} from ${schema.issueActivity} where ${schema.issueActivity.id} = ${options.cursor})`,
+    );
+  }
+
+  const rows = await executor
+    .select()
+    .from(schema.issueActivity)
+    .where(and(...filters))
+    .orderBy(order(schema.issueActivity.createdAt), order(schema.issueActivity.id))
+    .limit(limit + 1);
+
+  const activity = rows.slice(0, limit);
+  return {
+    activity,
+    nextCursor: rows.length > limit ? (activity.at(-1)?.id ?? null) : null,
+  };
+}
+
 export async function listActivity(
   executor: Executor,
   principal: Principal,
   issueId: string,
   options: { limit?: number; oldestFirst?: boolean } = {},
 ): Promise<ActivityRow[]> {
-  assertCan(principal, 'issue:read');
-  const order = options.oldestFirst === true ? asc : desc;
-  return await executor
-    .select()
-    .from(schema.issueActivity)
-    .where(
-      and(
-        eq(schema.issueActivity.organizationId, principal.organizationId),
-        eq(schema.issueActivity.issueId, issueId),
-      ),
-    )
-    .orderBy(order(schema.issueActivity.createdAt))
-    .limit(options.limit ?? 100);
+  const page = await listActivityPage(executor, principal, issueId, options);
+  return page.activity;
 }
 
 function nameOf(value: unknown): string | null {
