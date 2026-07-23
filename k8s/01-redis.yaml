@@ -41,21 +41,33 @@ spec:
         runAsUser: 999
         runAsGroup: 999
         runAsNonRoot: true
+      volumes:
+        - name: config
+          emptyDir:
+            medium: Memory
       containers:
         - name: redis
           image: redis:8-alpine
-          args:
-            - redis-server
-            - --appendonly
-            - "yes"
-            - --requirepass
-            - $(REDIS_PASSWORD)
-            - --maxmemory
-            - 384mb
-            - --maxmemory-policy
-            - noeviction
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              umask 077
+              {
+                printf 'requirepass %s\n' "$REDIS_PASSWORD"
+                printf 'appendonly yes\n'
+                printf 'maxmemory 384mb\n'
+                printf 'maxmemory-policy noeviction\n'
+              } > /etc/redis/redis.conf
+              exec redis-server /etc/redis/redis.conf
           env:
             - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orbit-redis
+                  key: REDIS_PASSWORD
+            - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
                   name: orbit-redis
@@ -72,13 +84,13 @@ spec:
               memory: 512Mi
           readinessProbe:
             exec:
-              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
             exec:
-              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
             initialDelaySeconds: 20
             periodSeconds: 20
             timeoutSeconds: 5
@@ -86,6 +98,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: config
+              mountPath: /etc/redis
   volumeClaimTemplates:
     - metadata:
         name: data

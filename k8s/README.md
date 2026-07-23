@@ -75,8 +75,9 @@ in this repository and must not be.
 
 ```
 curl -sO https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem
-kubectl create configmap orbit-rds-ca -n orbit \
-  --from-file=us-east-1-bundle.pem --dry-run=client -o yaml | kubectl apply -f -
+kubectl --server="$KUBE_SERVER" create configmap orbit-rds-ca -n orbit \
+  --from-file=us-east-1-bundle.pem --dry-run=client -o yaml \
+  | kubectl --server="$KUBE_SERVER" apply -f -
 ```
 
 Keeping the bundle in a ConfigMap rather than baking it into the images means
@@ -89,10 +90,10 @@ meaning in the next major version.
    that appears inside `REDIS_URL` in Doppler:
 
 ```
-kubectl create secret generic orbit-redis -n orbit \
+kubectl --server="$KUBE_SERVER" create secret generic orbit-redis -n orbit \
   --from-literal=REDIS_PASSWORD="$(openssl rand -base64 24)"
 
-kubectl create secret generic orbit-doppler-token -n orbit \
+kubectl --server="$KUBE_SERVER" create secret generic orbit-doppler-token -n orbit \
   --from-literal=DOPPLER_TOKEN='<doppler service token for orbit/prd>'
 ```
 
@@ -102,7 +103,8 @@ kubectl create secret generic orbit-doppler-token -n orbit \
    elsewhere. Read the load balancer hostname:
 
 ```
-kubectl get ingress orbit-web -n orbit -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+kubectl --server="$KUBE_SERVER" get ingress orbit-web -n orbit \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
 Then add a single CNAME from the Orbit hostname to that value, proxying
@@ -212,8 +214,8 @@ comfortably inside that, so WebSockets stay up without changes.
 ## Everyday commands
 
 ```
-kubectl get pods -n orbit
-kubectl logs -n orbit -l app.kubernetes.io/name=orbit-web --tail=100 -f
-kubectl rollout restart deployment/orbit-web -n orbit
-kubectl rollout status deployment/orbit-web -n orbit
+kubectl --server="$KUBE_SERVER" get pods -n orbit
+kubectl --server="$KUBE_SERVER" logs -n orbit -l app.kubernetes.io/name=orbit-web --tail=100 -f
+kubectl --server="$KUBE_SERVER" rollout restart deployment/orbit-web -n orbit
+kubectl --server="$KUBE_SERVER" rollout status deployment/orbit-web -n orbit
 ```

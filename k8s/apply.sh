@@ -26,12 +26,41 @@ if [ -z "$AWS_ACCOUNT_ID" ] || [ "$AWS_ACCOUNT_ID" = "None" ]; then
   exit 1
 fi
 
-ACM_CERTIFICATE_ARN="${ACM_CERTIFICATE_ARN:-$(awscli acm list-certificates \
-  --region "$AWS_REGION" \
-  --query "CertificateSummaryList[?DomainName=='${CERT_DOMAIN}'].CertificateArn | [0]" \
-  --output text)}"
-if [ -z "$ACM_CERTIFICATE_ARN" ] || [ "$ACM_CERTIFICATE_ARN" = "None" ]; then
-  echo "No ACM certificate found for ${CERT_DOMAIN} in ${AWS_REGION}." >&2
+covers_host() {
+  CANDIDATE="$1"
+  awscli acm describe-certificate --region "$AWS_REGION" --certificate-arn "$CANDIDATE" \
+    --query 'Certificate.SubjectAlternativeNames[]' --output text 2>/dev/null \
+    | tr '\t' '\n' \
+    | while IFS= read -r NAME; do
+        [ -z "$NAME" ] && continue
+        [ "$NAME" = "$ORBIT_HOST" ] && { echo match; break; }
+        case "$NAME" in
+          \*.*)
+            SUFFIX="${NAME#\*}"
+            STEM="${ORBIT_HOST%"$SUFFIX"}"
+            case "$ORBIT_HOST" in
+              *"$SUFFIX")
+                case "$STEM" in *.*) ;; *) echo match; break;; esac
+                ;;
+            esac
+            ;;
+        esac
+      done
+}
+
+if [ -z "${ACM_CERTIFICATE_ARN:-}" ]; then
+  for CANDIDATE in $(awscli acm list-certificates --region "$AWS_REGION" \
+      --certificate-statuses ISSUED \
+      --query 'CertificateSummaryList[].CertificateArn' --output text | tr '\t' '\n'); do
+    if [ -n "$(covers_host "$CANDIDATE")" ]; then
+      ACM_CERTIFICATE_ARN="$CANDIDATE"
+      break
+    fi
+  done
+fi
+if [ -z "${ACM_CERTIFICATE_ARN:-}" ] || [ "$ACM_CERTIFICATE_ARN" = "None" ]; then
+  echo "No ISSUED ACM certificate in ${AWS_REGION} covers ${ORBIT_HOST}." >&2
+  echo "Set ACM_CERTIFICATE_ARN explicitly to override." >&2
   exit 1
 fi
 

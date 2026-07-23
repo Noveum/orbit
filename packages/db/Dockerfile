@@ -20,11 +20,13 @@ RUN turbo prune @orbit/db --docker
 
 FROM base AS runner
 WORKDIR /app
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat && addgroup -S orbit && adduser -S orbit -G orbit
 COPY --from=doppler /usr/bin/doppler /usr/bin/doppler
-COPY --from=pruner /app/out/json/ .
+COPY --from=pruner --chown=orbit:orbit /app/out/json/ .
 RUN pnpm install --frozen-lockfile --ignore-scripts
-COPY --from=pruner /app/out/full/ .
-COPY tsconfig.base.json ./
+COPY --from=pruner --chown=orbit:orbit /app/out/full/ .
+COPY --chown=orbit:orbit tsconfig.base.json ./
+RUN chown -R orbit:orbit /app
+USER orbit
 WORKDIR /app/packages/db
 CMD ["/usr/bin/doppler", "run", "--", "pnpm", "run", "push"]
