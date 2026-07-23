@@ -6,6 +6,7 @@ const sessionHolder: { value: { user: { id: string } } | null } = { value: null 
 
 mock.module('@/lib/auth/session.ts', () => ({
   getSession: () => Promise.resolve(sessionHolder.value),
+  requireSession: () => Promise.resolve(sessionHolder.value),
 }));
 
 mock.module('next/navigation', () => ({

@@ -1,18 +1,21 @@
 import { createComment, listComments } from '@orbit/core';
 import { renderMarkdown } from '@orbit/services/markdown';
-import { commentQuerySchema } from '@orbit/shared/validators';
+import { commentQuerySchema, paginationSchema } from '@orbit/shared/validators';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
+
+const commentListQuerySchema = commentQuerySchema.extend(paginationSchema.shape);
 
 export async function GET(request: Request): Promise<Response> {
   return await handle(async (principal) => {
-    const { issueId } = commentQuerySchema.parse(searchParamsOf(request));
-    const rows = await listComments(principal, issueId);
+    const query = commentListQuerySchema.parse(searchParamsOf(request));
+    const page = await listComments(principal, query.issueId, query);
     return {
-      comments: rows.map((row) => ({
+      comments: page.comments.map((row) => ({
         comment: row.comment,
         bodyHtml: renderMarkdown(row.comment.body),
         reactions: row.reactions,
       })),
+      nextCursor: page.nextCursor,
     };
   });
 }

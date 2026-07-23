@@ -3,25 +3,55 @@
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
-import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
-import { COMMENTS_ROOT, DOC_ROOT, DOCS_ROOT, ISSUE_ROOT, ISSUES_ROOT } from '@/lib/query/keys.ts';
+import {
+  ASSIGNED_SCOPE,
+  BOOTSTRAP_ROOT,
+  COMMENTS_ROOT,
+  DOC_ROOT,
+  DOCS_ROOT,
+  ISSUE_ROOT,
+  ISSUES_ROOT,
+} from '@/lib/query/keys.ts';
 import type { Comment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
+import type { IssueBelongs, IssuePages } from '@/lib/query/sync.ts';
 import {
   applyCommentDelta,
-  applyIssueDelta,
+  applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
 } from '@/lib/query/sync.ts';
 
+const BOOTSTRAP_MODELS = new Set([
+  'team',
+  'label',
+  'workflow_state',
+  'project',
+  'cycle',
+  'member',
+  'organization',
+]);
+
+function membershipOf(key: QueryKey): IssueBelongs | null {
+  const scope = key[1];
+  if (typeof scope !== 'string') return null;
+  if (scope === ASSIGNED_SCOPE) {
+    const userId = key[2];
+    if (typeof userId !== 'string') return null;
+    return (issue: Issue) => issue.assigneeId === userId;
+  }
+  return (issue: Issue) => issue.teamId === scope;
+}
+
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUES_ROOT] })) {
-    const teamId = query.queryKey[1];
-    if (typeof teamId !== 'string') continue;
-    const current = query.state.data as readonly Issue[] | undefined;
+    const belongs = membershipOf(query.queryKey);
+    if (belongs === null) continue;
+    const current = query.state.data as IssuePages | undefined;
     if (current === undefined) continue;
-    const next = applyIssueDelta(current, action, teamId);
+    const next = applyIssueDeltaToPages(current, action, belongs);
     if (next !== current) client.setQueryData(query.queryKey, next);
   }
 
@@ -50,6 +80,21 @@ function isOwnEcho(action: SyncAction, tabClientId: string): boolean {
   return action.originClientId === tabClientId;
 }
 
+function applyAction(client: QueryClient, action: SyncAction): void {
+  if (BOOTSTRAP_MODELS.has(action.model)) {
+    client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(() => undefined);
+    return;
+  }
+  if (action.model === 'doc') {
+    client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(() => undefined);
+    client.invalidateQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(() => undefined);
+    return;
+  }
+  if (action.model === 'issue') patchIssueCaches(client, action);
+  else if (action.model === 'comment') patchCommentCaches(client, action, applyCommentDelta);
+  else if (action.model === 'reaction') patchCommentCaches(client, action, applyReactionDelta);
+}
+
 export interface DeltaBridgeProps {
   readonly organizationId: string;
   readonly teamIds: readonly string[];
@@ -68,15 +113,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
     (actions: SyncAction[]) => {
       const tabClientId = clientId();
       for (const action of actions) {
-        if (isOwnEcho(action, tabClientId)) continue;
-        if (action.model === 'doc') {
-          client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(() => undefined);
-          client.invalidateQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(() => undefined);
-        } else if (action.model === 'issue') patchIssueCaches(client, action);
-        else if (action.model === 'comment') patchCommentCaches(client, action, applyCommentDelta);
-        else if (action.model === 'reaction') {
-          patchCommentCaches(client, action, applyReactionDelta);
-        }
+        if (!isOwnEcho(action, tabClientId)) applyAction(client, action);
       }
     },
     [client],

@@ -23,7 +23,7 @@ export async function GET(request: Request): Promise<Response> {
       docs: docs.map((doc) => ({
         ...doc,
         publishToken: doc.publishToken === null ? null : 'set',
-        excerpt: summarize(doc.content, 140),
+        excerpt: summarize(doc.excerpt, 140),
       })),
       collections,
       projects,
