@@ -1,11 +1,12 @@
-import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
-export default function globalSetup(): void {
+export default async function globalSetup(): Promise<void> {
   const repoRoot = resolve(import.meta.dirname, '../../..');
-  execFileSync('pnpm', ['--filter', '@orbit/db', 'seed'], {
+  const seed = Bun.spawn(['bun', 'run', '--filter', '@orbit/db', 'seed'], {
     cwd: repoRoot,
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'inherit'],
     env: process.env,
   });
+  const code = await seed.exited;
+  if (code !== 0) throw new Error(`Seeding the end to end database failed with exit code ${code}.`);
 }

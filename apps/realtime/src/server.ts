@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import {
   clientMessageSchema,
   connectionOrganizationIdSchema,
@@ -15,16 +13,10 @@ import {
   syncActionSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
-import Redis from 'ioredis';
-import { type RawData, type WebSocket, WebSocketServer } from 'ws';
+import { RedisClient, type Server, type ServerWebSocket, type WebSocketHandler } from 'bun';
 import { z } from 'zod';
-import {
-  authenticateConnection,
-  authorizeScope,
-  type ConnectionPrincipal,
-  type ConnectionRejection,
-} from './auth.ts';
-import { Connection } from './connection.ts';
+import { authenticateConnection, authorizeScope, type ConnectionRejection } from './auth.ts';
+import { Connection, type SocketData } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
 
@@ -32,6 +24,7 @@ export const PRESENCE_TTL_MS = 45_000;
 export const MAX_SUBSCRIPTIONS_PER_CONNECTION = 256;
 export const MAX_BUFFERED_BYTES = 1_048_576;
 const SHUTDOWN_GRACE_MS = 1_000;
+const MAX_IDLE_TIMEOUT_SECONDS = 960;
 
 export interface RealtimeServerOptions {
   port?: number;
@@ -72,8 +65,7 @@ interface ConnectionCredentials {
   readonly organizationId: string | null;
 }
 
-function credentialsFrom(request: IncomingMessage): ConnectionCredentials | null {
-  const url = new URL(request.url ?? '/', 'http://realtime.local');
+function credentialsFrom(url: URL): ConnectionCredentials | null {
   const token = url.searchParams.get('token') ?? '';
   const stated = url.searchParams.get('organizationId');
   if (stated === null) return { token, organizationId: null };
@@ -88,6 +80,21 @@ function parseJson(payload: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+function isUpgrade(request: Request): boolean {
+  return (request.headers.get('upgrade') ?? '').toLowerCase() === 'websocket';
+}
+
+function idleTimeoutSeconds(heartbeatTimeoutMs: number, heartbeatIntervalMs: number): number {
+  const seconds = Math.ceil((heartbeatTimeoutMs + heartbeatIntervalMs) / 1_000);
+  return Math.min(MAX_IDLE_TIMEOUT_SECONDS, Math.max(1, seconds));
+}
+
+function afterGrace(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 }
 
 export async function createRealtimeServer(
@@ -105,29 +112,18 @@ export async function createRealtimeServer(
 
   const connections = new Map<string, Connection>();
   const presence = new PresenceStore(presenceTtlMs);
-  const subscriber = new Redis(redisUrl, { maxRetriesPerRequest: null });
-  const publisher = new Redis(redisUrl, { maxRetriesPerRequest: null });
+  const subscriber = new RedisClient(redisUrl);
+  const publisher = new RedisClient(redisUrl);
 
   function stats(): RealtimeStats {
     let subscriptions = 0;
     for (const connection of connections.values()) subscriptions += connection.subscriptionCount;
-    return { connections: connections.size, subscriptions, redis: subscriber.status };
+    return {
+      connections: connections.size,
+      subscriptions,
+      redis: subscriber.connected ? 'ready' : 'disconnected',
+    };
   }
-
-  function handleHttp(request: IncomingMessage, response: ServerResponse): void {
-    if (request.method === 'GET' && (request.url ?? '').startsWith('/health')) {
-      const snapshot = stats();
-      const healthy = snapshot.redis === 'ready';
-      response.writeHead(healthy ? 200 : 503, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ status: healthy ? 'ok' : 'degraded', ...snapshot }));
-      return;
-    }
-    response.writeHead(404, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ status: 'not_found' }));
-  }
-
-  const httpServer = createServer(handleHttp);
-  const wss = new WebSocketServer({ server: httpServer });
 
   function deliverDelta(payload: string): void {
     const envelope = deltaEnvelopeSchema.safeParse(parseJson(payload));
@@ -213,9 +209,9 @@ export async function createRealtimeServer(
     await publisher.publish(REDIS_PRESENCE_CHANNEL, JSON.stringify(message));
   }
 
-  async function handleMessage(connection: Connection, raw: RawData): Promise<void> {
+  async function handleMessage(connection: Connection, raw: string): Promise<void> {
     connection.lastSeenAt = Date.now();
-    const parsed = clientMessageSchema.safeParse(parseJson(raw.toString()));
+    const parsed = clientMessageSchema.safeParse(parseJson(raw));
     if (!parsed.success) {
       connection.send({
         type: 'error',
@@ -241,85 +237,101 @@ export async function createRealtimeServer(
     await handlePresence(connection, message.scope, message.kind);
   }
 
-  function register(socket: WebSocket, principal: ConnectionPrincipal): Connection {
-    const connection = new Connection(randomUUID(), socket, principal, limits);
-    connections.set(connection.id, connection);
-    socket.on('message', (raw) => {
-      handleMessage(connection, raw).catch((error: unknown) => {
+  function connectionOf(socket: ServerWebSocket<SocketData>): Connection | null {
+    const data = socket.data;
+    return 'rejection' in data ? null : data.connection;
+  }
+
+  async function socketDataFor(request: Request): Promise<SocketData> {
+    const credentials = credentialsFrom(new URL(request.url));
+    if (credentials === null) return { rejection: 'organization_forbidden' };
+    const authenticated = await authenticateConnection(
+      credentials.token,
+      credentials.organizationId,
+    );
+    if (!authenticated.ok) return { rejection: authenticated.reason };
+    return { principal: authenticated.principal, connection: null };
+  }
+
+  async function upgrade(
+    request: Request,
+    server: Server<SocketData>,
+  ): Promise<Response | undefined> {
+    let data: SocketData;
+    try {
+      data = await socketDataFor(request);
+    } catch (error: unknown) {
+      logger.error('connection rejected', errorFields(error));
+      data = { rejection: 'unauthorized' };
+    }
+    if (server.upgrade(request, { data })) return;
+    return new Response(JSON.stringify({ status: 'upgrade_failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  const websocket: WebSocketHandler<SocketData> = {
+    sendPings: false,
+    idleTimeout: idleTimeoutSeconds(heartbeatTimeoutMs, heartbeatIntervalMs),
+    open(socket) {
+      const data = socket.data;
+      if ('rejection' in data) {
+        socket.close(CLOSE_CODES[data.rejection], data.rejection);
+        return;
+      }
+      const connection = new Connection(randomUUID(), socket, data.principal, limits);
+      data.connection = connection;
+      connections.set(connection.id, connection);
+      connection.send({
+        type: 'ready',
+        connectionId: connection.id,
+        userId: data.principal.userId,
+        organizationId: data.principal.organizationId,
+        scopes: [],
+      });
+      logger.info('connection ready', {
+        connectionId: connection.id,
+        userId: data.principal.userId,
+        organizationId: data.principal.organizationId,
+      });
+    },
+    message(socket, raw) {
+      const connection = connectionOf(socket);
+      if (connection === null) return;
+      handleMessage(connection, raw.toString()).catch((error: unknown) => {
         logger.error('message handling failed', {
           connectionId: connection.id,
           ...errorFields(error),
         });
       });
-    });
-    socket.on('pong', () => {
+    },
+    pong(socket) {
+      const connection = connectionOf(socket);
+      if (connection === null) return;
       connection.lastSeenAt = Date.now();
-    });
-    socket.on('error', (error) => {
-      logger.warn('socket error', { connectionId: connection.id, ...errorFields(error) });
-    });
-    socket.on('close', () => {
+    },
+    close(socket) {
+      const connection = connectionOf(socket);
+      if (connection === null) return;
       connections.delete(connection.id);
-    });
-    return connection;
-  }
+    },
+  };
 
-  async function accept(socket: WebSocket, request: IncomingMessage): Promise<void> {
-    socket.pause();
-    const credentials = credentialsFrom(request);
-    if (credentials === null) {
-      socket.resume();
-      socket.close(CLOSE_CODES.organization_forbidden, 'organization_forbidden');
-      return;
-    }
-    const authenticated = await authenticateConnection(
-      credentials.token,
-      credentials.organizationId,
-    );
-    if (!authenticated.ok) {
-      socket.resume();
-      socket.close(CLOSE_CODES[authenticated.reason], authenticated.reason);
-      return;
-    }
-    const principal = authenticated.principal;
-    if (socket.readyState !== socket.OPEN) {
-      socket.terminate();
-      return;
-    }
-    const connection = register(socket, principal);
-    socket.resume();
-    connection.send({
-      type: 'ready',
-      connectionId: connection.id,
-      userId: principal.userId,
-      organizationId: principal.organizationId,
-      scopes: [],
-    });
-    logger.info('connection ready', {
-      connectionId: connection.id,
-      userId: principal.userId,
-      organizationId: principal.organizationId,
-    });
-  }
-
-  wss.on('connection', (socket, request) => {
-    accept(socket, request).catch((error: unknown) => {
-      logger.error('connection rejected', errorFields(error));
-      socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
-    });
-  });
-
-  subscriber.on('message', (channel: string, payload: string) => {
-    if (channel === REDIS_DELTA_CHANNEL) deliverDelta(payload);
-    else if (channel === REDIS_PRESENCE_CHANNEL) deliverPresence(payload);
-  });
-  subscriber.on('error', (error: unknown) => {
-    logger.error('redis subscriber error', errorFields(error));
-  });
-  publisher.on('error', (error: unknown) => {
-    logger.error('redis publisher error', errorFields(error));
-  });
-  await subscriber.subscribe(REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL);
+  await subscriber.subscribe(
+    [REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL],
+    (message: string, channel: string) => {
+      if (channel === REDIS_DELTA_CHANNEL) deliverDelta(message);
+      else if (channel === REDIS_PRESENCE_CHANNEL) deliverPresence(message);
+    },
+  );
+  let closing = false;
+  subscriber.onclose = (error: Error): void => {
+    if (!closing) logger.error('redis subscriber error', errorFields(error));
+  };
+  publisher.onclose = (error: Error): void => {
+    if (!closing) logger.error('redis publisher error', errorFields(error));
+  };
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
@@ -338,37 +350,38 @@ export async function createRealtimeServer(
   const sweeper = setInterval(() => presence.sweep(), Math.max(1_000, presenceTtlMs / 3));
   sweeper.unref();
 
-  const port = options.port ?? 0;
-  await new Promise<void>((resolve) => {
-    httpServer.listen(port, options.host ?? '0.0.0.0', resolve);
+  const server = Bun.serve<SocketData>({
+    port: options.port ?? 0,
+    hostname: options.host ?? '0.0.0.0',
+    websocket,
+    fetch(request, self) {
+      if (isUpgrade(request)) return upgrade(request, self);
+      const url = new URL(request.url);
+      if (request.method === 'GET' && url.pathname.startsWith('/health')) {
+        const snapshot = stats();
+        const healthy = snapshot.redis === 'ready';
+        return Response.json(
+          { status: healthy ? 'ok' : 'degraded', ...snapshot },
+          { status: healthy ? 200 : 503 },
+        );
+      }
+      return Response.json({ status: 'not_found' }, { status: 404 });
+    },
   });
-  const address = httpServer.address() as AddressInfo;
 
   async function close(): Promise<void> {
+    closing = true;
     clearInterval(heartbeat);
     clearInterval(sweeper);
     for (const connection of connections.values()) connection.close(1001, 'server shutting down');
     connections.clear();
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        for (const client of wss.clients) client.terminate();
-        resolve();
-      }, SHUTDOWN_GRACE_MS);
-      timer.unref();
-      wss.close(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    await new Promise<void>((resolve) => {
-      httpServer.closeAllConnections();
-      httpServer.close(() => resolve());
-    });
-    await Promise.allSettled([subscriber.quit(), publisher.quit()]);
-    subscriber.disconnect();
-    publisher.disconnect();
+    await Promise.race([server.stop(), afterGrace(SHUTDOWN_GRACE_MS)]);
+    await server.stop(true);
+    subscriber.close();
+    publisher.close();
   }
 
-  logger.info('realtime listening', { port: address.port });
-  return { port: address.port, stats, close };
+  const port = server.port ?? 0;
+  logger.info('realtime listening', { port });
+  return { port, stats, close };
 }

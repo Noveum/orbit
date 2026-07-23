@@ -6,7 +6,7 @@ import {
   unsupportedMediaType,
   validationFailed,
 } from '@orbit/shared';
-import { ulid } from 'ulid';
+import { randomUUIDv7 } from 'bun';
 import { z } from 'zod';
 import type { StorageKind } from './types.ts';
 
@@ -84,5 +84,5 @@ export function storageKeyFor(
   const organization = sanitizeFileName(organizationId);
   const year = String(at.getUTCFullYear());
   const month = String(at.getUTCMonth() + 1).padStart(2, '0');
-  return `${organization}/${year}/${month}/${ulid(at.getTime())}-${sanitizeFileName(fileName)}`;
+  return `${organization}/${year}/${month}/${randomUUIDv7('hex', at)}-${sanitizeFileName(fileName)}`;
 }

@@ -6,17 +6,16 @@ import { resolvePrincipal } from './org/member-service.ts';
 import { createOrganization } from './org/organization-service.ts';
 
 export async function resetDatabase(): Promise<void> {
-  const [current] = (await db.execute<{ name: string }>(sql`select current_database() as name`))
-    .rows;
-  if (current === undefined || !current.name.includes('test')) {
+  const [current] = await db.execute<{ name: string }>(sql`select current_database() as name`);
+  if (current === undefined || !String(current['name']).includes('test')) {
     throw new Error(
-      `resetDatabase refuses to truncate "${current?.name ?? 'unknown'}". Point DATABASE_URL at a database whose name contains "test".`,
+      `resetDatabase refuses to truncate "${current?.['name'] ?? 'unknown'}". Point DATABASE_URL at a database whose name contains "test".`,
     );
   }
-  const result = await db.execute<{ tablename: string }>(
+  const rows = await db.execute<{ tablename: string }>(
     sql`select tablename from pg_tables where schemaname = 'public'`,
   );
-  const tables = result.rows.map((row) => `"${row.tablename}"`).join(', ');
+  const tables = rows.map((row) => `"${row['tablename']}"`).join(', ');
   if (tables.length === 0) return;
   await db.execute(sql.raw(`truncate table ${tables} restart identity cascade`));
   await db.execute(sql`select setval('sync_id_seq', 1, false)`);

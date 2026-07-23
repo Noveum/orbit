@@ -99,6 +99,11 @@ export interface McpHttpServer {
   close(): Promise<void>;
 }
 
+function isAlreadyStopped(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  return (error as { code?: unknown }).code === 'ERR_SERVER_NOT_RUNNING';
+}
+
 export interface McpHttpServerOptions {
   readonly port?: number;
   readonly host?: string;
@@ -134,8 +139,14 @@ export async function createMcpHttpServer(
     port: address.port,
     close: () =>
       new Promise<void>((resolve, reject) => {
-        http.close((error) => (error === undefined ? resolve() : reject(error)));
         http.closeAllConnections();
+        http.close((error) => {
+          if (error === undefined || isAlreadyStopped(error)) {
+            resolve();
+            return;
+          }
+          reject(error);
+        });
       }),
   };
 }
