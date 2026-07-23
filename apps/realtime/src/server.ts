@@ -133,7 +133,16 @@ export async function createRealtimeServer(
   }
 
   async function revalidate(connection: Connection): Promise<void> {
-    if (await membershipStillValid(connection.principal)) return;
+    let valid = false;
+    try {
+      valid = await membershipStillValid(connection.principal);
+    } catch (error: unknown) {
+      logger.error('membership revalidation failed, closing to fail closed', {
+        connectionId: connection.id,
+        ...errorFields(error),
+      });
+    }
+    if (valid) return;
     logger.info('closing connection for a removed member', {
       connectionId: connection.id,
       userId: connection.principal.userId,

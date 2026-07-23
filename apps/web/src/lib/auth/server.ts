@@ -3,6 +3,7 @@ import { passkey } from '@better-auth/passkey';
 import { assertEmailDomainAllowed } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
+import { DomainError } from '@orbit/shared/errors';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -82,9 +83,13 @@ function assertSignUpAllowed(email: string): void {
   try {
     assertEmailDomainAllowed(email);
   } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : 'That email domain is not allowed here.';
-    throw new APIError('FORBIDDEN', { code: 'EMAIL_DOMAIN_NOT_ALLOWED', message });
+    if (error instanceof DomainError && error.code === 'forbidden') {
+      throw new APIError('FORBIDDEN', {
+        code: 'EMAIL_DOMAIN_NOT_ALLOWED',
+        message: error.message,
+      });
+    }
+    throw error;
   }
 }
 

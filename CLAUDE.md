@@ -91,7 +91,7 @@ domain verified in Resend, otherwise every send fails.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
   optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `Bun.password` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
-- **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma separated allowlist enforced on invite
+- **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
   creation and on user creation, so it covers every provider. Empty means no restriction. A
   workspace can narrow it further with its own `allowedEmailDomains`.
 - **Permissions.** All authorization goes through `packages/shared/src/policy`. Server routes enforce it. The UI reads the same policy to hide affordances, never as the only gate.
