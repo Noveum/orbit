@@ -1,10 +1,9 @@
 'use client';
 
-import { type KeyboardEvent, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
-import { Textarea } from '@/components/ui/textarea.tsx';
-import { cn } from '@/lib/cn.ts';
+import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import type { Member } from '@/lib/query/schemas.ts';
 
 export interface MentionQuery {
@@ -42,7 +41,7 @@ export interface CommentComposerProps {
 
 export function CommentComposer({
   members,
-  placeholder = 'Leave a comment. Markdown and @mentions work.',
+  placeholder = 'Leave a comment. Markdown, / for blocks, and @mentions work.',
   submitLabel = 'Comment',
   pending = false,
   autoFocus = false,
@@ -52,119 +51,39 @@ export function CommentComposer({
   testId = 'comment-composer',
 }: CommentComposerProps) {
   const [value, setValue] = useState(initialValue);
-  const [mention, setMention] = useState<MentionQuery | null>(null);
-  const [highlight, setHighlight] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const mentionListId = useId();
+  const [resetKey, setResetKey] = useState(0);
+  const latest = useRef(initialValue);
 
-  const matches = useMemo(() => {
-    if (mention === null) return [];
-    const query = mention.query.toLowerCase();
-    return members
-      .filter(
-        (member) =>
-          member.name.toLowerCase().includes(query) ||
-          (member.handle ?? '').toLowerCase().includes(query),
-      )
-      .slice(0, 5);
-  }, [mention, members]);
-
-  const submit = () => {
-    const body = value.trim();
+  const submit = useCallback(() => {
+    const body = latest.current.trim();
     if (body.length === 0) return;
     onSubmit(body);
+    latest.current = '';
     setValue('');
-    setMention(null);
-  };
+    setResetKey((key) => key + 1);
+  }, [onSubmit]);
 
-  const pickMention = (member: Member) => {
-    if (mention === null) return;
-    setValue(applyMention(value, mention, member.handle ?? member.name));
-    setMention(null);
-    setHighlight(0);
-    textareaRef.current?.focus();
-  };
-
-  const handleMentionKey = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    if (matches.length === 0) return false;
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      const step = event.key === 'ArrowDown' ? 1 : matches.length - 1;
-      setHighlight((current) => (current + step) % matches.length);
-      return true;
-    }
-    if (event.key === 'Escape') {
-      setMention(null);
-      return true;
-    }
-    if (event.key !== 'Enter' && event.key !== 'Tab') return false;
-    const member = matches[highlight] ?? matches[0];
-    if (member === undefined) return false;
-    pickMention(member);
-    return true;
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (handleMentionKey(event)) {
-      event.preventDefault();
-      return;
-    }
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      submit();
-      return;
-    }
-    if (event.key === 'Escape' && onCancel !== undefined) onCancel();
-  };
+  const change = useCallback((next: string) => {
+    latest.current = next;
+    setValue(next);
+  }, []);
 
   return (
-    <div className="relative flex flex-col gap-2">
-      <Textarea
-        ref={textareaRef}
-        data-testid={testId}
-        rows={3}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        value={value}
-        onKeyDown={onKeyDown}
-        role="textbox"
-        aria-autocomplete="list"
-        aria-expanded={matches.length > 0}
-        aria-controls={matches.length > 0 ? mentionListId : undefined}
-        onChange={(event) => {
-          const caret = event.target.selectionStart ?? event.target.value.length;
-          setValue(event.target.value);
-          setMention(findMentionQuery(event.target.value, caret));
-          setHighlight(0);
-        }}
-      />
-
-      {matches.length > 0 ? (
-        <div
-          id={mentionListId}
-          data-testid="mention-list"
-          className="absolute bottom-14 left-2 z-20 flex w-56 flex-col overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-pop"
-        >
-          {matches.map((member, index) => (
-            <button
-              key={member.id}
-              type="button"
-              aria-current={index === highlight}
-              onClick={() => pickMention(member)}
-              onMouseEnter={() => setHighlight(index)}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-dense text-muted',
-                'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text',
-                index === highlight && 'bg-surface-2 text-text',
-              )}
-            >
-              <span className="truncate">{member.name}</span>
-              <span className="ml-auto truncate text-2xs text-faint">
-                @{member.handle ?? member.name}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+    <div className="flex flex-col gap-2">
+      <div className="rounded-lg border border-border bg-surface px-3 py-2 focus-within:border-border-strong">
+        <RichTextEditor
+          key={resetKey}
+          value={value}
+          onChange={change}
+          members={members}
+          placeholder={placeholder}
+          ariaLabel={submitLabel === 'Comment' ? 'Comment body' : submitLabel}
+          testId={testId}
+          autoFocus={autoFocus}
+          onSubmit={submit}
+          {...(onCancel === undefined ? {} : { onCancel })}
+        />
+      </div>
 
       <div className="flex items-center gap-2">
         <span className="flex items-center gap-1 text-2xs text-faint">

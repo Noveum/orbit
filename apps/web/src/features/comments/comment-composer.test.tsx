@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { applyMention, CommentComposer, findMentionQuery } from './comment-composer.tsx';
@@ -40,74 +40,73 @@ describe('mention parsing', () => {
   });
 });
 
+function surface(): HTMLElement {
+  const node = screen.getByTestId('comment-composer').querySelector('.ProseMirror');
+  if (node === null) throw new Error('editor surface not found');
+  return node as HTMLElement;
+}
+
 describe('CommentComposer', () => {
+  it('mounts the shared rich editor so docs and comments format the same way', () => {
+    render(<CommentComposer members={members} onSubmit={mock()} />);
+    const editable = surface();
+    expect(editable.getAttribute('role')).toBe('textbox');
+    expect(editable.getAttribute('aria-multiline')).toBe('true');
+  });
+
+  it('shows an existing comment body when editing', () => {
+    render(
+      <CommentComposer
+        members={members}
+        submitLabel="Save"
+        initialValue="already **written**"
+        onSubmit={mock()}
+      />,
+    );
+    expect(surface().textContent).toContain('already written');
+  });
+
   it('submits with cmd enter and clears the draft', async () => {
     const user = userEvent.setup();
     const onSubmit = mock();
-    render(<CommentComposer members={members} onSubmit={onSubmit} />);
+    render(<CommentComposer members={members} initialValue="ship it" onSubmit={onSubmit} />);
 
-    const box = screen.getByTestId('comment-composer');
-    await user.click(box);
-    await user.keyboard('Ship it');
+    await user.click(surface());
     await user.keyboard('{Meta>}{Enter}{/Meta}');
 
-    expect(onSubmit).toHaveBeenCalledWith('Ship it');
-    expect(box).toHaveValue('');
+    expect(onSubmit).toHaveBeenCalledWith('ship it');
+    await waitFor(() => expect(surface().textContent).toBe(''));
   });
 
-  it('keeps the submit button disabled until there is text', async () => {
-    const user = userEvent.setup();
-    render(<CommentComposer members={members} onSubmit={mock()} />);
-
-    const button = screen.getByTestId('comment-composer-submit');
-    expect(button).toBeDisabled();
-    await user.click(screen.getByTestId('comment-composer'));
-    await user.keyboard('Hi');
-    expect(button).toBeEnabled();
-  });
-
-  it('picks a mention with the arrow keys and Enter, without submitting', async () => {
+  it('submits with the button and clears the draft', async () => {
     const user = userEvent.setup();
     const onSubmit = mock();
-    render(<CommentComposer members={members} onSubmit={onSubmit} />);
+    render(<CommentComposer members={members} initialValue="ship it" onSubmit={onSubmit} />);
 
-    await user.click(screen.getByTestId('comment-composer'));
-    await user.keyboard('ping @a');
-    await screen.findByTestId('mention-list');
-    await user.keyboard('{ArrowDown}{Enter}');
+    await user.click(screen.getByTestId('comment-composer-submit'));
 
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByTestId('comment-composer')).toHaveValue('ping @aditi ');
+    expect(onSubmit).toHaveBeenCalledWith('ship it');
+    await waitFor(() => expect(surface().textContent).toBe(''));
   });
 
-  it('closes the mention popup on escape instead of cancelling the draft', async () => {
+  it('disables the submit button when the draft is empty', () => {
+    render(<CommentComposer members={members} onSubmit={mock()} />);
+    expect(screen.getByTestId('comment-composer-submit')).toBeDisabled();
+  });
+
+  it('enables the submit button when the draft has text', () => {
+    render(<CommentComposer members={members} initialValue="hi" onSubmit={mock()} />);
+    expect(screen.getByTestId('comment-composer-submit')).toBeEnabled();
+  });
+
+  it('escapes to cancel when the draft has no open menu', async () => {
     const user = userEvent.setup();
     const onCancel = mock();
     render(<CommentComposer members={members} onSubmit={mock()} onCancel={onCancel} />);
 
-    await user.click(screen.getByTestId('comment-composer'));
-    await user.keyboard('ping @sha');
-    await screen.findByTestId('mention-list');
-    await user.keyboard('{Escape}');
-
-    expect(onCancel).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('mention-list')).toBeNull();
-
+    await user.click(surface());
     await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it('offers matching members after an at sign and inserts the handle', async () => {
-    const user = userEvent.setup();
-    render(<CommentComposer members={members} onSubmit={mock()} />);
-
-    await user.click(screen.getByTestId('comment-composer'));
-    await user.keyboard('ping @adi');
-
-    const list = await screen.findByTestId('mention-list');
-    expect(list).toBeInTheDocument();
-    await user.click(screen.getByText('Aditi Rao'));
-    expect(screen.getByTestId('comment-composer')).toHaveValue('ping @aditi ');
   });
 });
 

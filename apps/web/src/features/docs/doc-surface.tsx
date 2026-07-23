@@ -1,6 +1,6 @@
 'use client';
 
-import { Archive, Check, FolderInput, Pencil } from 'lucide-react';
+import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -15,10 +15,11 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import type { Doc, DocCollection, DocDetail } from '@/lib/query/schemas.ts';
+import type { Doc, DocCollection, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
 import { useArchiveDoc, useDoc, useUpdateDoc } from '@/lib/query/use-docs.ts';
 import { DocEditor } from './doc-editor.tsx';
+import { DocHistory } from './doc-history.tsx';
 import { DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import type { SaveStatus } from './use-autosave.ts';
@@ -31,14 +32,39 @@ const STATUS_LABEL = {
   error: 'Save failed',
 } as const;
 
+export function descendantIds(docs: readonly DocSummary[], rootId: string): Set<string> {
+  const children = new Map<string, string[]>();
+  for (const doc of docs) {
+    if (doc.parentId === null) continue;
+    const list = children.get(doc.parentId) ?? [];
+    list.push(doc.id);
+    children.set(doc.parentId, list);
+  }
+
+  const blocked = new Set<string>([rootId]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (next === undefined) continue;
+    for (const child of children.get(next) ?? []) {
+      if (blocked.has(child)) continue;
+      blocked.add(child);
+      queue.push(child);
+    }
+  }
+  return blocked;
+}
+
 export interface DocSurfaceProps {
   readonly docId: string;
+  readonly docs: readonly DocSummary[];
   readonly collections: readonly DocCollection[];
   readonly projects: readonly { readonly id: string; readonly name: string }[];
   readonly canWrite: boolean;
   readonly canPublish: boolean;
   readonly startEditing: boolean;
   readonly onUnsavedChange: (docId: string | null) => void;
+  readonly onToggleTree: () => void;
 }
 
 export function DocSurface(props: DocSurfaceProps) {
@@ -69,12 +95,14 @@ export function DocSurface(props: DocSurfaceProps) {
 
 function LoadedDoc({
   detail,
+  docs,
   collections,
   projects,
   canWrite,
   canPublish,
   startEditing,
   onUnsavedChange,
+  onToggleTree,
 }: DocSurfaceProps & { readonly detail: DocDetail }) {
   const router = useRouter();
   const update = useUpdateDoc(detail.doc.id);
@@ -89,10 +117,23 @@ function LoadedDoc({
   const collectionName =
     collections.find((entry) => entry.id === detail.doc.collectionId)?.name ?? null;
   const projectName = projects.find((entry) => entry.id === detail.doc.projectId)?.name ?? null;
+  const blocked = useMemo(() => descendantIds(docs, detail.doc.id), [docs, detail.doc.id]);
+  const parents = docs.filter((entry) => !blocked.has(entry.id)).slice(0, 50);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Toggle doc tree"
+          data-testid="toggle-doc-tree"
+          className="size-7 px-0 lg:hidden"
+          onClick={onToggleTree}
+        >
+          <PanelLeft className="size-4" aria-hidden="true" />
+        </Button>
+
         <p className="min-w-0 flex-1 truncate text-dense text-muted">{detail.doc.title}</p>
 
         {canWrite && editing ? (
@@ -103,6 +144,8 @@ function LoadedDoc({
             {STATUS_LABEL[status]}
           </span>
         ) : null}
+
+        <DocHistory docId={detail.doc.id} canWrite={canWrite} />
 
         {canPublish ? <DocShareMenu doc={detail.doc} /> : null}
 
@@ -137,6 +180,44 @@ function LoadedDoc({
               </DropdownMenuContent>
             </DropdownMenu>
 
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Nest doc"
+                  data-testid="doc-parent"
+                  className="size-7 px-0"
+                >
+                  <Indent className="size-4" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+                <DropdownMenuLabel>Nest under</DropdownMenuLabel>
+                <DropdownMenuItem
+                  data-testid="nest-under-none"
+                  onSelect={() => update.mutate({ parentId: null })}
+                >
+                  <span className="flex-1">Top level</span>
+                  {detail.doc.parentId === null ? (
+                    <Check className="size-3.5 text-accent" aria-hidden="true" />
+                  ) : null}
+                </DropdownMenuItem>
+                {parents.map((entry) => (
+                  <DropdownMenuItem
+                    key={entry.id}
+                    data-testid={`nest-under-${entry.id}`}
+                    onSelect={() => update.mutate({ parentId: entry.id })}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                    {detail.doc.parentId === entry.id ? (
+                      <Check className="size-3.5 text-accent" aria-hidden="true" />
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
             <Button
               variant="ghost"
               size="sm"
@@ -164,6 +245,7 @@ function LoadedDoc({
               variant="primary"
               size="sm"
               data-testid="new-doc"
+              className="hidden sm:inline-flex"
               onClick={() => router.push('/docs/new')}
             >
               New doc
@@ -185,6 +267,7 @@ function LoadedDoc({
             followers={detail.followers}
             collectionName={collectionName}
             projectName={projectName}
+            backlinks={detail.backlinks}
           />
         </div>
       )}

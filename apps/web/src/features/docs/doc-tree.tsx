@@ -25,6 +25,42 @@ export interface DocGroup {
   readonly docs: readonly DocSummary[];
 }
 
+export interface DocNode {
+  readonly doc: DocSummary;
+  readonly depth: number;
+}
+
+export const MAX_TREE_DEPTH = 6;
+
+export function docTreeOf(docs: readonly DocSummary[]): DocNode[] {
+  const present = new Set(docs.map((doc) => doc.id));
+  const byParent = new Map<string, DocSummary[]>();
+  const rootKey = '';
+
+  for (const doc of docs) {
+    const parent = doc.parentId !== null && present.has(doc.parentId) ? doc.parentId : rootKey;
+    const siblings = byParent.get(parent) ?? [];
+    siblings.push(doc);
+    byParent.set(parent, siblings);
+  }
+
+  const nodes: DocNode[] = [];
+  const seen = new Set<string>();
+
+  const walk = (parent: string, depth: number): void => {
+    if (depth >= MAX_TREE_DEPTH) return;
+    for (const doc of byParent.get(parent) ?? []) {
+      if (seen.has(doc.id)) continue;
+      seen.add(doc.id);
+      nodes.push({ doc, depth });
+      walk(doc.id, depth + 1);
+    }
+  };
+
+  walk(rootKey, 0);
+  return nodes;
+}
+
 export function groupDocs(
   docs: readonly DocSummary[],
   collections: readonly DocCollection[],
@@ -96,22 +132,29 @@ function GroupActions({
 
 function DocRow({
   doc,
+  depth,
   active,
   unsaved,
   recent,
+  onNavigate,
 }: {
   readonly doc: DocSummary;
+  readonly depth: number;
   readonly active: boolean;
   readonly unsaved: boolean;
   readonly recent: boolean;
+  readonly onNavigate: () => void;
 }) {
   return (
     <Link
       href={`/docs/${doc.id}`}
       data-testid={`doc-row-${doc.id}`}
+      data-depth={depth}
       aria-current={active ? 'page' : undefined}
+      onClick={onNavigate}
+      style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
       className={cn(
-        'flex h-7 items-center gap-2 rounded-md px-2 text-dense transition-colors duration-[var(--duration-fast)]',
+        'flex h-7 items-center gap-2 rounded-md pr-2 text-dense transition-colors duration-[var(--duration-fast)]',
         active
           ? 'bg-accent-soft font-medium text-accent'
           : 'text-muted hover:bg-surface-2 hover:text-text',
@@ -140,6 +183,7 @@ export interface DocTreeProps {
   readonly onRenameCollection: (id: string, name: string) => void;
   readonly onDeleteCollection: (id: string) => void;
   readonly canWrite: boolean;
+  readonly onNavigate?: () => void;
 }
 
 export function DocTree({
@@ -153,6 +197,7 @@ export function DocTree({
   onRenameCollection,
   onDeleteCollection,
   canWrite,
+  onNavigate = () => undefined,
 }: DocTreeProps) {
   const groups = useMemo(() => groupDocs(docs, collections), [docs, collections]);
   const [draftName, setDraftName] = useState<string | null>(null);
@@ -174,7 +219,10 @@ export function DocTree({
   };
 
   return (
-    <div className="flex h-full w-64 shrink-0 flex-col border-border border-r bg-surface">
+    <div
+      data-testid="doc-tree"
+      className="flex h-full w-64 shrink-0 flex-col border-border border-r bg-surface"
+    >
       <div className="flex items-center gap-1 border-border border-b p-2">
         <div className="relative min-w-0 flex-1">
           <Search
@@ -259,13 +307,15 @@ export function DocTree({
               {group.docs.length === 0 ? (
                 <p className="px-2 py-1 text-2xs text-faint">Nothing here yet</p>
               ) : (
-                group.docs.map((doc) => (
+                docTreeOf(group.docs).map((node) => (
                   <DocRow
-                    key={doc.id}
-                    doc={doc}
-                    active={activeDocId === doc.id}
-                    unsaved={unsavedDocId === doc.id}
-                    recent={now - new Date(doc.updatedAt).getTime() < RECENT_MS}
+                    key={node.doc.id}
+                    doc={node.doc}
+                    depth={node.depth}
+                    active={activeDocId === node.doc.id}
+                    unsaved={unsavedDocId === node.doc.id}
+                    recent={now - new Date(node.doc.updatedAt).getTime() < RECENT_MS}
+                    onNavigate={onNavigate}
                   />
                 ))
               )}

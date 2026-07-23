@@ -1,18 +1,20 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 import type { DocHeading } from './outline.ts';
+import { sameHeadings, withHeadingIds } from './outline.ts';
 
 export const docProseClassName = cn(
   'prose-orbit max-w-none text-base text-muted leading-7',
-  '[&_h1]:mt-8 [&_h1]:mb-3 [&_h1]:font-semibold [&_h1]:text-text [&_h1]:text-xl',
+  '[&_h1]:mt-8 [&_h1]:mb-3 [&_h1]:scroll-mt-24 [&_h1]:font-semibold [&_h1]:text-text [&_h1]:text-xl',
   '[&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:scroll-mt-24 [&_h2]:font-semibold [&_h2]:text-lg [&_h2]:text-text',
   '[&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:scroll-mt-24 [&_h3]:font-medium [&_h3]:text-base [&_h3]:text-text',
   '[&_p]:my-4',
   '[&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2',
   '[&_strong]:font-semibold [&_strong]:text-text',
   '[&_blockquote]:my-4 [&_blockquote]:border-border-strong [&_blockquote]:border-l-2 [&_blockquote]:pl-4 [&_blockquote]:text-muted',
+  '[&_blockquote>p:first-child>strong:first-child]:text-accent',
   '[&_hr]:my-8 [&_hr]:border-border',
   '[&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_code]:text-text',
   '[&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-2 [&_pre]:p-4 [&_pre]:text-dense',
@@ -29,52 +31,30 @@ export const docProseClassName = cn(
 
 export interface DocBodyProps {
   readonly html: string;
-  readonly headings: readonly DocHeading[];
-  readonly onActiveHeading?: (id: string) => void;
+  readonly onHeadings?: (headings: DocHeading[]) => void;
   readonly className?: string;
 }
 
-export function DocBody({ html, headings, onActiveHeading, className }: DocBodyProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const notify = useRef(onActiveHeading);
-  notify.current = onActiveHeading;
+export function DocBody({ html, onHeadings, className }: DocBodyProps) {
+  const notify = useRef(onHeadings);
+  const previous = useRef<DocHeading[]>([]);
+  notify.current = onHeadings;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: html is a dependency because React replaces every heading node when it changes
+  const outlined = useMemo(() => withHeadingIds(html), [html]);
+
   useEffect(() => {
-    const root = ref.current;
-    if (root === null) return;
-
-    const nodes = [...root.querySelectorAll('h1, h2, h3')];
-    nodes.forEach((node, index) => {
-      const heading = headings[index];
-      if (heading !== undefined) node.id = heading.id;
-    });
-
-    if (notify.current === undefined || nodes.length === 0) return;
-
-    const visible = new Set<string>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) visible.add(entry.target.id);
-          else visible.delete(entry.target.id);
-        }
-        const first = headings.find((heading) => visible.has(heading.id));
-        if (first !== undefined) notify.current?.(first.id);
-      },
-      { rootMargin: '-72px 0px -60% 0px', threshold: 0 },
-    );
-    for (const node of nodes) observer.observe(node);
-    return () => observer.disconnect();
-  }, [html, headings]);
+    if (notify.current === undefined) return;
+    if (sameHeadings(outlined.headings, previous.current)) return;
+    previous.current = outlined.headings;
+    notify.current(outlined.headings);
+  }, [outlined]);
 
   return (
     <div
-      ref={ref}
       data-testid="doc-body"
       className={cn(docProseClassName, className)}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized by @orbit/services/markdown
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: outlined.html }}
     />
   );
 }
