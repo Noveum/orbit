@@ -17,6 +17,17 @@ export interface HotkeyEntry extends HotkeyEntryInput {
   readonly steps: readonly HotkeyStep[];
 }
 
+function shiftSpecificity(entry: HotkeyEntry): number {
+  return entry.steps.reduce((total, step) => total + (step.shift ? 1 : 0), 0);
+}
+
+function beats(candidate: HotkeyEntry, current: HotkeyEntry): boolean {
+  if (candidate.steps.length !== current.steps.length) {
+    return candidate.steps.length > current.steps.length;
+  }
+  return shiftSpecificity(candidate) > shiftSpecificity(current);
+}
+
 export function selectMatch(
   entries: readonly HotkeyEntry[],
   buffer: readonly BufferedStep[],
@@ -27,7 +38,7 @@ export function selectMatch(
     if (!entry.enabled) continue;
     if (editableTarget && !entry.allowInInput) continue;
     if (!bufferMatches(entry.steps, buffer)) continue;
-    if (best === null || entry.steps.length > best.steps.length) best = entry;
+    if (best === null || beats(entry, best)) best = entry;
   }
   return best;
 }

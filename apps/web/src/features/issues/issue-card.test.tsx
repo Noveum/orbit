@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import type { Issue, Label, Member } from '@/lib/query/schemas.ts';
-import { buildColumns, planDrop } from './board.tsx';
+import { groupIssues } from '@/features/filters/grouping.ts';
+import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { planDrop } from './board.tsx';
 import { IssueCard } from './issue-card.tsx';
 
 function issue(overrides: Partial<Issue> = {}): Issue {
@@ -72,7 +73,7 @@ describe('IssueCard', () => {
 });
 
 describe('board placement', () => {
-  const states = [
+  const states: WorkflowState[] = [
     {
       id: 'state_todo',
       teamId: 'team_1',
@@ -95,7 +96,12 @@ describe('board placement', () => {
     issue({ id: 'b', identifier: 'ENG-2', sortOrder: 2048 }),
     issue({ id: 'c', identifier: 'ENG-3', stateId: 'state_doing', sortOrder: 1024 }),
   ];
-  const columns = buildColumns(states, issues);
+  const columns = groupIssues(
+    issues,
+    'state',
+    { states, members: [], projects: [], cycles: [], labels: [] },
+    { showEmptyGroups: true, ordering: 'manual' },
+  );
 
   it('groups issues into their state column in sort order', () => {
     expect(columns[0]?.issues.map((entry) => entry.id)).toEqual(['a', 'b']);

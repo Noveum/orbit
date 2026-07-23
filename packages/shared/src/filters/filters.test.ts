@@ -59,6 +59,14 @@ describe('issueFilterSchema predicates', () => {
     expect(issueFilterSchema.parse({}).predicates).toEqual([]);
   });
 
+  it('reads boolean flags from url strings', () => {
+    expect(issueFilterSchema.parse({ includeSubIssues: 'false' }).includeSubIssues).toBe(false);
+    expect(issueFilterSchema.parse({ includeSubIssues: '0' }).includeSubIssues).toBe(false);
+    expect(issueFilterSchema.parse({ includeSubIssues: 'true' }).includeSubIssues).toBe(true);
+    expect(issueFilterSchema.parse({}).includeSubIssues).toBe(true);
+    expect(issueFilterSchema.parse({ includeArchived: true }).includeArchived).toBe(true);
+  });
+
   it('refuses an unknown field', () => {
     expect(() =>
       issueFilterSchema.parse({ predicates: [{ field: 'nope', values: ['x'] }] }),

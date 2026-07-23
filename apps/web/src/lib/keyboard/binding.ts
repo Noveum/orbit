@@ -13,6 +13,7 @@ export interface BufferedStep extends HotkeyStep {
 
 export interface KeyEventLike {
   readonly key: string;
+  readonly code?: string | undefined;
   readonly metaKey: boolean;
   readonly ctrlKey: boolean;
   readonly altKey: boolean;
@@ -62,9 +63,17 @@ function parseStep(token: string): HotkeyStep {
   };
 }
 
+const LETTER_CODE = /^Key([A-Z])$/;
+
+export function typedKey(event: KeyEventLike): string {
+  if (!event.altKey) return event.key;
+  const letter = LETTER_CODE.exec(event.code ?? '')?.[1];
+  return letter ?? event.key;
+}
+
 export function eventToStep(event: KeyEventLike): HotkeyStep {
   return {
-    key: normalizeKey(event.key),
+    key: normalizeKey(typedKey(event)),
     mod: event.metaKey || event.ctrlKey,
     alt: event.altKey,
     shift: event.shiftKey,

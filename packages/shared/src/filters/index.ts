@@ -39,6 +39,10 @@ export const VIEW_LAYOUTS = ['list', 'board', 'table', 'calendar', 'timeline'] a
 
 export type ViewLayout = (typeof VIEW_LAYOUTS)[number];
 
+export const ISSUE_ORDERINGS = ['manual', 'priority', 'created', 'updated', 'due'] as const;
+
+export type IssueOrdering = (typeof ISSUE_ORDERINGS)[number];
+
 export const FILTER_FIELD_LABELS: Record<FilterField, string> = {
   state: 'Status',
   assignee: 'Assignee',
