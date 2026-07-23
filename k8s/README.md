@@ -138,12 +138,22 @@ BETTER_AUTH_SECRET        32+ random characters
 BETTER_AUTH_URL           https://<orbit host>
 NEXT_PUBLIC_APP_URL       https://<orbit host>
 NEXT_PUBLIC_REALTIME_URL  wss://<orbit host>/ws
-REALTIME_INTERNAL_TOKEN   shared secret between web and realtime
 S3_BUCKET                 the uploads bucket name
 S3_REGION                 us-east-1
-EMAIL_FROM                a sender on a domain verified in Resend
 RESEND_API_KEY            from Resend
+EMAIL_FROM                a sender on a domain verified in Resend
 ```
+
+`RESEND_API_KEY` and `EMAIL_FROM` are not optional. Passwords are disabled and
+magic link is the way in, so without working email nobody can sign in at all. A
+passkey only helps once an account already exists.
+
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are genuinely optional. Each pair enables that social
+button only when both halves are present, and the callback to register with the
+provider is `https://<orbit host>/api/auth/callback/<provider>`.
+
+Never set `ORBIT_DEV_LOGIN` in the `prd` config. It bypasses the magic link.
 
 The RDS master password is generated and rotated by AWS. Read it with:
 
