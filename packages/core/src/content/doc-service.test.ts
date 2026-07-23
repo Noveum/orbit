@@ -131,6 +131,23 @@ describe('updateDoc', () => {
       code: 'forbidden',
     });
   });
+
+  it('mints and clears the publish token when the visibility changes', async () => {
+    const doc = await newDoc();
+
+    const opened = await updateDoc(workspace.admin, doc.id, { visibility: 'link' });
+    const token = opened.doc.publishToken;
+    expect(token).not.toBeNull();
+    if (token === null) return;
+    expect(await getPublishedDoc(token)).not.toBeNull();
+
+    const kept = await updateDoc(workspace.admin, doc.id, { title: 'Still shared' });
+    expect(kept.doc.publishToken).toBe(token);
+
+    const closed = await updateDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    expect(closed.doc.publishToken).toBeNull();
+    expect(await getPublishedDoc(token)).toBeNull();
+  });
 });
 
 describe('archiveDoc', () => {

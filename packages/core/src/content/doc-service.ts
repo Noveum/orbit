@@ -68,6 +68,11 @@ function docAction(
   });
 }
 
+function tokenFor(visibility: string, current: string | null): string | null {
+  if (visibility === 'workspace') return null;
+  return current ?? newToken();
+}
+
 async function loadDoc(executor: Executor, principal: Principal, docId: string): Promise<DocRow> {
   const [row] = await executor
     .select()
@@ -218,7 +223,7 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
         title: parsed.title,
         content: parsed.content,
         visibility: parsed.visibility,
-        publishToken: parsed.visibility === 'workspace' ? null : newToken(),
+        publishToken: tokenFor(parsed.visibility, null),
         authorId: principal.userId,
         syncId,
       })
@@ -254,7 +259,14 @@ export async function updateDoc(
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
       .update(schema.doc)
-      .set({ ...parsed, updatedAt: new Date(), syncId })
+      .set({
+        ...parsed,
+        ...(parsed.visibility === undefined
+          ? {}
+          : { publishToken: tokenFor(parsed.visibility, current.publishToken) }),
+        updatedAt: new Date(),
+        syncId,
+      })
       .where(eq(schema.doc.id, docId))
       .returning();
     const doc = requireRow(saved, 'That doc does not exist.');
@@ -301,7 +313,7 @@ export async function shareDoc(
     const current = await loadDoc(tx, principal, docId);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
 
-    const publishToken = visibility === 'workspace' ? null : (current.publishToken ?? newToken());
+    const publishToken = tokenFor(visibility, current.publishToken);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
