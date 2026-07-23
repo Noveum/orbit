@@ -8,11 +8,12 @@ import {
 } from '@orbit/realtime-client/react';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { scopes, syncCatchupSchema } from '@orbit/shared/events';
-import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  ASSIGNED_SCOPE,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
   DOC_ROOT,
@@ -22,9 +23,10 @@ import {
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Comment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
+import type { IssueBelongs, IssuePages } from '@/lib/query/sync.ts';
 import {
   applyCommentDelta,
-  applyIssueDelta,
+  applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
 } from '@/lib/query/sync.ts';
@@ -56,13 +58,24 @@ interface RootInvalidations {
   docIds: Set<string>;
 }
 
+function membershipOf(key: QueryKey): IssueBelongs | null {
+  const scope = key[1];
+  if (typeof scope !== 'string') return null;
+  if (scope === ASSIGNED_SCOPE) {
+    const userId = key[2];
+    if (typeof userId !== 'string') return null;
+    return (issue: Issue) => issue.assigneeId === userId;
+  }
+  return (issue: Issue) => issue.teamId === scope;
+}
+
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUES_ROOT] })) {
-    const teamId = query.queryKey[1];
-    if (typeof teamId !== 'string') continue;
-    const current = query.state.data as readonly Issue[] | undefined;
+    const belongs = membershipOf(query.queryKey);
+    if (belongs === null) continue;
+    const current = query.state.data as IssuePages | undefined;
     if (current === undefined) continue;
-    const next = applyIssueDelta(current, action, teamId);
+    const next = applyIssueDeltaToPages(current, action, belongs);
     if (next !== current) client.setQueryData(query.queryKey, next);
   }
 

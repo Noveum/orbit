@@ -4,7 +4,7 @@ import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, isInTeam, teamScope } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, isInTeam, teamScope } from '@orbit/shared/policy';
 import { issueIdentifier, parseIssueIdentifier, sortOrderBetween } from '@orbit/shared/utils';
 import {
   issueBulkUpdateSchema,
@@ -15,7 +15,8 @@ import {
   issueUpdateSchema,
   paginationSchema,
 } from '@orbit/shared/validators';
-import type { SQL } from 'drizzle-orm';
+import { getTableColumns, type SQL } from 'drizzle-orm';
+import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
@@ -206,10 +207,100 @@ async function describeValue(executor: Executor, field: string, value: unknown):
   return name === null ? value : { id: value, name };
 }
 
+const BATCH_NAME_LOADERS: Record<
+  string,
+  (executor: Executor, ids: readonly string[]) => Promise<Map<string, string>>
+> = {
+  stateId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.workflowState.id, name: schema.workflowState.name })
+        .from(schema.workflowState)
+        .where(inArray(schema.workflowState.id, [...ids])),
+    ),
+  assigneeId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.user.id, name: schema.user.name })
+        .from(schema.user)
+        .where(inArray(schema.user.id, [...ids])),
+    ),
+  projectId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.project.id, name: schema.project.name })
+        .from(schema.project)
+        .where(inArray(schema.project.id, [...ids])),
+    ),
+  cycleId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.cycle.id, name: schema.cycle.name })
+        .from(schema.cycle)
+        .where(inArray(schema.cycle.id, [...ids])),
+    ),
+  milestoneId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.milestone.id, name: schema.milestone.name })
+        .from(schema.milestone)
+        .where(inArray(schema.milestone.id, [...ids])),
+    ),
+  parentId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.issue.id, name: schema.issue.identifier })
+        .from(schema.issue)
+        .where(inArray(schema.issue.id, [...ids])),
+    ),
+};
+
+async function namesOf(
+  query: Promise<{ id: string; name: string }[]>,
+): Promise<Map<string, string>> {
+  return new Map((await query).map((row) => [row.id, row.name]));
+}
+
 interface FieldChange {
   readonly field: string;
   readonly from: unknown;
   readonly to: unknown;
+}
+
+async function describeChanges(
+  executor: Executor,
+  changes: readonly FieldChange[],
+): Promise<Map<string, unknown>> {
+  const wanted = new Map<string, Set<string>>();
+  for (const change of changes) {
+    if (BATCH_NAME_LOADERS[change.field] === undefined) continue;
+    const bucket = wanted.get(change.field) ?? new Set<string>();
+    for (const value of [change.from, change.to]) {
+      if (typeof value === 'string') bucket.add(value);
+    }
+    wanted.set(change.field, bucket);
+  }
+
+  const described = new Map<string, unknown>();
+  for (const [field, ids] of wanted) {
+    const load = BATCH_NAME_LOADERS[field];
+    if (load === undefined || ids.size === 0) continue;
+    const names = await load(executor, [...ids]);
+    for (const id of ids) {
+      const name = names.get(id);
+      described.set(`${field}:${id}`, name === undefined ? id : { id, name });
+    }
+  }
+  return described;
+}
+
+function describedValue(
+  described: ReadonlyMap<string, unknown>,
+  field: string,
+  value: unknown,
+): unknown {
+  if (typeof value !== 'string') return value ?? null;
+  return described.get(`${field}:${value}`) ?? value;
 }
 
 function collectIssueChanges(
@@ -263,17 +354,40 @@ async function loadIssue(
   return issue;
 }
 
+async function replaceLabelsFor(
+  executor: Executor,
+  issueIds: readonly string[],
+  labelIds: readonly string[],
+): Promise<void> {
+  if (issueIds.length === 0) return;
+  await executor.delete(schema.issueLabel).where(inArray(schema.issueLabel.issueId, [...issueIds]));
+  const unique = [...new Set(labelIds)];
+  if (unique.length === 0) return;
+  await executor
+    .insert(schema.issueLabel)
+    .values(
+      issueIds.flatMap((issueId) => unique.map((labelId) => ({ id: newId(), issueId, labelId }))),
+    )
+    .onConflictDoNothing();
+}
+
 async function replaceLabels(
   executor: Executor,
   issueId: string,
   labelIds: readonly string[],
 ): Promise<void> {
-  await executor.delete(schema.issueLabel).where(eq(schema.issueLabel.issueId, issueId));
-  if (labelIds.length === 0) return;
-  await executor
-    .insert(schema.issueLabel)
-    .values([...new Set(labelIds)].map((labelId) => ({ id: newId(), issueId, labelId })))
-    .onConflictDoNothing();
+  await replaceLabelsFor(executor, [issueId], labelIds);
+}
+
+async function subscribeToIssues(
+  executor: Executor,
+  pairs: readonly { issueId: string; userId: string | null }[],
+): Promise<void> {
+  const rows = pairs.flatMap((pair) =>
+    pair.userId === null ? [] : [{ id: newId(), issueId: pair.issueId, userId: pair.userId }],
+  );
+  if (rows.length === 0) return;
+  await executor.insert(schema.issueSubscription).values(rows).onConflictDoNothing();
 }
 
 async function subscribeUsers(
@@ -372,59 +486,142 @@ export interface UpdatedIssue {
   readonly actions: SyncAction[];
 }
 
+interface PendingUpdate {
+  readonly current: IssueRow;
+  readonly values: IssueValues;
+  readonly changes: FieldChange[];
+}
+
+async function loadIssues(
+  executor: Executor,
+  organizationId: string,
+  issueIds: readonly string[],
+): Promise<Map<string, IssueRow>> {
+  const rows = await executor
+    .select()
+    .from(schema.issue)
+    .where(
+      and(inArray(schema.issue.id, [...issueIds]), eq(schema.issue.organizationId, organizationId)),
+    );
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+function updateGroups(pending: readonly PendingUpdate[]): Map<string, PendingUpdate[]> {
+  const groups = new Map<string, PendingUpdate[]>();
+  for (const entry of pending) {
+    const key = JSON.stringify(Object.entries(entry.values).sort());
+    const bucket = groups.get(key) ?? [];
+    bucket.push(entry);
+    groups.set(key, bucket);
+  }
+  return groups;
+}
+
+async function applyIssueUpdates(
+  tx: Executor,
+  principal: Principal,
+  issueIds: readonly string[],
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+): Promise<UpdatedIssue[]> {
+  const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  const now = new Date();
+  const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
+
+  const pending: PendingUpdate[] = [];
+  for (const issueId of issueIds) {
+    const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
+    assertInTeam(principal, teamScope(current));
+
+    const { values, changes } = collectIssueChanges(current, parsed);
+    if (values.parentId !== undefined && values.parentId !== null) {
+      await assertParentAllowed(tx, principal.organizationId, current.id, values.parentId);
+    }
+    if (values.stateId !== undefined) {
+      if (state === null || state.teamId !== current.teamId) {
+        throw validationFailed('That status belongs to another team.');
+      }
+      Object.assign(values, applyStateTimestamps(current, state.category, now));
+    }
+    pending.push({ current, values, changes });
+  }
+
+  const labelsChanged = parsed.labelIds !== undefined;
+  const changing = pending.filter((entry) => entry.changes.length > 0 || labelsChanged);
+  if (changing.length === 0) {
+    return pending.map((entry) => ({ issue: entry.current, changes: [], actions: [] }));
+  }
+
+  const syncId = await nextSyncId(tx);
+  const actor = await principalActor(tx, principal);
+
+  const updated = new Map<string, IssueRow>();
+  for (const [, group] of updateGroups(changing)) {
+    const first = group[0];
+    if (first === undefined) continue;
+    const rows = await tx
+      .update(schema.issue)
+      .set({ ...first.values, updatedAt: now, syncId })
+      .where(
+        inArray(
+          schema.issue.id,
+          group.map((entry) => entry.current.id),
+        ),
+      )
+      .returning();
+    for (const row of rows) updated.set(row.id, row);
+  }
+
+  if (parsed.labelIds !== undefined) {
+    await replaceLabelsFor(
+      tx,
+      changing.map((entry) => entry.current.id),
+      parsed.labelIds,
+    );
+  }
+
+  const assigned = changing
+    .filter((entry) => entry.values.assigneeId !== undefined)
+    .map((entry) => ({ issueId: entry.current.id, userId: entry.values.assigneeId ?? null }));
+  await subscribeToIssues(tx, assigned);
+
+  const described = await describeChanges(
+    tx,
+    changing.flatMap((entry) => entry.changes),
+  );
+  await appendActivities(
+    tx,
+    changing.flatMap((entry) =>
+      entry.changes.map((change) => ({
+        organizationId: principal.organizationId,
+        issueId: entry.current.id,
+        actor,
+        field: change.field,
+        from: describedValue(described, change.field, change.from),
+        to: describedValue(described, change.field, change.to),
+        syncId,
+      })),
+    ),
+  );
+
+  return pending.map((entry) => {
+    const issue = updated.get(entry.current.id);
+    if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
+    return {
+      issue,
+      changes: entry.changes,
+      actions: [issueAction(issue, syncId, actor, 'update')],
+    };
+  });
+}
+
 async function applyIssueUpdate(
   tx: Executor,
   principal: Principal,
   issueId: string,
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue> {
-  const current = await loadIssue(tx, principal, issueId);
-
-  const { values, changes } = collectIssueChanges(current, parsed);
-  const now = new Date();
-  if (values.parentId !== undefined && values.parentId !== null) {
-    await assertParentAllowed(tx, principal.organizationId, issueId, values.parentId);
-  }
-  if (values.stateId !== undefined) {
-    const state = await stateOf(tx, values.stateId);
-    if (state.teamId !== current.teamId) {
-      throw validationFailed('That status belongs to another team.');
-    }
-    Object.assign(values, applyStateTimestamps(current, state.category, now));
-  }
-
-  const labelsChanged = parsed.labelIds !== undefined;
-  if (changes.length === 0 && !labelsChanged) {
-    return { issue: current, changes: [], actions: [] };
-  }
-
-  const syncId = await nextSyncId(tx);
-  const actor = await principalActor(tx, principal);
-  const [updated] = await tx
-    .update(schema.issue)
-    .set({ ...values, updatedAt: now, syncId })
-    .where(eq(schema.issue.id, issueId))
-    .returning();
-  const issue = requireRow(updated, 'That issue does not exist.');
-
-  if (parsed.labelIds !== undefined) await replaceLabels(tx, issueId, parsed.labelIds);
-  if (values.assigneeId !== undefined)
-    await subscribeUsers(tx, issueId, [values.assigneeId], syncId);
-
-  const described = await Promise.all(
-    changes.map(async (change) => ({
-      organizationId: principal.organizationId,
-      issueId,
-      actor,
-      field: change.field,
-      from: await describeValue(tx, change.field, change.from),
-      to: await describeValue(tx, change.field, change.to),
-      syncId,
-    })),
-  );
-  await appendActivities(tx, described);
-
-  return { issue, changes, actions: [issueAction(issue, syncId, actor, 'update')] };
+  const [result] = await applyIssueUpdates(tx, principal, [issueId], parsed);
+  return requireRow(result, 'That issue does not exist.');
 }
 
 export async function updateIssue(
@@ -563,14 +760,16 @@ export async function bulkUpdateIssues(
   const parsed = issueBulkUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const issues: IssueRow[] = [];
-    const actions: SyncAction[] = [];
-    for (const issueId of new Set(parsed.issueIds)) {
-      const result = await applyIssueUpdate(tx, principal, issueId, parsed.patch);
-      issues.push(result.issue);
-      actions.push(...result.actions);
-    }
-    return { issues, actions };
+    const results = await applyIssueUpdates(
+      tx,
+      principal,
+      [...new Set(parsed.issueIds)],
+      parsed.patch,
+    );
+    return {
+      issues: results.map((result) => result.issue),
+      actions: results.flatMap((result) => result.actions),
+    };
   });
 }
 
@@ -652,8 +851,13 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
   });
 }
 
-const issueListSchema = issueFilterSchema.extend(paginationSchema.shape);
+const issueListSchema = issueFilterSchema
+  .extend(paginationSchema.shape)
+  .extend({ select: z.enum(['list', 'full']).default('list') });
 export type IssueListInput = typeof issueListSchema;
+
+const ISSUE_COLUMNS = getTableColumns(schema.issue);
+const ISSUE_LIST_COLUMNS = { ...ISSUE_COLUMNS, description: sql<string>`''` };
 
 function visibleTeamFilters(principal: Principal): SQL[] {
   if (principal.role === 'admin') return [];
@@ -802,7 +1006,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
 
   const direction = ordering.descending ? desc : asc;
   const rows = await db
-    .select()
+    .select(filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS)
     .from(schema.issue)
     .where(and(...filters))
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
@@ -1081,5 +1285,11 @@ export async function listSubscribers(
   return await db
     .select({ userId: schema.issueSubscription.userId })
     .from(schema.issueSubscription)
-    .where(eq(schema.issueSubscription.issueId, issueId));
+    .innerJoin(schema.issue, eq(schema.issue.id, schema.issueSubscription.issueId))
+    .where(
+      and(
+        eq(schema.issueSubscription.issueId, issueId),
+        eq(schema.issue.organizationId, principal.organizationId),
+      ),
+    );
 }

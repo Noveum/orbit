@@ -5,6 +5,7 @@ import { act, render } from '@testing-library/react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { BOOTSTRAP_ROOT, DOC_ROOT, DOCS_ROOT, queryKeys, VIEWS_ROOT } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
+import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
 let capturedResume: ((since: number) => void) | null = null;
@@ -79,7 +80,10 @@ function renameAction(originClientId: string, title: string): SyncAction {
 
 function mount(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(queryKeys.issues(TEAM), [issue()]);
+  client.setQueryData(queryKeys.issues(TEAM), {
+    pages: [{ issues: [issue()], nextCursor: null }],
+    pageParams: [null],
+  });
   render(
     <QueryClientProvider client={client}>
       <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
@@ -89,7 +93,7 @@ function mount(): QueryClient {
 }
 
 function titleIn(client: QueryClient): string | undefined {
-  return client.getQueryData<readonly Issue[]>(queryKeys.issues(TEAM))?.[0]?.title;
+  return client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.title;
 }
 
 function trackInvalidations(client: QueryClient): unknown[][] {
@@ -147,7 +151,8 @@ describe('DeltaBridge ordering', () => {
         }),
       ]),
     );
-    expect(client.getQueryData<readonly Issue[]>(queryKeys.issues(TEAM))).toHaveLength(1);
+    const list = client.getQueryData<IssuePages>(queryKeys.issues(TEAM));
+    expect(list?.pages.flatMap((page) => page.issues)).toHaveLength(1);
   });
 });
 

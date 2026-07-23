@@ -10,6 +10,7 @@ interface RouteContext {
 }
 
 const DOWNLOAD_URL_TTL_SECONDS = 300;
+const REDIRECT_CACHE_SECONDS = 280;
 
 type AttachmentRecord = typeof schema.attachment.$inferSelect;
 
@@ -39,7 +40,13 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
       contentType: record.contentType,
       disposition: dispositionFor(record.contentType, record.fileName),
     });
-    return Response.redirect(url, 302);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: url,
+        'cache-control': `private, max-age=${REDIRECT_CACHE_SECONDS}`,
+      },
+    });
   } catch (error: unknown) {
     return errorResponse(error);
   }
