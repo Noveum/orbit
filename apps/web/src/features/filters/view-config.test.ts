@@ -56,6 +56,15 @@ describe('view config url round trip', () => {
     expect(roundTrip(config)).toEqual(config);
   });
 
+  it('round trips a reordered property set of the same size', () => {
+    const config: ViewConfig = {
+      ...defaultViewConfig('list'),
+      properties: ['assignee', 'estimate', 'labels', 'status', 'identifier', 'priority'],
+    };
+    expect(viewConfigToParams(config, 'list').get('props')).not.toBeNull();
+    expect(roundTrip(config).properties).toEqual(config.properties);
+  });
+
   it('writes only the parameters that differ from the defaults', () => {
     const params = viewConfigToParams({ ...defaultViewConfig('list'), predicates }, 'list');
     expect([...params.keys()]).toEqual(['filter']);

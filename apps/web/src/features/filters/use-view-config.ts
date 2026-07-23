@@ -3,7 +3,7 @@
 import type { FilterPredicate } from '@orbit/shared/filters';
 import { GROUP_BY_FIELDS } from '@orbit/shared/filters';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
 import {
@@ -69,9 +69,11 @@ export function useViewConfig(teamId: string | null, layout: ViewLayoutMode): Vi
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [stored, setStored] = useState<StoredDisplay | null>(() =>
-    readStoredDisplay(teamId, layout),
-  );
+  const [stored, setStored] = useState<StoredDisplay | null>(null);
+
+  useEffect(() => {
+    setStored(readStoredDisplay(teamId, layout));
+  }, [teamId, layout]);
 
   const config = useMemo(() => {
     const base = defaultViewConfig(layout);

@@ -112,6 +112,10 @@ export function parseViewConfig(
   };
 }
 
+function sameProperties(left: readonly IssueProperty[], right: readonly IssueProperty[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
 export function viewConfigToParams(config: ViewConfig, layout: ViewLayoutMode): URLSearchParams {
   const fallback = defaultViewConfig(layout);
   const params = new URLSearchParams();
@@ -126,7 +130,7 @@ export function viewConfigToParams(config: ViewConfig, layout: ViewLayoutMode): 
   if (config.showEmptyGroups !== fallback.showEmptyGroups) {
     params.set(EMPTY_GROUPS_PARAM, config.showEmptyGroups ? '1' : '0');
   }
-  if (config.properties.length !== fallback.properties.length) {
+  if (!sameProperties(config.properties, fallback.properties)) {
     params.set(PROPERTIES_PARAM, config.properties.join(','));
   }
   return params;
