@@ -13,8 +13,8 @@ coverage/
 .env.*.local
 !.env.example
 
-/uploads/
-/storage/
+uploads/
+storage/
 
 .DS_Store
 *.log
