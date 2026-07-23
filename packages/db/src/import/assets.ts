@@ -101,6 +101,7 @@ export function inlineAssets(
     const key = storeAsset(store, rawId, parentType, parentId, uploadedById);
     const entry = store.manifest[rawId];
     if (key === null || entry === undefined) return match;
-    return `<img src="/api/files/${key}" alt="${entry.fileName}">`;
+    const alt = entry.fileName.replace(/"/g, '&quot;');
+    return `<img alt="${alt}" src="/api/files/${key}">`;
   });
 }

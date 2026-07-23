@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared';
 import { type AssetStore, inlineAssets } from './assets.ts';
+import { isImportableComment } from './importable.ts';
 import { htmlToMarkdown } from './markdown.ts';
 import {
   estimateFor,
@@ -301,12 +302,12 @@ function pushComments(
   rows: ImportRows,
 ): void {
   for (const comment of entry.comments[planeIssueId] ?? []) {
+    if (!isImportableComment(comment.comment_html)) continue;
     const commentId = id();
     const authorId = userFor(context, comment.actor) ?? context.fallbackUserId;
     const body = htmlToMarkdown(
       inlineAssets(comment.comment_html, 'comment', commentId, authorId, context.assets),
     );
-    if (body.length === 0) continue;
     const createdAt = at(comment.created_at, fallbackDate);
     rows.comments.push({
       id: commentId,
@@ -383,16 +384,20 @@ export function buildDocs(
 
   for (const page of pages) {
     const pageCreatedAt = at(page.created_at, createdAt);
+    const docId = id();
+    const authorId = userFor(context, page.owned_by) ?? context.fallbackUserId;
     rows.docs.push({
-      id: id(),
+      id: docId,
       organizationId: context.organizationId,
       collectionId,
       projectId,
       title: page.name ?? 'Untitled',
-      content: htmlToMarkdown(page.description_html),
+      content: htmlToMarkdown(
+        inlineAssets(page.description_html, 'doc', docId, authorId, context.assets),
+      ),
       visibility: 'workspace',
       publishToken: null,
-      authorId: userFor(context, page.owned_by) ?? context.fallbackUserId,
+      authorId,
       repoBinding: null,
       syncId: 0,
       createdAt: pageCreatedAt,

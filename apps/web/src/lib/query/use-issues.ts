@@ -67,7 +67,7 @@ async function fetchAllIssues(search: string, signal: AbortSignal): Promise<read
     cursor = result.nextCursor;
   }
 
-  return issues;
+  throw new Error(`Stopped after ${MAX_PAGES} pages of issues with more still to load.`);
 }
 
 export function useIssues(

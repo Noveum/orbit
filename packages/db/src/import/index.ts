@@ -183,14 +183,17 @@ async function main(): Promise<void> {
     return !Number.isNaN(created.getTime()) && created < oldest ? created : oldest;
   }, now);
 
-  await db.insert(schema.organization).values({
-    id: ORGANIZATION_ID,
-    name: ORGANIZATION_NAME,
-    slug: ORGANIZATION_SLUG,
-    logo: null,
-    allowedEmailDomains: ['noveum.ai'],
-    createdAt: floor,
-  });
+  await db
+    .insert(schema.organization)
+    .values({
+      id: ORGANIZATION_ID,
+      name: ORGANIZATION_NAME,
+      slug: ORGANIZATION_SLUG,
+      logo: null,
+      allowedEmailDomains: ['noveum.ai'],
+      createdAt: floor,
+    })
+    .onConflictDoNothing();
 
   const rows = emptyRows();
   const { byPlaneId, fallbackUserId } = buildUsers(source.members, floor, rows);

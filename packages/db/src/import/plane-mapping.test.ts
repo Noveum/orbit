@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createAssetStore, inlineAssets } from './assets.ts';
 import { htmlToMarkdown } from './markdown.ts';
 import {
   displayNameFor,
@@ -220,5 +224,53 @@ describe('markdown conversion', () => {
   it('returns an empty string for missing content', () => {
     expect(htmlToMarkdown(null)).toBe('');
     expect(htmlToMarkdown('')).toBe('');
+  });
+});
+
+describe('inlining plane image assets', () => {
+  const manifestRoot = mkdtempSync(resolve(tmpdir(), 'plane-assets-'));
+  const storageRoot = mkdtempSync(resolve(tmpdir(), 'plane-storage-'));
+  const assetId = 'd15ef111-8cc4-45d6-9ca0-0b2adc5594a7';
+
+  beforeAll(() => {
+    mkdirSync(resolve(manifestRoot, 'assets'), { recursive: true });
+    writeFileSync(resolve(manifestRoot, 'assets', assetId), 'not really a png');
+    writeFileSync(
+      resolve(manifestRoot, 'assets.json'),
+      JSON.stringify({
+        [assetId]: { fileName: 'a "quoted" name.png', contentType: 'image/png', size: 16 },
+      }),
+    );
+  });
+
+  afterAll(() => {
+    rmSync(manifestRoot, { recursive: true, force: true });
+    rmSync(storageRoot, { recursive: true, force: true });
+  });
+
+  it('rewrites the tag so markdown keeps both the alt text and the url', () => {
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const html = `<image-component data-id="x" src="${assetId}" width="10px"></image-component>`;
+    const markdown = htmlToMarkdown(inlineAssets(html, 'comment', 'comment-1', 'user-1', store));
+
+    expect(markdown).toMatch(/^!\[a "quoted" name\.png\]\(\/api\/files\/org_noveum\/plane\//);
+    expect(store.attachments).toHaveLength(1);
+    expect(store.attachments[0]?.parentType).toBe('comment');
+    expect(store.attachments[0]?.uploadedById).toBe('user-1');
+  });
+
+  it('registers one attachment however many places reference the same image', () => {
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const html = `<image-component src="${assetId}"></image-component>`;
+    inlineAssets(html, 'issue', 'issue-1', 'user-1', store);
+    inlineAssets(html, 'comment', 'comment-1', 'user-2', store);
+    expect(store.attachments).toHaveLength(1);
+  });
+
+  it('leaves an unknown asset alone rather than inventing a url', () => {
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const html = '<image-component src="00000000-0000-0000-0000-000000000000"></image-component>';
+    expect(inlineAssets(html, 'issue', 'issue-1', 'user-1', store)).toBe(html);
+    expect(store.attachments).toHaveLength(0);
   });
 });

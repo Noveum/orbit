@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { eq, sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
 import * as schema from '../schema/index.ts';
+import { isImportableComment } from './importable.ts';
 import { type PlaneExport, readPlaneExport } from './plane-source.ts';
 
 const { values } = parseArgs({
@@ -139,18 +140,26 @@ async function compareContent(source: PlaneExport): Promise<number> {
   const [comments] = await db.select({ total: sql<number>`count(*)::int` }).from(schema.comment);
   const planeComments = source.projects.reduce(
     (total, entry) =>
-      total + Object.values(entry.comments).reduce((sum, rows) => sum + rows.length, 0),
+      total +
+      Object.values(entry.comments).reduce(
+        (sum, rows) => sum + rows.filter((row) => isImportableComment(row.comment_html)).length,
+        0,
+      ),
     0,
   );
 
-  console.info(`\nComments  plane ${planeComments}  orbit ${comments?.total ?? 0}`);
-  console.info('  a comment whose body is empty once html is stripped is not imported');
-  return report('Documents', [{ label: 'pages', plane: planePages, orbit: docs?.total ?? 0 }]);
+  return report('Content', [
+    { label: 'pages', plane: planePages, orbit: docs?.total ?? 0 },
+    { label: 'comments', plane: planeComments, orbit: comments?.total ?? 0 },
+  ]);
 }
 
 async function main(): Promise<void> {
   const source = readPlaneExport(INPUT);
   console.info(`Comparing ${INPUT} against the database`);
+  if (source.inaccessible.length > 0) {
+    console.info(`not readable with this api key: ${source.inaccessible.join(', ')}`);
+  }
 
   const failures =
     (await compareProjects(source)) +

@@ -241,18 +241,20 @@ for (const project of projects) {
     });
   }
 
-  const referenced = new Set();
-  for (const item of issues)
-    for (const asset of assetIdsIn(item.description_html)) referenced.add(asset);
-  for (const rows of Object.values(comments))
-    for (const row of rows) for (const asset of assetIdsIn(row.comment_html)) referenced.add(asset);
-  for (const assetId of referenced) await downloadAsset(assetId);
-
   const pageDetails = [];
   await mapConcurrent(pages, 2, async (page) => {
     const detail = await get(`/projects/${id}/pages/${page.id}/`).catch(() => page);
     pageDetails.push(detail);
   });
+
+  const referenced = new Set();
+  for (const item of issues)
+    for (const asset of assetIdsIn(item.description_html)) referenced.add(asset);
+  for (const rows of Object.values(comments))
+    for (const row of rows) for (const asset of assetIdsIn(row.comment_html)) referenced.add(asset);
+  for (const page of pageDetails)
+    for (const asset of assetIdsIn(page.description_html)) referenced.add(asset);
+  for (const assetId of referenced) await downloadAsset(assetId);
 
   writeJson(directory, 'project', project);
   writeJson(directory, 'states', states);
@@ -338,6 +340,10 @@ writeText(
     '',
   ].join('\n'),
 );
+
+for (const page of workspacePages) {
+  for (const assetId of assetIdsIn(page.description_html)) await downloadAsset(assetId);
+}
 
 writeJson(OUT, 'assets', assetManifest);
 log(`assets: ${Object.keys(assetManifest).length}`);

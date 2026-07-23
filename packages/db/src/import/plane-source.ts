@@ -141,6 +141,7 @@ export interface PlaneExport {
   readonly members: PlaneMember[];
   readonly projects: PlaneProjectExport[];
   readonly workspacePages: PlanePage[];
+  readonly inaccessible: string[];
 }
 
 function readJson(path: string): unknown {
@@ -167,14 +168,36 @@ function readRecord<T>(directory: string, name: string, schema: z.ZodType<T>): R
   }
 }
 
+function readInaccessible(root: string): string[] {
+  try {
+    return z.array(z.string()).parse(readJson(resolve(root, 'inaccessible.json')));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 export function readPlaneExport(root: string): PlaneExport {
   const members = z.array(planeMemberSchema).parse(readJson(resolve(root, 'members.json')));
   const projectList = z.array(planeProjectSchema).parse(readJson(resolve(root, 'projects.json')));
   const workspacePages = readArray(root, 'workspace-pages', planePageSchema);
+  const inaccessible = readInaccessible(root);
 
   const directories = new Set(
     readdirSync(root).filter((entry) => statSync(resolve(root, entry)).isDirectory()),
   );
+
+  const missing = projectList
+    .filter((project) => !directories.has(project.identifier))
+    .map((project) => project.identifier)
+    .filter((identifier) => !inaccessible.includes(identifier));
+
+  if (missing.length > 0) {
+    throw new Error(
+      `The export is incomplete: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
+        'listed in projects.json but has no cached directory. Re-run the exporter before importing.',
+    );
+  }
 
   const projects = projectList
     .filter((project) => directories.has(project.identifier))
@@ -200,5 +223,5 @@ export function readPlaneExport(root: string): PlaneExport {
       };
     });
 
-  return { members, projects, workspacePages };
+  return { members, projects, workspacePages, inaccessible };
 }
