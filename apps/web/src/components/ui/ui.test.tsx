@@ -77,3 +77,46 @@ describe('Avatar', () => {
     });
   });
 });
+
+describe('Button aria-disabled', () => {
+  it('does not activate on click or on Enter when aria-disabled', async () => {
+    const onClick = mock(() => undefined);
+    render(
+      <Button aria-disabled="true" onClick={onClick}>
+        Save
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Save' });
+    await userEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+    button.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onClick).not.toHaveBeenCalled();
+    await userEvent.keyboard('{ }');
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('does not activate an asChild link when aria-disabled', async () => {
+    const onClick = mock(() => undefined);
+    render(
+      <Button asChild aria-disabled="true">
+        <a href="/somewhere" onClick={onClick}>
+          Go
+        </a>
+      </Button>,
+    );
+    const link = screen.getByText('Go');
+    await userEvent.click(link);
+    expect(onClick).not.toHaveBeenCalled();
+    link.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('still activates when it is not aria-disabled', async () => {
+    const onClick = mock(() => undefined);
+    render(<Button onClick={onClick}>Save</Button>);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});

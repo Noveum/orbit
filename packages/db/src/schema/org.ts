@@ -7,7 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
-  unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
 
@@ -41,8 +41,9 @@ export const member = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('member_org_user_unique').on(table.organizationId, table.userId),
+    uniqueIndex('member_org_user_unique').on(table.organizationId, table.userId),
     index('member_org_idx').on(table.organizationId),
+    index('member_user_idx').on(table.userId),
   ],
 );
 
@@ -67,6 +68,9 @@ export const invitation = pgTable(
   (table) => [
     index('invitation_org_idx').on(table.organizationId),
     index('invitation_email_idx').on(table.email),
+    uniqueIndex('invitation_org_email_pending_unique')
+      .on(table.organizationId, sql`lower(${table.email})`)
+      .where(sql`${table.status} = 'pending'`),
   ],
 );
 
@@ -89,7 +93,9 @@ export const team = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
   (table) => [
-    unique('team_org_key_unique').on(table.organizationId, table.key),
+    uniqueIndex('team_org_key_active_unique')
+      .on(table.organizationId, table.key)
+      .where(sql`${table.archivedAt} is null`),
     index('team_org_idx').on(table.organizationId),
   ],
 );
@@ -108,7 +114,7 @@ export const teamMember = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('team_member_unique').on(table.teamId, table.userId),
+    uniqueIndex('team_member_unique').on(table.teamId, table.userId),
     index('team_member_user_idx').on(table.userId),
   ],
 );

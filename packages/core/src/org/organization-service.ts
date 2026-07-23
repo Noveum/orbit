@@ -1,10 +1,11 @@
 import { and, asc, db, eq, schema } from '@orbit/db';
-import { conflict } from '@orbit/shared/errors';
+import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { organizationCreateSchema, organizationUpdateSchema } from '@orbit/shared/validators';
+import { z } from 'zod';
 import { newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
@@ -185,13 +186,49 @@ export function matchAllowedDomain(
   organization: Pick<OrganizationRow, 'allowedEmailDomains'>,
   email: string,
 ): string | null {
-  const at = email.lastIndexOf('@');
-  if (at < 0) return null;
-  const domain = email.slice(at + 1).toLowerCase();
-  const allowed = organization.allowedEmailDomains.map((entry) =>
-    entry.trim().toLowerCase().replace(/^@/, ''),
-  );
+  const domain = emailDomain(email);
+  if (domain === null) return null;
+  const allowed = normalizeDomains(organization.allowedEmailDomains);
   return allowed.includes(domain) ? domain : null;
+}
+
+const domainListSchema = z
+  .string()
+  .optional()
+  .transform((value) => normalizeDomains((value ?? '').split(',')));
+
+function normalizeDomains(entries: readonly string[]): string[] {
+  return entries
+    .map((entry) => entry.trim().toLowerCase().replace(/^@/, ''))
+    .filter((entry) => entry.length > 0);
+}
+
+export function emailDomain(email: string): string | null {
+  const at = email.lastIndexOf('@');
+  if (at < 0 || at === email.length - 1) return null;
+  return email.slice(at + 1).toLowerCase();
+}
+
+export function configuredEmailDomains(): string[] {
+  return domainListSchema.parse(process.env['ALLOWED_EMAIL_DOMAINS']);
+}
+
+export function assertEmailDomainAllowed(
+  email: string,
+  organization: Pick<OrganizationRow, 'allowedEmailDomains'> | null = null,
+): void {
+  const domain = emailDomain(email);
+  const lists = [
+    configuredEmailDomains(),
+    normalizeDomains(organization?.allowedEmailDomains ?? []),
+  ];
+  for (const allowed of lists) {
+    if (allowed.length === 0) continue;
+    if (domain !== null && allowed.includes(domain)) continue;
+    throw forbidden(`${domain ?? email} is not an allowed email domain.`, {
+      details: { domain, allowed },
+    });
+  }
 }
 
 export async function findOrganizationsForEmailDomain(email: string): Promise<OrganizationRow[]> {

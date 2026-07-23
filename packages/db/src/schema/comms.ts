@@ -1,15 +1,33 @@
 import {
   bigint,
   boolean,
+  foreignKey,
   index,
+  integer,
   jsonb,
+  pgEnum,
   pgTable,
   text,
   timestamp,
-  unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
-import { organization } from './org.ts';
+import { comment } from './content.ts';
+import { organization, team } from './org.ts';
+import { issue, workflowState } from './work.ts';
+
+export const notificationReason = pgEnum('notification_reason', [
+  'assigned',
+  'mentioned',
+  'subscribed',
+  'commented',
+  'state_changed',
+  'review_requested',
+  'review_approved',
+  'pull_request_merged',
+  'due_soon',
+  'manual',
+]);
 
 export const notification = pgTable(
   'notification',
@@ -22,6 +40,7 @@ export const notification = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     type: text('type').notNull(),
+    reason: notificationReason('reason'),
     actorType: text('actor_type').notNull().default('user'),
     actorId: text('actor_id').notNull(),
     actorName: text('actor_name').notNull(),
@@ -53,7 +72,9 @@ export const notificationPreference = pgTable(
     type: text('type').notNull(),
     enabled: boolean('enabled').notNull().default(true),
   },
-  (table) => [unique('notification_preference_unique').on(table.userId, table.channel, table.type)],
+  (table) => [
+    uniqueIndex('notification_preference_unique').on(table.userId, table.channel, table.type),
+  ],
 );
 
 export const notificationSetting = pgTable('notification_setting', {
@@ -102,7 +123,7 @@ export const integration = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('integration_org_provider_unique').on(
+    uniqueIndex('integration_org_provider_unique').on(
       table.organizationId,
       table.provider,
       table.externalId,
@@ -125,13 +146,201 @@ export const integrationChannel = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('integration_channel_unique').on(
+    uniqueIndex('integration_channel_unique').on(
       table.integrationId,
       table.entityType,
       table.entityId,
       table.channelId,
     ),
   ],
+);
+
+export const githubRepositorySync = pgTable(
+  'github_repository_sync',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    integrationId: text('integration_id')
+      .notNull()
+      .references(() => integration.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    repositoryId: text('repository_id').notNull(),
+    repositoryName: text('repository_name').notNull(),
+    installationId: text('installation_id').notNull().default(''),
+    defaultBranch: text('default_branch').notNull().default('main'),
+    enabled: boolean('enabled').notNull().default(true),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_repository_sync_unique').on(table.organizationId, table.repositoryId),
+    index('github_repository_sync_team_idx').on(table.teamId),
+  ],
+);
+
+export const githubIssueSync = pgTable(
+  'github_issue_sync',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    issueId: text('issue_id')
+      .notNull()
+      .references(() => issue.id, { onDelete: 'cascade' }),
+    externalId: text('external_id').notNull(),
+    externalNumber: bigint('external_number', { mode: 'number' }),
+    externalUrl: text('external_url').notNull().default(''),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_issue_sync_unique').on(table.repositorySyncId, table.externalId),
+    index('github_issue_sync_issue_idx').on(table.issueId),
+    foreignKey({
+      name: 'github_issue_sync_repository_sync_fk',
+      columns: [table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.id],
+    }).onDelete('cascade'),
+  ],
+);
+
+export const githubCommentSync = pgTable(
+  'github_comment_sync',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comment.id, { onDelete: 'cascade' }),
+    externalId: text('external_id').notNull(),
+    externalUrl: text('external_url').notNull().default(''),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_comment_sync_unique').on(table.repositorySyncId, table.externalId),
+    index('github_comment_sync_comment_idx').on(table.commentId),
+    foreignKey({
+      name: 'github_comment_sync_repository_sync_fk',
+      columns: [table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.id],
+    }).onDelete('cascade'),
+  ],
+);
+
+export const githubPrStateMapping = pgTable(
+  'github_pr_state_mapping',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    pullRequestState: text('pull_request_state').notNull(),
+    stateId: text('state_id')
+      .notNull()
+      .references(() => workflowState.id, { onDelete: 'cascade' }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_pr_state_mapping_unique').on(
+      table.repositorySyncId,
+      table.pullRequestState,
+    ),
+    foreignKey({
+      name: 'github_pr_state_mapping_repository_sync_fk',
+      columns: [table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.id],
+    }).onDelete('cascade'),
+  ],
+);
+
+export const slackChannelSync = pgTable(
+  'slack_channel_sync',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    integrationId: text('integration_id')
+      .notNull()
+      .references(() => integration.id, { onDelete: 'cascade' }),
+    teamId: text('team_id').references(() => team.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id').notNull(),
+    channelName: text('channel_name').notNull().default(''),
+    events: jsonb('events').$type<string[]>().notNull().default([]),
+    enabled: boolean('enabled').notNull().default(true),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('slack_channel_sync_unique').on(table.integrationId, table.channelId),
+    index('slack_channel_sync_team_idx').on(table.teamId),
+  ],
+);
+
+export const webhook = pgTable(
+  'webhook',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    secret: text('secret').notNull(),
+    events: jsonb('events').$type<string[]>().notNull().default([]),
+    enabled: boolean('enabled').notNull().default(true),
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+  },
+  (table) => [index('webhook_org_idx').on(table.organizationId)],
+);
+
+export const webhookLog = pgTable(
+  'webhook_log',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    webhookId: text('webhook_id')
+      .notNull()
+      .references(() => webhook.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempt: integer('attempt').notNull().default(1),
+    requestBody: jsonb('request_body').$type<Record<string, unknown>>().notNull().default({}),
+    responseStatus: integer('response_status'),
+    responseBody: text('response_body').notNull().default(''),
+    error: text('error'),
+    durationMs: integer('duration_ms'),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('webhook_log_webhook_idx').on(table.webhookId, table.createdAt)],
 );
 
 export const gitLink = pgTable(
@@ -141,7 +350,9 @@ export const gitLink = pgTable(
     organizationId: text('organization_id')
       .notNull()
       .references(() => organization.id, { onDelete: 'cascade' }),
-    issueId: text('issue_id').notNull(),
+    issueId: text('issue_id')
+      .notNull()
+      .references(() => issue.id, { onDelete: 'cascade' }),
     provider: text('provider').notNull().default('github'),
     kind: text('kind').notNull(),
     externalId: text('external_id').notNull(),
@@ -158,7 +369,7 @@ export const gitLink = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('git_link_unique').on(table.provider, table.externalId),
+    uniqueIndex('git_link_unique').on(table.provider, table.externalId),
     index('git_link_issue_idx').on(table.issueId),
   ],
 );
@@ -170,14 +381,18 @@ export const automationRule = pgTable(
     organizationId: text('organization_id')
       .notNull()
       .references(() => organization.id, { onDelete: 'cascade' }),
-    teamId: text('team_id').notNull(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
     event: text('event').notNull(),
     targetStateId: text('target_state_id'),
     branchPattern: text('branch_pattern'),
     enabled: boolean('enabled').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique('automation_rule_unique').on(table.teamId, table.event, table.branchPattern)],
+  (table) => [
+    uniqueIndex('automation_rule_unique').on(table.teamId, table.event, table.branchPattern),
+  ],
 );
 
 export const webhookDelivery = pgTable(
@@ -191,7 +406,7 @@ export const webhookDelivery = pgTable(
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique('webhook_delivery_unique').on(table.provider, table.deliveryId)],
+  (table) => [uniqueIndex('webhook_delivery_unique').on(table.provider, table.deliveryId)],
 );
 
 export const auditLog = pgTable(

@@ -26,6 +26,7 @@ export interface WorkspaceSwitcherProps {
   readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
   readonly collapsed: boolean;
+  readonly touch?: boolean;
 }
 
 export function WorkspaceSwitcher({
@@ -33,6 +34,7 @@ export function WorkspaceSwitcher({
   workspaces,
   user,
   collapsed,
+  touch = false,
 }: WorkspaceSwitcherProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -74,8 +76,9 @@ export function WorkspaceSwitcher({
       <DropdownMenuTrigger
         data-testid="workspace-switcher"
         className={cn(
-          'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-dense',
+          'flex w-full items-center gap-2 rounded-md px-2 text-left text-dense',
           'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2',
+          touch ? 'h-11 gap-3 px-3' : 'h-9 3xl:h-10',
           collapsed && 'justify-center px-0',
         )}
       >

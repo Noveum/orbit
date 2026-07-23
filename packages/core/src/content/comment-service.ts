@@ -3,7 +3,7 @@ import { forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { commentCreateSchema, commentUpdateSchema, reactionSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
@@ -33,7 +33,7 @@ async function loadIssueForComment(executor: Executor, principal: Principal, iss
     )
     .limit(1);
   const issue = requireRow(row, 'That issue does not exist.');
-  assertInTeam(principal, issue.teamId);
+  assertInTeam(principal, teamScope(issue));
   return issue;
 }
 

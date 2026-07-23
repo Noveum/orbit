@@ -1,12 +1,15 @@
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
+  doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
   timestamp,
-  unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
 import { organization } from './org.ts';
@@ -24,7 +27,7 @@ export const comment = pgTable(
       .references(() => issue.id, { onDelete: 'cascade' }),
     authorId: text('author_id')
       .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+      .references(() => user.id, { onDelete: 'restrict' }),
     parentId: text('parent_id'),
     body: text('body').notNull(),
     editedAt: timestamp('edited_at', { withTimezone: true }),
@@ -56,7 +59,7 @@ export const reaction = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('reaction_comment_unique').on(table.commentId, table.userId, table.emoji),
+    uniqueIndex('reaction_comment_unique').on(table.commentId, table.userId, table.emoji),
     index('reaction_comment_idx').on(table.commentId),
     index('reaction_issue_idx').on(table.issueId),
   ],
@@ -87,6 +90,7 @@ export const doc = pgTable(
     collectionId: text('collection_id').references(() => docCollection.id, {
       onDelete: 'set null',
     }),
+    parentId: text('parent_id').references((): AnyPgColumn => doc.id, { onDelete: 'set null' }),
     projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     content: text('content').notNull().default(''),
@@ -94,7 +98,7 @@ export const doc = pgTable(
     publishToken: text('publish_token').unique(),
     authorId: text('author_id')
       .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+      .references(() => user.id, { onDelete: 'restrict' }),
     repoBinding: jsonb('repo_binding').$type<{
       repo: string;
       path: string;
@@ -109,6 +113,34 @@ export const doc = pgTable(
   (table) => [
     index('doc_org_idx').on(table.organizationId),
     index('doc_project_idx').on(table.projectId),
+    index('doc_parent_idx').on(table.parentId),
+    index('doc_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
+    index('doc_content_trgm_idx').using('gin', table.content.op('gin_trgm_ops')),
+  ],
+);
+
+export const docVersion = pgTable(
+  'doc_version',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    docId: text('doc_id')
+      .notNull()
+      .references(() => doc.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    title: text('title').notNull(),
+    content: text('content').notNull().default(''),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('doc_version_unique').on(table.docId, table.version),
+    index('doc_version_doc_idx').on(table.docId, table.createdAt),
   ],
 );
 
@@ -131,7 +163,7 @@ export const attachment = pgTable(
     durationSeconds: bigint('duration_seconds', { mode: 'number' }),
     uploadedById: text('uploaded_by_id')
       .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+      .references(() => user.id, { onDelete: 'restrict' }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -150,9 +182,68 @@ export const favorite = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),
+    sortOrder: doublePrecision('sort_order').notNull().default(1024),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique('favorite_unique').on(table.userId, table.entityType, table.entityId)],
+  (table) => [
+    uniqueIndex('favorite_unique').on(table.userId, table.entityType, table.entityId),
+    index('favorite_user_idx').on(table.userId, table.sortOrder),
+  ],
+);
+
+export const recentVisit = pgTable(
+  'recent_visit',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    visitedAt: timestamp('visited_at', { withTimezone: true }).notNull().defaultNow(),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('recent_visit_unique').on(
+      table.userId,
+      table.organizationId,
+      table.entityType,
+      table.entityId,
+    ),
+    index('recent_visit_user_idx').on(table.userId, table.visitedAt),
+  ],
+);
+
+export const homeWidgetPreference = pgTable(
+  'home_widget_preference',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    widget: text('widget').notNull(),
+    position: integer('position').notNull().default(0),
+    enabled: boolean('enabled').notNull().default(true),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('home_widget_preference_unique').on(
+      table.userId,
+      table.organizationId,
+      table.widget,
+    ),
+  ],
 );
 
 export const docSubscription = pgTable(
@@ -167,5 +258,5 @@ export const docSubscription = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     muted: boolean('muted').notNull().default(false),
   },
-  (table) => [unique('doc_subscription_unique').on(table.docId, table.userId)],
+  (table) => [uniqueIndex('doc_subscription_unique').on(table.docId, table.userId)],
 );

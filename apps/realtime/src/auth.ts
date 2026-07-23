@@ -100,6 +100,22 @@ export async function authenticateConnection(
   return { ok: true, principal: await toPrincipal(found, active) };
 }
 
+export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
+
+export async function membershipStillValid(principal: ConnectionPrincipal): Promise<boolean> {
+  const rows = await db
+    .select({ id: schema.member.id })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, principal.organizationId),
+        eq(schema.member.userId, principal.userId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
   const rows = await db
     .select({ organizationId: schema.issue.organizationId })

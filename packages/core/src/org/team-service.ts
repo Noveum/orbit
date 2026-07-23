@@ -15,6 +15,29 @@ import { createDefaultWorkflowStates } from '../work/workflow-state-service.ts';
 export type TeamRow = typeof schema.team.$inferSelect;
 export type TeamMemberRow = typeof schema.teamMember.$inferSelect;
 
+export async function loadTeam(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+): Promise<TeamRow> {
+  const [row] = await executor
+    .select()
+    .from(schema.team)
+    .where(and(eq(schema.team.id, teamId), eq(schema.team.organizationId, organizationId)))
+    .limit(1);
+  return requireRow(row, 'That team does not exist.');
+}
+
+export async function requireTeam(
+  principal: Principal,
+  teamId: string,
+  executor: Executor = db,
+): Promise<TeamRow> {
+  const team = await loadTeam(executor, principal.organizationId, teamId);
+  assertInTeam(principal, team);
+  return team;
+}
+
 export function deriveTeamKey(name: string): string {
   const letters = name.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const words = name
@@ -253,14 +276,7 @@ export async function addTeamMember(
   const parsed = teamMemberSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const [team] = await tx
-      .select()
-      .from(schema.team)
-      .where(
-        and(eq(schema.team.id, teamId), eq(schema.team.organizationId, principal.organizationId)),
-      )
-      .limit(1);
-    requireRow(team, 'That team does not exist.');
+    const team = await requireTeam(principal, teamId, tx);
 
     const [membership] = await tx
       .select()
@@ -280,10 +296,10 @@ export async function addTeamMember(
     const actor = await principalActor(tx, principal);
     const [inserted] = await tx
       .insert(schema.teamMember)
-      .values({ id: newId(), teamId, userId: parsed.userId, syncId })
+      .values({ id: newId(), teamId: team.id, userId: parsed.userId, syncId })
       .onConflictDoUpdate({
         target: [schema.teamMember.teamId, schema.teamMember.userId],
-        set: { teamId, syncId },
+        set: { teamId: team.id, syncId },
       })
       .returning();
     const row = requireRow(inserted, 'That team membership could not be created.');
@@ -313,22 +329,23 @@ export async function removeTeamMember(
   assertCan(principal, 'team:manage');
 
   return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, teamId, tx);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [removed] = await tx
       .delete(schema.teamMember)
-      .where(and(eq(schema.teamMember.teamId, teamId), eq(schema.teamMember.userId, userId)))
+      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, userId)))
       .returning();
     const row = requireRow(removed, 'That person is not on this team.');
     return [
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
-        scopes: [scopes.team(teamId), scopes.user(userId)],
+        scopes: [scopes.team(team.id), scopes.user(userId)],
         action: 'delete',
         model: 'team_member',
         modelId: row.id,
-        data: { id: row.id, teamId, userId },
+        data: { id: row.id, teamId: team.id, userId },
         actor,
       }),
     ];
@@ -353,21 +370,13 @@ export async function listTeams(
 }
 
 export async function getTeam(principal: Principal, teamId: string): Promise<TeamRow> {
-  assertInTeam(principal, teamId);
-  const [row] = await db
-    .select()
-    .from(schema.team)
-    .where(
-      and(eq(schema.team.id, teamId), eq(schema.team.organizationId, principal.organizationId)),
-    )
-    .limit(1);
-  return requireRow(row, 'That team does not exist.');
+  return await requireTeam(principal, teamId);
 }
 
 export async function listTeamMembers(
   principal: Principal,
   teamId: string,
 ): Promise<TeamMemberRow[]> {
-  assertInTeam(principal, teamId);
-  return await db.select().from(schema.teamMember).where(eq(schema.teamMember.teamId, teamId));
+  const team = await requireTeam(principal, teamId);
+  return await db.select().from(schema.teamMember).where(eq(schema.teamMember.teamId, team.id));
 }

@@ -101,6 +101,31 @@ describe('IssueRow', () => {
     expect(onToggleSelected).toHaveBeenCalledTimes(1);
   });
 
+  it('reveals the checkbox on hover and keeps it reachable from the keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <IssueRow
+        issue={issue()}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active={false}
+        selected={false}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    const checkbox = screen.getByLabelText('Select ENG-7');
+    expect(checkbox.className).toContain('opacity-0');
+    expect(checkbox.className).toContain('group-hover:opacity-100');
+    expect(checkbox.className).toContain('focus-visible:opacity-100');
+
+    await user.tab();
+    expect(checkbox).toHaveFocus();
+  });
+
   it('marks the active row', () => {
     render(
       <IssueRow
