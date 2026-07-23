@@ -206,7 +206,7 @@ describe('sendEmail idempotency', () => {
   it('records a failure and rethrows a domain error', async () => {
     await withRollback(async (tx) => {
       const key = `test_${ulid()}`;
-      const transport = new RecordingTransport(new Error('smtp exploded'));
+      const transport = new RecordingTransport(new Error('resend exploded'));
       await expect(
         sendEmail(
           tx,
@@ -227,7 +227,7 @@ describe('sendEmail idempotency', () => {
         .from(emailDelivery)
         .where(eq(emailDelivery.idempotencyKey, key));
       expect(rows[0]?.status).toBe('failed');
-      expect(rows[0]?.error).toBe('smtp exploded');
+      expect(rows[0]?.error).toBe('resend exploded');
     });
   });
 
