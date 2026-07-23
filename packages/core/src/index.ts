@@ -1,4 +1,5 @@
 export * from './activity/activity-service.ts';
+export * from './analytics/index.ts';
 export * from './auth/api-key.ts';
 export * from './content/attachment-service.ts';
 export * from './content/comment-service.ts';
