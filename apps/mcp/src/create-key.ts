@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { createApiKey } from '@orbit/core';
+import { createApiKey, selectActiveMembership } from '@orbit/core';
 import { db, eq, pool, schema } from '@orbit/db';
 import { z } from 'zod';
 
@@ -32,15 +32,20 @@ async function main(): Promise<void> {
   if (user === undefined) throw new Error(`No user with the email ${parsed.email}.`);
 
   const memberships = await db
-    .select({ organization: schema.organization })
+    .select({ organization: schema.organization, createdAt: schema.member.createdAt })
     .from(schema.member)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
     .where(eq(schema.member.userId, user.id));
 
+  const candidates = memberships.map((row) => ({
+    organizationId: row.organization.id,
+    createdAt: row.createdAt,
+    organization: row.organization,
+  }));
   const organization =
     parsed.org === undefined
-      ? memberships[0]?.organization
-      : memberships.find((row) => row.organization.slug === parsed.org)?.organization;
+      ? selectActiveMembership(candidates, null)?.organization
+      : candidates.find((row) => row.organization.slug === parsed.org)?.organization;
   if (organization === undefined) {
     throw new Error(`${parsed.email} is not a member of any matching workspace.`);
   }

@@ -4,13 +4,14 @@ import type {
   PresenceMessage,
   SyncAction,
 } from '@orbit/shared/events';
-import { serverMessageSchema } from '@orbit/shared/events';
+import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, serverMessageSchema } from '@orbit/shared/events';
 
 export type RealtimeStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
 export interface RealtimeClientOptions {
   url: string;
   token: string;
+  organizationId: string;
   onDelta?: (actions: SyncAction[]) => void;
   onPresence?: (messages: PresenceMessage[]) => void;
   onStatus?: (status: RealtimeStatus) => void;
@@ -34,9 +35,10 @@ function backoffDelay(attempt: number, maxBackoffMs: number): number {
   return Math.round(exponential * (0.5 + Math.random() * 0.5));
 }
 
-function endpoint(url: string, token: string): string {
+function endpoint(url: string, token: string, organizationId: string): string {
   const target = new URL(url);
   target.searchParams.set('token', token);
+  target.searchParams.set('organizationId', organizationId);
   return target.toString();
 }
 
@@ -93,7 +95,7 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
 
   function connect(): void {
     if (disposed) return;
-    const next = new WebSocket(endpoint(options.url, options.token));
+    const next = new WebSocket(endpoint(options.url, options.token, options.organizationId));
     socket = next;
     next.onopen = () => {
       attempt = 0;
@@ -104,8 +106,9 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       const payload: unknown = event.data;
       if (typeof payload === 'string') receive(payload);
     };
-    next.onclose = () => {
+    next.onclose = (event) => {
       if (socket === next) socket = null;
+      if (event.code === ORGANIZATION_FORBIDDEN_CLOSE_CODE) disposed = true;
       if (disposed) {
         setStatus('closed');
         return;

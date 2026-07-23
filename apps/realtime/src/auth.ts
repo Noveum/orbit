@@ -1,3 +1,4 @@
+import { selectActiveMembership } from '@orbit/core';
 import { and, db, eq, gt, schema } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { z } from 'zod';
@@ -33,7 +34,37 @@ async function loadTeamIds(userId: string, organizationId: string, role: OrgRole
   return rows.map((row) => row.id);
 }
 
-export async function authenticateToken(token: string): Promise<ConnectionPrincipal | null> {
+interface SessionUser {
+  readonly userId: string;
+  readonly name: string;
+  readonly image: string | null;
+}
+
+async function toPrincipal(
+  user: SessionUser,
+  membership: { readonly organizationId: string; readonly role: string },
+): Promise<ConnectionPrincipal> {
+  const role = roleSchema.parse(membership.role);
+  return {
+    userId: user.userId,
+    name: user.name,
+    image: user.image,
+    organizationId: membership.organizationId,
+    role,
+    teamIds: await loadTeamIds(user.userId, membership.organizationId, role),
+  };
+}
+
+export type ConnectionRejection = 'unauthorized' | 'organization_forbidden';
+
+export type ConnectionAuthentication =
+  | { readonly ok: true; readonly principal: ConnectionPrincipal }
+  | { readonly ok: false; readonly reason: ConnectionRejection };
+
+export async function authenticateConnection(
+  token: string,
+  statedOrganizationId: string | null,
+): Promise<ConnectionAuthentication> {
   const sessions = await db
     .select({
       userId: schema.user.id,
@@ -47,27 +78,26 @@ export async function authenticateToken(token: string): Promise<ConnectionPrinci
     .limit(1);
 
   const found = sessions[0];
-  if (found === undefined) return null;
+  if (found === undefined) return { ok: false, reason: 'unauthorized' };
 
   const memberships = await db
-    .select({ organizationId: schema.member.organizationId, role: schema.member.role })
+    .select({
+      organizationId: schema.member.organizationId,
+      role: schema.member.role,
+      createdAt: schema.member.createdAt,
+    })
     .from(schema.member)
     .where(eq(schema.member.userId, found.userId));
 
-  const active =
-    memberships.find((row) => row.organizationId === found.activeOrganizationId) ?? memberships[0];
-  if (active === undefined) return null;
+  if (statedOrganizationId !== null) {
+    const stated = memberships.find((row) => row.organizationId === statedOrganizationId);
+    if (stated === undefined) return { ok: false, reason: 'organization_forbidden' };
+    return { ok: true, principal: await toPrincipal(found, stated) };
+  }
 
-  const role = roleSchema.parse(active.role);
-
-  return {
-    userId: found.userId,
-    name: found.name,
-    image: found.image,
-    organizationId: active.organizationId,
-    role,
-    teamIds: await loadTeamIds(found.userId, active.organizationId, role),
-  };
+  const active = selectActiveMembership(memberships, found.activeOrganizationId);
+  if (active === undefined) return { ok: false, reason: 'unauthorized' };
+  return { ok: true, principal: await toPrincipal(found, active) };
 }
 
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {

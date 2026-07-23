@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RealtimeProvider, useDeltaHandler, useScopeSubscription } from './react.tsx';
 
 type Handler = (() => void) | null;
+type CloseHandler = ((event: { code: number }) => void) | null;
+
+const NORMAL_CLOSURE = 1000;
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -12,7 +15,7 @@ class FakeWebSocket {
   sent: string[] = [];
   closed = false;
   onopen: Handler = null;
-  onclose: Handler = null;
+  onclose: CloseHandler = null;
   onmessage: ((event: { data: string }) => void) | null = null;
 
   constructor(readonly url: string) {
@@ -23,10 +26,10 @@ class FakeWebSocket {
     this.sent.push(payload);
   }
 
-  close(): void {
+  close(code = NORMAL_CLOSURE): void {
     this.closed = true;
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.({ code });
   }
 
   open(): void {
@@ -50,7 +53,7 @@ function Subscriber() {
 function Tree() {
   return (
     <StrictMode>
-      <RealtimeProvider url="ws://localhost:3100" token="token_1">
+      <RealtimeProvider url="ws://localhost:3100" token="token_1" organizationId="org_1">
         <Subscriber />
         <Subscriber />
       </RealtimeProvider>
@@ -76,6 +79,7 @@ describe('RealtimeProvider under StrictMode', () => {
     const socket = FakeWebSocket.instances[0];
     expect(socket?.closed).toBe(false);
     expect(socket?.url).toContain('token=token_1');
+    expect(socket?.url).toContain('organizationId=org_1');
   });
 
   it('subscribes to each scope once no matter how many consumers retain it', async () => {

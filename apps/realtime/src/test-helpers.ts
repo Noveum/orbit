@@ -34,6 +34,7 @@ export interface SeedMemberOptions {
   teamIds?: readonly string[];
   role?: string;
   expiresAt?: Date;
+  activeOrganizationId?: string | null;
 }
 
 export interface SeedMember {
@@ -53,18 +54,10 @@ export async function createMember(options: SeedMemberOptions): Promise<SeedMemb
   });
   createdUserIds.push(userId);
 
-  await db.insert(schema.member).values({
-    id: `member_${randomUUID()}`,
-    organizationId: options.organizationId,
-    userId,
-    role: options.role ?? 'member',
+  await addMembership(userId, options.organizationId, {
+    ...(options.role === undefined ? {} : { role: options.role }),
+    ...(options.teamIds === undefined ? {} : { teamIds: options.teamIds }),
   });
-
-  for (const teamId of options.teamIds ?? []) {
-    await db
-      .insert(schema.teamMember)
-      .values({ id: `team_member_${randomUUID()}`, teamId, userId });
-  }
 
   const token = `token_${randomUUID()}`;
   const expiresAt = options.expiresAt ?? new Date(Date.now() + 60 * 60 * 1000);
@@ -72,11 +65,40 @@ export async function createMember(options: SeedMemberOptions): Promise<SeedMemb
     id: `session_${randomUUID()}`,
     token,
     userId,
-    activeOrganizationId: options.organizationId,
+    activeOrganizationId:
+      options.activeOrganizationId === undefined
+        ? options.organizationId
+        : options.activeOrganizationId,
     expiresAt,
   });
 
   return { userId, token, name };
+}
+
+export interface MembershipOptions {
+  role?: string;
+  teamIds?: readonly string[];
+  createdAt?: Date;
+}
+
+export async function addMembership(
+  userId: string,
+  organizationId: string,
+  options: MembershipOptions = {},
+): Promise<void> {
+  await db.insert(schema.member).values({
+    id: `member_${randomUUID()}`,
+    organizationId,
+    userId,
+    role: options.role ?? 'member',
+    ...(options.createdAt === undefined ? {} : { createdAt: options.createdAt }),
+  });
+
+  for (const teamId of options.teamIds ?? []) {
+    await db
+      .insert(schema.teamMember)
+      .values({ id: `team_member_${randomUUID()}`, teamId, userId });
+  }
 }
 
 export async function createIssue(
@@ -150,8 +172,14 @@ export interface TestClient {
   close(): void;
 }
 
-export function connectClient(port: number, token: string): Promise<TestClient> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`);
+export function connectClient(
+  port: number,
+  token: string,
+  organizationId?: string,
+): Promise<TestClient> {
+  const query = new URLSearchParams({ token });
+  if (organizationId !== undefined) query.set('organizationId', organizationId);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/?${query.toString()}`);
   const messages: ServerMessage[] = [];
   const listeners = new Set<() => void>();
   let closeCode: number | undefined;

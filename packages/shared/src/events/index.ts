@@ -106,6 +106,11 @@ export const scopes = {
   user: (userId: string): string => `user:${userId}`,
 } as const;
 
+export const UNAUTHORIZED_CLOSE_CODE = 4001;
+export const ORGANIZATION_FORBIDDEN_CLOSE_CODE = 4003;
+
+export const connectionOrganizationIdSchema = z.string().min(1).max(128);
+
 export const REDIS_DELTA_CHANNEL = 'orbit:delta';
 export const REDIS_PRESENCE_CHANNEL = 'orbit:presence';
 

@@ -3,19 +3,27 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import {
   clientMessageSchema,
+  connectionOrganizationIdSchema,
   DELTA_BATCH_WINDOW_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
+  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
   type PresenceKind,
   presenceMessageSchema,
   REDIS_DELTA_CHANNEL,
   REDIS_PRESENCE_CHANNEL,
   syncActionSchema,
+  UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
 import Redis from 'ioredis';
 import { type RawData, type WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
-import { authenticateToken, authorizeScope, type ConnectionPrincipal } from './auth.ts';
+import {
+  authenticateConnection,
+  authorizeScope,
+  type ConnectionPrincipal,
+  type ConnectionRejection,
+} from './auth.ts';
 import { Connection } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
@@ -54,9 +62,21 @@ const deltaEnvelopeSchema = z.union([
   z.unknown().transform((action) => [action]),
 ]);
 
-function tokenFrom(request: IncomingMessage): string {
+const CLOSE_CODES: Record<ConnectionRejection, number> = {
+  unauthorized: UNAUTHORIZED_CLOSE_CODE,
+  organization_forbidden: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+};
+
+function credentialsFrom(request: IncomingMessage): {
+  token: string;
+  organizationId: string | null;
+} {
   const url = new URL(request.url ?? '/', 'http://realtime.local');
-  return url.searchParams.get('token') ?? '';
+  const stated = connectionOrganizationIdSchema.safeParse(url.searchParams.get('organizationId'));
+  return {
+    token: url.searchParams.get('token') ?? '',
+    organizationId: stated.success ? stated.data : null,
+  };
 }
 
 function parseJson(payload: string): unknown {
@@ -243,12 +263,17 @@ export async function createRealtimeServer(
 
   async function accept(socket: WebSocket, request: IncomingMessage): Promise<void> {
     socket.pause();
-    const principal = await authenticateToken(tokenFrom(request));
-    if (principal === null) {
+    const credentials = credentialsFrom(request);
+    const authenticated = await authenticateConnection(
+      credentials.token,
+      credentials.organizationId,
+    );
+    if (!authenticated.ok) {
       socket.resume();
-      socket.close(4001, 'unauthorized');
+      socket.close(CLOSE_CODES[authenticated.reason], authenticated.reason);
       return;
     }
+    const principal = authenticated.principal;
     if (socket.readyState !== socket.OPEN) {
       socket.terminate();
       return;
@@ -272,7 +297,7 @@ export async function createRealtimeServer(
   wss.on('connection', (socket, request) => {
     accept(socket, request).catch((error: unknown) => {
       logger.error('connection rejected', errorFields(error));
-      socket.close(4001, 'unauthorized');
+      socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
     });
   });
 
