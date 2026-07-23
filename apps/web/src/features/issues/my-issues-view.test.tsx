@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import { teamIssuesQuery } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from './workspace-provider.tsx';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -114,11 +114,11 @@ function renderView(): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  client.setQueryData(queryKeys.issues('team_eng'), [
+  client.setQueryData(teamIssuesQuery('team_eng').queryKey, [
     issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
     issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
   ]);
-  client.setQueryData(queryKeys.issues('team_des'), [
+  client.setQueryData(teamIssuesQuery('team_des').queryKey, [
     issue({ id: 'c', identifier: 'DES-9', teamId: 'team_des', assigneeId: 'me', sortOrder: 10 }),
   ]);
   render(
