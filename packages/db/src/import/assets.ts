@@ -4,7 +4,11 @@ import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import type * as schema from '../schema/index.ts';
 
-const IMAGE_TAG = /<image-component[^>]*\bsrc="([0-9a-fA-F-]{36})"[^>]*>(?:<\/image-component>)?/g;
+const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+
+export const IMAGE_TAG_SOURCE = `<image-component(?=[\\s/>])[^>]*\\bsrc="(${UUID})"[^>]*>(?:</image-component>)?`;
+
+const IMAGE_TAG = new RegExp(IMAGE_TAG_SOURCE, 'g');
 
 const manifestSchema = z.record(
   z.string(),

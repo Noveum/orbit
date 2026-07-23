@@ -85,3 +85,24 @@ describe('deciding whether a comment survives the import', () => {
     expect(isImportableComment(null)).toBe(false);
   });
 });
+
+describe('the image tag pattern', () => {
+  const valid = 'd15ef111-8cc4-45d6-9ca0-0b2adc5594a7';
+
+  it('does not treat a different tag with the same prefix as an image', () => {
+    expect(
+      isImportableComment(`<image-component-extra src="${valid}"></image-component-extra>`),
+    ).toBe(false);
+  });
+
+  it('requires a canonical uuid, not any thirty six characters', () => {
+    expect(
+      isImportableComment('<image-component src="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">'),
+    ).toBe(false);
+    expect(isImportableComment(`<image-component src="${valid}">`)).toBe(true);
+  });
+
+  it('accepts a self closing tag', () => {
+    expect(isImportableComment(`<image-component src="${valid}" />`)).toBe(true);
+  });
+});
