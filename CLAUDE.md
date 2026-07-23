@@ -65,3 +65,19 @@ domain verified in Resend, otherwise every send fails.
 - Branch per unit of work, PR into `main`, several small commits per PR.
 - Commit subject in imperative mood, scoped: `feat(issues): add board drag reorder`.
 - Never commit `.env`, uploads, or recordings.
+
+## Review before merge
+
+Never merge a pull request while a CodeRabbit review thread is unresolved, and
+never merge while its review is still running. Green CI is not enough on its
+own: wait for the review to finish, then deal with every thread it opens.
+
+Each thread ends one of two ways, and both are acceptable:
+
+- Fix the code, push the change, and resolve the thread.
+- Disagree, reply on the thread explaining why the finding does not apply, and
+  resolve it.
+
+What is not acceptable is merging with a thread left open, or resolving one
+silently without either a fix or a reply. A merge state of `UNSTABLE` means the
+review has not finished, so treat it as a block rather than a warning.
