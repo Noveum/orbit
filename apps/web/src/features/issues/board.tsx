@@ -25,7 +25,6 @@ import type { IssueGroup } from '@/features/filters/grouping.ts';
 import type { IssueProperty } from '@/features/filters/view-config.ts';
 import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
-import { surfaceHover } from '@/lib/interaction.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { type MoveInput, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
@@ -219,10 +218,8 @@ function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProp
           aria-label={`Create an issue in ${group.title}`}
           className={cn(
             'ml-auto rounded-sm p-1 text-faint opacity-0',
-            surfaceHover,
-            'transition-opacity duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
+            'transition-[opacity,background-color,color] duration-[var(--duration-fast)] ease-[var(--ease-standard)] motion-reduce:transition-none',
             'group-hover:opacity-100 focus-visible:opacity-100 hover:bg-surface-3 hover:text-text',
-            '[@media(hover:none)]:opacity-100',
             '[@media(hover:none)]:opacity-100',
           )}
         >

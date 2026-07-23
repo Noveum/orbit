@@ -65,7 +65,11 @@ export function AppShell({
   const togglePanel = useCallback(() => setPanelOpen((value) => !value), []);
   const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
 
-  useHotkey(']', togglePanel, { label: 'Toggle right panel', section: 'View' });
+  useHotkey(']', togglePanel, {
+    label: 'Toggle right panel',
+    section: 'View',
+    enabled: panel !== undefined,
+  });
 
   if (drawerPath !== pathname) {
     setDrawerPath(pathname);

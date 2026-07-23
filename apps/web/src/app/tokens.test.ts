@@ -169,7 +169,9 @@ describe('token layer', () => {
     for (const token of ['instant', 'fast', 'base', 'slow'] as const) {
       const value = themeMap.get(`--duration-${token}`);
       expect(value).toMatch(/^\d+ms$/);
-      expect(Number.parseInt(value ?? '0', 10)).toBeLessThanOrEqual(200);
+      const ms = Number.parseInt(value ?? '0', 10);
+      expect(ms).toBeGreaterThanOrEqual(80);
+      expect(ms).toBeLessThanOrEqual(200);
     }
     const reduced = css.slice(css.indexOf('prefers-reduced-motion'));
     expect(reduced).toContain('--duration-fast: 0.01ms');
