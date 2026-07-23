@@ -2,6 +2,7 @@
 
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
@@ -19,6 +20,20 @@ export function MyIssuesView() {
   const router = useRouter();
   const workspace = useWorkspace();
   const assigned = useAssignedIssues(workspace.userId);
+  const sentinel = useRef<HTMLDivElement>(null);
+
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = assigned;
+  useEffect(() => {
+    const node = sentinel.current;
+    if (node === null || !hasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && !isFetchingNextPage) {
+        fetchNextPage().catch(() => undefined);
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (!workspace.ready) {
     return (
@@ -70,6 +85,7 @@ export function MyIssuesView() {
               onToggleSelected={() => undefined}
             />
           ))}
+          {hasNextPage ? <div ref={sentinel} className="h-px" aria-hidden="true" /> : null}
         </div>
       )}
     </div>
