@@ -95,7 +95,7 @@ function LoadedDoc({
       <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
         <p className="min-w-0 flex-1 truncate text-dense text-muted">{detail.doc.title}</p>
 
-        {canWrite ? (
+        {canWrite && editing ? (
           <span
             data-testid="doc-save-status"
             className={status === 'error' ? 'text-2xs text-danger' : 'text-2xs text-faint'}
