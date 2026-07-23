@@ -50,15 +50,24 @@ export class ResendTransport implements EmailTransport {
   }
 }
 
+export const emailEnvSchema = z.object({
+  RESEND_API_KEY: z.string().trim().min(1).max(255),
+  EMAIL_FROM: z.string().trim().min(1).max(320).default(DEFAULT_FROM),
+});
+
 export function createEmailTransport(env: NodeJS.ProcessEnv = process.env): EmailTransport {
-  const apiKey = readEnv(env, 'RESEND_API_KEY');
-  if (apiKey === undefined) {
-    throw validationFailed('RESEND_API_KEY is required to send email.');
+  const parsed = emailEnvSchema.safeParse({
+    RESEND_API_KEY: blankToUndefined(env['RESEND_API_KEY']),
+    EMAIL_FROM: blankToUndefined(env['EMAIL_FROM']),
+  });
+  if (!parsed.success) {
+    throw validationFailed('RESEND_API_KEY is required to send email.', {
+      cause: parsed.error,
+    });
   }
-  return new ResendTransport(apiKey, readEnv(env, 'EMAIL_FROM') ?? DEFAULT_FROM);
+  return new ResendTransport(parsed.data.RESEND_API_KEY, parsed.data.EMAIL_FROM);
 }
 
-function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name]?.trim();
-  return value === undefined || value.length === 0 ? undefined : value;
+function blankToUndefined(value: string | undefined): string | undefined {
+  return value === undefined || value.trim().length === 0 ? undefined : value;
 }
