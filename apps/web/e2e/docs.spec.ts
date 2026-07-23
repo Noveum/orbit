@@ -151,6 +151,24 @@ test('a doc is written, attached to, published, and read without a session', asy
   await expect(author.getByTestId('doc-attachments').getByText('delta-protocol.pdf')).toBeVisible();
   await shoot(author, 'docs-attachment');
 
+  const watching = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const watcher = await signIn(watching, 'shashank@noveum.ai');
+  await watcher.goto(`${BASE}${new URL(author.url()).pathname}`);
+  await expect(watcher.getByTestId('doc-reader')).toBeVisible();
+  await expect(watcher.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+  const renamed = `${title} renamed`;
+  await author.getByTestId('doc-edit-toggle').click();
+  await author.getByTestId('doc-title-input').fill(renamed);
+  await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
+  await expect(watcher.getByRole('heading', { level: 1, name: renamed })).toBeVisible({
+    timeout: 30_000,
+  });
+  await watching.close();
+
+  await author.getByTestId('doc-edit-toggle').click();
+  await expect(author.getByTestId('doc-reader')).toBeVisible();
+
   await author.getByTestId('doc-publish').click();
   await expect(author.getByTestId('doc-publish')).toHaveText('Unpublish', { timeout: 30_000 });
   await author.getByTestId('doc-share').click();

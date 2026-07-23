@@ -15,11 +15,13 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import type { DocCollection, DocDetail } from '@/lib/query/schemas.ts';
+import type { Doc, DocCollection, DocDetail } from '@/lib/query/schemas.ts';
+import type { DocPatch } from '@/lib/query/use-docs.ts';
 import { useArchiveDoc, useDoc, useUpdateDoc } from '@/lib/query/use-docs.ts';
 import { DocEditor } from './doc-editor.tsx';
 import { DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
+import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
 
 const STATUS_LABEL = {
@@ -78,20 +80,11 @@ function LoadedDoc({
   const update = useUpdateDoc(detail.doc.id);
   const archive = useArchiveDoc();
   const [editing, setEditing] = useState(startEditing && canWrite);
-  const [title, setTitle] = useState(detail.doc.title);
-  const [content, setContent] = useState(detail.doc.content);
-
-  const draft = useMemo(() => ({ title, content }), [title, content]);
-  const autosave = useAutosave({
-    value: draft,
-    save: async (value) => {
-      await update.mutateAsync(value);
-    },
-  });
+  const [status, setStatus] = useState<SaveStatus>('saved');
 
   useEffect(() => {
-    onUnsavedChange(autosave.status === 'saved' ? null : detail.doc.id);
-  }, [autosave.status, detail.doc.id, onUnsavedChange]);
+    onUnsavedChange(editing && status !== 'saved' ? detail.doc.id : null);
+  }, [editing, status, detail.doc.id, onUnsavedChange]);
 
   const collectionName =
     collections.find((entry) => entry.id === detail.doc.collectionId)?.name ?? null;
@@ -100,14 +93,14 @@ function LoadedDoc({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
-        <p className="min-w-0 flex-1 truncate text-dense text-muted">{title}</p>
+        <p className="min-w-0 flex-1 truncate text-dense text-muted">{detail.doc.title}</p>
 
         {canWrite ? (
           <span
             data-testid="doc-save-status"
-            className={autosave.status === 'error' ? 'text-2xs text-danger' : 'text-2xs text-faint'}
+            className={status === 'error' ? 'text-2xs text-danger' : 'text-2xs text-faint'}
           >
-            {STATUS_LABEL[autosave.status]}
+            {STATUS_LABEL[status]}
           </span>
         ) : null}
 
@@ -162,10 +155,7 @@ function LoadedDoc({
               variant={editing ? 'primary' : 'secondary'}
               size="sm"
               data-testid="doc-edit-toggle"
-              onClick={() => {
-                if (editing) autosave.saveNow();
-                setEditing((value) => !value);
-              }}
+              onClick={() => setEditing((value) => !value)}
             >
               {editing ? 'Done' : 'Edit'}
             </Button>
@@ -184,27 +174,11 @@ function LoadedDoc({
       </div>
 
       {editing ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-border border-b px-6 pt-5 pb-3">
-            <Input
-              value={title}
-              aria-label="Doc title"
-              data-testid="doc-title-input"
-              onChange={(event) => setTitle(event.target.value)}
-              className="h-auto border-0 bg-transparent px-0 font-semibold text-text text-xl focus-visible:border-0"
-            />
-          </div>
-          <DocEditor
-            docId={detail.doc.id}
-            content={content}
-            onChange={setContent}
-            onForceSave={autosave.saveNow}
-          />
-        </div>
+        <EditSession doc={detail.doc} save={update.mutateAsync} onStatusChange={setStatus} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DocReader
-            doc={{ ...detail.doc, title, content }}
+            doc={detail.doc}
             contentHtml={detail.contentHtml}
             attachments={detail.attachments}
             author={detail.author}
@@ -214,6 +188,40 @@ function LoadedDoc({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function EditSession({
+  doc,
+  save,
+  onStatusChange,
+}: {
+  readonly doc: Doc;
+  readonly save: (patch: DocPatch) => Promise<unknown>;
+  readonly onStatusChange: (status: SaveStatus) => void;
+}) {
+  const [title, setTitle] = useState(doc.title);
+  const [content, setContent] = useState(doc.content);
+  const draft = useMemo(() => ({ title, content }), [title, content]);
+  const autosave = useAutosave({ value: draft, save });
+  const flush = autosave.saveNow;
+
+  useEffect(() => onStatusChange(autosave.status), [autosave.status, onStatusChange]);
+  useEffect(() => flush, [flush]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-border border-b px-6 pt-5 pb-3">
+        <Input
+          value={title}
+          aria-label="Doc title"
+          data-testid="doc-title-input"
+          onChange={(event) => setTitle(event.target.value)}
+          className="h-auto border-0 bg-transparent px-0 font-semibold text-text text-xl focus-visible:border-0"
+        />
+      </div>
+      <DocEditor docId={doc.id} content={content} onChange={setContent} onForceSave={flush} />
     </div>
   );
 }
