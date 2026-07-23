@@ -34,6 +34,23 @@ describe('buildSyncAction', () => {
     });
     expect(Date.parse(action.at)).toBeLessThanOrEqual(Date.now());
   });
+
+  it('carries the originating client id through and omits the key when there is none', () => {
+    const input = {
+      syncId: 3,
+      organizationId: 'org_1',
+      scopes: [scopes.team('team_1')],
+      action: 'insert',
+      model: 'issue',
+      modelId: 'issue_1',
+      data: {},
+      actor: { type: 'user', id: 'user_1' },
+    } as const;
+
+    expect(buildSyncAction({ ...input, originClientId: 'tab_a' }).originClientId).toBe('tab_a');
+    expect(buildSyncAction(input)).not.toHaveProperty('originClientId');
+    expect(syncActionSchema.safeParse(buildSyncAction(input)).success).toBe(true);
+  });
 });
 
 describe('publishDeltas', () => {

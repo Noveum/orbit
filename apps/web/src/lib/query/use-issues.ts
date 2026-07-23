@@ -67,6 +67,17 @@ export function useIssues(
   });
 }
 
+export function teamIssuesQuery(teamId: string) {
+  const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
+  return {
+    queryKey: queryKeys.issues(teamId, search),
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> => {
+      const page = await apiFetch(`/api/issues?${search}`, issueListSchema, { signal });
+      return page.issues;
+    },
+  };
+}
+
 export function useIssueDetail(identifier: string) {
   return useQuery({
     queryKey: queryKeys.issue(identifier),

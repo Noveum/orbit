@@ -11,6 +11,7 @@ import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 
 export interface SidebarProps {
   readonly workspace: ShellWorkspace;
+  readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
   readonly sections: readonly NavSection[];
   readonly collapsed: boolean;
@@ -21,6 +22,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   workspace,
+  workspaces,
   user,
   sections,
   collapsed,
@@ -32,7 +34,12 @@ export function Sidebar({
     <div className="flex h-full flex-col gap-1 border-border border-r bg-surface">
       <div className={cn('flex items-center gap-1 p-2', collapsed && 'flex-col')}>
         <div className="min-w-0 flex-1">
-          <WorkspaceSwitcher workspace={workspace} user={user} collapsed={collapsed} />
+          <WorkspaceSwitcher
+            workspace={workspace}
+            workspaces={workspaces}
+            user={user}
+            collapsed={collapsed}
+          />
         </div>
         <Tooltip label="Toggle sidebar" shortcut={['[']} side="bottom">
           <button

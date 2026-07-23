@@ -5,6 +5,7 @@ import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
+import { clientId } from '@/lib/query/client-id.ts';
 import { COMMENTS_ROOT, ISSUE_ROOT, ISSUES_ROOT } from '@/lib/query/keys.ts';
 import type { Comment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
 import {
@@ -12,7 +13,6 @@ import {
   applyIssueDelta,
   applyIssueDetailDelta,
   applyReactionDelta,
-  isSelfEcho,
 } from '@/lib/query/sync.ts';
 
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {
@@ -46,13 +46,16 @@ function patchCommentCaches(
   }
 }
 
+function isOwnEcho(action: SyncAction, tabClientId: string): boolean {
+  return action.originClientId === tabClientId;
+}
+
 export interface DeltaBridgeProps {
-  readonly userId: string;
   readonly organizationId: string;
   readonly teamIds: readonly string[];
 }
 
-export function DeltaBridge({ userId, organizationId, teamIds }: DeltaBridgeProps) {
+export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const client = useQueryClient();
 
   const subscribed = useMemo(
@@ -63,8 +66,9 @@ export function DeltaBridge({ userId, organizationId, teamIds }: DeltaBridgeProp
 
   const handler = useCallback(
     (actions: SyncAction[]) => {
+      const tabClientId = clientId();
       for (const action of actions) {
-        if (isSelfEcho(action, userId)) continue;
+        if (isOwnEcho(action, tabClientId)) continue;
         if (action.model === 'issue') patchIssueCaches(client, action);
         else if (action.model === 'comment') patchCommentCaches(client, action, applyCommentDelta);
         else if (action.model === 'reaction') {
@@ -72,7 +76,7 @@ export function DeltaBridge({ userId, organizationId, teamIds }: DeltaBridgeProp
         }
       }
     },
-    [client, userId],
+    [client],
   );
   useDeltaHandler(handler);
 

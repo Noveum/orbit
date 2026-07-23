@@ -24,12 +24,6 @@ const commentDeltaSchema = z.object({
 
 const reactionDeltaSchema = reactionSchema.extend({ issueId: z.string().nullable().optional() });
 
-export function isSelfEcho(action: SyncAction, currentUserId: string | null): boolean {
-  return (
-    currentUserId !== null && action.actor.type === 'user' && action.actor.id === currentUserId
-  );
-}
-
 function isStale(incomingSyncId: number | undefined, existingSyncId: number): boolean {
   return incomingSyncId !== undefined && incomingSyncId <= existingSyncId;
 }

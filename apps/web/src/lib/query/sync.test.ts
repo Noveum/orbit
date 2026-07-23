@@ -6,7 +6,6 @@ import {
   applyIssueDelta,
   applyIssueDetailDelta,
   applyReactionDelta,
-  isSelfEcho,
   summarizeReactions,
 } from './sync.ts';
 
@@ -60,15 +59,41 @@ function action(overrides: Partial<SyncAction> = {}): SyncAction {
   };
 }
 
-describe('isSelfEcho', () => {
-  it('suppresses actions made by the current user', () => {
-    expect(isSelfEcho(action({ actor: { type: 'user', id: 'me' } }), 'me')).toBe(true);
+describe('sync id staleness guard', () => {
+  it('never lets a late delta revert newer local state', () => {
+    const local = [issue({ syncId: 30, title: 'Newer local title', stateId: 'state_done' })];
+    const late = action({
+      syncId: 21,
+      data: { id: 'issue_1', title: 'Older remote title', stateId: 'state_todo', syncId: 21 },
+    });
+    expect(applyIssueDelta(local, late, TEAM)).toBe(local);
+
+    const detail = { issue: issue({ syncId: 30, title: 'Newer local title' }) };
+    expect(applyIssueDetailDelta(detail, late)?.issue.title).toBe('Newer local title');
+
+    const thread = [comment({ syncId: 12, body: 'Newer local body' })];
+    const lateComment = action({
+      model: 'comment',
+      data: { ...comment({ body: 'Older remote body', syncId: 11 }).comment },
+    });
+    expect(applyCommentDelta(thread, lateComment)).toBe(thread);
   });
 
-  it('keeps actions from other users and from integrations', () => {
-    expect(isSelfEcho(action({ actor: { type: 'user', id: 'other' } }), 'me')).toBe(false);
-    expect(isSelfEcho(action({ actor: { type: 'agent', id: 'me' } }), 'me')).toBe(false);
-    expect(isSelfEcho(action(), null)).toBe(false);
+  it('stays idempotent when the same delta arrives twice', () => {
+    const insert = action({
+      action: 'insert',
+      data: issue({ id: 'issue_2', identifier: 'ENG-4', syncId: 12 }),
+    });
+    const once = applyIssueDelta([issue()], insert, TEAM);
+    expect(applyIssueDelta(once, insert, TEAM)).toHaveLength(2);
+
+    const reaction = action({
+      model: 'reaction',
+      action: 'insert',
+      data: { id: 'reaction_1', commentId: 'comment_1', userId: 'user_2', emoji: '🎉' },
+    });
+    const first = applyReactionDelta([comment()], reaction);
+    expect(applyReactionDelta(first, reaction)[0]?.reactions).toHaveLength(1);
   });
 });
 

@@ -48,6 +48,32 @@ export const paginationSchema = z.object({
   cursor: z.string().max(256).optional(),
 });
 
+export const handleSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(2)
+  .max(39)
+  .regex(SLUG_PATTERN, 'Use lowercase letters, numbers and dashes.');
+
+export const profileUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(64),
+    handle: handleSchema,
+    image: z.string().url().max(2048).nullable(),
+    timezone: z.string().trim().min(1).max(64),
+  })
+  .partial();
+
+export const credentialRemoveSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('account'),
+    providerId: z.string().trim().min(1).max(64),
+    accountId: z.string().trim().min(1).max(255).optional(),
+  }),
+  z.object({ kind: z.literal('passkey'), id: idSchema }),
+]);
+
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(64),
   slug: slugSchema,
@@ -351,6 +377,7 @@ export const notificationReadSchema = z.object({
   read: z.boolean(),
 });
 
+export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
 export type InviteCreateInput = z.infer<typeof inviteCreateSchema>;
 export type TeamCreateInput = z.infer<typeof teamCreateSchema>;
