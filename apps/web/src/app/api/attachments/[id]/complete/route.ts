@@ -1,5 +1,5 @@
 import { findAttachmentForOrganization, markAttachmentReady } from '@orbit/core';
-import { createStorageDriver } from '@orbit/services/storage';
+import { storageDriver } from '@orbit/services/storage';
 import { notFound, validationFailed } from '@orbit/shared/errors';
 import { handle, publish } from '@/lib/api/handler.ts';
 
@@ -12,7 +12,7 @@ export async function POST(_request: Request, context: RouteContext): Promise<Re
   return await handle(async (principal) => {
     const record = await findAttachmentForOrganization(principal, id);
 
-    const stored = await createStorageDriver().stat(record.storageKey);
+    const stored = await storageDriver().stat(record.storageKey);
     if (stored === null) throw notFound('That upload never reached storage.');
     if (stored.size > record.size) {
       throw validationFailed('That upload is larger than the registered size.');

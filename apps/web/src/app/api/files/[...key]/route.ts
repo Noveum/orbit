@@ -1,6 +1,6 @@
 import { isPublishedDoc } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
-import { createStorageDriver } from '@orbit/services/storage';
+import { storageDriver } from '@orbit/services/storage';
 import { notFound } from '@orbit/shared/errors';
 import { dispositionFor } from '@/lib/api/content-disposition.ts';
 import { apiContext, errorResponse } from '@/lib/api/handler.ts';
@@ -35,7 +35,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
       .limit(1);
     const record = await assertReadable(found);
 
-    const url = await createStorageDriver().getUrl(storageKey, DOWNLOAD_URL_TTL_SECONDS, {
+    const url = await storageDriver().getUrl(storageKey, DOWNLOAD_URL_TTL_SECONDS, {
       contentType: record.contentType,
       disposition: dispositionFor(record.contentType, record.fileName),
     });

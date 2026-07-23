@@ -4,7 +4,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
-JOB_TIMEOUT="${JOB_TIMEOUT:-600}"
+JOB_TIMEOUT="${JOB_TIMEOUT:-660}"
 
 awscli() {
   env -u HTTPS_PROXY -u https_proxy -u ALL_PROXY -u all_proxy aws "$@"
@@ -19,7 +19,19 @@ kube() {
 }
 
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(awscli sts get-caller-identity --query Account --output text)}"
+if [ -z "$AWS_ACCOUNT_ID" ] || [ "$AWS_ACCOUNT_ID" = "None" ]; then
+  echo "Could not resolve the AWS account. Are your credentials loaded?" >&2
+  exit 1
+fi
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+ACTIVE=$(kube get jobs -n orbit -l app.kubernetes.io/name=orbit-migrate \
+  -o jsonpath='{range .items[?(@.status.active)]}{.metadata.name}{" "}{end}' 2>/dev/null || true)
+if [ -n "$(printf '%s' "$ACTIVE" | tr -d '[:space:]')" ]; then
+  echo "A migration job is already running: $ACTIVE" >&2
+  echo "Wait for it to finish rather than running two against one schema." >&2
+  exit 1
+fi
 
 if [ -z "${IMAGE_TAG:-}" ]; then
   RUNNING=$(kube get deployment orbit-web -n orbit \

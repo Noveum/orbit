@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/part-of: orbit
 spec:
   backoffLimit: 1
+  activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 86400
   template:
     metadata:

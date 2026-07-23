@@ -21,6 +21,13 @@ export {
   validateUpload,
 } from './validate.ts';
 
+let cachedDriver: StorageDriver | null = null;
+
+export function storageDriver(): StorageDriver {
+  if (cachedDriver === null) cachedDriver = createStorageDriver();
+  return cachedDriver;
+}
+
 export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): StorageDriver {
   const accessKeyId = readEnv(env, 'S3_ACCESS_KEY_ID');
   const secretAccessKey = readEnv(env, 'S3_SECRET_ACCESS_KEY');
