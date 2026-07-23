@@ -4,7 +4,7 @@ import type { FilterPredicate, IssueOrdering } from '@orbit/shared/filters';
 import { encodeFilterPredicates } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { queryKeys } from './keys.ts';
@@ -63,7 +63,7 @@ export function useIssues(
       const page = await apiFetch(`/api/issues?${search}`, issueListSchema, { signal });
       return page.issues;
     },
-    ...(seed === undefined ? {} : { placeholderData: seed }),
+    placeholderData: seed ?? keepPreviousData,
   });
 }
 
