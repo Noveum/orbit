@@ -110,18 +110,25 @@ function bodyFor(contentType: string): Blob {
   return new Blob(['plain notes\n']);
 }
 
-const driver: StorageDriver = createStorageDriver();
+const storageConfigured = Boolean(process.env['S3_BUCKET']);
 const written: string[] = [];
+let cachedDriver: StorageDriver | undefined;
+
+function storage(): StorageDriver {
+  cachedDriver ??= createStorageDriver();
+  return cachedDriver;
+}
 
 afterAll(async () => {
-  await Promise.all(written.map((key) => driver.delete(key)));
+  if (written.length === 0) return;
+  await Promise.all(written.map((key) => storage().delete(key)));
 });
 
-describe('presign, PUT and GET against object storage', () => {
+describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage', () => {
   for (const upload of UPLOADS) {
     it(`round trips ${upload.contentType} with its content type intact`, async () => {
       const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-${upload.name}`;
-      const target = await driver.createUploadTarget(key, upload.contentType);
+      const target = await storage().createUploadTarget(key, upload.contentType);
       written.push(key);
 
       expect(Object.keys(target.headers)).toEqual(['content-type']);
@@ -143,10 +150,10 @@ describe('presign, PUT and GET against object storage', () => {
       });
       expect(put.status).toBe(200);
 
-      const stored = await driver.stat(key);
+      const stored = await storage().stat(key);
       expect(stored?.contentType).toBe(upload.contentType);
 
-      const downloadUrl = await driver.getUrl(key, 60, {
+      const downloadUrl = await storage().getUrl(key, 60, {
         contentType: upload.contentType,
         disposition: `inline; filename="${upload.name}"`,
       });
@@ -160,7 +167,7 @@ describe('presign, PUT and GET against object storage', () => {
 
   it('stores the content type the client sent, so the client must send the target headers', async () => {
     const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-mismatch.pdf`;
-    const target = await driver.createUploadTarget(key, 'application/pdf');
+    const target = await storage().createUploadTarget(key, 'application/pdf');
     written.push(key);
 
     await fetch(target.url, {
@@ -169,6 +176,6 @@ describe('presign, PUT and GET against object storage', () => {
       body: bodyFor('application/pdf'),
     });
 
-    expect((await driver.stat(key))?.contentType).toBe('text/html');
+    expect((await storage().stat(key))?.contentType).toBe('text/html');
   });
 });
