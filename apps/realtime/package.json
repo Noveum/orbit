@@ -9,7 +9,7 @@
     "build": "bun build src/index.ts --target=bun --outdir=dist --minify",
     "start": "bun dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
     "@orbit/core": "workspace:*",

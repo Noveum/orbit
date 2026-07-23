@@ -13,7 +13,7 @@ async function ensureLinkedProvider(email: string, providerId: string): Promise<
     .from(schema.user)
     .where(eq(schema.user.email, email))
     .limit(1);
-  if (owner === undefined) throw new Error(`Seed user ${email} is missing, run bun run db:seed.`);
+  if (owner === undefined) throw new Error(`Seed user ${email} is missing, run bun run db:seed`);
 
   const existing = await db
     .select({ id: schema.account.id })

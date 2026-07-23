@@ -5,11 +5,13 @@ import { newId } from './internal.ts';
 import { resolvePrincipal } from './org/member-service.ts';
 import { createOrganization } from './org/organization-service.ts';
 
+const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
+
 export async function resetDatabase(): Promise<void> {
   const [current] = await db.execute<{ name: string }>(sql`select current_database() as name`);
-  if (current === undefined || !String(current['name']).includes('test')) {
+  if (current === undefined || !TEST_DATABASE_NAME.test(String(current['name']))) {
     throw new Error(
-      `resetDatabase refuses to truncate "${current?.['name'] ?? 'unknown'}". Point DATABASE_URL at a database whose name contains "test".`,
+      `resetDatabase refuses to truncate "${current?.['name'] ?? 'unknown'}". Point DATABASE_URL at a database matching ${String(TEST_DATABASE_NAME)}.`,
     );
   }
   const rows = await db.execute<{ tablename: string }>(

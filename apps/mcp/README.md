@@ -25,7 +25,7 @@ bun run --filter "@orbit/mcp" dev
 
 ## Mint an API key
 
-```
+```sh
 bun run --filter "@orbit/mcp" create-key --email pulkit@noveum.ai --name "Local agent"
 ```
 

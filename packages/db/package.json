@@ -16,7 +16,7 @@
     "seed": "bun --env-file=../../.env src/seed/index.ts",
     "import:plane": "bun --env-file=../../.env src/import/index.ts",
     "import:verify": "bun --env-file=../../.env src/import/verify.ts",
-    "test": "bun test"
+    "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
     "@orbit/shared": "workspace:*",

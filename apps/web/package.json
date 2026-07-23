@@ -8,7 +8,7 @@
     "build": "bun --env-file=../../.env --bun next build",
     "start": "bun server.js",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src",
+    "test": "bun --env-file=../../.env test src",
     "test:e2e": "bun --env-file=../../.env playwright test"
   },
   "dependencies": {

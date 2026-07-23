@@ -10,7 +10,7 @@
     "start": "bun dist/index.js",
     "create-key": "bun --env-file=../../.env src/create-key.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

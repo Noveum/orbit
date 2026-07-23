@@ -9,11 +9,13 @@ import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { createMcpHttpServer, MCP_PATH, type McpHttpServer } from './server.ts';
 
+const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
+
 export async function resetDatabase(): Promise<void> {
   const [current] = await db.execute<{ name: string }>(sql`select current_database() as name`);
-  if (current === undefined || !String(current['name']).includes('test')) {
+  if (current === undefined || !TEST_DATABASE_NAME.test(String(current['name']))) {
     throw new Error(
-      `resetDatabase refuses to truncate "${current?.['name'] ?? 'unknown'}". Point DATABASE_URL at a database whose name contains "test".`,
+      `resetDatabase refuses to truncate "${current?.['name'] ?? 'unknown'}". Point DATABASE_URL at a database matching ${String(TEST_DATABASE_NAME)}.`,
     );
   }
   const rows = await db.execute<{ tablename: string }>(
@@ -137,5 +139,5 @@ export function errorPayload(result: CallToolResult): { code: string; message: s
 }
 
 export function startServer(): Promise<McpHttpServer> {
-  return createMcpHttpServer({ port: 0, host: '127.0.0.1' });
+  return createMcpHttpServer({ port: 0, host: '127.0.0.1', shutdownGraceMs: 25 });
 }

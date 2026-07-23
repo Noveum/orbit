@@ -63,10 +63,15 @@ const HANDSHAKE_SETTLE_MS = 25;
 async function connectSilently(port: number, token: string): Promise<Socket<undefined>> {
   let markUpgraded: (() => void) | undefined;
   let failUpgrade: ((error: Error) => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let received = '';
   const upgraded = new Promise<void>((resolve, reject) => {
     markUpgraded = resolve;
     failUpgrade = reject;
-    setTimeout(() => reject(new Error('timed out upgrading raw socket')), HANDSHAKE_TIMEOUT_MS);
+    timer = setTimeout(
+      () => reject(new Error('timed out upgrading raw socket')),
+      HANDSHAKE_TIMEOUT_MS,
+    );
   });
 
   const socket = await connect({
@@ -74,7 +79,18 @@ async function connectSilently(port: number, token: string): Promise<Socket<unde
     port,
     socket: {
       data(_socket, chunk: Buffer) {
-        if (chunk.toString('latin1').startsWith('HTTP/1.1 101')) markUpgraded?.();
+        received += chunk.toString('latin1');
+        const end = received.indexOf('\r\n\r\n');
+        if (end === -1) return;
+        const status = received.slice(0, received.indexOf('\r\n'));
+        if (status.startsWith('HTTP/1.1 101')) {
+          markUpgraded?.();
+          return;
+        }
+        failUpgrade?.(new Error(`raw socket did not upgrade: ${status}`));
+      },
+      close() {
+        failUpgrade?.(new Error('raw socket closed before upgrading'));
       },
       error(_socket, error: Error) {
         failUpgrade?.(error);
@@ -95,7 +111,11 @@ async function connectSilently(port: number, token: string): Promise<Socket<unde
     ].join('\r\n'),
   );
 
-  await upgraded;
+  try {
+    await upgraded;
+  } finally {
+    clearTimeout(timer);
+  }
   await delay(HANDSHAKE_SETTLE_MS);
   return socket;
 }

@@ -99,6 +99,8 @@ export interface McpHttpServer {
   close(): Promise<void>;
 }
 
+const SHUTDOWN_GRACE_MS = 5_000;
+
 function isAlreadyStopped(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
   return (error as { code?: unknown }).code === 'ERR_SERVER_NOT_RUNNING';
@@ -107,6 +109,7 @@ function isAlreadyStopped(error: unknown): boolean {
 export interface McpHttpServerOptions {
   readonly port?: number;
   readonly host?: string;
+  readonly shutdownGraceMs?: number;
 }
 
 export async function createMcpHttpServer(
@@ -139,13 +142,25 @@ export async function createMcpHttpServer(
     port: address.port,
     close: () =>
       new Promise<void>((resolve, reject) => {
-        http.closeAllConnections();
-        http.close((error) => {
+        let settled = false;
+        const finish = (error?: Error): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(force);
           if (error === undefined || isAlreadyStopped(error)) {
             resolve();
             return;
           }
           reject(error);
+        };
+        const force = setTimeout(() => {
+          http.closeAllConnections();
+          finish();
+        }, options.shutdownGraceMs ?? SHUTDOWN_GRACE_MS);
+        force.unref();
+        http.closeIdleConnections();
+        http.close((error) => {
+          finish(error ?? undefined);
         });
       }),
   };

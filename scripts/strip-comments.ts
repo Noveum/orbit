@@ -694,9 +694,17 @@ function trackedFiles(): string[] {
     .filter((f) => !/(^|\/)package-lock\.json$/.test(f));
 }
 
+function selectedFiles(): string[] {
+  const requested = args.filter((a) => !a.startsWith('-'));
+  const tracked = trackedFiles();
+  if (requested.length === 0) return tracked;
+  const wanted = new Set(requested.map((f) => f.replace(/^\.\//, '')));
+  return tracked.filter((f) => wanted.has(f));
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: straight line driver over every tracked file, splitting it would only move branches
 async function main(): Promise<void> {
-  const files = trackedFiles();
+  const files = selectedFiles();
 
   let changedFiles = 0;
   let totalRemoved = 0;
