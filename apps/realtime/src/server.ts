@@ -67,16 +67,19 @@ const CLOSE_CODES: Record<ConnectionRejection, number> = {
   organization_forbidden: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
 };
 
-function credentialsFrom(request: IncomingMessage): {
-  token: string;
-  organizationId: string | null;
-} {
+interface ConnectionCredentials {
+  readonly token: string;
+  readonly organizationId: string | null;
+}
+
+function credentialsFrom(request: IncomingMessage): ConnectionCredentials | null {
   const url = new URL(request.url ?? '/', 'http://realtime.local');
-  const stated = connectionOrganizationIdSchema.safeParse(url.searchParams.get('organizationId'));
-  return {
-    token: url.searchParams.get('token') ?? '',
-    organizationId: stated.success ? stated.data : null,
-  };
+  const token = url.searchParams.get('token') ?? '';
+  const stated = url.searchParams.get('organizationId');
+  if (stated === null) return { token, organizationId: null };
+  const parsed = connectionOrganizationIdSchema.safeParse(stated);
+  if (!parsed.success) return null;
+  return { token, organizationId: parsed.data };
 }
 
 function parseJson(payload: string): unknown {
@@ -264,6 +267,11 @@ export async function createRealtimeServer(
   async function accept(socket: WebSocket, request: IncomingMessage): Promise<void> {
     socket.pause();
     const credentials = credentialsFrom(request);
+    if (credentials === null) {
+      socket.resume();
+      socket.close(CLOSE_CODES.organization_forbidden, 'organization_forbidden');
+      return;
+    }
     const authenticated = await authenticateConnection(
       credentials.token,
       credentials.organizationId,

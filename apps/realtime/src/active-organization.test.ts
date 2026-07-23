@@ -111,6 +111,16 @@ describe('client stated organization', () => {
     expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
   });
 
+  it('rejects an empty stated organization instead of choosing one', async () => {
+    const client = await connectClient(server.port, ambiguous.token, '');
+    expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
+  });
+
+  it('rejects a stated organization longer than an identifier can be', async () => {
+    const client = await connectClient(server.port, ambiguous.token, 'x'.repeat(200));
+    expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
+  });
+
   it('falls back to the oldest membership when the client states nothing', async () => {
     const client = await connectClient(server.port, ambiguous.token);
     const ready = await client.waitFor('ready');
