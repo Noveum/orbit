@@ -26,3 +26,4 @@ extras/
 .claude/worktrees/
 
 next-env.d.ts
+.artifacts/

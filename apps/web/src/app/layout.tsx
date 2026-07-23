@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { serverEnv } from '@/lib/env.ts';
 import { Providers } from './providers.tsx';
 import './globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(serverEnv().NEXT_PUBLIC_APP_URL),
   title: {
     default: 'Orbit',
     template: '%s · Orbit',
