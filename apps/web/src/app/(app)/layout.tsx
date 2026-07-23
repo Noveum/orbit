@@ -1,10 +1,12 @@
 import { listOrganizationsForUser } from '@orbit/core';
+import { HydrationBoundary } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { WorkspaceShell } from '@/components/layout/workspace-shell.tsx';
 import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx';
 import { resolveMembership } from '@/lib/auth/principal.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam, ShellWorkspace } from '@/lib/navigation.ts';
+import { dehydratedWorkspace } from '@/lib/query/prefetch.ts';
 import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
@@ -61,14 +63,16 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   if (membership === null) return shell;
 
   return (
-    <WorkspaceRealtime
-      url={realtimeUrl()}
-      token={session.session.token}
-      userId={membership.principal.userId}
-      organizationId={membership.principal.organizationId}
-      teamIds={teams.map((team) => team.id)}
-    >
-      <IssueWorkspaceProvider>{shell}</IssueWorkspaceProvider>
-    </WorkspaceRealtime>
+    <HydrationBoundary state={await dehydratedWorkspace(membership.principal)}>
+      <WorkspaceRealtime
+        url={realtimeUrl()}
+        token={session.session.token}
+        userId={membership.principal.userId}
+        organizationId={membership.principal.organizationId}
+        teamIds={teams.map((team) => team.id)}
+      >
+        <IssueWorkspaceProvider>{shell}</IssueWorkspaceProvider>
+      </WorkspaceRealtime>
+    </HydrationBoundary>
   );
 }

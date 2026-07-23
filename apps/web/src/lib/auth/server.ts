@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
+import { assertEmailDomainAllowed } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
+import { DomainError } from '@orbit/shared/errors';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { createAuthMiddleware } from 'better-auth/api';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
 import { magicLink, organization } from 'better-auth/plugins';
 import { z } from 'zod';
@@ -41,9 +43,54 @@ function socialProviders() {
 
 export const enabledSocialProviders: readonly string[] = Object.keys(socialProviders());
 
+export const passwordAuthEnabled: boolean = serverEnv().ORBIT_PASSWORD_AUTH;
+
+const SIGN_IN_ATTEMPTS_PER_MINUTE = 5;
+const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
+
 function handleFor(email: string, name: string): string {
   const base = slugify(name) || slugify(email.split('@')[0] ?? '') || 'member';
   return `${base}-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+}
+
+function emailAndPassword() {
+  if (!passwordAuthEnabled) return { enabled: false } as const;
+  return {
+    enabled: true,
+    minPasswordLength: 12,
+    password: {
+      hash: (password: string) => Bun.password.hash(password, { algorithm: 'argon2id' }),
+      verify: ({ hash, password }: { hash: string; password: string }) =>
+        Bun.password.verify(password, hash),
+    },
+  } as const;
+}
+
+function rateLimit() {
+  if (!passwordAuthEnabled) return {};
+  return {
+    rateLimit: {
+      enabled: true,
+      customRules: {
+        '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
+        '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
+      },
+    },
+  };
+}
+
+function assertSignUpAllowed(email: string): void {
+  try {
+    assertEmailDomainAllowed(email);
+  } catch (error: unknown) {
+    if (error instanceof DomainError && error.code === 'forbidden') {
+      throw new APIError('FORBIDDEN', {
+        code: 'EMAIL_DOMAIN_NOT_ALLOWED',
+        message: error.message,
+      });
+    }
+    throw error;
+  }
 }
 
 export const auth = betterAuth({
@@ -51,7 +98,8 @@ export const auth = betterAuth({
   baseURL: serverEnv().BETTER_AUTH_URL,
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
-  emailAndPassword: { enabled: false },
+  emailAndPassword: emailAndPassword(),
+  ...rateLimit(),
   socialProviders: socialProviders(),
   account: { accountLinking: { enabled: true, allowUnlinkingAll: true } },
   session: {
@@ -72,10 +120,12 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: (user) =>
-          Promise.resolve({
+        before: (user) => {
+          assertSignUpAllowed(user.email);
+          return Promise.resolve({
             data: { ...user, handle: handleFor(user.email, user.name) },
-          }),
+          });
+        },
       },
     },
   },

@@ -3,10 +3,11 @@ import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
+import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -58,9 +59,8 @@ export async function createCycle(
 ): Promise<{ cycle: CycleRow; actions: SyncAction[] }> {
   assertCan(principal, 'cycle:manage');
   const parsed = cycleCreateSchema.parse(input);
-  assertInTeam(principal, parsed.teamId);
-
   return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parsed.teamId, tx);
     await assertCycleWindow(tx, {
       teamId: parsed.teamId,
       startsAt: parsed.startsAt,
@@ -69,13 +69,13 @@ export async function createCycle(
     });
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    const number = await nextCycleNumber(tx, parsed.teamId);
+    const number = await nextCycleNumber(tx, team.id);
     const [created] = await tx
       .insert(schema.cycle)
       .values({
         id: newId(),
         organizationId: principal.organizationId,
-        teamId: parsed.teamId,
+        teamId: team.id,
         number,
         name: parsed.name ?? `Cycle ${number}`,
         startsAt: parsed.startsAt,
@@ -204,6 +204,7 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
 
 export async function listCycles(principal: Principal, teamId: string): Promise<CycleRow[]> {
   assertCan(principal, 'issue:read');
+  await requireTeam(principal, teamId);
   return await db
     .select()
     .from(schema.cycle)
@@ -225,7 +226,9 @@ export async function getCycle(principal: Principal, cycleId: string): Promise<C
       and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, principal.organizationId)),
     )
     .limit(1);
-  return requireRow(row, 'That cycle does not exist.');
+  const cycle = requireRow(row, 'That cycle does not exist.');
+  assertInTeam(principal, teamScope(cycle));
+  return cycle;
 }
 
 export async function activeCycle(
@@ -234,6 +237,7 @@ export async function activeCycle(
   now: Date = new Date(),
 ): Promise<CycleRow | undefined> {
   assertCan(principal, 'issue:read');
+  await requireTeam(principal, teamId);
   const [row] = await db
     .select()
     .from(schema.cycle)
@@ -257,6 +261,7 @@ export async function upcomingCycles(
   options: { now?: Date; limit?: number } = {},
 ): Promise<CycleRow[]> {
   assertCan(principal, 'issue:read');
+  await requireTeam(principal, teamId);
   return await db
     .select()
     .from(schema.cycle)
@@ -351,7 +356,7 @@ export async function completeCycle(
       )
       .limit(1);
     const cycle = requireRow(found, 'That cycle does not exist.');
-    assertInTeam(principal, cycle.teamId);
+    assertInTeam(principal, teamScope(cycle));
     if (cycle.completedAt !== null) throw conflict('That cycle is already complete.');
 
     const syncId = await nextSyncId(tx);
@@ -449,7 +454,7 @@ export async function completeCycle(
 }
 
 export async function cycleIssueCount(principal: Principal, cycleId: string): Promise<number> {
-  assertCan(principal, 'issue:read');
+  await getCycle(principal, cycleId);
   const [row] = await db
     .select({ total: count() })
     .from(schema.issue)

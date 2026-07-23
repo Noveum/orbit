@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
+import { revealOnHover } from '@/lib/interaction.ts';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { summarizeReactions } from '@/lib/query/sync.ts';
 import {
@@ -135,7 +136,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
   const summary = summarizeReactions(entry.reactions, currentUserId);
 
   return (
-    <article data-testid={`comment-${entry.comment.id}`} className="flex gap-2.5">
+    <article data-testid={`comment-${entry.comment.id}`} className="group flex gap-2.5">
       <Avatar name={author?.name ?? 'Unknown'} src={author?.image ?? null} size="md" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center gap-2 text-2xs">
@@ -172,7 +173,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
               onClick={() => react.mutate({ commentId: entry.comment.id, emoji: reaction.emoji })}
               className={cn(
                 'flex h-6 items-center gap-1 rounded-full border px-2 text-2xs',
-                'animate-pop-in transition-[transform,background-color,border-color] duration-[var(--duration-fast)] hover:scale-105',
+                'animate-pop-in transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] hover:border-border-strong',
                 reaction.mine
                   ? 'border-accent bg-accent-soft text-accent'
                   : 'border-border bg-surface text-muted',
@@ -189,7 +190,10 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
                 type="button"
                 aria-label="Add reaction"
                 data-testid={`add-reaction-${entry.comment.id}`}
-                className="flex size-6 items-center justify-center rounded-full border border-border border-dashed text-faint transition-colors duration-[var(--duration-fast)] hover:border-border-strong hover:text-text"
+                className={cn(
+                  'flex size-6 items-center justify-center rounded-full border border-border border-dashed text-faint hover:border-border-strong hover:text-text',
+                  revealOnHover,
+                )}
               >
                 <SmilePlus className="size-3" aria-hidden="true" />
               </button>
@@ -210,21 +214,23 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {isReply ? null : (
-            <Button size="sm" variant="ghost" onClick={() => setReplying((open) => !open)}>
-              Reply
-            </Button>
-          )}
-          {mine ? (
-            <>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-                Edit
+          <span className={cn('flex items-center gap-1', revealOnHover)}>
+            {isReply ? null : (
+              <Button size="sm" variant="ghost" onClick={() => setReplying((open) => !open)}>
+                Reply
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
-                Delete
-              </Button>
-            </>
-          ) : null}
+            )}
+            {mine ? (
+              <>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
+                  Delete
+                </Button>
+              </>
+            ) : null}
+          </span>
         </div>
 
         {replying ? (

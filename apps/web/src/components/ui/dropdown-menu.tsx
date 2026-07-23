@@ -10,7 +10,7 @@ export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 
 const itemClassName =
-  'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-dense text-muted outline-none transition-colors duration-[var(--duration-fast)] data-[disabled]:pointer-events-none data-[highlighted]:bg-surface-2 data-[highlighted]:text-text data-[disabled]:opacity-50';
+  'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] data-[highlighted]:bg-surface-2 data-[highlighted]:text-text data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50';
 
 export function DropdownMenuContent({
   className,
@@ -25,6 +25,7 @@ export function DropdownMenuContent({
         sideOffset={sideOffset}
         className={cn(
           'z-50 min-w-52 rounded-lg border border-border bg-surface p-1 shadow-pop',
+          'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
           'data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in',
           className,
         )}

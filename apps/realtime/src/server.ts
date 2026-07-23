@@ -10,12 +10,19 @@ import {
   presenceMessageSchema,
   REDIS_DELTA_CHANNEL,
   REDIS_PRESENCE_CHANNEL,
+  type SyncAction,
   syncActionSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
 import { RedisClient, type Server, type ServerWebSocket, type WebSocketHandler } from 'bun';
 import { z } from 'zod';
-import { authenticateConnection, authorizeScope, type ConnectionRejection } from './auth.ts';
+import {
+  authenticateConnection,
+  authorizeScope,
+  type ConnectionRejection,
+  memberDeleteSchema,
+  membershipStillValid,
+} from './auth.ts';
 import { Connection, type SocketData } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
@@ -125,6 +132,42 @@ export async function createRealtimeServer(
     };
   }
 
+  async function revalidate(connection: Connection): Promise<void> {
+    let valid = false;
+    try {
+      valid = await membershipStillValid(connection.principal);
+    } catch (error: unknown) {
+      logger.error('membership revalidation failed, closing to fail closed', {
+        connectionId: connection.id,
+        ...errorFields(error),
+      });
+    }
+    if (valid) return;
+    logger.info('closing connection for a removed member', {
+      connectionId: connection.id,
+      userId: connection.principal.userId,
+      organizationId: connection.principal.organizationId,
+    });
+    connections.delete(connection.id);
+    connection.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE, 'membership_revoked');
+  }
+
+  function revalidateAffected(action: SyncAction): void {
+    if (action.model !== 'member' || action.action !== 'delete') return;
+    const removed = memberDeleteSchema.safeParse(action.data);
+    if (!removed.success) return;
+    for (const connection of connections.values()) {
+      if (connection.organizationId !== action.organizationId) continue;
+      if (connection.principal.userId !== removed.data.userId) continue;
+      revalidate(connection).catch((error: unknown) => {
+        logger.error('membership revalidation failed', {
+          connectionId: connection.id,
+          ...errorFields(error),
+        });
+      });
+    }
+  }
+
   function deliverDelta(payload: string): void {
     const envelope = deltaEnvelopeSchema.safeParse(parseJson(payload));
     if (!envelope.success) {
@@ -141,6 +184,7 @@ export async function createRealtimeServer(
       for (const connection of connections.values()) {
         if (connection.matches(action.scopes, action.organizationId)) connection.queueDelta(action);
       }
+      revalidateAffected(action);
     }
   }
 
