@@ -1,4 +1,4 @@
-import { and, asc, db, eq, gt, inArray, schema } from '@orbit/db';
+import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -146,6 +146,36 @@ export async function createInvites(
     }
     return { invites, actions };
   });
+}
+
+export interface PendingInviteForUser {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly organizationName: string;
+  readonly organizationSlug: string;
+  readonly role: string;
+}
+
+export async function pendingInvitesForEmail(email: string): Promise<PendingInviteForUser[]> {
+  const rows = await db
+    .select({
+      id: schema.invitation.id,
+      organizationId: schema.organization.id,
+      organizationName: schema.organization.name,
+      organizationSlug: schema.organization.slug,
+      role: schema.invitation.role,
+    })
+    .from(schema.invitation)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.invitation.organizationId))
+    .where(
+      and(
+        eq(sql`lower(${schema.invitation.email})`, email.toLowerCase()),
+        eq(schema.invitation.status, 'pending'),
+        gt(schema.invitation.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(asc(schema.invitation.createdAt));
+  return rows;
 }
 
 export async function listPendingInvites(principal: Principal): Promise<InvitationRow[]> {

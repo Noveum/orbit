@@ -1,10 +1,22 @@
 import { z } from 'zod';
-import { ORG_ROLES } from '../constants/index.ts';
-import { emailSchema, idSchema, slugSchema } from './common.ts';
+import { isReservedWorkspaceSlug, ORG_ROLES } from '../constants/index.ts';
+import { SLUG_PATTERN } from '../constants/pattern.ts';
+import { emailSchema, idSchema } from './common.ts';
+
+export const workspaceSlugSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(2)
+  .max(48)
+  .regex(SLUG_PATTERN, 'Use lowercase letters, numbers and dashes.')
+  .refine((value) => !isReservedWorkspaceSlug(value), {
+    message: 'That workspace address is reserved. Pick another.',
+  });
 
 export const organizationCreateSchema = z.object({
-  name: z.string().trim().min(2).max(64),
-  slug: slugSchema,
+  name: z.string().trim().min(2).max(80),
+  slug: workspaceSlugSchema,
 });
 
 export const organizationUpdateSchema = z

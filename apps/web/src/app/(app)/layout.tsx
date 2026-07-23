@@ -1,4 +1,5 @@
-import { listOrganizationsForUser } from '@orbit/core';
+import { getOnboardingStatus, listOrganizationsForUser } from '@orbit/core';
+import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { WorkspaceShell } from '@/components/layout/workspace-shell.tsx';
 import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx';
@@ -23,6 +24,9 @@ function realtimeUrl(): string {
 
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {
   const session = await requireSession();
+  const onboarding = await getOnboardingStatus(session.user.id);
+  if (!onboarding.completed) redirect('/onboarding');
+
   const membership = await resolveMembership(
     session.user.id,
     session.session.activeOrganizationId ?? null,
