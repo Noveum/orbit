@@ -2,7 +2,7 @@
 
 import { FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
@@ -15,6 +15,8 @@ import {
 } from '@/lib/query/use-docs.ts';
 import { DocSurface } from './doc-surface.tsx';
 import { DocTree } from './doc-tree.tsx';
+
+const SEARCH_DEBOUNCE_MS = 200;
 
 export interface DocsWorkspaceProps {
   readonly docId: string | null;
@@ -31,8 +33,14 @@ export function DocsWorkspace({
 }: DocsWorkspaceProps) {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
   const [unsavedDocId, setUnsavedDocId] = useState<string | null>(null);
-  const list = useDocs(search);
+  const list = useDocs(query);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
   const createCollection = useCreateCollection();
   const renameCollection = useRenameCollection();
   const deleteCollection = useDeleteCollection();
