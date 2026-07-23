@@ -102,7 +102,8 @@ phases:
         JOB=$(sed -e "s|__ECR_REGISTRY__|$ECR|g" -e "s|__IMAGE_TAG__|$IMAGE_TAG|g" \
           k8s/06-migrate-job.yaml | kubectl create -n "$EKS_NAMESPACE" -f - -o name)
         echo "created $JOB for schema migration"
-        DEADLINE=$(( $(date +%s) + $(printf '%s' "$ROLLOUT_TIMEOUT" | tr -dc '0-9') ))
+        TIMEOUT_SECONDS=$(printf '%s' "$ROLLOUT_TIMEOUT" | awk '{ s=0; n=""; for (i=1;i<=length($0);i++) { c=substr($0,i,1); if (c ~ /[0-9]/) { n=n c } else { if (c=="h") s+=n*3600; else if (c=="m") s+=n*60; else if (c=="s") s+=n; n="" } } if (n!="") s+=n; print s }')
+        DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
         while true; do
           READY=$(kubectl get "$JOB" -n "$EKS_NAMESPACE" \
             -o 'jsonpath={.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)
