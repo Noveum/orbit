@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
 import * as schema from '../schema/index.ts';
+import { type AssetStore, createAssetStore } from './assets.ts';
 import { type BuildContext, buildDocs, buildProject } from './build-project.ts';
 import { displayNameFor, handleFor, orgRoleFor } from './plane-mapping.ts';
 import { type PlaneMember, readPlaneExport } from './plane-source.ts';
@@ -18,11 +19,15 @@ const { values } = parseArgs({
   options: {
     input: { type: 'string', default: 'extras/import/plane' },
     keep: { type: 'boolean', default: false },
+    storage: { type: 'string', default: process.env['STORAGE_LOCAL_DIR'] ?? './uploads' },
   },
 });
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '../../../..');
 const INPUT = isAbsolute(values.input) ? values.input : resolve(REPOSITORY_ROOT, values.input);
+const STORAGE = isAbsolute(values.storage)
+  ? values.storage
+  : resolve(REPOSITORY_ROOT, values.storage);
 
 const RESET_TABLES = [
   'reaction',
@@ -142,7 +147,7 @@ function buildUsers(
   return { byPlaneId, fallbackUserId };
 }
 
-async function writeRows(rows: ImportRows): Promise<void> {
+async function writeRows(rows: ImportRows, assets: AssetStore): Promise<void> {
   await insertAll(schema.user, rows.users);
   await insertAll(schema.member, rows.members);
   await insertAll(schema.team, rows.teams);
@@ -158,6 +163,7 @@ async function writeRows(rows: ImportRows): Promise<void> {
   await insertAll(schema.comment, rows.comments);
   await insertAll(schema.docCollection, rows.collections);
   await insertAll(schema.doc, rows.docs);
+  await insertAll(schema.attachment, assets.attachments);
 }
 
 async function main(): Promise<void> {
@@ -189,6 +195,8 @@ async function main(): Promise<void> {
   const rows = emptyRows();
   const { byPlaneId, fallbackUserId } = buildUsers(source.members, floor, rows);
 
+  const assets = createAssetStore(INPUT, STORAGE, ORGANIZATION_ID);
+
   const context: BuildContext = {
     organizationId: ORGANIZATION_ID,
     userIdByPlaneId: byPlaneId,
@@ -197,6 +205,7 @@ async function main(): Promise<void> {
     projectSlugs: new Set<string>(),
     now,
     floor,
+    assets,
   };
 
   let skippedDrafts = 0;
@@ -208,9 +217,10 @@ async function main(): Promise<void> {
 
   buildDocs(source.workspacePages, 'Workspace', null, floor, context, rows);
 
-  await writeRows(rows);
+  await writeRows(rows, assets);
 
   console.info(countRows(rows));
+  console.info(`${assets.attachments.length} images copied into ${STORAGE}`);
   if (skippedDrafts > 0) console.info(`Skipped ${skippedDrafts} draft work items`);
 }
 

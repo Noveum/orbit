@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared';
+import { type AssetStore, inlineAssets } from './assets.ts';
 import { htmlToMarkdown } from './markdown.ts';
 import {
   estimateFor,
@@ -22,6 +23,7 @@ export interface BuildContext {
   readonly projectSlugs: Set<string>;
   readonly now: Date;
   readonly floor: Date;
+  readonly assets: AssetStore;
 }
 
 export interface ProjectOutcome {
@@ -196,9 +198,16 @@ function invert(
   return byIssue;
 }
 
-function descriptionFor(entry: PlaneProjectExport, planeIssueId: string, html: string): string {
+function descriptionFor(
+  entry: PlaneProjectExport,
+  planeIssueId: string,
+  html: string,
+  orbitIssueId: string,
+  creatorId: string,
+  store: AssetStore,
+): string {
   const links = entry.links[planeIssueId] ?? [];
-  const body = [htmlToMarkdown(html)];
+  const body = [htmlToMarkdown(inlineAssets(html, 'issue', orbitIssueId, creatorId, store))];
   if (links.length > 0) {
     body.push('', '## Links', ...links.map((link) => `- [${link.title || link.url}](${link.url})`));
   }
@@ -232,6 +241,7 @@ function pushIssue(
   rows: ImportRows,
 ): string {
   const orbitIssueId = linked.issueIds.get(issue.id) ?? id();
+  const creatorId = userFor(context, issue.created_by) ?? context.fallbackUserId;
   const category = issueContext.categories.get(issue.state) ?? 'backlog';
   const createdAt = at(issue.created_at, issueContext.createdAt);
   const open = category === 'backlog' || category === 'unstarted' || category === 'triage';
@@ -250,10 +260,17 @@ function pushIssue(
     number: issue.sequence_id,
     identifier: `${issueContext.key}-${issue.sequence_id}`,
     title: issue.name.slice(0, 500),
-    description: descriptionFor(entry, issue.id, issue.description_html ?? ''),
+    description: descriptionFor(
+      entry,
+      issue.id,
+      issue.description_html ?? '',
+      orbitIssueId,
+      creatorId,
+      context.assets,
+    ),
     stateId: issueContext.stateIds.get(issue.state) ?? '',
     priority: priorityFor(issue),
-    creatorId: userFor(context, issue.created_by) ?? context.fallbackUserId,
+    creatorId,
     assigneeId: assigneeId ?? null,
     projectId: issueContext.projectId,
     milestoneId: linked.milestoneByIssue.get(issue.id) ?? null,
@@ -284,14 +301,18 @@ function pushComments(
   rows: ImportRows,
 ): void {
   for (const comment of entry.comments[planeIssueId] ?? []) {
-    const body = htmlToMarkdown(comment.comment_html);
+    const commentId = id();
+    const authorId = userFor(context, comment.actor) ?? context.fallbackUserId;
+    const body = htmlToMarkdown(
+      inlineAssets(comment.comment_html, 'comment', commentId, authorId, context.assets),
+    );
     if (body.length === 0) continue;
     const createdAt = at(comment.created_at, fallbackDate);
     rows.comments.push({
-      id: id(),
+      id: commentId,
       organizationId: context.organizationId,
       issueId: orbitIssueId,
-      authorId: userFor(context, comment.actor) ?? context.fallbackUserId,
+      authorId,
       parentId: null,
       body,
       editedAt: null,

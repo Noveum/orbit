@@ -64,7 +64,11 @@ export function IssueRow({
       </span>
       {shows('priority') ? <PriorityGlyph priority={issue.priority} /> : null}
       {shows('identifier') ? (
-        <span data-numeric className="w-16 shrink-0 text-2xs text-faint">
+        <span
+          data-numeric
+          className="w-24 shrink-0 truncate whitespace-nowrap text-2xs text-faint"
+          title={issue.identifier}
+        >
           {issue.identifier}
         </span>
       ) : null}

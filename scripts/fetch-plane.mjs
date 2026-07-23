@@ -128,6 +128,38 @@ function slugify(value) {
   );
 }
 
+const IMAGE_TAG = /<image-component[^>]*\bsrc="([0-9a-fA-F-]{36})"/g;
+const assetManifest = {};
+
+function assetIdsIn(html) {
+  if (typeof html !== 'string') return [];
+  return [...html.matchAll(IMAGE_TAG)].map((match) => match[1]);
+}
+
+async function downloadAsset(assetId) {
+  if (assetManifest[assetId] !== undefined) return;
+  const meta = await get(`/assets/${assetId}/`).catch(() => null);
+  const url = meta?.asset_url;
+  if (typeof url !== 'string' || url.length === 0) return;
+
+  const response = await fetch(url);
+  if (!response.ok) return;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const named = /filename[^=]*=(?:UTF-8'')?"?([^&";]+)/i.exec(decodeURIComponent(url));
+  const fileName = slugify(named?.[1] ?? 'image').concat(
+    (named?.[1] ?? '').includes('.') ? `.${(named?.[1] ?? '').split('.').pop()}` : '.png',
+  );
+  const directory = resolve(OUT, 'assets');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(resolve(directory, assetId), bytes);
+  assetManifest[assetId] = {
+    fileName,
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+    size: bytes.byteLength,
+  };
+  log(`  asset ${assetId} ${fileName} ${bytes.byteLength} bytes`);
+}
+
 const projects = await collect('/projects/?per_page=100');
 writeJson(OUT, 'projects', projects);
 log(`projects: ${projects.length}`);
@@ -141,6 +173,7 @@ writeJson(OUT, 'workspace-pages', workspacePages);
 log(`workspace pages: ${workspacePages.length}`);
 
 const summaryRows = [];
+const inaccessible = [];
 
 for (const project of projects) {
   const id = project.id;
@@ -152,7 +185,15 @@ for (const project of projects) {
   }
 
   log(`${project.identifier}: fetching metadata`);
-  const states = await collect(`/projects/${id}/states/?per_page=100`);
+  const states = await collect(`/projects/${id}/states/?per_page=100`).catch((error) => {
+    if (String(error).includes('403')) return null;
+    throw error;
+  });
+  if (states === null) {
+    log(`${project.identifier}: no permission to read this project, skipping`);
+    inaccessible.push(project.identifier);
+    continue;
+  }
   const labels = await collect(`/projects/${id}/labels/?per_page=100`);
   const cycles = await collect(`/projects/${id}/cycles/?per_page=100`);
   const modules = await collect(`/projects/${id}/modules/?per_page=100`);
@@ -199,6 +240,13 @@ for (const project of projects) {
       if (rows.length > 0) links[item.id] = rows;
     });
   }
+
+  const referenced = new Set();
+  for (const item of issues)
+    for (const asset of assetIdsIn(item.description_html)) referenced.add(asset);
+  for (const rows of Object.values(comments))
+    for (const row of rows) for (const asset of assetIdsIn(row.comment_html)) referenced.add(asset);
+  for (const assetId of referenced) await downloadAsset(assetId);
 
   const pageDetails = [];
   await mapConcurrent(pages, 2, async (page) => {
@@ -291,4 +339,11 @@ writeText(
   ].join('\n'),
 );
 
+writeJson(OUT, 'assets', assetManifest);
+log(`assets: ${Object.keys(assetManifest).length}`);
+
+if (inaccessible.length > 0) {
+  writeJson(OUT, 'inaccessible', inaccessible);
+  log(`no permission to read: ${inaccessible.join(', ')}`);
+}
 log(`done in ${requests} requests (${throttled} throttled), cached in ${OUT}`);
