@@ -24,7 +24,7 @@ export interface DownloadOptions {
 
 export interface StorageDriver {
   readonly name: 's3';
-  createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget>;
+  createUploadTarget(key: string, contentType: string): Promise<UploadTarget>;
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
   getUrl(key: string, expiresInSeconds: number, options?: DownloadOptions): Promise<string>;
   delete(key: string): Promise<void>;

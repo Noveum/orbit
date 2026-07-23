@@ -76,7 +76,7 @@ export class S3StorageDriver implements StorageDriver {
     return client;
   }
 
-  async createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget> {
+  async createUploadTarget(key: string, contentType: string): Promise<UploadTarget> {
     assertSafeKey(key);
     const client = await this.client();
     const url = client.presign(key, {
@@ -88,7 +88,7 @@ export class S3StorageDriver implements StorageDriver {
       key,
       url,
       method: 'PUT',
-      headers: { 'content-type': contentType, 'content-length': String(size) },
+      headers: { 'content-type': contentType },
       maxBytes: MAX_UPLOAD_BYTES,
       expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
     };

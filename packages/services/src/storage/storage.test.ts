@@ -128,11 +128,17 @@ describe('S3StorageDriver', () => {
   });
 
   it('presigns a PUT upload target against a path style endpoint', async () => {
-    const target = await driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', 12);
+    const target = await driver.createUploadTarget('org_1/2026/03/a.png', 'image/png');
     expect(target.url).toContain('http://localhost:9010/orbit-uploads/org_1/2026/03/a.png');
     expect(target.url).toContain('X-Amz-Signature=');
     expect(target.method).toBe('PUT');
     expect(target.headers['content-type']).toBe('image/png');
+  });
+
+  it('offers one header the browser is allowed to set, and never content-length', async () => {
+    const target = await driver.createUploadTarget('org_1/2026/03/a.pdf', 'application/pdf');
+    expect(Object.keys(target.headers)).toEqual(['content-type']);
+    expect(target.headers['content-type']).toBe('application/pdf');
   });
 
   it('presigns a GET download url with the requested ttl', async () => {
@@ -175,5 +181,32 @@ describe('createStorageDriver', () => {
     expect(() =>
       createStorageDriver({ S3_BUCKET: 'orbit-uploads', S3_SECRET_ACCESS_KEY: 'only-the-secret' }),
     ).toThrow(DomainError);
+  });
+
+  it('refuses explicit keys inside a pod that already assumes a role', () => {
+    for (const variable of [
+      'AWS_WEB_IDENTITY_TOKEN_FILE',
+      'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+      'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
+    ]) {
+      const call = () =>
+        createStorageDriver({
+          S3_BUCKET: 'orbit-uploads',
+          S3_ACCESS_KEY_ID: 'static-id',
+          S3_SECRET_ACCESS_KEY: 'static-secret',
+          [variable]: '/var/run/secrets/token',
+        });
+      expect(call).toThrow(DomainError);
+      expect(call).toThrow(new RegExp(variable));
+    }
+  });
+
+  it('allows the pod role on its own', () => {
+    expect(
+      createStorageDriver({
+        S3_BUCKET: 'orbit-uploads',
+        AWS_WEB_IDENTITY_TOKEN_FILE: '/var/run/secrets/token',
+      }).name,
+    ).toBe('s3');
   });
 });
