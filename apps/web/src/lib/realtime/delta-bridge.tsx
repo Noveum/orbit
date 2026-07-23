@@ -46,7 +46,7 @@ function patchCommentCaches(
   }
 }
 
-export function isOwnEcho(action: SyncAction, tabClientId: string): boolean {
+function isOwnEcho(action: SyncAction, tabClientId: string): boolean {
   return action.originClientId === tabClientId;
 }
 
