@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbit-web
+  namespace: orbit
+  labels:
+    app.kubernetes.io/name: orbit-web
+    app.kubernetes.io/part-of: orbit
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: orbit-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbit-web
+  namespace: orbit
+  labels:
+    app.kubernetes.io/name: orbit-web
+    app.kubernetes.io/part-of: orbit
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbit-web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orbit-web
+        app.kubernetes.io/part-of: orbit
+    spec:
+      serviceAccountName: orbit-app
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: orbit-web
+      containers:
+        - name: orbit-web
+          image: __ECR_REGISTRY__/orbit-web:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/bin/doppler", "run", "--", "node", "apps/web/server.js"]
+          env:
+            - name: DOPPLER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orbit-doppler-token
+                  key: DOPPLER_TOKEN
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=768
+          ports:
+            - name: http
+              containerPort: 3000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orbit-web
+  namespace: orbit
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orbit-web
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orbit-web
+  namespace: orbit
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orbit-web

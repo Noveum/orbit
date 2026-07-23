@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: orbit-migrate-
+  namespace: orbit
+  labels:
+    app.kubernetes.io/name: orbit-migrate
+    app.kubernetes.io/part-of: orbit
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orbit-migrate
+        app.kubernetes.io/part-of: orbit
+    spec:
+      serviceAccountName: orbit-app
+      restartPolicy: Never
+      containers:
+        - name: orbit-migrate
+          image: __ECR_REGISTRY__/orbit-migrate:latest
+          imagePullPolicy: Always
+          env:
+            - name: DOPPLER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orbit-doppler-token
+                  key: DOPPLER_TOKEN
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
