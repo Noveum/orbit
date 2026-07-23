@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, schema } from '@orbit/db';
 import { SYNC_MODELS } from '@orbit/shared/events';
 import { createDoc, createDocCollection } from '../content/doc-service.ts';
+import { newId } from '../internal.ts';
 import { createInvite } from '../org/invite-service.ts';
 import { addTeamMember } from '../org/team-service.ts';
 import {
@@ -119,8 +121,30 @@ describe('catchUp', () => {
 
   it('only returns notifications addressed to the caller', async () => {
     const teammate = await createUser('Nate Notified');
+    const notify = (userId: string, title: string, syncId: number) => ({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      userId,
+      type: 'issue_assigned',
+      actorType: 'user',
+      actorId: workspace.admin.userId,
+      actorName: 'Nova Admin',
+      entityType: 'issue',
+      entityId: newId(),
+      title,
+      url: '/inbox',
+      syncId,
+    });
+    await db
+      .insert(schema.notification)
+      .values([
+        notify(workspace.admin.userId, 'For the admin', 1000),
+        notify(teammate.id, 'For a teammate', 1001),
+      ]);
+
     const result = await catchUp(workspace.admin, 0);
     const notifications = result.actions.filter((action) => action.model === 'notification');
+    expect(notifications.length).toBeGreaterThan(0);
     for (const action of notifications) {
       expect(action.data['userId']).toBe(workspace.admin.userId);
       expect(action.data['userId']).not.toBe(teammate.id);

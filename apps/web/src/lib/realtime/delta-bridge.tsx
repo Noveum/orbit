@@ -200,7 +200,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
     [client, currentUserId],
   );
 
-  useDeltaHandler(useCallback((actions: SyncAction[]) => applyActions(actions), [applyActions]));
+  useDeltaHandler(applyActions);
 
   useResumeHandler(
     useCallback(

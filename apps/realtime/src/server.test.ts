@@ -354,20 +354,22 @@ describe('authorization', () => {
     client.close();
   });
 
-  it('grants an issue scope to every member of the issue organization, matching the read path', async () => {
+  it('scopes an issue subscription to the teams a member can read, matching the read path', async () => {
     const issueId = await createIssue(orgA, teamB, bob.userId);
 
     const otherTeam = await connectClient(server.port, alice.token);
     await otherTeam.waitFor('ready');
     otherTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
-    const granted = await otherTeam.waitFor('subscribed');
-    expect(granted.scopes).toEqual([scopes.issue(issueId)]);
-    expect(granted.denied).toEqual([]);
+    const denied = await otherTeam.waitFor('subscribed');
+    expect(denied.scopes).toEqual([]);
+    expect(denied.denied).toEqual([scopes.issue(issueId)]);
 
     const owningTeam = await connectClient(server.port, bob.token);
     await owningTeam.waitFor('ready');
     owningTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
-    expect((await owningTeam.waitFor('subscribed')).scopes).toEqual([scopes.issue(issueId)]);
+    const granted = await owningTeam.waitFor('subscribed');
+    expect(granted.scopes).toEqual([scopes.issue(issueId)]);
+    expect(granted.denied).toEqual([]);
 
     otherTeam.close();
     owningTeam.close();

@@ -470,10 +470,18 @@ export async function catchUp(
 ): Promise<SyncCatchupResult> {
   assertCan(principal, 'issue:read');
   const perModel = Math.max(1, limit);
+  const loaded = await Promise.all(
+    SYNC_CATCHUP_MODELS.map(async (model) => ({
+      model,
+      rows: await LOADERS[model](principal, since, perModel + 1),
+    })),
+  );
+
   const all: SyncAction[] = [];
-  for (const model of SYNC_CATCHUP_MODELS) {
-    const rows = await LOADERS[model](principal, since, perModel);
-    for (const row of rows) {
+  let saturated = false;
+  for (const { model, rows } of loaded) {
+    if (rows.length > perModel) saturated = true;
+    for (const row of rows.slice(0, perModel)) {
       all.push(
         buildSyncAction({
           syncId: row.syncId,
@@ -494,6 +502,6 @@ export async function catchUp(
   return {
     syncId: actions.reduce((highest, action) => Math.max(highest, action.syncId), since),
     actions,
-    truncated: all.length > actions.length,
+    truncated: saturated || all.length > actions.length,
   };
 }

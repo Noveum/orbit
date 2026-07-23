@@ -118,11 +118,13 @@ export async function membershipStillValid(principal: ConnectionPrincipal): Prom
 
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
   const rows = await db
-    .select({ organizationId: schema.issue.organizationId })
+    .select({ organizationId: schema.issue.organizationId, teamId: schema.issue.teamId })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
     .limit(1);
-  return rows[0]?.organizationId === principal.organizationId;
+  const issue = rows[0];
+  if (issue === undefined || issue.organizationId !== principal.organizationId) return false;
+  return principal.role === 'admin' || principal.teamIds.includes(issue.teamId);
 }
 
 async function projectScopeAllowed(projectId: string, principal: ConnectionPrincipal) {
