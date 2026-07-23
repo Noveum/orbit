@@ -29,29 +29,23 @@ describe('ThemeProvider', () => {
     document.documentElement.style.colorScheme = '';
   });
 
-  it('applies the light class when light is chosen', async () => {
+  it('applies the chosen theme as a class on the document', async () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'light' }));
-    await waitFor(() => {
-      expect(hasClass('light')).toBe(true);
-    });
-    expect(hasClass('dark')).toBe(false);
-  });
 
-  it('applies the dark class when dark is chosen', async () => {
-    render(
-      <ThemeProvider>
-        <ThemeProbe />
-      </ThemeProvider>,
-    );
     await userEvent.click(screen.getByRole('button', { name: 'dark' }));
     await waitFor(() => {
       expect(hasClass('dark')).toBe(true);
     });
     expect(hasClass('light')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'light' }));
+    await waitFor(() => {
+      expect(hasClass('light')).toBe(true);
+    });
+    expect(hasClass('dark')).toBe(false);
   });
 });
