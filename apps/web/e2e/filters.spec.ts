@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { BASE } from './base-url.ts';
 
-const BASE = process.env['ORBIT_E2E_BASE_URL'] ?? 'http://localhost:3011';
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 
 test.use({ viewport: { width: 1440, height: 900 } });

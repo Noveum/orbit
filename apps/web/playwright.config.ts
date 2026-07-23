@@ -1,4 +1,11 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+
+const repositoryEnvFile = resolve(import.meta.dirname, '../../.env');
+if (existsSync(repositoryEnvFile)) process.loadEnvFile(repositoryEnvFile);
+
+const { BASE } = await import('./e2e/base-url.ts');
 
 export default defineConfig({
   testDir: './e2e',
@@ -9,7 +16,7 @@ export default defineConfig({
   workers: 1,
   reporter: [['list']],
   use: {
-    baseURL: process.env['ORBIT_E2E_BASE_URL'] ?? 'http://localhost:3011',
+    baseURL: BASE,
     trace: 'retain-on-failure',
     ...devices['Desktop Chrome'],
   },

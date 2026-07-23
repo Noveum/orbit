@@ -1,8 +1,12 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NextConfig } from 'next';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
+const repositoryEnvFile = path.resolve(appDirectory, '..', '..', '.env');
+
+if (existsSync(repositoryEnvFile)) process.loadEnvFile(repositoryEnvFile);
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,

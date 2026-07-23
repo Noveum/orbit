@@ -1,7 +1,7 @@
 import { and, db, eq, schema } from '@orbit/db';
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { BASE } from './base-url.ts';
 
-const BASE = process.env['ORBIT_E2E_BASE_URL'] ?? 'http://localhost:3011';
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 const PROPAGATION_TIMEOUT = 30_000;
 
