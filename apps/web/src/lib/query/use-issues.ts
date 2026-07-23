@@ -50,6 +50,26 @@ export function issueSearch(teamId: string, query: IssueQuery): string {
   return params.toString();
 }
 
+const MAX_PAGES = 40;
+
+async function fetchAllIssues(search: string, signal: AbortSignal): Promise<readonly Issue[]> {
+  const issues: Issue[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const url: string =
+      cursor === null
+        ? `/api/issues?${search}`
+        : `/api/issues?${search}&cursor=${encodeURIComponent(cursor)}`;
+    const result = await apiFetch(url, issueListSchema, { signal });
+    issues.push(...result.issues);
+    if (result.nextCursor === null || result.nextCursor === undefined) return issues;
+    cursor = result.nextCursor;
+  }
+
+  return issues;
+}
+
 export function useIssues(
   teamId: string | null,
   seed: readonly Issue[] | undefined,
@@ -59,10 +79,7 @@ export function useIssues(
   return useQuery({
     queryKey: queryKeys.issues(teamId ?? 'none', search),
     enabled: teamId !== null,
-    queryFn: async ({ signal }): Promise<readonly Issue[]> => {
-      const page = await apiFetch(`/api/issues?${search}`, issueListSchema, { signal });
-      return page.issues;
-    },
+    queryFn: async ({ signal }): Promise<readonly Issue[]> => await fetchAllIssues(search, signal),
     placeholderData: seed ?? keepPreviousData,
   });
 }
@@ -71,10 +88,8 @@ export function teamIssuesQuery(teamId: string) {
   const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
   return {
     queryKey: queryKeys.issues(teamId, search),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> => {
-      const page = await apiFetch(`/api/issues?${search}`, issueListSchema, { signal });
-      return page.issues;
-    },
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> =>
+      await fetchAllIssues(search, signal),
   };
 }
 
