@@ -1,5 +1,5 @@
 import { db } from '@orbit/db';
-import { listInbox } from '@orbit/services/notifications';
+import { listInbox, unreadCounters } from '@orbit/services/notifications';
 import type { NotificationType } from '@orbit/shared/constants';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -19,6 +19,7 @@ export interface InboxItem {
 export interface InboxData {
   readonly items: InboxItem[];
   readonly unreadCount: number;
+  readonly unreadMentions: number;
 }
 
 function toType(value: string): NotificationType {
@@ -26,13 +27,17 @@ function toType(value: string): NotificationType {
 }
 
 export async function loadInbox(principal: Principal): Promise<InboxData> {
-  const page = await listInbox(db, {
-    userId: principal.userId,
-    organizationId: principal.organizationId,
-    limit: 50,
-  });
+  const [page, counters] = await Promise.all([
+    listInbox(db, {
+      userId: principal.userId,
+      organizationId: principal.organizationId,
+      limit: 50,
+    }),
+    unreadCounters(db, principal.userId, principal.organizationId),
+  ]);
   return {
-    unreadCount: page.unreadCount,
+    unreadCount: counters.total,
+    unreadMentions: counters.mentions,
     items: page.items.map((row) => ({
       id: row.id,
       type: toType(row.type),

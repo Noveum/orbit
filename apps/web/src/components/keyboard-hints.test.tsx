@@ -126,7 +126,7 @@ function Surfaces({ extra }: { readonly extra?: ReactNode }) {
           />
           <ShortcutsOverlay open onOpenChange={noop} />
           <IssueProperties issue={issue} />
-          <InboxView items={[]} unreadCount={0} userId="user_1" />
+          <InboxView items={[]} unreadCount={0} unreadMentions={0} userId="user_1" />
           <DocsWorkspace docId={null} canWrite canPublish={false} />
           {extra}
         </IssueWorkspaceProvider>

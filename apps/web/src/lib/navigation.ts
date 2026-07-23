@@ -3,6 +3,7 @@ import {
   CircleDot,
   FileText,
   FolderKanban,
+  GitPullRequest,
   Inbox,
   Keyboard,
   LayoutList,
@@ -57,6 +58,7 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
       links: [
         { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
         { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
+        { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
       ],
     },
     {
