@@ -2,10 +2,9 @@ import { emailDelivery } from '@orbit/db/schema';
 import { DomainError } from '@orbit/shared';
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { closeTestDatabase, withRollback } from '../test-database.ts';
 import {
-  ConsoleTransport,
   commentEmail,
   createEmailTransport,
   digestEmail,
@@ -18,7 +17,6 @@ import {
   magicLinkEmail,
   mentionEmail,
   ResendTransport,
-  SmtpTransport,
   sendEmail,
 } from './index.ts';
 
@@ -27,7 +25,6 @@ afterAll(async () => {
 });
 
 class RecordingTransport implements EmailTransport {
-  readonly name = 'console' as const;
   readonly sent: EmailMessage[] = [];
   constructor(private readonly failure: Error | null = null) {}
   send(message: EmailMessage): Promise<EmailSendResult> {
@@ -132,46 +129,26 @@ describe('templates', () => {
 });
 
 describe('createEmailTransport', () => {
-  it('defaults to the console transport', () => {
-    expect(createEmailTransport({}).name).toBe('console');
-    expect(createEmailTransport({ EMAIL_TRANSPORT: 'console' })).toBeInstanceOf(ConsoleTransport);
-  });
-
-  it('uses resend when the api key is present', () => {
+  it('builds a resend transport from the api key', () => {
     expect(createEmailTransport({ RESEND_API_KEY: 're_test_key' })).toBeInstanceOf(ResendTransport);
   });
 
-  it('honours an explicit smtp choice', () => {
+  it('accepts a custom from address', () => {
     expect(
-      createEmailTransport({ EMAIL_TRANSPORT: 'smtp', SMTP_HOST: 'localhost', SMTP_PORT: '1025' }),
-    ).toBeInstanceOf(SmtpTransport);
+      createEmailTransport({ RESEND_API_KEY: 're_test_key', EMAIL_FROM: 'Orbit <hi@orbit.dev>' }),
+    ).toBeInstanceOf(ResendTransport);
   });
 
-  it('treats blank environment values as unset', () => {
-    expect(createEmailTransport({ EMAIL_TRANSPORT: '  ', RESEND_API_KEY: '' }).name).toBe(
-      'console',
-    );
+  it('refuses to build without an api key', () => {
+    expect(() => createEmailTransport({})).toThrow(DomainError);
   });
 
-  it('rejects an unknown transport and a resend transport without a key', () => {
-    expect(() => createEmailTransport({ EMAIL_TRANSPORT: 'carrier-pigeon' })).toThrow(DomainError);
-    expect(() => createEmailTransport({ EMAIL_TRANSPORT: 'resend' })).toThrow(DomainError);
+  it('treats a blank api key as unset', () => {
+    expect(() => createEmailTransport({ RESEND_API_KEY: '   ' })).toThrow(DomainError);
   });
-});
 
-describe('ConsoleTransport', () => {
-  it('prints a readable summary', async () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    await new ConsoleTransport().send({
-      to: 'ada@orbit.local',
-      subject: 'Hello',
-      html: '<p>Hello</p>',
-      text: 'Hello',
-      idempotencyKey: 'k1',
-    });
-    expect(info).toHaveBeenCalledOnce();
-    expect(String(info.mock.calls[0]?.[0])).toContain('ada@orbit.local');
-    info.mockRestore();
+  it('refuses a blank key passed straight to the transport', () => {
+    expect(() => new ResendTransport('')).toThrow(DomainError);
   });
 });
 
