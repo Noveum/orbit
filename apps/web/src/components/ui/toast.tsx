@@ -67,8 +67,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             }}
             className={cn(
               'flex w-80 max-w-[calc(100vw-2rem)] items-start gap-3 rounded-lg border border-border bg-surface p-3 shadow-pop',
-              'data-[state=closed]:animate-pop-out data-[state=open]:animate-toast-in',
-              'data-[swipe=end]:animate-pop-out',
+              'data-[state=closed]:animate-toast-out data-[state=open]:animate-toast-in',
+              'data-[swipe=end]:animate-toast-out',
             )}
           >
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">

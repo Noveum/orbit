@@ -88,7 +88,10 @@ function SortableCard({
         transform: CSS.Translate.toString(transform),
         transition: transition ?? 'transform 140ms var(--ease-out-orbit)',
       }}
-      className={cn('list-none', isDragging && 'opacity-40')}
+      className={cn(
+        'list-none',
+        isDragging ? 'cursor-grabbing opacity-40' : 'cursor-grab active:cursor-grabbing',
+      )}
       {...attributes}
       {...listeners}
     >
@@ -201,7 +204,7 @@ function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProp
   return (
     <section
       data-testid={`board-column-${group.title}`}
-      className="flex w-72 shrink-0 flex-col rounded-lg bg-surface-2/60"
+      className="group flex w-72 shrink-0 flex-col rounded-lg bg-surface-2/60"
     >
       <header className="flex items-center gap-2 px-2.5 py-2">
         <GroupGlyph group={group} />
@@ -213,7 +216,12 @@ function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProp
           type="button"
           onClick={onCreate}
           aria-label={`Create an issue in ${group.title}`}
-          className="ml-auto rounded-sm p-1 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-3 hover:text-text"
+          className={cn(
+            'ml-auto rounded-sm p-1 text-faint opacity-0',
+            'transition-[opacity,background-color,color] duration-[var(--duration-fast)] ease-[var(--ease-standard)] motion-reduce:transition-none',
+            'group-hover:opacity-100 focus-visible:opacity-100 hover:bg-surface-3 hover:text-text',
+            '[@media(hover:none)]:opacity-100',
+          )}
         >
           <Plus className="size-3.5" aria-hidden="true" />
         </button>
