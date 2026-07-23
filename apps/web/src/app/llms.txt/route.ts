@@ -1,7 +1,7 @@
-import { serverEnv } from '@/lib/env.ts';
+import { absoluteUrl, publicAppUrl } from '@/lib/env.ts';
 
 export function GET(): Response {
-  const base = serverEnv().NEXT_PUBLIC_APP_URL;
+  const base = publicAppUrl();
   const body = `# Orbit
 
 > Orbit is a free, realtime, keyboard-first work tracker for teams. It covers issues, boards, cycles and sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever.
@@ -22,7 +22,7 @@ export function GET(): Response {
 ## Links
 
 - [Landing page](${base}/)
-- [Sign in](${base}/login) with Google, GitHub, a passkey, or a magic link
+- [Sign in](${absoluteUrl('/login')}) with Google, GitHub, a passkey, or a magic link
 `;
   return new Response(body, {
     headers: { 'content-type': 'text/plain; charset=utf-8' },

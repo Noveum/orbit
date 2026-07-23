@@ -128,7 +128,7 @@ function LandingHeader() {
           >
             Pricing
           </a>
-          <a href={GITHUB_HREF} className={quietLink} rel="noreferrer">
+          <a href={GITHUB_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
             GitHub
           </a>
         </nav>
@@ -783,7 +783,7 @@ function LandingFooter() {
           <a href="#pricing" className={quietLink}>
             Pricing
           </a>
-          <a href={GITHUB_HREF} className={quietLink} rel="noreferrer">
+          <a href={GITHUB_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
             GitHub
           </a>
           <Link href={SIGN_IN_HREF} className={quietLink}>

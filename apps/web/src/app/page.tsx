@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { LandingPage } from '@/features/landing/landing-page.tsx';
 import { getSession } from '@/lib/auth/session.ts';
+import { publicAppUrl } from '@/lib/env.ts';
 
 const TITLE = 'Orbit: the free, realtime, keyboard-first work tracker';
 const DESCRIPTION =
@@ -34,7 +35,7 @@ function structuredData(): string {
     name: 'Orbit',
     applicationCategory: 'BusinessApplication',
     operatingSystem: 'Web',
-    url: process.env['NEXT_PUBLIC_APP_URL'] ?? 'https://orbit.noveum.ai',
+    url: publicAppUrl(),
     description: DESCRIPTION,
     offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
     featureList: [
