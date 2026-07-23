@@ -88,7 +88,12 @@ domain verified in Resend, otherwise every send fails.
 - **Errors.** Throw typed domain errors from `@orbit/shared/errors`. Route handlers map them to responses. Never swallow an error silently.
 - **Server state.** TanStack Query for fetching, with optimistic mutations. The realtime stream invalidates and patches the cache; it never triggers a full refetch of a list the user is looking at.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
-- **Auth.** better-auth. Passkeys, Google, GitHub, magic link.
+- **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
+  optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `Bun.password` (argon2id),
+  rate limited, and never a replacement for the passwordless methods.
+- **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
+  creation and on user creation, so it covers every provider. Empty means no restriction. A
+  workspace can narrow it further with its own `allowedEmailDomains`.
 - **Permissions.** All authorization goes through `packages/shared/src/policy`. Server routes enforce it. The UI reads the same policy to hide affordances, never as the only gate.
 - **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the measured Linear behaviour does, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db } from '@orbit/db';
+import { createTeam } from '../org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -138,5 +139,21 @@ describe('views', () => {
 
     await deleteView(workspace.admin, created.view.id);
     expect(await listViews(workspace.admin)).toHaveLength(0);
+  });
+});
+
+describe('workflow state reads are team scoped', () => {
+  it('refuses a team the reader is not on and a team in another workspace', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+    const vega = await createWorkspace('Vega');
+
+    await expect(listWorkflowStates(guest.principal, team.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(listWorkflowStates(workspace.admin, vega.teamId)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(await listWorkflowStates(guest.principal, workspace.teamId)).not.toHaveLength(0);
   });
 });
