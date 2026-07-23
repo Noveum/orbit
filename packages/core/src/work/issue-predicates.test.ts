@@ -1,5 +1,5 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
 import type { FilterPredicate } from '@orbit/shared/filters';
-import { beforeEach, describe, expect, it } from 'vitest';
 import {
   addMember,
   createWorkspace,

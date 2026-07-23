@@ -37,11 +37,13 @@ export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): Stora
     );
   }
   const endpoint = readEnv(env, 'S3_ENDPOINT');
+  const sessionToken = readEnv(env, 'S3_SESSION_TOKEN');
   return new S3StorageDriver({
     bucket: requireEnv(env, 'S3_BUCKET'),
     region: readEnv(env, 'S3_REGION') ?? 'us-east-1',
     ...(accessKeyId === undefined ? {} : { accessKeyId }),
     ...(secretAccessKey === undefined ? {} : { secretAccessKey }),
+    ...(sessionToken === undefined ? {} : { sessionToken }),
     ...(endpoint === undefined ? {} : { endpoint }),
   });
 }

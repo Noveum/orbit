@@ -1,6 +1,7 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { randomBytes } from 'node:crypto';
 import { scopes } from '@orbit/shared/events';
-import type Redis from 'ioredis';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { connect, type RedisClient, type Socket } from 'bun';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
@@ -20,7 +21,7 @@ const BATCH_WINDOW_MS = 80;
 const DELTA_CHANNEL = 'orbit:delta';
 
 let server: RealtimeServer;
-let publisher: Redis;
+let publisher: RedisClient;
 let orgA = '';
 let orgB = '';
 let teamA = '';
@@ -48,12 +49,75 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  publisher.disconnect();
+  publisher.close();
   await cleanupFixtures();
 });
 
 async function publish(action: ReturnType<typeof syncAction>): Promise<void> {
   await publisher.publish(DELTA_CHANNEL, JSON.stringify(action));
+}
+
+const HANDSHAKE_TIMEOUT_MS = 5_000;
+const HANDSHAKE_SETTLE_MS = 25;
+
+async function connectSilently(port: number, token: string): Promise<Socket<undefined>> {
+  let markUpgraded: (() => void) | undefined;
+  let failUpgrade: ((error: Error) => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let received = '';
+  const upgraded = new Promise<void>((resolve, reject) => {
+    markUpgraded = resolve;
+    failUpgrade = reject;
+    timer = setTimeout(
+      () => reject(new Error('timed out upgrading raw socket')),
+      HANDSHAKE_TIMEOUT_MS,
+    );
+  });
+
+  const socket = await connect({
+    hostname: '127.0.0.1',
+    port,
+    socket: {
+      data(_socket, chunk: Buffer) {
+        received += chunk.toString('latin1');
+        const end = received.indexOf('\r\n\r\n');
+        if (end === -1) return;
+        const status = received.slice(0, received.indexOf('\r\n'));
+        if (status.startsWith('HTTP/1.1 101')) {
+          markUpgraded?.();
+          return;
+        }
+        failUpgrade?.(new Error(`raw socket did not upgrade: ${status}`));
+      },
+      close() {
+        failUpgrade?.(new Error('raw socket closed before upgrading'));
+      },
+      error(_socket, error: Error) {
+        failUpgrade?.(error);
+      },
+    },
+  });
+
+  socket.write(
+    [
+      `GET /?token=${encodeURIComponent(token)} HTTP/1.1`,
+      `Host: 127.0.0.1:${port}`,
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
+      'Sec-WebSocket-Version: 13',
+      '',
+      '',
+    ].join('\r\n'),
+  );
+
+  try {
+    await upgraded;
+  } finally {
+    clearTimeout(timer);
+  }
+  await delay(HANDSHAKE_SETTLE_MS);
+  return socket;
 }
 
 describe('fan-out', () => {
@@ -313,12 +377,11 @@ describe('liveness', () => {
       heartbeatTimeoutMs: 60,
     });
     try {
-      const client = await connectClient(strict.port, alice.token);
-      await client.waitFor('ready');
+      const silent = await connectSilently(strict.port, alice.token);
       expect(strict.stats().connections).toBe(1);
-      client.socket.pause();
       await delay(400);
       expect(strict.stats().connections).toBe(0);
+      silent.end();
     } finally {
       await strict.close();
     }

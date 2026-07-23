@@ -1,8 +1,8 @@
 import type { Database, Transaction } from '@orbit/db';
 import { emailDelivery } from '@orbit/db/schema';
 import { internal, toDomainError } from '@orbit/shared';
+import { randomUUIDv7 } from 'bun';
 import { eq } from 'drizzle-orm';
-import { ulid } from 'ulid';
 import { z } from 'zod';
 import { createEmailTransport, type EmailTransport, emailMessageSchema } from './transports.ts';
 
@@ -29,7 +29,7 @@ export async function sendEmail(
   const claimed = await database
     .insert(emailDelivery)
     .values({
-      id: ulid(),
+      id: randomUUIDv7(),
       idempotencyKey: message.idempotencyKey,
       toEmail: message.to,
       subject: message.subject,

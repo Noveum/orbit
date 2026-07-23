@@ -1,14 +1,14 @@
+import { describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { teamIssuesQuery } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from './workspace-provider.tsx';
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+mock.module('next/navigation', () => ({ useRouter: () => ({ push: mock() }) }));
 
 let workspace: WorkspaceData;
-vi.mock('./workspace-provider.tsx', () => ({ useWorkspace: () => workspace }));
+mock.module('./workspace-provider.tsx', () => ({ useWorkspace: () => workspace }));
 
 const { MyIssuesView, assignedTo } = await import('./my-issues-view.tsx');
 

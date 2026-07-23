@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import { describe, expect, it } from 'vitest';
 import type { Comment, Issue } from './schemas.ts';
 import {
   applyCommentDelta,

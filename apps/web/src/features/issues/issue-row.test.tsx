@@ -1,6 +1,6 @@
+import { describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
 import type { GroupContext } from '@/features/filters/grouping.ts';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
@@ -77,8 +77,8 @@ const groupContext: GroupContext = {
 describe('IssueRow', () => {
   it('opens on click and toggles selection from the checkbox', async () => {
     const user = userEvent.setup();
-    const onOpen = vi.fn();
-    const onToggleSelected = vi.fn();
+    const onOpen = mock();
+    const onToggleSelected = mock();
 
     render(
       <IssueRow
@@ -90,15 +90,15 @@ describe('IssueRow', () => {
         selected={false}
         onOpen={onOpen}
         onToggleSelected={onToggleSelected}
-        onFocus={vi.fn()}
+        onFocus={mock()}
       />,
     );
 
     await user.click(screen.getByText('Domain auto join for verified workspace domains'));
-    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onOpen).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByLabelText('Select ENG-7'));
-    expect(onToggleSelected).toHaveBeenCalledOnce();
+    expect(onToggleSelected).toHaveBeenCalledTimes(1);
   });
 
   it('marks the active row', () => {
@@ -110,9 +110,9 @@ describe('IssueRow', () => {
         assignee={undefined}
         active
         selected={false}
-        onOpen={vi.fn()}
-        onToggleSelected={vi.fn()}
-        onFocus={vi.fn()}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
       />,
     );
     expect(screen.getByTestId('issue-row-ENG-7')).toHaveAttribute('data-active', 'true');

@@ -1,6 +1,6 @@
+import { describe, expect, it } from 'bun:test';
 import { SYNC_MODELS } from '@orbit/shared/events';
 import { getTableColumns, type Table } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
 import * as schema from './index.ts';
 
 function tableExportName(model: string): string {

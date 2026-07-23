@@ -1,12 +1,12 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingInviteView, TeamBadge } from './data.ts';
 import { InvitePanel, parseEmails } from './invite-panel.tsx';
 
-const refresh = vi.fn();
+const refresh = mock();
 
-vi.mock('next/navigation', () => ({
+mock.module('next/navigation', () => ({
   useRouter: () => ({ refresh }),
 }));
 
@@ -23,16 +23,17 @@ const INVITES: PendingInviteView[] = [
   },
 ];
 
+const realFetch = globalThis.fetch;
+
 beforeEach(() => {
   refresh.mockClear();
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })),
-  );
+  globalThis.fetch = mock(() =>
+    Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }),
+  ) as unknown as typeof fetch;
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 describe('parseEmails', () => {

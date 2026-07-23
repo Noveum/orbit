@@ -1,12 +1,37 @@
-import { execSync } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import ts from 'typescript';
 
-const args = process.argv.slice(2);
+export interface CommentRange {
+  pos: number;
+  end: number;
+}
+
+export interface ScanResult {
+  remove: CommentRange[];
+  kept: number;
+}
+
+interface Finding {
+  file: string;
+  line: number;
+  text: string;
+}
+
+interface Stats {
+  totalRemoved: number;
+  changedFiles: number;
+  totalKept: number;
+}
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+const args: string[] = process.argv.slice(2);
 const CHECK = args.some((a) => a === '--check' || a === '--dry-run' || a === '--dry');
 const SELFTEST = args.includes('--selftest');
 
-export function keep(raw) {
+export function keep(raw: string): boolean {
   const isLine = raw.startsWith('//');
   if (isLine && raw.startsWith('///') && /^<(reference|amd-)/.test(raw.slice(3).trim())) {
     return true;
@@ -32,27 +57,27 @@ export function keep(raw) {
   return false;
 }
 
-function scriptKind(file) {
+function scriptKind(file: string): ts.ScriptKind {
   if (file.endsWith('.tsx')) return ts.ScriptKind.TSX;
   if (file.endsWith('.jsx')) return ts.ScriptKind.JSX;
   if (/\.(c|m)?ts$/.test(file)) return ts.ScriptKind.TS;
   return ts.ScriptKind.JS;
 }
 
-export function tsComments(file, text) {
+export function tsComments(file: string, text: string): ScanResult {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));
-  const seen = new Set();
-  const found = [];
-  const jsxSpans = [];
-  const add = (ranges) => {
-    for (const r of ranges || []) {
+  const seen = new Set<string>();
+  const found: CommentRange[] = [];
+  const jsxSpans: [number, number][] = [];
+  const add = (ranges: readonly ts.CommentRange[] | undefined): void => {
+    for (const r of ranges ?? []) {
       const key = `${r.pos}:${r.end}`;
       if (seen.has(key)) continue;
       seen.add(key);
       found.push({ pos: r.pos, end: r.end });
     }
   };
-  const visit = (node) => {
+  const visit = (node: ts.Node): void => {
     if (node.kind === ts.SyntaxKind.JsxText) {
       jsxSpans.push([node.getFullStart(), node.getEnd()]);
       return;
@@ -67,8 +92,8 @@ export function tsComments(file, text) {
   };
   visit(sf);
 
-  const inJsxText = (r) => jsxSpans.some(([s, e]) => r.pos < e && r.end > s);
-  const remove = [];
+  const inJsxText = (r: CommentRange): boolean => jsxSpans.some(([s, e]) => r.pos < e && r.end > s);
+  const remove: CommentRange[] = [];
   let kept = 0;
   for (const r of found) {
     if (inJsxText(r)) continue;
@@ -78,7 +103,7 @@ export function tsComments(file, text) {
   return { remove, kept };
 }
 
-export function keepSwift(raw) {
+export function keepSwift(raw: string): boolean {
   const isLine = raw.startsWith('//');
   if (!isLine && raw.startsWith('/*!')) return true;
   const inner = isLine ? raw.replace(/^\/\/+/, '') : raw.slice(2, -2);
@@ -90,14 +115,31 @@ export function keepSwift(raw) {
   return false;
 }
 
-export function swiftComments(text) {
+interface SwiftCodeContext {
+  kind: 'code';
+  interp: boolean;
+  paren: number;
+}
+
+interface SwiftStringContext {
+  kind: 'string';
+  raw: boolean;
+  hashes: number;
+  multiline: boolean;
+}
+
+type SwiftContext = SwiftCodeContext | SwiftStringContext;
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single pass scanner over Swift source, splitting it would spread the string state
+export function swiftComments(text: string): ScanResult {
   const n = text.length;
-  const stack = [{ kind: 'code', interp: false, paren: 0 }];
-  const found = [];
-  const has = (i, s) => text.startsWith(s, i);
+  const stack: SwiftContext[] = [{ kind: 'code', interp: false, paren: 0 }];
+  const found: CommentRange[] = [];
+  const has = (i: number, s: string): boolean => text.startsWith(s, i);
   let i = 0;
   while (i < n) {
-    const ctx = stack[stack.length - 1];
+    const ctx = stack.at(-1);
+    if (ctx === undefined) break;
     if (ctx.kind === 'string') {
       const s = ctx;
       const c = text[i];
@@ -213,7 +255,7 @@ export function swiftComments(text) {
     i++;
   }
 
-  const remove = [];
+  const remove: CommentRange[] = [];
   let kept = 0;
   for (const r of found) {
     if (keepSwift(text.slice(r.pos, r.end))) kept++;
@@ -222,8 +264,8 @@ export function swiftComments(text) {
   return { remove, kept };
 }
 
-export function htmlComments(text) {
-  const remove = [];
+export function htmlComments(text: string): ScanResult {
+  const remove: CommentRange[] = [];
   let i = 0;
   const n = text.length;
   while (i < n) {
@@ -241,15 +283,16 @@ export function htmlComments(text) {
   return { remove, kept: 0 };
 }
 
-export function cssComments(text) {
-  const remove = [];
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single pass scanner over CSS source, splitting it would spread the string state
+export function cssComments(text: string): ScanResult {
+  const remove: CommentRange[] = [];
   let kept = 0;
   let i = 0;
   const n = text.length;
-  let str = null;
+  let str: string | null = null;
   while (i < n) {
     const c = text[i];
-    if (str) {
+    if (str !== null) {
       if (c === '\\') {
         i += 2;
         continue;
@@ -278,8 +321,9 @@ export function cssComments(text) {
   return { remove, kept };
 }
 
-export function jsoncComments(text) {
-  const remove = [];
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single pass scanner over JSONC source, splitting it would spread the string state
+export function jsoncComments(text: string): ScanResult {
+  const remove: CommentRange[] = [];
   let i = 0;
   const n = text.length;
   let str = false;
@@ -321,19 +365,57 @@ export function jsoncComments(text) {
   return { remove, kept: 0 };
 }
 
-function keepYaml(t) {
+function keepYaml(t: string): boolean {
   if (/^yaml-language-server\b/.test(t)) return true;
   if (/^yamllint\b/.test(t)) return true;
   return false;
 }
 
-export function yamlComments(text) {
-  const remove = [];
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single pass scanner over one YAML line, splitting it would spread the quote state
+function yamlCommentAt(line: string, quote: string | null): { at: number; quote: string | null } {
+  let str = quote;
+  let prevWs = true;
+  for (let k = 0; k < line.length; k++) {
+    const c = line[k];
+    if (str === '"') {
+      if (c === '\\') {
+        k++;
+        prevWs = false;
+        continue;
+      }
+      if (c === '"') str = null;
+      prevWs = false;
+      continue;
+    }
+    if (str === "'") {
+      if (c === "'" && line[k + 1] === "'") {
+        k++;
+        prevWs = false;
+        continue;
+      }
+      if (c === "'") str = null;
+      prevWs = false;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      str = c;
+      prevWs = false;
+      continue;
+    }
+    if (c === '#' && prevWs) return { at: k, quote: str };
+    prevWs = c === ' ' || c === '\t';
+  }
+  return { at: -1, quote: str };
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: line walker carrying block scalar and quote state, splitting it would spread that state
+export function yamlComments(text: string): ScanResult {
+  const remove: CommentRange[] = [];
   let kept = 0;
   const lines = text.split('\n');
   let pos = 0;
-  let blockIndent = null;
-  let str = null;
+  let blockIndent: number | null = null;
+  let str: string | null = null;
   for (const line of lines) {
     const lineStart = pos;
     pos += line.length + 1;
@@ -345,41 +427,9 @@ export function yamlComments(text) {
       blockIndent = null;
     }
     if (str === null && isBlank) continue;
-    let commentAt = -1;
-    let prevWs = true;
-    for (let k = 0; k < line.length; k++) {
-      const c = line[k];
-      if (str === '"') {
-        if (c === '\\') {
-          k++;
-          prevWs = false;
-          continue;
-        }
-        if (c === '"') str = null;
-        prevWs = false;
-        continue;
-      }
-      if (str === "'") {
-        if (c === "'" && line[k + 1] === "'") {
-          k++;
-          prevWs = false;
-          continue;
-        }
-        if (c === "'") str = null;
-        prevWs = false;
-        continue;
-      }
-      if (c === '"' || c === "'") {
-        str = c;
-        prevWs = false;
-        continue;
-      }
-      if (c === '#' && prevWs) {
-        commentAt = k;
-        break;
-      }
-      prevWs = c === ' ' || c === '\t';
-    }
+    const scanned = yamlCommentAt(line, str);
+    const commentAt = scanned.at;
+    str = scanned.quote;
     if (str === null) {
       const code = (commentAt === -1 ? line : line.slice(0, commentAt)).trimEnd();
       if (/(?:^|\s)[|>](?:[1-9][+-]?|[+-][1-9]?)?$/.test(code)) blockIndent = indent;
@@ -395,7 +445,7 @@ export function yamlComments(text) {
   return { remove, kept };
 }
 
-function expand(text, pos, end) {
+function expand(text: string, pos: number, end: number): Span {
   let ls = pos;
   while (ls > 0 && text[ls - 1] !== '\n') ls--;
   let le = end;
@@ -406,13 +456,13 @@ function expand(text, pos, end) {
   return { start: pos, end };
 }
 
-export function build(text, ranges) {
+export function build(text: string, ranges: readonly CommentRange[]): string {
   const exp = ranges.map((r) => expand(text, r.pos, r.end));
   exp.sort((a, b) => a.start - b.start || a.end - b.end);
-  const merged = [];
+  const merged: Span[] = [];
   for (const r of exp) {
-    const last = merged[merged.length - 1];
-    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    const last = merged.at(-1);
+    if (last !== undefined && r.start <= last.end) last.end = Math.max(last.end, r.end);
     else merged.push({ ...r });
   }
   let out = '';
@@ -424,7 +474,7 @@ export function build(text, ranges) {
   return out + text.slice(cursor);
 }
 
-function tidyText(s) {
+function tidyText(s: string): string {
   return s
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
@@ -432,18 +482,18 @@ function tidyText(s) {
     .replace(/\s+$/, '\n');
 }
 
-function lineOf(text, pos) {
+function lineOf(text: string, pos: number): number {
   let line = 1;
   for (let i = 0; i < pos; i++) if (text[i] === '\n') line++;
   return line;
 }
 
-function snippet(text, r) {
-  const first = text.slice(r.pos, r.end).split('\n')[0].trim();
+function snippet(text: string, r: CommentRange): string {
+  const first = (text.slice(r.pos, r.end).split('\n')[0] ?? '').trim();
   return first.length > 80 ? `${first.slice(0, 77)}...` : first;
 }
 
-export function scan(file, text) {
+export function scan(file: string, text: string): ScanResult {
   const ext = file.slice(file.lastIndexOf('.'));
   if (ext === '.swift') return swiftComments(text);
   if (ext === '.html' || ext === '.htm') return htmlComments(text);
@@ -453,8 +503,15 @@ export function scan(file, text) {
   return tsComments(file, text);
 }
 
-function selftest() {
-  const cases = [
+interface SelftestCase {
+  name: string;
+  src: string;
+  remove: number;
+  kept: number;
+}
+
+function selftest(): void {
+  const cases: SelftestCase[] = [
     {
       name: 'url in string + trailing comment',
       src: 'let u = "https://x.com" // c',
@@ -552,16 +609,17 @@ function selftest() {
   console.log(`selftest: all ${cases.length} cases passed`);
 }
 
-function buildSummary(findings, { totalRemoved, changedFiles, totalKept }) {
-  const server = process.env.GITHUB_SERVER_URL || 'https://github.com';
-  const repo = process.env.GITHUB_REPOSITORY;
-  const sha = process.env.GITHUB_SHA;
-  const fileCell = (f, line) => {
-    if (!repo || !sha) return `\`${f}\``;
+function buildSummary(findings: readonly Finding[], stats: Stats): string {
+  const { totalRemoved, changedFiles, totalKept } = stats;
+  const server = process.env['GITHUB_SERVER_URL'] ?? 'https://github.com';
+  const repo = process.env['GITHUB_REPOSITORY'];
+  const sha = process.env['GITHUB_SHA'];
+  const fileCell = (f: string, line: number): string => {
+    if (repo === undefined || sha === undefined) return `\`${f}\``;
     const href = `${server}/${repo}/blob/${sha}/${f.split('/').map(encodeURIComponent).join('/')}#L${line}`;
     return `[\`${f}\`](${href})`;
   };
-  const codeCell = (s) =>
+  const codeCell = (s: string): string =>
     s.replace(/[\\|]/g, '\\$&').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const rows = findings
     .map((x) => `| ${fileCell(x.file, x.line)} | ${x.line} | <code>${codeCell(x.text)}</code> |`)
@@ -582,40 +640,81 @@ function buildSummary(findings, { totalRemoved, changedFiles, totalKept }) {
   ].join('\n');
 }
 
-function reportGithub(findings, stats) {
-  if (process.env.GITHUB_ACTIONS !== 'true') return;
-  const escData = (s) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-  const escProp = (s) => escData(s).replace(/,/g, '%2C').replace(/:/g, '%3A');
+async function appendToFile(path: string, contents: string): Promise<void> {
+  const file = Bun.file(path);
+  const existing = (await file.exists()) ? await file.text() : '';
+  await Bun.write(path, existing + contents);
+}
+
+async function reportGithub(findings: readonly Finding[], stats: Stats): Promise<void> {
+  if (process.env['GITHUB_ACTIONS'] !== 'true') return;
+  const escData = (s: string): string =>
+    s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  const escProp = (s: string): string => escData(s).replace(/,/g, '%2C').replace(/:/g, '%3A');
   for (const x of findings) {
     console.log(
       `::error file=${escProp(x.file)},line=${x.line},title=Disallowed comment::${escData(x.text)}`,
     );
   }
-  const out = process.env.GITHUB_STEP_SUMMARY;
-  if (!out) return;
+  const out = process.env['GITHUB_STEP_SUMMARY'];
+  if (out === undefined || out.length === 0) return;
   const md = findings.length
     ? buildSummary(findings, stats)
     : '## ✅ No disallowed code comments\n\nEvery tracked file is comment-free (functional directives ignored).\n';
-  appendFileSync(out, `${md}\n`);
+  await appendToFile(out, `${md}\n`);
 }
 
-function main() {
-  const files = execSync(
-    "git ls-files '*.swift' '*.html' '*.htm' '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.css' '*.json' '*.jsonc' '*.yml' '*.yaml'",
-    { encoding: 'utf8' },
-  )
+function trackedFiles(): string[] {
+  const listed = Bun.spawnSync([
+    'git',
+    'ls-files',
+    '*.swift',
+    '*.html',
+    '*.htm',
+    '*.ts',
+    '*.tsx',
+    '*.js',
+    '*.jsx',
+    '*.mjs',
+    '*.cjs',
+    '*.css',
+    '*.json',
+    '*.jsonc',
+    '*.yml',
+    '*.yaml',
+  ]);
+  if (listed.exitCode !== 0) {
+    throw new Error(`git ls-files failed: ${listed.stderr.toString().trim()}`);
+  }
+  return listed.stdout
+    .toString()
     .split('\n')
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((f) => !/(^|\/)package-lock\.json$/.test(f));
+}
+
+function selectedFiles(): string[] {
+  const requested = args.filter((a) => !a.startsWith('-'));
+  const tracked = trackedFiles();
+  if (requested.length === 0) return tracked;
+  const wanted = new Set(requested.map((f) => f.replace(/^\.\//, '')));
+  return tracked.filter((f) => wanted.has(f));
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: straight line driver over every tracked file, splitting it would only move branches
+async function main(): Promise<void> {
+  const files = selectedFiles();
 
   let changedFiles = 0;
   let totalRemoved = 0;
   let totalKept = 0;
-  const findings = [];
+  const findings: Finding[] = [];
 
   for (const f of files) {
-    const text = readFileSync(f, 'utf8');
+    const source = Bun.file(f);
+    if (!(await source.exists())) continue;
+    const text = await source.text();
     const ext = f.slice(f.lastIndexOf('.'));
     const { remove, kept } = scan(f, text);
     totalKept += kept;
@@ -633,12 +732,12 @@ function main() {
     }
     let out = build(text, remove);
     if (ext === '.css' || ext === '.html' || ext === '.htm') out = tidyText(out);
-    if (out !== text) writeFileSync(f, out);
+    if (out !== text) await Bun.write(f, out);
   }
 
   if (CHECK) {
     for (const x of findings) console.log(`${x.file}:${x.line}: ${x.text}`);
-    reportGithub(findings, { totalRemoved, changedFiles, totalKept });
+    await reportGithub(findings, { totalRemoved, changedFiles, totalKept });
     console.log(
       `\n${totalRemoved} disallowed comment(s) in ${changedFiles} file(s) (${totalKept} directive(s) ignored).`,
     );
@@ -657,5 +756,5 @@ function main() {
 
 if (import.meta.main) {
   if (SELFTEST) selftest();
-  else main();
+  else await main();
 }

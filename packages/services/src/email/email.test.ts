@@ -1,9 +1,9 @@
+import { describe, expect, it } from 'bun:test';
 import { emailDelivery } from '@orbit/db/schema';
 import { DomainError } from '@orbit/shared';
+import { randomUUIDv7 } from 'bun';
 import { eq } from 'drizzle-orm';
-import { ulid } from 'ulid';
-import { afterAll, describe, expect, it } from 'vitest';
-import { closeTestDatabase, withRollback } from '../test-database.ts';
+import { withRollback } from '../test-database.ts';
 import {
   commentEmail,
   createEmailTransport,
@@ -19,10 +19,6 @@ import {
   ResendTransport,
   sendEmail,
 } from './index.ts';
-
-afterAll(async () => {
-  await closeTestDatabase();
-});
 
 class RecordingTransport implements EmailTransport {
   readonly sent: EmailMessage[] = [];
@@ -156,7 +152,7 @@ describe('sendEmail idempotency', () => {
   it('sends once and records the delivery', async () => {
     await withRollback(async (tx) => {
       const transport = new RecordingTransport();
-      const key = `test_${ulid()}`;
+      const key = `test_${randomUUIDv7()}`;
       const record = await sendEmail(
         tx,
         {
@@ -180,7 +176,7 @@ describe('sendEmail idempotency', () => {
   it('is a no-op for a repeated idempotency key and returns the original record', async () => {
     await withRollback(async (tx) => {
       const transport = new RecordingTransport();
-      const key = `test_${ulid()}`;
+      const key = `test_${randomUUIDv7()}`;
       const message = {
         to: 'ada@orbit.local',
         subject: 'Hello',
@@ -205,7 +201,7 @@ describe('sendEmail idempotency', () => {
 
   it('records a failure and rethrows a domain error', async () => {
     await withRollback(async (tx) => {
-      const key = `test_${ulid()}`;
+      const key = `test_${randomUUIDv7()}`;
       const transport = new RecordingTransport(new Error('resend exploded'));
       await expect(
         sendEmail(

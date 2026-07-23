@@ -1,6 +1,6 @@
 import type { ServerMessage, SyncAction } from '@orbit/shared/events';
-import { WebSocket } from 'ws';
-import type { ConnectionPrincipal } from './auth.ts';
+import type { ServerWebSocket } from 'bun';
+import type { ConnectionPrincipal, ConnectionRejection } from './auth.ts';
 import { logger } from './logger.ts';
 
 export interface ConnectionLimits {
@@ -9,15 +9,19 @@ export interface ConnectionLimits {
   readonly maxBufferedBytes: number;
 }
 
+export type SocketData =
+  | { readonly rejection: ConnectionRejection }
+  | { readonly principal: ConnectionPrincipal; connection: Connection | null };
+
 export class Connection {
   readonly scopes = new Set<string>();
   lastSeenAt = Date.now();
   private readonly pending = new Map<string, SyncAction>();
-  private flushTimer: NodeJS.Timeout | undefined;
+  private flushTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     readonly id: string,
-    private readonly socket: WebSocket,
+    private readonly socket: ServerWebSocket<SocketData>,
     readonly principal: ConnectionPrincipal,
     private readonly limits: ConnectionLimits,
   ) {}
@@ -48,11 +52,9 @@ export class Connection {
 
   send(message: ServerMessage): void {
     if (this.socket.readyState !== WebSocket.OPEN) return;
-    if (this.socket.bufferedAmount > this.limits.maxBufferedBytes) {
-      logger.warn('dropping slow connection', {
-        connectionId: this.id,
-        bufferedAmount: this.socket.bufferedAmount,
-      });
+    const buffered = this.socket.getBufferedAmount();
+    if (buffered > this.limits.maxBufferedBytes) {
+      logger.warn('dropping slow connection', { connectionId: this.id, bufferedAmount: buffered });
       this.socket.terminate();
       return;
     }

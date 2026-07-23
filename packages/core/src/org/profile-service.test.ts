@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { createUser, resetDatabase } from '../test-support.ts';
 import { updateProfile } from './profile-service.ts';
 

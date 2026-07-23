@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'bun:test';
 import {
   notification,
   notificationPreference,
@@ -6,10 +7,9 @@ import {
   user,
 } from '@orbit/db/schema';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
+import { randomUUIDv7 } from 'bun';
 import { eq } from 'drizzle-orm';
-import { ulid } from 'ulid';
-import { afterAll, describe, expect, it } from 'vitest';
-import { closeTestDatabase, type TestTransaction, withRollback } from '../test-database.ts';
+import { type TestTransaction, withRollback } from '../test-database.ts';
 import {
   defaultPreferences,
   isWithinQuietHours,
@@ -24,10 +24,6 @@ import {
   unreadCount,
 } from './index.ts';
 
-afterAll(async () => {
-  await closeTestDatabase();
-});
-
 interface Fixture {
   readonly organizationId: string;
   readonly actorId: string;
@@ -36,7 +32,7 @@ interface Fixture {
 }
 
 async function seed(tx: TestTransaction, timezone = 'UTC'): Promise<Fixture> {
-  const suffix = ulid();
+  const suffix = randomUUIDv7();
   const organizationId = `org_${suffix}`;
   await tx.insert(organization).values({
     id: organizationId,
@@ -123,14 +119,14 @@ describe('notifyMany', () => {
       const fixture = await seed(tx);
       await tx.insert(notificationPreference).values([
         {
-          id: `np_${ulid()}`,
+          id: `np_${randomUUIDv7()}`,
           userId: fixture.adaId,
           channel: 'email',
           type: 'comment_created',
           enabled: false,
         },
         {
-          id: `np_${ulid()}`,
+          id: `np_${randomUUIDv7()}`,
           userId: fixture.graceId,
           channel: 'slack',
           type: 'comment_created',

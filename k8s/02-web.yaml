@@ -58,7 +58,7 @@ spec:
         - name: orbit-web
           image: __ECR_REGISTRY__/orbit-web:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/bin/doppler", "run", "--", "node", "apps/web/server.js"]
+          command: ["/usr/bin/doppler", "run", "--", "bun", "apps/web/server.js"]
           env:
             - name: DOPPLER_TOKEN
               valueFrom:
@@ -71,8 +71,6 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: 0.0.0.0
-            - name: NODE_OPTIONS
-              value: --max-old-space-size=768
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/ssl/rds/us-east-1-bundle.pem
           volumeMounts:
@@ -85,10 +83,10 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 384Mi
+              memory: 512Mi
             limits:
               cpu: 1000m
-              memory: 1Gi
+              memory: 2Gi
           startupProbe:
             httpGet:
               path: /api/health

@@ -1,39 +1,6 @@
-import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import type { TestingLibraryMatchers } from '@testing-library/jest-dom/matchers';
 
-Object.defineProperty(window, 'matchMedia', {
-  writable: true,
-  value: (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  }),
-});
-
-if (typeof Element.prototype.scrollIntoView !== 'function') {
-  Object.defineProperty(Element.prototype, 'scrollIntoView', {
-    writable: true,
-    value: vi.fn(),
-  });
+declare module 'bun:test' {
+  interface Matchers<T> extends TestingLibraryMatchers<never, T> {}
+  interface AsymmetricMatchers extends TestingLibraryMatchers<never, void> {}
 }
-
-if (!('ResizeObserver' in globalThis)) {
-  Object.defineProperty(globalThis, 'ResizeObserver', {
-    writable: true,
-    value: class {
-      observe = vi.fn();
-      unobserve = vi.fn();
-      disconnect = vi.fn();
-    },
-  });
-}
-
-afterEach(() => {
-  cleanup();
-});

@@ -2,30 +2,39 @@
   "name": "orbit",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=22"
+    "bun": ">=1.3.0"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "@biomejs/biome",
+    "esbuild",
+    "lefthook",
+    "sharp"
+  ],
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "test:e2e": "turbo run test:e2e",
+    "build": "bun run --filter '*' build",
+    "dev": "bun run --filter '*' dev",
+    "typecheck": "tsc -p scripts/tsconfig.json --noEmit && bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "test:e2e": "bun run --filter '@orbit/web' test:e2e",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "check-comments": "node scripts/strip-comments.mjs --check",
-    "strip-comments": "node scripts/strip-comments.mjs",
-    "verify": "pnpm lint && pnpm check-comments && pnpm typecheck && pnpm test",
-    "db:generate": "pnpm --filter @orbit/db generate",
-    "db:migrate": "pnpm --filter @orbit/db migrate",
-    "db:push": "pnpm --filter @orbit/db push",
-    "db:seed": "pnpm --filter @orbit/db seed",
-    "plane:fetch": "node scripts/fetch-plane.mjs",
-    "db:import-plane": "pnpm --filter @orbit/db import:plane",
-    "db:verify-plane": "pnpm --filter @orbit/db import:verify",
-    "db:studio": "pnpm --filter @orbit/db studio",
+    "check-comments": "bun scripts/strip-comments.ts --check",
+    "strip-comments": "bun scripts/strip-comments.ts",
+    "verify": "bun run lint && bun run check-comments && bun run typecheck && bun run test",
+    "db:generate": "bun run --filter '@orbit/db' generate",
+    "db:migrate": "bun run --filter '@orbit/db' migrate",
+    "db:push": "bun run --filter '@orbit/db' push",
+    "db:seed": "bun run --filter '@orbit/db' seed",
+    "db:studio": "bun run --filter '@orbit/db' studio",
+    "db:import-plane": "bun run --filter '@orbit/db' import:plane",
+    "db:verify-plane": "bun run --filter '@orbit/db' import:verify",
+    "plane:fetch": "bun scripts/fetch-plane.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",
@@ -33,9 +42,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
-    "@types/node": "^26.1.1",
+    "@types/bun": "1.3.14",
     "lefthook": "2.1.10",
-    "turbo": "2.10.6",
     "typescript": "5.9.3"
   }
 }

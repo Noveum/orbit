@@ -1,6 +1,6 @@
+import { describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { applyMention, CommentComposer, findMentionQuery } from './comment-composer.tsx';
 import { buildTimeline, CommentBody } from './comment-thread.tsx';
@@ -43,7 +43,7 @@ describe('mention parsing', () => {
 describe('CommentComposer', () => {
   it('submits with cmd enter and clears the draft', async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
+    const onSubmit = mock();
     render(<CommentComposer members={members} onSubmit={onSubmit} />);
 
     const box = screen.getByTestId('comment-composer');
@@ -57,7 +57,7 @@ describe('CommentComposer', () => {
 
   it('keeps the submit button disabled until there is text', async () => {
     const user = userEvent.setup();
-    render(<CommentComposer members={members} onSubmit={vi.fn()} />);
+    render(<CommentComposer members={members} onSubmit={mock()} />);
 
     const button = screen.getByTestId('comment-composer-submit');
     expect(button).toBeDisabled();
@@ -68,7 +68,7 @@ describe('CommentComposer', () => {
 
   it('picks a mention with the arrow keys and Enter, without submitting', async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
+    const onSubmit = mock();
     render(<CommentComposer members={members} onSubmit={onSubmit} />);
 
     await user.click(screen.getByTestId('comment-composer'));
@@ -82,8 +82,8 @@ describe('CommentComposer', () => {
 
   it('closes the mention popup on escape instead of cancelling the draft', async () => {
     const user = userEvent.setup();
-    const onCancel = vi.fn();
-    render(<CommentComposer members={members} onSubmit={vi.fn()} onCancel={onCancel} />);
+    const onCancel = mock();
+    render(<CommentComposer members={members} onSubmit={mock()} onCancel={onCancel} />);
 
     await user.click(screen.getByTestId('comment-composer'));
     await user.keyboard('ping @sha');
@@ -94,12 +94,12 @@ describe('CommentComposer', () => {
     expect(screen.queryByTestId('mention-list')).toBeNull();
 
     await user.keyboard('{Escape}');
-    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it('offers matching members after an at sign and inserts the handle', async () => {
     const user = userEvent.setup();
-    render(<CommentComposer members={members} onSubmit={vi.fn()} />);
+    render(<CommentComposer members={members} onSubmit={mock()} />);
 
     await user.click(screen.getByTestId('comment-composer'));
     await user.keyboard('ping @adi');

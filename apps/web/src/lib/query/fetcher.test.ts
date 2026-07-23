@@ -1,25 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, type Mock, mock } from 'bun:test';
 import { z } from 'zod';
 import { ApiError, apiFetch, messageOf } from './fetcher.ts';
 
 const schema = z.object({ ok: z.boolean() });
+const realFetch = globalThis.fetch;
 
 function respondWith(status: number, body: unknown): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () =>
-      Promise.resolve(
-        new Response(JSON.stringify(body), {
-          status,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
+  globalThis.fetch = mock(async () =>
+    Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
     ),
-  );
+  ) as unknown as typeof fetch;
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 describe('apiFetch', () => {
@@ -46,8 +44,8 @@ describe('apiFetch', () => {
   it('sends a JSON body for writes', async () => {
     respondWith(200, { ok: true });
     await apiFetch('/api/thing', schema, { method: 'POST', body: { title: 'Hi' } });
-    const mock = vi.mocked(globalThis.fetch);
-    expect(mock.mock.calls[0]?.[1]).toMatchObject({
+    const fetchMock = globalThis.fetch as unknown as Mock<typeof fetch>;
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'POST',
       body: JSON.stringify({ title: 'Hi' }),
     });

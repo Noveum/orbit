@@ -1,32 +1,34 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreateWorkspaceForm } from './create-workspace-form.tsx';
 
-const push = vi.fn();
-const refresh = vi.fn();
-const setActive = vi.fn();
-const assign = vi.fn();
+const push = mock();
+const refresh = mock();
+const setActive = mock();
+const assign = mock();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, refresh, back: vi.fn() }),
+mock.module('next/navigation', () => ({
+  useRouter: () => ({ push, refresh, back: mock() }),
 }));
 
-vi.mock('@/components/ui/toast.tsx', () => ({
-  useToast: () => ({ toast: vi.fn(), dismiss: vi.fn() }),
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast: mock(), dismiss: mock() }),
 }));
 
-vi.mock('@/lib/auth/client.ts', () => ({
+mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
     organization: { setActive: (...args: unknown[]) => setActive(...args) },
   },
 }));
 
-function mockFetch(status: number, body: unknown): ReturnType<typeof vi.fn> {
-  const spy = vi.fn(() =>
+const realFetch = globalThis.fetch;
+
+function mockFetch(status: number, body: unknown): ReturnType<typeof mock> {
+  const spy = mock(() =>
     Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) }),
   );
-  vi.stubGlobal('fetch', spy);
+  globalThis.fetch = spy as unknown as typeof fetch;
   return spy;
 }
 
@@ -39,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 describe('CreateWorkspaceForm', () => {

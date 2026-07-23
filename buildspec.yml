@@ -15,8 +15,6 @@ env:
 
 phases:
   install:
-    runtime-versions:
-      nodejs: 22
     commands:
       - set -e
       - curl -sSLO "https://s3.us-west-2.amazonaws.com/amazon-eks/${KUBECTL_VERSION}/${KUBECTL_RELEASE}/bin/linux/amd64/kubectl"

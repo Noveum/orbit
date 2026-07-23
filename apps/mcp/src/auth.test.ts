@@ -1,7 +1,7 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { createApiKey, verifyApiKey } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HEALTH_PATH, MCP_PATH, type McpHttpServer } from './server.ts';
 import { createWorkspace, resetDatabase, startServer, type TestWorkspace } from './test-helpers.ts';
 

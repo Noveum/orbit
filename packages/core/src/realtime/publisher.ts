@@ -1,6 +1,6 @@
 import type { Actor, SyncAction, SyncActionKind, SyncModel } from '@orbit/shared/events';
 import { REDIS_DELTA_CHANNEL } from '@orbit/shared/events';
-import { Redis } from 'ioredis';
+import { RedisClient } from 'bun';
 
 export interface BuildSyncActionInput {
   readonly syncId: number;
@@ -30,16 +30,17 @@ export function buildSyncAction(input: BuildSyncActionInput): SyncAction {
   };
 }
 
-let client: Redis | null = null;
+let client: RedisClient | null = null;
 
-function connection(): Redis | null {
+function connection(): RedisClient | null {
   const url = process.env['REDIS_URL'];
   if (url === undefined || url.length === 0) return null;
   if (client === null) {
-    const created = new Redis(url, { maxRetriesPerRequest: 3, enableOfflineQueue: true });
-    created.on('error', (error: Error) => {
+    const created = new RedisClient(url, { maxRetries: 3, enableOfflineQueue: true });
+    created.onclose = (error: Error) => {
+      if (client !== created) return;
       console.error('[orbit] realtime publisher redis error:', error.message);
-    });
+    };
     client = created;
   }
   return client;
@@ -52,9 +53,9 @@ export async function publishDeltas(actions: SyncAction[]): Promise<void> {
   await redis.publish(REDIS_DELTA_CHANNEL, JSON.stringify(actions));
 }
 
-export async function closeRealtime(): Promise<void> {
+export function closeRealtime(): Promise<void> {
   const open = client;
   client = null;
-  if (open === null) return;
-  await open.quit();
+  open?.close();
+  return Promise.resolve();
 }

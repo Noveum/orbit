@@ -58,7 +58,7 @@ spec:
         - name: orbit-realtime
           image: __ECR_REGISTRY__/orbit-realtime:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/bin/doppler", "run", "--", "node", "dist/index.js"]
+          command: ["/usr/bin/doppler", "run", "--", "bun", "dist/index.js"]
           env:
             - name: DOPPLER_TOKEN
               valueFrom:

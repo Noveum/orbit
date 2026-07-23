@@ -1,14 +1,14 @@
+import { describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
 import { clientId } from '@/lib/query/client-id.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
 
-vi.mock('@orbit/realtime-client/react', () => ({
+mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,
   useDeltaHandler: (handler: (actions: SyncAction[]) => void) => {
     capturedHandler = handler;

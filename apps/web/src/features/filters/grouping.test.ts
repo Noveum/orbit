@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import type { Issue } from '@/lib/query/schemas.ts';
 import type { GroupContext } from './grouping.ts';
 import { groupIssues, groupKeysOf } from './grouping.ts';

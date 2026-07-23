@@ -1,10 +1,7 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-alpine AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+FROM oven/bun:1.3.14-alpine AS base
 ENV CI=1
-ENV TURBO_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+WORKDIR /app
 
 FROM base AS doppler
 RUN apk add --no-cache wget && \
@@ -12,21 +9,23 @@ RUN apk add --no-cache wget && \
     echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' >> /etc/apk/repositories && \
     apk add --no-cache doppler
 
-FROM base AS pruner
-WORKDIR /app
-RUN pnpm add -g turbo@2.10.6
-COPY . .
-RUN turbo prune @orbit/db --docker
-
 FROM base AS runner
-WORKDIR /app
-RUN apk add --no-cache libc6-compat && addgroup -S orbit && adduser -S orbit -G orbit
+RUN addgroup -S orbit && adduser -S orbit -G orbit
 COPY --from=doppler /usr/bin/doppler /usr/bin/doppler
-COPY --from=pruner --chown=orbit:orbit /app/out/json/ .
-RUN pnpm install --frozen-lockfile --ignore-scripts
-COPY --from=pruner --chown=orbit:orbit /app/out/full/ .
+COPY --chown=orbit:orbit package.json bun.lock ./
+COPY --chown=orbit:orbit apps/mcp/package.json apps/mcp/package.json
+COPY --chown=orbit:orbit apps/realtime/package.json apps/realtime/package.json
+COPY --chown=orbit:orbit apps/web/package.json apps/web/package.json
+COPY --chown=orbit:orbit packages/core/package.json packages/core/package.json
+COPY --chown=orbit:orbit packages/db/package.json packages/db/package.json
+COPY --chown=orbit:orbit packages/realtime-client/package.json packages/realtime-client/package.json
+COPY --chown=orbit:orbit packages/services/package.json packages/services/package.json
+COPY --chown=orbit:orbit packages/shared/package.json packages/shared/package.json
+RUN test -s bun.lock || (echo "bun.lock is missing, refusing to build a floating dependency tree" >&2; exit 1)
+RUN bun install --frozen-lockfile
 COPY --chown=orbit:orbit tsconfig.base.json ./
+COPY --chown=orbit:orbit packages packages
 RUN chown -R orbit:orbit /app
 USER orbit
 WORKDIR /app/packages/db
-CMD ["/usr/bin/doppler", "run", "--", "pnpm", "run", "push"]
+CMD ["/usr/bin/doppler", "run", "--", "bun", "run", "push"]

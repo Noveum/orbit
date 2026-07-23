@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db, eq, inArray, schema } from '@orbit/db';
 import type { ClientMessage, ServerMessage, SyncAction } from '@orbit/shared/events';
 import { serverMessageSchema } from '@orbit/shared/events';
-import Redis from 'ioredis';
-import { WebSocket } from 'ws';
+import { RedisClient } from 'bun';
 
 const createdOrganizationIds: string[] = [];
 const createdUserIds: string[] = [];
@@ -184,14 +183,16 @@ export function connectClient(
   const listeners = new Set<() => void>();
   let closeCode: number | undefined;
 
-  socket.on('message', (raw) => {
-    const parsed = serverMessageSchema.safeParse(JSON.parse(raw.toString()));
+  socket.addEventListener('message', (event) => {
+    const payload: unknown = event.data;
+    if (typeof payload !== 'string') return;
+    const parsed = serverMessageSchema.safeParse(JSON.parse(payload));
     if (!parsed.success) return;
     messages.push(parsed.data);
     for (const listener of [...listeners]) listener();
   });
-  socket.on('close', (code) => {
-    closeCode = code;
+  socket.addEventListener('close', (event) => {
+    closeCode = event.code;
     for (const listener of [...listeners]) listener();
   });
 
@@ -248,19 +249,27 @@ export function connectClient(
 
   return new Promise<TestClient>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timed out opening socket')), WAIT_TIMEOUT_MS);
-    socket.once('open', () => {
-      clearTimeout(timer);
-      resolve(client);
-    });
-    socket.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
+    socket.addEventListener(
+      'open',
+      () => {
+        clearTimeout(timer);
+        resolve(client);
+      },
+      { once: true },
+    );
+    socket.addEventListener(
+      'error',
+      () => {
+        clearTimeout(timer);
+        reject(new Error('socket failed to open'));
+      },
+      { once: true },
+    );
   });
 }
 
-export function createPublisher(): Redis {
-  return new Redis(redisUrl());
+export function createPublisher(): RedisClient {
+  return new RedisClient(redisUrl());
 }
 
 export function delay(ms: number): Promise<void> {

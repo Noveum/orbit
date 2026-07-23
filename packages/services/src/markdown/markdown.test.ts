@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import {
   extractFirstImage,
   extractIssueIdentifiers,
@@ -148,5 +148,76 @@ describe('re-exported extractors', () => {
   it('extracts mentions and issue identifiers', () => {
     expect(extractMentions('hey @ada and @grace')).toEqual(['ada', 'grace']);
     expect(extractIssueIdentifiers('fixes ORB-12 and ENG-3')).toEqual(['ORB-12', 'ENG-3']);
+  });
+});
+
+describe('sanitizer url handling', () => {
+  const dangerous = /javascript|vbscript|data:text\/html|\son[a-z]+=/i;
+
+  it('rejects a scheme hidden behind html entities', () => {
+    for (const source of [
+      '[a](&#106;avascript:alert(1))',
+      '[a](&#x6a;avascript:alert(1))',
+      '[a](javascript&#58;alert(1))',
+      '[a](java&Tab;script:alert(1))',
+      '[a](&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;alert(1))',
+      '![i](&#106;avascript:alert(1))',
+      '<img src="&#106;avascript:alert(1)">',
+    ]) {
+      expect(renderMarkdown(source)).not.toMatch(dangerous);
+    }
+  });
+
+  it('keeps the first href when an anchor repeats the attribute', () => {
+    const html = renderMarkdown('<a href="https://ok.example" href="javascript:alert(1)">x</a>');
+    expect(html).toContain('href="https://ok.example"');
+    expect(html).not.toMatch(dangerous);
+  });
+
+  it('allows http, https, mailto, relative and fragment urls', () => {
+    expect(renderMarkdown('[a](https://example.com/x?a=1#f)')).toContain(
+      'href="https://example.com/x?a=1#f"',
+    );
+    expect(renderMarkdown('[a](mailto:x@y.com)')).toContain('href="mailto:x@y.com"');
+    expect(renderMarkdown('[a](/relative/path)')).toContain('href="/relative/path"');
+    expect(renderMarkdown('[a](#anchor)')).toContain('href="#anchor"');
+    expect(renderMarkdown('<a href="/a:b">x</a>')).toContain('href="/a:b"');
+  });
+
+  it('drops raw text elements together with their content', () => {
+    for (const source of [
+      '<script>alert(1)</script>after',
+      '<style>body{background:url(javascript:alert(1))}</style>after',
+      '<iframe src="https://evil.example"></iframe>after',
+      '<textarea></textarea><img src=x onerror=alert(1)>after',
+    ]) {
+      const html = renderMarkdown(source);
+      expect(html).not.toMatch(dangerous);
+      expect(html).not.toContain('alert(1)');
+    }
+  });
+
+  it('marks absolute links as external and leaves relative links alone', () => {
+    expect(renderMarkdown('[a](https://example.com)')).toContain('rel="noopener noreferrer"');
+    expect(renderMarkdown('[a](/local)')).not.toContain('target=');
+  });
+});
+
+describe('sanitizer defects found by the adversarial audit', () => {
+  it('treats a protocol relative link as external', () => {
+    const html = renderMarkdown('[y](//example.com/x)');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it('classifies an entity encoded absolute url as external', () => {
+    expect(renderMarkdown('<a href="&#104;ttps://example.com">y</a>')).toContain(
+      'rel="noopener noreferrer"',
+    );
+  });
+
+  it('returns readable plain text rather than escaped html', () => {
+    expect(renderPlainText('a < b & "c"')).toBe('a < b & "c"');
+    expect(summarize('a < b & "c"', 40)).toBe('a < b & "c"');
   });
 });

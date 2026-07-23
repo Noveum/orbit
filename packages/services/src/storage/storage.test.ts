@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import { DomainError, MAX_UPLOAD_BYTES } from '@orbit/shared';
-import { describe, expect, it } from 'vitest';
 import {
   assertSafeKey,
   createStorageDriver,
@@ -81,9 +81,14 @@ describe('sanitizeFileName', () => {
 });
 
 describe('storageKeyFor', () => {
-  it('builds org/year/month/ulid-name', () => {
-    const key = storageKeyFor('org_123', 'My Photo.png', new Date('2026-03-09T00:00:00.000Z'));
-    expect(key).toMatch(/^org_123\/2026\/03\/[0-9A-HJKMNP-TV-Z]{26}-My-Photo\.png$/);
+  it('builds org/year/month/uuid-name', () => {
+    const at = new Date('2026-03-09T00:00:00.000Z');
+    const key = storageKeyFor('org_123', 'My Photo.png', at);
+    expect(key).toMatch(
+      /^org_123\/2026\/03\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}-My-Photo\.png$/,
+    );
+    const timestamp = key.slice('org_123/2026/03/'.length, 'org_123/2026/03/'.length + 13);
+    expect(Number.parseInt(timestamp.replace('-', ''), 16)).toBe(at.getTime());
   });
 
   it('requires an organization', () => {
@@ -137,7 +142,9 @@ describe('S3StorageDriver', () => {
   });
 
   it('rejects unsafe keys before signing', async () => {
-    await expect(driver.getUrl('../secrets', 60)).rejects.toThrow(DomainError);
+    await expect(Promise.resolve().then(() => driver.getUrl('../secrets', 60))).rejects.toThrow(
+      DomainError,
+    );
   });
 });
 

@@ -1,0 +1,3 @@
+[test]
+preload = ["./tests-preload.ts"]
+root = "src"

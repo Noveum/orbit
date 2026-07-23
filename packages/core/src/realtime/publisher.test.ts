@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import { scopes, syncActionSchema } from '@orbit/shared/events';
-import { describe, expect, it } from 'vitest';
 import { buildSyncAction, publishDeltas } from './publisher.ts';
 
 describe('buildSyncAction', () => {

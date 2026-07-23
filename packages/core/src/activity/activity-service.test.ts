@@ -1,5 +1,5 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { db } from '@orbit/db';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { createWorkspace, resetDatabase, stateNamed, type Workspace } from '../test-support.ts';
 import { createIssue, updateIssue } from '../work/issue-service.ts';
 import { describeActivity, listActivity } from './activity-service.ts';

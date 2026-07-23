@@ -1,9 +1,4 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
-
-const repositoryEnvFile = resolve(import.meta.dirname, '../../.env');
-if (existsSync(repositoryEnvFile)) process.loadEnvFile(repositoryEnvFile);
 
 const { BASE } = await import('./e2e/base-url.ts');
 

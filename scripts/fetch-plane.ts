@@ -1,40 +1,122 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const KEY = process.env.PLANE_API_KEY;
-const SLUG = process.env.PLANE_WORKSPACE ?? 'noveum-ai';
-const OUT = resolve(process.env.PLANE_OUT ?? 'extras/import/plane');
-const RATE = Number(process.env.PLANE_RATE ?? 55);
-const WITH_LINKS = process.env.PLANE_LINKS === '1';
+interface Page<T> {
+  results: T[];
+  next_page_results: boolean;
+  next_cursor: string;
+}
 
-if (!KEY) throw new Error('PLANE_API_KEY is not set.');
+interface PlaneProject {
+  id: string;
+  identifier: string;
+  name: string;
+  description?: string;
+}
+
+interface PlaneState {
+  id: string;
+  name: string;
+  group: string;
+}
+
+interface PlaneLabel {
+  id: string;
+  name: string;
+}
+
+interface PlaneMember {
+  id: string;
+  display_name: string;
+}
+
+interface PlaneGrouping {
+  id: string;
+  name: string;
+}
+
+interface PlaneGroupingIssue {
+  id: string;
+  issue?: string;
+}
+
+interface PlaneIssue {
+  id: string;
+  sequence_id: number;
+  name: string;
+  priority: string;
+  state: string;
+  assignees?: string[];
+  labels?: string[];
+  target_date?: string | null;
+  description_html?: string;
+}
+
+interface PlaneComment {
+  actor: string;
+  created_at: string;
+  comment_html?: string;
+}
+
+interface PlanePage {
+  id: string;
+  name?: string;
+  description_html?: string;
+}
+
+interface PlaneAsset {
+  asset_url?: string;
+}
+
+interface AssetRecord {
+  fileName: string;
+  contentType: string;
+  size: number;
+}
+
+const KEY = process.env['PLANE_API_KEY'] ?? '';
+const SLUG = process.env['PLANE_WORKSPACE'] ?? 'noveum-ai';
+const OUT = resolve(process.env['PLANE_OUT'] ?? 'extras/import/plane');
+const RATE = Number(process.env['PLANE_RATE'] ?? 55);
+const WITH_LINKS = process.env['PLANE_LINKS'] === '1';
+
+if (KEY.length === 0) throw new Error('PLANE_API_KEY is not set.');
+if (!Number.isFinite(RATE) || RATE < 1) {
+  throw new Error(`PLANE_RATE must be a number of at least 1, got "${process.env['PLANE_RATE']}".`);
+}
 
 const BASE = `https://api.plane.so/api/v1/workspaces/${SLUG}`;
-mkdirSync(OUT, { recursive: true });
 
-const log = (line) => {
+const log = (line: string): void => {
   process.stdout.write(`${line}\n`);
 };
 
-const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((done) => {
+    setTimeout(done, ms);
+  });
 
-const window = [];
+const requestWindow: number[] = [];
 let requests = 0;
 let throttled = 0;
 
-async function takeSlot() {
+async function takeSlot(): Promise<void> {
   for (;;) {
     const now = Date.now();
-    while (window.length > 0 && now - window[0] > 60_000) window.shift();
-    if (window.length < RATE) {
-      window.push(now);
+    for (;;) {
+      const oldest = requestWindow[0];
+      if (oldest === undefined || now - oldest <= 60_000) break;
+      requestWindow.shift();
+    }
+    if (requestWindow.length < RATE) {
+      requestWindow.push(now);
       return;
     }
-    await sleep(Math.max(250, 60_000 - (now - window[0])));
+    const oldest = requestWindow[0] ?? now;
+    await sleep(Math.max(250, 60_000 - (now - oldest)));
   }
 }
 
-async function get(path, attempt = 0) {
+async function get<T>(path: string, attempt = 0): Promise<T> {
   await takeSlot();
   requests += 1;
   const response = await fetch(BASE + path, { headers: { 'x-api-key': KEY } });
@@ -43,20 +125,21 @@ async function get(path, attempt = 0) {
     if (attempt >= 8) throw new Error(`${response.status} on ${path}`);
     const retryAfter = Number(response.headers.get('retry-after') ?? 0);
     await sleep(retryAfter > 0 ? (retryAfter + 1) * 1000 : 2000 * 2 ** attempt);
-    return get(path, attempt + 1);
+    return get<T>(path, attempt + 1);
   }
   if (!response.ok) throw new Error(`${response.status} on ${path}`);
-  return response.json();
+  return (await response.json()) as T;
 }
 
-async function collect(path) {
-  const rows = [];
-  const seen = new Set();
-  let cursor = null;
+async function collect<T>(path: string): Promise<T[]> {
+  const rows: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
   for (;;) {
     const separator = path.includes('?') ? '&' : '?';
-    const suffix = cursor === null ? '' : `${separator}cursor=${encodeURIComponent(cursor)}`;
-    const page = await get(`${path}${suffix}`);
+    const suffix: string =
+      cursor === null ? '' : `${separator}cursor=${encodeURIComponent(cursor)}`;
+    const page: T[] | Page<T> = await get<T[] | Page<T>>(`${path}${suffix}`);
     if (Array.isArray(page)) return page;
     rows.push(...page.results);
     if (!page.next_page_results || seen.has(page.next_cursor)) return rows;
@@ -65,35 +148,40 @@ async function collect(path) {
   }
 }
 
-async function mapConcurrent(items, limit, worker) {
+async function mapConcurrent<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
       for (;;) {
         const index = next;
         next += 1;
-        if (index >= items.length) return;
-        await worker(items[index], index);
+        const item = items[index];
+        if (item === undefined) return;
+        await worker(item);
       }
     }),
   );
 }
 
-function writeJson(directory, name, value) {
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(resolve(directory, `${name}.json`), JSON.stringify(value, null, 2));
+async function writeJson(directory: string, name: string, value: unknown): Promise<void> {
+  await Bun.write(resolve(directory, `${name}.json`), JSON.stringify(value, null, 2));
 }
 
-function writeText(directory, name, value) {
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(resolve(directory, name), value);
+async function writeText(directory: string, name: string, value: string): Promise<void> {
+  await Bun.write(resolve(directory, name), value);
 }
 
-function htmlToMarkdown(html) {
+function htmlToMarkdown(html: string | null | undefined): string {
   if (typeof html !== 'string' || html.length === 0) return '';
   return html
-    .replace(/<a [^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, text) =>
-      String(text).trim().length === 0 ? String(href) : `[${String(text).trim()}](${href})`,
+    .replace(
+      /<a [^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi,
+      (_m: string, href: string, text: string) =>
+        text.trim().length === 0 ? href : `[${text.trim()}](${href})`,
     )
     .replace(/<h1[^>]*>/gi, '\n# ')
     .replace(/<h2[^>]*>/gi, '\n## ')
@@ -118,9 +206,9 @@ function htmlToMarkdown(html) {
     .trim();
 }
 
-function slugify(value) {
+function slugify(value: string): string {
   return (
-    String(value)
+    value
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
@@ -129,16 +217,21 @@ function slugify(value) {
 }
 
 const IMAGE_TAG = /<image-component[^>]*\bsrc="([0-9a-fA-F-]{36})"/g;
-const assetManifest = {};
+const assetManifest: Record<string, AssetRecord> = {};
 
-function assetIdsIn(html) {
+function assetIdsIn(html: string | null | undefined): string[] {
   if (typeof html !== 'string') return [];
-  return [...html.matchAll(IMAGE_TAG)].map((match) => match[1]);
+  const ids: string[] = [];
+  for (const match of html.matchAll(IMAGE_TAG)) {
+    const id = match[1];
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
 }
 
-async function downloadAsset(assetId) {
+async function downloadAsset(assetId: string): Promise<void> {
   if (assetManifest[assetId] !== undefined) return;
-  const meta = await get(`/assets/${assetId}/`).catch(() => null);
+  const meta = await get<PlaneAsset>(`/assets/${assetId}/`).catch(() => null);
   const url = meta?.asset_url;
   if (typeof url !== 'string' || url.length === 0) return;
 
@@ -146,12 +239,11 @@ async function downloadAsset(assetId) {
   if (!response.ok) return;
   const bytes = new Uint8Array(await response.arrayBuffer());
   const named = /filename[^=]*=(?:UTF-8'')?"?([^&";]+)/i.exec(decodeURIComponent(url));
-  const fileName = slugify(named?.[1] ?? 'image').concat(
-    (named?.[1] ?? '').includes('.') ? `.${(named?.[1] ?? '').split('.').pop()}` : '.png',
+  const raw = named?.[1] ?? '';
+  const fileName = slugify(raw.length > 0 ? raw : 'image').concat(
+    raw.includes('.') ? `.${raw.split('.').pop() ?? 'png'}` : '.png',
   );
-  const directory = resolve(OUT, 'assets');
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(resolve(directory, assetId), bytes);
+  await Bun.write(resolve(OUT, 'assets', assetId), bytes);
   assetManifest[assetId] = {
     fileName,
     contentType: response.headers.get('content-type') ?? 'application/octet-stream',
@@ -160,94 +252,99 @@ async function downloadAsset(assetId) {
   log(`  asset ${assetId} ${fileName} ${bytes.byteLength} bytes`);
 }
 
-const projects = await collect('/projects/?per_page=100');
-writeJson(OUT, 'projects', projects);
+const projects = await collect<PlaneProject>('/projects/?per_page=100');
+await writeJson(OUT, 'projects', projects);
 log(`projects: ${projects.length}`);
 
-const members = await get('/members/');
-writeJson(OUT, 'members', members);
+const members = await get<PlaneMember[]>('/members/');
+await writeJson(OUT, 'members', members);
 log(`members: ${members.length}`);
 
-const workspacePages = await collect('/pages/?per_page=100').catch(() => []);
-writeJson(OUT, 'workspace-pages', workspacePages);
+const workspacePages = await collect<PlanePage>('/pages/?per_page=100').catch(() => []);
+await writeJson(OUT, 'workspace-pages', workspacePages);
 log(`workspace pages: ${workspacePages.length}`);
 
-const summaryRows = [];
-const inaccessible = [];
+const summaryRows: string[] = [];
+const inaccessible: string[] = [];
 
 for (const project of projects) {
   const id = project.id;
   const directory = resolve(OUT, project.identifier);
 
-  if (existsSync(resolve(directory, 'issues.json')) && process.env.PLANE_FORCE !== '1') {
+  if (
+    (await Bun.file(resolve(directory, 'issues.json')).exists()) &&
+    process.env['PLANE_FORCE'] !== '1'
+  ) {
     log(`${project.identifier}: cached, skipping`);
     continue;
   }
 
   log(`${project.identifier}: fetching metadata`);
-  const states = await collect(`/projects/${id}/states/?per_page=100`).catch((error) => {
-    if (String(error).includes('403')) return null;
-    throw error;
-  });
+  const states = await collect<PlaneState>(`/projects/${id}/states/?per_page=100`).catch(
+    (error: unknown) => {
+      if (String(error).includes('403')) return null;
+      throw error;
+    },
+  );
   if (states === null) {
     log(`${project.identifier}: no permission to read this project, skipping`);
     inaccessible.push(project.identifier);
     continue;
   }
-  const labels = await collect(`/projects/${id}/labels/?per_page=100`);
-  const cycles = await collect(`/projects/${id}/cycles/?per_page=100`);
-  const modules = await collect(`/projects/${id}/modules/?per_page=100`);
-  const projectMembers = await get(`/projects/${id}/members/`).catch(() => []);
-  const issueTypes = await get(`/projects/${id}/issue-types/`).catch(() => []);
-  const pages = await collect(`/projects/${id}/pages/?per_page=100`).catch(() => []);
+  const labels = await collect<PlaneLabel>(`/projects/${id}/labels/?per_page=100`);
+  const cycles = await collect<PlaneGrouping>(`/projects/${id}/cycles/?per_page=100`);
+  const modules = await collect<PlaneGrouping>(`/projects/${id}/modules/?per_page=100`);
+  const projectMembers = await get<PlaneMember[]>(`/projects/${id}/members/`).catch(() => []);
+  const issueTypes = await get<unknown[]>(`/projects/${id}/issue-types/`).catch(() => []);
+  const pages = await collect<PlanePage>(`/projects/${id}/pages/?per_page=100`).catch(() => []);
 
-  const issues = await collect(`/projects/${id}/issues/?per_page=100`);
+  const issues = await collect<PlaneIssue>(`/projects/${id}/issues/?per_page=100`);
   log(`${project.identifier}: ${issues.length} issues, fetching comments`);
 
-  const cycleIssues = {};
+  const cycleIssues: Record<string, string[]> = {};
   for (const item of cycles) {
-    const rows = await collect(
+    const rows = await collect<PlaneGroupingIssue>(
       `/projects/${id}/cycles/${item.id}/cycle-issues/?per_page=100`,
     ).catch(() => []);
     cycleIssues[item.id] = rows.map((row) => row.issue ?? row.id);
   }
 
-  const moduleIssues = {};
+  const moduleIssues: Record<string, string[]> = {};
   for (const item of modules) {
-    const rows = await collect(
+    const rows = await collect<PlaneGroupingIssue>(
       `/projects/${id}/modules/${item.id}/module-issues/?per_page=100`,
     ).catch(() => []);
     moduleIssues[item.id] = rows.map((row) => row.issue ?? row.id);
   }
 
-  const comments = {};
+  const comments: Record<string, PlaneComment[]> = {};
   let done = 0;
   await mapConcurrent(issues, 4, async (item) => {
-    const rows = await collect(`/projects/${id}/issues/${item.id}/comments/?per_page=100`).catch(
-      () => [],
-    );
+    const rows = await collect<PlaneComment>(
+      `/projects/${id}/issues/${item.id}/comments/?per_page=100`,
+    ).catch(() => []);
     if (rows.length > 0) comments[item.id] = rows;
     done += 1;
     if (done % 50 === 0) log(`  ${project.identifier}: ${done}/${issues.length} comment threads`);
   });
 
-  const links = {};
+  const links: Record<string, unknown[]> = {};
   if (WITH_LINKS) {
     await mapConcurrent(issues, 4, async (item) => {
-      const rows = await collect(`/projects/${id}/issues/${item.id}/links/?per_page=100`).catch(
-        () => [],
-      );
+      const rows = await collect<unknown>(
+        `/projects/${id}/issues/${item.id}/links/?per_page=100`,
+      ).catch(() => []);
       if (rows.length > 0) links[item.id] = rows;
     });
   }
 
-  const pageDetails = [];
+  const pageDetails: PlanePage[] = [];
   await mapConcurrent(pages, 2, async (page) => {
-    const detail = await get(`/projects/${id}/pages/${page.id}/`).catch(() => page);
+    const detail = await get<PlanePage>(`/projects/${id}/pages/${page.id}/`).catch(() => page);
     pageDetails.push(detail);
   });
 
-  const referenced = new Set();
+  const referenced = new Set<string>();
   for (const item of issues)
     for (const asset of assetIdsIn(item.description_html)) referenced.add(asset);
   for (const rows of Object.values(comments))
@@ -256,23 +353,23 @@ for (const project of projects) {
     for (const asset of assetIdsIn(page.description_html)) referenced.add(asset);
   for (const assetId of referenced) await downloadAsset(assetId);
 
-  writeJson(directory, 'project', project);
-  writeJson(directory, 'states', states);
-  writeJson(directory, 'labels', labels);
-  writeJson(directory, 'cycles', cycles);
-  writeJson(directory, 'modules', modules);
-  writeJson(directory, 'members', projectMembers);
-  writeJson(directory, 'issue-types', issueTypes);
-  writeJson(directory, 'cycle-issues', cycleIssues);
-  writeJson(directory, 'module-issues', moduleIssues);
-  writeJson(directory, 'comments', comments);
-  writeJson(directory, 'links', links);
-  writeJson(directory, 'pages', pageDetails);
-  writeJson(directory, 'issues', issues);
+  await writeJson(directory, 'project', project);
+  await writeJson(directory, 'states', states);
+  await writeJson(directory, 'labels', labels);
+  await writeJson(directory, 'cycles', cycles);
+  await writeJson(directory, 'modules', modules);
+  await writeJson(directory, 'members', projectMembers);
+  await writeJson(directory, 'issue-types', issueTypes);
+  await writeJson(directory, 'cycle-issues', cycleIssues);
+  await writeJson(directory, 'module-issues', moduleIssues);
+  await writeJson(directory, 'comments', comments);
+  await writeJson(directory, 'links', links);
+  await writeJson(directory, 'pages', pageDetails);
+  await writeJson(directory, 'issues', issues);
 
-  const stateById = new Map(states.map((row) => [row.id, row]));
-  const memberById = new Map(projectMembers.map((row) => [row.id, row]));
-  const labelById = new Map(labels.map((row) => [row.id, row]));
+  const stateById = new Map(states.map((row): [string, PlaneState] => [row.id, row]));
+  const memberById = new Map(projectMembers.map((row): [string, PlaneMember] => [row.id, row]));
+  const labelById = new Map(labels.map((row): [string, PlaneLabel] => [row.id, row]));
 
   const readable = [`# ${project.name} (${project.identifier})`, ''];
   if (project.description) readable.push(project.description, '');
@@ -302,10 +399,10 @@ for (const project of projects) {
     }
     readable.push('');
   }
-  writeText(directory, 'issues.md', readable.join('\n'));
+  await writeText(directory, 'issues.md', readable.join('\n'));
 
   for (const page of pageDetails) {
-    writeText(
+    await writeText(
       resolve(directory, 'pages'),
       `${slugify(page.name ?? 'untitled')}.md`,
       `# ${page.name ?? 'Untitled'}\n\n${htmlToMarkdown(page.description_html ?? '')}\n`,
@@ -322,7 +419,7 @@ for (const project of projects) {
   );
 }
 
-writeText(
+await writeText(
   OUT,
   'SUMMARY.md',
   [
@@ -345,11 +442,11 @@ for (const page of workspacePages) {
   for (const assetId of assetIdsIn(page.description_html)) await downloadAsset(assetId);
 }
 
-writeJson(OUT, 'assets', assetManifest);
+await writeJson(OUT, 'assets', assetManifest);
 log(`assets: ${Object.keys(assetManifest).length}`);
 
 if (inaccessible.length > 0) {
-  writeJson(OUT, 'inaccessible', inaccessible);
+  await writeJson(OUT, 'inaccessible', inaccessible);
   log(`no permission to read: ${inaccessible.join(', ')}`);
 }
 log(`done in ${requests} requests (${throttled} throttled), cached in ${OUT}`);

@@ -1,34 +1,41 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { DEV_LOGIN_HEADER, devLoginEnabled, isDevLoginRequest } from './dev-login.ts';
 
+const env = process.env as Record<string, string | undefined>;
+const STUBBED_KEYS = ['NODE_ENV', 'ORBIT_DEV_LOGIN'];
+const originalEnv = new Map(STUBBED_KEYS.map((key) => [key, env[key]]));
+
 afterEach(() => {
-  vi.unstubAllEnvs();
+  for (const [key, value] of originalEnv) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
 });
 
 describe('devLoginEnabled', () => {
   it('stays off unless the flag is explicitly set to 1', () => {
-    vi.stubEnv('NODE_ENV', 'development');
-    vi.stubEnv('ORBIT_DEV_LOGIN', '');
+    env['NODE_ENV'] = 'development';
+    env['ORBIT_DEV_LOGIN'] = '';
     expect(devLoginEnabled()).toBe(false);
 
-    vi.stubEnv('ORBIT_DEV_LOGIN', 'true');
+    env['ORBIT_DEV_LOGIN'] = 'true';
     expect(devLoginEnabled()).toBe(false);
 
-    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
+    env['ORBIT_DEV_LOGIN'] = '1';
     expect(devLoginEnabled()).toBe(true);
   });
 
   it('stays off in production even when the flag is set', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
+    env['NODE_ENV'] = 'production';
+    env['ORBIT_DEV_LOGIN'] = '1';
     expect(devLoginEnabled()).toBe(false);
   });
 });
 
 describe('isDevLoginRequest', () => {
   beforeEach(() => {
-    vi.stubEnv('NODE_ENV', 'development');
-    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
+    env['NODE_ENV'] = 'development';
+    env['ORBIT_DEV_LOGIN'] = '1';
   });
 
   it('recognises the marker on the context headers', () => {
@@ -53,11 +60,11 @@ describe('isDevLoginRequest', () => {
   });
 
   it('never suppresses a send once dev login is off', () => {
-    vi.stubEnv('ORBIT_DEV_LOGIN', '');
+    env['ORBIT_DEV_LOGIN'] = '';
     expect(isDevLoginRequest({ headers: new Headers({ [DEV_LOGIN_HEADER]: '1' }) })).toBe(false);
 
-    vi.stubEnv('ORBIT_DEV_LOGIN', '1');
-    vi.stubEnv('NODE_ENV', 'production');
+    env['ORBIT_DEV_LOGIN'] = '1';
+    env['NODE_ENV'] = 'production';
     expect(isDevLoginRequest({ headers: new Headers({ [DEV_LOGIN_HEADER]: '1' }) })).toBe(false);
   });
 });

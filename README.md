@@ -4,4 +4,28 @@ A free, realtime, keyboard-first work tracker. Issues, cycles, projects, and doc
 
 No pricing, no billing, no paid tiers.
 
-[Product specification and UI mockups](https://claude.ai/code/artifact/bddfe1fe-1b5c-40fb-99c2-18cb31700fdc)
+Orbit runs on [Bun](https://bun.sh) end to end: Bun installs the workspace, runs
+every script, executes the TypeScript, serves the WebSockets, talks to Postgres,
+Redis and S3 through Bun built-ins, runs the tests, and is the runtime inside
+every container image.
+
+```bash
+bun install
+cp .env.example .env
+bun run infra:up
+bun run db:push
+bun run db:seed
+bun run dev
+```
+
+| Service | Port |
+| --- | --- |
+| web | 3000 |
+| realtime | 3100 |
+| mcp | 3200 |
+| postgres | 5434 |
+| redis | 6380 |
+| minio | 9010 |
+
+`bun run verify` runs lint, the comment policy, types, and tests. All four must be
+green before a pull request.

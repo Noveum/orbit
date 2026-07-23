@@ -1,7 +1,7 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { createTeam } from '../org/team-service.ts';
 import {
   addMember,

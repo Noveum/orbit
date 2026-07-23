@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { buildBurnUp, cycleDayCount, idealLine } from './burn-up.ts';
 
 const STARTS = new Date('2026-07-13T00:00:00.000Z');
