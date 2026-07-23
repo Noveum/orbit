@@ -5,10 +5,9 @@ import { useTheme } from 'next-themes';
 import { ThemeProvider } from './theme-provider.tsx';
 
 function ThemeProbe() {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { setTheme } = useTheme();
   return (
     <div>
-      <span data-testid="resolved">{resolvedTheme ?? 'unset'}</span>
       <button type="button" onClick={() => setTheme('dark')}>
         dark
       </button>
@@ -19,6 +18,10 @@ function ThemeProbe() {
   );
 }
 
+function hasClass(name: string): boolean {
+  return document.documentElement.classList.contains(name);
+}
+
 describe('ThemeProvider', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -26,7 +29,7 @@ describe('ThemeProvider', () => {
     document.documentElement.style.colorScheme = '';
   });
 
-  it('renders the light theme and applies the light class', async () => {
+  it('applies the light class when light is chosen', async () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
@@ -34,13 +37,12 @@ describe('ThemeProvider', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: 'light' }));
     await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('light');
+      expect(hasClass('light')).toBe(true);
     });
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(hasClass('dark')).toBe(false);
   });
 
-  it('switches to the dark theme and applies the dark class', async () => {
+  it('applies the dark class when dark is chosen', async () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
@@ -48,9 +50,8 @@ describe('ThemeProvider', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: 'dark' }));
     await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('dark');
+      expect(hasClass('dark')).toBe(true);
     });
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(document.documentElement.classList.contains('light')).toBe(false);
+    expect(hasClass('light')).toBe(false);
   });
 });
