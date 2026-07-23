@@ -1,6 +1,6 @@
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
-import { SORT_ORDER_STEP } from '@orbit/shared/constants';
-import { notFound, validationFailed } from '@orbit/shared/errors';
+import { type IssueRelationType, SORT_ORDER_STEP } from '@orbit/shared/constants';
+import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -29,12 +29,39 @@ export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
 export const REBALANCE_THRESHOLD = 0.0001;
 
-const INVERSE_RELATION = {
+export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
   blocks: 'blocked_by',
   blocked_by: 'blocks',
   related: 'related',
-  duplicate_of: 'duplicate_of',
-} as const;
+  duplicate_of: 'duplicated_by',
+  duplicated_by: 'duplicate_of',
+};
+
+export const PARENT_CHAIN_LIMIT = 10;
+
+async function assertParentAllowed(
+  executor: Executor,
+  organizationId: string,
+  issueId: string,
+  parentId: string,
+): Promise<void> {
+  let cursor: string | null = parentId;
+  let depth = 0;
+  while (cursor !== null) {
+    if (cursor === issueId) {
+      throw conflict('An issue cannot be its own parent, directly or through its parent chain.');
+    }
+    depth += 1;
+    if (depth > PARENT_CHAIN_LIMIT) throw conflict('That parent chain is too deep.');
+    const rows: { parentId: string | null }[] = await executor
+      .select({ parentId: schema.issue.parentId })
+      .from(schema.issue)
+      .where(and(eq(schema.issue.id, cursor), eq(schema.issue.organizationId, organizationId)))
+      .limit(1);
+    const parent = requireRow(rows[0], 'That parent issue does not exist.');
+    cursor = parent.parentId;
+  }
+}
 
 export function issueScopes(
   row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
@@ -290,11 +317,15 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const number = await allocateIssueNumber(tx, parsed.teamId);
     const key = await teamKey(tx, parsed.teamId);
     const now = new Date();
+    const id = newId();
+    if (parsed.parentId !== null) {
+      await assertParentAllowed(tx, principal.organizationId, id, parsed.parentId);
+    }
 
     const [created] = await tx
       .insert(schema.issue)
       .values({
-        id: newId(),
+        id,
         organizationId: principal.organizationId,
         teamId: parsed.teamId,
         number,
@@ -353,6 +384,9 @@ async function applyIssueUpdate(
 
   const { values, changes } = collectIssueChanges(current, parsed);
   const now = new Date();
+  if (values.parentId !== undefined && values.parentId !== null) {
+    await assertParentAllowed(tx, principal.organizationId, issueId, values.parentId);
+  }
   if (values.stateId !== undefined) {
     const state = await stateOf(tx, values.stateId);
     if (state.teamId !== current.teamId) {
