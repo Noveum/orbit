@@ -6,7 +6,7 @@ import { Bookmark, ListFilter, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
-import { useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
 import { DisplayMenu } from './display-menu.tsx';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { buildFilterFields, operatorLabel, valueLabel } from './filter-fields.tsx';
@@ -36,19 +36,31 @@ export function FilterBar({ teamId, teamName, layout, config, onChange }: Filter
     onChange({ ...config, predicates: next });
   };
 
-  useHotkey('f', () => setTarget('new'), { label: 'Add filter', section: 'View' });
+  useHotkey('f', () => setTarget('new'), {
+    label: 'Add filter',
+    section: 'View',
+    scope: 'filters',
+  });
   useHotkey('shift+f', () => setPredicates(dropLastPredicate(predicates)), {
     label: 'Remove the last filter',
     section: 'View',
+    scope: 'filters',
   });
   useHotkey('alt+shift+f', () => setPredicates([]), {
     label: 'Clear all filters',
     section: 'View',
+    scope: 'filters',
   });
-  useHotkey('alt+v', () => setSaveOpen(true), { label: 'Save as a view', section: 'View' });
+  useHotkey('alt+v', () => setSaveOpen(true), {
+    label: 'Save as a view',
+    section: 'View',
+    scope: 'filters',
+  });
   useHotkey('escape', () => setTarget(null), {
     label: 'Close the filter menu',
     section: 'View',
+    scope: 'filters',
+    priority: HOTKEY_PRIORITY.layer,
     enabled: target !== null,
     preventDefault: false,
   });

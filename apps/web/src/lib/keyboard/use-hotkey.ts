@@ -2,12 +2,15 @@
 
 import { useEffect, useId, useRef } from 'react';
 import { useHotkeyRegistry } from './provider.tsx';
-import type { HotkeySection } from './registry.ts';
+import { HOTKEY_PRIORITY, type HotkeyScope, type HotkeySection } from './registry.ts';
 
 export interface HotkeyOptions {
   readonly label: string;
   readonly section?: HotkeySection;
+  readonly scope?: HotkeyScope;
+  readonly priority?: number;
   readonly enabled?: boolean;
+  readonly advertised?: boolean;
   readonly preventDefault?: boolean;
   readonly allowInInput?: boolean;
 }
@@ -22,7 +25,10 @@ export function useHotkey(
   const {
     label,
     section = 'General',
+    scope = 'global',
+    priority = HOTKEY_PRIORITY.global,
     enabled = true,
+    advertised = true,
     preventDefault = true,
     allowInInput = false,
   } = options;
@@ -40,11 +46,26 @@ export function useHotkey(
         binding,
         label,
         section,
+        scope,
+        priority,
         enabled,
+        advertised,
         preventDefault,
         allowInInput,
         run: (event) => handlerRef.current(event),
       }),
-    [registry, id, binding, label, section, enabled, preventDefault, allowInInput],
+    [
+      registry,
+      id,
+      binding,
+      label,
+      section,
+      scope,
+      priority,
+      enabled,
+      advertised,
+      preventDefault,
+      allowInInput,
+    ],
   );
 }

@@ -2,12 +2,23 @@ import { type BufferedStep, bufferMatches, type HotkeyStep, parseBinding } from 
 
 export type HotkeySection = 'Navigation' | 'General' | 'Issues' | 'View';
 
+export type HotkeyScope = 'global' | 'issues' | 'docs' | 'inbox' | 'filters';
+
+export const HOTKEY_PRIORITY = {
+  global: 0,
+  surface: 1,
+  layer: 2,
+} as const;
+
 export interface HotkeyEntryInput {
   readonly id: string;
   readonly binding: string;
   readonly label: string;
   readonly section: HotkeySection;
+  readonly scope: HotkeyScope;
+  readonly priority: number;
   readonly enabled: boolean;
+  readonly advertised: boolean;
   readonly preventDefault: boolean;
   readonly allowInInput: boolean;
   readonly run: (event: KeyboardEvent) => void;
@@ -22,6 +33,7 @@ function shiftSpecificity(entry: HotkeyEntry): number {
 }
 
 function beats(candidate: HotkeyEntry, current: HotkeyEntry): boolean {
+  if (candidate.priority !== current.priority) return candidate.priority > current.priority;
   if (candidate.steps.length !== current.steps.length) {
     return candidate.steps.length > current.steps.length;
   }

@@ -88,11 +88,11 @@ export function IssueList({
   );
 
   useEffect(() => {
-    if (activeRow === undefined && issueIndexes[0] !== undefined) setActiveIndex(issueIndexes[0]);
-  }, [activeRow, issueIndexes]);
+    if (activeIssue === undefined && issueIndexes[0] !== undefined) setActiveIndex(issueIndexes[0]);
+  }, [activeIssue, issueIndexes]);
 
-  useHotkey('j', () => step(1), { label: 'Next issue', section: 'Issues' });
-  useHotkey('k', () => step(-1), { label: 'Previous issue', section: 'Issues' });
+  useHotkey('j', () => step(1), { label: 'Next issue', section: 'Issues', scope: 'issues' });
+  useHotkey('k', () => step(-1), { label: 'Previous issue', section: 'Issues', scope: 'issues' });
   useHotkey(
     'x',
     () => {
@@ -103,29 +103,37 @@ export function IssueList({
           : [...current, activeIssue.id],
       );
     },
-    { label: 'Select issue', section: 'Issues' },
+    { label: 'Select issue', section: 'Issues', scope: 'issues' },
   );
   useHotkey(
     'space',
     () => {
       if (activeIssue !== undefined) setPeekId(activeIssue.id);
     },
-    { label: 'Peek issue', section: 'Issues' },
+    { label: 'Peek issue', section: 'Issues', scope: 'issues' },
   );
   useHotkey(
     'enter',
     () => {
       if (activeIssue !== undefined) router.push(`/issue/${activeIssue.identifier}`);
     },
-    { label: 'Open issue', section: 'Issues' },
+    { label: 'Open issue', section: 'Issues', scope: 'issues' },
   );
   useHotkey(
     'escape',
     () => {
+      if (peekId !== null) {
+        setPeekId(null);
+        return;
+      }
       setSelected([]);
-      setPeekId(null);
     },
-    { label: 'Clear selection', section: 'Issues' },
+    {
+      label: 'Close the peek, then clear the selection',
+      section: 'Issues',
+      scope: 'issues',
+      preventDefault: false,
+    },
   );
 
   const peekIssue = issues.find((issue) => issue.id === peekId);
