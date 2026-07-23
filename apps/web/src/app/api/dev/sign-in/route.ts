@@ -2,7 +2,7 @@ import { db, desc, eq, ilike, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import { devSignInSchema } from '@orbit/shared/validators';
 import { NextResponse } from 'next/server';
-import { devLoginEnabled } from '@/lib/api/dev-login.ts';
+import { DEV_LOGIN_HEADER, devLoginEnabled } from '@/lib/api/dev-login.ts';
 import { listDevUsers } from '@/lib/api/dev-users.ts';
 import { errorResponse, readJson } from '@/lib/api/handler.ts';
 import { auth } from '@/lib/auth/server.ts';
@@ -27,6 +27,7 @@ export async function POST(request: Request): Promise<Response> {
     if (existing === undefined) throw notFound('No seeded user with that email.');
 
     const forwarded = new Headers(request.headers);
+    forwarded.set(DEV_LOGIN_HEADER, '1');
     await auth.api.signInMagicLink({
       body: { email, callbackURL: '/' },
       headers: forwarded,

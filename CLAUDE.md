@@ -27,14 +27,17 @@ Cross-app code lives in `packages/shared`. If two apps need it, it belongs there
 ## Commands
 
 ```
-pnpm infra:up        start postgres, redis, minio, mailpit
+pnpm infra:up        start postgres, redis, minio
 pnpm db:push         apply schema to the dev database
 pnpm db:seed         load demo org, teams, members, issues, comments
 pnpm dev             run web, realtime, and mcp together
 pnpm verify          lint + comment policy + typecheck + tests
 ```
 
-Ports: web 3000, realtime 3100, mcp 3200, postgres 5433, redis 6380, minio 9010, mailpit UI 8025.
+Ports: web 3000, realtime 3100, mcp 3200, postgres 5434, redis 6380, minio 9010.
+
+Email goes out through Resend only. Set `RESEND_API_KEY` and an `EMAIL_FROM` on a
+domain verified in Resend, otherwise every send fails.
 
 ## Conventions
 

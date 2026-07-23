@@ -53,17 +53,6 @@ services:
       timeout: 5s
       retries: 20
 
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: orbit-mailpit
-    restart: unless-stopped
-    environment:
-      MP_SMTP_AUTH_ACCEPT_ANY: 1
-      MP_SMTP_AUTH_ALLOW_INSECURE: 1
-    ports:
-      - "1025:1025"
-      - "8025:8025"
-
 volumes:
   orbit-postgres:
   orbit-redis:

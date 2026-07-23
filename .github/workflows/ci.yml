@@ -69,7 +69,6 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
       REALTIME_INTERNAL_TOKEN: ci-realtime-token
-      EMAIL_TRANSPORT: console
       STORAGE_DRIVER: local
     steps:
       - uses: actions/checkout@v5

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import { db, eq, schema } from '@orbit/db';
+import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -8,8 +9,8 @@ import { createAuthMiddleware } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
 import { magicLink, organization } from 'better-auth/plugins';
 import { z } from 'zod';
+import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { serverEnv } from '@/lib/env.ts';
-import { sendAuthEmail } from './email.ts';
 
 const passkeyAssertionSchema = z.object({ response: z.object({ id: z.string().min(1) }) });
 
@@ -81,22 +82,34 @@ export const auth = betterAuth({
   plugins: [
     passkey({ rpName: 'Orbit' }),
     magicLink({
-      sendMagicLink: async ({ email, url }) => {
-        await sendAuthEmail({
+      sendMagicLink: async ({ email, url, token }, request) => {
+        if (isDevLoginRequest(request)) return;
+        const content = await magicLinkEmail({ url, email });
+        await sendEmail(db, {
           to: email,
-          subject: 'Your Orbit sign in link',
-          text: `Open this link to sign in to Orbit. It expires in 5 minutes.\n${url}`,
-          url,
+          subject: content.subject,
+          html: content.html,
+          text: content.text,
+          template: 'magic-link',
+          idempotencyKey: `magic-link:${token}`,
         });
       },
     }),
     organization({
       sendInvitationEmail: async (data) => {
-        await sendAuthEmail({
+        const content = await inviteEmail({
+          organizationName: data.organization.name,
+          inviterName: data.inviter.user.name,
+          role: data.role,
+          acceptUrl: `${serverEnv().NEXT_PUBLIC_APP_URL}/invite/${data.id}`,
+        });
+        await sendEmail(db, {
           to: data.email,
-          subject: `${data.inviter.user.name} invited you to ${data.organization.name} on Orbit`,
-          text: `Accept the invitation to join ${data.organization.name}.`,
-          url: `${serverEnv().NEXT_PUBLIC_APP_URL}/invite/${data.id}`,
+          subject: content.subject,
+          html: content.html,
+          text: content.text,
+          template: 'invite',
+          idempotencyKey: `org-invite:${data.id}`,
         });
       },
     }),

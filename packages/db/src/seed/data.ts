@@ -696,7 +696,7 @@ export const SEED_DOCS: readonly SeedDoc[] = [
     collection: 'Runbooks',
     author: 'pulkit',
     content:
-      '# Local development\n\n```bash\npnpm install\ncp .env.example .env\npnpm infra:up\npnpm db:push\npnpm db:seed\npnpm dev\n```\n\n## Services\n\n| Service | Port |\n| --- | --- |\n| web | 3000 |\n| realtime | 3100 |\n| mcp | 3200 |\n| postgres | 5434 |\n| redis | 6380 |\n| minio | 9010 |\n| mailpit | 8025 |\n\n> Magic link emails are printed to the console when `EMAIL_TRANSPORT=console`, and captured by Mailpit otherwise.\n\n## Checks\n\n`pnpm verify` runs lint, the comment policy, types, and tests. All four must be green before a pull request.',
+      '# Local development\n\n```bash\npnpm install\ncp .env.example .env\npnpm infra:up\npnpm db:push\npnpm db:seed\npnpm dev\n```\n\n## Services\n\n| Service | Port |\n| --- | --- |\n| web | 3000 |\n| realtime | 3100 |\n| mcp | 3200 |\n| postgres | 5434 |\n| redis | 6380 |\n| minio | 9010 |\n\n> Email goes out through Resend only. Set `RESEND_API_KEY` and an `EMAIL_FROM` on a domain you have verified in Resend, or every send will fail.\n\n## Checks\n\n`pnpm verify` runs lint, the comment policy, types, and tests. All four must be green before a pull request.',
   },
   {
     title: 'Sync engine launch plan',
