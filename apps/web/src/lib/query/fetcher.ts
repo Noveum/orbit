@@ -1,5 +1,7 @@
 import type { ErrorCode } from '@orbit/shared/errors';
+import { ORIGIN_CLIENT_ID_HEADER } from '@orbit/shared/events';
 import { z } from 'zod';
+import { clientId } from './client-id.ts';
 
 const errorBodySchema = z.object({
   error: z.object({
@@ -41,9 +43,11 @@ export async function apiFetch<T>(
   const method = options.method ?? 'GET';
   const response = await fetch(path, {
     method,
-    ...(options.body === undefined
-      ? {}
-      : { body: JSON.stringify(options.body), headers: { 'content-type': 'application/json' } }),
+    headers: {
+      [ORIGIN_CLIENT_ID_HEADER]: clientId(),
+      ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 
