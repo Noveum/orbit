@@ -17,6 +17,7 @@ export interface ShellTeam {
 }
 
 export interface ShellWorkspace {
+  readonly id: string;
   readonly name: string;
   readonly slug: string;
 }

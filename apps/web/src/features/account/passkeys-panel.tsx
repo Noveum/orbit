@@ -102,8 +102,10 @@ export function PasskeysPanel({ passkeys, accountCount }: PasskeysPanelProps) {
   return (
     <div className="flex flex-col gap-4" data-testid="passkeys-panel">
       <div className="flex flex-wrap items-end gap-2">
-        <label htmlFor="passkey-name" className="flex min-w-52 flex-1 flex-col gap-1.5">
-          <span className="font-medium text-dense text-text">Name this passkey</span>
+        <div className="flex min-w-52 flex-1 flex-col gap-1.5">
+          <label htmlFor="passkey-name" className="font-medium text-dense text-text">
+            Name this passkey
+          </label>
           <Input
             id="passkey-name"
             value={newName}
@@ -111,7 +113,7 @@ export function PasskeysPanel({ passkeys, accountCount }: PasskeysPanelProps) {
             placeholder="Work laptop"
             onChange={(event) => setNewName(event.target.value)}
           />
-        </label>
+        </div>
         <Button
           variant="primary"
           disabled={adding}

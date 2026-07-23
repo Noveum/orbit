@@ -19,16 +19,24 @@ export function breadcrumbsFor(pathname: string, workspaceName: string): Breadcr
 
 export interface WorkspaceShellProps {
   readonly workspace: ShellWorkspace;
+  readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
   readonly teams: readonly ShellTeam[];
   readonly children: ReactNode;
 }
 
-export function WorkspaceShell({ workspace, user, teams, children }: WorkspaceShellProps) {
+export function WorkspaceShell({
+  workspace,
+  workspaces,
+  user,
+  teams,
+  children,
+}: WorkspaceShellProps) {
   const pathname = usePathname();
   return (
     <AppShell
       workspace={workspace}
+      workspaces={workspaces}
       user={user}
       teams={teams}
       breadcrumbs={breadcrumbsFor(pathname, workspace.name)}

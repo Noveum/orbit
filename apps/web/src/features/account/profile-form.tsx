@@ -67,8 +67,10 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
       </div>
 
       <fieldset disabled={pending} className="flex flex-col gap-5">
-        <label htmlFor="profile-name" className="flex flex-col gap-1.5">
-          <span className="font-medium text-dense text-text">Display name</span>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="profile-name" className="font-medium text-dense text-text">
+            Display name
+          </label>
           <Input
             id="profile-name"
             name="name"
@@ -78,10 +80,12 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
             minLength={1}
             maxLength={64}
           />
-        </label>
+        </div>
 
-        <label htmlFor="profile-handle" className="flex flex-col gap-1.5">
-          <span className="font-medium text-dense text-text">Handle</span>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="profile-handle" className="font-medium text-dense text-text">
+            Handle
+          </label>
           <Input
             id="profile-handle"
             name="handle"
@@ -91,9 +95,9 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
             minLength={2}
             maxLength={39}
             aria-invalid={handleError !== null}
-            aria-describedby={handleError === null ? undefined : 'profile-handle-error'}
+            aria-describedby={handleError === null ? 'profile-handle-hint' : 'profile-handle-error'}
           />
-          <span className="text-faint text-xs">
+          <span id="profile-handle-hint" className="text-faint text-xs">
             Teammates mention you with @{userHandle.length === 0 ? 'handle' : userHandle}. It has to
             be unique.
           </span>
@@ -102,10 +106,12 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
               {handleError}
             </span>
           )}
-        </label>
+        </div>
 
-        <label htmlFor="profile-image" className="flex flex-col gap-1.5">
-          <span className="font-medium text-dense text-text">Avatar URL</span>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="profile-image" className="font-medium text-dense text-text">
+            Avatar URL
+          </label>
           <Input
             id="profile-image"
             name="image"
@@ -114,10 +120,12 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
             onChange={(event) => setAvatarUrl(event.target.value)}
             placeholder="https://example.com/avatar.png"
           />
-        </label>
+        </div>
 
-        <label htmlFor="profile-timezone" className="flex flex-col gap-1.5">
-          <span className="font-medium text-dense text-text">Timezone</span>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="profile-timezone" className="font-medium text-dense text-text">
+            Timezone
+          </label>
           <Input
             id="profile-timezone"
             name="timezone"
@@ -127,17 +135,18 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
             maxLength={64}
             placeholder="Asia/Kolkata"
             list="profile-timezone-options"
+            aria-describedby="profile-timezone-hint"
           />
           <datalist id="profile-timezone-options">
             {Intl.supportedValuesOf('timeZone').map((option) => (
               <option key={option} value={option} />
             ))}
           </datalist>
-          <span className="text-faint text-xs">
+          <span id="profile-timezone-hint" className="text-faint text-xs">
             Due dates and digests follow this zone. Yours looks like{' '}
             {Intl.DateTimeFormat().resolvedOptions().timeZone}.
           </span>
-        </label>
+        </div>
       </fieldset>
 
       {formError === null ? null : (
