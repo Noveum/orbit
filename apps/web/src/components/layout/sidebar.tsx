@@ -15,10 +15,10 @@ export interface SidebarProps {
   readonly user: ShellUser;
   readonly sections: readonly NavSection[];
   readonly collapsed: boolean;
-  readonly touch: boolean;
+  readonly touch?: boolean;
   readonly onToggleCollapsed: () => void;
   readonly onOpenPalette: () => void;
-  readonly onNavigate: (() => void) | null;
+  readonly onNavigate?: (() => void) | null;
 }
 
 export function Sidebar({
@@ -27,10 +27,10 @@ export function Sidebar({
   user,
   sections,
   collapsed,
-  touch,
+  touch = false,
   onToggleCollapsed,
   onOpenPalette,
-  onNavigate,
+  onNavigate = null,
 }: SidebarProps) {
   const toggle = (
     <button

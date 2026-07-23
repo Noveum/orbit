@@ -43,14 +43,35 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
 
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);
 
-  useHotkey('s', () => setOpenMenu('status'), { label: 'Change status', section: 'Issues' });
-  useHotkey('p', () => setOpenMenu('priority'), { label: 'Change priority', section: 'Issues' });
-  useHotkey('a', () => setOpenMenu('assignee'), { label: 'Assign issue', section: 'Issues' });
-  useHotkey('i', () => setOpenMenu('project'), { label: 'Change project', section: 'Issues' });
-  useHotkey('l', () => setOpenMenu('labels'), { label: 'Change labels', section: 'Issues' });
+  useHotkey('s', () => setOpenMenu('status'), {
+    label: 'Change status',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('p', () => setOpenMenu('priority'), {
+    label: 'Change priority',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('a', () => setOpenMenu('assignee'), {
+    label: 'Assign issue',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('i', () => setOpenMenu('project'), {
+    label: 'Change project',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('l', () => setOpenMenu('labels'), {
+    label: 'Change labels',
+    section: 'Issues',
+    scope: 'issues',
+  });
   useHotkey('shift+e', () => setOpenMenu('estimate'), {
     label: 'Change estimate',
     section: 'Issues',
+    scope: 'issues',
   });
 
   return (

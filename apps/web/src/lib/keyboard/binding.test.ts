@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  activatesFocusedControl,
   type BufferedStep,
   bufferMatches,
   eventToStep,
@@ -10,7 +11,7 @@ import {
   pruneBuffer,
   SEQUENCE_TIMEOUT_MS,
 } from './binding.ts';
-import { type HotkeyEntry, selectMatch } from './registry.ts';
+import { HOTKEY_PRIORITY, type HotkeyEntry, selectMatch } from './registry.ts';
 
 function keyEvent(key: string, modifiers: Partial<KeyEventLike> = {}): KeyEventLike {
   return {
@@ -34,7 +35,10 @@ function entry(binding: string, overrides: Partial<HotkeyEntry> = {}): HotkeyEnt
     binding,
     label: binding,
     section: 'Navigation',
+    scope: 'global',
+    priority: HOTKEY_PRIORITY.global,
     enabled: true,
+    advertised: true,
     preventDefault: true,
     allowInInput: false,
     run: () => undefined,
@@ -179,5 +183,85 @@ describe('selectMatch', () => {
     const step = eventToStep(keyEvent('Ï', { altKey: true, shiftKey: true, code: 'KeyF' }));
     expect(step.key).toBe('f');
     expect(bufferMatches(parseBinding('alt+shift+f'), [{ ...step, at: 0 }])).toBe(true);
+  });
+});
+
+describe('selectMatch priority', () => {
+  const newIssue = entry('c', { id: 'issue', label: 'Create issue' });
+  const newDoc = entry('c', {
+    id: 'doc',
+    label: 'New doc',
+    scope: 'docs',
+    priority: HOTKEY_PRIORITY.surface,
+  });
+
+  it('resolves to the higher priority binding whatever the registration order', () => {
+    const buffer = press([], 'c', 0);
+    expect(selectMatch([newIssue, newDoc], buffer, false)?.id).toBe('doc');
+    expect(selectMatch([newDoc, newIssue], buffer, false)?.id).toBe('doc');
+  });
+
+  it('falls back to the global binding when the surface binding is disabled', () => {
+    const readOnlyDoc = { ...newDoc, enabled: false };
+    const buffer = press([], 'c', 0);
+    expect(selectMatch([newIssue, readOnlyDoc], buffer, false)?.id).toBe('issue');
+    expect(selectMatch([readOnlyDoc, newIssue], buffer, false)?.id).toBe('issue');
+  });
+
+  it('gives the innermost layer the escape key while it is open', () => {
+    const clearSelection = entry('escape', { id: 'selection', scope: 'issues' });
+    const closeMenu = entry('escape', {
+      id: 'menu',
+      scope: 'filters',
+      priority: HOTKEY_PRIORITY.layer,
+    });
+    const buffer = press([], 'Escape', 0);
+    expect(selectMatch([clearSelection, closeMenu], buffer, false)?.id).toBe('menu');
+    expect(selectMatch([closeMenu, clearSelection], buffer, false)?.id).toBe('menu');
+    expect(selectMatch([clearSelection], buffer, false)?.id).toBe('selection');
+  });
+});
+
+describe('activatesFocusedControl', () => {
+  function node(tag: string, attributes: Record<string, string> = {}): Element {
+    const element = document.createElement(tag);
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+    return element;
+  }
+
+  it('keeps enter and space for every focusable control', () => {
+    const controls = [
+      node('button'),
+      node('a', { href: '/issue/ENG-1' }),
+      node('summary'),
+      node('div', { role: 'button' }),
+      node('div', { role: 'menuitem' }),
+      node('div', { role: 'option' }),
+    ];
+    for (const control of controls) {
+      expect(activatesFocusedControl(keyEvent('Enter'), control)).toBe(true);
+      expect(activatesFocusedControl(keyEvent(' '), control)).toBe(true);
+    }
+  });
+
+  it('looks past the label a control renders inside itself', () => {
+    const button = node('button');
+    const label = document.createElement('span');
+    button.append(label);
+    expect(activatesFocusedControl(keyEvent('Enter'), label)).toBe(true);
+  });
+
+  it('leaves plain elements and anchors without a target to the registry', () => {
+    expect(activatesFocusedControl(keyEvent('Enter'), node('a'))).toBe(false);
+    expect(activatesFocusedControl(keyEvent('Enter'), node('div'))).toBe(false);
+    expect(activatesFocusedControl(keyEvent('Enter'), null)).toBe(false);
+  });
+
+  it('guards only unmodified activation keys', () => {
+    const button = node('button');
+    expect(activatesFocusedControl(keyEvent('j'), button)).toBe(false);
+    expect(activatesFocusedControl(keyEvent('Escape'), button)).toBe(false);
+    expect(activatesFocusedControl(keyEvent('Enter', { metaKey: true }), button)).toBe(false);
+    expect(activatesFocusedControl(keyEvent(' ', { altKey: true }), button)).toBe(false);
   });
 });

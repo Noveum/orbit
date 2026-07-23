@@ -1,4 +1,5 @@
 export {
+  activatesFocusedControl,
   type BufferedStep,
   bufferMatches,
   eventToStep,
@@ -14,5 +15,12 @@ export {
   stepMatches,
 } from './binding.ts';
 export { HotkeyProvider, useHotkeyList, useHotkeyRegistry } from './provider.tsx';
-export { type HotkeyEntry, HotkeyRegistry, type HotkeySection, selectMatch } from './registry.ts';
+export {
+  HOTKEY_PRIORITY,
+  type HotkeyEntry,
+  HotkeyRegistry,
+  type HotkeyScope,
+  type HotkeySection,
+  selectMatch,
+} from './registry.ts';
 export { type HotkeyOptions, useHotkey } from './use-hotkey.ts';

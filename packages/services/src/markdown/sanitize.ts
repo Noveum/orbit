@@ -143,58 +143,136 @@ function isSafeUrl(raw: string): boolean {
   return SAFE_SCHEMES.has(value.slice(0, colon).toLowerCase());
 }
 
-const sanitizer = new HTMLRewriter()
-  .on('*', {
-    element(element) {
-      const tag = element.tagName.toLowerCase();
-      if (DROP_WITH_CONTENT.has(tag)) {
-        element.remove();
-        return;
-      }
-      if (!ALLOWED_TAGS.has(tag)) {
-        element.removeAndKeepContent();
-        return;
-      }
-      const present: [string, string][] = [];
-      for (const attribute of element.attributes) present.push(attribute);
+function keptAttributes(present: readonly (readonly [string, string])[]): Map<string, string> {
+  const keep = new Map<string, string>();
+  for (const [name, value] of present) {
+    const key = name.toLowerCase();
+    if (keep.has(key)) continue;
+    if (!ALLOWED_ATTR.has(key)) continue;
+    if (URL_ATTR.has(key) && !isSafeUrl(value)) continue;
+    keep.set(key, value);
+  }
+  return keep;
+}
 
-      const keep = new Map<string, string>();
-      for (const [name, value] of present) {
-        const key = name.toLowerCase();
-        element.removeAttribute(name);
-        if (keep.has(key)) continue;
-        if (!ALLOWED_ATTR.has(key)) continue;
-        if (URL_ATTR.has(key) && !isSafeUrl(value)) continue;
-        keep.set(key, value);
-      }
-      for (const [key, value] of keep) element.setAttribute(key, value);
+function externalLinkTarget(keep: ReadonlyMap<string, string>): boolean {
+  const href = stripIgnorable(decodeEntities(keep.get('href') ?? ''));
+  return href.length > 0 && ABSOLUTE_URL.test(href);
+}
 
-      if (tag !== 'a') return;
-      const href = stripIgnorable(decodeEntities(keep.get('href') ?? ''));
-      element.removeAttribute('target');
-      element.removeAttribute('rel');
-      if (href.length === 0 || !ABSOLUTE_URL.test(href)) return;
-      element.setAttribute('target', '_blank');
-      element.setAttribute('rel', 'noopener noreferrer');
-    },
-  })
-  .onDocument({
-    comments(comment) {
-      comment.remove();
-    },
-  });
+let rewriter: HTMLRewriter | null = null;
+
+function bunSanitizer(): HTMLRewriter {
+  rewriter ??= new HTMLRewriter()
+    .on('*', {
+      element(element) {
+        const tag = element.tagName.toLowerCase();
+        if (DROP_WITH_CONTENT.has(tag)) {
+          element.remove();
+          return;
+        }
+        if (!ALLOWED_TAGS.has(tag)) {
+          element.removeAndKeepContent();
+          return;
+        }
+        const present: [string, string][] = [];
+        for (const attribute of element.attributes) present.push(attribute);
+        for (const [name] of present) element.removeAttribute(name);
+
+        const keep = keptAttributes(present);
+        for (const [key, value] of keep) element.setAttribute(key, value);
+
+        if (tag !== 'a') return;
+        element.removeAttribute('target');
+        element.removeAttribute('rel');
+        if (!externalLinkTarget(keep)) return;
+        element.setAttribute('target', '_blank');
+        element.setAttribute('rel', 'noopener noreferrer');
+      },
+    })
+    .onDocument({
+      comments(comment) {
+        comment.remove();
+      },
+    });
+  return rewriter;
+}
+
+function cleanDomNode(node: ChildNode): void {
+  if (node instanceof Comment) {
+    node.remove();
+    return;
+  }
+  if (!(node instanceof Element)) return;
+
+  const tag = node.tagName.toLowerCase();
+  if (DROP_WITH_CONTENT.has(tag)) {
+    node.remove();
+    return;
+  }
+
+  const children = Array.from(node.childNodes);
+  if (ALLOWED_TAGS.has(tag)) {
+    const present = Array.from(node.attributes).map((attribute): [string, string] => [
+      attribute.name,
+      attribute.value,
+    ]);
+    for (const [name] of present) node.removeAttribute(name);
+
+    const keep = keptAttributes(present);
+    for (const [key, value] of keep) node.setAttribute(key, value);
+
+    if (tag === 'a' && externalLinkTarget(keep)) {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+  } else {
+    node.replaceWith(...children);
+  }
+
+  for (const child of children) cleanDomNode(child);
+}
+
+function sanitizeInDom(html: string): string {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  for (const node of Array.from(template.content.childNodes)) cleanDomNode(node);
+  return template.innerHTML;
+}
 
 export function sanitizeHtml(html: string): string {
   if (html.length === 0) return '';
-  return sanitizer.transform(html);
+  if (typeof HTMLRewriter === 'undefined') return sanitizeInDom(html);
+  return bunSanitizer().transform(html);
 }
 
 const VOID_TEXT_TAGS = new Set(['br', 'hr', 'img', 'input']);
 
+function collectDomText(node: Node, parts: string[]): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child instanceof Text) {
+      parts.push(child.data);
+      continue;
+    }
+    if (!(child instanceof Element)) continue;
+    if (VOID_TEXT_TAGS.has(child.tagName.toLowerCase())) parts.push(' ');
+    collectDomText(child, parts);
+  }
+}
+
+function textInDom(html: string): string {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const parts: string[] = [];
+  collectDomText(template.content, parts);
+  return parts.join('');
+}
+
 export function htmlToText(html: string): string {
   if (html.length === 0) return '';
+  if (typeof HTMLRewriter === 'undefined') return textInDom(html);
   const parts: string[] = [];
-  const collector = new HTMLRewriter()
+  new HTMLRewriter()
     .on('*', {
       element(element) {
         if (VOID_TEXT_TAGS.has(element.tagName.toLowerCase())) parts.push(' ');
@@ -207,7 +285,7 @@ export function htmlToText(html: string): string {
       comments(comment) {
         comment.remove();
       },
-    });
-  collector.transform(html);
+    })
+    .transform(html);
   return parts.join('');
 }

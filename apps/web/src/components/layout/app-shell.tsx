@@ -1,7 +1,7 @@
 'use client';
 
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
@@ -42,11 +42,12 @@ export function AppShell({
   panel,
   children,
 }: AppShellProps) {
-  const router = useRouter();
+  const pathname = usePathname();
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [drawerPath, setDrawerPath] = useState(pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
@@ -62,29 +63,14 @@ export function AppShell({
   }, [isDesktop]);
 
   const togglePanel = useCallback(() => setPanelOpen((value) => !value), []);
+  const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
 
-  const go = useCallback(
-    (href: string) => {
-      setDrawerOpen(false);
-      router.push(href);
-    },
-    [router],
-  );
-
-  useHotkey('mod+k', () => setPaletteOpen(true), {
-    label: 'Open command palette',
-    section: 'General',
-    allowInInput: true,
-  });
-  useHotkey('?', () => setShortcutsOpen(true), {
-    label: 'Show keyboard shortcuts',
-    section: 'General',
-  });
-  useHotkey('[', toggleSidebar, { label: 'Toggle sidebar', section: 'View' });
   useHotkey(']', togglePanel, { label: 'Toggle right panel', section: 'View' });
-  useHotkey('g i', () => go('/inbox'), { label: 'Go to inbox', section: 'Navigation' });
-  useHotkey('g m', () => go('/my-issues'), { label: 'Go to my issues', section: 'Navigation' });
-  useHotkey('g p', () => go('/projects'), { label: 'Go to projects', section: 'Navigation' });
+
+  if (drawerPath !== pathname) {
+    setDrawerPath(pathname);
+    setDrawerOpen(false);
+  }
 
   const sidebar = (touch: boolean, onNavigate: (() => void) | null) => (
     <Sidebar
@@ -157,6 +143,7 @@ export function AppShell({
         onOpenChange={setPaletteOpen}
         sections={sections}
         onToggleSidebar={toggleSidebar}
+        onShowShortcuts={openShortcuts}
       />
       <ShortcutsOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
