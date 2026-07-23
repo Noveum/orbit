@@ -1,4 +1,4 @@
-import { and, asc, db, desc, eq, ilike, isNull, or, schema } from '@orbit/db';
+import { and, asc, count, db, desc, eq, ilike, isNull, or, schema } from '@orbit/db';
 import { conflict, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -21,9 +21,17 @@ export type DocRow = typeof schema.doc.$inferSelect;
 export type DocCollectionRow = typeof schema.docCollection.$inferSelect;
 export type AttachmentRow = typeof schema.attachment.$inferSelect;
 
+export interface DocAuthor {
+  readonly id: string;
+  readonly name: string;
+  readonly image: string | null;
+}
+
 export interface DocDetail {
   readonly doc: DocRow;
   readonly attachments: AttachmentRow[];
+  readonly author: DocAuthor;
+  readonly followers: number;
 }
 
 export interface SavedDoc {
@@ -146,10 +154,28 @@ async function attachmentsFor(docId: string): Promise<AttachmentRow[]> {
     .orderBy(asc(schema.attachment.createdAt));
 }
 
+async function detailFor(doc: DocRow): Promise<DocDetail> {
+  const [author] = await db
+    .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
+    .from(schema.user)
+    .where(eq(schema.user.id, doc.authorId))
+    .limit(1);
+  const [followers] = await db
+    .select({ total: count() })
+    .from(schema.docSubscription)
+    .where(eq(schema.docSubscription.docId, doc.id));
+
+  return {
+    doc,
+    attachments: await attachmentsFor(doc.id),
+    author: author ?? { id: doc.authorId, name: 'Someone', image: null },
+    followers: followers?.total ?? 0,
+  };
+}
+
 export async function getDoc(principal: Principal, docId: string): Promise<DocDetail> {
   assertCan(principal, 'doc:read');
-  const doc = await loadDoc(db, principal, docId);
-  return { doc, attachments: await attachmentsFor(doc.id) };
+  return await detailFor(await loadDoc(db, principal, docId));
 }
 
 export async function getPublishedDoc(token: string): Promise<DocDetail | null> {
@@ -161,7 +187,16 @@ export async function getPublishedDoc(token: string): Promise<DocDetail | null> 
     .limit(1);
   if (doc === undefined) return null;
   if (doc.visibility === 'workspace') return null;
-  return { doc, attachments: await attachmentsFor(doc.id) };
+  return await detailFor(doc);
+}
+
+export async function isPublishedDoc(docId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ visibility: schema.doc.visibility, archivedAt: schema.doc.archivedAt })
+    .from(schema.doc)
+    .where(eq(schema.doc.id, docId))
+    .limit(1);
+  return row !== undefined && row.archivedAt === null && row.visibility !== 'workspace';
 }
 
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {

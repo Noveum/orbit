@@ -6,7 +6,7 @@ import { scopes } from '@orbit/shared/events';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
-import { COMMENTS_ROOT, ISSUE_ROOT, ISSUES_ROOT } from '@/lib/query/keys.ts';
+import { COMMENTS_ROOT, DOC_ROOT, DOCS_ROOT, ISSUE_ROOT, ISSUES_ROOT } from '@/lib/query/keys.ts';
 import type { Comment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
 import {
   applyCommentDelta,
@@ -69,7 +69,10 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const tabClientId = clientId();
       for (const action of actions) {
         if (isOwnEcho(action, tabClientId)) continue;
-        if (action.model === 'issue') patchIssueCaches(client, action);
+        if (action.model === 'doc') {
+          client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(() => undefined);
+          client.invalidateQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(() => undefined);
+        } else if (action.model === 'issue') patchIssueCaches(client, action);
         else if (action.model === 'comment') patchCommentCaches(client, action, applyCommentDelta);
         else if (action.model === 'reaction') {
           patchCommentCaches(client, action, applyReactionDelta);

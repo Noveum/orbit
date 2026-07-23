@@ -176,6 +176,77 @@ export const issueDetailSchema = z.object({
 
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
 
+export const docSchema = z.object({
+  id: z.string(),
+  organizationId: z.string(),
+  collectionId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  title: z.string(),
+  content: z.string(),
+  visibility: z.string(),
+  publishToken: z.string().nullable(),
+  authorId: z.string(),
+  repoBinding: z
+    .object({ repo: z.string(), path: z.string(), branch: z.string(), syncedAt: z.string() })
+    .nullable(),
+  syncId: z.number(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  archivedAt: nullableTimestamp,
+});
+
+export type Doc = z.infer<typeof docSchema>;
+
+export const docSummarySchema = docSchema.extend({ excerpt: z.string().default('') });
+export type DocSummary = z.infer<typeof docSummarySchema>;
+
+export const docCollectionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  icon: z.string(),
+});
+
+export type DocCollection = z.infer<typeof docCollectionSchema>;
+
+export const attachmentSchema = z.object({
+  id: z.string(),
+  parentType: z.string(),
+  parentId: z.string(),
+  fileName: z.string(),
+  contentType: z.string(),
+  size: z.number(),
+  storageKey: z.string(),
+  status: z.string(),
+});
+
+export type Attachment = z.infer<typeof attachmentSchema>;
+
+export const docListSchema = z.object({
+  docs: z.array(docSummarySchema),
+  collections: z.array(docCollectionSchema),
+  projects: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+export type DocList = z.infer<typeof docListSchema>;
+
+export const docDetailSchema = z.object({
+  doc: docSchema,
+  contentHtml: z.string(),
+  attachments: z.array(attachmentSchema),
+  author: z.object({ id: z.string(), name: z.string(), image: z.string().nullable() }),
+  followers: z.number(),
+});
+
+export type DocDetail = z.infer<typeof docDetailSchema>;
+
+export const docEnvelopeSchema = z.object({ doc: docSchema });
+export const docSaveResultSchema = z.object({ doc: docSchema, contentHtml: z.string() });
+export const docShareResultSchema = z.object({
+  doc: docSchema,
+  publishUrl: z.string().nullable(),
+});
+export const docCollectionEnvelopeSchema = z.object({ collection: docCollectionSchema });
+
 export const commentListSchema = z.object({ comments: z.array(commentSchema) });
 export const commentEnvelopeSchema = z.object({ comment: commentSchema });
 export const reactionResultSchema = z.object({ emoji: z.string(), active: z.boolean() });

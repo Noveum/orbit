@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { isPublishedDoc } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { createStorageDriver, LocalStorageDriver } from '@orbit/services/storage';
 import { notFound, validationFailed } from '@orbit/shared/errors';
@@ -11,20 +12,29 @@ interface RouteContext {
 
 const MAX_INLINE_BYTES = 25 * 1024 * 1024;
 
+type AttachmentRecord = typeof schema.attachment.$inferSelect;
+
+async function assertReadable(record: AttachmentRecord | undefined): Promise<AttachmentRecord> {
+  if (record === undefined) throw notFound('That file does not exist.');
+  if (record.parentType === 'doc' && (await isPublishedDoc(record.parentId))) return record;
+  const { principal } = await apiContext();
+  if (record.organizationId !== principal.organizationId) {
+    throw notFound('That file does not exist.');
+  }
+  return record;
+}
+
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   try {
-    const { principal } = await apiContext();
     const { key } = await context.params;
     const storageKey = key.join('/');
 
-    const [record] = await db
+    const [found] = await db
       .select()
       .from(schema.attachment)
       .where(eq(schema.attachment.storageKey, storageKey))
       .limit(1);
-    if (record === undefined || record.organizationId !== principal.organizationId) {
-      throw notFound('That file does not exist.');
-    }
+    const record = await assertReadable(found);
 
     const driver = createStorageDriver();
     if (!(driver instanceof LocalStorageDriver)) {
