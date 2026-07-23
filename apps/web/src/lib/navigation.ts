@@ -62,8 +62,8 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
       links: built([
         { href: '/projects', label: 'Projects', icon: FolderKanban, shortcut: ['g', 'p'] },
         { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
-        { href: '/views', label: 'Views', icon: LayoutList, unbuilt: true },
-        { href: '/docs', label: 'Docs', icon: FileText, unbuilt: true },
+        { href: '/views', label: 'Views', icon: LayoutList },
+        { href: '/docs', label: 'Docs', icon: FileText },
       ]),
     },
     ...teams.map((team) => ({
