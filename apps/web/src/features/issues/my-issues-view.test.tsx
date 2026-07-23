@@ -99,6 +99,17 @@ function buildWorkspace(): WorkspaceData {
   };
 }
 
+function renderEmptyCacheView(): void {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <MyIssuesView />
+    </QueryClientProvider>,
+  );
+}
+
 function renderView(): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -130,6 +141,15 @@ describe('MyIssuesView', () => {
       .getAllByTestId(/^issue-row-/)
       .map((row) => row.getAttribute('data-testid'));
     expect(rendered).toEqual(['issue-row-DES-9', 'issue-row-ENG-1']);
+  });
+
+  it('shows the loading state while the team queries are still pending', () => {
+    workspace = buildWorkspace();
+    renderEmptyCacheView();
+
+    expect(screen.getByText('Loading your issues')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing assigned to you')).toBeNull();
+    expect(screen.queryByTestId('my-issues-list')).toBeNull();
   });
 
   it('shows the empty state when nothing is assigned to the viewer', () => {
