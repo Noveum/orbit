@@ -1,5 +1,5 @@
 import { buildSyncAction, newId, nextSyncId, principalActor, requireRow } from '@orbit/core';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import {
   assertUploadParent,
   storageDriver,
@@ -42,6 +42,14 @@ export async function POST(request: Request): Promise<Response> {
     if (attachment.parentType === 'doc') scope.push(scopes.doc(attachment.parentId));
     if (attachment.parentType === 'issue') scope.push(scopes.issue(attachment.parentId));
     if (attachment.parentType === 'project') scope.push(scopes.project(attachment.parentId));
+    if (attachment.parentType === 'comment') {
+      const [comment] = await db
+        .select({ issueId: schema.comment.issueId })
+        .from(schema.comment)
+        .where(eq(schema.comment.id, attachment.parentId))
+        .limit(1);
+      if (comment !== undefined) scope.push(scopes.issue(comment.issueId));
+    }
 
     await publish([
       buildSyncAction({
