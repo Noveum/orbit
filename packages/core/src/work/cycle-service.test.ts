@@ -78,6 +78,37 @@ describe('activeCycle and upcomingCycles', () => {
   });
 });
 
+describe('cycle window invariant', () => {
+  it('refuses a cycle that overlaps another cycle on the team', async () => {
+    const bootstrap = await firstCycle();
+    await expect(
+      createCycle(workspace.admin, {
+        teamId: workspace.teamId,
+        startsAt: new Date(bootstrap.endsAt.getTime() - 86_400_000),
+        endsAt: new Date(bootstrap.endsAt.getTime() + 86_400_000),
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('accepts a cycle that starts exactly when the previous one ends', async () => {
+    const bootstrap = await firstCycle();
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: bootstrap.endsAt,
+      endsAt: new Date(bootstrap.endsAt.getTime() + 14 * 86_400_000),
+    });
+    expect(cycle.number).toBe(2);
+  });
+
+  it('scopes the overlap rule to one team', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
+    const window = { startsAt: daysFromNow(20), endsAt: daysFromNow(34) };
+    await createCycle(workspace.admin, { teamId: workspace.teamId, ...window });
+    const { cycle } = await createCycle(workspace.admin, { teamId: other.team.id, ...window });
+    expect(cycle.teamId).toBe(other.team.id);
+  });
+});
+
 describe('updateCycle', () => {
   it('renames without clearing the dates', async () => {
     const cycle = await firstCycle();
@@ -85,6 +116,47 @@ describe('updateCycle', () => {
     expect(renamed.name).toBe('Sprint one');
     expect(renamed.startsAt.getTime()).toBe(cycle.startsAt.getTime());
     expect(renamed.endsAt.getTime()).toBe(cycle.endsAt.getTime());
+  });
+
+  it('refuses an end date that lands before the stored start date', async () => {
+    const cycle = await firstCycle();
+    await expect(
+      updateCycle(workspace.admin, cycle.id, {
+        endsAt: new Date(cycle.startsAt.getTime() - 86_400_000),
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('refuses a start date that lands after the stored end date', async () => {
+    const cycle = await firstCycle();
+    await expect(
+      updateCycle(workspace.admin, cycle.id, {
+        startsAt: new Date(cycle.endsAt.getTime() + 86_400_000),
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('refuses dates that overlap a neighbouring cycle', async () => {
+    const bootstrap = await firstCycle();
+    const { cycle: next } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: bootstrap.endsAt,
+      endsAt: new Date(bootstrap.endsAt.getTime() + 14 * 86_400_000),
+    });
+
+    await expect(
+      updateCycle(workspace.admin, next.id, {
+        startsAt: new Date(bootstrap.endsAt.getTime() - 86_400_000),
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('lets a cycle keep its own window while shifting', async () => {
+    const cycle = await firstCycle();
+    const { cycle: shifted } = await updateCycle(workspace.admin, cycle.id, {
+      endsAt: new Date(cycle.endsAt.getTime() + 86_400_000),
+    });
+    expect(shifted.endsAt.getTime()).toBe(cycle.endsAt.getTime() + 86_400_000);
   });
 });
 

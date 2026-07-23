@@ -1,4 +1,4 @@
-import { and, asc, count, db, desc, eq, gt, isNull, lte, schema, sql } from '@orbit/db';
+import { and, asc, count, db, desc, eq, gt, isNull, lt, lte, ne, schema, sql } from '@orbit/db';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -17,6 +17,32 @@ function cycleScopes(row: CycleRow): string[] {
   return [scopes.organization(row.organizationId), scopes.team(row.teamId)];
 }
 
+async function assertCycleWindow(
+  executor: Executor,
+  window: { teamId: string; startsAt: Date; endsAt: Date; excludingCycleId: string | null },
+): Promise<void> {
+  if (window.endsAt.getTime() <= window.startsAt.getTime()) {
+    throw conflict('A cycle has to end after it starts.');
+  }
+  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${window.teamId}`}))`);
+  const [clash] = await executor
+    .select({ id: schema.cycle.id, name: schema.cycle.name })
+    .from(schema.cycle)
+    .where(
+      and(
+        eq(schema.cycle.teamId, window.teamId),
+        isNull(schema.cycle.archivedAt),
+        lt(schema.cycle.startsAt, window.endsAt),
+        gt(schema.cycle.endsAt, window.startsAt),
+        window.excludingCycleId === null ? undefined : ne(schema.cycle.id, window.excludingCycleId),
+      ),
+    )
+    .limit(1);
+  if (clash !== undefined) {
+    throw conflict(`Those dates overlap ${clash.name}.`, { details: { cycleId: clash.id } });
+  }
+}
+
 async function nextCycleNumber(executor: Executor, teamId: string): Promise<number> {
   const [row] = await executor
     .select({ number: schema.cycle.number })
@@ -33,12 +59,14 @@ export async function createCycle(
 ): Promise<{ cycle: CycleRow; actions: SyncAction[] }> {
   assertCan(principal, 'cycle:manage');
   const parsed = cycleCreateSchema.parse(input);
-  if (parsed.endsAt.getTime() <= parsed.startsAt.getTime()) {
-    throw conflict('A cycle has to end after it starts.');
-  }
-
   return await db.transaction(async (tx) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
+    await assertCycleWindow(tx, {
+      teamId: parsed.teamId,
+      startsAt: parsed.startsAt,
+      endsAt: parsed.endsAt,
+      excludingCycleId: null,
+    });
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const number = await nextCycleNumber(tx, team.id);
@@ -83,10 +111,31 @@ export async function updateCycle(
   const parsed = cycleUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    const [found] = await tx
+      .select()
+      .from(schema.cycle)
+      .where(
+        and(
+          eq(schema.cycle.id, cycleId),
+          eq(schema.cycle.organizationId, principal.organizationId),
+        ),
+      )
+      .limit(1);
+    const current = requireRow(found, 'That cycle does not exist.');
+
     const values: Partial<typeof schema.cycle.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
     if (parsed.startsAt !== undefined) values.startsAt = parsed.startsAt;
     if (parsed.endsAt !== undefined) values.endsAt = parsed.endsAt;
+
+    if (parsed.startsAt !== undefined || parsed.endsAt !== undefined) {
+      await assertCycleWindow(tx, {
+        teamId: current.teamId,
+        startsAt: parsed.startsAt ?? current.startsAt,
+        endsAt: parsed.endsAt ?? current.endsAt,
+        excludingCycleId: current.id,
+      });
+    }
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);

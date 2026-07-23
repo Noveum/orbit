@@ -1,6 +1,6 @@
 import { defineConfig } from 'drizzle-kit';
 
-const url = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5433/orbit';
+const url = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 
 export default defineConfig({
   schema: './src/schema/index.ts',

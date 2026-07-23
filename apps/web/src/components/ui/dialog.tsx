@@ -12,7 +12,7 @@ export const DialogTitle = DialogPrimitive.Title;
 export const DialogDescription = DialogPrimitive.Description;
 
 export const overlayClassName =
-  'fixed inset-0 z-50 bg-overlay data-[state=open]:animate-overlay-in';
+  'fixed inset-0 z-50 bg-overlay data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in';
 
 export function DialogContent({
   className,
@@ -27,7 +27,7 @@ export function DialogContent({
         className={cn(
           'fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
           'rounded-xl border border-border bg-surface p-5 shadow-pop',
-          'data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in',
+          'data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in',
           className,
         )}
         {...props}

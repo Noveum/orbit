@@ -46,7 +46,7 @@ export interface CommandPaletteProps {
 }
 
 const itemClassName =
-  'flex h-9 cursor-default select-none items-center gap-2.5 rounded-md px-2.5 text-dense text-muted outline-none data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
+  'flex h-9 cursor-pointer select-none items-center gap-2.5 rounded-md px-2.5 text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] data-[selected=true]:bg-surface-2 data-[selected=true]:text-text data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50';
 
 const groupClassName =
   '[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:text-faint [&_[cmdk-group-heading]]:uppercase';

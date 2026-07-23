@@ -1,4 +1,13 @@
-import { boolean, index, integer, pgTable, text, timestamp, unique } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 
 export const user = pgTable(
   'user',
@@ -10,6 +19,12 @@ export const user = pgTable(
     image: text('image'),
     handle: text('handle').notNull().unique(),
     timezone: text('timezone').notNull().default('UTC'),
+    onboardingStep: text('onboarding_step').notNull().default('workspace'),
+    onboardingState: jsonb('onboarding_state')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    onboardingCompletedAt: timestamp('onboarding_completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -55,7 +70,7 @@ export const account = pgTable(
   },
   (table) => [
     index('account_user_idx').on(table.userId),
-    unique('account_provider_unique').on(table.providerId, table.accountId),
+    uniqueIndex('account_provider_unique').on(table.providerId, table.accountId),
   ],
 );
 
