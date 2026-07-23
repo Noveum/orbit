@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { IDENTIFIER_PATTERN, SORT_ORDER_STEP } from '../constants/index.ts';
 import {
   branchName,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import type { OrgRole } from '../constants/index.ts';
 import { DomainError } from '../errors/index.ts';
 import {

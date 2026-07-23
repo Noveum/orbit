@@ -1,7 +1,7 @@
+import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import { isImportableComment } from './importable.ts';
 import { readPlaneExport } from './plane-source.ts';
 

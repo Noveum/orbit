@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { planDrop } from './board.tsx';

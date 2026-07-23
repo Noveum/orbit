@@ -1,6 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { act, render } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RealtimeProvider, useDeltaHandler, useScopeSubscription } from './react.tsx';
 
 type Handler = (() => void) | null;

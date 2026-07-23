@@ -1,24 +1,23 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { matrixKey, NotificationMatrix } from './notification-matrix.tsx';
 
 let sentBody: Record<string, unknown> | null = null;
 
+const realFetch = globalThis.fetch;
+
 beforeEach(() => {
   sentBody = null;
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((_url: string, init: { body?: string }) => {
-      sentBody = init.body === undefined ? null : JSON.parse(init.body);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
-    }),
-  );
+  globalThis.fetch = mock((_url: string, init: { body?: string }) => {
+    sentBody = init.body === undefined ? null : JSON.parse(init.body);
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  }) as unknown as typeof fetch;
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 function renderMatrix(disabledKeys: string[] = []) {

@@ -1,8 +1,8 @@
+import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import { describe, expect, it } from 'vitest';
-import type { WebSocket } from 'ws';
+import type { ServerWebSocket } from 'bun';
 import type { ConnectionPrincipal } from './auth.ts';
-import { Connection, type ConnectionLimits } from './connection.ts';
+import { Connection, type ConnectionLimits, type SocketData } from './connection.ts';
 
 const principal: ConnectionPrincipal = {
   userId: 'user_1',
@@ -23,6 +23,10 @@ class FakeSocket {
 
   send(payload: string): void {
     this.sent.push(payload);
+  }
+
+  getBufferedAmount(): number {
+    return this.bufferedAmount;
   }
 
   terminate(): void {
@@ -61,7 +65,12 @@ function build(overrides: Partial<ConnectionLimits> = {}) {
     maxBufferedBytes: 1_000,
     ...overrides,
   };
-  const connection = new Connection('conn_1', socket as unknown as WebSocket, principal, limits);
+  const connection = new Connection(
+    'conn_1',
+    socket as unknown as ServerWebSocket<SocketData>,
+    principal,
+    limits,
+  );
   return { socket, connection };
 }
 

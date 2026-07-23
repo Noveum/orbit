@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { issueFilterSchema } from '../validators/index.ts';
 import type { FilterPredicate } from './index.ts';
 import {

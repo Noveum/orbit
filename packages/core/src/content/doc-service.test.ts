@@ -1,5 +1,5 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
   archiveDoc,

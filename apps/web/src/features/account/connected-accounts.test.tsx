@@ -1,25 +1,25 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectedAccounts } from './connected-accounts.tsx';
 import { LAST_CREDENTIAL_MESSAGE } from './credentials.ts';
 import type { ConnectedAccountView } from './data.ts';
 
-const refresh = vi.fn();
-const linkSocial = vi.fn();
+const refresh = mock();
+const linkSocial = mock();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh, push: vi.fn() }),
+mock.module('next/navigation', () => ({
+  useRouter: () => ({ refresh, push: mock() }),
 }));
 
-vi.mock('@/lib/auth/client.ts', () => ({
+mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
     linkSocial: (...args: unknown[]) => linkSocial(...args),
   },
 }));
 
-vi.mock('@/components/ui/toast.tsx', () => ({
-  useToast: () => ({ toast: vi.fn(), dismiss: vi.fn() }),
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast: mock(), dismiss: mock() }),
 }));
 
 const GITHUB: ConnectedAccountView = {
@@ -36,11 +36,12 @@ const GOOGLE: ConnectedAccountView = {
   connectedAt: '2026-04-02T00:00:00.000Z',
 };
 
+const realFetch = globalThis.fetch;
+
 function mockFetch(status: number, body: unknown): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(() => Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) })),
-  );
+  globalThis.fetch = mock(() =>
+    Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) }),
+  ) as unknown as typeof fetch;
 }
 
 beforeEach(() => {
@@ -49,7 +50,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 describe('ConnectedAccounts', () => {

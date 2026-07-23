@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import type { FilterPredicate } from '@orbit/shared/filters';
-import { describe, expect, it } from 'vitest';
 import type { ViewConfig } from './view-config.ts';
 import {
   defaultViewConfig,

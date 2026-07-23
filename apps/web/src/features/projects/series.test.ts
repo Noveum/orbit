@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { buildProjectSeries } from './series.ts';
 
 const NOW = new Date('2026-07-11T00:00:00.000Z');

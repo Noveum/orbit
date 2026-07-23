@@ -1,6 +1,6 @@
+import { afterAll, beforeAll, expect, it } from 'bun:test';
 import { createRealtimeClient, type RealtimeStatus } from '@orbit/realtime-client';
 import { type SyncAction, scopes } from '@orbit/shared/events';
-import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
@@ -84,7 +84,7 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
     expect(statuses.at(-1)).toBe('open');
   } finally {
     client.close();
-    publisher.disconnect();
+    publisher.close();
     await second?.close();
   }
 });

@@ -1,5 +1,5 @@
+import { describe, expect, it } from 'bun:test';
 import { DomainError } from '@orbit/shared';
-import { describe, expect, it } from 'vitest';
 import {
   buildUnfurl,
   commandParser,
@@ -165,9 +165,17 @@ describe('slashCommandSchema', () => {
   });
 });
 
+type FetchImpl = typeof globalThis.fetch;
+type FetchInput = Parameters<FetchImpl>[0];
+type FetchInit = Parameters<FetchImpl>[1];
+
+function asFetchImpl(send: (input: FetchInput, init: FetchInit) => Promise<Response>): FetchImpl {
+  return Object.assign(send, { preconnect: globalThis.fetch.preconnect });
+}
+
 function stubFetch(status: number, body: unknown) {
-  const calls: { url: string; init: RequestInit | undefined }[] = [];
-  const impl: typeof globalThis.fetch = (input, init) => {
+  const calls: { url: string; init: FetchInit }[] = [];
+  const impl = asFetchImpl((input, init) => {
     calls.push({ url: String(input), init });
     return Promise.resolve(
       new Response(JSON.stringify(body), {
@@ -175,7 +183,7 @@ function stubFetch(status: number, body: unknown) {
         headers: { 'content-type': 'application/json' },
       }),
     );
-  };
+  });
   return { impl, calls };
 }
 
@@ -249,8 +257,9 @@ describe('SlackClient', () => {
   });
 
   it('rejects a body that is not json', async () => {
-    const impl: typeof globalThis.fetch = () =>
-      Promise.resolve(new Response('<html>nope</html>', { status: 200 }));
+    const impl = asFetchImpl(() =>
+      Promise.resolve(new Response('<html>nope</html>', { status: 200 })),
+    );
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
     await expect(client.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(/not json/);
   });

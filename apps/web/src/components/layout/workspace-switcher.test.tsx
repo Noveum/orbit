@@ -1,30 +1,30 @@
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
 import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 
-const push = vi.fn();
-const refresh = vi.fn();
-const setActive = vi.fn();
-const assign = vi.fn();
+const push = mock();
+const refresh = mock();
+const setActive = mock();
+const assign = mock();
 
-vi.mock('next/navigation', () => ({
+mock.module('next/navigation', () => ({
   useRouter: () => ({ push, refresh }),
 }));
 
-vi.mock('next-themes', () => ({
-  useTheme: () => ({ resolvedTheme: 'dark', setTheme: vi.fn() }),
+mock.module('next-themes', () => ({
+  useTheme: () => ({ resolvedTheme: 'dark', setTheme: mock() }),
 }));
 
-vi.mock('@/components/ui/toast.tsx', () => ({
-  useToast: () => ({ toast: vi.fn(), dismiss: vi.fn() }),
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast: mock(), dismiss: mock() }),
 }));
 
-vi.mock('@/lib/auth/client.ts', () => ({
+mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
     organization: { setActive: (...args: unknown[]) => setActive(...args) },
-    signOut: vi.fn(() => Promise.resolve()),
+    signOut: mock(() => Promise.resolve()),
   },
 }));
 

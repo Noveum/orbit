@@ -1,12 +1,12 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemberView } from './data.ts';
 import { MembersTable } from './members-table.tsx';
 
-const refresh = vi.fn();
+const refresh = mock();
 
-vi.mock('next/navigation', () => ({
+mock.module('next/navigation', () => ({
   useRouter: () => ({ refresh }),
 }));
 
@@ -35,17 +35,16 @@ const MEMBERS: MemberView[] = [
   },
 ];
 
+const realFetch = globalThis.fetch;
+
 function mockFetch(status: number, body: unknown): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(() =>
-      Promise.resolve({
-        ok: status < 400,
-        status,
-        json: () => Promise.resolve(body),
-      }),
-    ),
-  );
+  globalThis.fetch = mock(() =>
+    Promise.resolve({
+      ok: status < 400,
+      status,
+      json: () => Promise.resolve(body),
+    }),
+  ) as unknown as typeof fetch;
 }
 
 beforeEach(() => {
@@ -53,7 +52,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 describe('MembersTable', () => {

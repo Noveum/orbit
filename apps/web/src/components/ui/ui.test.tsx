@@ -1,6 +1,6 @@
+import { describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
 import { Avatar } from './avatar.tsx';
 import { Badge } from './badge.tsx';
 import { Button } from './button.tsx';
@@ -29,7 +29,7 @@ describe('Button', () => {
 
   it('is reachable and activatable from the keyboard', async () => {
     const user = userEvent.setup();
-    const onClick = vi.fn();
+    const onClick = mock();
     render(<Button onClick={onClick}>Focus me</Button>);
     await user.tab();
     expect(screen.getByRole('button')).toHaveFocus();
@@ -39,7 +39,7 @@ describe('Button', () => {
 
   it('does not fire while disabled', async () => {
     const user = userEvent.setup();
-    const onClick = vi.fn();
+    const onClick = mock();
     render(
       <Button disabled onClick={onClick}>
         Nope

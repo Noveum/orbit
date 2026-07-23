@@ -1,6 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { renderMarkdown, summarize } from '@orbit/services/markdown';
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachmentMarkdown,
   insertBlock,
@@ -95,11 +95,11 @@ describe('markdown input helpers', () => {
 });
 
 describe('useAutosave', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
 
   it('saves once after the caller stops typing', async () => {
-    const save = vi.fn().mockResolvedValue(undefined);
+    const save = mock().mockResolvedValue(undefined);
     const { result, rerender } = renderHook(({ value }) => useAutosave({ value, save }), {
       initialProps: { value: 'a' },
     });
@@ -111,12 +111,14 @@ describe('useAutosave', () => {
     expect(result.current.status).toBe('unsaved');
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS - 1);
+      jest.advanceTimersByTime(AUTOSAVE_DELAY_MS - 1);
+      await Promise.resolve();
     });
     expect(save).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
+      jest.advanceTimersByTime(1);
+      await Promise.resolve();
     });
     expect(save).toHaveBeenCalledTimes(1);
     expect(save).toHaveBeenCalledWith('abc');
@@ -124,7 +126,7 @@ describe('useAutosave', () => {
   });
 
   it('forces a save immediately and reports a failure', async () => {
-    const save = vi.fn().mockRejectedValue(new Error('offline'));
+    const save = mock().mockRejectedValue(new Error('offline'));
     const { result, rerender } = renderHook(({ value }) => useAutosave({ value, save }), {
       initialProps: { value: 'a' },
     });
@@ -138,7 +140,8 @@ describe('useAutosave', () => {
     expect(result.current.status).toBe('error');
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS * 2);
+      jest.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2);
+      await Promise.resolve();
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
@@ -163,13 +166,15 @@ describe('uploadDocFile', () => {
     });
   }
 
+  const realFetch = globalThis.fetch;
+
   afterEach(() => {
-    vi.unstubAllGlobals();
+    globalThis.fetch = realFetch;
   });
 
   it('presigns, uploads to the returned url, then confirms completion', async () => {
     const calls: string[] = [];
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = mock((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push(`${init?.method ?? 'GET'} ${url}`);
       if (url === '/api/attachments/presign') {
@@ -192,7 +197,7 @@ describe('uploadDocFile', () => {
       }
       return Promise.resolve(new Response(null, { status: 404 }));
     });
-    vi.stubGlobal('fetch', fetchMock);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
     const result = await uploadDocFile('doc_1', file);
@@ -206,7 +211,7 @@ describe('uploadDocFile', () => {
   });
 
   it('fails when the completion call is rejected', async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = mock((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/attachments/presign') {
         return Promise.resolve(
@@ -230,7 +235,7 @@ describe('uploadDocFile', () => {
         }),
       );
     });
-    vi.stubGlobal('fetch', fetchMock);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
     await expect(uploadDocFile('doc_1', file)).rejects.toThrow();

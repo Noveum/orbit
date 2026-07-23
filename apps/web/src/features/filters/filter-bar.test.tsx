@@ -1,11 +1,12 @@
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { FilterPredicate } from '@orbit/shared/filters';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import { FilterBar } from './filter-bar.tsx';
@@ -61,10 +62,10 @@ const workspace: WorkspaceData = {
   openQuickCreate: () => undefined,
 };
 
-vi.mock('@/features/issues/workspace-provider.tsx', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/issues/workspace-provider.tsx')>();
-  return { ...actual, useWorkspace: () => workspace };
-});
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
+  ...workspaceProvider,
+  useWorkspace: () => workspace,
+}));
 
 function Providers({ children }: { children: ReactNode }) {
   return (
@@ -76,7 +77,7 @@ function Providers({ children }: { children: ReactNode }) {
   );
 }
 
-const onChange = vi.fn();
+const onChange = mock();
 
 function renderBar(predicates: readonly FilterPredicate[] = []) {
   const config: ViewConfig = { ...defaultViewConfig('list'), predicates };

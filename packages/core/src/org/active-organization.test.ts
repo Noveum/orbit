@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { selectActiveMembership } from './active-organization.ts';
 
 const oldest = { organizationId: 'org_alpha', createdAt: new Date('2024-01-01T00:00:00.000Z') };

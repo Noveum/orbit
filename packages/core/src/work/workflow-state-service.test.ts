@@ -1,5 +1,5 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { db } from '@orbit/db';
-import { beforeEach, describe, expect, it } from 'vitest';
 import {
   addMember,
   createWorkspace,

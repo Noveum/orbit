@@ -1,24 +1,26 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProfileForm } from './profile-form.tsx';
 
-const refresh = vi.fn();
-const toast = vi.fn();
+const refresh = mock();
+const toast = mock();
 
-vi.mock('next/navigation', () => ({
+mock.module('next/navigation', () => ({
   useRouter: () => ({ refresh }),
 }));
 
-vi.mock('@/components/ui/toast.tsx', () => ({
-  useToast: () => ({ toast, dismiss: vi.fn() }),
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast, dismiss: mock() }),
 }));
 
-function mockFetch(status: number, body: unknown): ReturnType<typeof vi.fn> {
-  const spy = vi.fn(() =>
+const realFetch = globalThis.fetch;
+
+function mockFetch(status: number, body: unknown): ReturnType<typeof mock> {
+  const spy = mock(() =>
     Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) }),
   );
-  vi.stubGlobal('fetch', spy);
+  globalThis.fetch = spy as unknown as typeof fetch;
   return spy;
 }
 
@@ -28,7 +30,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  globalThis.fetch = realFetch;
 });
 
 function renderForm() {

@@ -1,7 +1,7 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAssetStore, inlineAssets } from './assets.ts';
 import { htmlToMarkdown } from './markdown.ts';
 import {
