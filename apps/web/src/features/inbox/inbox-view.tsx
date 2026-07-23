@@ -2,6 +2,8 @@
 
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
 import type { NotificationType } from '@orbit/shared/constants';
+import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
+import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
 import type { LucideIcon } from 'lucide-react';
@@ -16,14 +18,15 @@ import {
   UserPlus,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
+import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
 
 const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
@@ -46,6 +49,82 @@ const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
 
 const SNOOZE_HOURS = 24;
 
+const notificationDeltaSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  actorName: z.string(),
+  title: z.string(),
+  body: z.string(),
+  url: z.string(),
+  readAt: z.string().nullable(),
+  snoozedUntil: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const unreadCountSchema = z.object({ unreadCount: z.number() });
+
+function toInboxItem(data: Record<string, unknown>): InboxItem | null {
+  const parsed = notificationDeltaSchema.safeParse(data);
+  if (!parsed.success) return null;
+  const row = parsed.data;
+  return {
+    id: row.id,
+    type: NOTIFICATION_TYPES.find((entry) => entry === row.type) ?? 'subscription_activity',
+    actorName: row.actorName,
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    read: row.readAt !== null,
+    snoozedUntil: row.snoozedUntil,
+    createdAt: row.createdAt,
+  };
+}
+
+interface InboxPatch {
+  readonly rows: readonly InboxItem[];
+  readonly unreadDelta: number;
+}
+
+function readChange(read: boolean): number {
+  return read ? -1 : 1;
+}
+
+function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
+  const item = toInboxItem(action.data);
+  if (item === null) return patch;
+  const previous = patch.rows.find((row) => row.id === item.id);
+
+  if (action.action === 'delete') {
+    if (previous === undefined) return patch;
+    return {
+      rows: patch.rows.filter((row) => row.id !== item.id),
+      unreadDelta: patch.unreadDelta - (previous.read ? 0 : 1),
+    };
+  }
+  if (previous === undefined) {
+    if (action.action !== 'insert') return patch;
+    return {
+      rows: [item, ...patch.rows],
+      unreadDelta: patch.unreadDelta + (item.read ? 0 : 1),
+    };
+  }
+  const change = previous.read === item.read ? 0 : readChange(item.read);
+  return {
+    rows: patch.rows.map((row) => (row.id === item.id ? item : row)),
+    unreadDelta: patch.unreadDelta + change,
+  };
+}
+
+export function applyNotificationDeltas(
+  rows: readonly InboxItem[],
+  actions: readonly SyncAction[],
+  tabClientId: string,
+): InboxPatch {
+  return actions
+    .filter((action) => action.model === 'notification' && action.originClientId !== tabClientId)
+    .reduce(applyOne, { rows, unreadDelta: 0 });
+}
+
 export interface InboxViewProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
@@ -53,7 +132,6 @@ export interface InboxViewProps {
 }
 
 export function InboxView({ items, unreadCount, userId }: InboxViewProps) {
-  const router = useRouter();
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const [unread, setUnread] = useState(unreadCount);
   const [selected, setSelected] = useState(0);
@@ -67,11 +145,13 @@ export function InboxView({ items, unreadCount, userId }: InboxViewProps) {
   useDeltaHandler(
     useCallback(
       (actions) => {
-        if (!actions.some((action) => action.model === 'notification')) return;
-        setUnread((current) => current + actions.filter((a) => a.model === 'notification').length);
-        router.refresh();
+        const patch = applyNotificationDeltas(rows, actions, clientId());
+        if (patch.rows !== rows) setRows(patch.rows);
+        if (patch.unreadDelta !== 0) {
+          setUnread((current) => Math.max(0, current + patch.unreadDelta));
+        }
       },
-      [router],
+      [rows],
     ),
   );
 
@@ -84,33 +164,41 @@ export function InboxView({ items, unreadCount, userId }: InboxViewProps) {
     [rows.length],
   );
 
+  const applyServerCount = useCallback((payload: unknown) => {
+    const parsed = unreadCountSchema.safeParse(payload);
+    if (parsed.success) setUnread(parsed.data.unreadCount);
+  }, []);
+
   const toggleRead = useCallback(async () => {
     if (current === undefined) return;
     const next = !current.read;
     setRows((list) => list.map((row) => (row.id === current.id ? { ...row, read: next } : row)));
     setUnread((count) => Math.max(0, count + (next ? -1 : 1)));
-    await apiRequest('/api/notifications/read', {
-      method: 'POST',
-      body: { notificationIds: [current.id], read: next },
-    });
-    router.refresh();
-  }, [current, router]);
+    applyServerCount(
+      await apiRequest('/api/notifications/read', {
+        method: 'POST',
+        body: { notificationIds: [current.id], read: next },
+      }),
+    );
+  }, [current, applyServerCount]);
 
   const snooze = useCallback(async () => {
     if (current === undefined) return;
-    await apiRequest(`/api/notifications/${current.id}`, {
-      method: 'PATCH',
-      body: { snoozeHours: SNOOZE_HOURS },
-    });
-    router.refresh();
-  }, [current, router]);
+    const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
+    setRows((list) => list.map((row) => (row.id === current.id ? { ...row, snoozedUntil } : row)));
+    applyServerCount(
+      await apiRequest(`/api/notifications/${current.id}`, {
+        method: 'PATCH',
+        body: { snoozeHours: SNOOZE_HOURS },
+      }),
+    );
+  }, [current, applyServerCount]);
 
   const remove = useCallback(async () => {
     if (current === undefined) return;
     setRows((list) => list.filter((row) => row.id !== current.id));
-    await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' });
-    router.refresh();
-  }, [current, router]);
+    applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
+  }, [current, applyServerCount]);
 
   useHotkey('j', () => move(1), {
     label: 'Next notification',

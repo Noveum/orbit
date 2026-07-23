@@ -122,12 +122,9 @@ async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
     .limit(1);
-  const found = rows[0];
-  return (
-    found !== undefined &&
-    found.organizationId === principal.organizationId &&
-    principal.teamIds.includes(found.teamId)
-  );
+  const issue = rows[0];
+  if (issue === undefined || issue.organizationId !== principal.organizationId) return false;
+  return principal.role === 'admin' || principal.teamIds.includes(issue.teamId);
 }
 
 async function projectScopeAllowed(projectId: string, principal: ConnectionPrincipal) {

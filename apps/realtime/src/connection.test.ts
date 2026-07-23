@@ -63,6 +63,8 @@ function build(overrides: Partial<ConnectionLimits> = {}) {
     batchWindowMs: 5,
     maxSubscriptions: 3,
     maxBufferedBytes: 1_000,
+    messageBurst: 5,
+    messagesPerSecond: 10,
     ...overrides,
   };
   const connection = new Connection(
@@ -103,10 +105,54 @@ describe('Connection', () => {
     expect(socket.terminated).toBe(true);
   });
 
-  it('caps the number of subscriptions per connection', () => {
+  it('caps the number of subscriptions per connection and reports the overflow', () => {
     const { connection } = build({ maxSubscriptions: 2 });
-    connection.addScopes(['a', 'b', 'c', 'd']);
+    expect(connection.addScopes(['a', 'b', 'c', 'd'])).toEqual(['c', 'd']);
     expect(connection.subscriptionCount).toBe(2);
+  });
+
+  it('never counts a scope it already holds against the cap', () => {
+    const { connection } = build({ maxSubscriptions: 2 });
+    connection.addScopes(['a', 'b']);
+    expect(connection.addScopes(['a', 'b'])).toEqual([]);
+    expect(connection.subscriptionCount).toBe(2);
+  });
+
+  it('drops an action the client already applied and keeps the newer one', () => {
+    const { socket, connection } = build();
+    connection.advanceWatermark(20);
+    connection.queueDelta(action('issue_old', 20, 'already seen'));
+    connection.queueDelta(action('issue_new', 21, 'fresh'));
+    connection.flushDeltas();
+
+    const message = JSON.parse(socket.sent[0] ?? '{}');
+    expect(message.actions.map((entry: SyncAction) => entry.modelId)).toEqual(['issue_new']);
+  });
+
+  it('never lets the watermark move backwards', () => {
+    const { socket, connection } = build();
+    connection.advanceWatermark(30);
+    connection.advanceWatermark(5);
+    connection.queueDelta(action('issue_stale', 12, 'stale'));
+    connection.flushDeltas();
+    expect(socket.sent).toHaveLength(0);
+  });
+
+  it('spends one token per message and refills over time', () => {
+    const { connection } = build({ messageBurst: 2, messagesPerSecond: 4 });
+    const start = 1_000;
+    expect(connection.takeToken(start)).toBe(true);
+    expect(connection.takeToken(start)).toBe(true);
+    expect(connection.takeToken(start)).toBe(false);
+    expect(connection.takeToken(start + 250)).toBe(true);
+  });
+
+  it('announces throttling once until the connection recovers', () => {
+    const { connection } = build();
+    expect(connection.announceThrottled()).toBe(true);
+    expect(connection.announceThrottled()).toBe(false);
+    connection.clearThrottle();
+    expect(connection.announceThrottled()).toBe(true);
   });
 
   it('only matches actions from its own organization', () => {

@@ -6,6 +6,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
   ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+  PRESENCE_TTL_MS,
   type PresenceKind,
   presenceMessageSchema,
   REDIS_DELTA_CHANNEL,
@@ -27,9 +28,10 @@ import { Connection, type SocketData } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
 
-export const PRESENCE_TTL_MS = 45_000;
 export const MAX_SUBSCRIPTIONS_PER_CONNECTION = 256;
 export const MAX_BUFFERED_BYTES = 1_048_576;
+export const MESSAGE_BURST = 60;
+export const MESSAGES_PER_SECOND = 20;
 const SHUTDOWN_GRACE_MS = 1_000;
 const MAX_IDLE_TIMEOUT_SECONDS = 960;
 
@@ -43,6 +45,8 @@ export interface RealtimeServerOptions {
   presenceTtlMs?: number;
   maxSubscriptions?: number;
   maxBufferedBytes?: number;
+  messageBurst?: number;
+  messagesPerSecond?: number;
 }
 
 export interface RealtimeStats {
@@ -111,6 +115,8 @@ export async function createRealtimeServer(
     batchWindowMs: options.batchWindowMs ?? DELTA_BATCH_WINDOW_MS,
     maxSubscriptions: options.maxSubscriptions ?? MAX_SUBSCRIPTIONS_PER_CONNECTION,
     maxBufferedBytes: options.maxBufferedBytes ?? MAX_BUFFERED_BYTES,
+    messageBurst: options.messageBurst ?? MESSAGE_BURST,
+    messagesPerSecond: options.messagesPerSecond ?? MESSAGES_PER_SECOND,
   };
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
@@ -203,26 +209,33 @@ export async function createRealtimeServer(
     }
   }
 
-  async function acceptedScopes(
+  async function partitionScopes(
     connection: Connection,
     requested: readonly string[],
-  ): Promise<string[]> {
+  ): Promise<{ accepted: string[]; denied: string[] }> {
     const accepted: string[] = [];
+    const denied: string[] = [];
     for (const scope of requested) {
       if (connection.scopes.has(scope)) {
         accepted.push(scope);
         continue;
       }
       if (await authorizeScope(scope, connection.principal)) accepted.push(scope);
+      else denied.push(scope);
     }
-    return accepted;
+    return { accepted, denied };
   }
 
   async function handleSubscribe(connection: Connection, requested: string[]): Promise<void> {
-    const accepted = await acceptedScopes(connection, requested);
-    connection.addScopes(accepted);
-    connection.send({ type: 'subscribed', scopes: [...connection.scopes] });
+    const { accepted, denied } = await partitionScopes(connection, requested);
+    const overflow = connection.addScopes(accepted);
+    connection.send({
+      type: 'subscribed',
+      scopes: [...connection.scopes],
+      denied: [...denied, ...overflow],
+    });
     for (const scope of accepted) {
+      if (!connection.scopes.has(scope)) continue;
       const messages = presence
         .snapshot(scope)
         .filter((message) => message.userId !== connection.principal.userId);
@@ -255,6 +268,17 @@ export async function createRealtimeServer(
 
   async function handleMessage(connection: Connection, raw: string): Promise<void> {
     connection.lastSeenAt = Date.now();
+    if (!connection.takeToken()) {
+      if (connection.announceThrottled()) {
+        connection.send({
+          type: 'error',
+          code: 'rate_limited',
+          message: 'Too many messages, slow down.',
+        });
+      }
+      return;
+    }
+    connection.clearThrottle();
     const parsed = clientMessageSchema.safeParse(parseJson(raw));
     if (!parsed.success) {
       connection.send({
@@ -271,10 +295,11 @@ export async function createRealtimeServer(
     }
     if (message.type === 'unsubscribe') {
       connection.removeScopes(message.scopes);
-      connection.send({ type: 'subscribed', scopes: [...connection.scopes] });
+      connection.send({ type: 'subscribed', scopes: [...connection.scopes], denied: [] });
       return;
     }
     if (message.type === 'subscribe') {
+      if (message.since !== undefined) connection.advanceWatermark(message.since);
       await handleSubscribe(connection, message.scopes);
       return;
     }

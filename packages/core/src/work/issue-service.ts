@@ -394,12 +394,17 @@ async function subscribeUsers(
   executor: Executor,
   issueId: string,
   userIds: readonly (string | null)[],
+  syncId: number,
 ): Promise<void> {
   const unique = [...new Set(userIds.filter((id): id is string => id !== null))];
-  await subscribeToIssues(
-    executor,
-    unique.map((userId) => ({ issueId, userId })),
-  );
+  if (unique.length === 0) return;
+  await executor
+    .insert(schema.issueSubscription)
+    .values(unique.map((userId) => ({ id: newId(), issueId, userId, syncId })))
+    .onConflictDoUpdate({
+      target: [schema.issueSubscription.issueId, schema.issueSubscription.userId],
+      set: { syncId },
+    });
 }
 
 export interface CreatedIssue {
@@ -458,7 +463,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const issue = requireRow(created, 'The issue could not be created.');
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId]);
+    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -1217,7 +1222,7 @@ export async function subscribe(
     const current = await loadIssue(tx, principal, issueId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    await subscribeUsers(tx, issueId, [principal.userId]);
+    await subscribeUsers(tx, issueId, [principal.userId], syncId);
     return {
       subscribed: true,
       actions: [
@@ -1226,9 +1231,9 @@ export async function subscribe(
           organizationId: principal.organizationId,
           scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
           action: 'insert',
-          model: 'notification',
+          model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,
-          data: { issueId, userId: principal.userId, identifier: current.identifier },
+          data: { issueId, userId: principal.userId, identifier: current.identifier, syncId },
           actor,
         }),
       ],
@@ -1261,9 +1266,9 @@ export async function unsubscribe(
           organizationId: principal.organizationId,
           scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
           action: 'delete',
-          model: 'notification',
+          model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,
-          data: { issueId, userId: principal.userId },
+          data: { issueId, userId: principal.userId, syncId },
           actor,
         }),
       ],
