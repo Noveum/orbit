@@ -3,6 +3,7 @@ export * from './auth/api-key.ts';
 export * from './content/comment-service.ts';
 export * from './content/doc-service.ts';
 export * from './internal.ts';
+export * from './org/active-organization.ts';
 export * from './org/invite-service.ts';
 export * from './org/member-service.ts';
 export * from './org/organization-service.ts';
