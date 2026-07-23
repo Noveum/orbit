@@ -83,11 +83,16 @@ export function FilterMenu({
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor asChild>{anchor}</PopoverAnchor>
       <PopoverContent
+        collisionPadding={12}
         className="w-72 p-0"
         data-testid="filter-menu"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        <Command loop label={active === undefined ? 'Add filter' : `Filter by ${active.label}`}>
+        <Command
+          key={field ?? 'fields'}
+          loop
+          label={active === undefined ? 'Add filter' : `Filter by ${active.label}`}
+        >
           <div className="flex items-center gap-2 border-border border-b px-2.5">
             <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
             <Command.Input
@@ -110,7 +115,10 @@ export function FilterMenu({
                 fields={fields}
                 predicates={predicates}
                 searching={search.trim().length > 0}
-                onPickField={setField}
+                onPickField={(next) => {
+                  setSearch('');
+                  setField(next);
+                }}
                 onPickValue={toggleValue}
               />
             ) : (

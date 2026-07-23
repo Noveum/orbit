@@ -47,7 +47,8 @@ export function DisplayMenu({ config, onChange }: DisplayMenuProps) {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="max-h-[70vh] w-60 overflow-y-auto"
+        collisionPadding={12}
+        className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-60 overflow-y-auto"
         data-testid="display-menu"
       >
         <DropdownMenuLabel>Grouping</DropdownMenuLabel>
