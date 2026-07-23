@@ -5,6 +5,7 @@ export const SYNC_MODELS = [
   'organization',
   'issue',
   'issue_relation',
+  'issue_subscription',
   'comment',
   'reaction',
   'attachment',
@@ -12,11 +13,14 @@ export const SYNC_MODELS = [
   'milestone',
   'cycle',
   'team',
+  'team_member',
   'workflow_state',
   'label',
   'doc',
+  'doc_collection',
   'notification',
   'member',
+  'invitation',
   'view',
 ] as const;
 
@@ -67,8 +71,14 @@ export const presenceMessageSchema = z.object({
 
 export type PresenceMessage = z.infer<typeof presenceMessageSchema>;
 
+export const syncCursorSchema = z.number().int().nonnegative();
+
 export const clientMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('subscribe'), scopes: z.array(z.string().min(1)).max(64) }),
+  z.object({
+    type: z.literal('subscribe'),
+    scopes: z.array(z.string().min(1)).max(64),
+    since: syncCursorSchema.optional(),
+  }),
   z.object({ type: z.literal('unsubscribe'), scopes: z.array(z.string().min(1)).max(64) }),
   z.object({ type: z.literal('ping') }),
   z.object({
@@ -91,7 +101,11 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), actions: z.array(syncActionSchema).min(1) }),
   z.object({ type: z.literal('presence'), messages: z.array(presenceMessageSchema).min(1) }),
   z.object({ type: z.literal('pong'), at: z.string().datetime() }),
-  z.object({ type: z.literal('subscribed'), scopes: z.array(z.string()) }),
+  z.object({
+    type: z.literal('subscribed'),
+    scopes: z.array(z.string()),
+    denied: z.array(z.string()).default([]),
+  }),
   z.object({ type: z.literal('error'), message: z.string(), code: z.string() }),
 ]);
 
@@ -117,3 +131,23 @@ export const REDIS_PRESENCE_CHANNEL = 'orbit:presence';
 export const DELTA_BATCH_WINDOW_MS = 50;
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const HEARTBEAT_TIMEOUT_MS = 75_000;
+export const PRESENCE_TTL_MS = 45_000;
+
+export const CATCHUP_LIMIT = 500;
+
+export const syncCatchupQuerySchema = z.object({
+  since: z.coerce.number().int().nonnegative().default(0),
+});
+
+export const syncCatchupSchema = z.object({
+  syncId: syncCursorSchema,
+  actions: z.array(syncActionSchema),
+  truncated: z.boolean(),
+});
+
+export type SyncCatchup = z.infer<typeof syncCatchupSchema>;
+
+export function isFresh(at: string, ttlMs: number, now = Date.now()): boolean {
+  const stamped = Date.parse(at);
+  return Number.isFinite(stamped) && now - stamped < ttlMs;
+}

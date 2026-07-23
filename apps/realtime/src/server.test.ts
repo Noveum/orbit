@@ -201,6 +201,121 @@ describe('fan-out', () => {
   });
 });
 
+describe('multi tab and multi tenant fan-out', () => {
+  it('delivers the same delta to both tabs of one user exactly once each', async () => {
+    const tabOne = await connectClient(server.port, alice.token);
+    const tabTwo = await connectClient(server.port, alice.token);
+    await tabOne.waitFor('ready');
+    await tabTwo.waitFor('ready');
+    tabOne.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
+    tabTwo.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
+    await tabOne.waitFor('subscribed');
+    await tabTwo.waitFor('subscribed');
+
+    await publish(
+      syncAction({
+        organizationId: orgA,
+        scopes: [scopes.team(teamA)],
+        modelId: 'issue_two_tabs',
+        syncId: 400,
+      }),
+    );
+
+    await tabOne.waitFor('delta');
+    await tabTwo.waitFor('delta');
+    await delay(BATCH_WINDOW_MS * 3);
+
+    for (const tab of [tabOne, tabTwo]) {
+      const actions = tab.messages
+        .filter((message) => message.type === 'delta')
+        .flatMap((message) => message.actions)
+        .filter((action) => action.modelId === 'issue_two_tabs');
+      expect(actions).toHaveLength(1);
+    }
+
+    tabOne.close();
+    tabTwo.close();
+  });
+
+  it('keeps two organizations apart even when both subscribe at the same moment', async () => {
+    const inside = await connectClient(server.port, alice.token);
+    const outside = await connectClient(server.port, carol.token);
+    await inside.waitFor('ready');
+    await outside.waitFor('ready');
+    inside.send({ type: 'subscribe', scopes: [scopes.organization(orgA), scopes.team(teamA)] });
+    outside.send({ type: 'subscribe', scopes: [scopes.organization(orgB), scopes.team(teamA)] });
+    await inside.waitFor('subscribed');
+    const outsideScopes = await outside.waitFor('subscribed');
+    expect(outsideScopes.scopes).toEqual([scopes.organization(orgB)]);
+    expect(outsideScopes.denied).toEqual([scopes.team(teamA)]);
+
+    await publish(
+      syncAction({
+        organizationId: orgA,
+        scopes: [scopes.organization(orgA), scopes.team(teamA)],
+        modelId: 'issue_tenant_a',
+        syncId: 410,
+      }),
+    );
+    await publish(
+      syncAction({
+        organizationId: orgB,
+        scopes: [scopes.organization(orgB)],
+        modelId: 'issue_tenant_b',
+        syncId: 411,
+      }),
+    );
+
+    await inside.waitFor('delta');
+    await outside.waitFor('delta');
+    await delay(BATCH_WINDOW_MS * 3);
+
+    const insideIds = inside.messages
+      .filter((message) => message.type === 'delta')
+      .flatMap((message) => message.actions.map((action) => action.modelId));
+    const outsideIds = outside.messages
+      .filter((message) => message.type === 'delta')
+      .flatMap((message) => message.actions.map((action) => action.modelId));
+
+    expect(insideIds).toContain('issue_tenant_a');
+    expect(insideIds).not.toContain('issue_tenant_b');
+    expect(outsideIds).toContain('issue_tenant_b');
+    expect(outsideIds).not.toContain('issue_tenant_a');
+
+    inside.close();
+    outside.close();
+  });
+
+  it('skips deltas the resubscribing client already applied', async () => {
+    const client = await connectClient(server.port, alice.token);
+    await client.waitFor('ready');
+    client.send({ type: 'subscribe', scopes: [scopes.team(teamA)], since: 500 });
+    await client.waitFor('subscribed');
+
+    await publish(
+      syncAction({
+        organizationId: orgA,
+        scopes: [scopes.team(teamA)],
+        modelId: 'issue_already_seen',
+        syncId: 500,
+      }),
+    );
+    await publish(
+      syncAction({
+        organizationId: orgA,
+        scopes: [scopes.team(teamA)],
+        modelId: 'issue_after_watermark',
+        syncId: 501,
+      }),
+    );
+
+    const delta = await client.waitFor('delta');
+    await delay(BATCH_WINDOW_MS * 3);
+    expect(delta.actions.map((action) => action.modelId)).toEqual(['issue_after_watermark']);
+    client.close();
+  });
+});
+
 describe('authorization', () => {
   it('rejects an expired session with 4001', async () => {
     const expired = await createMember({
@@ -239,21 +354,36 @@ describe('authorization', () => {
     client.close();
   });
 
-  it('drops an issue scope owned by a team the connection does not belong to', async () => {
+  it('grants an issue scope to every member of the issue organization, matching the read path', async () => {
     const issueId = await createIssue(orgA, teamB, bob.userId);
 
-    const outsider = await connectClient(server.port, alice.token);
+    const otherTeam = await connectClient(server.port, alice.token);
+    await otherTeam.waitFor('ready');
+    otherTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
+    const granted = await otherTeam.waitFor('subscribed');
+    expect(granted.scopes).toEqual([scopes.issue(issueId)]);
+    expect(granted.denied).toEqual([]);
+
+    const owningTeam = await connectClient(server.port, bob.token);
+    await owningTeam.waitFor('ready');
+    owningTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
+    expect((await owningTeam.waitFor('subscribed')).scopes).toEqual([scopes.issue(issueId)]);
+
+    otherTeam.close();
+    owningTeam.close();
+  });
+
+  it('refuses an issue scope that belongs to another organization', async () => {
+    const issueId = await createIssue(orgA, teamA, alice.userId);
+
+    const outsider = await connectClient(server.port, carol.token);
     await outsider.waitFor('ready');
     outsider.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
-    expect((await outsider.waitFor('subscribed')).scopes).toEqual([]);
-
-    const insider = await connectClient(server.port, bob.token);
-    await insider.waitFor('ready');
-    insider.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
-    expect((await insider.waitFor('subscribed')).scopes).toEqual([scopes.issue(issueId)]);
+    const refused = await outsider.waitFor('subscribed');
+    expect(refused.scopes).toEqual([]);
+    expect(refused.denied).toEqual([scopes.issue(issueId)]);
 
     outsider.close();
-    insider.close();
   });
 
   it('never fans out to a connection whose subscription was refused', async () => {
@@ -314,6 +444,34 @@ describe('protocol', () => {
     client.close();
   });
 
+  it('throttles a connection that floods the socket, once, without closing it', async () => {
+    const strict = await createRealtimeServer({
+      redisUrl: redisUrl(),
+      messageBurst: 3,
+      messagesPerSecond: 0,
+    });
+    try {
+      const client = await connectClient(strict.port, alice.token);
+      await client.waitFor('ready');
+      for (let index = 0; index < 12; index += 1) client.send({ type: 'ping' });
+
+      const throttled = await client.waitFor('error');
+      expect(throttled).toMatchObject({ code: 'rate_limited' });
+      await delay(150);
+
+      expect(client.messages.filter((message) => message.type === 'pong')).toHaveLength(3);
+      expect(
+        client.messages.filter(
+          (message) => message.type === 'error' && message.code === 'rate_limited',
+        ),
+      ).toHaveLength(1);
+      expect(client.socket.readyState).toBe(WebSocket.OPEN);
+      client.close();
+    } finally {
+      await strict.close();
+    }
+  });
+
   it('serves health with connection and redis status', async () => {
     const response = await fetch(`http://127.0.0.1:${server.port}/health`);
     const body = (await response.json()) as Record<string, unknown>;
@@ -366,6 +524,35 @@ describe('presence', () => {
     client.send({ type: 'presence', scope: scopes.team(teamA), kind: 'viewing' });
     expect(await client.waitFor('error')).toMatchObject({ code: 'forbidden_scope' });
     client.close();
+  });
+
+  it('replays a live viewer to a joiner and withholds one that outlived the ttl', async () => {
+    const shortLived = await createRealtimeServer({ redisUrl: redisUrl(), presenceTtlMs: 120 });
+    try {
+      const viewer = await connectClient(shortLived.port, alice.token);
+      await viewer.waitFor('ready');
+      viewer.send({ type: 'presence', scope: scopes.team(teamA), kind: 'viewing' });
+
+      const joiner = await connectClient(shortLived.port, dave.token);
+      await joiner.waitFor('ready');
+      joiner.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
+      const replayed = await joiner.waitFor('presence');
+      expect(replayed.messages.map((message) => message.userId)).toEqual([alice.userId]);
+
+      await delay(200);
+      const late = await connectClient(shortLived.port, bob.token);
+      await late.waitFor('ready');
+      late.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
+      await late.waitFor('subscribed');
+      await delay(50);
+      expect(late.messages.some((message) => message.type === 'presence')).toBe(false);
+
+      viewer.close();
+      joiner.close();
+      late.close();
+    } finally {
+      await shortLived.close();
+    }
   });
 });
 

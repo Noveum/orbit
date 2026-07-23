@@ -344,6 +344,7 @@ export async function createDocCollection(
         organizationId: principal.organizationId,
         name: parsed.name,
         icon: parsed.icon,
+        syncId,
       })
       .returning();
     const collection = requireRow(created, 'The collection could not be created.');
@@ -363,9 +364,9 @@ function collectionAction(
     organizationId: row.organizationId,
     scopes: [scopes.organization(row.organizationId)],
     action,
-    model: 'doc',
+    model: 'doc_collection',
     modelId: row.id,
-    data: { ...row, kind: 'collection' },
+    data: row,
     actor,
   });
 }
@@ -384,7 +385,7 @@ export async function updateDocCollection(
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
       .update(schema.docCollection)
-      .set(parsed)
+      .set({ ...parsed, syncId })
       .where(
         and(
           eq(schema.docCollection.id, collectionId),

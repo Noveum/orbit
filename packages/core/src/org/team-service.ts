@@ -280,10 +280,10 @@ export async function addTeamMember(
     const actor = await principalActor(tx, principal);
     const [inserted] = await tx
       .insert(schema.teamMember)
-      .values({ id: newId(), teamId, userId: parsed.userId })
+      .values({ id: newId(), teamId, userId: parsed.userId, syncId })
       .onConflictDoUpdate({
         target: [schema.teamMember.teamId, schema.teamMember.userId],
-        set: { teamId },
+        set: { teamId, syncId },
       })
       .returning();
     const row = requireRow(inserted, 'That team membership could not be created.');
@@ -295,7 +295,7 @@ export async function addTeamMember(
           organizationId: principal.organizationId,
           scopes: [scopes.team(teamId), scopes.user(parsed.userId)],
           action: 'insert',
-          model: 'member',
+          model: 'team_member',
           modelId: row.id,
           data: row,
           actor,
@@ -326,7 +326,7 @@ export async function removeTeamMember(
         organizationId: principal.organizationId,
         scopes: [scopes.team(teamId), scopes.user(userId)],
         action: 'delete',
-        model: 'member',
+        model: 'team_member',
         modelId: row.id,
         data: { id: row.id, teamId, userId },
         actor,

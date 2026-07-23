@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { clientMessageSchema, scopes, serverMessageSchema, syncActionSchema } from './index.ts';
+import {
+  clientMessageSchema,
+  isFresh,
+  PRESENCE_TTL_MS,
+  SYNC_MODELS,
+  scopes,
+  serverMessageSchema,
+  syncActionSchema,
+  syncCatchupSchema,
+} from './index.ts';
 
 const action = {
   syncId: 7,
@@ -38,5 +47,43 @@ describe('event contract', () => {
   it('rejects empty server payloads', () => {
     expect(serverMessageSchema.safeParse({ type: 'delta', actions: [action] }).success).toBe(true);
     expect(serverMessageSchema.safeParse({ type: 'delta', actions: [] }).success).toBe(false);
+  });
+
+  it('names every model once so no name can carry two row shapes', () => {
+    const models: readonly string[] = SYNC_MODELS;
+    expect(new Set(models).size).toBe(models.length);
+    for (const model of ['team_member', 'invitation', 'doc_collection', 'issue_subscription']) {
+      expect(models).toContain(model);
+    }
+  });
+
+  it('carries a catch up cursor on subscribe and denied scopes on the reply', () => {
+    const subscribe = clientMessageSchema.safeParse({
+      type: 'subscribe',
+      scopes: ['org:1'],
+      since: 42,
+    });
+    expect(subscribe.success && subscribe.data.type === 'subscribe' && subscribe.data.since).toBe(
+      42,
+    );
+    expect(
+      clientMessageSchema.safeParse({ type: 'subscribe', scopes: ['org:1'], since: -1 }).success,
+    ).toBe(false);
+
+    const subscribed = serverMessageSchema.parse({ type: 'subscribed', scopes: ['org:1'] });
+    expect(subscribed.type === 'subscribed' && subscribed.denied).toEqual([]);
+  });
+
+  it('parses a catch up page of actions', () => {
+    const parsed = syncCatchupSchema.safeParse({ syncId: 7, actions: [action], truncated: false });
+    expect(parsed.success).toBe(true);
+    expect(syncCatchupSchema.safeParse({ syncId: 7, actions: [action] }).success).toBe(false);
+  });
+
+  it('treats presence older than the ttl as stale', () => {
+    const now = Date.parse('2026-01-01T00:01:00.000Z');
+    expect(isFresh('2026-01-01T00:00:59.000Z', PRESENCE_TTL_MS, now)).toBe(true);
+    expect(isFresh('2026-01-01T00:00:00.000Z', PRESENCE_TTL_MS, now)).toBe(false);
+    expect(isFresh('not a date', PRESENCE_TTL_MS, now)).toBe(false);
   });
 });

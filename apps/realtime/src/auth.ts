@@ -102,16 +102,11 @@ export async function authenticateConnection(
 
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
   const rows = await db
-    .select({ organizationId: schema.issue.organizationId, teamId: schema.issue.teamId })
+    .select({ organizationId: schema.issue.organizationId })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
     .limit(1);
-  const found = rows[0];
-  return (
-    found !== undefined &&
-    found.organizationId === principal.organizationId &&
-    principal.teamIds.includes(found.teamId)
-  );
+  return rows[0]?.organizationId === principal.organizationId;
 }
 
 async function projectScopeAllowed(projectId: string, principal: ConnectionPrincipal) {

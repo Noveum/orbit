@@ -43,6 +43,7 @@ async function insertInvite(
     role: string;
     teamIds: string[];
     now: Date;
+    syncId: number;
   },
 ): Promise<InvitationRow> {
   await executor
@@ -65,6 +66,7 @@ async function insertInvite(
       teamIds: params.teamIds,
       inviterId: params.inviterId,
       expiresAt: addUtcDays(params.now, INVITE_TTL_DAYS),
+      syncId: params.syncId,
     })
     .returning();
   return requireRow(row, 'The invite could not be created.');
@@ -81,9 +83,9 @@ function inviteAction(
     organizationId: invitation.organizationId,
     scopes: [scopes.organization(invitation.organizationId)],
     action,
-    model: 'member',
+    model: 'invitation',
     modelId: invitation.id,
-    data: { ...invitation, kind: 'invitation' },
+    data: invitation,
     actor,
   });
 }
@@ -109,6 +111,7 @@ export async function createInvite(
       role: parsed.role,
       teamIds: parsed.teamIds,
       now: new Date(),
+      syncId,
     });
     return {
       invitation,
@@ -140,6 +143,7 @@ export async function createInvites(
         role: entry.role,
         teamIds: entry.teamIds,
         now,
+        syncId,
       });
       invites.push({ invitation, token: invitation.id });
       actions.push(inviteAction(invitation, syncId, actor, 'insert'));
@@ -174,7 +178,7 @@ export async function revokeInvite(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.invitation)
-      .set({ status: 'revoked' })
+      .set({ status: 'revoked', syncId })
       .where(
         and(
           eq(schema.invitation.id, inviteId),
@@ -199,7 +203,7 @@ export async function resendInvite(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.invitation)
-      .set({ expiresAt: addUtcDays(new Date(), INVITE_TTL_DAYS), status: 'pending' })
+      .set({ expiresAt: addUtcDays(new Date(), INVITE_TTL_DAYS), status: 'pending', syncId })
       .where(
         and(
           eq(schema.invitation.id, inviteId),
@@ -298,14 +302,15 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     if (teamIds.length > 0) {
       await tx
         .insert(schema.teamMember)
-        .values(teamIds.map((teamId) => ({ id: newId(), teamId, userId })))
+        .values(teamIds.map((teamId) => ({ id: newId(), teamId, userId, syncId })))
         .onConflictDoNothing();
     }
 
-    await tx
+    const [acceptedInvitation] = await tx
       .update(schema.invitation)
-      .set({ status: 'accepted' })
-      .where(eq(schema.invitation.id, invitation.id));
+      .set({ status: 'accepted', syncId })
+      .where(eq(schema.invitation.id, invitation.id))
+      .returning();
 
     const actor = { type: 'user', id: userId, name: invitedUser.name } as const;
 
@@ -329,6 +334,9 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
           data: member,
           actor,
         }),
+        ...(acceptedInvitation === undefined
+          ? []
+          : [inviteAction(acceptedInvitation, syncId, actor, 'update')]),
       ],
     };
   });

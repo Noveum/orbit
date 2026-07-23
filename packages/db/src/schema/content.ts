@@ -71,6 +71,7 @@ export const docCollection = pgTable(
       .references(() => organization.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     icon: text('icon').notNull().default('book'),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('doc_collection_org_idx').on(table.organizationId)],

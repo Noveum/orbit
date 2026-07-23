@@ -327,11 +327,11 @@ export const markReadSchema = z.object({
 export async function markRead(
   database: NotificationDatabase,
   input: z.input<typeof markReadSchema>,
-): Promise<string[]> {
+): Promise<NotificationRecord[]> {
   const params = markReadSchema.parse(input);
-  const updated = await database
+  return await database
     .update(notification)
-    .set({ readAt: params.read ? new Date() : null })
+    .set({ readAt: params.read ? new Date() : null, syncId: nextSyncId })
     .where(
       and(
         eq(notification.userId, params.userId),
@@ -339,8 +339,7 @@ export async function markRead(
         inArray(notification.id, params.notificationIds),
       ),
     )
-    .returning({ id: notification.id });
-  return updated.map((row) => row.id);
+    .returning();
 }
 
 export const markAllReadSchema = z.object({
@@ -355,7 +354,7 @@ export async function markAllRead(
   const params = markAllReadSchema.parse(input);
   const updated = await database
     .update(notification)
-    .set({ readAt: new Date() })
+    .set({ readAt: new Date(), syncId: nextSyncId })
     .where(
       and(
         eq(notification.userId, params.userId),
@@ -381,7 +380,7 @@ export async function snooze(
   const params = snoozeSchema.parse(input);
   const updated = await database
     .update(notification)
-    .set({ snoozedUntil: params.until })
+    .set({ snoozedUntil: params.until, syncId: nextSyncId })
     .where(
       and(
         eq(notification.userId, params.userId),
