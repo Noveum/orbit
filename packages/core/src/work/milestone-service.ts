@@ -1,4 +1,4 @@
-import { and, asc, db, eq, inArray, schema } from '@orbit/db';
+import { and, asc, db, desc, eq, schema } from '@orbit/db';
 import { SORT_ORDER_STEP } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -45,7 +45,7 @@ export async function createMilestone(
       .select({ sortOrder: schema.milestone.sortOrder })
       .from(schema.milestone)
       .where(eq(schema.milestone.projectId, parsed.projectId))
-      .orderBy(asc(schema.milestone.sortOrder))
+      .orderBy(desc(schema.milestone.sortOrder), desc(schema.milestone.createdAt))
       .limit(1);
     const [created] = await tx
       .insert(schema.milestone)
@@ -176,7 +176,7 @@ export async function listMilestones(
         eq(schema.milestone.organizationId, principal.organizationId),
       ),
     )
-    .orderBy(asc(schema.milestone.sortOrder));
+    .orderBy(asc(schema.milestone.sortOrder), asc(schema.milestone.createdAt));
 }
 
 export async function reorderMilestones(
@@ -189,6 +189,10 @@ export async function reorderMilestones(
 
   return await db.transaction(async (tx) => {
     await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    const requested = new Set(orderedMilestoneIds);
+    if (requested.size !== orderedMilestoneIds.length) {
+      throw conflict('That order lists the same milestone twice.');
+    }
     const existing = await tx
       .select({ id: schema.milestone.id })
       .from(schema.milestone)
@@ -196,11 +200,10 @@ export async function reorderMilestones(
         and(
           eq(schema.milestone.organizationId, principal.organizationId),
           eq(schema.milestone.projectId, projectId),
-          inArray(schema.milestone.id, [...orderedMilestoneIds]),
         ),
       );
-    if (existing.length !== orderedMilestoneIds.length) {
-      throw conflict('Some of those milestones do not belong to this project.');
+    if (existing.length !== requested.size || existing.some((row) => !requested.has(row.id))) {
+      throw conflict('That order has to list every milestone in this project, and only those.');
     }
 
     const syncId = await nextSyncId(tx);
