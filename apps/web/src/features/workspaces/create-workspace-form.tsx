@@ -48,8 +48,7 @@ export function CreateWorkspaceForm() {
         throw new Error(activated.error.message ?? 'Could not switch to the new workspace.');
       }
       toast({ title: `${parsed.data.name} is ready`, tone: 'success' });
-      router.push(`/team/${created.team.key.toLowerCase()}/board`);
-      router.refresh();
+      window.location.assign(`/team/${created.team.key.toLowerCase()}/board`);
     } catch (caught) {
       setError(messageOf(caught));
       setPending(false);

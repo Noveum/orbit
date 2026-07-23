@@ -7,6 +7,7 @@ import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 const push = vi.fn();
 const refresh = vi.fn();
 const setActive = vi.fn();
+const assign = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, refresh }),
@@ -35,6 +36,8 @@ beforeEach(() => {
   push.mockClear();
   refresh.mockClear();
   setActive.mockReset();
+  assign.mockClear();
+  Object.defineProperty(window, 'location', { value: { assign }, writable: true });
 });
 
 async function openMenu(): Promise<void> {
@@ -88,8 +91,9 @@ describe('WorkspaceSwitcher', () => {
     await waitFor(() => {
       expect(setActive).toHaveBeenCalledWith({ organizationId: 'org-2' });
     });
-    expect(push).toHaveBeenCalledWith('/my-issues');
-    expect(refresh).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('/my-issues');
+    });
   });
 
   it('does not switch when the active workspace is picked again', async () => {

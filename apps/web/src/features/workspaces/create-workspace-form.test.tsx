@@ -6,6 +6,7 @@ import { CreateWorkspaceForm } from './create-workspace-form.tsx';
 const push = vi.fn();
 const refresh = vi.fn();
 const setActive = vi.fn();
+const assign = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, refresh, back: vi.fn() }),
@@ -33,6 +34,8 @@ beforeEach(() => {
   push.mockClear();
   refresh.mockClear();
   setActive.mockReset();
+  assign.mockClear();
+  Object.defineProperty(window, 'location', { value: { assign }, writable: true });
 });
 
 afterEach(() => {
@@ -72,7 +75,9 @@ describe('CreateWorkspaceForm', () => {
     expect(url).toBe('/api/organizations');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ name: 'Noveum Labs', slug: 'noveum-labs' });
-    expect(push).toHaveBeenCalledWith('/team/nl/board');
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('/team/nl/board');
+    });
   });
 
   it('keeps the submit disabled until the name and slug are valid', async () => {
@@ -98,6 +103,6 @@ describe('CreateWorkspaceForm', () => {
       'That workspace address is already taken.',
     );
     expect(setActive).not.toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
   });
 });

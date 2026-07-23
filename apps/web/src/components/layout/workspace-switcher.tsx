@@ -57,8 +57,7 @@ export function WorkspaceSwitcher({
     try {
       const result = await authClient.organization.setActive({ organizationId: target.id });
       if (result.error) throw new Error(result.error.message ?? 'Could not switch workspace.');
-      router.push(WORKSPACE_LANDING);
-      router.refresh();
+      window.location.assign(WORKSPACE_LANDING);
     } catch (error: unknown) {
       toast({
         title: 'Could not switch workspace',
