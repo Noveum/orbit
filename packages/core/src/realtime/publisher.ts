@@ -12,6 +12,7 @@ export interface BuildSyncActionInput {
   readonly data: Record<string, unknown>;
   readonly actor: Actor;
   readonly at?: Date;
+  readonly originClientId?: string | undefined;
 }
 
 export function buildSyncAction(input: BuildSyncActionInput): SyncAction {
@@ -25,6 +26,7 @@ export function buildSyncAction(input: BuildSyncActionInput): SyncAction {
     data: input.data,
     actor: input.actor,
     at: (input.at ?? new Date()).toISOString(),
+    ...(input.originClientId === undefined ? {} : { originClientId: input.originClientId }),
   };
 }
 

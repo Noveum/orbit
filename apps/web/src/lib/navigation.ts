@@ -33,6 +33,7 @@ export interface NavLink {
   readonly icon: LucideIcon;
   readonly shortcut?: readonly string[] | undefined;
   readonly count?: number | undefined;
+  readonly unbuilt?: boolean | undefined;
 }
 
 export interface NavSection {
@@ -41,37 +42,46 @@ export interface NavSection {
   readonly links: readonly NavLink[];
 }
 
+function built(links: readonly NavLink[]): NavLink[] {
+  return links.filter((link) => link.unbuilt !== true);
+}
+
 export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): NavSection[] {
   return [
     {
       id: 'personal',
-      links: [
+      links: built([
         { href: '/inbox', label: 'Inbox', icon: Inbox, shortcut: ['g', 'i'], count: inboxCount },
         { href: '/my-issues', label: 'My issues', icon: CircleDot, shortcut: ['g', 'm'] },
-      ],
+      ]),
     },
     {
       id: 'workspace',
       title: 'Workspace',
-      links: [
+      links: built([
         { href: '/projects', label: 'Projects', icon: FolderKanban, shortcut: ['g', 'p'] },
-        { href: '/views', label: 'Views', icon: LayoutList },
-        { href: '/docs', label: 'Docs', icon: FileText },
-      ],
+        { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
+        { href: '/views', label: 'Views', icon: LayoutList, unbuilt: true },
+        { href: '/docs', label: 'Docs', icon: FileText, unbuilt: true },
+      ]),
     },
     ...teams.map((team) => ({
       id: `team-${team.id}`,
       title: team.name,
-      links: [
+      links: built([
         {
           href: `/team/${team.key.toLowerCase()}/issues`,
           label: 'Issues',
           icon: CircleDot,
           count: team.openIssues,
         },
-        { href: `/team/${team.key.toLowerCase()}/cycles`, label: 'Cycles', icon: RefreshCcw },
-        { href: `/team/${team.key.toLowerCase()}/projects`, label: 'Projects', icon: Target },
-      ],
+        { href: `/team/${team.key.toLowerCase()}/board`, label: 'Board', icon: Target },
+        {
+          href: `/team/${team.key.toLowerCase()}/cycle/active`,
+          label: 'Active cycle',
+          icon: RefreshCcw,
+        },
+      ]),
     })),
   ];
 }

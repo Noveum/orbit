@@ -27,18 +27,26 @@ export function useBootstrap(teamKey: string | null) {
   });
 }
 
-export function useIssues(teamId: string | null, seed: readonly Issue[] | undefined) {
-  return useQuery({
-    queryKey: queryKeys.issues(teamId ?? 'none'),
-    enabled: teamId !== null,
-    queryFn: async ({ signal }): Promise<readonly Issue[]> => {
+const TEAM_ISSUE_LIMIT = 200;
+
+export function teamIssuesQuery(teamId: string) {
+  return {
+    queryKey: queryKeys.issues(teamId),
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> => {
       const page = await apiFetch(
-        `/api/issues?teamId=${encodeURIComponent(teamId ?? '')}&limit=200`,
+        `/api/issues?teamId=${encodeURIComponent(teamId)}&limit=${TEAM_ISSUE_LIMIT}`,
         issueListSchema,
         { signal },
       );
       return page.issues;
     },
+  };
+}
+
+export function useIssues(teamId: string | null, seed: readonly Issue[] | undefined) {
+  return useQuery({
+    ...teamIssuesQuery(teamId ?? 'none'),
+    enabled: teamId !== null,
     ...(seed === undefined ? {} : { placeholderData: seed }),
   });
 }
