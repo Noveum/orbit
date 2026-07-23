@@ -1,0 +1,115 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_DEFAULT_REGION: us-east-1
+    DOCKER_BUILDKIT: "1"
+    EKS_NAMESPACE: orbit
+    KUBECTL_VERSION: "1.33.5"
+    KUBECTL_RELEASE: "2025-11-13"
+  secrets-manager:
+    AWS_ACCOUNT_ID: orbit-app-secrets:AWS_ACCOUNT_ID
+    EKS_CLUSTER_NAME: orbit-app-secrets:EKS_CLUSTER_NAME
+    ROLLOUT_TIMEOUT: orbit-app-secrets:ROLLOUT_TIMEOUT
+    DOPPLER_TOKEN_BUILD: orbit-app-secrets:DOPPLER_TOKEN_BUILD
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+    commands:
+      - set -e
+      - curl -sSLO "https://s3.us-west-2.amazonaws.com/amazon-eks/${KUBECTL_VERSION}/${KUBECTL_RELEASE}/bin/linux/amd64/kubectl"
+      - curl -sSLO "https://s3.us-west-2.amazonaws.com/amazon-eks/${KUBECTL_VERSION}/${KUBECTL_RELEASE}/bin/linux/amd64/kubectl.sha256"
+      - sha256sum -c kubectl.sha256
+      - rm kubectl.sha256
+      - chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+      - kubectl version --client
+
+  pre_build:
+    commands:
+      - set -e
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - ECR=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - 'if [ -z "$IMAGE_TAG" ]; then echo "ERROR: could not resolve the source commit"; exit 1; fi'
+      - echo "Image tag is $IMAGE_TAG"
+      - for NAME in web realtime mcp migrate; do docker pull $ECR/orbit-$NAME:latest || true; done
+      - export ECR IMAGE_TAG
+
+  build:
+    commands:
+      - |
+        set -e
+        build_image() {
+          NAME="$1"
+          DOCKERFILE="$2"
+          docker build \
+            --cache-from "$ECR/orbit-$NAME:latest" \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --secret id=DOPPLER_TOKEN,env=DOPPLER_TOKEN_BUILD \
+            -t "$ECR/orbit-$NAME:latest" \
+            -t "$ECR/orbit-$NAME:$IMAGE_TAG" \
+            -f "$DOCKERFILE" .
+        }
+
+        build_image web apps/web/Dockerfile & WEB_PID=$!
+        build_image realtime apps/realtime/Dockerfile & REALTIME_PID=$!
+        build_image mcp apps/mcp/Dockerfile & MCP_PID=$!
+        build_image migrate packages/db/Dockerfile & MIGRATE_PID=$!
+
+        FAILED=0
+        wait $WEB_PID || { echo "web build failed"; FAILED=1; }
+        wait $REALTIME_PID || { echo "realtime build failed"; FAILED=1; }
+        wait $MCP_PID || { echo "mcp build failed"; FAILED=1; }
+        wait $MIGRATE_PID || { echo "migrate build failed"; FAILED=1; }
+        if [ $FAILED -ne 0 ]; then exit 1; fi
+        echo "All images built"
+
+  post_build:
+    commands:
+      - |
+        set -e
+        push_image() {
+          docker push "$ECR/orbit-$1:latest"
+          docker push "$ECR/orbit-$1:$IMAGE_TAG"
+        }
+
+        push_image web & WEB_PID=$!
+        push_image realtime & REALTIME_PID=$!
+        push_image mcp & MCP_PID=$!
+        push_image migrate & MIGRATE_PID=$!
+
+        FAILED=0
+        wait $WEB_PID || { echo "web push failed"; FAILED=1; }
+        wait $REALTIME_PID || { echo "realtime push failed"; FAILED=1; }
+        wait $MCP_PID || { echo "mcp push failed"; FAILED=1; }
+        wait $MIGRATE_PID || { echo "migrate push failed"; FAILED=1; }
+        if [ $FAILED -ne 0 ]; then exit 1; fi
+        echo "All images pushed"
+      - |
+        set -e
+        aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_DEFAULT_REGION"
+
+        MISSING=""
+        for NAME in web realtime mcp; do
+          kubectl get deployment "orbit-$NAME" -n "$EKS_NAMESPACE" --request-timeout=10s >/dev/null 2>&1 || MISSING="$MISSING orbit-$NAME"
+        done
+        if [ -n "$MISSING" ]; then
+          echo "ERROR: missing deployments in namespace $EKS_NAMESPACE:$MISSING"
+          echo "Apply k8s/ from this repository before running this pipeline."
+          exit 1
+        fi
+
+        for NAME in web realtime mcp; do
+          kubectl set image "deployment/orbit-$NAME" -n "$EKS_NAMESPACE" \
+            "orbit-$NAME=$ECR/orbit-$NAME:$IMAGE_TAG"
+        done
+
+        FAILED=0
+        for NAME in web realtime mcp; do
+          kubectl rollout status "deployment/orbit-$NAME" -n "$EKS_NAMESPACE" --timeout="$ROLLOUT_TIMEOUT" \
+            || { echo "orbit-$NAME rollout failed"; FAILED=1; }
+        done
+        if [ $FAILED -ne 0 ]; then exit 1; fi
+        echo "All deployments rolled out"
