@@ -38,7 +38,13 @@
     "GITHUB_APP_ID",
     "GITHUB_APP_PRIVATE_KEY",
     "MCP_PORT",
-    "PORT"
+    "PORT",
+    "PLANE_API_KEY",
+    "PLANE_WORKSPACE",
+    "PLANE_OUT",
+    "PLANE_RATE",
+    "PLANE_LINKS",
+    "PLANE_FORCE"
   ],
   "tasks": {
     "build": {

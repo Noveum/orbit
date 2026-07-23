@@ -41,7 +41,7 @@ export function IssueCard({
       <div className="flex items-center gap-2 text-2xs text-faint">
         {shows('priority') ? <PriorityGlyph priority={issue.priority} /> : null}
         {shows('identifier') ? (
-          <span data-numeric className="font-medium">
+          <span data-numeric className="truncate whitespace-nowrap font-medium">
             {issue.identifier}
           </span>
         ) : null}
