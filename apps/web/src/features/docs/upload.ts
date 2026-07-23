@@ -12,8 +12,6 @@ const presignSchema = z.object({
   }),
 });
 
-const completeSchema = z.object({ attachment: attachmentSchema });
-
 export interface UploadedFile {
   readonly fileName: string;
   readonly contentType: string;
@@ -39,10 +37,6 @@ export async function uploadDocFile(docId: string, file: File): Promise<Uploaded
     body: file,
   });
   if (!response.ok) throw new Error(`Uploading ${file.name} failed.`);
-
-  await apiFetch(`/api/attachments/${presigned.attachment.id}/complete`, completeSchema, {
-    method: 'POST',
-  });
 
   return {
     fileName: file.name,

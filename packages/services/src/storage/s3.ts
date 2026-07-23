@@ -8,16 +8,16 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { internal, MAX_UPLOAD_BYTES } from '@orbit/shared';
 import { z } from 'zod';
-import { assertSafeKey } from './key.ts';
-import type { DownloadOptions, StorageDriver, StoredObject, UploadTarget } from './types.ts';
+import { assertSafeKey } from './local.ts';
+import type { StorageDriver, StoredObject, UploadTarget } from './types.ts';
 
 export const s3ConfigSchema = z.object({
   bucket: z.string().min(1),
   region: z.string().min(1).default('us-east-1'),
   endpoint: z.string().url().optional(),
-  accessKeyId: z.string().min(1).optional(),
-  secretAccessKey: z.string().min(1).optional(),
-  forcePathStyle: z.boolean().optional(),
+  accessKeyId: z.string().min(1),
+  secretAccessKey: z.string().min(1),
+  forcePathStyle: z.boolean().default(true),
 });
 
 export type S3Config = z.input<typeof s3ConfigSchema>;
@@ -31,17 +31,15 @@ export class S3StorageDriver implements StorageDriver {
 
   constructor(config: S3Config) {
     const parsed = s3ConfigSchema.parse(config);
-    const { accessKeyId, secretAccessKey, endpoint } = parsed;
-    const explicitCredentials =
-      accessKeyId === undefined || secretAccessKey === undefined
-        ? {}
-        : { credentials: { accessKeyId, secretAccessKey } };
     this.bucket = parsed.bucket;
     this.client = new S3Client({
       region: parsed.region,
-      forcePathStyle: parsed.forcePathStyle ?? endpoint !== undefined,
-      ...explicitCredentials,
-      ...(endpoint === undefined ? {} : { endpoint }),
+      forcePathStyle: parsed.forcePathStyle,
+      credentials: {
+        accessKeyId: parsed.accessKeyId,
+        secretAccessKey: parsed.secretAccessKey,
+      },
+      ...(parsed.endpoint === undefined ? {} : { endpoint: parsed.endpoint }),
     });
   }
 
@@ -74,22 +72,11 @@ export class S3StorageDriver implements StorageDriver {
     );
   }
 
-  async getUrl(
-    key: string,
-    expiresInSeconds: number,
-    options: DownloadOptions = {},
-  ): Promise<string> {
+  async getUrl(key: string, expiresInSeconds: number): Promise<string> {
     assertSafeKey(key);
     return await getSignedUrl(
       this.client,
-      new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        ...(options.contentType === undefined ? {} : { ResponseContentType: options.contentType }),
-        ...(options.disposition === undefined
-          ? {}
-          : { ResponseContentDisposition: options.disposition }),
-      }),
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       { expiresIn: expiresInSeconds },
     );
   }
