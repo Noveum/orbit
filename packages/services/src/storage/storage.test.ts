@@ -1,27 +1,14 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { DomainError, MAX_UPLOAD_BYTES } from '@orbit/shared';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
+  assertSafeKey,
   createStorageDriver,
   kindOf,
-  LocalStorageDriver,
   S3StorageDriver,
   sanitizeFileName,
   storageKeyFor,
   validateUpload,
 } from './index.ts';
-
-let root = '';
-
-beforeAll(async () => {
-  root = await mkdtemp(path.join(tmpdir(), 'orbit-storage-'));
-});
-
-afterAll(async () => {
-  await rm(root, { recursive: true, force: true });
-});
 
 describe('kindOf', () => {
   it('classifies every supported preview kind', () => {
@@ -104,29 +91,8 @@ describe('storageKeyFor', () => {
   });
 });
 
-describe('LocalStorageDriver', () => {
-  it('round trips put, stat, getUrl and delete', async () => {
-    const driver = new LocalStorageDriver(root);
-    const key = 'org_1/2026/03/01HB-note.txt';
-    await driver.put(key, new TextEncoder().encode('hello'), 'text/plain');
-    expect(await readFile(path.join(root, key), 'utf8')).toBe('hello');
-
-    const info = await driver.stat(key);
-    expect(info?.size).toBe(5);
-    expect(info?.contentType).toBe('text/plain');
-
-    expect(await driver.getUrl(key, 60)).toBe(`/api/files/${key}`);
-
-    const target = await driver.createUploadTarget(key, 'text/plain', 5);
-    expect(target.method).toBe('PUT');
-    expect(target.url).toBe(`/api/files/${key}`);
-
-    await driver.delete(key);
-    expect(await driver.stat(key)).toBeNull();
-  });
-
-  it('rejects keys that escape the root', async () => {
-    const driver = new LocalStorageDriver(root);
+describe('assertSafeKey', () => {
+  it('rejects keys that escape their prefix', () => {
     const escapes = [
       '../outside.txt',
       'org/../../outside.txt',
@@ -134,23 +100,16 @@ describe('LocalStorageDriver', () => {
       'a/./../../b.txt',
       '..',
       '',
+      'a\\b.txt',
     ];
     for (const key of escapes) {
-      expect(() => driver.resolve(key)).toThrow(DomainError);
-      await expect(driver.put(key, new Uint8Array([1]), 'text/plain')).rejects.toThrow(DomainError);
+      expect(() => assertSafeKey(key)).toThrow(DomainError);
     }
-    await expect(readFile(path.join(root, '..', 'outside.txt'))).rejects.toThrow();
   });
 
-  it('returns null when a file is missing rather than throwing', async () => {
-    const driver = new LocalStorageDriver(root);
-    expect(await driver.stat('org_1/2026/03/nope.txt')).toBeNull();
-    expect(await driver.stat('org_1')).toBeNull();
-  });
-
-  it('collapses harmless traversal inside the root', () => {
-    const driver = new LocalStorageDriver(root);
-    expect(driver.resolve('org/sub/../file.txt')).toBe(path.join(root, 'org', 'file.txt'));
+  it('collapses harmless traversal', () => {
+    expect(assertSafeKey('org/sub/../file.txt')).toBe('org/file.txt');
+    expect(assertSafeKey('org/2026/03/a.png')).toBe('org/2026/03/a.png');
   });
 });
 
@@ -183,12 +142,9 @@ describe('S3StorageDriver', () => {
 });
 
 describe('createStorageDriver', () => {
-  it('selects local by default and s3 on request', () => {
-    expect(createStorageDriver({}).name).toBe('local');
-    expect(createStorageDriver({ STORAGE_DRIVER: 'local' }).name).toBe('local');
+  it('builds an s3 driver from explicit keys and endpoint', () => {
     expect(
       createStorageDriver({
-        STORAGE_DRIVER: 's3',
         S3_BUCKET: 'orbit-uploads',
         S3_ACCESS_KEY_ID: 'orbitminio',
         S3_SECRET_ACCESS_KEY: 'orbitminio',
@@ -197,14 +153,20 @@ describe('createStorageDriver', () => {
     ).toBe('s3');
   });
 
-  it('rejects an unknown driver', () => {
-    expect(() => createStorageDriver({ STORAGE_DRIVER: 'ftp' })).toThrow(DomainError);
+  it('builds an s3 driver with no keys so the pod role supplies them', () => {
+    expect(createStorageDriver({ S3_BUCKET: 'orbit-uploads' }).name).toBe('s3');
   });
 
-  it('reports missing s3 configuration as a domain error', () => {
-    expect(() => createStorageDriver({ STORAGE_DRIVER: 's3' })).toThrow(/S3_BUCKET is required/);
+  it('requires a bucket', () => {
+    expect(() => createStorageDriver({})).toThrow(/S3_BUCKET is required/);
+  });
+
+  it('rejects a half configured key pair', () => {
     expect(() =>
-      createStorageDriver({ STORAGE_DRIVER: 's3', S3_BUCKET: 'b', S3_ACCESS_KEY_ID: '  ' }),
-    ).toThrow(/S3_ACCESS_KEY_ID is required/);
+      createStorageDriver({ S3_BUCKET: 'orbit-uploads', S3_ACCESS_KEY_ID: 'only-the-id' }),
+    ).toThrow(DomainError);
+    expect(() =>
+      createStorageDriver({ S3_BUCKET: 'orbit-uploads', S3_SECRET_ACCESS_KEY: 'only-the-secret' }),
+    ).toThrow(DomainError);
   });
 });
