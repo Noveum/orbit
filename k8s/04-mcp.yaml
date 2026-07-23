@@ -49,7 +49,7 @@ spec:
         - name: orbit-mcp
           image: __ECR_REGISTRY__/orbit-mcp:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/bin/doppler", "run", "--", "node", "dist/index.js"]
+          command: ["/usr/bin/doppler", "run", "--", "bun", "dist/index.js"]
           env:
             - name: DOPPLER_TOKEN
               valueFrom:

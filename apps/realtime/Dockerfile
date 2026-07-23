@@ -1,10 +1,7 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-alpine AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+FROM oven/bun:1.3.14-alpine AS base
 ENV CI=1
-ENV TURBO_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+WORKDIR /app
 
 FROM base AS doppler
 RUN apk add --no-cache wget && \
@@ -12,23 +9,26 @@ RUN apk add --no-cache wget && \
     echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' >> /etc/apk/repositories && \
     apk add --no-cache doppler
 
-FROM base AS pruner
-WORKDIR /app
-RUN pnpm add -g turbo@2.10.6
-COPY . .
-RUN turbo prune @orbit/realtime --docker
+FROM base AS deps
+COPY package.json bun.lock ./
+COPY apps/mcp/package.json apps/mcp/package.json
+COPY apps/realtime/package.json apps/realtime/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/realtime-client/package.json packages/realtime-client/package.json
+COPY packages/services/package.json packages/services/package.json
+COPY packages/shared/package.json packages/shared/package.json
+RUN test -s bun.lock || (echo "bun.lock is missing, refusing to build a floating dependency tree" >&2; exit 1)
+RUN bun install --frozen-lockfile
 
-FROM base AS installer
-WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY --from=pruner /app/out/json/ .
-RUN pnpm install --frozen-lockfile --ignore-scripts
-COPY --from=pruner /app/out/full/ .
+FROM deps AS installer
 COPY tsconfig.base.json ./
-RUN pnpm --filter @orbit/realtime run build
+COPY packages packages
+COPY apps/realtime apps/realtime
+RUN bun run --filter '@orbit/realtime' build
 
 FROM base AS runner
-WORKDIR /app
 ENV NODE_ENV=production
 ENV REALTIME_PORT=3100
 RUN addgroup -S orbit && adduser -S orbit -G orbit
@@ -36,4 +36,4 @@ COPY --from=doppler /usr/bin/doppler /usr/bin/doppler
 COPY --from=installer --chown=orbit:orbit /app/apps/realtime/dist ./dist
 USER orbit
 EXPOSE 3100
-CMD ["/usr/bin/doppler", "run", "--", "node", "dist/index.js"]
+CMD ["/usr/bin/doppler", "run", "--", "bun", "dist/index.js"]
