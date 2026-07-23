@@ -9,6 +9,10 @@ const serverEnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  ORBIT_PASSWORD_AUTH: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

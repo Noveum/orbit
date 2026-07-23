@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
-import { createWorkspace, resetDatabase, stateNamed, type Workspace } from '../test-support.ts';
+import { createTeam } from '../org/team-service.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  stateNamed,
+  type Workspace,
+} from '../test-support.ts';
 import {
   activeCycle,
   completeCycle,
   createCycle,
   cycleProgress,
+  getCycle,
   listCycles,
   upcomingCycles,
   updateCycle,
@@ -149,6 +157,25 @@ describe('completeCycle', () => {
     await completeCycle(workspace.admin, cycle.id);
     await expect(completeCycle(workspace.admin, cycle.id)).rejects.toMatchObject({
       code: 'conflict',
+    });
+  });
+});
+
+describe('cycle reads are team scoped', () => {
+  it('refuses a team the reader is not on and a team in another workspace', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+    const vega = await createWorkspace('Vega');
+
+    await expect(listCycles(guest.principal, team.id)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(listCycles(workspace.admin, vega.teamId)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    const [foreign] = await listCycles(vega.admin, vega.teamId);
+    if (foreign === undefined) throw new Error('missing seeded cycle');
+    await expect(getCycle(workspace.admin, foreign.id)).rejects.toMatchObject({
+      code: 'not_found',
     });
   });
 });

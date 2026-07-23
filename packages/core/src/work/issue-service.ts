@@ -4,7 +4,7 @@ import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam } from '@orbit/shared/policy';
+import { assertCan, isInTeam, teamScope } from '@orbit/shared/policy';
 import { issueIdentifier, parseIssueIdentifier, sortOrderBetween } from '@orbit/shared/utils';
 import {
   issueBulkUpdateSchema,
@@ -18,6 +18,7 @@ import {
 import type { SQL } from 'drizzle-orm';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
+import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { buildPredicateFilters, today } from './issue-predicates.ts';
@@ -66,23 +67,14 @@ function issueAction(
   });
 }
 
-async function allocateIssueNumber(executor: Executor, teamId: string): Promise<number> {
+async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<number> {
   const [row] = await executor
     .update(schema.team)
     .set({ issueCounter: sql`${schema.team.issueCounter} + 1` })
-    .where(eq(schema.team.id, teamId))
-    .returning({ issueCounter: schema.team.issueCounter, key: schema.team.key });
+    .where(and(eq(schema.team.id, team.id), eq(schema.team.organizationId, team.organizationId)))
+    .returning({ issueCounter: schema.team.issueCounter });
   if (row === undefined) throw notFound('That team does not exist.');
   return row.issueCounter;
-}
-
-async function teamKey(executor: Executor, teamId: string): Promise<string> {
-  const [row] = await executor
-    .select({ key: schema.team.key })
-    .from(schema.team)
-    .where(eq(schema.team.id, teamId))
-    .limit(1);
-  return requireRow(row, 'That team does not exist.').key;
 }
 
 async function topOfColumn(executor: Executor, teamId: string, stateId: string): Promise<number> {
@@ -229,15 +221,19 @@ function collectIssueChanges(
 
 async function loadIssue(
   executor: Executor,
-  organizationId: string,
+  principal: Principal,
   issueId: string,
 ): Promise<IssueRow> {
   const [row] = await executor
     .select()
     .from(schema.issue)
-    .where(and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, organizationId)))
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, principal.organizationId)),
+    )
     .limit(1);
-  return requireRow(row, 'That issue does not exist.');
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
 }
 
 async function replaceLabels(
@@ -274,21 +270,20 @@ export interface CreatedIssue {
 export async function createIssue(principal: Principal, input: unknown): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
-  assertInTeam(principal, parsed.teamId);
 
   return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parsed.teamId, tx);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const state =
       parsed.stateId === undefined
-        ? await initialStateFor(tx, parsed.teamId)
+        ? await initialStateFor(tx, team.id)
         : await stateOf(tx, parsed.stateId);
-    if (state.teamId !== parsed.teamId) {
+    if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
 
-    const number = await allocateIssueNumber(tx, parsed.teamId);
-    const key = await teamKey(tx, parsed.teamId);
+    const number = await allocateIssueNumber(tx, team);
     const now = new Date();
 
     const [created] = await tx
@@ -296,9 +291,9 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       .values({
         id: newId(),
         organizationId: principal.organizationId,
-        teamId: parsed.teamId,
+        teamId: team.id,
         number,
-        identifier: issueIdentifier(key, number),
+        identifier: issueIdentifier(team.key, number),
         title: parsed.title,
         description: parsed.description,
         stateId: state.id,
@@ -311,7 +306,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         parentId: parsed.parentId,
         estimate: parsed.estimate,
         dueDate: toDateString(parsed.dueDate) ?? null,
-        sortOrder: await topOfColumn(tx, parsed.teamId, state.id),
+        sortOrder: await topOfColumn(tx, team.id, state.id),
         ...stateTimestamps(state.category, now),
         syncId,
       })
@@ -348,8 +343,7 @@ async function applyIssueUpdate(
   issueId: string,
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue> {
-  const current = await loadIssue(tx, principal.organizationId, issueId);
-  assertInTeam(principal, current.teamId);
+  const current = await loadIssue(tx, principal, issueId);
 
   const { values, changes } = collectIssueChanges(current, parsed);
   const now = new Date();
@@ -453,11 +447,10 @@ export async function moveIssue(
   const parsed = issueMoveSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    const current = await loadIssue(tx, principal, issueId);
 
-    const teamId = parsed.teamId ?? current.teamId;
-    assertInTeam(principal, teamId);
+    const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
+    const teamId = team.id;
     const state =
       parsed.stateId === undefined
         ? await stateOf(tx, current.stateId)
@@ -479,10 +472,10 @@ export async function moveIssue(
     const now = new Date();
     const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
     if (teamId !== current.teamId) {
-      const number = await allocateIssueNumber(tx, teamId);
+      const number = await allocateIssueNumber(tx, team);
       values.teamId = teamId;
       values.number = number;
-      values.identifier = issueIdentifier(await teamKey(tx, teamId), number);
+      values.identifier = issueIdentifier(team.key, number);
     }
     if (state.id !== current.stateId) {
       values.stateId = state.id;
@@ -550,8 +543,7 @@ async function setArchived(
   assertCan(principal, 'issue:update');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -599,8 +591,7 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
   assertCan(principal, 'issue:delete');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    const current = await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -625,11 +616,21 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
 const issueListSchema = issueFilterSchema.extend(paginationSchema.shape);
 export type IssueListInput = typeof issueListSchema;
 
+function visibleTeamFilters(principal: Principal): SQL[] {
+  if (principal.role === 'admin') return [];
+  if (principal.teamIds.length === 0) return [sql`false`];
+  return [inArray(schema.issue.teamId, [...principal.teamIds])];
+}
+
 function buildIssueFilters(
-  organizationId: string,
+  principal: Principal,
   filter: ReturnType<typeof issueListSchema.parse>,
 ): SQL[] {
-  const filters: SQL[] = [eq(schema.issue.organizationId, organizationId)];
+  const organizationId = principal.organizationId;
+  const filters: SQL[] = [
+    eq(schema.issue.organizationId, organizationId),
+    ...visibleTeamFilters(principal),
+  ];
   if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
   if (filter.projectId !== undefined) filters.push(eq(schema.issue.projectId, filter.projectId));
   if (filter.cycleId !== undefined) filters.push(eq(schema.issue.cycleId, filter.cycleId));
@@ -750,7 +751,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = buildIssueFilters(principal.organizationId, filter);
+  const filters = buildIssueFilters(principal, filter);
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -783,7 +784,7 @@ export async function getIssueCounts(
 ): Promise<{ stateId: string; total: number }[]> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const filters = buildIssueFilters(principal.organizationId, filter);
+  const filters = buildIssueFilters(principal, filter);
   return await db
     .select({ stateId: schema.issue.stateId, total: count() })
     .from(schema.issue)
@@ -803,7 +804,9 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
     .from(schema.issue)
     .where(and(eq(schema.issue.organizationId, principal.organizationId), match))
     .limit(1);
-  return requireRow(row, 'That issue does not exist.');
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
 }
 
 export async function listIssueLabels(
@@ -811,7 +814,7 @@ export async function listIssueLabels(
   issueId: string,
 ): Promise<{ labelId: string }[]> {
   assertCan(principal, 'issue:read');
-  await loadIssue(db, principal.organizationId, issueId);
+  await loadIssue(db, principal, issueId);
   return await db
     .select({ labelId: schema.issueLabel.labelId })
     .from(schema.issueLabel)
@@ -830,9 +833,8 @@ export async function setRelation(
   }
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal.organizationId, issueId);
-    const target = await loadIssue(tx, principal.organizationId, parsed.relatedIssueId);
-    assertInTeam(principal, source.teamId);
+    const source = await loadIssue(tx, principal, issueId);
+    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -904,8 +906,7 @@ export async function removeRelation(
   const parsed = issueRelationSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, source.teamId);
+    await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -975,7 +976,7 @@ export async function subscribe(
   assertCan(principal, 'issue:read');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
+    const current = await loadIssue(tx, principal, issueId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     await subscribeUsers(tx, issueId, [principal.userId]);
@@ -1037,7 +1038,7 @@ export async function listSubscribers(
   issueId: string,
 ): Promise<{ userId: string }[]> {
   assertCan(principal, 'issue:read');
-  await loadIssue(db, principal.organizationId, issueId);
+  await loadIssue(db, principal, issueId);
   return await db
     .select({ userId: schema.issueSubscription.userId })
     .from(schema.issueSubscription)
