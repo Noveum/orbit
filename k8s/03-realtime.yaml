@@ -41,6 +41,10 @@ spec:
     spec:
       serviceAccountName: orbit-app
       terminationGracePeriodSeconds: 60
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: orbit-rds-ca
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -65,6 +69,12 @@ spec:
               value: production
             - name: REALTIME_PORT
               value: "3100"
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/ssl/rds/us-east-1-bundle.pem
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/ssl/rds
+              readOnly: true
           ports:
             - name: ws
               containerPort: 3100

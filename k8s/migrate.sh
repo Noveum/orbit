@@ -27,9 +27,9 @@ echo "created $JOB"
 kube wait --for=jsonpath='{.status.ready}'=1 "$JOB" -n orbit --timeout=120s >/dev/null 2>&1 || true
 kube logs -n orbit "$JOB" --follow --tail=-1 || true
 
-SUCCEEDED=$(kube get "$JOB" -n orbit -o jsonpath='{.status.succeeded}')
-if [ "${SUCCEEDED:-0}" != "1" ]; then
-  echo "migration did not succeed, inspect with: kubectl describe $JOB -n orbit" >&2
-  exit 1
+if kube wait --for=condition=complete --timeout=180s "$JOB" -n orbit >/dev/null 2>&1; then
+  echo "schema is up to date"
+  exit 0
 fi
-echo "schema is up to date"
+echo "migration did not succeed, inspect with: kubectl describe $JOB -n orbit" >&2
+exit 1

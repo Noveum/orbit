@@ -68,7 +68,24 @@ in this repository and must not be.
 ./k8s/apply.sh                 # apply for real
 ```
 
-2. Create the two secrets the pods read. `REDIS_PASSWORD` must be the same value
+2. Load the RDS certificate authority. RDS runs with `rds.force_ssl=1`, and its
+   certificate is signed by an Amazon CA that Node does not trust by default.
+   Every workload mounts this bundle and points `NODE_EXTRA_CA_CERTS` at it, so
+   the connection is both encrypted and verified:
+
+```
+curl -sO https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem
+kubectl create configmap orbit-rds-ca -n orbit \
+  --from-file=us-east-1-bundle.pem --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Keeping the bundle in a ConfigMap rather than baking it into the images means
+rotating it is an apply, not a rebuild. `DATABASE_URL` must end with
+`?sslmode=verify-full`. Do not use `sslmode=require`: in pg-connection-string
+2.x that is an alias for verify-full anyway, and it is documented to change
+meaning in the next major version.
+
+3. Create the two secrets the pods read. `REDIS_PASSWORD` must be the same value
    that appears inside `REDIS_URL` in Doppler:
 
 ```
@@ -79,7 +96,7 @@ kubectl create secret generic orbit-doppler-token -n orbit \
   --from-literal=DOPPLER_TOKEN='<doppler service token for orbit/prd>'
 ```
 
-3. Point DNS at the load balancer. This is a manual step. The cluster runs
+4. Point DNS at the load balancer. This is a manual step. The cluster runs
    external-dns with the AWS provider against an account that holds no Route53
    zone, so it will never create this record, and DNS is authoritative
    elsewhere. Read the load balancer hostname:
@@ -97,7 +114,7 @@ TLS mode to be full rather than flexible.
 The certificate is already valid for this name: the ALB serves a wildcard ACM
 certificate covering the zone, so nothing needs issuing.
 
-4. Create the schema:
+5. Create the schema:
 
 ```
 ./k8s/migrate.sh

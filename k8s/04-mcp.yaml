@@ -41,6 +41,10 @@ spec:
     spec:
       serviceAccountName: orbit-app
       terminationGracePeriodSeconds: 60
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: orbit-rds-ca
       containers:
         - name: orbit-mcp
           image: __ECR_REGISTRY__/orbit-mcp:latest
@@ -56,6 +60,12 @@ spec:
               value: production
             - name: MCP_PORT
               value: "3200"
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/ssl/rds/us-east-1-bundle.pem
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/ssl/rds
+              readOnly: true
           ports:
             - name: http
               containerPort: 3200

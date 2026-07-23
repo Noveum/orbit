@@ -17,6 +17,10 @@ spec:
     spec:
       serviceAccountName: orbit-app
       restartPolicy: Never
+      volumes:
+        - name: rds-ca
+          configMap:
+            name: orbit-rds-ca
       containers:
         - name: orbit-migrate
           image: __ECR_REGISTRY__/orbit-migrate:latest
@@ -27,6 +31,12 @@ spec:
                 secretKeyRef:
                   name: orbit-doppler-token
                   key: DOPPLER_TOKEN
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/ssl/rds/us-east-1-bundle.pem
+          volumeMounts:
+            - name: rds-ca
+              mountPath: /etc/ssl/rds
+              readOnly: true
           resources:
             requests:
               cpu: 100m
