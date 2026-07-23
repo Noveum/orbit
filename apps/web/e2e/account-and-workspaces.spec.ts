@@ -1,7 +1,37 @@
+import { randomUUID } from 'node:crypto';
+import { db, eq, schema } from '@orbit/db';
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
 
 const BASE = process.env['ORBIT_E2E_BASE_URL'] ?? 'http://localhost:3011';
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
+
+const DEMO_EMAIL = 'pulkit@noveum.ai';
+
+async function ensureLinkedProvider(email: string, providerId: string): Promise<void> {
+  const [owner] = await db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.email, email))
+    .limit(1);
+  if (owner === undefined) throw new Error(`Seed user ${email} is missing, run pnpm db:seed.`);
+
+  const existing = await db
+    .select({ id: schema.account.id })
+    .from(schema.account)
+    .where(eq(schema.account.userId, owner.id));
+  if (existing.some((row) => row.id.length > 0)) return;
+
+  await db.insert(schema.account).values({
+    id: randomUUID(),
+    accountId: `e2e-${providerId}-${owner.id}`,
+    providerId,
+    userId: owner.id,
+  });
+}
+
+test.beforeAll(async () => {
+  await ensureLinkedProvider(DEMO_EMAIL, 'github');
+});
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
