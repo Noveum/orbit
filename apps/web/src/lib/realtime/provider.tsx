@@ -2,6 +2,7 @@
 
 import { RealtimeProvider } from '@orbit/realtime-client/react';
 import type { ReactNode } from 'react';
+import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
 import { SessionProvider } from './session.tsx';
 
@@ -27,6 +28,7 @@ export function WorkspaceRealtime({
       <RealtimeProvider url={url} token={token} organizationId={organizationId}>
         <DeltaBridge organizationId={organizationId} teamIds={teamIds} />
         {children}
+        <ConnectionBanner />
       </RealtimeProvider>
     </SessionProvider>
   );
