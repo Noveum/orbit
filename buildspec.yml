@@ -105,7 +105,7 @@ phases:
         TIMEOUT_SECONDS=$(printf '%s' "$ROLLOUT_TIMEOUT" | awk '{ s=0; n=""; for (i=1;i<=length($0);i++) { c=substr($0,i,1); if (c ~ /[0-9]/) { n=n c } else { if (c=="h") s+=n*3600; else if (c=="m") s+=n*60; else if (c=="s") s+=n; n="" } } if (n!="") s+=n; print s }')
         DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
         while true; do
-          READY=$(kubectl get "$JOB" -n "$EKS_NAMESPACE" \
+          READY=$(kubectl get "$JOB" -n "$EKS_NAMESPACE" --request-timeout=10s \
             -o 'jsonpath={.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)
           case "$READY" in
             *Complete*) echo "Schema migration applied, rolling out new code"; break ;;

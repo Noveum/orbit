@@ -126,7 +126,7 @@ nothing: in `oven/bun` images `node` is a symlink to `bun`, so
 
 Deploy by hand with:
 
-```
+```sh
 KUBE_API_SERVER=http://127.0.0.1:8080 ./extras/scripts/docker-build-push.sh -y
 ```
 
