@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
@@ -19,6 +20,9 @@ const { values } = parseArgs({
     keep: { type: 'boolean', default: false },
   },
 });
+
+const REPOSITORY_ROOT = resolve(import.meta.dirname, '../../../..');
+const INPUT = isAbsolute(values.input) ? values.input : resolve(REPOSITORY_ROOT, values.input);
 
 const RESET_TABLES = [
   'reaction',
@@ -118,6 +122,8 @@ function buildUsers(
       updatedAt: createdAt,
     });
 
+    if (member.is_bot) continue;
+
     rows.members.push({
       id: id(),
       organizationId: ORGANIZATION_ID,
@@ -155,9 +161,9 @@ async function writeRows(rows: ImportRows): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const source = readPlaneExport(values.input);
+  const source = readPlaneExport(INPUT);
   console.info(
-    `Reading ${source.projects.length} projects and ${source.members.length} members from ${values.input}`,
+    `Reading ${source.projects.length} projects and ${source.members.length} members from ${INPUT}`,
   );
 
   if (!values.keep) {
