@@ -4,7 +4,7 @@ import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, isInTeam, teamScope } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, isInTeam, teamScope } from '@orbit/shared/policy';
 import { issueIdentifier, parseIssueIdentifier, sortOrderBetween } from '@orbit/shared/utils';
 import {
   issueBulkUpdateSchema,
@@ -525,7 +525,7 @@ async function applyIssueUpdates(
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
     const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
-    assertInTeam(principal, current.teamId);
+    assertInTeam(principal, teamScope(current));
 
     const { values, changes } = collectIssueChanges(current, parsed);
     if (values.parentId !== undefined && values.parentId !== null) {
