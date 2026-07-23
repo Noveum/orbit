@@ -1,6 +1,6 @@
 import { truncate } from '@orbit/shared/utils';
 import { Marked } from 'marked';
-import { htmlToText, sanitizeHtml } from './sanitize.ts';
+import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 export { extractIssueIdentifiers, extractMentions } from '@orbit/shared/utils';
 
@@ -17,7 +17,7 @@ export function renderMarkdown(source: string): string {
 
 export function renderPlainText(source: string): string {
   const html = renderMarkdown(source).replace(BLOCK_END, (tag) => `${tag}\n`);
-  return htmlToText(html)
+  return decodeEntities(htmlToText(html))
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

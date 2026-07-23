@@ -85,7 +85,7 @@ const ALLOWED_ATTR = new Set([
 ]);
 
 const URL_ATTR = new Set(['href', 'src']);
-const ABSOLUTE_URL = /^https?:\/\//i;
+const ABSOLUTE_URL = /^(?:https?:)?\/\//i;
 const SAFE_SCHEMES = new Set(['http', 'https', 'mailto']);
 const ENTITY = /&(#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);?/g;
 const NAMED_ENTITIES = new Map([
@@ -108,7 +108,7 @@ const IGNORED_CODE_POINTS = new Set([
   0x00a0, 0x1680, 0x180e, 0x2028, 0x2029, 0x202f, 0x205f, 0x2060, 0x3000, 0xfeff,
 ]);
 
-function decodeEntities(value: string): string {
+export function decodeEntities(value: string): string {
   return value.replace(ENTITY, (match, body: string) => {
     if (!body.startsWith('#')) return NAMED_ENTITIES.get(body.toLowerCase()) ?? match;
     const hex = body[1] === 'x' || body[1] === 'X';
@@ -170,7 +170,7 @@ const sanitizer = new HTMLRewriter()
       for (const [key, value] of keep) element.setAttribute(key, value);
 
       if (tag !== 'a') return;
-      const href = keep.get('href') ?? '';
+      const href = stripIgnorable(decodeEntities(keep.get('href') ?? ''));
       element.removeAttribute('target');
       element.removeAttribute('rel');
       if (href.length === 0 || !ABSOLUTE_URL.test(href)) return;

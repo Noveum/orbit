@@ -202,3 +202,22 @@ describe('sanitizer url handling', () => {
     expect(renderMarkdown('[a](/local)')).not.toContain('target=');
   });
 });
+
+describe('sanitizer defects found by the adversarial audit', () => {
+  it('treats a protocol relative link as external', () => {
+    const html = renderMarkdown('[y](//example.com/x)');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it('classifies an entity encoded absolute url as external', () => {
+    expect(renderMarkdown('<a href="&#104;ttps://example.com">y</a>')).toContain(
+      'rel="noopener noreferrer"',
+    );
+  });
+
+  it('returns readable plain text rather than escaped html', () => {
+    expect(renderPlainText('a < b & "c"')).toBe('a < b & "c"');
+    expect(summarize('a < b & "c"', 40)).toBe('a < b & "c"');
+  });
+});
