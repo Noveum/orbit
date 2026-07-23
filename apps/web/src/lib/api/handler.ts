@@ -1,7 +1,9 @@
 import { publishDeltas } from '@orbit/core';
 import { toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import { ORIGIN_CLIENT_ID_HEADER, originClientIdSchema } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ZodError } from 'zod';
 import type { MembershipContext } from '@/lib/auth/principal.ts';
@@ -76,8 +78,19 @@ export async function handle<T>(run: (principal: Principal) => Promise<T>): Prom
   });
 }
 
+export async function originClientId(): Promise<string | null> {
+  const parsed = originClientIdSchema.safeParse((await headers()).get(ORIGIN_CLIENT_ID_HEADER));
+  return parsed.success ? parsed.data : null;
+}
+
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
-  await publishDeltas([...actions]);
+  if (actions.length === 0) return;
+  const origin = await originClientId();
+  if (origin === null) {
+    await publishDeltas([...actions]);
+    return;
+  }
+  await publishDeltas(actions.map((action) => ({ ...action, originClientId: origin })));
 }
 
 export async function readJson(request: Request): Promise<unknown> {

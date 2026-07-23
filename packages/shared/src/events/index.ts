@@ -33,6 +33,10 @@ export const actorSchema = z.object({
 
 export type Actor = z.infer<typeof actorSchema>;
 
+export const ORIGIN_CLIENT_ID_HEADER = 'x-orbit-client-id';
+
+export const originClientIdSchema = z.string().min(1).max(64);
+
 export const syncActionSchema = z.object({
   syncId: z.number().int().nonnegative(),
   organizationId: z.string().min(1),
@@ -43,6 +47,7 @@ export const syncActionSchema = z.object({
   data: z.record(z.string(), z.unknown()),
   actor: actorSchema,
   at: z.string().datetime(),
+  originClientId: originClientIdSchema.optional(),
 });
 
 export type SyncAction = z.infer<typeof syncActionSchema>;
