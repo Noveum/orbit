@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
+import { formatBinding } from '@/lib/keyboard/index.ts';
 import type { NavLink } from '@/lib/navigation.ts';
 
 export interface NavItemProps {
@@ -52,7 +53,7 @@ export function NavItem({ link, collapsed, onNavigate }: NavItemProps) {
     <Tooltip
       label={link.label}
       side="right"
-      {...(link.shortcut === undefined ? {} : { shortcut: link.shortcut })}
+      {...(link.binding === undefined ? {} : { shortcut: formatBinding(link.binding) })}
     >
       {anchor}
     </Tooltip>

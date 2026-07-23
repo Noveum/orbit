@@ -116,6 +116,18 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target.getAttribute('role') === 'textbox';
 }
 
+const ACTIVATION_KEYS = new Set(['enter', ' ']);
+
+const ACTIVATION_CONTROLS =
+  'a[href], button, summary, [role="button"], [role="menuitem"], [role="option"]';
+
+export function activatesFocusedControl(event: KeyEventLike, target: EventTarget | null): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  if (!ACTIVATION_KEYS.has(normalizeKey(event.key))) return false;
+  if (target === null || !(target instanceof Element)) return false;
+  return target.closest(ACTIVATION_CONTROLS) !== null;
+}
+
 export function formatBinding(binding: string): string[] {
   return binding
     .trim()

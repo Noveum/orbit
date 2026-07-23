@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
-import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { HotkeyProvider, useHotkey } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import { FilterBar } from './filter-bar.tsx';
 import { defaultViewConfig, type ViewConfig } from './view-config.ts';
@@ -184,6 +184,45 @@ describe('filter hotkeys', () => {
     await user.keyboard('{Alt>}v{/Alt}');
     await waitFor(() => expect(screen.getByTestId('save-view-dialog')).toBeInTheDocument());
     expect(screen.getByTestId('save-view-name')).toHaveValue('Engineering: Aditi Rao');
+  });
+});
+
+function SelectionOwner({ onClear }: { readonly onClear: () => void }) {
+  useHotkey('escape', onClear, {
+    label: 'Clear selection',
+    section: 'Issues',
+    scope: 'issues',
+    preventDefault: false,
+  });
+  return null;
+}
+
+describe('escape ownership', () => {
+  it('closes the filter menu first and only then clears the selection', async () => {
+    const user = userEvent.setup();
+    const onClear = mock();
+    render(
+      <Providers>
+        <SelectionOwner onClear={onClear} />
+        <FilterBar
+          teamId="team-1"
+          teamName="Engineering"
+          layout="list"
+          config={defaultViewConfig('list')}
+          onChange={onChange}
+        />
+      </Providers>,
+    );
+
+    await user.keyboard('f');
+    await waitFor(() => expect(screen.getByTestId('filter-menu')).toBeInTheDocument());
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('filter-menu')).not.toBeInTheDocument());
+    expect(onClear).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 });
 

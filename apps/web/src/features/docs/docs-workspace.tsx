@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
-import { useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
 import {
   useCreateCollection,
   useDeleteCollection,
@@ -46,7 +46,19 @@ export function DocsWorkspace({
   const deleteCollection = useDeleteCollection();
 
   const newDoc = useCallback(() => router.push('/docs/new'), [router]);
-  useHotkey('c', newDoc, { label: 'New doc', section: 'Navigation', enabled: canWrite });
+  useHotkey(
+    'c',
+    () => {
+      if (canWrite) newDoc();
+    },
+    {
+      label: 'New doc',
+      section: 'Navigation',
+      scope: 'docs',
+      priority: HOTKEY_PRIORITY.surface,
+      advertised: canWrite,
+    },
+  );
 
   const docs = list.data?.docs ?? [];
   const collections = list.data?.collections ?? [];
