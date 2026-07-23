@@ -47,6 +47,7 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
   const client = createRealtimeClient({
     url: `ws://127.0.0.1:${port}`,
     token: member.token,
+    organizationId,
     maxBackoffMs: 500,
     onStatus: (status) => statuses.push(status),
     onDelta: (actions) => received.push(...actions),

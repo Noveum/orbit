@@ -24,7 +24,7 @@ export function WorkspaceRealtime({
 }: WorkspaceRealtimeProps) {
   return (
     <SessionProvider userId={userId}>
-      <RealtimeProvider url={url} token={token}>
+      <RealtimeProvider url={url} token={token} organizationId={organizationId}>
         <DeltaBridge organizationId={organizationId} teamIds={teamIds} />
         {children}
       </RealtimeProvider>
