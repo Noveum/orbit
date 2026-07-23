@@ -78,7 +78,7 @@ export async function handle<T>(run: (principal: Principal) => Promise<T>): Prom
   });
 }
 
-export async function originClientId(): Promise<string | null> {
+async function originClientId(): Promise<string | null> {
   const parsed = originClientIdSchema.safeParse((await headers()).get(ORIGIN_CLIENT_ID_HEADER));
   return parsed.success ? parsed.data : null;
 }
