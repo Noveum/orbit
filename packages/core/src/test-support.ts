@@ -15,7 +15,7 @@ export async function resetDatabase(): Promise<void> {
     );
   }
   const rows = await db.execute<{ tablename: string }>(
-    sql`select tablename from pg_tables where schemaname = 'public'`,
+    sql`select tablename from pg_tables where schemaname = 'public' order by tablename`,
   );
   const tables = rows.map((row) => `"${row['tablename']}"`).join(', ');
   if (tables.length === 0) return;
