@@ -24,10 +24,9 @@ const OPTIONS = [
 
 export interface DocShareMenuProps {
   readonly doc: Doc;
-  readonly canPublish: boolean;
 }
 
-export function DocShareMenu({ doc, canPublish }: DocShareMenuProps) {
+export function DocShareMenu({ doc }: DocShareMenuProps) {
   const share = useShareDoc(doc.id);
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -62,7 +61,6 @@ export function DocShareMenu({ doc, canPublish }: DocShareMenuProps) {
           {OPTIONS.map((option) => (
             <DropdownMenuItem
               key={option.value}
-              disabled={!canPublish && option.value !== 'workspace'}
               data-testid={`doc-visibility-${option.value}`}
               onSelect={() => share.mutate(option.value)}
             >
@@ -98,17 +96,15 @@ export function DocShareMenu({ doc, canPublish }: DocShareMenuProps) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {canPublish ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          data-testid="doc-publish"
-          disabled={share.isPending}
-          onClick={() => share.mutate(published ? 'workspace' : 'public')}
-        >
-          {published ? 'Unpublish' : 'Publish'}
-        </Button>
-      ) : null}
+      <Button
+        variant="secondary"
+        size="sm"
+        data-testid="doc-publish"
+        disabled={share.isPending}
+        onClick={() => share.mutate(published ? 'workspace' : 'public')}
+      >
+        {published ? 'Unpublish' : 'Publish'}
+      </Button>
     </>
   );
 }

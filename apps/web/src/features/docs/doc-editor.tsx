@@ -40,6 +40,8 @@ const SLASH_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bol
   { name: 'tasks', label: 'Task list', icon: ListChecks },
 ];
 
+const DISMISS_SLASH = new Set(['Escape', ' ', 'Enter', 'Backspace']);
+
 export interface DocEditorProps {
   readonly docId: string;
   readonly content: string;
@@ -130,8 +132,8 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
       return;
     }
     if (event.key === '/' && !slashOpen) setSlashOpen(true);
-    else if (event.key === 'Escape' && slashOpen) {
-      event.preventDefault();
+    else if (slashOpen && DISMISS_SLASH.has(event.key)) {
+      if (event.key === 'Escape') event.preventDefault();
       setSlashOpen(false);
     }
   };

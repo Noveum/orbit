@@ -241,6 +241,7 @@ export type DocDetail = z.infer<typeof docDetailSchema>;
 
 export const docEnvelopeSchema = z.object({ doc: docSchema });
 export const docSaveResultSchema = z.object({ doc: docSchema, contentHtml: z.string() });
+export const docArchiveResultSchema = z.object({ doc: docSchema, archived: z.boolean() });
 export const docShareResultSchema = z.object({
   doc: docSchema,
   publishUrl: z.string().nullable(),

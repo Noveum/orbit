@@ -7,6 +7,7 @@ import { DOCS_ROOT, queryKeys } from './keys.ts';
 import type { Doc, DocCollection, DocDetail, DocList } from './schemas.ts';
 import {
   deletedSchema,
+  docArchiveResultSchema,
   docCollectionEnvelopeSchema,
   docDetailSchema,
   docEnvelopeSchema,
@@ -130,7 +131,7 @@ export function useArchiveDoc() {
 
   return useMutation({
     mutationFn: async (docId: string): Promise<void> => {
-      await apiFetch(`/api/docs/${docId}`, deletedSchema.partial(), { method: 'DELETE' });
+      await apiFetch(`/api/docs/${docId}`, docArchiveResultSchema, { method: 'DELETE' });
     },
     onSuccess: () => invalidateDocs(client),
     onError: (error) =>

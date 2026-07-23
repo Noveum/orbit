@@ -111,7 +111,7 @@ function LoadedDoc({
           </span>
         ) : null}
 
-        <DocShareMenu doc={detail.doc} canPublish={canPublish} />
+        {canPublish ? <DocShareMenu doc={detail.doc} /> : null}
 
         {canWrite ? (
           <>
