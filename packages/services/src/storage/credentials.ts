@@ -14,6 +14,7 @@ export interface StaticCredentials {
 }
 
 const REFRESH_MARGIN_MS = 20 * 60 * 1000;
+const DEFAULT_SESSION_TTL_MS = 60 * 60 * 1000;
 const SESSION_NAME = 'orbit-storage';
 
 function extract(xml: string, tag: string): string | null {
@@ -51,12 +52,12 @@ async function assumeWebIdentityRole(
   if (accessKeyId === null || secretAccessKey === null || sessionToken === null) {
     throw internal('The storage role response did not include credentials.');
   }
-  const expiresAt = expiration === null ? undefined : Date.parse(expiration);
+  const parsedExpiry = expiration === null ? Number.NaN : Date.parse(expiration);
   return {
     accessKeyId,
     secretAccessKey,
     sessionToken,
-    ...(expiresAt === undefined || Number.isNaN(expiresAt) ? {} : { expiresAt }),
+    expiresAt: Number.isNaN(parsedExpiry) ? Date.now() + DEFAULT_SESSION_TTL_MS : parsedExpiry,
   };
 }
 
@@ -76,12 +77,21 @@ export function createCredentialResolver(
 
   const roleArn = env['AWS_ROLE_ARN']?.trim();
   const tokenFile = env['AWS_WEB_IDENTITY_TOKEN_FILE']?.trim();
-  if (roleArn === undefined || roleArn.length === 0 || tokenFile === undefined) {
+  if (
+    roleArn === undefined ||
+    roleArn.length === 0 ||
+    tokenFile === undefined ||
+    tokenFile.length === 0
+  ) {
     return () => Promise.resolve(undefined);
   }
 
   let cached: ResolvedCredentials | null = null;
   let inflight: Promise<ResolvedCredentials> | null = null;
+
+  const usable = (credentials: ResolvedCredentials | null): credentials is ResolvedCredentials =>
+    credentials !== null &&
+    (credentials.expiresAt === undefined || Date.now() < credentials.expiresAt);
 
   const stale = (): boolean => {
     if (cached === null) return true;
@@ -96,7 +106,12 @@ export function createCredentialResolver(
         inflight = null;
       });
     }
-    cached = await inflight;
+    try {
+      cached = await inflight;
+    } catch (error) {
+      if (usable(cached)) return cached;
+      throw error;
+    }
     return cached;
   };
 }

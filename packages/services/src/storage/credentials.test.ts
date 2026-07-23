@@ -88,4 +88,31 @@ describe('createCredentialResolver', () => {
     expect((await resolve())?.accessKeyId).toBe('KEY2');
     expect(calls).toBe(2);
   });
+
+  it('keeps serving still-valid credentials when a refresh fails', async () => {
+    (Bun as { file: typeof Bun.file }).file = (() => ({
+      text: () => Promise.resolve('web-identity-token'),
+    })) as unknown as typeof Bun.file;
+    let calls = 0;
+    globalThis.fetch = mock(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response(stsResponse('ASIA', new Date(Date.now() + 60_000).toISOString()), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.reject(new Error('sts unavailable'));
+    }) as unknown as typeof fetch;
+
+    const resolve = createCredentialResolver(
+      'us-east-1',
+      {},
+      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: '/token' },
+    );
+    expect((await resolve())?.accessKeyId).toBe('ASIA');
+    expect((await resolve())?.accessKeyId).toBe('ASIA');
+    expect(calls).toBe(2);
+  });
 });

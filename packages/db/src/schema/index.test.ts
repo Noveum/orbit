@@ -83,7 +83,13 @@ describe('domain invariants', () => {
   });
 
   it('keeps one reaction per comment, user, and emoji', () => {
-    expect(indexNamesOf(schema.reaction)).toContain('reaction_comment_unique');
+    const index = getTableConfig(schema.reaction).indexes.find(
+      (entry) => entry.config.name === 'reaction_comment_unique',
+    );
+    expect(index?.config.unique).toBe(true);
+    expect(
+      (index?.config.columns ?? []).map((column) => (column as { name?: string }).name),
+    ).toEqual(['comment_id', 'user_id', 'emoji']);
   });
 
   it('scopes every soft deletable uniqueness rule to live rows', () => {
