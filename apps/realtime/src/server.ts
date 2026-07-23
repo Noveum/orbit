@@ -15,7 +15,12 @@ import {
 import Redis from 'ioredis';
 import { type RawData, type WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
-import { authenticateToken, authorizeScope, type ConnectionPrincipal } from './auth.ts';
+import {
+  authenticateConnection,
+  authorizeScope,
+  type ConnectionPrincipal,
+  type ConnectionRejection,
+} from './auth.ts';
 import { Connection } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
@@ -54,9 +59,24 @@ const deltaEnvelopeSchema = z.union([
   z.unknown().transform((action) => [action]),
 ]);
 
-function tokenFrom(request: IncomingMessage): string {
+export const UNAUTHORIZED_CLOSE_CODE = 4001;
+export const ORGANIZATION_FORBIDDEN_CLOSE_CODE = 4003;
+
+const CLOSE_CODES: Record<ConnectionRejection, number> = {
+  unauthorized: UNAUTHORIZED_CLOSE_CODE,
+  organization_forbidden: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+};
+
+function credentialsFrom(request: IncomingMessage): {
+  token: string;
+  organizationId: string | null;
+} {
   const url = new URL(request.url ?? '/', 'http://realtime.local');
-  return url.searchParams.get('token') ?? '';
+  const organizationId = url.searchParams.get('organizationId');
+  return {
+    token: url.searchParams.get('token') ?? '',
+    organizationId: organizationId === null || organizationId === '' ? null : organizationId,
+  };
 }
 
 function parseJson(payload: string): unknown {
@@ -243,12 +263,17 @@ export async function createRealtimeServer(
 
   async function accept(socket: WebSocket, request: IncomingMessage): Promise<void> {
     socket.pause();
-    const principal = await authenticateToken(tokenFrom(request));
-    if (principal === null) {
+    const credentials = credentialsFrom(request);
+    const authenticated = await authenticateConnection(
+      credentials.token,
+      credentials.organizationId,
+    );
+    if (!authenticated.ok) {
       socket.resume();
-      socket.close(4001, 'unauthorized');
+      socket.close(CLOSE_CODES[authenticated.reason], authenticated.reason);
       return;
     }
+    const principal = authenticated.principal;
     if (socket.readyState !== socket.OPEN) {
       socket.terminate();
       return;

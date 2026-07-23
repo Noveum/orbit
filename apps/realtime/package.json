@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@orbit/core": "workspace:*",
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
     "ioredis": "5.11.1",

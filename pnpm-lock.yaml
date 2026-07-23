@@ -60,6 +60,9 @@ importers:
 
   apps/realtime:
     dependencies:
+      '@orbit/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@orbit/db':
         specifier: workspace:*
         version: link:../../packages/db
