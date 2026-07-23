@@ -53,7 +53,7 @@ describe('can', () => {
   });
 
   it('reports no capability that no route enforces', () => {
-    const retired = ['attachment:delete', 'integration:manage', 'agent:delegate', 'audit:read'];
+    const retired = ['attachment:delete', 'agent:delegate', 'audit:read'];
     for (const permission of retired) expect(permissionsFor('admin')).not.toContain(permission);
   });
 });

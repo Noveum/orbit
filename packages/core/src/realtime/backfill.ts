@@ -459,6 +459,27 @@ const LOADERS: Record<SyncModel, Loader> = {
       scopes: [scopes.organization(row.organizationId), scopes.user(row.ownerId)],
       data: row,
     })),
+
+  git_link: async (principal, since, limit) =>
+    (
+      await db
+        .select({ row: schema.gitLink, teamId: schema.issue.teamId })
+        .from(schema.gitLink)
+        .innerJoin(schema.issue, eq(schema.issue.id, schema.gitLink.issueId))
+        .where(
+          and(
+            eq(schema.gitLink.organizationId, principal.organizationId),
+            gt(schema.gitLink.syncId, since),
+          ),
+        )
+        .orderBy(asc(schema.gitLink.syncId))
+        .limit(limit)
+    ).map(({ row, teamId }) => ({
+      modelId: row.id,
+      syncId: row.syncId,
+      scopes: [scopes.issue(row.issueId), scopes.team(teamId)],
+      data: row,
+    })),
 };
 
 export const SYNC_CATCHUP_MODELS = Object.keys(LOADERS) as SyncModel[];
