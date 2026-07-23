@@ -83,6 +83,27 @@ describe('updateOrganization', () => {
   });
 });
 
+describe('listOrganizationsForUser', () => {
+  it('returns every workspace the member belongs to and no other tenant', async () => {
+    const user = await createUser('Nia New');
+    const first = await createOrganization(user.id, { name: 'Comet', slug: 'comet' });
+    const second = await createOrganization(user.id, { name: 'Nebula', slug: 'nebula' });
+    const stranger = await createUser('Otto Other');
+    await createOrganization(stranger.id, { name: 'Quasar', slug: 'quasar' });
+
+    const mine = await listOrganizationsForUser(user.id);
+
+    expect(mine.map((row) => row.organization.slug)).toEqual(['comet', 'nebula']);
+    expect(mine.map((row) => row.organization.id).sort()).toEqual(
+      [first.organization.id, second.organization.id].sort(),
+    );
+    expect(mine.every((row) => row.role === 'admin')).toBe(true);
+
+    const theirs = await listOrganizationsForUser(stranger.id);
+    expect(theirs.map((row) => row.organization.slug)).toEqual(['quasar']);
+  });
+});
+
 describe('teams', () => {
   it('derives a key from the name', () => {
     expect(deriveTeamKey('Nova')).toBe('NOVA');

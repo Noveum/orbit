@@ -2,6 +2,8 @@
 
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
+import type { IssueProperty } from '@/features/filters/view-config.ts';
+import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -16,6 +18,7 @@ export interface IssueRowProps {
   readonly assignee: Member | undefined;
   readonly active: boolean;
   readonly selected: boolean;
+  readonly properties?: readonly IssueProperty[];
   readonly onOpen: () => void;
   readonly onToggleSelected: () => void;
   readonly onFocus: () => void;
@@ -28,10 +31,13 @@ export function IssueRow({
   assignee,
   active,
   selected,
+  properties = ISSUE_PROPERTIES,
   onOpen,
   onToggleSelected,
   onFocus,
 }: IssueRowProps) {
+  const shows = (property: IssueProperty) => properties.includes(property);
+
   return (
     <div
       data-testid={`issue-row-${issue.identifier}`}
@@ -56,13 +62,15 @@ export function IssueRow({
           )}
         />
       </span>
-      <PriorityGlyph priority={issue.priority} />
-      <span data-numeric className="w-16 shrink-0 text-2xs text-faint">
-        {issue.identifier}
-      </span>
-      {state === undefined ? null : (
+      {shows('priority') ? <PriorityGlyph priority={issue.priority} /> : null}
+      {shows('identifier') ? (
+        <span data-numeric className="w-16 shrink-0 text-2xs text-faint">
+          {issue.identifier}
+        </span>
+      ) : null}
+      {shows('status') && state !== undefined ? (
         <StateGlyph category={state.category} color={state.color} title={state.name} />
-      )}
+      ) : null}
       <button
         type="button"
         onClick={onOpen}
@@ -71,31 +79,36 @@ export function IssueRow({
       >
         {issue.title}
       </button>
-      <span className="hidden items-center gap-1 sm:flex">
-        {labels.slice(0, 2).map((label) => (
-          <span
-            key={label.id}
-            className="flex items-center gap-1 rounded-sm border border-border px-1 text-2xs text-muted"
-          >
+      {shows('labels') ? (
+        <span className="hidden items-center gap-1 sm:flex">
+          {labels.slice(0, 2).map((label) => (
             <span
-              className="size-1.5 rounded-full"
-              style={{ backgroundColor: label.color }}
-              aria-hidden="true"
-            />
-            {label.name}
-          </span>
-        ))}
-      </span>
-      {issue.estimate === null ? null : (
+              key={label.id}
+              className="flex items-center gap-1 rounded-sm border border-border px-1 text-2xs text-muted"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: label.color }}
+                aria-hidden="true"
+              />
+              {label.name}
+            </span>
+          ))}
+        </span>
+      ) : null}
+      {shows('estimate') && issue.estimate !== null ? (
         <span data-numeric className="w-5 text-right text-2xs text-faint">
           {issue.estimate}
         </span>
-      )}
-      {assignee === undefined ? (
-        <span className="size-4.5 rounded-full border border-border border-dashed" />
-      ) : (
-        <Avatar name={assignee.name} src={assignee.image} size="xs" />
-      )}
+      ) : null}
+      {shows('assignee') ? <RowAssignee assignee={assignee} /> : null}
     </div>
   );
+}
+
+function RowAssignee({ assignee }: { assignee: Member | undefined }) {
+  if (assignee === undefined) {
+    return <span className="size-4.5 rounded-full border border-border border-dashed" />;
+  }
+  return <Avatar name={assignee.name} src={assignee.image} size="xs" />;
 }

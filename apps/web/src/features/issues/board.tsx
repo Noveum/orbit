@@ -21,40 +21,25 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import type { IssueGroup } from '@/features/filters/grouping.ts';
+import type { IssueProperty } from '@/features/filters/view-config.ts';
+import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
-import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { sortIssues } from '@/lib/query/sync.ts';
+import type { Issue } from '@/lib/query/schemas.ts';
 import { type MoveInput, useMoveIssue } from '@/lib/query/use-issues.ts';
+import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
-import { StateGlyph } from './state-glyph.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardProps {
   readonly teamId: string;
-  readonly states: readonly WorkflowState[];
-  readonly issues: readonly Issue[];
-}
-
-export interface Column {
-  readonly state: WorkflowState;
-  readonly issues: readonly Issue[];
-}
-
-export function buildColumns(states: readonly WorkflowState[], issues: readonly Issue[]): Column[] {
-  const byState = new Map<string, Issue[]>();
-  for (const issue of issues) {
-    const bucket = byState.get(issue.stateId) ?? [];
-    bucket.push(issue);
-    byState.set(issue.stateId, bucket);
-  }
-  return states.map((state) => ({
-    state,
-    issues: sortIssues(byState.get(state.id) ?? []),
-  }));
+  readonly groups: readonly IssueGroup[];
+  readonly draggable?: boolean;
+  readonly properties?: readonly IssueProperty[];
 }
 
 export function planDrop(
-  columns: readonly Column[],
+  groups: readonly IssueGroup[],
   issues: readonly Issue[],
   activeId: string,
   overId: string,
@@ -62,12 +47,12 @@ export function planDrop(
   const dragged = issues.find((issue) => issue.id === activeId);
   if (dragged === undefined || overId === activeId) return null;
 
-  const targetColumn =
-    columns.find((column) => column.state.id === overId) ??
-    columns.find((column) => column.issues.some((issue) => issue.id === overId));
-  if (targetColumn === undefined) return null;
+  const targetGroup =
+    groups.find((group) => group.id === overId) ??
+    groups.find((group) => group.issues.some((issue) => issue.id === overId));
+  if (targetGroup === undefined) return null;
 
-  const siblings = targetColumn.issues.filter((issue) => issue.id !== dragged.id);
+  const siblings = targetGroup.issues.filter((issue) => issue.id !== dragged.id);
   const overIndex = siblings.findIndex((issue) => issue.id === overId);
   const insertAt = overIndex === -1 ? siblings.length : overIndex;
   const before = insertAt === 0 ? null : (siblings[insertAt - 1] ?? null);
@@ -75,7 +60,7 @@ export function planDrop(
 
   return {
     issue: dragged,
-    stateId: targetColumn.state.id,
+    stateId: targetGroup.id,
     beforeId: before?.id ?? null,
     afterId: after?.id ?? null,
     beforeOrder: before?.sortOrder ?? null,
@@ -83,7 +68,13 @@ export function planDrop(
   };
 }
 
-function SortableCard({ issue }: { issue: Issue }) {
+function SortableCard({
+  issue,
+  properties,
+}: {
+  issue: Issue;
+  properties: readonly IssueProperty[];
+}) {
   const { labelById, memberById } = useWorkspace();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: issue.id,
@@ -103,6 +94,7 @@ function SortableCard({ issue }: { issue: Issue }) {
     >
       <IssueCard
         issue={issue}
+        properties={properties}
         labels={issue.labelIds.flatMap((id) => {
           const label = labelById.get(id);
           return label === undefined ? [] : [label];
@@ -113,12 +105,17 @@ function SortableCard({ issue }: { issue: Issue }) {
   );
 }
 
-export function Board({ teamId, states, issues }: BoardProps) {
+export function Board({
+  teamId,
+  groups,
+  draggable = true,
+  properties = ISSUE_PROPERTIES,
+}: BoardProps) {
   const { labelById, memberById, openQuickCreate } = useWorkspace();
   const move = useMoveIssue(teamId);
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  const columns = useMemo(() => buildColumns(states, issues), [states, issues]);
+  const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -133,9 +130,25 @@ export function Board({ teamId, states, issues }: BoardProps) {
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
     if (event.over === null) return;
-    const placement = planDrop(columns, issues, String(event.active.id), String(event.over.id));
+    const placement = planDrop(groups, issues, String(event.active.id), String(event.over.id));
     if (placement !== null) move.mutate(placement);
   };
+
+  const columns = (
+    <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
+      {groups.map((group) => (
+        <BoardColumn
+          key={group.id}
+          group={group}
+          draggable={draggable}
+          properties={properties}
+          onCreate={() => openQuickCreate()}
+        />
+      ))}
+    </div>
+  );
+
+  if (!draggable) return columns;
 
   return (
     <DndContext
@@ -145,17 +158,14 @@ export function Board({ teamId, states, issues }: BoardProps) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
-        {columns.map((column) => (
-          <BoardColumn key={column.state.id} column={column} onCreate={() => openQuickCreate()} />
-        ))}
-      </div>
+      {columns}
 
       <DragOverlay dropAnimation={{ duration: 140, easing: 'cubic-bezier(0.22,0.61,0.36,1)' }}>
         {activeIssue === undefined ? null : (
           <IssueCard
             issue={activeIssue}
             dragging
+            properties={properties}
             labels={activeIssue.labelIds.flatMap((id) => {
               const label = labelById.get(id);
               return label === undefined ? [] : [label];
@@ -170,43 +180,77 @@ export function Board({ teamId, states, issues }: BoardProps) {
   );
 }
 
-function BoardColumn({ column, onCreate }: { column: Column; onCreate: () => void }) {
-  const { setNodeRef } = useDroppable({ id: column.state.id, data: { isColumn: true } });
+interface BoardColumnProps {
+  readonly group: IssueGroup;
+  readonly draggable: boolean;
+  readonly properties: readonly IssueProperty[];
+  readonly onCreate: () => void;
+}
+
+function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProps) {
+  const { setNodeRef } = useDroppable({ id: group.id, data: { isColumn: true } });
+
+  const cards = group.issues.map((issue) =>
+    draggable ? (
+      <SortableCard key={issue.id} issue={issue} properties={properties} />
+    ) : (
+      <StaticCard key={issue.id} issue={issue} properties={properties} />
+    ),
+  );
 
   return (
     <section
-      data-testid={`board-column-${column.state.name}`}
+      data-testid={`board-column-${group.title}`}
       className="flex w-72 shrink-0 flex-col rounded-lg bg-surface-2/60"
     >
       <header className="flex items-center gap-2 px-2.5 py-2">
-        <StateGlyph category={column.state.category} color={column.state.color} />
-        <h2 className="font-medium text-dense text-text">{column.state.name}</h2>
+        <GroupGlyph group={group} />
+        <h2 className="font-medium text-dense text-text">{group.title}</h2>
         <span data-numeric className="text-2xs text-faint">
-          {column.issues.length}
+          {group.issues.length}
         </span>
         <button
           type="button"
           onClick={onCreate}
-          aria-label={`Create an issue in ${column.state.name}`}
+          aria-label={`Create an issue in ${group.title}`}
           className="ml-auto rounded-sm p-1 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-3 hover:text-text"
         >
           <Plus className="size-3.5" aria-hidden="true" />
         </button>
       </header>
 
-      <SortableContext
-        items={column.issues.map((issue) => issue.id)}
-        strategy={verticalListSortingStrategy}
-      >
-        <ul
-          ref={setNodeRef}
-          className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0"
+      {draggable ? (
+        <SortableContext
+          items={group.issues.map((issue) => issue.id)}
+          strategy={verticalListSortingStrategy}
         >
-          {column.issues.map((issue) => (
-            <SortableCard key={issue.id} issue={issue} />
-          ))}
-        </ul>
-      </SortableContext>
+          <ul
+            ref={setNodeRef}
+            className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0"
+          >
+            {cards}
+          </ul>
+        </SortableContext>
+      ) : (
+        <ul className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0">{cards}</ul>
+      )}
     </section>
+  );
+}
+
+function StaticCard({ issue, properties }: { issue: Issue; properties: readonly IssueProperty[] }) {
+  const { labelById, memberById } = useWorkspace();
+  return (
+    <li className="list-none">
+      <IssueCard
+        issue={issue}
+        properties={properties}
+        labels={issue.labelIds.flatMap((id) => {
+          const label = labelById.get(id);
+          return label === undefined ? [] : [label];
+        })}
+        assignee={issue.assigneeId === null ? undefined : memberById.get(issue.assigneeId)}
+      />
+    </li>
   );
 }

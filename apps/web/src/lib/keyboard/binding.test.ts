@@ -166,4 +166,18 @@ describe('selectMatch', () => {
     const buffer = press([], 'g', 0);
     expect(selectMatch([entry('g', { enabled: false })], buffer, false)).toBeNull();
   });
+
+  it('prefers the binding that asks for shift when shift is held', () => {
+    const both = [entry('f'), entry('shift+f')];
+    const shifted = press([], 'F', 0, { shiftKey: true });
+    expect(selectMatch(both, shifted, false)?.binding).toBe('shift+f');
+    expect(selectMatch(both, press([], 'f', 0), false)?.binding).toBe('f');
+    expect(selectMatch(both.toReversed(), shifted, false)?.binding).toBe('shift+f');
+  });
+
+  it('reads the physical key when alt rewrites the character', () => {
+    const step = eventToStep(keyEvent('Ï', { altKey: true, shiftKey: true, code: 'KeyF' }));
+    expect(step.key).toBe('f');
+    expect(bufferMatches(parseBinding('alt+shift+f'), [{ ...step, at: 0 }])).toBe(true);
+  });
 });

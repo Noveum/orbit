@@ -14,6 +14,23 @@ import {
   SLUG_PATTERN,
   STATE_CATEGORIES,
 } from '../constants/index.ts';
+import {
+  filterPredicateListSchema,
+  GROUP_BY_FIELDS,
+  ISSUE_ORDERINGS,
+  VIEW_LAYOUTS,
+} from '../filters/index.ts';
+
+function flagSchema(fallback: boolean) {
+  return z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return fallback;
+      if (typeof value === 'boolean') return value;
+      return value === 'true' || value === '1';
+    });
+}
 
 export const idSchema = z.string().min(1).max(64);
 export const slugSchema = z
@@ -30,6 +47,32 @@ export const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().max(256).optional(),
 });
+
+export const handleSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(2)
+  .max(39)
+  .regex(SLUG_PATTERN, 'Use lowercase letters, numbers and dashes.');
+
+export const profileUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(64),
+    handle: handleSchema,
+    image: z.string().url().max(2048).nullable(),
+    timezone: z.string().trim().min(1).max(64),
+  })
+  .partial();
+
+export const credentialRemoveSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('account'),
+    providerId: z.string().trim().min(1).max(64),
+    accountId: z.string().trim().min(1).max(255).optional(),
+  }),
+  z.object({ kind: z.literal('passkey'), id: idSchema }),
+]);
 
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -162,9 +205,10 @@ export const issueFilterSchema = z.object({
   labelId: idSchema.optional(),
   parentId: idSchema.optional(),
   query: z.string().max(200).optional(),
-  includeArchived: z.coerce.boolean().default(false),
-  includeSubIssues: z.coerce.boolean().default(true),
-  orderBy: z.enum(['manual', 'priority', 'created', 'updated', 'due']).default('manual'),
+  includeArchived: flagSchema(false),
+  includeSubIssues: flagSchema(true),
+  orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
+  predicates: filterPredicateListSchema,
 });
 
 export const issueRelationSchema = z.object({
@@ -289,8 +333,8 @@ export const docCollectionUpdateSchema = docCollectionCreateSchema.partial();
 export const viewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   filter: issueFilterSchema.partial(),
-  layout: z.enum(['list', 'board', 'table', 'calendar', 'timeline']).default('list'),
-  groupBy: z.enum(['state', 'assignee', 'priority', 'project', 'label', 'cycle', 'none']),
+  layout: z.enum(VIEW_LAYOUTS).default('list'),
+  groupBy: z.enum(GROUP_BY_FIELDS).default('state'),
   shared: z.boolean().default(false),
 });
 
@@ -298,8 +342,8 @@ export const viewUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     filter: issueFilterSchema.partial(),
-    layout: z.enum(['list', 'board', 'table', 'calendar', 'timeline']),
-    groupBy: z.enum(['state', 'assignee', 'priority', 'project', 'label', 'cycle', 'none']),
+    layout: z.enum(VIEW_LAYOUTS),
+    groupBy: z.enum(GROUP_BY_FIELDS),
     shared: z.boolean(),
   })
   .partial();
@@ -351,6 +395,7 @@ export const notificationReadSchema = z.object({
   read: z.boolean(),
 });
 
+export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
 export type InviteCreateInput = z.infer<typeof inviteCreateSchema>;
 export type TeamCreateInput = z.infer<typeof teamCreateSchema>;

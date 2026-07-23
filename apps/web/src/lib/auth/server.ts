@@ -1,13 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { createAuthMiddleware } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
 import { magicLink, organization } from 'better-auth/plugins';
+import { z } from 'zod';
 import { serverEnv } from '@/lib/env.ts';
 import { sendAuthEmail } from './email.ts';
+
+const passkeyAssertionSchema = z.object({ response: z.object({ id: z.string().min(1) }) });
+
+async function touchPasskeyLastUsed(body: unknown): Promise<void> {
+  const parsed = passkeyAssertionSchema.safeParse(body);
+  if (!parsed.success) return;
+  await db
+    .update(schema.passkey)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(schema.passkey.credentialID, parsed.data.response.id));
+}
 
 const SESSION_CACHE_SECONDS = 5 * 60;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -39,6 +52,7 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: { enabled: false },
   socialProviders: socialProviders(),
+  account: { accountLinking: { enabled: true, allowUnlinkingAll: true } },
   session: {
     expiresIn: SESSION_MAX_AGE_SECONDS,
     cookieCache: { enabled: true, maxAge: SESSION_CACHE_SECONDS },
@@ -48,6 +62,11 @@ export const auth = betterAuth({
       handle: { type: 'string', required: false, input: false },
       timezone: { type: 'string', required: false, input: false },
     },
+  },
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === '/passkey/verify-authentication') await touchPasskeyLastUsed(ctx.body);
+    }),
   },
   databaseHooks: {
     user: {

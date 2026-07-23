@@ -20,6 +20,7 @@ import { TopBar } from './top-bar.tsx';
 
 export interface AppShellProps {
   readonly workspace: ShellWorkspace;
+  readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
   readonly teams: readonly ShellTeam[];
   readonly inboxCount?: number;
@@ -30,6 +31,7 @@ export interface AppShellProps {
 
 export function AppShell({
   workspace,
+  workspaces,
   user,
   teams,
   inboxCount = 0,
@@ -76,6 +78,7 @@ export function AppShell({
   const sidebar = (onNavigate?: () => void) => (
     <Sidebar
       workspace={workspace}
+      workspaces={workspaces}
       user={user}
       sections={sections}
       collapsed={isDesktop ? collapsed : false}

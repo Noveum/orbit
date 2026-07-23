@@ -20,6 +20,7 @@ import { appendActivities, principalActor } from '../activity/activity-service.t
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { buildPredicateFilters, today } from './issue-predicates.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
 export type IssueRow = typeof schema.issue.$inferSelect;
@@ -678,6 +679,7 @@ function buildIssueFilters(
   if (!filter.includeSubIssues && filter.parentId === undefined) {
     filters.push(isNull(schema.issue.parentId));
   }
+  filters.push(...buildPredicateFilters(filter.predicates, today()));
   return filters;
 }
 

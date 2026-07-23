@@ -9,6 +9,7 @@
     "./errors": "./src/errors/index.ts",
     "./policy": "./src/policy/index.ts",
     "./validators": "./src/validators/index.ts",
+    "./filters": "./src/filters/index.ts",
     "./utils": "./src/utils/index.ts",
     "./constants": "./src/constants/index.ts"
   },

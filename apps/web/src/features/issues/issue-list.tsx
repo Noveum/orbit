@@ -3,35 +3,33 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { IssueGroup } from '@/features/filters/grouping.ts';
+import type { IssueProperty } from '@/features/filters/view-config.ts';
+import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { sortIssues } from '@/lib/query/sync.ts';
 import { BulkEditBar } from './bulk-edit-bar.tsx';
+import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow, ROW_HEIGHT } from './issue-row.tsx';
-import { StateGlyph } from './state-glyph.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
-const HEADER_HEIGHT = 32;
+export const HEADER_HEIGHT = 32;
 
-type Row =
-  | { readonly kind: 'header'; readonly state: WorkflowState; readonly count: number }
-  | { readonly kind: 'issue'; readonly issue: Issue; readonly state: WorkflowState };
+export type Row =
+  | { readonly kind: 'header'; readonly group: IssueGroup }
+  | { readonly kind: 'issue'; readonly issue: Issue; readonly state: WorkflowState | undefined };
 
-export function buildRows(states: readonly WorkflowState[], issues: readonly Issue[]): Row[] {
-  const byState = new Map<string, Issue[]>();
-  for (const issue of issues) {
-    const bucket = byState.get(issue.stateId) ?? [];
-    bucket.push(issue);
-    byState.set(issue.stateId, bucket);
-  }
-
+export function buildRows(
+  groups: readonly IssueGroup[],
+  stateById: ReadonlyMap<string, WorkflowState>,
+): Row[] {
   const rows: Row[] = [];
-  for (const state of states) {
-    const group = sortIssues(byState.get(state.id) ?? []);
-    if (group.length === 0) continue;
-    rows.push({ kind: 'header', state, count: group.length });
-    for (const issue of group) rows.push({ kind: 'issue', issue, state });
+  for (const group of groups) {
+    rows.push({ kind: 'header', group });
+    for (const issue of group.issues) {
+      rows.push({ kind: 'issue', issue, state: stateById.get(issue.stateId) });
+    }
   }
   return rows;
 }
@@ -39,18 +37,25 @@ export function buildRows(states: readonly WorkflowState[], issues: readonly Iss
 export interface IssueListProps {
   readonly teamId: string;
   readonly states: readonly WorkflowState[];
-  readonly issues: readonly Issue[];
+  readonly groups: readonly IssueGroup[];
+  readonly properties?: readonly IssueProperty[];
 }
 
-export function IssueList({ teamId, states, issues }: IssueListProps) {
+export function IssueList({
+  teamId,
+  states,
+  groups,
+  properties = ISSUE_PROPERTIES,
+}: IssueListProps) {
   const router = useRouter();
-  const { labelById, memberById } = useWorkspace();
+  const { labelById, memberById, stateById } = useWorkspace();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [peekId, setPeekId] = useState<string | null>(null);
 
-  const rows = useMemo(() => buildRows(states, issues), [states, issues]);
+  const rows = useMemo(() => buildRows(groups, stateById), [groups, stateById]);
+  const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
   const issueIndexes = useMemo(
     () => rows.flatMap((row, index) => (row.kind === 'issue' ? [index] : [])),
     [rows],
@@ -147,17 +152,21 @@ export function IssueList({ teamId, states, issues }: IssueListProps) {
                 className={row.kind === 'header' ? 'z-10 bg-bg' : undefined}
               >
                 {row.kind === 'header' ? (
-                  <div className="flex h-8 items-center gap-2 border-border border-b bg-surface-2/60 px-3">
-                    <StateGlyph category={row.state.category} color={row.state.color} />
-                    <h2 className="font-medium text-dense text-text">{row.state.name}</h2>
+                  <div
+                    className="flex h-8 items-center gap-2 border-border border-b bg-surface-2/60 px-3"
+                    data-testid={`issue-group-${row.group.title}`}
+                  >
+                    <GroupGlyph group={row.group} />
+                    <h2 className="font-medium text-dense text-text">{row.group.title}</h2>
                     <span data-numeric className="text-2xs text-faint">
-                      {row.count}
+                      {row.group.issues.length}
                     </span>
                   </div>
                 ) : (
                   <IssueRow
                     issue={row.issue}
                     state={row.state}
+                    properties={properties}
                     active={item.index === activeIndex}
                     selected={selected.includes(row.issue.id)}
                     labels={row.issue.labelIds.flatMap((id) => {

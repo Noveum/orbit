@@ -16,6 +16,13 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    writable: true,
+    value: vi.fn(),
+  });
+}
+
 if (!('ResizeObserver' in globalThis)) {
   Object.defineProperty(globalThis, 'ResizeObserver', {
     writable: true,

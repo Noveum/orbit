@@ -1,8 +1,9 @@
 'use client';
 
-import { ChevronsUpDown, LogOut, Settings, SunMoon } from 'lucide-react';
+import { Check, ChevronsUpDown, LogOut, Plus, Settings, SunMoon, UserCog } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import {
   DropdownMenu,
@@ -13,19 +14,30 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
+import { useToast } from '@/components/ui/toast.tsx';
 import { authClient } from '@/lib/auth/client.ts';
 import { cn } from '@/lib/cn.ts';
 import type { ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
 
+export const WORKSPACE_LANDING = '/my-issues';
+
 export interface WorkspaceSwitcherProps {
   readonly workspace: ShellWorkspace;
+  readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
   readonly collapsed: boolean;
 }
 
-export function WorkspaceSwitcher({ workspace, user, collapsed }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({
+  workspace,
+  workspaces,
+  user,
+  collapsed,
+}: WorkspaceSwitcherProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const { resolvedTheme, setTheme } = useTheme();
+  const [switching, setSwitching] = useState(false);
 
   const handleSignOut = () => {
     authClient
@@ -39,9 +51,28 @@ export function WorkspaceSwitcher({ workspace, user, collapsed }: WorkspaceSwitc
       });
   };
 
+  const switchTo = async (target: ShellWorkspace): Promise<void> => {
+    if (target.id === workspace.id || switching) return;
+    setSwitching(true);
+    try {
+      const result = await authClient.organization.setActive({ organizationId: target.id });
+      if (result.error) throw new Error(result.error.message ?? 'Could not switch workspace.');
+      window.location.assign(WORKSPACE_LANDING);
+    } catch (error: unknown) {
+      toast({
+        title: 'Could not switch workspace',
+        description: error instanceof Error ? error.message : 'Try again.',
+        tone: 'danger',
+      });
+    } finally {
+      setSwitching(false);
+    }
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        data-testid="workspace-switcher"
         className={cn(
           'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-dense',
           'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2',
@@ -67,10 +98,44 @@ export function WorkspaceSwitcher({ workspace, user, collapsed }: WorkspaceSwitc
           </div>
         </div>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>{workspace.slug}</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => router.push('/settings')}>
+
+        <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+        {workspaces.map((option) => {
+          const active = option.id === workspace.id;
+          return (
+            <DropdownMenuItem
+              key={option.id}
+              data-testid={`workspace-option-${option.slug}`}
+              aria-current={active ? 'true' : undefined}
+              disabled={switching}
+              onSelect={() => {
+                switchTo(option);
+              }}
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-surface-2 font-semibold text-[9px] text-muted">
+                {option.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{option.name}</span>
+              {active ? <Check className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+            </DropdownMenuItem>
+          );
+        })}
+        <DropdownMenuItem
+          data-testid="create-workspace"
+          onSelect={() => router.push('/workspaces/new')}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          Create workspace
+        </DropdownMenuItem>
+
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => router.push('/settings/general')}>
           <Settings className="size-4" aria-hidden="true" />
           Workspace settings
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => router.push('/settings/account')}>
+          <UserCog className="size-4" aria-hidden="true" />
+          Account settings
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>
           <SunMoon className="size-4" aria-hidden="true" />
