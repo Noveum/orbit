@@ -13,6 +13,8 @@ import { buildFilterFields, describePredicate } from '@/features/filters/filter-
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { viewConfigFromStored, viewConfigSearch } from '@/features/filters/view-config.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import { cn } from '@/lib/cn.ts';
+import { cardHover, revealOnHover } from '@/lib/interaction.ts';
 import type { View } from '@/lib/query/schemas.ts';
 import { useDeleteView, useUpdateView, useViews } from '@/lib/query/use-views.ts';
 
@@ -128,7 +130,10 @@ function ViewCard({ view, editable }: { view: View; editable: boolean }) {
 
   return (
     <li
-      className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center"
+      className={cn(
+        'group flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center',
+        cardHover,
+      )}
       data-testid={`view-${view.name}`}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -199,6 +204,7 @@ function ViewCard({ view, editable }: { view: View; editable: boolean }) {
             <Button
               size="sm"
               variant="ghost"
+              className={revealOnHover}
               aria-label={`Rename ${view.name}`}
               data-testid={`rename-${view.name}`}
               onClick={() => {
@@ -211,6 +217,7 @@ function ViewCard({ view, editable }: { view: View; editable: boolean }) {
             <Button
               size="sm"
               variant="ghost"
+              className={revealOnHover}
               aria-label={`Delete ${view.name}`}
               data-testid={`delete-${view.name}`}
               onClick={() => remove.mutate(view.id)}

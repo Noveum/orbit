@@ -9,6 +9,8 @@ import { getProjectDetail } from '@/features/projects/data.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { UpdateComposer } from '@/features/projects/update-composer.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 
 interface PageProps {
   readonly params: Promise<{ slug: string }>;
@@ -111,7 +113,10 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                 {detail.milestones.map((milestone) => (
                   <li
                     key={milestone.id}
-                    className="flex flex-col gap-2 rounded-lg border border-border p-3"
+                    className={cn(
+                      'flex flex-col gap-2 rounded-lg border border-border p-3',
+                      cardHover,
+                    )}
                   >
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-dense text-text">{milestone.name}</span>
@@ -147,7 +152,10 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                 {detail.updates.map((update) => (
                   <li
                     key={update.id}
-                    className="flex flex-col gap-2 rounded-lg border border-border p-3"
+                    className={cn(
+                      'flex flex-col gap-2 rounded-lg border border-border p-3',
+                      cardHover,
+                    )}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       {update.author === null ? null : (

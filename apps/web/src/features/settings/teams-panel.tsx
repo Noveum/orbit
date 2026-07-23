@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { MemberView, TeamDetail } from './data.ts';
 
 export interface TeamsPanelProps {
@@ -111,7 +113,10 @@ export function TeamsPanel({ teams, members, canManage }: TeamsPanelProps) {
 
       <ul className="flex flex-col gap-3">
         {teams.map((team) => (
-          <li key={team.id} className="flex flex-col gap-3 rounded-lg border border-border p-4">
+          <li
+            key={team.id}
+            className={cn('flex flex-col gap-3 rounded-lg border border-border p-4', cardHover)}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <Badge tone="accent">{team.key}</Badge>

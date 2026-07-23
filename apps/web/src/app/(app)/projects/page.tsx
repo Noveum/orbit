@@ -7,6 +7,8 @@ import { Donut } from '@/features/charts/donut.tsx';
 import { listProjectSummaries } from '@/features/projects/data.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 
 export const metadata: Metadata = { title: 'Projects' };
 
@@ -39,7 +41,7 @@ export default async function ProjectsPage() {
       </header>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[52rem] border-collapse text-dense">
+        <table className="row-stack w-full border-collapse md:min-w-[52rem] text-dense">
           <thead>
             <tr className="border-border border-b text-2xs text-faint uppercase">
               <th scope="col" className="px-3 py-2 text-left font-medium">
@@ -64,7 +66,10 @@ export default async function ProjectsPage() {
           </thead>
           <tbody>
             {projects.map((project) => (
-              <tr key={project.id} className="border-border border-b last:border-b-0">
+              <tr
+                key={project.id}
+                className={cn('border-border border-b last:border-b-0', rowHover)}
+              >
                 <td className="px-3 py-2">
                   <Link
                     href={`/projects/${project.slug}`}
@@ -77,10 +82,10 @@ export default async function ProjectsPage() {
                     </span>
                   </Link>
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="Health" className="px-3 py-2">
                   <HealthChip health={project.health} />
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="Lead" className="px-3 py-2">
                   {project.lead === null ? (
                     <span className="text-faint text-xs">Unassigned</span>
                   ) : (
@@ -90,9 +95,13 @@ export default async function ProjectsPage() {
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-muted tabular">{formatDate(project.targetDate)}</td>
-                <td className="px-3 py-2 text-right text-muted tabular">{project.issueCount}</td>
-                <td className="px-3 py-2">
+                <td data-label="Target" className="px-3 py-2 text-muted tabular">
+                  {formatDate(project.targetDate)}
+                </td>
+                <td data-label="Issues" className="px-3 py-2 text-right text-muted tabular">
+                  {project.issueCount}
+                </td>
+                <td data-label="Progress" className="px-3 py-2">
                   <Donut completed={project.completedCount} scope={project.issueCount} />
                 </td>
               </tr>
