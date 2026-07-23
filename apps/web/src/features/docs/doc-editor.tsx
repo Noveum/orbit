@@ -1,6 +1,7 @@
 'use client';
 
 import { renderMarkdown } from '@orbit/services/markdown';
+import { useQueryClient } from '@tanstack/react-query';
 import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Table2 } from 'lucide-react';
 import {
   type ClipboardEvent,
@@ -17,6 +18,7 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import { DocBody } from './doc-body.tsx';
 import {
   attachmentMarkdown,
@@ -47,6 +49,7 @@ export interface DocEditorProps {
 
 export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorProps) {
   const { toast } = useToast();
+  const client = useQueryClient();
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const [preview, setPreview] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
@@ -102,13 +105,14 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
             ),
           );
         }
+        await client.invalidateQueries({ queryKey: queryKeys.doc(docId) });
       } catch (error: unknown) {
         toast({ title: 'Upload failed', description: messageOf(error), tone: 'danger' });
       } finally {
         setUploading(false);
       }
     },
-    [applyEdit, docId, selection, toast],
+    [applyEdit, client, docId, selection, toast],
   );
 
   const modActions: Record<string, () => void> = {

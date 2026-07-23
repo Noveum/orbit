@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { STATE_CATEGORY_ORDER } from '@orbit/shared';
+import { STATE_CATEGORY_ORDER, unique } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
 import * as schema from '../schema/index.ts';
@@ -497,7 +497,10 @@ async function seedComments(
   }
 }
 
-async function seedDocs(userIds: Map<string, string>): Promise<void> {
+async function seedDocs(
+  userIds: Map<string, string>,
+  projects: Map<string, ProjectRecord>,
+): Promise<void> {
   const collections = new Map<string, string>();
   const collectionRows = SEED_COLLECTIONS.map((name) => {
     const collectionId = id();
@@ -512,22 +515,41 @@ async function seedDocs(userIds: Map<string, string>): Promise<void> {
   });
   await db.insert(schema.docCollection).values(collectionRows);
 
-  await db.insert(schema.doc).values(
-    SEED_DOCS.map((entry) => ({
-      id: id(),
-      organizationId: ORGANIZATION_ID,
-      collectionId: collections.get(entry.collection) ?? null,
-      projectId: null,
-      title: entry.title,
-      content: entry.content,
-      visibility: 'workspace',
-      publishToken: null,
-      authorId: required(userIds.get(entry.author), `missing user ${entry.author}`),
-      repoBinding: null,
-      syncId: 0,
-      createdAt: daysAgo(30),
-      updatedAt: daysAgo(3),
-    })),
+  const docRows = await db
+    .insert(schema.doc)
+    .values(
+      SEED_DOCS.map((entry) => ({
+        id: id(),
+        organizationId: ORGANIZATION_ID,
+        collectionId:
+          entry.collection === null ? null : (collections.get(entry.collection) ?? null),
+        projectId: entry.project === undefined ? null : (projects.get(entry.project)?.id ?? null),
+        title: entry.title,
+        content: entry.content,
+        visibility: 'workspace',
+        publishToken: null,
+        authorId: required(userIds.get(entry.author), `missing user ${entry.author}`),
+        repoBinding:
+          entry.repoBinding === undefined
+            ? null
+            : { ...entry.repoBinding, syncedAt: daysAgo(1).toISOString() },
+        syncId: 0,
+        createdAt: daysAgo(30),
+        updatedAt: daysAgo(3),
+      })),
+    )
+    .returning({ id: schema.doc.id, authorId: schema.doc.authorId });
+
+  const watchers = [...userIds.values()].slice(0, 3);
+  await db.insert(schema.docSubscription).values(
+    docRows.flatMap((row) =>
+      unique([row.authorId, ...watchers]).map((userId) => ({
+        id: id(),
+        docId: row.id,
+        userId,
+        muted: false,
+      })),
+    ),
   );
 }
 
@@ -587,7 +609,7 @@ async function main(): Promise<void> {
   await seedComments(userIds, issues);
 
   console.info('Seeding docs');
-  await seedDocs(userIds);
+  await seedDocs(userIds, projects);
 
   console.info('Seeding notifications');
   await seedNotifications(userIds, issues);

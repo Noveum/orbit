@@ -666,9 +666,11 @@ export const SEED_COMMENTS: readonly SeedComment[] = [
 
 export interface SeedDoc {
   readonly title: string;
-  readonly collection: string;
+  readonly collection: string | null;
   readonly author: string;
   readonly content: string;
+  readonly project?: string;
+  readonly repoBinding?: { readonly repo: string; readonly path: string; readonly branch: string };
 }
 
 export const SEED_COLLECTIONS: readonly string[] = ['Engineering', 'Product', 'Runbooks'];
@@ -678,6 +680,7 @@ export const SEED_DOCS: readonly SeedDoc[] = [
     title: 'Realtime delta protocol',
     collection: 'Engineering',
     author: 'shashank',
+    repoBinding: { repo: 'noveum/orbit', path: 'docs/realtime.md', branch: 'main' },
     content:
       '# Realtime delta protocol\n\nEvery mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients.\n\n## Action shape\n\n```ts\ntype SyncAction = {\n  syncId: number;\n  organizationId: string;\n  scopes: string[];\n  action: "insert" | "update" | "delete" | "archive" | "unarchive";\n  model: string;\n  modelId: string;\n  data: Record<string, unknown>;\n  actor: { type: "user" | "integration" | "agent" | "system"; id: string };\n  at: string;\n};\n```\n\n## Rules\n\n| Rule | Why |\n| --- | --- |\n| Batch inside 50ms | A bulk edit becomes one packet |\n| Dedupe by model and id | The newest write wins |\n| Filter by scope | A client never sees what it cannot read |\n| Suppress own echo | Optimistic writes must not flicker |\n\nPresence is ephemeral and never touches Postgres.',
   },
@@ -694,5 +697,13 @@ export const SEED_DOCS: readonly SeedDoc[] = [
     author: 'pulkit',
     content:
       '# Local development\n\n```bash\npnpm install\ncp .env.example .env\npnpm infra:up\npnpm db:push\npnpm db:seed\npnpm dev\n```\n\n## Services\n\n| Service | Port |\n| --- | --- |\n| web | 3000 |\n| realtime | 3100 |\n| mcp | 3200 |\n| postgres | 5434 |\n| redis | 6380 |\n| minio | 9010 |\n| mailpit | 8025 |\n\n> Magic link emails are printed to the console when `EMAIL_TRANSPORT=console`, and captured by Mailpit otherwise.\n\n## Checks\n\n`pnpm verify` runs lint, the comment policy, types, and tests. All four must be green before a pull request.',
+  },
+  {
+    title: 'Sync engine launch plan',
+    collection: null,
+    project: 'Realtime Sync Engine',
+    author: 'pulkit',
+    content:
+      '# Sync engine launch plan\n\nThe sync engine ships when a second browser sees every write without a reload.\n\n## Milestones\n\n| Milestone | Owner | State |\n| --- | --- | --- |\n| Delta contract frozen | Shashank | Done |\n| Fan out under load | Koushik | In progress |\n| Reconnect and replay | Aditi | Not started |\n\n## Exit checklist\n\n- [x] Deltas batch inside 50ms\n- [x] Scopes filter what a client can read\n- [ ] Reconnect replays the missed window\n- [ ] Presence survives a server restart',
   },
 ];
