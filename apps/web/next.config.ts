@@ -8,10 +8,14 @@ const repositoryEnvFile = path.resolve(appDirectory, '..', '..', '.env');
 
 if (existsSync(repositoryEnvFile)) process.loadEnvFile(repositoryEnvFile);
 
+const workspaceRoot = path.resolve(appDirectory, '..', '..');
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
+  outputFileTracingRoot: workspaceRoot,
   turbopack: {
-    root: path.resolve(appDirectory, '..', '..'),
+    root: workspaceRoot,
   },
   transpilePackages: [
     '@orbit/shared',
