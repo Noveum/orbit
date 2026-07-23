@@ -112,28 +112,36 @@ export function InboxView({ items, unreadCount, userId }: InboxViewProps) {
     router.refresh();
   }, [current, router]);
 
-  useHotkey('j', () => move(1), { label: 'Next notification', section: 'Navigation' });
-  useHotkey('k', () => move(-1), { label: 'Previous notification', section: 'Navigation' });
+  useHotkey('j', () => move(1), {
+    label: 'Next notification',
+    section: 'Navigation',
+    scope: 'inbox',
+  });
+  useHotkey('k', () => move(-1), {
+    label: 'Previous notification',
+    section: 'Navigation',
+    scope: 'inbox',
+  });
   useHotkey(
     'u',
     () => {
       toggleRead();
     },
-    { label: 'Toggle read', section: 'General' },
+    { label: 'Toggle read', section: 'General', scope: 'inbox' },
   );
   useHotkey(
     'h',
     () => {
       snooze();
     },
-    { label: 'Snooze for a day', section: 'General' },
+    { label: 'Snooze for a day', section: 'General', scope: 'inbox' },
   );
   useHotkey(
     'backspace',
     () => {
       remove();
     },
-    { label: 'Delete notification', section: 'General' },
+    { label: 'Delete notification', section: 'General', scope: 'inbox' },
   );
 
   return (

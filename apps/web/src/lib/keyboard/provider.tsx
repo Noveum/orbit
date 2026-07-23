@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import {
+  activatesFocusedControl,
   type BufferedStep,
   eventToStep,
   isEditableTarget,
@@ -32,7 +33,9 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
     let buffer: BufferedStep[] = [];
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (isModifierKey(event.key)) return;
+      if (activatesFocusedControl(event, event.target)) return;
       const editable = isEditableTarget(event.target);
       const now = Date.now();
       buffer = editable ? [] : pruneBuffer(buffer, now, SEQUENCE_TIMEOUT_MS);

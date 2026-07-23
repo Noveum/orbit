@@ -67,7 +67,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
     () => {
       router.push(`/team/${teamKey.toLowerCase()}/${other}`);
     },
-    { label: 'Toggle board and list', section: 'View' },
+    { label: 'Toggle board and list', section: 'View', scope: 'issues' },
   );
 
   if (!workspace.ready) return <ListSkeleton layout={layout} />;
