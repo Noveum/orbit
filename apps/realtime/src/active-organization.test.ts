@@ -1,11 +1,7 @@
-import { scopes } from '@orbit/shared/events';
+import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, scopes } from '@orbit/shared/events';
 import type Redis from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  createRealtimeServer,
-  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
-  type RealtimeServer,
-} from './server.ts';
+import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   addMembership,
   cleanupFixtures,

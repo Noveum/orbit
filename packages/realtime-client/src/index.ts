@@ -4,7 +4,7 @@ import type {
   PresenceMessage,
   SyncAction,
 } from '@orbit/shared/events';
-import { serverMessageSchema } from '@orbit/shared/events';
+import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, serverMessageSchema } from '@orbit/shared/events';
 
 export type RealtimeStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -106,8 +106,9 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       const payload: unknown = event.data;
       if (typeof payload === 'string') receive(payload);
     };
-    next.onclose = () => {
+    next.onclose = (event) => {
       if (socket === next) socket = null;
+      if (event.code === ORGANIZATION_FORBIDDEN_CLOSE_CODE) disposed = true;
       if (disposed) {
         setStatus('closed');
         return;

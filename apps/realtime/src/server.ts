@@ -3,14 +3,17 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import {
   clientMessageSchema,
+  connectionOrganizationIdSchema,
   DELTA_BATCH_WINDOW_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
+  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
   type PresenceKind,
   presenceMessageSchema,
   REDIS_DELTA_CHANNEL,
   REDIS_PRESENCE_CHANNEL,
   syncActionSchema,
+  UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
 import Redis from 'ioredis';
 import { type RawData, type WebSocket, WebSocketServer } from 'ws';
@@ -59,9 +62,6 @@ const deltaEnvelopeSchema = z.union([
   z.unknown().transform((action) => [action]),
 ]);
 
-export const UNAUTHORIZED_CLOSE_CODE = 4001;
-export const ORGANIZATION_FORBIDDEN_CLOSE_CODE = 4003;
-
 const CLOSE_CODES: Record<ConnectionRejection, number> = {
   unauthorized: UNAUTHORIZED_CLOSE_CODE,
   organization_forbidden: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
@@ -72,10 +72,10 @@ function credentialsFrom(request: IncomingMessage): {
   organizationId: string | null;
 } {
   const url = new URL(request.url ?? '/', 'http://realtime.local');
-  const organizationId = url.searchParams.get('organizationId');
+  const stated = connectionOrganizationIdSchema.safeParse(url.searchParams.get('organizationId'));
   return {
     token: url.searchParams.get('token') ?? '',
-    organizationId: organizationId === null || organizationId === '' ? null : organizationId,
+    organizationId: stated.success ? stated.data : null,
   };
 }
 
@@ -297,7 +297,7 @@ export async function createRealtimeServer(
   wss.on('connection', (socket, request) => {
     accept(socket, request).catch((error: unknown) => {
       logger.error('connection rejected', errorFields(error));
-      socket.close(4001, 'unauthorized');
+      socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
     });
   });
 
