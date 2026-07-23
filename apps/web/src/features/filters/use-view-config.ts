@@ -1,25 +1,31 @@
 'use client';
 
-import type { FilterPredicate } from '@orbit/shared/filters';
-import { GROUP_BY_FIELDS } from '@orbit/shared/filters';
+import type { FilterGroup } from '@orbit/shared/filters';
+import {
+  COMPLETED_WINDOWS,
+  DISPLAY_PROPERTIES,
+  GROUP_BY_FIELDS,
+  ISSUE_ORDERINGS,
+} from '@orbit/shared/filters';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
-import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
+import type { ViewConfig, ViewLayoutMode, ViewPage } from './view-config.ts';
 import {
+  applyCapabilities,
   defaultViewConfig,
-  ISSUE_ORDERINGS,
-  ISSUE_PROPERTIES,
   parseViewConfig,
   viewConfigSearch,
 } from './view-config.ts';
 
 const storedDisplaySchema = z.object({
   groupBy: z.enum(GROUP_BY_FIELDS),
+  subGroupBy: z.enum(GROUP_BY_FIELDS).default('none'),
   orderBy: z.enum(ISSUE_ORDERINGS),
   showSubIssues: z.boolean(),
   showEmptyGroups: z.boolean(),
-  properties: z.array(z.enum(ISSUE_PROPERTIES)),
+  showCompleted: z.enum(COMPLETED_WINDOWS).default('all'),
+  properties: z.array(z.enum(DISPLAY_PROPERTIES)),
 });
 
 type StoredDisplay = z.infer<typeof storedDisplaySchema>;
@@ -43,29 +49,62 @@ export function readStoredDisplay(
   }
 }
 
+function toStored(config: ViewConfig): StoredDisplay {
+  return {
+    groupBy: config.groupBy,
+    subGroupBy: config.subGroupBy,
+    orderBy: config.orderBy,
+    showSubIssues: config.display.showSubIssues,
+    showEmptyGroups: config.display.showEmptyGroups,
+    showCompleted: config.display.showCompleted,
+    properties: [...config.display.properties],
+  };
+}
+
 export function writeStoredDisplay(
   teamId: string | null,
   layout: ViewLayoutMode,
   config: ViewConfig,
 ): void {
   if (typeof window === 'undefined') return;
-  const display: StoredDisplay = {
-    groupBy: config.groupBy,
-    orderBy: config.orderBy,
-    showSubIssues: config.showSubIssues,
-    showEmptyGroups: config.showEmptyGroups,
-    properties: [...config.properties],
+  window.localStorage.setItem(displayStorageKey(teamId, layout), JSON.stringify(toStored(config)));
+}
+
+function withStored(base: ViewConfig, stored: StoredDisplay | null): ViewConfig {
+  if (stored === null) return base;
+  return {
+    ...base,
+    groupBy: stored.groupBy,
+    subGroupBy: stored.subGroupBy,
+    orderBy: stored.orderBy,
+    display: {
+      showSubIssues: stored.showSubIssues,
+      showEmptyGroups: stored.showEmptyGroups,
+      showCompleted: stored.showCompleted,
+      properties: stored.properties,
+    },
   };
-  window.localStorage.setItem(displayStorageKey(teamId, layout), JSON.stringify(display));
+}
+
+export const VIEW_PARAM = 'view';
+
+export function withViewParam(search: string, viewId: string | null): string {
+  if (viewId === null || viewId.length === 0) return search;
+  const separator = search.length === 0 ? '?' : '&';
+  return `${search}${separator}${VIEW_PARAM}=${encodeURIComponent(viewId)}`;
 }
 
 export interface ViewConfigController {
   readonly config: ViewConfig;
   readonly setConfig: (next: ViewConfig) => void;
-  readonly setPredicates: (next: readonly FilterPredicate[]) => void;
+  readonly setFilter: (next: FilterGroup) => void;
 }
 
-export function useViewConfig(teamId: string | null, layout: ViewLayoutMode): ViewConfigController {
+export function useViewConfig(
+  teamId: string | null,
+  layout: ViewLayoutMode,
+  page: ViewPage = 'team',
+): ViewConfigController {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -76,35 +115,30 @@ export function useViewConfig(teamId: string | null, layout: ViewLayoutMode): Vi
   }, [teamId, layout]);
 
   const config = useMemo(() => {
-    const base = defaultViewConfig(layout);
-    return parseViewConfig(
-      new URLSearchParams(searchParams.toString()),
-      layout,
-      stored === null ? base : { ...base, ...stored },
-    );
-  }, [searchParams, layout, stored]);
+    const base = withStored(defaultViewConfig(layout), stored);
+    const parsed = parseViewConfig(new URLSearchParams(searchParams.toString()), layout, base);
+    return applyCapabilities(parsed, page, layout);
+  }, [searchParams, layout, stored, page]);
+
+  const carried = searchParams.get(VIEW_PARAM);
 
   const setConfig = useCallback(
     (next: ViewConfig) => {
-      writeStoredDisplay(teamId, layout, next);
-      setStored({
-        groupBy: next.groupBy,
-        orderBy: next.orderBy,
-        showSubIssues: next.showSubIssues,
-        showEmptyGroups: next.showEmptyGroups,
-        properties: [...next.properties],
-      });
-      router.replace(`${pathname}${viewConfigSearch(next, layout)}`, { scroll: false });
+      const sanitized = applyCapabilities(next, page, layout);
+      writeStoredDisplay(teamId, layout, sanitized);
+      setStored(toStored(sanitized));
+      const search = withViewParam(viewConfigSearch(sanitized, layout), carried);
+      router.replace(`${pathname}${search}`, { scroll: false });
     },
-    [router, pathname, teamId, layout],
+    [router, pathname, teamId, layout, page, carried],
   );
 
-  const setPredicates = useCallback(
-    (predicates: readonly FilterPredicate[]) => {
-      setConfig({ ...config, predicates });
+  const setFilter = useCallback(
+    (filter: FilterGroup) => {
+      setConfig({ ...config, filter });
     },
     [config, setConfig],
   );
 
-  return { config, setConfig, setPredicates };
+  return { config, setConfig, setFilter };
 }

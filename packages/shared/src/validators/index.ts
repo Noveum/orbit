@@ -15,10 +15,11 @@ import {
   STATE_CATEGORIES,
 } from '../constants/index.ts';
 import {
-  filterPredicateListSchema,
+  filterGroupQuerySchema,
   GROUP_BY_FIELDS,
   ISSUE_ORDERINGS,
   VIEW_LAYOUTS,
+  viewStateSchema,
 } from '../filters/index.ts';
 
 function flagSchema(fallback: boolean) {
@@ -208,7 +209,7 @@ export const issueFilterSchema = z.object({
   includeArchived: flagSchema(false),
   includeSubIssues: flagSchema(true),
   orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
-  predicates: filterPredicateListSchema,
+  filter: filterGroupQuerySchema,
 });
 
 export const issueRelationSchema = z.object({
@@ -332,7 +333,7 @@ export const docCollectionUpdateSchema = docCollectionCreateSchema.partial();
 
 export const viewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  filter: issueFilterSchema.partial(),
+  filter: viewStateSchema,
   layout: z.enum(VIEW_LAYOUTS).default('list'),
   groupBy: z.enum(GROUP_BY_FIELDS).default('state'),
   shared: z.boolean().default(false),
@@ -341,12 +342,14 @@ export const viewCreateSchema = z.object({
 export const viewUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    filter: issueFilterSchema.partial(),
+    filter: viewStateSchema,
     layout: z.enum(VIEW_LAYOUTS),
     groupBy: z.enum(GROUP_BY_FIELDS),
     shared: z.boolean(),
   })
   .partial();
+
+export const viewFavoriteSchema = z.object({ favorite: z.boolean() });
 
 export const uploadRequestSchema = z.object({
   fileName: z.string().trim().min(1).max(255),

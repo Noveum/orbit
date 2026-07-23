@@ -1,7 +1,7 @@
 'use client';
 
-import type { FilterPredicate, IssueOrdering } from '@orbit/shared/filters';
-import { encodeFilterPredicates } from '@orbit/shared/filters';
+import type { FilterGroup, IssueOrdering } from '@orbit/shared/filters';
+import { emptyFilterGroup, encodeFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -31,22 +31,19 @@ export function useBootstrap(teamKey: string | null) {
 }
 
 export interface IssueQuery {
-  readonly predicates: readonly FilterPredicate[];
+  readonly filter: FilterGroup;
   readonly orderBy: IssueOrdering;
-  readonly includeSubIssues: boolean;
 }
 
 export const DEFAULT_ISSUE_QUERY: IssueQuery = {
-  predicates: [],
+  filter: emptyFilterGroup(),
   orderBy: 'manual',
-  includeSubIssues: true,
 };
 
 export function issueSearch(teamId: string, query: IssueQuery): string {
   const params = new URLSearchParams({ teamId, limit: '200', orderBy: query.orderBy });
-  if (!query.includeSubIssues) params.set('includeSubIssues', 'false');
-  const predicates = encodeFilterPredicates(query.predicates);
-  if (predicates.length > 0) params.set('predicates', predicates);
+  const filter = encodeFilter(query.filter);
+  if (filter.length > 0) params.set('filter', filter);
   return params.toString();
 }
 

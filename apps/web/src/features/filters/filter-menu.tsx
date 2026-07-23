@@ -1,14 +1,16 @@
 'use client';
 
-import type { FilterField, FilterPredicate } from '@orbit/shared/filters';
-import { removePredicate, replacePredicate } from '@orbit/shared/filters';
+import type { FilterCondition, FilterGroup, FilterProperty } from '@orbit/shared/filters';
+import { conditionFor, removeCondition, replaceCondition } from '@orbit/shared/filters';
 import { Command } from 'cmdk';
-import { Check, Search } from 'lucide-react';
+import { Check, ChevronRight, Search } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover.tsx';
 import { cn } from '@/lib/cn.ts';
+import type { Issue } from '@/lib/query/schemas.ts';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
+import { countValues, RELATIVE_PRESETS } from './filter-fields.tsx';
 
 const itemClassName =
   'flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-dense text-muted outline-none data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
@@ -20,63 +22,58 @@ export interface FilterMenuProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly fields: readonly FilterFieldDefinition[];
-  readonly predicates: readonly FilterPredicate[];
-  readonly onChange: (next: readonly FilterPredicate[]) => void;
-  readonly startField?: FilterField | null;
+  readonly filter: FilterGroup;
+  readonly onChange: (next: FilterGroup) => void;
+  readonly issues: readonly Issue[];
+  readonly startProperty?: FilterProperty | null;
   readonly anchor: ReactNode;
-}
-
-function predicateFor(
-  predicates: readonly FilterPredicate[],
-  field: FilterField,
-): FilterPredicate | undefined {
-  return predicates.find((predicate) => predicate.field === field);
 }
 
 export function FilterMenu({
   open,
   onOpenChange,
   fields,
-  predicates,
+  filter,
   onChange,
-  startField = null,
+  issues,
+  startProperty = null,
   anchor,
 }: FilterMenuProps) {
-  const [field, setField] = useState<FilterField | null>(startField);
+  const [property, setProperty] = useState<FilterProperty | null>(startProperty);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     if (open) {
-      setField(startField);
+      setProperty(startProperty);
       setSearch('');
     }
-  }, [open, startField]);
+  }, [open, startProperty]);
 
-  const active = fields.find((entry) => entry.field === field);
+  const active = fields.find((entry) => entry.property === property);
 
-  const toggleValue = (target: FilterField, value: string) => {
-    const current = predicateFor(predicates, target);
-    const operator = current?.operator ?? 'is';
-    const values = current?.values ?? [];
+  const commit = (next: FilterCondition | null, target: FilterProperty) => {
+    onChange(next === null ? removeCondition(filter, target) : replaceCondition(filter, next));
+  };
+
+  const toggleValue = (target: FilterProperty, value: string) => {
+    const current = conditionFor(filter, target);
+    const values = current?.operator === 'in' ? current.values : [];
+    const negate = current?.negate ?? false;
     const next = values.includes(value)
       ? values.filter((entry) => entry !== value)
       : [...values, value];
-    onChange(
+    commit(
       next.length === 0
-        ? removePredicate(predicates, target)
-        : replacePredicate(predicates, { field: target, operator, values: next }),
+        ? null
+        : { kind: 'condition', property: target, operator: 'in', values: next, negate },
+      target,
     );
   };
 
-  const toggleOperator = (target: FilterField) => {
-    const current = predicateFor(predicates, target);
+  const toggleNegate = (target: FilterProperty) => {
+    const current = conditionFor(filter, target);
     if (current === undefined) return;
-    onChange(
-      replacePredicate(predicates, {
-        ...current,
-        operator: current.operator === 'is' ? 'is_not' : 'is',
-      }),
-    );
+    commit({ ...current, negate: !current.negate }, target);
   };
 
   return (
@@ -89,7 +86,7 @@ export function FilterMenu({
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
         <Command
-          key={field ?? 'fields'}
+          key={property ?? 'fields'}
           loop
           label={active === undefined ? 'Add filter' : `Filter by ${active.label}`}
         >
@@ -101,11 +98,11 @@ export function FilterMenu({
               onValueChange={setSearch}
               data-testid="filter-menu-input"
               aria-label={active === undefined ? 'Search filters' : `Search ${active.label}`}
-              placeholder={active === undefined ? 'Filter by...' : `Search ${active.label}...`}
+              placeholder={active === undefined ? 'Add filter...' : `Search ${active.label}...`}
               className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
             />
           </div>
-          <Command.List className="max-h-72 overflow-y-auto p-1.5">
+          <Command.List className="max-h-80 overflow-y-auto p-1.5">
             <Command.Empty className="px-2 py-5 text-center text-2xs text-muted">
               Nothing matches that.
             </Command.Empty>
@@ -113,20 +110,24 @@ export function FilterMenu({
             {active === undefined ? (
               <FieldPicker
                 fields={fields}
-                predicates={predicates}
+                filter={filter}
+                issues={issues}
                 searching={search.trim().length > 0}
                 onPickField={(next) => {
                   setSearch('');
-                  setField(next);
+                  setProperty(next);
                 }}
                 onPickValue={toggleValue}
               />
             ) : (
               <ValuePicker
                 definition={active}
-                predicate={predicateFor(predicates, active.field)}
-                onToggleValue={(value) => toggleValue(active.field, value)}
-                onToggleOperator={() => toggleOperator(active.field)}
+                condition={conditionFor(filter, active.property)}
+                issues={issues}
+                search={search}
+                onToggleValue={(value) => toggleValue(active.property, value)}
+                onToggleNegate={() => toggleNegate(active.property)}
+                onCommit={(next) => commit(next, active.property)}
               />
             )}
           </Command.List>
@@ -138,15 +139,17 @@ export function FilterMenu({
 
 interface FieldPickerProps {
   readonly fields: readonly FilterFieldDefinition[];
-  readonly predicates: readonly FilterPredicate[];
+  readonly filter: FilterGroup;
+  readonly issues: readonly Issue[];
   readonly searching: boolean;
-  readonly onPickField: (field: FilterField) => void;
-  readonly onPickValue: (field: FilterField, value: string) => void;
+  readonly onPickField: (property: FilterProperty) => void;
+  readonly onPickValue: (property: FilterProperty, value: string) => void;
 }
 
 function FieldPicker({
   fields,
-  predicates,
+  filter,
+  issues,
   searching,
   onPickField,
   onPickValue,
@@ -158,14 +161,15 @@ function FieldPicker({
           const Icon = definition.icon;
           return (
             <Command.Item
-              key={definition.field}
-              value={`field ${definition.field} ${definition.label}`}
-              data-testid={`filter-field-${definition.field}`}
+              key={definition.property}
+              value={`field ${definition.property} ${definition.label}`}
+              data-testid={`filter-field-${definition.property}`}
               className={itemClassName}
-              onSelect={() => onPickField(definition.field)}
+              onSelect={() => onPickField(definition.property)}
             >
               <Icon className="size-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
               <span className="flex-1 truncate">{definition.label}</span>
+              <ChevronRight className="size-3 shrink-0 text-faint" aria-hidden="true" />
             </Command.Item>
           );
         })}
@@ -174,25 +178,22 @@ function FieldPicker({
       {searching
         ? fields.map((definition) => (
             <Command.Group
-              key={definition.field}
+              key={definition.property}
               heading={definition.label}
               className={groupClassName}
             >
               {definition.options.map((option) => (
                 <Command.Item
-                  key={`${definition.field}-${option.value}`}
+                  key={`${definition.property}-${option.value}`}
                   value={`value ${definition.label} ${option.label} ${option.value}`}
                   className={itemClassName}
-                  onSelect={() => onPickValue(definition.field, option.value)}
+                  onSelect={() => onPickValue(definition.property, option.value)}
                 >
                   {option.icon}
                   <span className="flex-1 truncate">{option.label}</span>
+                  <ValueCount count={countValues(definition, issues).get(option.value)} />
                   <Selected
-                    on={
-                      predicates
-                        .find((predicate) => predicate.field === definition.field)
-                        ?.values.includes(option.value) ?? false
-                    }
+                    on={selectedValues(filter, definition.property).includes(option.value)}
                   />
                 </Command.Item>
               ))}
@@ -203,46 +204,143 @@ function FieldPicker({
   );
 }
 
-interface ValuePickerProps {
-  readonly definition: FilterFieldDefinition;
-  readonly predicate: FilterPredicate | undefined;
-  readonly onToggleValue: (value: string) => void;
-  readonly onToggleOperator: () => void;
+function selectedValues(filter: FilterGroup, property: FilterProperty): readonly string[] {
+  const condition = conditionFor(filter, property);
+  return condition?.operator === 'in' ? condition.values : [];
 }
 
-function ValuePicker({ definition, predicate, onToggleValue, onToggleOperator }: ValuePickerProps) {
-  const negated = predicate?.operator === 'is_not';
+interface ValuePickerProps {
+  readonly definition: FilterFieldDefinition;
+  readonly condition: FilterCondition | undefined;
+  readonly issues: readonly Issue[];
+  readonly search: string;
+  readonly onToggleValue: (value: string) => void;
+  readonly onToggleNegate: () => void;
+  readonly onCommit: (next: FilterCondition | null) => void;
+}
+
+function ValuePicker({
+  definition,
+  condition,
+  issues,
+  search,
+  onToggleValue,
+  onToggleNegate,
+  onCommit,
+}: ValuePickerProps) {
+  const negated = condition?.negate === true;
+  const counts = countValues(definition, issues);
+  const chosen = condition?.operator === 'in' ? condition.values : [];
+
   return (
     <>
-      {predicate === undefined ? null : (
+      {condition === undefined ? null : (
         <Command.Group heading="Operator" className={groupClassName}>
           <Command.Item
             value={`operator ${definition.label}`}
             data-testid="filter-toggle-operator"
             className={itemClassName}
-            onSelect={onToggleOperator}
+            onSelect={onToggleNegate}
           >
             <span className="flex-1 truncate">{negated ? 'Include instead' : 'Exclude these'}</span>
             <span className="text-2xs text-faint">{negated ? 'is not' : 'is'}</span>
           </Command.Item>
         </Command.Group>
       )}
-      <Command.Group heading={definition.label} className={groupClassName}>
-        {definition.options.map((option) => (
+
+      {definition.input === 'text' ? (
+        <Command.Group heading={definition.label} className={groupClassName}>
           <Command.Item
-            key={option.value}
-            value={`${option.label} ${option.value}`}
-            data-testid={`filter-value-${option.value}`}
+            value={`content ${search}`}
+            data-testid="filter-content-apply"
             className={itemClassName}
-            onSelect={() => onToggleValue(option.value)}
+            disabled={search.trim().length === 0}
+            onSelect={() =>
+              onCommit(
+                search.trim().length === 0
+                  ? null
+                  : {
+                      kind: 'condition',
+                      property: definition.property,
+                      operator: 'exact',
+                      value: search.trim(),
+                      negate: negated,
+                    },
+              )
+            }
           >
-            {option.icon}
-            <span className="flex-1 truncate">{option.label}</span>
-            <Selected on={predicate?.values.includes(option.value) ?? false} />
+            <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
+            <span className="flex-1 truncate">
+              {search.trim().length === 0 ? 'Type to filter by content' : `Contains "${search}"`}
+            </span>
           </Command.Item>
-        ))}
-      </Command.Group>
+        </Command.Group>
+      ) : null}
+
+      {definition.input === 'dates' ? (
+        <Command.Group heading="Relative" className={groupClassName}>
+          {RELATIVE_PRESETS.map((preset) => (
+            <Command.Item
+              key={preset.key}
+              value={`relative ${preset.label}`}
+              data-testid={`filter-relative-${preset.key}`}
+              className={itemClassName}
+              onSelect={() =>
+                onCommit({
+                  kind: 'condition',
+                  property: definition.property,
+                  operator: 'relative',
+                  relative: {
+                    unit: preset.unit,
+                    offset: preset.offset,
+                    direction: preset.direction,
+                  },
+                  negate: negated,
+                })
+              }
+            >
+              <span className="flex-1 truncate">{preset.label}</span>
+              <Selected
+                on={
+                  condition?.operator === 'relative' &&
+                  condition.relative.unit === preset.unit &&
+                  condition.relative.offset === preset.offset &&
+                  condition.relative.direction === preset.direction
+                }
+              />
+            </Command.Item>
+          ))}
+        </Command.Group>
+      ) : null}
+
+      {definition.options.length === 0 ? null : (
+        <Command.Group heading={definition.label} className={groupClassName}>
+          {definition.options.map((option) => (
+            <Command.Item
+              key={option.value}
+              value={`${option.label} ${option.value}`}
+              data-testid={`filter-value-${option.value}`}
+              className={itemClassName}
+              onSelect={() => onToggleValue(option.value)}
+            >
+              {option.icon}
+              <span className="flex-1 truncate">{option.label}</span>
+              <ValueCount count={counts.get(option.value)} />
+              <Selected on={chosen.includes(option.value)} />
+            </Command.Item>
+          ))}
+        </Command.Group>
+      )}
     </>
+  );
+}
+
+function ValueCount({ count }: { count: number | undefined }) {
+  if (count === undefined || count === 0) return null;
+  return (
+    <span data-numeric className="shrink-0 text-2xs text-faint">
+      {count.toLocaleString()}
+    </span>
   );
 }
 

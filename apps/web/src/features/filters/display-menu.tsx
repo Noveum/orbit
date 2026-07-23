@@ -1,6 +1,20 @@
 'use client';
 
-import { GROUP_BY_FIELDS, type GroupByField } from '@orbit/shared/filters';
+import type {
+  CompletedWindow,
+  DisplayProperty,
+  GroupByField,
+  IssueOrdering,
+  ViewCapability,
+} from '@orbit/shared/filters';
+import {
+  COMPLETED_WINDOW_LABELS,
+  COMPLETED_WINDOWS,
+  DISPLAY_PROPERTIES,
+  DISPLAY_PROPERTY_LABELS,
+  GROUP_BY_LABELS,
+  ISSUE_ORDERING_LABELS,
+} from '@orbit/shared/filters';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -13,42 +27,61 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
-import type { IssueOrdering, IssueProperty, ViewConfig } from './view-config.ts';
-import {
-  GROUP_BY_LABELS,
-  ISSUE_ORDERING_LABELS,
-  ISSUE_ORDERINGS,
-  ISSUE_PROPERTIES,
-  ISSUE_PROPERTY_LABELS,
-} from './view-config.ts';
+import type { ViewConfig } from './view-config.ts';
 
 export interface DisplayMenuProps {
   readonly config: ViewConfig;
+  readonly capability: ViewCapability;
+  readonly modified: boolean;
   readonly onChange: (next: ViewConfig) => void;
+  readonly compact?: boolean;
 }
 
 function toggleProperty(
-  properties: readonly IssueProperty[],
-  property: IssueProperty,
-): IssueProperty[] {
+  properties: readonly DisplayProperty[],
+  property: DisplayProperty,
+): DisplayProperty[] {
   return properties.includes(property)
     ? properties.filter((entry) => entry !== property)
-    : ISSUE_PROPERTIES.filter((entry) => entry === property || properties.includes(entry));
+    : DISPLAY_PROPERTIES.filter((entry) => entry === property || properties.includes(entry));
 }
 
-export function DisplayMenu({ config, onChange }: DisplayMenuProps) {
+export function DisplayMenu({
+  config,
+  capability,
+  modified,
+  onChange,
+  compact = false,
+}: DisplayMenuProps) {
+  const setDisplay = (patch: Partial<ViewConfig['display']>) => {
+    onChange({ ...config, display: { ...config.display, ...patch } });
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="ghost" data-testid="display-menu-trigger">
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="display-menu-trigger"
+          aria-label="Display options"
+          className={compact ? 'relative size-9 px-0 sm:size-7' : 'relative'}
+        >
           <SlidersHorizontal className="size-3.5" aria-hidden="true" />
-          Display
+          {compact ? null : 'Display'}
+          {modified ? (
+            <span
+              data-testid="display-modified-dot"
+              className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-accent"
+              aria-hidden="true"
+            />
+          ) : null}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
         collisionPadding={12}
-        className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-60 overflow-y-auto"
+        className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 overflow-y-auto"
         data-testid="display-menu"
       >
         <DropdownMenuLabel>Grouping</DropdownMenuLabel>
@@ -56,12 +89,35 @@ export function DisplayMenu({ config, onChange }: DisplayMenuProps) {
           value={config.groupBy}
           onValueChange={(value) => onChange({ ...config, groupBy: value as GroupByField })}
         >
-          {GROUP_BY_FIELDS.map((field) => (
+          {capability.groupBy.map((field) => (
             <DropdownMenuRadioItem key={field} value={field} data-testid={`group-by-${field}`}>
               {GROUP_BY_LABELS[field]}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+
+        {capability.subGrouping ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Sub-grouping</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={config.subGroupBy}
+              onValueChange={(value) => onChange({ ...config, subGroupBy: value as GroupByField })}
+            >
+              {capability.subGroupBy
+                .filter((field) => field === 'none' || field !== config.groupBy)
+                .map((field) => (
+                  <DropdownMenuRadioItem
+                    key={field}
+                    value={field}
+                    data-testid={`sub-group-by-${field}`}
+                  >
+                    {GROUP_BY_LABELS[field]}
+                  </DropdownMenuRadioItem>
+                ))}
+            </DropdownMenuRadioGroup>
+          </>
+        ) : null}
 
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Ordering</DropdownMenuLabel>
@@ -69,7 +125,7 @@ export function DisplayMenu({ config, onChange }: DisplayMenuProps) {
           value={config.orderBy}
           onValueChange={(value) => onChange({ ...config, orderBy: value as IssueOrdering })}
         >
-          {ISSUE_ORDERINGS.map((ordering) => (
+          {capability.orderBy.map((ordering) => (
             <DropdownMenuRadioItem
               key={ordering}
               value={ordering}
@@ -81,40 +137,59 @@ export function DisplayMenu({ config, onChange }: DisplayMenuProps) {
         </DropdownMenuRadioGroup>
 
         <DropdownMenuSeparator />
+        <DropdownMenuLabel>Completed issues</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={config.display.showCompleted}
+          onValueChange={(value) => setDisplay({ showCompleted: value as CompletedWindow })}
+        >
+          {COMPLETED_WINDOWS.map((window) => (
+            <DropdownMenuRadioItem
+              key={window}
+              value={window}
+              data-testid={`show-completed-${window}`}
+            >
+              {COMPLETED_WINDOW_LABELS[window]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+
+        <DropdownMenuSeparator />
         <DropdownMenuCheckboxItem
-          checked={config.showSubIssues}
+          checked={config.display.showSubIssues}
           data-testid="toggle-sub-issues"
           onSelect={(event) => {
             event.preventDefault();
-            onChange({ ...config, showSubIssues: !config.showSubIssues });
+            setDisplay({ showSubIssues: !config.display.showSubIssues });
           }}
         >
           Show sub-issues
         </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={config.showEmptyGroups}
-          data-testid="toggle-empty-groups"
-          onSelect={(event) => {
-            event.preventDefault();
-            onChange({ ...config, showEmptyGroups: !config.showEmptyGroups });
-          }}
-        >
-          Show empty groups
-        </DropdownMenuCheckboxItem>
+        {capability.showEmptyGroups ? (
+          <DropdownMenuCheckboxItem
+            checked={config.display.showEmptyGroups}
+            data-testid="toggle-empty-groups"
+            onSelect={(event) => {
+              event.preventDefault();
+              setDisplay({ showEmptyGroups: !config.display.showEmptyGroups });
+            }}
+          >
+            Show empty groups
+          </DropdownMenuCheckboxItem>
+        ) : null}
 
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Properties</DropdownMenuLabel>
-        {ISSUE_PROPERTIES.map((property) => (
+        {capability.properties.map((property) => (
           <DropdownMenuCheckboxItem
             key={property}
-            checked={config.properties.includes(property)}
+            checked={config.display.properties.includes(property)}
             data-testid={`property-${property}`}
             onSelect={(event) => {
               event.preventDefault();
-              onChange({ ...config, properties: toggleProperty(config.properties, property) });
+              setDisplay({ properties: toggleProperty(config.display.properties, property) });
             }}
           >
-            {ISSUE_PROPERTY_LABELS[property]}
+            {DISPLAY_PROPERTY_LABELS[property]}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuContent>

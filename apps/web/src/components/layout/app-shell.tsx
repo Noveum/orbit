@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { overlayClassName } from '@/components/ui/dialog.tsx';
+import { ViewControlsHost } from '@/features/filters/view-controls.tsx';
 import {
   buildNavigation,
   type ShellTeam,
@@ -74,48 +75,50 @@ export function AppShell({
   );
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-bg">
-      <aside
-        className={
-          collapsed
-            ? 'hidden w-[var(--sidebar-width-collapsed)] shrink-0 lg:block'
-            : 'hidden w-[var(--sidebar-width)] shrink-0 lg:block'
-        }
-      >
-        {sidebar()}
-      </aside>
+    <ViewControlsHost>
+      <div className="flex h-dvh w-full overflow-hidden bg-bg">
+        <aside
+          className={
+            collapsed
+              ? 'hidden w-[var(--sidebar-width-collapsed)] shrink-0 lg:block'
+              : 'hidden w-[var(--sidebar-width)] shrink-0 lg:block'
+          }
+        >
+          {sidebar()}
+        </aside>
 
-      <DialogPrimitive.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className={`${overlayClassName} lg:hidden`} />
-          <DialogPrimitive.Content
-            aria-label="Navigation"
-            aria-describedby={undefined}
-            className="fixed inset-y-0 left-0 z-50 w-[min(17rem,85vw)] outline-none data-[state=closed]:animate-drawer-out data-[state=open]:animate-drawer-in lg:hidden"
-          >
-            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
-            {sidebar(() => setDrawerOpen(false))}
-          </DialogPrimitive.Content>
-        </DialogPrimitive.Portal>
-      </DialogPrimitive.Root>
+        <DialogPrimitive.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+          <DialogPrimitive.Portal>
+            <DialogPrimitive.Overlay className={`${overlayClassName} lg:hidden`} />
+            <DialogPrimitive.Content
+              aria-label="Navigation"
+              aria-describedby={undefined}
+              className="fixed inset-y-0 left-0 z-50 w-[min(17rem,85vw)] outline-none data-[state=closed]:animate-drawer-out data-[state=open]:animate-drawer-in lg:hidden"
+            >
+              <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+              {sidebar(() => setDrawerOpen(false))}
+            </DialogPrimitive.Content>
+          </DialogPrimitive.Portal>
+        </DialogPrimitive.Root>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar
-          breadcrumbs={breadcrumbs}
-          onOpenDrawer={() => setDrawerOpen(true)}
-          {...(actions === undefined ? {} : { actions })}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar
+            breadcrumbs={breadcrumbs}
+            onOpenDrawer={() => setDrawerOpen(true)}
+            {...(actions === undefined ? {} : { actions })}
+          />
+          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        </div>
+
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          sections={sections}
+          onToggleSidebar={toggleSidebar}
+          onShowShortcuts={openShortcuts}
         />
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <ShortcutsOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       </div>
-
-      <CommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
-        sections={sections}
-        onToggleSidebar={toggleSidebar}
-        onShowShortcuts={openShortcuts}
-      />
-      <ShortcutsOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-    </div>
+    </ViewControlsHost>
   );
 }

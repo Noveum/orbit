@@ -1,10 +1,10 @@
 'use client';
 
-import { Menu, SlidersHorizontal } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Fragment, type ReactNode } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle.tsx';
 import { Button } from '@/components/ui/button.tsx';
-import { Tooltip } from '@/components/ui/tooltip.tsx';
+import { TopBarDisplayMenu } from '@/features/filters/view-controls.tsx';
 
 export interface Breadcrumb {
   readonly label: string;
@@ -55,16 +55,7 @@ export function TopBar({ breadcrumbs, actions, onOpenDrawer }: TopBarProps) {
 
       <div className="flex shrink-0 items-center gap-1">
         {actions}
-        <Tooltip label="Display options" side="bottom">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Display options"
-            className="size-9 px-0 sm:size-7"
-          >
-            <SlidersHorizontal className="size-4" aria-hidden="true" />
-          </Button>
-        </Tooltip>
+        <TopBarDisplayMenu />
         <ThemeToggle />
       </div>
     </header>

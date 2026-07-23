@@ -1,5 +1,9 @@
-import { GROUP_BY_FIELDS, VIEW_LAYOUTS } from '@orbit/shared/filters';
-import { issueFilterSchema } from '@orbit/shared/validators';
+import {
+  defaultViewState,
+  GROUP_BY_FIELDS,
+  VIEW_LAYOUTS,
+  viewStateSchema,
+} from '@orbit/shared/filters';
 import { z } from 'zod';
 
 const timestamp = z.string();
@@ -253,10 +257,13 @@ export const viewSchema = z.object({
   id: z.string(),
   ownerId: z.string(),
   name: z.string(),
-  filter: issueFilterSchema.partial().catch({}),
+  filter: viewStateSchema.catch(defaultViewState()),
   layout: z.enum(VIEW_LAYOUTS).catch('list'),
   groupBy: z.enum(GROUP_BY_FIELDS).catch('state'),
   shared: z.boolean(),
+  virtual: z.boolean().catch(false),
+  locked: z.boolean().catch(false),
+  favorite: z.boolean().catch(false),
   createdAt: timestamp,
 });
 

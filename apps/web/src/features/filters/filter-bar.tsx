@@ -1,20 +1,24 @@
 'use client';
 
-import type { FilterField, FilterPredicate } from '@orbit/shared/filters';
-import { dropLastPredicate, removePredicate } from '@orbit/shared/filters';
-import { Bookmark, ListFilter, X } from 'lucide-react';
+import type { FilterCondition, FilterGroup, FilterProperty } from '@orbit/shared/filters';
+import { conditionsOf, dropLastCondition, removeCondition } from '@orbit/shared/filters';
+import { Bookmark, ListFilter, Save, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
+import type { Issue, View } from '@/lib/query/schemas.ts';
+import { useUpdateView } from '@/lib/query/use-views.ts';
 import { DisplayMenu } from './display-menu.tsx';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { buildFilterFields, operatorLabel, valueLabel } from './filter-fields.tsx';
 import { FilterMenu } from './filter-menu.tsx';
 import { SaveViewDialog } from './save-view-dialog.tsx';
 import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
+import { viewConfigToState } from './view-config.ts';
+import type { ViewControls } from './view-controls.tsx';
 
-type MenuTarget = FilterField | 'new' | null;
+type MenuTarget = FilterProperty | 'new' | null;
 
 export interface FilterBarProps {
   readonly teamId: string | null;
@@ -22,31 +26,56 @@ export interface FilterBarProps {
   readonly layout: ViewLayoutMode;
   readonly config: ViewConfig;
   readonly onChange: (next: ViewConfig) => void;
+  readonly controls: ViewControls;
+  readonly issues?: readonly Issue[];
+  readonly savedView?: View | null;
+  readonly dirty?: boolean;
 }
 
-export function FilterBar({ teamId, teamName, layout, config, onChange }: FilterBarProps) {
+export function FilterBar({
+  teamId,
+  teamName,
+  layout,
+  config,
+  onChange,
+  controls,
+  issues = [],
+  savedView = null,
+  dirty = false,
+}: FilterBarProps) {
   const workspace = useWorkspace();
+  const updateView = useUpdateView();
   const [target, setTarget] = useState<MenuTarget>(null);
   const [saveOpen, setSaveOpen] = useState(false);
 
-  const fields = useMemo(() => buildFilterFields(workspace, teamId), [workspace, teamId]);
-  const { predicates } = config;
+  const fields = useMemo(
+    () => buildFilterFields(workspace, teamId, controls.capability.filters),
+    [workspace, teamId, controls.capability.filters],
+  );
+  const conditions = conditionsOf(config.filter);
 
-  const setPredicates = (next: readonly FilterPredicate[]) => {
-    onChange({ ...config, predicates: next });
+  const setFilter = (next: FilterGroup) => {
+    onChange({ ...config, filter: next });
   };
+
+  const canUpdate =
+    savedView !== null &&
+    !savedView.virtual &&
+    !savedView.locked &&
+    savedView.ownerId === workspace.userId &&
+    dirty;
 
   useHotkey('f', () => setTarget('new'), {
     label: 'Add filter',
     section: 'View',
     scope: 'filters',
   });
-  useHotkey('shift+f', () => setPredicates(dropLastPredicate(predicates)), {
+  useHotkey('shift+f', () => setFilter(dropLastCondition(config.filter)), {
     label: 'Remove the last filter',
     section: 'View',
     scope: 'filters',
   });
-  useHotkey('alt+shift+f', () => setPredicates([]), {
+  useHotkey('alt+shift+f', () => setFilter({ ...config.filter, children: [] }), {
     label: 'Clear all filters',
     section: 'View',
     scope: 'filters',
@@ -70,17 +99,18 @@ export function FilterBar({ teamId, teamName, layout, config, onChange }: Filter
       className="flex flex-wrap items-center gap-1.5 border-border border-b px-3 py-1.5"
       data-testid="filter-bar"
     >
-      {predicates.map((predicate) => (
+      {conditions.map((condition) => (
         <FilterChip
-          key={predicate.field}
-          predicate={predicate}
-          definition={fields.find((entry) => entry.field === predicate.field)}
-          open={target === predicate.field}
-          onOpenChange={(open) => setTarget(open ? predicate.field : null)}
+          key={condition.property}
+          condition={condition}
+          definition={fields.find((entry) => entry.property === condition.property)}
+          open={target === condition.property}
+          onOpenChange={(open) => setTarget(open ? condition.property : null)}
           fields={fields}
-          predicates={predicates}
-          onChange={setPredicates}
-          onRemove={() => setPredicates(removePredicate(predicates, predicate.field))}
+          filter={config.filter}
+          issues={issues}
+          onChange={setFilter}
+          onRemove={() => setFilter(removeCondition(config.filter, condition.property))}
         />
       ))}
 
@@ -88,39 +118,73 @@ export function FilterBar({ teamId, teamName, layout, config, onChange }: Filter
         open={target === 'new'}
         onOpenChange={(open) => setTarget(open ? 'new' : null)}
         fields={fields}
-        predicates={predicates}
-        onChange={setPredicates}
+        filter={config.filter}
+        issues={issues}
+        onChange={setFilter}
         anchor={
           <Button
             size="sm"
             variant="ghost"
             data-testid="add-filter"
-            aria-haspopup="listbox"
+            aria-haspopup="dialog"
             aria-expanded={target === 'new'}
             onClick={() => setTarget(target === 'new' ? null : 'new')}
           >
             <ListFilter className="size-3.5" aria-hidden="true" />
-            {predicates.length === 0 ? 'Filter' : 'Add filter'}
+            {conditions.length === 0 ? 'Filter' : 'Add filter'}
           </Button>
         }
       />
 
       <div className="ml-auto flex items-center gap-1">
-        {predicates.length === 0 ? null : (
+        {conditions.length === 0 ? null : (
           <Button
             size="sm"
             variant="ghost"
             data-testid="clear-filters"
-            onClick={() => setPredicates([])}
+            onClick={() => setFilter({ ...config.filter, children: [] })}
           >
             Clear
           </Button>
         )}
+        {canUpdate && savedView !== null ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="update-view"
+            disabled={updateView.isPending}
+            onClick={() =>
+              updateView.mutate({
+                id: savedView.id,
+                patch: {
+                  filter: viewConfigToState(
+                    config,
+                    layout,
+                    { teamId, projectId: null },
+                    {
+                      visibility: savedView.filter.visibility,
+                      locked: savedView.filter.locked,
+                      position: savedView.filter.position,
+                    },
+                  ),
+                },
+              })
+            }
+          >
+            <Save className="size-3.5" aria-hidden="true" />
+            Save changes
+          </Button>
+        ) : null}
         <Button size="sm" variant="ghost" data-testid="save-view" onClick={() => setSaveOpen(true)}>
           <Bookmark className="size-3.5" aria-hidden="true" />
           Save view
         </Button>
-        <DisplayMenu config={config} onChange={onChange} />
+        <DisplayMenu
+          config={config}
+          capability={controls.capability}
+          modified={controls.displayModified}
+          onChange={onChange}
+        />
       </div>
 
       <SaveViewDialog
@@ -129,7 +193,7 @@ export function FilterBar({ teamId, teamName, layout, config, onChange }: Filter
         config={config}
         layout={layout}
         teamId={teamId}
-        suggestedName={suggestName(teamName, predicates, fields)}
+        suggestedName={suggestName(teamName, conditions, fields)}
       />
     </div>
   );
@@ -137,56 +201,59 @@ export function FilterBar({ teamId, teamName, layout, config, onChange }: Filter
 
 function suggestName(
   teamName: string,
-  predicates: readonly FilterPredicate[],
+  conditions: readonly FilterCondition[],
   fields: readonly FilterFieldDefinition[],
 ): string {
-  const first = predicates[0];
+  const first = conditions[0];
   if (first === undefined) return `${teamName} issues`;
-  const definition = fields.find((entry) => entry.field === first.field);
+  const definition = fields.find((entry) => entry.property === first.property);
   return `${teamName}: ${valueLabel(first, definition)}`;
 }
 
 interface FilterChipProps {
-  readonly predicate: FilterPredicate;
+  readonly condition: FilterCondition;
   readonly definition: FilterFieldDefinition | undefined;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly fields: readonly FilterFieldDefinition[];
-  readonly predicates: readonly FilterPredicate[];
-  readonly onChange: (next: readonly FilterPredicate[]) => void;
+  readonly filter: FilterGroup;
+  readonly issues: readonly Issue[];
+  readonly onChange: (next: FilterGroup) => void;
   readonly onRemove: () => void;
 }
 
 function FilterChip({
-  predicate,
+  condition,
   definition,
   open,
   onOpenChange,
   fields,
-  predicates,
+  filter,
+  issues,
   onChange,
   onRemove,
 }: FilterChipProps) {
   const Icon = definition?.icon;
-  const label = definition?.label ?? predicate.field;
-  const description = `${label} ${operatorLabel(predicate)} ${valueLabel(predicate, definition)}`;
+  const label = definition?.label ?? condition.property;
+  const description = `${label} ${operatorLabel(condition)} ${valueLabel(condition, definition)}`;
 
   return (
     <span
       className="flex h-7 items-center rounded-md border border-border bg-surface-2 text-2xs"
-      data-testid={`filter-chip-${predicate.field}`}
+      data-testid={`filter-chip-${condition.property}`}
     >
       <FilterMenu
         open={open}
         onOpenChange={onOpenChange}
         fields={fields}
-        predicates={predicates}
+        filter={filter}
+        issues={issues}
         onChange={onChange}
-        startField={predicate.field}
+        startProperty={condition.property}
         anchor={
           <button
             type="button"
-            aria-haspopup="listbox"
+            aria-haspopup="dialog"
             aria-expanded={open}
             aria-label={`Edit filter: ${description}`}
             onClick={() => onOpenChange(!open)}
@@ -196,8 +263,8 @@ function FilterChip({
               <Icon className="size-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
             )}
             <span className="text-faint">{label}</span>
-            <span className="text-faint italic">{operatorLabel(predicate)}</span>
-            <span className="max-w-40 truncate text-text">{valueLabel(predicate, definition)}</span>
+            <span className="text-faint italic">{operatorLabel(condition)}</span>
+            <span className="max-w-40 truncate text-text">{valueLabel(condition, definition)}</span>
           </button>
         }
       />
@@ -205,7 +272,7 @@ function FilterChip({
         type="button"
         onClick={onRemove}
         aria-label={`Remove filter: ${description}`}
-        data-testid={`remove-filter-${predicate.field}`}
+        data-testid={`remove-filter-${condition.property}`}
         className="flex h-7 items-center rounded-r-md border-border border-l px-1.5 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-3 hover:text-text"
       >
         <X className="size-3" aria-hidden="true" />

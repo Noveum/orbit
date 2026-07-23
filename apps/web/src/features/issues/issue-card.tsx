@@ -1,9 +1,9 @@
 'use client';
 
+import type { DisplayProperty } from '@orbit/shared/filters';
+import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
-import type { IssueProperty } from '@/features/filters/view-config.ts';
-import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member } from '@/lib/query/schemas.ts';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -13,7 +13,7 @@ export interface IssueCardProps {
   readonly labels: readonly Label[];
   readonly assignee: Member | undefined;
   readonly dragging?: boolean;
-  readonly properties?: readonly IssueProperty[];
+  readonly properties?: readonly DisplayProperty[];
   readonly className?: string;
 }
 
@@ -22,10 +22,10 @@ export function IssueCard({
   labels,
   assignee,
   dragging = false,
-  properties = ISSUE_PROPERTIES,
+  properties = DEFAULT_DISPLAY_PROPERTIES,
   className,
 }: IssueCardProps) {
-  const shows = (property: IssueProperty) => properties.includes(property);
+  const shows = (property: DisplayProperty) => properties.includes(property);
 
   return (
     <article

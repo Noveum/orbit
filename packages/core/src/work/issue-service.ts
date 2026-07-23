@@ -20,7 +20,7 @@ import { appendActivities, principalActor } from '../activity/activity-service.t
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { buildPredicateFilters, today } from './issue-predicates.ts';
+import { buildFilterFilters, today } from './issue-predicates.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
 export type IssueRow = typeof schema.issue.$inferSelect;
@@ -679,7 +679,7 @@ function buildIssueFilters(
   if (!filter.includeSubIssues && filter.parentId === undefined) {
     filters.push(isNull(schema.issue.parentId));
   }
-  filters.push(...buildPredicateFilters(filter.predicates, today()));
+  filters.push(...buildFilterFilters(filter.filter, { today: today() }));
   return filters;
 }
 
@@ -723,6 +723,18 @@ const ORDERINGS: Record<
     descending: false,
     cast: 'date',
     read: (row) => row.dueDate ?? '9999-12-31',
+  },
+  estimate: {
+    expression: sql`coalesce(${schema.issue.estimate}, 9999)`,
+    descending: false,
+    cast: 'int',
+    read: (row) => row.estimate ?? 9999,
+  },
+  title: {
+    expression: sql`lower(${schema.issue.title})`,
+    descending: false,
+    cast: 'text',
+    read: (row) => row.title.toLowerCase(),
   },
 };
 
