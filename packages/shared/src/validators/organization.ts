@@ -11,7 +11,7 @@ export const organizationUpdateSchema = z
   .object({
     name: z.string().trim().min(2).max(64),
     logo: z.string().url().max(2048).nullable(),
-    allowedEmailDomains: z.array(z.string().trim().toLowerCase().max(255)).max(20),
+    allowedEmailDomains: z.array(z.string().trim().toLowerCase().min(1).max(255)).max(20),
   })
   .partial();
 

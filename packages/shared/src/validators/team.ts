@@ -8,7 +8,10 @@ export const teamCreateSchema = z.object({
     .string()
     .trim()
     .toUpperCase()
-    .regex(IDENTIFIER_PATTERN, 'Use 2 to 6 uppercase letters or digits.'),
+    .regex(
+      IDENTIFIER_PATTERN,
+      'Start with a letter, then 1 to 5 more uppercase letters or digits.',
+    ),
   description: z.string().max(1000).optional(),
   icon: z.string().max(32).optional(),
   color: colorSchema.optional(),

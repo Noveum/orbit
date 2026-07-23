@@ -3,9 +3,9 @@ import { ISSUE_RELATION_TYPES, PRIORITIES, STATE_CATEGORIES } from '../constants
 import { filterPredicateListSchema, ISSUE_ORDERINGS } from '../filters/index.ts';
 import { idSchema, markdownSchema, titleSchema } from './common.ts';
 
-function flagSchema(fallback: boolean) {
+export function booleanFlag(fallback: boolean) {
   return z
-    .union([z.boolean(), z.string()])
+    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
     .optional()
     .transform((value) => {
       if (value === undefined) return fallback;
@@ -76,8 +76,8 @@ export const issueFilterSchema = z.object({
   labelId: idSchema.optional(),
   parentId: idSchema.optional(),
   query: z.string().max(200).optional(),
-  includeArchived: flagSchema(false),
-  includeSubIssues: flagSchema(true),
+  includeArchived: booleanFlag(false),
+  includeSubIssues: booleanFlag(true),
   orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
   predicates: filterPredicateListSchema,
 });

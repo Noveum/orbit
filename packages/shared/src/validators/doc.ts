@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DOC_VISIBILITIES } from '../constants/index.ts';
 import { idSchema, markdownSchema } from './common.ts';
+import { booleanFlag } from './issue.ts';
 
 export const docCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -28,7 +29,7 @@ export const docFilterSchema = z.object({
   query: z.string().trim().max(200).optional(),
   collectionId: idSchema.optional(),
   projectId: idSchema.optional(),
-  includeArchived: z.coerce.boolean().default(false),
+  includeArchived: booleanFlag(false),
 });
 
 export const docCollectionCreateSchema = z.object({

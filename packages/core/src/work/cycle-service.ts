@@ -23,6 +23,7 @@ async function assertCycleWindow(
   if (window.endsAt.getTime() <= window.startsAt.getTime()) {
     throw conflict('A cycle has to end after it starts.');
   }
+  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${window.teamId}`}))`);
   const [clash] = await executor
     .select({ id: schema.cycle.id, name: schema.cycle.name })
     .from(schema.cycle)
