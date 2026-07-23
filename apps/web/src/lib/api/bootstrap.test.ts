@@ -9,8 +9,8 @@ mock.module('@orbit/db', () => ({
 
 const { bootstrapVersion } = await import('./bootstrap.ts');
 
-function member(userId: string): Principal {
-  return { userId, organizationId: 'org_shared', role: 'admin', teamIds: ['team_1'] };
+function member(userId: string, organizationId = 'org_shared'): Principal {
+  return { userId, organizationId, role: 'admin', teamIds: ['team_1'] };
 }
 
 describe('bootstrapVersion keeps the weak etag user scoped', () => {
@@ -21,5 +21,14 @@ describe('bootstrapVersion keeps the weak etag user scoped', () => {
     expect(admin).not.toBe(teammate);
     expect(admin.startsWith('user_admin')).toBe(true);
     expect(teammate.startsWith('user_teammate')).toBe(true);
+  });
+
+  it('separates the same user across two organizations at the same sync id', async () => {
+    const inOrgA = await bootstrapVersion(member('user_multi', 'org_a'));
+    const inOrgB = await bootstrapVersion(member('user_multi', 'org_b'));
+
+    expect(inOrgA).not.toBe(inOrgB);
+    expect(inOrgA.includes('org_a')).toBe(true);
+    expect(inOrgB.includes('org_b')).toBe(true);
   });
 });

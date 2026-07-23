@@ -81,7 +81,7 @@ export async function bootstrapVersion(principal: Principal): Promise<string> {
       coalesce((select max(sync_id) from member where organization_id = ${organizationId}), 0)
     )::text as version
   `);
-  return `${principal.userId}-${row?.['version'] ?? '0'}`;
+  return `${principal.userId}-${organizationId}-${row?.['version'] ?? '0'}`;
 }
 
 export async function bootstrapPayload(principal: Principal, query: BootstrapQuery) {
