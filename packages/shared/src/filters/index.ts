@@ -91,10 +91,13 @@ export function encodeFilterPredicates(predicates: readonly FilterPredicate[]): 
     .join(PREDICATE_SEPARATOR);
 }
 
+export const MAX_FILTER_PREDICATES = 20;
+
 export function decodeFilterPredicates(raw: string): FilterPredicate[] {
   const predicates: FilterPredicate[] = [];
   for (const chunk of raw.split(PREDICATE_SEPARATOR)) {
     if (chunk.trim().length === 0) continue;
+    if (predicates.length === MAX_FILTER_PREDICATES) break;
     const [field, operator, values] = chunk.split(PART_SEPARATOR);
     const parsed = filterPredicateSchema.safeParse({
       field,
@@ -109,7 +112,7 @@ export function decodeFilterPredicates(raw: string): FilterPredicate[] {
 export const filterPredicateListSchema = z
   .preprocess(
     (value) => (typeof value === 'string' ? decodeFilterPredicates(value) : value),
-    z.array(filterPredicateSchema).max(20),
+    z.array(filterPredicateSchema).max(MAX_FILTER_PREDICATES),
   )
   .default([]);
 

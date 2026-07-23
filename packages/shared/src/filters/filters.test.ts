@@ -5,6 +5,7 @@ import {
   decodeFilterPredicates,
   dropLastPredicate,
   encodeFilterPredicates,
+  MAX_FILTER_PREDICATES,
   removePredicate,
   replacePredicate,
 } from './index.ts';
@@ -37,6 +38,12 @@ describe('filter predicate encoding', () => {
 
   it('rejects values carrying separator or script characters', () => {
     expect(decodeFilterPredicates('state:is:<script>')).toEqual([]);
+  });
+
+  it('stops decoding past the predicate ceiling the server enforces', () => {
+    const oversized = Array.from({ length: 40 }, () => 'state:is:state-a').join(';');
+    expect(decodeFilterPredicates(oversized)).toHaveLength(MAX_FILTER_PREDICATES);
+    expect(() => issueFilterSchema.parse({ predicates: oversized })).not.toThrow();
   });
 
   it('defaults a missing operator to is', () => {
