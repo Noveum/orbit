@@ -1,4 +1,5 @@
 import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -9,7 +10,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import type { MemberRow } from './organization-service.ts';
+import { assertEmailDomainAllowed, type MemberRow } from './organization-service.ts';
 
 export type InvitationRow = typeof schema.invitation.$inferSelect;
 
@@ -34,8 +35,19 @@ async function assertEmailIsFree(
   if (existing !== undefined) throw conflict(`${email} is already a member.`);
 }
 
+function orgRoleOf(role: string | undefined): OrgRole {
+  return ORG_ROLES.find((entry) => entry === role) ?? 'guest';
+}
+
+function assertCanInviteRole(actorRole: OrgRole, role: string): void {
+  if (role === 'admin' && !canAssignRole(actorRole, 'admin')) {
+    throw forbidden('Only admins can invite admins.', { details: { role } });
+  }
+}
+
 async function insertInvite(
   executor: Executor,
+  principal: Principal,
   params: {
     organizationId: string;
     inviterId: string;
@@ -43,8 +55,17 @@ async function insertInvite(
     role: string;
     teamIds: string[];
     now: Date;
+    syncId: number;
   },
 ): Promise<InvitationRow> {
+  assertCanInviteRole(principal.role, params.role);
+  const [organization] = await executor
+    .select({ allowedEmailDomains: schema.organization.allowedEmailDomains })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, params.organizationId))
+    .limit(1);
+  assertEmailDomainAllowed(params.email, organization ?? null);
+
   await executor
     .delete(schema.invitation)
     .where(
@@ -65,6 +86,7 @@ async function insertInvite(
       teamIds: params.teamIds,
       inviterId: params.inviterId,
       expiresAt: addUtcDays(params.now, INVITE_TTL_DAYS),
+      syncId: params.syncId,
     })
     .returning();
   return requireRow(row, 'The invite could not be created.');
@@ -81,9 +103,9 @@ function inviteAction(
     organizationId: invitation.organizationId,
     scopes: [scopes.organization(invitation.organizationId)],
     action,
-    model: 'member',
+    model: 'invitation',
     modelId: invitation.id,
-    data: { ...invitation, kind: 'invitation' },
+    data: invitation,
     actor,
   });
 }
@@ -94,21 +116,19 @@ export async function createInvite(
 ): Promise<{ invitation: InvitationRow; token: string; actions: SyncAction[] }> {
   assertCan(principal, 'member:invite');
   const parsed = inviteCreateSchema.parse(input);
-  if (parsed.role === 'admin' && !canAssignRole(principal.role, parsed.role)) {
-    throw forbidden('Only admins can invite admins.');
-  }
 
   return await db.transaction(async (tx) => {
     await assertEmailIsFree(tx, principal.organizationId, parsed.email);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    const invitation = await insertInvite(tx, {
+    const invitation = await insertInvite(tx, principal, {
       organizationId: principal.organizationId,
       inviterId: principal.userId,
       email: parsed.email,
       role: parsed.role,
       teamIds: parsed.teamIds,
       now: new Date(),
+      syncId,
     });
     return {
       invitation,
@@ -133,13 +153,14 @@ export async function createInvites(
     const actions: SyncAction[] = [];
     for (const entry of parsed.invites) {
       await assertEmailIsFree(tx, principal.organizationId, entry.email);
-      const invitation = await insertInvite(tx, {
+      const invitation = await insertInvite(tx, principal, {
         organizationId: principal.organizationId,
         inviterId: principal.userId,
         email: entry.email,
         role: entry.role,
         teamIds: entry.teamIds,
         now,
+        syncId,
       });
       invites.push({ invitation, token: invitation.id });
       actions.push(inviteAction(invitation, syncId, actor, 'insert'));
@@ -204,7 +225,7 @@ export async function revokeInvite(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.invitation)
-      .set({ status: 'revoked' })
+      .set({ status: 'revoked', syncId })
       .where(
         and(
           eq(schema.invitation.id, inviteId),
@@ -229,15 +250,16 @@ export async function resendInvite(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.invitation)
-      .set({ expiresAt: addUtcDays(new Date(), INVITE_TTL_DAYS), status: 'pending' })
+      .set({ expiresAt: addUtcDays(new Date(), INVITE_TTL_DAYS), syncId })
       .where(
         and(
           eq(schema.invitation.id, inviteId),
           eq(schema.invitation.organizationId, principal.organizationId),
+          eq(schema.invitation.status, 'pending'),
         ),
       )
       .returning();
-    const invitation = requireRow(updated, 'That invite does not exist.');
+    const invitation = requireRow(updated, 'That invite is no longer pending.');
     return {
       invitation,
       token: invitation.id,
@@ -287,6 +309,18 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     if (invitation.status !== 'pending') throw conflict('That invite is no longer available.');
     if (invitation.expiresAt.getTime() < Date.now()) throw conflict('That invite has expired.');
 
+    const [inviter] = await tx
+      .select({ role: schema.member.role })
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, invitation.organizationId),
+          eq(schema.member.userId, invitation.inviterId),
+        ),
+      )
+      .limit(1);
+    assertCanInviteRole(orgRoleOf(inviter?.role), invitation.role);
+
     const [invitedUser] = await tx
       .select({ email: schema.user.email, name: schema.user.name })
       .from(schema.user)
@@ -328,14 +362,15 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     if (teamIds.length > 0) {
       await tx
         .insert(schema.teamMember)
-        .values(teamIds.map((teamId) => ({ id: newId(), teamId, userId })))
+        .values(teamIds.map((teamId) => ({ id: newId(), teamId, userId, syncId })))
         .onConflictDoNothing();
     }
 
-    await tx
+    const [acceptedInvitation] = await tx
       .update(schema.invitation)
-      .set({ status: 'accepted' })
-      .where(eq(schema.invitation.id, invitation.id));
+      .set({ status: 'accepted', syncId })
+      .where(eq(schema.invitation.id, invitation.id))
+      .returning();
 
     const actor = { type: 'user', id: userId, name: invitedUser.name } as const;
 
@@ -359,6 +394,9 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
           data: member,
           actor,
         }),
+        ...(acceptedInvitation === undefined
+          ? []
+          : [inviteAction(acceptedInvitation, syncId, actor, 'update')]),
       ],
     };
   });

@@ -23,6 +23,7 @@ export function useViews() {
       const payload = await apiFetch('/api/views', viewListSchema, { signal });
       return payload.views;
     },
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

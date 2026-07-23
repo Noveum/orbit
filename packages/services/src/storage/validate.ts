@@ -48,7 +48,7 @@ export function sanitizeFileName(fileName: string): string {
   return cleaned.length > 120 ? cleaned.slice(-120).replace(/^[-.]+/, '') : cleaned;
 }
 
-export function validateUpload(candidate: UploadCandidate): ValidatedUpload {
+export function validateUpload(candidate: unknown): ValidatedUpload {
   const parsed = uploadCandidateSchema.safeParse(candidate);
   if (!parsed.success) {
     throw validationFailed('That upload request is not valid.', {

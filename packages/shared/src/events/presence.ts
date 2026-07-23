@@ -14,3 +14,10 @@ export const presenceMessageSchema = z.object({
 });
 
 export type PresenceMessage = z.infer<typeof presenceMessageSchema>;
+
+export const PRESENCE_TTL_MS = 45_000;
+
+export function isFresh(at: string, ttlMs: number, now = Date.now()): boolean {
+  const stamped = Date.parse(at);
+  return Number.isFinite(stamped) && now - stamped < ttlMs;
+}

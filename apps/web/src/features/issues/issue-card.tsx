@@ -32,8 +32,9 @@ export function IssueCard({
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(
         'flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
-        'transition-[transform,box-shadow,opacity] duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
-        'hover:border-border-strong',
+        'transition-[transform,box-shadow,opacity,background-color,border-color] ease-[var(--ease-standard)] motion-reduce:transition-none',
+        'duration-[var(--duration-instant)] hover:duration-[var(--duration-base)]',
+        'hover:border-border-strong hover:bg-surface-2',
         dragging && '-translate-y-0.5 rotate-[0.4deg] opacity-95 shadow-pop',
         className,
       )}

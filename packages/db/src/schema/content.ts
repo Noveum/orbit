@@ -1,9 +1,7 @@
-import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
   bigint,
   boolean,
-  check,
   doublePrecision,
   index,
   integer,
@@ -62,10 +60,8 @@ export const reaction = pgTable(
   },
   (table) => [
     uniqueIndex('reaction_comment_unique').on(table.commentId, table.userId, table.emoji),
-    uniqueIndex('reaction_issue_unique').on(table.issueId, table.userId, table.emoji),
     index('reaction_comment_idx').on(table.commentId),
     index('reaction_issue_idx').on(table.issueId),
-    check('reaction_one_parent', sql`num_nonnulls(${table.commentId}, ${table.issueId}) = 1`),
   ],
 );
 

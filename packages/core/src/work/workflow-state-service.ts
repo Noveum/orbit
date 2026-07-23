@@ -4,10 +4,11 @@ import { conflict, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { workflowStateCreateSchema, workflowStateUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
+import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -57,13 +58,14 @@ export async function listWorkflowStates(
   teamId: string,
 ): Promise<WorkflowStateRow[]> {
   assertCan(principal, 'issue:read');
+  const team = await requireTeam(principal, teamId);
   return await db
     .select()
     .from(schema.workflowState)
     .where(
       and(
         eq(schema.workflowState.organizationId, principal.organizationId),
-        eq(schema.workflowState.teamId, teamId),
+        eq(schema.workflowState.teamId, team.id),
       ),
     )
     .orderBy(asc(schema.workflowState.position));
@@ -108,21 +110,21 @@ export async function createWorkflowState(
 ): Promise<{ state: WorkflowStateRow; actions: SyncAction[] }> {
   assertCan(principal, 'workflow:manage');
   const parsed = workflowStateCreateSchema.parse(input);
-  assertInTeam(principal, parsed.teamId);
 
   return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parsed.teamId, tx);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [maxPosition] = await tx
       .select({ total: count() })
       .from(schema.workflowState)
-      .where(eq(schema.workflowState.teamId, parsed.teamId));
+      .where(eq(schema.workflowState.teamId, team.id));
     const [state] = await tx
       .insert(schema.workflowState)
       .values({
         id: newId(),
         organizationId: principal.organizationId,
-        teamId: parsed.teamId,
+        teamId: team.id,
         name: parsed.name,
         category: parsed.category,
         color: parsed.color,
@@ -169,7 +171,7 @@ export async function updateWorkflowState(
       )
       .limit(1);
     const current = requireRow(existing, 'That workflow state does not exist.');
-    assertInTeam(principal, current.teamId);
+    assertInTeam(principal, teamScope(current));
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -221,7 +223,7 @@ export async function deleteWorkflowState(
       )
       .limit(1);
     const current = requireRow(existing, 'That workflow state does not exist.');
-    assertInTeam(principal, current.teamId);
+    assertInTeam(principal, teamScope(current));
 
     const [used] = await tx
       .select({ total: count() })
@@ -257,10 +259,10 @@ export async function reorderWorkflowStates(
   orderedStateIds: readonly string[],
 ): Promise<{ states: WorkflowStateRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'workflow:manage');
-  assertInTeam(principal, teamId);
   if (orderedStateIds.length === 0) throw notFound('Provide the states to reorder.');
 
   return await db.transaction(async (tx) => {
+    await requireTeam(principal, teamId, tx);
     const existing = await tx
       .select()
       .from(schema.workflowState)

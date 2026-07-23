@@ -5,6 +5,7 @@ export const SYNC_MODELS = [
   'organization',
   'issue',
   'issue_relation',
+  'issue_subscription',
   'comment',
   'reaction',
   'attachment',
@@ -12,11 +13,14 @@ export const SYNC_MODELS = [
   'milestone',
   'cycle',
   'team',
+  'team_member',
   'workflow_state',
   'label',
   'doc',
+  'doc_collection',
   'notification',
   'member',
+  'invitation',
   'view',
 ] as const;
 
@@ -43,3 +47,19 @@ export const syncActionSchema = z.object({
 });
 
 export type SyncAction = z.infer<typeof syncActionSchema>;
+
+export const syncCursorSchema = z.number().int().nonnegative();
+
+export const CATCHUP_LIMIT = 500;
+
+export const syncCatchupQuerySchema = z.object({
+  since: z.coerce.number().int().nonnegative().default(0),
+});
+
+export const syncCatchupSchema = z.object({
+  syncId: syncCursorSchema,
+  actions: z.array(syncActionSchema),
+  truncated: z.boolean(),
+});
+
+export type SyncCatchup = z.infer<typeof syncCatchupSchema>;

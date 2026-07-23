@@ -1,7 +1,13 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
-import { createUser, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
+import {
+  addMember,
+  createUser,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../test-support.ts';
 import {
   acceptInvite,
   createInvite,
@@ -165,5 +171,116 @@ describe('matchAllowedDomain', () => {
     expect(matchAllowedDomain(organization, 'b@example.com')).toBe('example.com');
     expect(matchAllowedDomain(organization, 'c@nope.dev')).toBeNull();
     expect(matchAllowedDomain(organization, 'not-an-email')).toBeNull();
+  });
+});
+
+describe('role escalation', () => {
+  it('refuses a member inviting an admin through the bulk path', async () => {
+    const member = await addMember(workspace, 'member');
+    const invited = await createUser('Ivy Invitee');
+
+    await expect(
+      createInvites(member.principal, { invites: [{ email: invited.email, role: 'admin' }] }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+
+    expect(await listPendingInvites(workspace.admin)).toHaveLength(0);
+  });
+
+  it('refuses a member inviting an admin through the single path', async () => {
+    const member = await addMember(workspace, 'member');
+    const invited = await createUser('Ivy Invitee');
+
+    await expect(
+      createInvite(member.principal, { email: invited.email, role: 'admin' }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('lets a member invite a lesser role', async () => {
+    const member = await addMember(workspace, 'member');
+    const invited = await createUser('Ivy Invitee');
+
+    const { invites } = await createInvites(member.principal, {
+      invites: [{ email: invited.email, role: 'contributor' }],
+    });
+    expect(invites[0]?.invitation.role).toBe('contributor');
+  });
+
+  it('refuses an admin invite once the inviter has been demoted', async () => {
+    const inviter = await addMember(workspace, 'member');
+    const invited = await createUser('Ivy Invitee');
+    const { token } = await createInvite(workspace.admin, {
+      email: invited.email,
+      role: 'admin',
+    });
+    await db
+      .update(schema.invitation)
+      .set({ inviterId: inviter.user.id })
+      .where(eq(schema.invitation.id, token));
+
+    await expect(acceptInvite(token, invited.id)).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
+describe('resendInvite', () => {
+  it('refuses to resurrect a revoked invite', async () => {
+    const invited = await createUser('Ivy Invitee');
+    const { token } = await createInvite(workspace.admin, { email: invited.email });
+    await revokeInvite(workspace.admin, token);
+
+    await expect(resendInvite(workspace.admin, token)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    const [invitation] = await db
+      .select()
+      .from(schema.invitation)
+      .where(eq(schema.invitation.id, token));
+    expect(invitation?.status).toBe('revoked');
+  });
+});
+
+describe('allowed email domains', () => {
+  const previous = process.env['ALLOWED_EMAIL_DOMAINS'];
+
+  afterEach(() => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = previous ?? '';
+  });
+
+  it('rejects an address outside the configured domains and names the domain', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com, noveum.ai';
+
+    await expect(
+      createInvites(workspace.admin, { invites: [{ email: 'kpulkit15234@gmail.com' }] }),
+    ).rejects.toMatchObject({ code: 'forbidden', details: { domain: 'gmail.com' } });
+
+    const allowed = await createInvites(workspace.admin, {
+      invites: [{ email: 'shashank@magicapi.com' }, { email: 'pulkit@noveum.ai' }],
+    });
+    expect(allowed.invites).toHaveLength(2);
+  });
+
+  it('honours the per workspace list on top of the configured one', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = '';
+    await db
+      .update(schema.organization)
+      .set({ allowedEmailDomains: ['noveum.ai'] })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    await expect(
+      createInvites(workspace.admin, { invites: [{ email: 'shashank@magicapi.com' }] }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+
+    const allowed = await createInvites(workspace.admin, {
+      invites: [{ email: 'pulkit@noveum.ai' }],
+    });
+    expect(allowed.invites).toHaveLength(1);
+  });
+
+  it('allows anything when nothing is configured', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = '';
+    const { invites } = await createInvites(workspace.admin, {
+      invites: [{ email: 'kpulkit15234@gmail.com' }],
+    });
+    expect(invites).toHaveLength(1);
   });
 });

@@ -4,7 +4,11 @@ import type {
   PresenceMessage,
   SyncAction,
 } from '@orbit/shared/events';
-import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, serverMessageSchema } from '@orbit/shared/events';
+import {
+  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+  serverMessageSchema,
+  UNAUTHORIZED_CLOSE_CODE,
+} from '@orbit/shared/events';
 
 export type RealtimeStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -15,6 +19,8 @@ export interface RealtimeClientOptions {
   onDelta?: (actions: SyncAction[]) => void;
   onPresence?: (messages: PresenceMessage[]) => void;
   onStatus?: (status: RealtimeStatus) => void;
+  onResume?: (since: number) => void;
+  onDenied?: (scopes: string[]) => void;
   maxBackoffMs?: number;
 }
 
@@ -23,12 +29,19 @@ export interface RealtimeClient {
   unsubscribe(scopes: readonly string[]): void;
   setPresence(scope: string, kind: PresenceKind): void;
   status(): RealtimeStatus;
+  seen(): number;
+  observe(syncId: number): void;
   close(): void;
 }
 
 const BASE_BACKOFF_MS = 500;
 const DEFAULT_MAX_BACKOFF_MS = 15_000;
 const NORMAL_CLOSURE = 1000;
+
+const TERMINAL_CLOSE_CODES: readonly number[] = [
+  UNAUTHORIZED_CLOSE_CODE,
+  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+];
 
 function backoffDelay(attempt: number, maxBackoffMs: number): number {
   const exponential = Math.min(maxBackoffMs, BASE_BACKOFF_MS * 2 ** attempt);
@@ -50,6 +63,8 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
   let status: RealtimeStatus = 'connecting';
   let attempt = 0;
   let disposed = false;
+  let resumed = false;
+  let maxSeenSyncId = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function setStatus(next: RealtimeStatus): void {
@@ -64,6 +79,15 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     return true;
   }
 
+  function sendSubscribe(requested: readonly string[]): void {
+    if (requested.length === 0) return;
+    send({ type: 'subscribe', scopes: [...requested], since: maxSeenSyncId });
+  }
+
+  function observe(syncId: number): void {
+    if (syncId > maxSeenSyncId) maxSeenSyncId = syncId;
+  }
+
   function receive(payload: string): void {
     let parsedJson: unknown;
     try {
@@ -74,8 +98,19 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     const parsed = serverMessageSchema.safeParse(parsedJson);
     if (!parsed.success) return;
     const message = parsed.data;
-    if (message.type === 'delta') options.onDelta?.(message.actions);
-    else if (message.type === 'presence') options.onPresence?.(message.messages);
+    if (message.type === 'delta') {
+      for (const action of message.actions) observe(action.syncId);
+      options.onDelta?.(message.actions);
+      return;
+    }
+    if (message.type === 'presence') {
+      options.onPresence?.(message.messages);
+      return;
+    }
+    if (message.type === 'subscribed' && message.denied.length > 0) {
+      for (const scope of message.denied) scopes.delete(scope);
+      options.onDenied?.([...message.denied]);
+    }
   }
 
   function scheduleReconnect(): void {
@@ -99,8 +134,11 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     socket = next;
     next.onopen = () => {
       attempt = 0;
+      const reconnected = resumed;
+      resumed = true;
       setStatus('open');
-      if (scopes.size > 0) send({ type: 'subscribe', scopes: [...scopes] });
+      sendSubscribe([...scopes]);
+      if (reconnected) options.onResume?.(maxSeenSyncId);
     };
     next.onmessage = (event) => {
       const payload: unknown = event.data;
@@ -108,7 +146,7 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     };
     next.onclose = (event) => {
       if (socket === next) socket = null;
-      if (event.code === ORGANIZATION_FORBIDDEN_CLOSE_CODE) disposed = true;
+      if (TERMINAL_CLOSE_CODES.includes(event.code)) disposed = true;
       if (disposed) {
         setStatus('closed');
         return;
@@ -123,7 +161,7 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     subscribe(requested: readonly string[]): void {
       const added = requested.filter((scope) => !scopes.has(scope));
       for (const scope of requested) scopes.add(scope);
-      if (added.length > 0) send({ type: 'subscribe', scopes: added });
+      sendSubscribe(added);
     },
     unsubscribe(requested: readonly string[]): void {
       for (const scope of requested) scopes.delete(scope);
@@ -135,6 +173,10 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     status(): RealtimeStatus {
       return status;
     },
+    seen(): number {
+      return maxSeenSyncId;
+    },
+    observe,
     close(): void {
       disposed = true;
       if (reconnectTimer !== undefined) {
