@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { ScrollArea } from '@/components/ui/scroll-area.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
+import { revealOnHover } from '@/lib/interaction.ts';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
 
 const RECENT_MS = 24 * 60 * 60 * 1000;
@@ -56,8 +57,10 @@ function GroupActions({
   readonly onRename: () => void;
   readonly onDelete: () => void;
 }) {
-  const iconClassName =
-    'flex size-5 items-center justify-center rounded-sm text-faint opacity-0 transition-opacity duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text focus-visible:opacity-100 group-hover:opacity-100';
+  const iconClassName = cn(
+    'flex size-5 items-center justify-center rounded-sm text-faint hover:bg-surface-2 hover:text-text',
+    revealOnHover,
+  );
 
   return (
     <>
