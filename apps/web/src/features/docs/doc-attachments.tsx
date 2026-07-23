@@ -2,6 +2,8 @@
 
 import { formatBytes } from '@orbit/shared/utils';
 import { FileText, Paperclip } from 'lucide-react';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { Attachment } from '@/lib/query/schemas.ts';
 
 export function fileUrl(storageKey: string): string {
@@ -77,7 +79,7 @@ export function DocAttachments({ attachments }: DocAttachmentsProps) {
         {ready.map((attachment) => (
           <li
             key={attachment.id}
-            className="overflow-hidden rounded-lg border border-border bg-surface"
+            className={cn('overflow-hidden rounded-lg border border-border bg-surface', cardHover)}
           >
             <Preview attachment={attachment} />
             <div className="flex items-baseline justify-between gap-2 border-border border-t px-3 py-2">

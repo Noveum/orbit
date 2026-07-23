@@ -82,10 +82,14 @@ describe('domain invariants', () => {
     expect(deleteActionOf(schema.issue, 'parent_id')).toBe('set null');
   });
 
-  it('allows one reaction parent only', () => {
-    expect(getTableConfig(schema.reaction).checks.map((entry) => entry.name)).toContain(
-      'reaction_one_parent',
+  it('keeps one reaction per comment, user, and emoji', () => {
+    const index = getTableConfig(schema.reaction).indexes.find(
+      (entry) => entry.config.name === 'reaction_comment_unique',
     );
+    expect(index?.config.unique).toBe(true);
+    expect(
+      (index?.config.columns ?? []).map((column) => (column as { name?: string }).name),
+    ).toEqual(['comment_id', 'user_id', 'emoji']);
   });
 
   it('scopes every soft deletable uniqueness rule to live rows', () => {

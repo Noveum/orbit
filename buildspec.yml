@@ -99,6 +99,29 @@ phases:
           exit 1
         fi
 
+        JOB=$(sed -e "s|__ECR_REGISTRY__|$ECR|g" -e "s|__IMAGE_TAG__|$IMAGE_TAG|g" \
+          k8s/06-migrate-job.yaml | kubectl create -n "$EKS_NAMESPACE" -f - -o name)
+        echo "created $JOB for schema migration"
+        TIMEOUT_SECONDS=$(printf '%s' "$ROLLOUT_TIMEOUT" | awk '{ s=0; n=""; for (i=1;i<=length($0);i++) { c=substr($0,i,1); if (c ~ /[0-9]/) { n=n c } else { if (c=="h") s+=n*3600; else if (c=="m") s+=n*60; else if (c=="s") s+=n; n="" } } if (n!="") s+=n; print s }')
+        DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
+        while true; do
+          READY=$(kubectl get "$JOB" -n "$EKS_NAMESPACE" --request-timeout=10s \
+            -o 'jsonpath={.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)
+          case "$READY" in
+            *Complete*) echo "Schema migration applied, rolling out new code"; break ;;
+            *Failed*)
+              echo "ERROR: schema migration failed, refusing to roll out new code" >&2
+              kubectl logs "$JOB" -n "$EKS_NAMESPACE" --tail=80 >&2 || true
+              exit 1 ;;
+          esac
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "ERROR: schema migration did not finish within $ROLLOUT_TIMEOUT" >&2
+            kubectl logs "$JOB" -n "$EKS_NAMESPACE" --tail=80 >&2 || true
+            exit 1
+          fi
+          sleep 3
+        done
+
         for NAME in web realtime mcp; do
           kubectl set image "deployment/orbit-$NAME" -n "$EKS_NAMESPACE" \
             "orbit-$NAME=$ECR/orbit-$NAME:$IMAGE_TAG"

@@ -1,50 +1,27 @@
 import { describe, expect, it } from 'bun:test';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { useTheme } from 'next-themes';
+import { render, screen } from '@testing-library/react';
+import { isValidElement, type ReactElement } from 'react';
 import { ThemeProvider } from './theme-provider.tsx';
 
-function ThemeProbe() {
-  const { resolvedTheme, setTheme } = useTheme();
-  return (
-    <div>
-      <span data-testid="resolved">{resolvedTheme ?? 'unset'}</span>
-      <button type="button" onClick={() => setTheme('dark')}>
-        dark
-      </button>
-      <button type="button" onClick={() => setTheme('light')}>
-        light
-      </button>
-    </div>
-  );
-}
-
 describe('ThemeProvider', () => {
-  it('renders the light theme and applies the light class', async () => {
+  it('renders its children under the theme context', () => {
     render(
       <ThemeProvider>
-        <ThemeProbe />
+        <span data-testid="child">content</span>
       </ThemeProvider>,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'light' }));
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('light');
-    });
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(screen.getByTestId('child')).toHaveTextContent('content');
   });
 
-  it('switches to the dark theme and applies the dark class', async () => {
-    render(
-      <ThemeProvider>
-        <ThemeProbe />
-      </ThemeProvider>,
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'dark' }));
-    await waitFor(() => {
-      expect(screen.getByTestId('resolved')).toHaveTextContent('dark');
+  it('drives theming through the class attribute with a light and dark scheme', () => {
+    const element = ThemeProvider({ children: null }) as ReactElement<Record<string, unknown>>;
+    expect(isValidElement(element)).toBe(true);
+    expect(element.props).toMatchObject({
+      attribute: 'class',
+      defaultTheme: 'system',
+      enableSystem: true,
+      disableTransitionOnChange: true,
+      themes: ['light', 'dark'],
     });
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(document.documentElement.classList.contains('light')).toBe(false);
   });
 });

@@ -3,16 +3,23 @@ import type { SyncAction } from '@orbit/shared/events';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
 import { clientId } from '@/lib/query/client-id.ts';
-import { queryKeys } from '@/lib/query/keys.ts';
+import { BOOTSTRAP_ROOT, DOC_ROOT, DOCS_ROOT, queryKeys, VIEWS_ROOT } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
+import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
+let capturedResume: ((since: number) => void) | null = null;
+const observed: number[] = [];
 
 mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,
   useDeltaHandler: (handler: (actions: SyncAction[]) => void) => {
     capturedHandler = handler;
   },
+  useResumeHandler: (handler: (since: number) => void) => {
+    capturedResume = handler;
+  },
+  useObserveSyncId: () => (syncId: number) => observed.push(syncId),
 }));
 
 const { DeltaBridge } = await import('./delta-bridge.tsx');
@@ -52,7 +59,7 @@ function issue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
-function renameAction(originClientId: string, title: string): SyncAction {
+function action(overrides: Partial<SyncAction> = {}): SyncAction {
   return {
     syncId: 11,
     organizationId: 'org_1',
@@ -60,16 +67,23 @@ function renameAction(originClientId: string, title: string): SyncAction {
     action: 'update',
     model: 'issue',
     modelId: 'issue_1',
-    data: { id: 'issue_1', title, syncId: 11 },
+    data: { id: 'issue_1', title: 'Renamed', syncId: 11 },
     actor: { type: 'user', id: 'user_1' },
     at: '2026-01-01T00:00:01.000Z',
-    originClientId,
+    ...overrides,
   };
+}
+
+function renameAction(originClientId: string, title: string): SyncAction {
+  return { ...action({ data: { id: 'issue_1', title, syncId: 11 } }), originClientId };
 }
 
 function mount(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(queryKeys.issues(TEAM), [issue()]);
+  client.setQueryData(queryKeys.issues(TEAM), {
+    pages: [{ issues: [issue()], nextCursor: null }],
+    pageParams: [null],
+  });
   render(
     <QueryClientProvider client={client}>
       <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
@@ -79,7 +93,18 @@ function mount(): QueryClient {
 }
 
 function titleIn(client: QueryClient): string | undefined {
-  return client.getQueryData<readonly Issue[]>(queryKeys.issues(TEAM))?.[0]?.title;
+  return client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.title;
+}
+
+function trackInvalidations(client: QueryClient): unknown[][] {
+  const seen: unknown[][] = [];
+  const original = client.invalidateQueries.bind(client);
+  client.invalidateQueries = (filters?: Parameters<typeof original>[0]) => {
+    const key = filters?.queryKey;
+    if (key !== undefined) seen.push([...key]);
+    return Promise.resolve();
+  };
+  return seen;
 }
 
 describe('DeltaBridge origin suppression', () => {
@@ -101,5 +126,112 @@ describe('DeltaBridge origin suppression', () => {
     const { originClientId: _ignored, ...withoutOrigin } = renameAction('unused', 'From the MCP');
     act(() => capturedHandler?.([withoutOrigin]));
     expect(titleIn(client)).toBe('From the MCP');
+  });
+});
+
+describe('DeltaBridge ordering', () => {
+  it('ignores a delta whose sync id is not newer than the cached row', () => {
+    const client = mount();
+    act(() =>
+      capturedHandler?.([
+        action({ syncId: 12, data: { id: 'issue_1', title: 'Newest', syncId: 12 } }),
+        action({ syncId: 9, data: { id: 'issue_1', title: 'Stale replay', syncId: 9 } }),
+      ]),
+    );
+    expect(titleIn(client)).toBe('Newest');
+  });
+
+  it('keeps a delta for another team out of this team list', () => {
+    const client = mount();
+    act(() =>
+      capturedHandler?.([
+        action({
+          modelId: 'issue_other',
+          data: { ...issue({ id: 'issue_other', teamId: 'team_design' }), syncId: 30 },
+        }),
+      ]),
+    );
+    const list = client.getQueryData<IssuePages>(queryKeys.issues(TEAM));
+    expect(list?.pages.flatMap((page) => page.issues)).toHaveLength(1);
+  });
+});
+
+describe('DeltaBridge root invalidation', () => {
+  it('invalidates the bootstrap root once for a burst of org config models', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'workflow_state', modelId: 'state_1', data: { id: 'state_1' } }),
+        action({ model: 'label', modelId: 'label_1', data: { id: 'label_1' } }),
+        action({ model: 'team_member', modelId: 'tm_1', data: { id: 'tm_1' } }),
+      ]),
+    );
+    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+  });
+
+  it('invalidates the views root for a view delta', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() => capturedHandler?.([action({ model: 'view', modelId: 'view_1', data: {} })]));
+    expect(seen).toEqual([[VIEWS_ROOT]]);
+  });
+
+  it('invalidates docs once and each touched doc for a doc burst', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'doc', modelId: 'doc_1', data: {} }),
+        action({ model: 'doc_collection', modelId: 'col_1', data: {} }),
+      ]),
+    );
+    expect(seen).toEqual([[DOCS_ROOT], [DOC_ROOT, 'doc_1']]);
+  });
+
+  it('leaves every root alone for a delta the bridge patches in place', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() => capturedHandler?.([action()]));
+    expect(seen).toEqual([]);
+  });
+});
+
+describe('DeltaBridge reconnect backfill', () => {
+  it('replays the catch up endpoint instead of refetching the visible list', async () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    observed.length = 0;
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(
+        Response.json({
+          syncId: 42,
+          truncated: false,
+          actions: [
+            action({ syncId: 42, data: { id: 'issue_1', title: 'Caught up', syncId: 42 } }),
+          ],
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await act(async () => {
+        capturedResume?.(17);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requested).toEqual(['/api/sync?since=17']);
+    expect(titleIn(client)).toBe('Caught up');
+    expect(observed).toContain(42);
+    expect(seen).toEqual([]);
   });
 });

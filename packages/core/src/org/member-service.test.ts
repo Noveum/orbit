@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { newId } from '../internal.ts';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import { createIssue } from '../work/issue-service.ts';
 import { listMembers, removeMember, resolvePrincipal, updateMemberRole } from './member-service.ts';
@@ -127,5 +128,46 @@ describe('removeMember', () => {
     await expect(
       removeMember(workspace.admin, await memberIdFor(workspace.admin.userId)),
     ).rejects.toMatchObject({ code: 'conflict' });
+  });
+});
+
+describe('removeMember kills the session', () => {
+  it('deletes every session of the removed user in the same transaction', async () => {
+    const { user } = await addMember(workspace, 'member');
+    await db.insert(schema.session).values({
+      id: newId(),
+      token: newId(),
+      userId: user.id,
+      activeOrganizationId: workspace.organizationId,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+
+    await removeMember(workspace.admin, await memberIdFor(user.id));
+
+    const sessions = await db
+      .select()
+      .from(schema.session)
+      .where(eq(schema.session.userId, user.id));
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('leaves other people signed in', async () => {
+    const leaver = await addMember(workspace, 'member');
+    const stayer = await addMember(workspace, 'member');
+    await db.insert(schema.session).values({
+      id: newId(),
+      token: newId(),
+      userId: stayer.user.id,
+      activeOrganizationId: workspace.organizationId,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+
+    await removeMember(workspace.admin, await memberIdFor(leaver.user.id));
+
+    const sessions = await db
+      .select()
+      .from(schema.session)
+      .where(eq(schema.session.userId, stayer.user.id));
+    expect(sessions).toHaveLength(1);
   });
 });

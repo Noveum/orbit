@@ -1,73 +1,91 @@
 'use client';
 
-import type { FilterPredicate, IssueOrdering } from '@orbit/shared/filters';
-import { encodeFilterPredicates } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
-import { queryKeys } from './keys.ts';
-import type { Bootstrap, Issue, IssueDetail } from './schemas.ts';
+import {
+  assignedSearch,
+  DEFAULT_ISSUE_QUERY,
+  ISSUE_PAGE_SIZE,
+  type IssueQuery,
+  issueSearch,
+} from './issue-search.ts';
+import { ISSUES_ROOT, queryKeys } from './keys.ts';
+import type { Bootstrap, Issue, IssueCounts, IssueDetail, IssuePage } from './schemas.ts';
 import {
   bootstrapSchema,
+  issueCountsSchema,
   issueDetailSchema,
   issueEnvelopeSchema,
   issueListSchema,
   issueMoveResultSchema,
 } from './schemas.ts';
-import { sortIssues } from './sync.ts';
+import type { IssuePages } from './sync.ts';
+import { flattenIssuePages, mapIssuePages, sortIssues } from './sync.ts';
 
-export function useBootstrap(teamKey: string | null) {
-  return useQuery({
+export type { IssueQuery };
+export { assignedSearch, DEFAULT_ISSUE_QUERY, ISSUE_PAGE_SIZE, issueSearch };
+
+export function bootstrapQueryOptions(teamKey: string | null) {
+  return {
     queryKey: queryKeys.bootstrap(teamKey),
-    queryFn: async ({ signal }): Promise<Bootstrap> =>
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Bootstrap> =>
       await apiFetch(
         teamKey === null ? '/api/bootstrap' : `/api/bootstrap?team=${encodeURIComponent(teamKey)}`,
         bootstrapSchema,
         { signal },
       ),
-  });
+    staleTime: Number.POSITIVE_INFINITY,
+  };
 }
 
-export interface IssueQuery {
-  readonly predicates: readonly FilterPredicate[];
-  readonly orderBy: IssueOrdering;
-  readonly includeSubIssues: boolean;
+export function useBootstrap(teamKey: string | null) {
+  return useQuery(bootstrapQueryOptions(teamKey));
 }
 
-export const DEFAULT_ISSUE_QUERY: IssueQuery = {
-  predicates: [],
-  orderBy: 'manual',
-  includeSubIssues: true,
-};
-
-export function issueSearch(teamId: string, query: IssueQuery): string {
-  const params = new URLSearchParams({ teamId, limit: '200', orderBy: query.orderBy });
-  if (!query.includeSubIssues) params.set('includeSubIssues', 'false');
-  const predicates = encodeFilterPredicates(query.predicates);
-  if (predicates.length > 0) params.set('predicates', predicates);
-  return params.toString();
+async function fetchIssuePage(
+  search: string,
+  cursor: string | null,
+  signal: AbortSignal,
+): Promise<IssuePage> {
+  const url =
+    cursor === null
+      ? `/api/issues?${search}`
+      : `/api/issues?${search}&cursor=${encodeURIComponent(cursor)}`;
+  return await apiFetch(url, issueListSchema, { signal });
 }
 
-const MAX_PAGES = 40;
+function pagedIssueOptions(queryKey: QueryKey, search: string) {
+  return {
+    queryKey,
+    queryFn: async ({
+      pageParam,
+      signal,
+    }: {
+      pageParam: string | null;
+      signal: AbortSignal;
+    }): Promise<IssuePage> => await fetchIssuePage(search, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: IssuePage): string | null => last.nextCursor,
+  };
+}
 
-async function fetchAllIssues(search: string, signal: AbortSignal): Promise<readonly Issue[]> {
-  const issues: Issue[] = [];
-  let cursor: string | null = null;
+export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_ISSUE_QUERY) {
+  const search = issueSearch(teamId, query);
+  return pagedIssueOptions(queryKeys.issues(teamId, search), search);
+}
 
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const url: string =
-      cursor === null
-        ? `/api/issues?${search}`
-        : `/api/issues?${search}&cursor=${encodeURIComponent(cursor)}`;
-    const result = await apiFetch(url, issueListSchema, { signal });
-    issues.push(...result.issues);
-    if (result.nextCursor === null || result.nextCursor === undefined) return issues;
-    cursor = result.nextCursor;
-  }
-
-  throw new Error(`Stopped after ${MAX_PAGES} pages of issues with more still to load.`);
+function seedPages(seed: readonly Issue[] | undefined): IssuePages | undefined {
+  if (seed === undefined || seed.length === 0) return undefined;
+  return { pages: [{ issues: [...seed], nextCursor: null }], pageParams: [null] };
 }
 
 export function useIssues(
@@ -75,22 +93,33 @@ export function useIssues(
   seed: readonly Issue[] | undefined,
   query: IssueQuery = DEFAULT_ISSUE_QUERY,
 ) {
-  const search = teamId === null ? '' : issueSearch(teamId, query);
-  return useQuery({
-    queryKey: queryKeys.issues(teamId ?? 'none', search),
+  const options = issuesQueryOptions(teamId ?? 'none', query);
+  return useInfiniteQuery({
+    ...options,
     enabled: teamId !== null,
-    queryFn: async ({ signal }): Promise<readonly Issue[]> => await fetchAllIssues(search, signal),
-    placeholderData: seed ?? keepPreviousData,
+    select: flattenIssuePages,
+    placeholderData: seedPages(seed) ?? keepPreviousData,
   });
 }
 
-export function teamIssuesQuery(teamId: string) {
-  const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
-  return {
-    queryKey: queryKeys.issues(teamId, search),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> =>
-      await fetchAllIssues(search, signal),
-  };
+export function useAssignedIssues(userId: string | null) {
+  const search = userId === null ? '' : assignedSearch(userId);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.assignedIssues(userId ?? 'none', search), search),
+    enabled: userId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useIssueCounts(teamId: string | null) {
+  const search = teamId === null ? '' : `teamId=${encodeURIComponent(teamId)}`;
+  return useQuery({
+    queryKey: queryKeys.issueCounts(search),
+    enabled: teamId !== null,
+    queryFn: async ({ signal }): Promise<IssueCounts> =>
+      await apiFetch(`/api/issues/counts?${search}`, issueCountsSchema, { signal }),
+  });
 }
 
 export function useIssueDetail(identifier: string) {
@@ -115,8 +144,15 @@ export interface IssuePatch {
   readonly labelIds?: readonly string[];
 }
 
-function replaceIssue(issues: readonly Issue[] | undefined, next: Issue): readonly Issue[] {
-  if (issues === undefined) return [next];
+function replaceIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
+  const index = issues.findIndex((issue) => issue.id === next.id);
+  if (index === -1) return issues;
+  const copy = [...issues];
+  copy[index] = next;
+  return copy;
+}
+
+function addIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
   if (index === -1) return [...issues, next];
   const copy = [...issues];
@@ -124,27 +160,36 @@ function replaceIssue(issues: readonly Issue[] | undefined, next: Issue): readon
   return copy;
 }
 
-type IssueListSnapshot = readonly [QueryKey, readonly Issue[] | undefined][];
+type IssueListSnapshot = readonly [QueryKey, IssuePages | undefined][];
 
-function snapshotIssueLists(client: QueryClient, teamId: string): IssueListSnapshot {
-  return client.getQueriesData<readonly Issue[]>({ queryKey: queryKeys.issueTeam(teamId) });
+function snapshotIssueLists(client: QueryClient): IssueListSnapshot {
+  return client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
 }
 
 function restoreIssueLists(client: QueryClient, snapshot: IssueListSnapshot): void {
-  for (const [key, issues] of snapshot) client.setQueryData(key, issues);
+  for (const [key, pages] of snapshot) client.setQueryData(key, pages);
 }
 
 function patchIssueLists(
   client: QueryClient,
-  teamId: string,
   update: (issues: readonly Issue[]) => readonly Issue[],
 ): void {
-  client.setQueriesData<readonly Issue[]>({ queryKey: queryKeys.issueTeam(teamId) }, (current) =>
-    current === undefined ? current : update(current),
+  client.setQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] }, (current) =>
+    current === undefined ? current : mapIssuePages(current, update),
   );
 }
 
-export function useUpdateIssue(teamId: string) {
+function patchTeamIssueLists(
+  client: QueryClient,
+  teamId: string,
+  update: (issues: readonly Issue[]) => readonly Issue[],
+): void {
+  client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(teamId) }, (current) =>
+    current === undefined ? current : mapIssuePages(current, update),
+  );
+}
+
+export function useUpdateIssue(_teamId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -157,8 +202,8 @@ export function useUpdateIssue(teamId: string) {
       return result.issue;
     },
     onMutate: async (input) => {
-      await client.cancelQueries({ queryKey: queryKeys.issueTeam(teamId) });
-      const previous = snapshotIssueLists(client, teamId);
+      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      const previous = snapshotIssueLists(client);
       const previousDetail = client.getQueryData<IssueDetail>(
         queryKeys.issue(input.issue.identifier),
       );
@@ -169,11 +214,14 @@ export function useUpdateIssue(teamId: string) {
         labelIds:
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
-      patchIssueLists(client, teamId, (issues) => replaceIssue(issues, optimistic));
+      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
       if (previousDetail !== undefined) {
         client.setQueryData(queryKeys.issue(input.issue.identifier), {
           ...previousDetail,
-          issue: optimistic,
+          issue: {
+            ...optimistic,
+            description: input.patch.description ?? previousDetail.issue.description,
+          },
         });
       }
       return { previous, previousDetail, identifier: input.issue.identifier };
@@ -186,13 +234,10 @@ export function useUpdateIssue(teamId: string) {
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (issue) => {
-      patchIssueLists(client, teamId, (issues) => replaceIssue(issues, issue));
+      patchIssueLists(client, (issues) => replaceIssue(issues, issue));
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
         current === undefined ? current : { ...current, issue },
       );
-    },
-    onSettled: async () => {
-      await client.invalidateQueries({ queryKey: queryKeys.issueTeam(teamId) });
     },
   });
 }
@@ -219,14 +264,14 @@ export function useMoveIssue(teamId: string) {
       return [result.issue, ...result.rebalanced];
     },
     onMutate: async (input) => {
-      await client.cancelQueries({ queryKey: queryKeys.issueTeam(teamId) });
-      const previous = snapshotIssueLists(client, teamId);
+      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      const previous = snapshotIssueLists(client);
       const optimistic: Issue = {
         ...input.issue,
         stateId: input.stateId,
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      patchIssueLists(client, teamId, (issues) => replaceIssue(issues, optimistic));
+      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
       return { previous };
     },
     onError: (error, _input, context) => {
@@ -234,11 +279,14 @@ export function useMoveIssue(teamId: string) {
       toast({ title: 'Could not move that issue', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (moved) => {
-      patchIssueLists(client, teamId, (current) => {
+      patchIssueLists(client, (current) => {
         let next = current;
         for (const issue of moved) next = replaceIssue(next, issue);
         return sortIssues(next);
       });
+    },
+    onSettled: () => {
+      patchTeamIssueLists(client, teamId, sortIssues);
     },
   });
 }
@@ -276,15 +324,12 @@ export function useCreateIssue(teamId: string) {
       });
     },
     onSuccess: (issue) => {
-      patchIssueLists(client, teamId, (issues) => sortIssues(replaceIssue(issues, issue)));
-    },
-    onSettled: async () => {
-      await client.invalidateQueries({ queryKey: queryKeys.issueTeam(teamId) });
+      patchTeamIssueLists(client, teamId, (issues) => sortIssues(addIssue(issues, issue)));
     },
   });
 }
 
-export function useDeleteIssue(teamId: string) {
+export function useDeleteIssue(_teamId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -295,14 +340,17 @@ export function useDeleteIssue(teamId: string) {
       });
     },
     onMutate: async (issue) => {
-      await client.cancelQueries({ queryKey: queryKeys.issueTeam(teamId) });
-      const previous = snapshotIssueLists(client, teamId);
-      patchIssueLists(client, teamId, (issues) => issues.filter((entry) => entry.id !== issue.id));
+      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      const previous = snapshotIssueLists(client);
+      patchIssueLists(client, (issues) => issues.filter((entry) => entry.id !== issue.id));
       return { previous };
     },
     onError: (error, _issue, context) => {
       if (context?.previous !== undefined) restoreIssueLists(client, context.previous);
       toast({ title: 'Could not delete', description: messageOf(error), tone: 'danger' });
+    },
+    onSettled: (_data, _error, issue) => {
+      client.removeQueries({ queryKey: queryKeys.issue(issue.identifier) });
     },
   });
 }

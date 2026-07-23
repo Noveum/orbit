@@ -15,7 +15,7 @@ export function Input({ className, type = 'text', ...props }: InputProps) {
         'h-9 w-full rounded-md border border-border bg-surface px-2.5 text-dense text-text',
         'placeholder:text-faint',
         'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
-        'hover:border-border-strong focus-visible:border-accent',
+        'not-disabled:hover:border-border-strong focus-visible:border-accent',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}

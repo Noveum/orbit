@@ -333,6 +333,16 @@ describe('listIssues', () => {
     expect(byIdentifier.issues[0]?.identifier).toBe('NOVA-1');
   });
 
+  it('leaves the description out of list rows and keeps it for an explicit full select', async () => {
+    await newIssue('Heavy issue', { description: 'A body long enough to matter on the wire.' });
+
+    const listed = await listIssues(workspace.admin, {});
+    expect(listed.issues[0]?.description).toBe('');
+
+    const full = await listIssues(workspace.admin, { select: 'full' });
+    expect(full.issues[0]?.description).toBe('A body long enough to matter on the wire.');
+  });
+
   it('hides archived issues unless asked', async () => {
     const issue = await newIssue('Old news');
     await archiveIssue(workspace.admin, issue.id);
@@ -468,6 +478,29 @@ describe('bulkUpdateIssues', () => {
     expect(result.actions).toHaveLength(2);
   });
 
+  it('writes one batched update for the whole selection instead of one per issue', async () => {
+    const created: Awaited<ReturnType<typeof newIssue>>[] = [];
+    for (let index = 0; index < 25; index += 1) created.push(await newIssue(`Bulk ${index}`));
+    const done = stateNamed(workspace, 'Done');
+
+    const result = await bulkUpdateIssues(workspace.admin, {
+      issueIds: created.map((issue) => issue.id),
+      patch: { stateId: done.id },
+    });
+
+    expect(result.issues).toHaveLength(25);
+    expect(result.issues.every((issue) => issue.stateId === done.id)).toBe(true);
+    expect(new Set(result.issues.map((issue) => issue.syncId)).size).toBe(1);
+    expect(new Set(result.issues.map((issue) => issue.updatedAt.getTime())).size).toBe(1);
+
+    const activity = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.field, 'stateId'));
+    expect(activity).toHaveLength(25);
+    expect(activity.every((row) => row.toValue !== null)).toBe(true);
+  });
+
   it('applies nothing when one issue in the batch fails', async () => {
     const first = await newIssue('Bulk one');
 
@@ -480,5 +513,70 @@ describe('bulkUpdateIssues', () => {
 
     const [unchanged] = await db.select().from(schema.issue).where(eq(schema.issue.id, first.id));
     expect(unchanged?.priority).toBe(0);
+  });
+});
+
+describe('tenancy', () => {
+  it('refuses to create an issue in another workspace team', async () => {
+    const vega = await createWorkspace('Vega');
+
+    await expect(
+      createIssue(workspace.admin, { teamId: vega.teamId, title: 'Injected' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    const rows = await db.select().from(schema.issue).where(eq(schema.issue.teamId, vega.teamId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('refuses to move an issue into another workspace team', async () => {
+    const issue = await newIssue('Stay home');
+    const vega = await createWorkspace('Vega');
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, { teamId: vega.teamId }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('keeps another team page empty for a guest', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const designState = states[0];
+    if (designState === undefined) throw new Error('missing design state');
+    await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Design only',
+      stateId: designState.id,
+    });
+    await newIssue('Engineering only');
+
+    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+
+    const page = await listIssues(guest.principal, { teamId: team.id });
+    expect(page.issues).toHaveLength(0);
+
+    const own = await listIssues(guest.principal, {});
+    expect(own.issues.map((issue) => issue.title)).toEqual(['Engineering only']);
+
+    const counts = await getIssueCounts(guest.principal, { teamId: team.id });
+    expect(counts).toHaveLength(0);
+  });
+
+  it('hides an issue on a team the reader is not on', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const designState = states[0];
+    if (designState === undefined) throw new Error('missing design state');
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Design only',
+      stateId: designState.id,
+    });
+    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+
+    await expect(getIssue(guest.principal, issue.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(getIssue(guest.principal, issue.identifier)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(listSubscribers(guest.principal, issue.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
   });
 });

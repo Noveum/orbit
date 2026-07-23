@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import { removalBlockReason } from './credentials.ts';
 import type { PasskeyView } from './data.ts';
 
@@ -149,7 +151,10 @@ export function PasskeysPanel({ passkeys, accountCount }: PasskeysPanelProps) {
             <li
               key={passkey.id}
               data-testid={`passkey-${passkey.id}`}
-              className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+              className={cn(
+                'flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5',
+                cardHover,
+              )}
             >
               <Fingerprint className="size-4 shrink-0 text-faint" aria-hidden="true" />
               {renamingId === passkey.id ? (

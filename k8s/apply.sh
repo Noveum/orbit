@@ -16,6 +16,13 @@ require aws
 require kubectl
 require sed
 
+if [ "${1:-}" != "--render" ] && [ -z "${S3_BUCKET:-}" ]; then
+  echo "S3_BUCKET is not set." >&2
+  echo "Browser uploads PUT straight at the bucket, so it needs the CORS rule in k8s/s3-cors.json." >&2
+  echo "Export S3_BUCKET with the uploads bucket name and run this again." >&2
+  exit 1
+fi
+
 awscli() {
   env -u HTTPS_PROXY -u https_proxy -u ALL_PROXY -u all_proxy aws "$@"
 }
@@ -77,6 +84,7 @@ render() {
     -e "s|__ECR_REGISTRY__|${ECR_REGISTRY}|g" \
     -e "s|__ORBIT_S3_ROLE_ARN__|${ORBIT_S3_ROLE_ARN}|g" \
     -e "s|__ACM_CERTIFICATE_ARN__|${ACM_CERTIFICATE_ARN}|g" \
+    -e "s|__ORBIT_ORIGIN__|https://${ORBIT_HOST}|g" \
     -e "s|__ORBIT_HOST__|${ORBIT_HOST}|g" \
     -e "s|__ALB_GROUP__|${ALB_GROUP}|g" \
     "$1"
@@ -86,6 +94,7 @@ MANIFESTS="00-namespace.yaml 01-redis.yaml 02-web.yaml 03-realtime.yaml 04-mcp.y
 
 if [ "${1:-}" = "--render" ]; then
   for file in $MANIFESTS; do render "$HERE/$file"; echo "---"; done
+  render "$HERE/s3-cors.json"
   exit 0
 fi
 
@@ -93,8 +102,10 @@ KUBECTL_ARGS=""
 if [ -n "${KUBE_SERVER:-}" ]; then
   KUBECTL_ARGS="--server=${KUBE_SERVER}"
 fi
+DRY_RUN="no"
 if [ "${1:-}" = "--dry-run" ]; then
   KUBECTL_ARGS="$KUBECTL_ARGS --dry-run=server"
+  DRY_RUN="yes"
   echo "running a server side dry run, nothing will be changed"
 fi
 
@@ -102,6 +113,15 @@ for file in $MANIFESTS; do
   echo "applying $file"
   render "$HERE/$file" | kubectl apply $KUBECTL_ARGS -f -
 done
+
+if [ "$DRY_RUN" = "yes" ]; then
+  echo "skipping the bucket CORS apply on a dry run. It would send:"
+  render "$HERE/s3-cors.json"
+else
+  echo "applying s3-cors.json to s3://${S3_BUCKET}"
+  awscli s3api put-bucket-cors --region "$AWS_REGION" --bucket "$S3_BUCKET" \
+    --cors-configuration "$(render "$HERE/s3-cors.json")"
+fi
 
 echo "done. run the migrate job separately with:"
 echo "  k8s/migrate.sh"

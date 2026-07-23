@@ -12,6 +12,8 @@ import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 
 export function matrixKey(channel: string, type: string): string {
   return `${channel}:${type}`;
@@ -106,7 +108,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
           </thead>
           <tbody>
             {NOTIFICATION_TYPES.map((type) => (
-              <tr key={type} className="border-border border-b last:border-b-0">
+              <tr key={type} className={cn('border-border border-b last:border-b-0', rowHover)}>
                 <th scope="row" className="px-3 py-1.5 text-left font-normal text-muted">
                   {typeLabel(type)}
                 </th>

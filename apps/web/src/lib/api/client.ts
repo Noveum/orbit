@@ -1,7 +1,9 @@
 'use client';
 
 import type { ErrorCode } from '@orbit/shared/errors';
+import { ORIGIN_CLIENT_ID_HEADER } from '@orbit/shared/events';
 import { z } from 'zod';
+import { clientId } from '@/lib/query/client-id.ts';
 
 const errorBodySchema = z.object({
   error: z.object({
@@ -36,7 +38,10 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const response = await fetch(url, {
     method: init.method,
-    headers: init.body === undefined ? {} : { 'content-type': 'application/json' },
+    headers: {
+      [ORIGIN_CLIENT_ID_HEADER]: clientId(),
+      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   const payload: unknown = await response.json().catch(() => ({}));

@@ -1,6 +1,7 @@
 import type { SyncAction } from '@orbit/shared/events';
+import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
-import type { Comment, Issue, Reaction } from './schemas.ts';
+import type { Comment, Issue, IssuePage, Reaction } from './schemas.ts';
 import { issueSchema, reactionSchema } from './schemas.ts';
 
 const partialIssueSchema = issueSchema.partial().extend({
@@ -35,10 +36,12 @@ function definedFields(value: Record<string, unknown>): IssueDelta {
   return Object.fromEntries(entries) as IssueDelta;
 }
 
+export type IssueBelongs = (issue: Issue) => boolean;
+
 export function applyIssueDelta(
   issues: readonly Issue[],
   action: SyncAction,
-  teamId: string,
+  belongs: IssueBelongs,
 ): readonly Issue[] {
   const parsed = partialIssueSchema.safeParse(action.data);
   if (!parsed.success) return issues;
@@ -52,7 +55,7 @@ export function applyIssueDelta(
   if (index === -1) {
     const full = issueSchema.safeParse(action.data);
     if (!full.success) return issues;
-    if (full.data.teamId !== teamId) return issues;
+    if (!belongs(full.data)) return issues;
     if (full.data.archivedAt !== null) return issues;
     return [...issues, full.data];
   }
@@ -66,11 +69,46 @@ export function applyIssueDelta(
     ...definedFields(incoming),
     labelIds: existing.labelIds,
   };
-  if (merged.teamId !== teamId) return issues.filter((issue) => issue.id !== incoming.id);
+  if (!belongs(merged)) return issues.filter((issue) => issue.id !== incoming.id);
 
   const next = [...issues];
   next[index] = merged;
   return next;
+}
+
+export type IssuePages = InfiniteData<IssuePage, string | null>;
+
+export function flattenIssuePages(data: IssuePages): readonly Issue[] {
+  if (data.pages.length === 1) return data.pages[0]?.issues ?? [];
+  return data.pages.flatMap((page) => page.issues);
+}
+
+export function mapIssuePages(
+  data: IssuePages,
+  update: (issues: readonly Issue[]) => readonly Issue[],
+): IssuePages {
+  const flat = flattenIssuePages(data);
+  const next = update(flat);
+  if (next === flat) return data;
+
+  let taken = 0;
+  const pages = data.pages.map((page, index) => {
+    const last = index === data.pages.length - 1;
+    const size = last ? next.length - taken : Math.min(page.issues.length, next.length - taken);
+    const issues = next.slice(taken, taken + Math.max(0, size));
+    taken += issues.length;
+    return { ...page, issues };
+  });
+  return { ...data, pages };
+}
+
+export function applyIssueDeltaToPages(
+  data: IssuePages | undefined,
+  action: SyncAction,
+  belongs: IssueBelongs,
+): IssuePages | undefined {
+  if (data === undefined) return data;
+  return mapIssuePages(data, (issues) => applyIssueDelta(issues, action, belongs));
 }
 
 export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?: string }>(

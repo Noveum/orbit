@@ -164,7 +164,7 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
             <button
               type="button"
               data-testid="issue-title"
-              className="text-left font-medium text-text text-xl leading-tight"
+              className="-mx-1 cursor-text select-text rounded-md px-1 text-left font-medium text-text text-xl leading-tight transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
               onClick={() => {
                 setTitleDraft(issue.title);
                 setEditingTitle(true);
@@ -208,7 +208,7 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
                   setBodyDraft(issue.description);
                   setEditingBody(true);
                 }}
-                className="group flex flex-col items-start gap-1 text-left"
+                className="-mx-2 group flex cursor-text select-text flex-col items-start gap-1 rounded-md px-2 py-1 text-left transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
               >
                 {issue.description.length === 0 ? (
                   <span className="flex items-center gap-1.5 text-dense text-faint">
