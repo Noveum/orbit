@@ -41,6 +41,7 @@ export async function POST(request: Request): Promise<Response> {
     const scope = [scopes.organization(attachment.organizationId)];
     if (attachment.parentType === 'doc') scope.push(scopes.doc(attachment.parentId));
     if (attachment.parentType === 'issue') scope.push(scopes.issue(attachment.parentId));
+    if (attachment.parentType === 'project') scope.push(scopes.project(attachment.parentId));
 
     await publish([
       buildSyncAction({

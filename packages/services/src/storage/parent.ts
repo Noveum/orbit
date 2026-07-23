@@ -1,4 +1,5 @@
 import { and, type Database, eq, schema, type Transaction } from '@orbit/db';
+import { isExternallyShared } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import { assertCan, type Principal } from '@orbit/shared/policy';
 
@@ -76,7 +77,7 @@ export async function assertUploadParent(
       throw notFound('That doc does not exist.');
     }
     assertCan(principal, 'doc:write');
-    if (row.visibility !== 'workspace') assertCan(principal, 'doc:publish');
+    if (isExternallyShared(row.visibility)) assertCan(principal, 'doc:publish');
     return;
   }
 
@@ -91,5 +92,5 @@ export async function isPubliclyReadable(
 ): Promise<boolean> {
   if (attachment.parentType !== 'doc') return false;
   const row = await docFor(executor, attachment.organizationId, attachment.parentId);
-  return row !== undefined && row.archivedAt === null && row.visibility !== 'workspace';
+  return row !== undefined && row.archivedAt === null && isExternallyShared(row.visibility);
 }

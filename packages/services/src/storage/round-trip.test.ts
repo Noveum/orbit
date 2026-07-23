@@ -80,7 +80,11 @@ describe('bucket CORS document', () => {
     expect(
       allows(rules, { origin: PRODUCTION_ORIGIN, method: 'DELETE', header: 'content-type' }),
     ).toBe(false);
+    expect(
+      allows(rules, { origin: PRODUCTION_ORIGIN, method: 'PUT', header: 'x-amz-meta-smuggled' }),
+    ).toBe(false);
     expect(rules.some((rule) => rule.AllowedOrigins.includes('*'))).toBe(false);
+    expect(rules.some((rule) => rule.AllowedHeaders.includes('*'))).toBe(false);
   });
 
   it('is applied by k8s/apply.sh, not just committed', async () => {

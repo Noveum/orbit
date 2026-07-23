@@ -161,7 +161,7 @@ host>`, methods `PUT`, `GET` and `HEAD`, request header `content-type`, and
 `ETag` exposed to the page. `apply.sh` renders the origin from `ORBIT_HOST` and
 applies it in the same run as the manifests, so there is one command:
 
-```
+```sh
 S3_BUCKET=<uploads bucket> ./k8s/apply.sh
 ```
 
@@ -169,7 +169,7 @@ S3_BUCKET=<uploads bucket> ./k8s/apply.sh
 without the CORS rule is exactly the broken state it exists to prevent. Read
 back what the bucket carries with:
 
-```
+```sh
 aws s3api get-bucket-cors --region us-east-1 --bucket "$S3_BUCKET"
 ```
 
@@ -177,7 +177,7 @@ Verify a real cross origin PDF upload after a deploy. Ask the running app for a
 presigned target, then PUT to it with the `Origin` header a browser would send,
 and record the status code:
 
-```
+```sh
 curl -si -X OPTIONS "$PRESIGNED_URL" \
   -H "Origin: https://<orbit host>" \
   -H 'Access-Control-Request-Method: PUT' \
@@ -189,8 +189,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X PUT "$PRESIGNED_URL" \
   --data-binary @sample.pdf
 ```
 
-A healthy bucket answers `204` to the preflight and `200` to the PUT. A `403`
-on the preflight means the CORS document never reached the bucket.
+A healthy bucket answers `200` to the preflight and `200` to the PUT. A `403`
+on the preflight means the CORS document never reached the bucket, the request
+origin, or the request method.
 
 Minio, which stands in for S3 in development and in CI, reflects whatever origin
 asks and answers `NotImplemented` to `PutBucketCors`, so it can neither be

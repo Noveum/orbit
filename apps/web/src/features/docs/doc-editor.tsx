@@ -212,7 +212,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
 
         <span className="ml-auto flex items-center gap-2">
           {uploading ? (
-            <span className="text-2xs text-faint" data-testid="upload-progress">
+            <span className="text-2xs text-faint" data-testid="upload-progress" aria-live="polite">
               Uploading {percent}%
             </span>
           ) : null}
