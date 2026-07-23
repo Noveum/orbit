@@ -9,10 +9,11 @@ import type { NavLink } from '@/lib/navigation.ts';
 export interface NavItemProps {
   readonly link: NavLink;
   readonly collapsed: boolean;
-  readonly onNavigate?: () => void;
+  readonly touch: boolean;
+  readonly onNavigate: (() => void) | null;
 }
 
-export function NavItem({ link, collapsed, onNavigate }: NavItemProps) {
+export function NavItem({ link, collapsed, touch, onNavigate }: NavItemProps) {
   const pathname = usePathname();
   const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
   const Icon = link.icon;
@@ -21,10 +22,11 @@ export function NavItem({ link, collapsed, onNavigate }: NavItemProps) {
     <Link
       href={link.href}
       aria-current={active ? 'page' : undefined}
-      {...(onNavigate === undefined ? {} : { onClick: onNavigate })}
+      {...(onNavigate === null ? {} : { onClick: onNavigate })}
       className={cn(
-        'group flex h-9 items-center gap-2 rounded-md px-2 text-dense sm:h-7',
+        'group flex items-center gap-2 rounded-md px-2 text-dense',
         'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
+        touch ? 'h-11 gap-3 px-3' : 'h-7 3xl:h-8',
         active
           ? 'bg-surface-2 font-medium text-text'
           : 'text-muted hover:bg-surface-2/70 hover:text-text',
@@ -47,6 +49,8 @@ export function NavItem({ link, collapsed, onNavigate }: NavItemProps) {
       )}
     </Link>
   );
+
+  if (touch) return anchor;
 
   return (
     <Tooltip
