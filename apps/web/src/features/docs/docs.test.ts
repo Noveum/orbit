@@ -10,7 +10,7 @@ import {
   wrapSelection,
 } from './markdown-input.ts';
 import { outlineOf, readTimeMinutes, slugify } from './outline.ts';
-import { uploadDocFile } from './upload.ts';
+import { uploadContentType, uploadDocFile } from './upload.ts';
 import { AUTOSAVE_DELAY_MS, useAutosave } from './use-autosave.ts';
 
 describe('outlineOf', () => {
@@ -147,17 +147,51 @@ describe('useAutosave', () => {
   });
 });
 
+describe('uploadContentType', () => {
+  it('sniffs the extension when the browser reports nothing', () => {
+    expect(uploadContentType({ name: 'Report Q3.PDF', type: '' })).toBe('application/pdf');
+    expect(uploadContentType({ name: 'shot.png', type: 'application/octet-stream' })).toBe(
+      'image/png',
+    );
+    expect(uploadContentType({ name: 'notes.md', type: '' })).toBe('text/markdown');
+  });
+
+  it('keeps the type the browser reported when it is supported', () => {
+    expect(uploadContentType({ name: 'clip.bin', type: 'Video/MP4' })).toBe('video/mp4');
+  });
+
+  it('names the offending type instead of falling back to octet-stream', () => {
+    expect(() =>
+      uploadContentType({ name: 'setup.exe', type: 'application/x-msdownload' }),
+    ).toThrow('That file type is not supported. (application/x-msdownload)');
+    expect(() => uploadContentType({ name: 'archive.rar', type: '' })).toThrow(
+      'That file type is not supported. (.rar)',
+    );
+    expect(() => uploadContentType({ name: 'noextension', type: '' })).toThrow(
+      'That file type is not supported. (noextension)',
+    );
+  });
+});
+
 describe('uploadDocFile', () => {
   const attachment = {
     id: 'att_1',
     parentType: 'doc',
     parentId: 'doc_1',
-    fileName: 'note.png',
-    contentType: 'image/png',
+    fileName: 'brief.pdf',
+    contentType: 'application/pdf',
     size: 4,
-    storageKey: 'org_1/2026/07/note.png',
+    storageKey: 'org_1/2026/07/brief.pdf',
     status: 'pending',
   };
+
+  const signedHeaders = { 'content-type': 'application/pdf' };
+
+  interface PutCall {
+    readonly method: string;
+    readonly url: string;
+    readonly headers: Record<string, string>;
+  }
 
   function jsonResponse(body: unknown): Response {
     return new Response(JSON.stringify(body), {
@@ -166,15 +200,9 @@ describe('uploadDocFile', () => {
     });
   }
 
-  const realFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = realFetch;
-  });
-
-  it('presigns, uploads to the returned url, then confirms completion', async () => {
+  function stubApi(completeStatus = 200): string[] {
     const calls: string[] = [];
-    const fetchMock = mock((input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = mock((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push(`${init?.method ?? 'GET'} ${url}`);
       if (url === '/api/attachments/presign') {
@@ -185,59 +213,120 @@ describe('uploadDocFile', () => {
               key: attachment.storageKey,
               url: 'https://s3.example.com/signed',
               method: 'PUT',
-              headers: { 'content-type': 'image/png' },
+              headers: signedHeaders,
             },
           }),
         );
       }
-      if (url === 'https://s3.example.com/signed')
-        return Promise.resolve(new Response(null, { status: 200 }));
-      if (url === `/api/attachments/${attachment.id}/complete`) {
+      if (completeStatus === 200) {
         return Promise.resolve(jsonResponse({ attachment: { ...attachment, status: 'ready' } }));
       }
-      return Promise.resolve(new Response(null, { status: 404 }));
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
-    const result = await uploadDocFile('doc_1', file);
-
-    expect(calls).toEqual([
-      'POST /api/attachments/presign',
-      'PUT https://s3.example.com/signed',
-      `POST /api/attachments/${attachment.id}/complete`,
-    ]);
-    expect(result.url).toBe('/api/files/org_1/2026/07/note.png');
-  });
-
-  it('fails when the completion call is rejected', async () => {
-    const fetchMock = mock((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === '/api/attachments/presign') {
-        return Promise.resolve(
-          jsonResponse({
-            attachment,
-            upload: {
-              key: attachment.storageKey,
-              url: 'https://s3.example.com/signed',
-              method: 'PUT',
-              headers: { 'content-type': 'image/png' },
-            },
-          }),
-        );
-      }
-      if (url === 'https://s3.example.com/signed')
-        return Promise.resolve(new Response(null, { status: 200 }));
       return Promise.resolve(
         new Response(JSON.stringify({ error: { code: 'not_found', message: 'gone' } }), {
-          status: 404,
+          status: completeStatus,
           headers: { 'content-type': 'application/json' },
         }),
       );
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    }) as unknown as typeof fetch;
+    return calls;
+  }
 
-    const file = new File([new Uint8Array([1, 2, 3, 4])], 'note.png', { type: 'image/png' });
-    await expect(uploadDocFile('doc_1', file)).rejects.toThrow();
+  function stubPut(statuses: readonly number[]): PutCall[] {
+    const calls: PutCall[] = [];
+    const queue = [...statuses];
+    class FakeXhr {
+      status = 0;
+      private method = '';
+      private url = '';
+      private readonly headers: Record<string, string> = {};
+      private readonly listeners = new Map<string, () => void>();
+      private progress: ((event: ProgressEvent) => void) | null = null;
+      readonly upload = {
+        addEventListener: (name: string, run: (event: ProgressEvent) => void) => {
+          if (name === 'progress') this.progress = run;
+        },
+      };
+      open(method: string, url: string): void {
+        this.method = method;
+        this.url = url;
+      }
+      setRequestHeader(name: string, value: string): void {
+        this.headers[name] = value;
+      }
+      addEventListener(name: string, run: () => void): void {
+        this.listeners.set(name, run);
+      }
+      send(): void {
+        calls.push({ method: this.method, url: this.url, headers: { ...this.headers } });
+        this.progress?.({ lengthComputable: true, loaded: 2, total: 4 } as ProgressEvent);
+        this.status = queue.shift() ?? 200;
+        this.listeners.get('loadend')?.();
+      }
+    }
+    globalThis.XMLHttpRequest = FakeXhr as unknown as typeof XMLHttpRequest;
+    return calls;
+  }
+
+  const realFetch = globalThis.fetch;
+  const realXhr = globalThis.XMLHttpRequest;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    globalThis.XMLHttpRequest = realXhr;
+  });
+
+  function pdf(): File {
+    return new File([new Uint8Array([1, 2, 3, 4])], 'brief.pdf', { type: '' });
+  }
+
+  it('presigns, PUTs the signed headers verbatim, then confirms completion', async () => {
+    const api = stubApi();
+    const puts = stubPut([200]);
+    const seen: number[] = [];
+
+    const result = await uploadDocFile('doc_1', pdf(), {
+      onProgress: ({ loaded, total }) => seen.push(Math.round((loaded / total) * 100)),
+    });
+
+    expect(api).toEqual([
+      'POST /api/attachments/presign',
+      `POST /api/attachments/${attachment.id}/complete`,
+    ]);
+    expect(puts).toHaveLength(1);
+    expect(puts[0]?.method).toBe('PUT');
+    expect(puts[0]?.url).toBe('https://s3.example.com/signed');
+    expect(puts[0]?.headers).toEqual(signedHeaders);
+    expect(seen).toEqual([50]);
+    expect(result.contentType).toBe('application/pdf');
+    expect(result.url).toBe('/api/files/org_1/2026/07/brief.pdf');
+  });
+
+  it('retries a failed PUT and gives up with the last status', async () => {
+    stubApi();
+    const retried = stubPut([0, 200]);
+    await uploadDocFile('doc_1', pdf());
+    expect(retried).toHaveLength(2);
+
+    stubApi();
+    const refused = stubPut([403, 403, 403]);
+    await expect(uploadDocFile('doc_1', pdf())).rejects.toThrow(
+      'Uploading brief.pdf failed with status 403.',
+    );
+    expect(refused).toHaveLength(1);
+  });
+
+  it('fails when the completion call is rejected', async () => {
+    stubApi(404);
+    stubPut([200]);
+    await expect(uploadDocFile('doc_1', pdf())).rejects.toThrow();
+  });
+
+  it('never presigns a file whose type is not supported', async () => {
+    const api = stubApi();
+    stubPut([200]);
+    await expect(
+      uploadDocFile('doc_1', new File([new Uint8Array([1])], 'setup.exe', { type: '' })),
+    ).rejects.toThrow('That file type is not supported. (.exe)');
+    expect(api).toEqual([]);
   });
 });

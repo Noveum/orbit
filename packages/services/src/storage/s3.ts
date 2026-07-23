@@ -42,7 +42,7 @@ export class S3StorageDriver implements StorageDriver {
     }
   }
 
-  createUploadTarget(key: string, contentType: string, size: number): Promise<UploadTarget> {
+  createUploadTarget(key: string, contentType: string): Promise<UploadTarget> {
     assertSafeKey(key);
     const url = this.client.presign(key, {
       expiresIn: UPLOAD_URL_TTL_SECONDS,
@@ -53,7 +53,7 @@ export class S3StorageDriver implements StorageDriver {
       key,
       url,
       method: 'PUT',
-      headers: { 'content-type': contentType, 'content-length': String(size) },
+      headers: { 'content-type': contentType },
       maxBytes: MAX_UPLOAD_BYTES,
       expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
     });
