@@ -54,30 +54,28 @@ export function Button({
 }: ButtonProps) {
   const Component = asChild ? Slot : 'button';
   const inert = props['aria-disabled'] === true || props['aria-disabled'] === 'true';
-  const onClick = (event: MouseEvent<HTMLButtonElement>) => {
-    if (inert) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    props.onClick?.(event);
+  const blockActivation = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
   };
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (inert && (event.key === 'Enter' || event.key === ' ')) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    props.onKeyDown?.(event);
+  const blockKeyActivation = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
   };
+  const inertHandlers = inert
+    ? { onClickCapture: blockActivation, onKeyDownCapture: blockKeyActivation, tabIndex: -1 }
+    : {};
   return (
     <Component
-      className={cn(buttonVariants({ variant, size, block }), className)}
+      className={cn(
+        buttonVariants({ variant, size, block }),
+        inert && 'pointer-events-none',
+        className,
+      )}
       {...(asChild ? {} : { type })}
       {...props}
-      onClick={onClick}
-      onKeyDown={onKeyDown}
-      {...(inert ? { tabIndex: -1 } : {})}
+      {...inertHandlers}
     />
   );
 }

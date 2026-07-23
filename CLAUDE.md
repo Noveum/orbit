@@ -90,7 +90,7 @@ domain verified in Resend, otherwise every send fails.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link.
 - **Permissions.** All authorization goes through `packages/shared/src/policy`. Server routes enforce it. The UI reads the same policy to hide affordances, never as the only gate.
-- **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the measured Linear behaviour does, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
+- **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the measured Linear behaviour does, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.
 - **Accessibility.** Keyboard operable everywhere, visible focus rings, real semantics from Radix primitives.
 
@@ -142,9 +142,10 @@ Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
 
 Two bots review this repository. **Greptile carries the most weight**: treat its
 findings as the primary gate and work through them first. CodeRabbit is
-secondary, and it sometimes reports `Review rate limited`, which is not a pass:
-if it never actually reviewed, either re-run it or say plainly in the pull
-request that only Greptile reviewed the change.
+secondary. It sometimes reports `Review rate limited`, which is not a real
+review: when that happens, re-run it and wait for it to complete rather than
+merging on the rate-limited result. Both reviews should complete before merge;
+Greptile is the one whose findings are weighted most heavily.
 
 Never merge while a review is still running, and never merge with a thread left
 open. Green CI is not enough on its own. A merge state of `UNSTABLE` means a

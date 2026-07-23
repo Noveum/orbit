@@ -92,6 +92,21 @@ describe('Button aria-disabled', () => {
     button.focus();
     await userEvent.keyboard('{Enter}');
     expect(onClick).not.toHaveBeenCalled();
+    await userEvent.keyboard('{ }');
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('does not activate an asChild link when aria-disabled', async () => {
+    const onClick = mock(() => undefined);
+    render(
+      <Button asChild aria-disabled="true">
+        <a href="/somewhere" onClick={onClick}>
+          Go
+        </a>
+      </Button>,
+    );
+    await userEvent.click(screen.getByText('Go'));
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it('still activates when it is not aria-disabled', async () => {
