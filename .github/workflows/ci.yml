@@ -191,3 +191,96 @@ jobs:
         run: |
           sh -n k8s/apply.sh
           sh -n k8s/migrate.sh
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
+      REDIS_URL: redis://localhost:6380
+      BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
+      REALTIME_PORT: "3100"
+      ORBIT_DEV_LOGIN: "1"
+      ORBIT_E2E_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - name: The dev scripts read the repository env file
+        run: |
+          {
+            echo "DATABASE_URL=$DATABASE_URL"
+            echo "REDIS_URL=$REDIS_URL"
+            echo "BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET"
+            echo "BETTER_AUTH_URL=$BETTER_AUTH_URL"
+            echo "NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL"
+            echo "NEXT_PUBLIC_REALTIME_URL=$NEXT_PUBLIC_REALTIME_URL"
+            echo "REALTIME_PORT=$REALTIME_PORT"
+            echo "ORBIT_DEV_LOGIN=$ORBIT_DEV_LOGIN"
+            echo "ORBIT_E2E_BASE_URL=$ORBIT_E2E_BASE_URL"
+          } > .env
+      - name: Apply the schema to the e2e database
+        run: bun run --filter '@orbit/db' push
+      - name: Install the Playwright browser
+        working-directory: apps/web
+        run: bunx playwright install --with-deps chromium
+      - name: Boot the realtime and web servers
+        run: |
+          nohup bun run --filter '@orbit/realtime' dev > "$RUNNER_TEMP/realtime.log" 2>&1 &
+          disown
+          nohup bun run --filter '@orbit/web' dev > "$RUNNER_TEMP/web.log" 2>&1 &
+          disown
+      - name: Wait for the web server to answer its health check
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:3000/api/health | grep -q '"status":"ok"'; then
+              echo "web is up after ${attempt} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "web never became healthy" >&2
+          cat "$RUNNER_TEMP/web.log" >&2 || true
+          exit 1
+      - name: Run the end-to-end suite
+        run: bun run test:e2e
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: apps/web/test-results/
+          if-no-files-found: ignore
+      - name: Dump server logs on failure
+        if: failure()
+        run: |
+          echo "=== web ==="; cat "$RUNNER_TEMP/web.log" || true
+          echo "=== realtime ==="; cat "$RUNNER_TEMP/realtime.log" || true
