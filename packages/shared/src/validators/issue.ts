@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ISSUE_RELATION_TYPES, PRIORITIES, STATE_CATEGORIES } from '../constants/index.ts';
-import { filterPredicateListSchema, ISSUE_ORDERINGS } from '../filters/index.ts';
+import { filterGroupQuerySchema, ISSUE_ORDERINGS } from '../filters/index.ts';
 import { idSchema, markdownSchema, titleSchema } from './common.ts';
 
 export function booleanFlag(fallback: boolean) {
@@ -79,7 +79,7 @@ export const issueFilterSchema = z.object({
   includeArchived: booleanFlag(false),
   includeSubIssues: booleanFlag(true),
   orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
-  predicates: filterPredicateListSchema,
+  filter: filterGroupQuerySchema,
 });
 
 export const issueRelationSchema = z.object({

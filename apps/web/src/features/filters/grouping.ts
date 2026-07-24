@@ -1,8 +1,7 @@
 import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
-import type { GroupByField } from '@orbit/shared/filters';
+import type { GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
-import type { IssueOrdering } from './view-config.ts';
 
 export const UNGROUPED_ID = 'none';
 
@@ -21,11 +20,18 @@ export interface GroupDefinition {
   readonly category: string | null;
 }
 
-export interface IssueGroup extends GroupDefinition {
+export interface IssueSubGroup extends GroupDefinition {
   readonly issues: readonly Issue[];
 }
 
+export interface IssueGroup extends GroupDefinition {
+  readonly issues: readonly Issue[];
+  readonly subGroups: readonly IssueSubGroup[];
+}
+
 export const PRIORITY_ORDER: readonly Priority[] = [1, 2, 3, 4, 0];
+
+const ESTIMATE_ORDER = [0, 1, 2, 3, 5, 8, 13];
 
 function unassigned(title: string): GroupDefinition {
   return { id: UNGROUPED_ID, title, color: null, category: null };
@@ -50,6 +56,13 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
         })),
         unassigned('No assignee'),
       ];
+    case 'creator':
+      return context.members.map((member) => ({
+        id: member.id,
+        title: member.name,
+        color: null,
+        category: null,
+      }));
     case 'priority':
       return PRIORITY_ORDER.map((priority) => ({
         id: String(priority),
@@ -57,6 +70,16 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
         color: null,
         category: null,
       }));
+    case 'estimate':
+      return [
+        ...ESTIMATE_ORDER.map((points) => ({
+          id: String(points),
+          title: points === 1 ? '1 Point' : `${points} Points`,
+          color: null,
+          category: null,
+        })),
+        unassigned('No estimate'),
+      ];
     case 'project':
       return [
         ...context.projects.map((project) => ({
@@ -81,7 +104,7 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
       return [
         ...context.cycles.map((cycle) => ({
           id: cycle.id,
-          title: cycle.name,
+          title: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
           color: null,
           category: null,
         })),
@@ -98,8 +121,12 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
       return [issue.stateId];
     case 'assignee':
       return [issue.assigneeId ?? UNGROUPED_ID];
+    case 'creator':
+      return [issue.creatorId];
     case 'priority':
       return [String(issue.priority)];
+    case 'estimate':
+      return [issue.estimate === null ? UNGROUPED_ID : String(issue.estimate)];
     case 'project':
       return [issue.projectId ?? UNGROUPED_ID];
     case 'cycle':
@@ -114,6 +141,39 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
 export interface GroupOptions {
   readonly showEmptyGroups: boolean;
   readonly ordering: IssueOrdering;
+  readonly subGroupBy?: GroupByField;
+}
+
+function bucket(
+  issues: readonly Issue[],
+  groupBy: GroupByField,
+): ReadonlyMap<string, readonly Issue[]> {
+  const buckets = new Map<string, Issue[]>();
+  for (const issue of issues) {
+    for (const key of groupKeysOf(issue, groupBy)) {
+      const current = buckets.get(key);
+      if (current === undefined) buckets.set(key, [issue]);
+      else current.push(issue);
+    }
+  }
+  return buckets;
+}
+
+function definitionsWithExtras(
+  groupBy: GroupByField,
+  context: GroupContext,
+  keys: Iterable<string>,
+): GroupDefinition[] {
+  const definitions = groupDefinitions(groupBy, context);
+  const known = new Set(definitions.map((definition) => definition.id));
+  const extras = [...keys]
+    .filter((key) => !known.has(key))
+    .map((key) => ({ id: key, title: 'Other', color: null, category: null }));
+  return [...definitions, ...extras];
+}
+
+function ordered(issues: readonly Issue[], ordering: IssueOrdering): readonly Issue[] {
+  return ordering === 'manual' ? sortIssues(issues) : issues;
 }
 
 export function groupIssues(
@@ -122,25 +182,32 @@ export function groupIssues(
   context: GroupContext,
   options: GroupOptions,
 ): IssueGroup[] {
-  const buckets = new Map<string, Issue[]>();
-  for (const issue of issues) {
-    for (const key of groupKeysOf(issue, groupBy)) {
-      const bucket = buckets.get(key);
-      if (bucket === undefined) buckets.set(key, [issue]);
-      else bucket.push(issue);
-    }
-  }
+  const buckets = bucket(issues, groupBy);
+  const subGroupBy = options.subGroupBy ?? 'none';
 
-  const definitions = groupDefinitions(groupBy, context);
-  const known = new Set(definitions.map((definition) => definition.id));
-  const extras = [...buckets.keys()]
-    .filter((key) => !known.has(key))
-    .map((key) => ({ id: key, title: 'Other', color: null, category: null }));
+  return definitionsWithExtras(groupBy, context, buckets.keys()).flatMap((definition) => {
+    const rows = buckets.get(definition.id) ?? [];
+    if (rows.length === 0 && !options.showEmptyGroups) return [];
+    const sorted = ordered(rows, options.ordering);
+    const subGroups =
+      subGroupBy === 'none' || subGroupBy === groupBy
+        ? []
+        : subGroupsOf(sorted, subGroupBy, context, options);
+    return [{ ...definition, issues: sorted, subGroups }];
+  });
+}
 
-  return [...definitions, ...extras].flatMap((definition) => {
-    const bucket = buckets.get(definition.id) ?? [];
-    if (bucket.length === 0 && !options.showEmptyGroups) return [];
-    return [{ ...definition, issues: options.ordering === 'manual' ? sortIssues(bucket) : bucket }];
+function subGroupsOf(
+  issues: readonly Issue[],
+  subGroupBy: GroupByField,
+  context: GroupContext,
+  options: GroupOptions,
+): IssueSubGroup[] {
+  const buckets = bucket(issues, subGroupBy);
+  return definitionsWithExtras(subGroupBy, context, buckets.keys()).flatMap((definition) => {
+    const rows = buckets.get(definition.id) ?? [];
+    if (rows.length === 0) return [];
+    return [{ ...definition, issues: ordered(rows, options.ordering) }];
   });
 }
 

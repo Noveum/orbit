@@ -1,10 +1,11 @@
 'use client';
 
-import { Menu, PanelRight, SlidersHorizontal } from 'lucide-react';
+import { Menu, PanelRight } from 'lucide-react';
 import { Fragment, type ReactNode } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
+import { TopBarDisplayMenu } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
 
 export interface Breadcrumb {
@@ -73,16 +74,7 @@ export function TopBar({
 
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           {actions}
-          <Tooltip label="Display options" side="bottom">
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label="Display options"
-              className="size-11 px-0 lg:size-7"
-            >
-              <SlidersHorizontal className="size-4" aria-hidden="true" />
-            </Button>
-          </Tooltip>
+          <TopBarDisplayMenu />
           {panelOpen === null ? null : (
             <Tooltip label="Toggle right panel" shortcut={[']']} side="bottom">
               <Button

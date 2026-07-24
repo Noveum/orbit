@@ -1,5 +1,7 @@
 'use client';
 
+import type { ViewVisibility } from '@orbit/shared/filters';
+import { conditionsOf, VIEW_VISIBILITIES, VIEW_VISIBILITY_LABELS } from '@orbit/shared/filters';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -14,7 +16,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
 import { useCreateView } from '@/lib/query/use-views.ts';
 import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
-import { viewConfigToFilter } from './view-config.ts';
+import { viewConfigToState } from './view-config.ts';
 
 export interface SaveViewDialogProps {
   readonly open: boolean;
@@ -35,11 +37,14 @@ export function SaveViewDialog({
 }: SaveViewDialogProps) {
   const create = useCreateView();
   const [name, setName] = useState(suggestedName);
-  const [shared, setShared] = useState(false);
+  const [visibility, setVisibility] = useState<ViewVisibility>('private');
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     if (open) setName(suggestedName);
   }, [open, suggestedName]);
+
+  const count = conditionsOf(config.filter).length;
 
   const submit = () => {
     const trimmed = name.trim();
@@ -47,13 +52,15 @@ export function SaveViewDialog({
     create.mutate(
       {
         name: trimmed,
-        filter: {
-          ...viewConfigToFilter(config),
-          ...(teamId === null ? {} : { teamId }),
-        },
+        filter: viewConfigToState(
+          config,
+          layout,
+          { teamId, projectId: null },
+          { visibility, locked },
+        ),
         layout,
         groupBy: config.groupBy,
-        shared,
+        shared: visibility !== 'private',
       },
       { onSuccess: () => onOpenChange(false) },
     );
@@ -65,9 +72,9 @@ export function SaveViewDialog({
         <DialogHeader>
           <DialogTitle className="font-medium text-base text-text">Save this view</DialogTitle>
           <DialogDescription className="text-muted text-xs">
-            {config.predicates.length === 0
+            {count === 0
               ? 'No filters yet, the layout and grouping are still saved.'
-              : `${config.predicates.length} filter${config.predicates.length === 1 ? '' : 's'} and the current display options.`}
+              : `${count} filter${count === 1 ? '' : 's'} and the current display options.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -91,15 +98,38 @@ export function SaveViewDialog({
             />
           </label>
 
+          <fieldset className="flex flex-col gap-1.5 rounded-md border border-border px-2.5 py-2">
+            <legend className="px-1 text-2xs text-faint">Visibility</legend>
+            {VIEW_VISIBILITIES.map((option) => (
+              <label
+                key={option}
+                className="flex items-center gap-2 text-dense text-muted"
+                htmlFor={`save-view-visibility-${option}`}
+              >
+                <input
+                  type="radio"
+                  id={`save-view-visibility-${option}`}
+                  name="save-view-visibility"
+                  value={option}
+                  checked={visibility === option}
+                  data-testid={`save-view-visibility-${option}`}
+                  onChange={() => setVisibility(option)}
+                  className="accent-[var(--color-accent)]"
+                />
+                {VIEW_VISIBILITY_LABELS[option]}
+              </label>
+            ))}
+          </fieldset>
+
           <div className="flex items-center justify-between gap-3 rounded-md border border-border px-2.5 py-2">
-            <label htmlFor="save-view-shared" className="text-dense text-muted">
-              Share with the workspace
+            <label htmlFor="save-view-locked" className="text-dense text-muted">
+              Lock so it cannot be changed
             </label>
             <Switch
-              id="save-view-shared"
-              checked={shared}
-              onCheckedChange={setShared}
-              data-testid="save-view-shared"
+              id="save-view-locked"
+              checked={locked}
+              onCheckedChange={setLocked}
+              data-testid="save-view-locked"
             />
           </div>
 
