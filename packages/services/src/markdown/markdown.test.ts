@@ -242,7 +242,9 @@ describe('toggle blocks', () => {
 
   it('does not turn a github alert marker into anything but text', () => {
     const html = renderMarkdown('> [!IMPORTANT]\n> read this');
-    expect(html).toContain('[!IMPORTANT]');
-    expect(html).toContain('<blockquote>');
+    expect(html).toBe('<blockquote>\n<p>[!IMPORTANT]\nread this</p>\n</blockquote>\n');
+    expect(html).not.toContain('markdown-alert');
+    expect(html).not.toContain('class=');
+    expect(html).not.toContain('<div');
   });
 });

@@ -63,6 +63,11 @@ describe('withHeadingIds', () => {
     expect(slugify('   ')).toBe('section');
   });
 
+  it('keeps ids unique when a later heading slugifies onto an earlier suffixed id', () => {
+    const outlined = withHeadingIds(renderMarkdown('## Setup\n\n## Setup\n\n## Setup 1\n'));
+    expect(outlined.headings.map((entry) => entry.id)).toEqual(['setup', 'setup-1', 'setup-1-1']);
+  });
+
   it('reads through inline markup and entities to the heading text', () => {
     const outlined = withHeadingIds(renderMarkdown('## Batch & `sync_id`\n'));
     expect(outlined.headings[0]).toEqual({
@@ -149,6 +154,23 @@ describe('published doc seo', () => {
       headline: 'Delta protocol',
       url: 'https://orbit.test/d/delta-protocol-tok',
     });
+  });
+
+  it('escapes user fields so a doc title cannot break out of the ld+json script tag', () => {
+    const jsonLd = publishedDocJsonLd({
+      ...base,
+      visibility: 'public',
+      title: '</script><script>alert(1)</script>',
+      summary: 'a & b',
+    });
+    expect(jsonLd).not.toBeNull();
+    expect(jsonLd).not.toContain('<');
+    expect(jsonLd).not.toContain('>');
+    expect(jsonLd).not.toContain('</script>');
+    expect(jsonLd).toContain('\\u003c');
+    const parsed = JSON.parse(jsonLd ?? '{}');
+    expect(parsed.headline).toBe('</script><script>alert(1)</script>');
+    expect(parsed.description).toBe('a & b');
   });
 
   it('points both modes at the canonical slug url', () => {

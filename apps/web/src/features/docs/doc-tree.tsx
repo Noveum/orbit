@@ -31,7 +31,7 @@ export interface DocNode {
   readonly depth: number;
 }
 
-export const MAX_TREE_DEPTH = 6;
+export const MAX_TREE_DEPTH = 32;
 
 export function docTreeOf(docs: readonly DocSummary[]): DocNode[] {
   const present = new Set(docs.map((doc) => doc.id));

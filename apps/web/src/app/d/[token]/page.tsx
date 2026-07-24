@@ -73,7 +73,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
         <script
           type="application/ld+json"
           data-testid="doc-json-ld"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON.stringify output, no user html
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: publishedDocJsonLd escapes < > and & so user fields cannot break out of the script tag
           dangerouslySetInnerHTML={{ __html: jsonLd }}
         />
       )}

@@ -22,9 +22,15 @@ export function slugify(text: string): string {
 
 export function uniqueHeadingId(text: string, used: Map<string, number>): string {
   const base = slugify(text);
-  const seen = used.get(base) ?? 0;
-  used.set(base, seen + 1);
-  return seen === 0 ? base : `${base}-${seen}`;
+  let suffix = used.get(base) ?? 0;
+  let id = suffix === 0 ? base : `${base}-${suffix}`;
+  while (used.has(id)) {
+    suffix += 1;
+    id = `${base}-${suffix}`;
+  }
+  used.set(base, suffix + 1);
+  if (id !== base) used.set(id, 0);
+  return id;
 }
 
 export function withHeadingIds(html: string): OutlinedHtml {

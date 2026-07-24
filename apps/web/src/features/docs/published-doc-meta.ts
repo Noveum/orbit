@@ -55,18 +55,24 @@ export function publishedDocMetadata(input: PublishedDocSeoInput): Metadata {
   };
 }
 
+export function escapeJsonForScript(json: string): string {
+  return json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+}
+
 export function publishedDocJsonLd(input: PublishedDocSeoInput): string | null {
   if (!isIndexable(input.visibility)) return null;
   const canonical = canonicalDocUrl(input);
 
-  return JSON.stringify({
-    '@context': 'https://schema.org',
-    '@type': 'Article',
-    headline: input.title,
-    description: input.summary,
-    datePublished: input.createdAt.toISOString(),
-    dateModified: input.updatedAt.toISOString(),
-    author: { '@type': 'Person', name: input.authorName },
-    ...(canonical === null ? {} : { mainEntityOfPage: canonical, url: canonical }),
-  });
+  return escapeJsonForScript(
+    JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Article',
+      headline: input.title,
+      description: input.summary,
+      datePublished: input.createdAt.toISOString(),
+      dateModified: input.updatedAt.toISOString(),
+      author: { '@type': 'Person', name: input.authorName },
+      ...(canonical === null ? {} : { mainEntityOfPage: canonical, url: canonical }),
+    }),
+  );
 }
