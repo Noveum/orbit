@@ -191,3 +191,149 @@ jobs:
         run: |
           sh -n k8s/apply.sh
           sh -n k8s/migrate.sh
+
+  e2e:
+    name: End to end (Playwright)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
+      REDIS_URL: redis://localhost:6380
+      BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
+      REALTIME_PORT: "3100"
+      ORBIT_DEV_LOGIN: "1"
+      ORBIT_E2E_BASE_URL: http://localhost:3000
+      ORBIT_E2E_SHOTS: ${{ github.workspace }}/e2e-shots
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: orbit-uploads
+      S3_ACCESS_KEY_ID: orbitminio
+      S3_SECRET_ACCESS_KEY: orbitminio
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Start MinIO and create the uploads bucket
+        run: |
+          set -eu
+          docker run -d --name orbit-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
+            minio/minio:latest server /data
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null; then
+              echo "minio ready after ${attempt} attempts"
+              break
+            fi
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint sh minio/mc:latest -c "
+            mc alias set orbit http://localhost:9000 $S3_ACCESS_KEY_ID $S3_SECRET_ACCESS_KEY &&
+            mc mb --ignore-existing orbit/$S3_BUCKET"
+
+      - name: Push the schema to the database
+        run: bun run --filter '@orbit/db' push
+
+      - name: Install the Playwright browser
+        run: cd apps/web && bunx playwright install --with-deps chromium
+
+      - name: Start web and realtime, then wait for both to be healthy
+        run: |
+          set -eu
+          mkdir -p "$ORBIT_E2E_SHOTS"
+          nohup bun run --filter '@orbit/realtime' dev > /tmp/realtime.log 2>&1 &
+          nohup bun run --filter '@orbit/web' dev > /tmp/web.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health 2>/dev/null | grep -q '"status":"ok"' \
+              && curl -fsS http://localhost:3100/health 2>/dev/null | grep -q '"status":"ok"'; then
+              echo "web and realtime healthy after ${attempt} attempts"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "servers never became healthy" >&2
+          echo "=== web log ===" >&2; cat /tmp/web.log >&2 || true
+          echo "=== realtime log ===" >&2; cat /tmp/realtime.log >&2 || true
+          exit 1
+
+      - name: Run the Playwright specs
+        run: cd apps/web && bunx playwright test
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          echo "=== web log ==="; cat /tmp/web.log || true
+          echo "=== realtime log ==="; cat /tmp/realtime.log || true
+
+      - name: Upload the screenshots and traces
+        id: shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e-shots
+            apps/web/test-results
+          if-no-files-found: warn
+
+      - name: Post the screenshots on the pull request
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_URL: ${{ steps.shots.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          {
+            echo "### End to end screenshots"
+            echo
+            echo "Captured from the seeded demo workspace, safe demo data only, no real workspace content."
+            echo
+            echo "Full set as a run artifact: ${ARTIFACT_URL:-$RUN_URL}"
+            echo
+            echo "Captured shots:"
+            echo
+            if ls "$ORBIT_E2E_SHOTS"/*.png >/dev/null 2>&1; then
+              for shot in "$ORBIT_E2E_SHOTS"/*.png; do
+                echo "- \`$(basename "$shot")\`"
+              done
+            else
+              echo "- none, the run failed before any screenshot was captured"
+            fi
+            echo
+            echo "<!-- orbit-e2e-shots -->"
+          } > /tmp/e2e-comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/e2e-comment.md --edit-last --create-if-none
