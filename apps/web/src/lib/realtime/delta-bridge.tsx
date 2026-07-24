@@ -103,7 +103,9 @@ function patchCommentCaches(
 }
 
 function patchDocCommentCaches(client: QueryClient, action: SyncAction): void {
+  const targetDocId = action.data['docId'];
   for (const query of client.getQueryCache().findAll({ queryKey: [DOC_COMMENTS_ROOT] })) {
+    if (query.queryKey[1] !== targetDocId) continue;
     const current = query.state.data as readonly DocComment[] | undefined;
     if (current === undefined) continue;
     const next = applyDocCommentDelta(current, action);

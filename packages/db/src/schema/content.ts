@@ -156,7 +156,9 @@ export const docComment = pgTable(
     authorId: text('author_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
-    parentId: text('parent_id'),
+    parentId: text('parent_id').references((): AnyPgColumn => docComment.id, {
+      onDelete: 'set null',
+    }),
     body: text('body').notNull(),
     editedAt: timestamp('edited_at', { withTimezone: true }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),

@@ -15,12 +15,20 @@ export function useDocComments(docId: string | null) {
     queryKey: queryKeys.docComments(docId ?? 'none'),
     enabled: docId !== null,
     queryFn: async ({ signal }): Promise<readonly DocComment[]> => {
-      const result = await apiFetch(
-        `/api/docs/${encodeURIComponent(docId ?? '')}/comments?limit=${DOC_COMMENT_PAGE_SIZE}`,
-        docCommentListSchema,
-        { signal },
-      );
-      return result.comments;
+      const all: DocComment[] = [];
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams({ limit: String(DOC_COMMENT_PAGE_SIZE) });
+        if (cursor !== null) params.set('cursor', cursor);
+        const result = await apiFetch(
+          `/api/docs/${encodeURIComponent(docId ?? '')}/comments?${params.toString()}`,
+          docCommentListSchema,
+          { signal },
+        );
+        all.push(...result.comments);
+        cursor = result.nextCursor;
+      } while (cursor !== null);
+      return all;
     },
   });
 }
@@ -44,7 +52,7 @@ export function useCreateDocComment(docId: string) {
       await client.cancelQueries({ queryKey: key });
       const previous = client.getQueryData<readonly DocComment[]>(key);
       const now = new Date().toISOString();
-      const pendingId = `pending-${now}`;
+      const pendingId = `pending-${crypto.randomUUID()}`;
       const optimistic: DocComment = {
         comment: {
           id: pendingId,

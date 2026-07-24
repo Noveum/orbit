@@ -70,8 +70,18 @@ export async function listDocComments(
   await loadDocForComment(db, principal, docId);
   const page = paginationSchema.parse(input);
 
-  const filters = [eq(schema.docComment.docId, docId), isNull(schema.docComment.deletedAt)];
+  const filters = [
+    eq(schema.docComment.docId, docId),
+    isNull(schema.docComment.deletedAt),
+    sql`not exists (select 1 from doc_comment parent where parent.id = ${schema.docComment.parentId} and parent.deleted_at is not null)`,
+  ];
   if (page.cursor !== undefined) {
+    const [anchor] = await db
+      .select({ id: schema.docComment.id })
+      .from(schema.docComment)
+      .where(and(eq(schema.docComment.id, page.cursor), eq(schema.docComment.docId, docId)))
+      .limit(1);
+    if (anchor === undefined) throw validationFailed('That page cursor is no longer valid.');
     filters.push(
       sql`(${schema.docComment.createdAt}, ${schema.docComment.id}) > (select ${schema.docComment.createdAt}, ${schema.docComment.id} from ${schema.docComment} where ${schema.docComment.id} = ${page.cursor})`,
     );

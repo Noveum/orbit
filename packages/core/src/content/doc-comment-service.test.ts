@@ -81,6 +81,21 @@ describe('listDocComments', () => {
     expect(page.comments).toHaveLength(1);
     expect(page.comments[0]?.body).toBe('To keep');
   });
+
+  it('hides a reply whose root comment was soft deleted', async () => {
+    const { comment: root } = await createDocComment(workspace.admin, docId, { body: 'Root' });
+    await createDocComment(workspace.admin, docId, { body: 'Reply', parentId: root.id });
+
+    await deleteDocComment(workspace.admin, root.id);
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments).toHaveLength(0);
+  });
+
+  it('rejects a cursor that does not resolve to a comment', async () => {
+    await writeComments(3);
+    await expect(listDocComments(workspace.admin, docId, { cursor: 'nope' })).rejects.toThrow();
+  });
 });
 
 describe('doc comment policy', () => {
