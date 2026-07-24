@@ -105,9 +105,9 @@ export function IntegrationPicker({
           disabled={item.linked}
           aria-pressed={selectedId === item.id}
           onClick={() => setSelectedId(item.id)}
-          className={`flex w-full items-center justify-between gap-3 border-border border-b px-3 py-2 text-left last:border-b-0 ${
+          className={`flex w-full items-center justify-between gap-3 border-border border-b px-3 py-2 text-left last:border-b-0 disabled:cursor-not-allowed ${
             selectedId === item.id ? 'bg-surface-2' : ''
-          } ${item.linked ? 'cursor-default text-faint' : 'text-text hover:bg-surface-2'}`}
+          } ${item.linked ? 'text-faint' : 'text-text hover:bg-surface-2'}`}
         >
           <span className="truncate text-dense">{item.label}</span>
           {item.linked ? <span className="text-2xs text-faint">Linked</span> : null}
