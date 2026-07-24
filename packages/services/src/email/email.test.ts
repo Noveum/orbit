@@ -17,6 +17,7 @@ import {
   magicLinkEmail,
   mentionEmail,
   ResendTransport,
+  resetPasswordEmail,
   sendEmail,
 } from './index.ts';
 
@@ -40,6 +41,19 @@ describe('templates', () => {
     expect(content.html).toContain('https://orbit.local/auth/magic?token=abc123');
     expect(content.html).toContain('#5A63C8');
     expect(content.text).toContain('https://orbit.local/auth/magic?token=abc123');
+    expect(content.text).toContain('ada@orbit.local');
+  });
+
+  it('renders the reset password email with the url in html and text', async () => {
+    const content = await resetPasswordEmail({
+      url: 'https://orbit.local/api/auth/reset-password/tok123?callbackURL=/reset-password',
+      email: 'ada@orbit.local',
+    });
+    expect(content.subject).toBe('Reset your Orbit password');
+    expect(content.html).toContain(
+      'https://orbit.local/api/auth/reset-password/tok123?callbackURL=/reset-password',
+    );
+    expect(content.text).toContain('reset-password/tok123');
     expect(content.text).toContain('ada@orbit.local');
   });
 
