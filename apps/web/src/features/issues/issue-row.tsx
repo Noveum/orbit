@@ -86,8 +86,8 @@ export function IssueRow({
       data-testid={`issue-row-${issue.identifier}`}
       data-active={active ? 'true' : undefined}
       className={cn(
-        'flex h-7 w-full items-center gap-2 px-3 text-dense',
-        'transition-colors duration-[var(--duration-fast)]',
+        'group flex h-7 w-full items-center gap-2 px-3 text-dense',
+        'transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)]',
         active ? 'bg-surface-2' : 'hover:bg-surface-2/70',
         selected && 'bg-accent-soft',
       )}
@@ -100,7 +100,10 @@ export function IssueRow({
           onPointerDown={onFocus}
           aria-label={`Select ${issue.identifier}`}
           className={cn(
-            'opacity-0 transition-opacity focus-visible:opacity-100',
+            'opacity-0 transition-opacity duration-[var(--duration-instant)] ease-[var(--ease-standard)]',
+            'group-hover:opacity-100 group-hover:duration-[var(--duration-fast)]',
+            'focus-visible:opacity-100 group-focus-within:opacity-100',
+            '[@media(hover:none)]:opacity-100',
             (active || selected) && 'opacity-100',
           )}
         />
@@ -122,7 +125,7 @@ export function IssueRow({
         type="button"
         onClick={onOpen}
         onFocus={onFocus}
-        className="min-w-0 flex-1 truncate text-left text-text"
+        className="min-w-0 flex-1 truncate rounded-sm text-left text-text"
       >
         {issue.title}
       </button>

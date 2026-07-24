@@ -13,13 +13,15 @@ import {
   reactionResultSchema,
 } from './schemas.ts';
 
+export const COMMENT_PAGE_SIZE = 50;
+
 export function useComments(issueId: string | null) {
   return useQuery({
     queryKey: queryKeys.comments(issueId ?? 'none'),
     enabled: issueId !== null,
     queryFn: async ({ signal }): Promise<readonly Comment[]> => {
       const result = await apiFetch(
-        `/api/comments?issueId=${encodeURIComponent(issueId ?? '')}`,
+        `/api/comments?issueId=${encodeURIComponent(issueId ?? '')}&limit=${COMMENT_PAGE_SIZE}`,
         commentListSchema,
         { signal },
       );

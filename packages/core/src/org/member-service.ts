@@ -230,6 +230,7 @@ export async function removeMember(
       );
 
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
+    await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
     const actions: SyncAction[] = [
       buildSyncAction({

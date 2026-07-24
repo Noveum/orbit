@@ -4,7 +4,7 @@ import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
 import { devLoginEnabled } from '@/lib/api/dev-login.ts';
 import { listDevUsers } from '@/lib/api/dev-users.ts';
-import { enabledSocialProviders } from '@/lib/auth/server.ts';
+import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -31,6 +31,7 @@ export default async function LoginPage({
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-pop sm:p-7">
         <LoginForm
           providers={enabledSocialProviders}
+          passwordEnabled={passwordAuthEnabled}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
         {devUsers.length > 0 ? (

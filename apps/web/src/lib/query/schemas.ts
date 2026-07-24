@@ -155,15 +155,24 @@ export const bootstrapSchema = z.object({
   members: z.array(memberSchema),
   projects: z.array(projectSchema),
   cycles: z.array(cycleSchema),
-  issues: z.array(issueSchema),
+  issues: z.array(issueSchema).default([]),
 });
 
 export type Bootstrap = z.infer<typeof bootstrapSchema>;
 
 export const issueListSchema = z.object({
   issues: z.array(issueSchema),
-  nextCursor: z.string().nullable(),
+  nextCursor: z.string().nullable().default(null),
 });
+
+export type IssuePage = z.infer<typeof issueListSchema>;
+
+export const issueCountsSchema = z.object({
+  total: z.number(),
+  byState: z.record(z.string(), z.number()),
+});
+
+export type IssueCounts = z.infer<typeof issueCountsSchema>;
 
 export const issueEnvelopeSchema = z.object({ issue: issueSchema });
 
@@ -176,6 +185,7 @@ export const issueDetailSchema = z.object({
   issue: issueSchema,
   descriptionHtml: z.string(),
   activity: z.array(activitySchema),
+  activityCursor: z.string().nullable().default(null),
   subIssues: z.array(issueSchema),
   subscribed: z.boolean(),
 });
@@ -272,7 +282,10 @@ export type View = z.infer<typeof viewSchema>;
 export const viewListSchema = z.object({ views: z.array(viewSchema) });
 export const viewEnvelopeSchema = z.object({ view: viewSchema });
 
-export const commentListSchema = z.object({ comments: z.array(commentSchema) });
+export const commentListSchema = z.object({
+  comments: z.array(commentSchema),
+  nextCursor: z.string().nullable().default(null),
+});
 export const commentEnvelopeSchema = z.object({ comment: commentSchema });
 export const reactionResultSchema = z.object({ emoji: z.string(), active: z.boolean() });
 export const deletedSchema = z.object({ deleted: z.boolean() });

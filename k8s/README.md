@@ -63,9 +63,9 @@ in this repository and must not be.
    correctly before touching the cluster:
 
 ```
-./k8s/apply.sh --render        # print the resolved manifests, change nothing
-./k8s/apply.sh --dry-run       # server side dry run
-./k8s/apply.sh                 # apply for real
+./k8s/apply.sh --render                        # print the resolved manifests, change nothing
+S3_BUCKET=<uploads bucket> ./k8s/apply.sh --dry-run   # server side dry run
+S3_BUCKET=<uploads bucket> ./k8s/apply.sh             # apply for real, bucket CORS included
 ```
 
 2. Load the RDS certificate authority. RDS runs with `rds.force_ssl=1`, and its
@@ -128,15 +128,78 @@ Uploads go to a private S3 bucket. There is one storage path and no local disk
 fallback, so development points the same S3 driver at the minio container from
 `docker-compose.yml` and production points it at the real bucket.
 
-Pods reach S3 through IRSA rather than static keys. The `orbit-app` service
-account carries an `eks.amazonaws.com/role-arn` annotation, the role trusts the
-cluster OIDC provider for exactly `system:serviceaccount:orbit:orbit-app`, and
-it is scoped to get, put and delete inside the one bucket. Leave
-`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` unset in production so the SDK
-picks up that role. Setting only one of the pair is rejected at startup.
+### Credentials: IRSA, never static keys
 
-The bucket blocks all public access. The browser uploads straight to a presigned
-URL, so the bucket needs a CORS rule allowing `PUT` from the Orbit origin.
+Production signs with IRSA and nothing else. The `orbit-app` service account
+carries an `eks.amazonaws.com/role-arn` annotation, the role trusts the cluster
+OIDC provider for exactly `system:serviceaccount:orbit:orbit-app`, and it is
+scoped to get, put and delete inside the one bucket. `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY` must not exist in the `prd` Doppler config.
+
+This is not a preference, it is the difference between working and broken
+uploads. Bun's `S3Client` snapshots the ambient `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` when the process starts and
+keeps attaching that session token to signatures even when explicit keys are
+passed in, so every presigned PUT comes back `InvalidTokenId`. Two guards keep a
+pod out of that state:
+
+- Setting only one half of the key pair is rejected at startup.
+- Setting both halves while the pod also has an assumed role
+  (`AWS_WEB_IDENTITY_TOKEN_FILE` from IRSA, or the EKS Pod Identity variables)
+  is rejected at startup, naming the variable that clashed.
+
+So a pod has IRSA or it has explicit keys, never both. Development uses the
+second mode against minio, which is why `.env` carries `S3_ACCESS_KEY_ID` and no
+AWS variables at all.
+
+### Bucket CORS
+
+The bucket blocks all public access, and the browser PUTs straight at a
+presigned URL, so a cross origin upload dies at the preflight unless the bucket
+carries a CORS rule. That rule is `k8s/s3-cors.json`: origin `https://<orbit
+host>`, methods `PUT`, `GET` and `HEAD`, request header `content-type`, and
+`ETag` exposed to the page. `apply.sh` renders the origin from `ORBIT_HOST` and
+applies it in the same run as the manifests, so there is one command:
+
+```sh
+S3_BUCKET=<uploads bucket> ./k8s/apply.sh
+```
+
+`apply.sh` refuses to run without `S3_BUCKET`, because applying the workloads
+without the CORS rule is exactly the broken state it exists to prevent. Read
+back what the bucket carries with:
+
+```sh
+aws s3api get-bucket-cors --region us-east-1 --bucket "$S3_BUCKET"
+```
+
+Verify a real cross origin PDF upload after a deploy. Ask the running app for a
+presigned target, then PUT to it with the `Origin` header a browser would send,
+and record the status code:
+
+```sh
+curl -si -X OPTIONS "$PRESIGNED_URL" \
+  -H "Origin: https://<orbit host>" \
+  -H 'Access-Control-Request-Method: PUT' \
+  -H 'Access-Control-Request-Headers: content-type' | head -1
+
+curl -s -o /dev/null -w '%{http_code}\n' -X PUT "$PRESIGNED_URL" \
+  -H "Origin: https://<orbit host>" \
+  -H 'content-type: application/pdf' \
+  --data-binary @sample.pdf
+```
+
+A healthy bucket answers `200` to the preflight and `200` to the PUT. A `403`
+on the preflight means the CORS document never reached the bucket, the request
+origin, or the request method.
+
+Minio, which stands in for S3 in development and in CI, reflects whatever origin
+asks and answers `NotImplemented` to `PutBucketCors`, so it can neither be
+locked down per bucket nor prove the rule is right. `bun test` therefore reads
+`k8s/s3-cors.json` itself and fails when the document is missing, when it stops
+covering the presigned PUT, or when it starts allowing an origin the app never
+uses.
+
 Downloads stay behind the app's permission check, which then redirects to a
 short-lived presigned URL with the content type and disposition pinned.
 
@@ -173,6 +236,8 @@ button only when both halves are present, and the callback to register with the
 provider is `https://<orbit host>/api/auth/callback/<provider>`.
 
 Never set `ORBIT_DEV_LOGIN` in the `prd` config. It bypasses the magic link.
+Never set `S3_ACCESS_KEY_ID` or `S3_SECRET_ACCESS_KEY` there either: the pods
+sign with IRSA, and a pod that has both refuses to start.
 
 The RDS master password is generated and rotated by AWS. Read it with:
 

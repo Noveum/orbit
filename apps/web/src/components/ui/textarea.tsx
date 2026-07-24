@@ -15,7 +15,7 @@ export function Textarea({ className, rows = 4, ...props }: TextareaProps) {
         'w-full resize-y rounded-md border border-border bg-surface px-2.5 py-2 text-dense text-text',
         'placeholder:text-faint',
         'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
-        'hover:border-border-strong focus-visible:border-accent',
+        'not-disabled:hover:border-border-strong focus-visible:border-accent',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}

@@ -4,6 +4,8 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { ProgressBar } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
+import { cn } from '@/lib/cn.ts';
+import { cardHover, rowHover } from '@/lib/interaction.ts';
 import { buildBurnUp } from './burn-up.ts';
 import type { CycleView, UpcomingCycleView } from './data.ts';
 
@@ -102,7 +104,10 @@ export function CycleIssueList({ cycle }: { readonly cycle: CycleView }) {
             {group.issues.map((issue) => (
               <li
                 key={issue.id}
-                className="flex items-center gap-3 border-border border-b px-3 py-1.5 last:border-b-0"
+                className={cn(
+                  'flex items-center gap-3 border-border border-b px-3 py-1.5 last:border-b-0',
+                  rowHover,
+                )}
               >
                 <span className="w-16 shrink-0 text-2xs text-faint tabular">
                   {issue.identifier}
@@ -160,7 +165,10 @@ export function CyclePanel({ cycle, upcoming, teamName }: CyclePanelProps) {
             {upcoming.map((entry) => (
               <li
                 key={entry.id}
-                className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5"
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5',
+                  cardHover,
+                )}
               >
                 <span className="flex items-center gap-2 text-dense text-text">
                   <Badge tone="outline">{entry.teamKey}</Badge>

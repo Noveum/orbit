@@ -1,9 +1,8 @@
 'use client';
 
-import { useQueries } from '@tanstack/react-query';
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
@@ -13,7 +12,7 @@ import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
-import { teamIssuesQuery } from '@/lib/query/use-issues.ts';
+import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueRow } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
@@ -29,15 +28,24 @@ export function MyIssuesView() {
   const { config, setConfig } = useViewConfig(null, 'list', 'my_issues');
   useProvideViewControls('my_issues', 'list', config, setConfig);
 
-  const results = useQueries({
-    queries: workspace.teams.map((team) => teamIssuesQuery(team.id)),
-  });
+  const assigned = useAssignedIssues(workspace.userId);
+  const sentinel = useRef<HTMLDivElement>(null);
 
-  const loading = results.some((result) => result.isPending);
-  const mine = assignedTo(
-    results.flatMap((result) => result.data ?? []),
-    workspace.userId,
-  );
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = assigned;
+  useEffect(() => {
+    const node = sentinel.current;
+    if (node === null || !hasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) && !isFetchingNextPage) {
+        fetchNextPage().catch(() => undefined);
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const loading = assigned.isPending;
+  const mine = assignedTo(assigned.data ?? [], workspace.userId);
 
   const shown = applyDisplayFilters(mine, config.display, workspace.stateById);
 
@@ -128,6 +136,7 @@ export function MyIssuesView() {
               ))}
             </section>
           ))}
+          {hasNextPage ? <div ref={sentinel} className="h-px" aria-hidden="true" /> : null}
         </div>
       )}
 

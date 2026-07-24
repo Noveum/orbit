@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { SessionView } from './data.ts';
 
 export interface SessionsPanelProps {
@@ -47,7 +49,10 @@ export function SessionsPanel({ sessions }: SessionsPanelProps) {
           <li
             key={session.id}
             data-testid={`session-${session.id}`}
-            className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5"
+            className={cn(
+              'flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5',
+              cardHover,
+            )}
           >
             <MonitorSmartphone className="size-4 shrink-0 text-faint" aria-hidden="true" />
             <span className="flex min-w-0 flex-1 flex-col">

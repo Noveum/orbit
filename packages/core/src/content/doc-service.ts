@@ -1,4 +1,4 @@
-import { and, asc, count, db, desc, eq, ilike, isNull, or, schema } from '@orbit/db';
+import { and, asc, count, db, desc, eq, ilike, isNull, or, schema, sql } from '@orbit/db';
 import { conflict, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -12,10 +12,14 @@ import {
   docShareSchema,
   docUpdateSchema,
 } from '@orbit/shared/validators';
+import { getTableColumns } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+
+const DOC_EXCERPT_LENGTH = 400;
+const DOC_LIST_LIMIT = 500;
 
 export type DocRow = typeof schema.doc.$inferSelect;
 export type DocCollectionRow = typeof schema.docCollection.$inferSelect;
@@ -118,7 +122,18 @@ async function assertPlacement(
   }
 }
 
-export async function listDocs(principal: Principal, input: unknown = {}): Promise<DocRow[]> {
+export interface DocListRow extends Omit<DocRow, 'content'> {
+  readonly content: string;
+  readonly excerpt: string;
+}
+
+const DOC_LIST_COLUMNS = {
+  ...getTableColumns(schema.doc),
+  content: sql<string>`''`,
+  excerpt: sql<string>`left(${schema.doc.content}, ${DOC_EXCERPT_LENGTH})`,
+};
+
+export async function listDocs(principal: Principal, input: unknown = {}): Promise<DocListRow[]> {
   assertCan(principal, 'doc:read');
   const filter = docFilterSchema.parse(input);
 
@@ -135,11 +150,11 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
   }
 
   return await db
-    .select()
+    .select(DOC_LIST_COLUMNS)
     .from(schema.doc)
     .where(and(...conditions))
     .orderBy(desc(schema.doc.updatedAt))
-    .limit(500);
+    .limit(DOC_LIST_LIMIT);
 }
 
 export async function listDocCollections(principal: Principal): Promise<DocCollectionRow[]> {
@@ -344,6 +359,7 @@ export async function createDocCollection(
         organizationId: principal.organizationId,
         name: parsed.name,
         icon: parsed.icon,
+        syncId,
       })
       .returning();
     const collection = requireRow(created, 'The collection could not be created.');
@@ -363,9 +379,9 @@ function collectionAction(
     organizationId: row.organizationId,
     scopes: [scopes.organization(row.organizationId)],
     action,
-    model: 'doc',
+    model: 'doc_collection',
     modelId: row.id,
-    data: { ...row, kind: 'collection' },
+    data: row,
     actor,
   });
 }
@@ -384,7 +400,7 @@ export async function updateDocCollection(
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
       .update(schema.docCollection)
-      .set(parsed)
+      .set({ ...parsed, syncId })
       .where(
         and(
           eq(schema.docCollection.id, collectionId),

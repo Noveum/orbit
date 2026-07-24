@@ -57,6 +57,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
   const [slashOpen, setSlashOpen] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [percent, setPercent] = useState(0);
 
   const html = useMemo(() => (preview ? renderMarkdown(content) : ''), [preview, content]);
   const headings = useMemo(() => (preview ? outlineOf(content) : []), [preview, content]);
@@ -97,9 +98,13 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
     async (files: readonly File[]) => {
       if (files.length === 0) return;
       setUploading(true);
+      setPercent(0);
       try {
         for (const file of files) {
-          const uploaded = await uploadDocFile(docId, file);
+          const uploaded = await uploadDocFile(docId, file, {
+            onProgress: ({ loaded, total }) =>
+              setPercent(total === 0 ? 0 : Math.round((loaded / total) * 100)),
+          });
           applyEdit(
             insertBlock(
               selection(),
@@ -206,7 +211,11 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
         ))}
 
         <span className="ml-auto flex items-center gap-2">
-          {uploading ? <span className="text-2xs text-faint">Uploading…</span> : null}
+          {uploading ? (
+            <span className="text-2xs text-faint" data-testid="upload-progress" aria-live="polite">
+              Uploading {percent}%
+            </span>
+          ) : null}
           <span className="hidden items-center gap-1 text-2xs text-faint sm:flex">
             Type <Kbd keys={['/']} /> to insert
           </span>

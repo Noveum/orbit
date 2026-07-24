@@ -93,6 +93,16 @@ describe('listDocs', () => {
     expect(await listDocs(guest.principal, { query: 'nothing at all' })).toHaveLength(0);
   });
 
+  it('sends an excerpt instead of the whole body so a long list stays small', async () => {
+    const body = 'A'.repeat(5000);
+    await newDoc('Heavy doc', body);
+
+    const [row] = await listDocs(workspace.admin);
+    expect(row?.content).toBe('');
+    expect(row?.excerpt.length).toBeLessThan(body.length);
+    expect(row?.excerpt.startsWith('AAA')).toBe(true);
+  });
+
   it('never returns docs from another workspace', async () => {
     await newDoc('Ours');
     const other = await createWorkspace('Other');
