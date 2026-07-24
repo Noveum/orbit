@@ -14,7 +14,6 @@ import { getSession, requireSession } from '@/lib/auth/session.ts';
 export interface ApiContext extends MembershipContext {
   readonly userName: string;
   readonly userEmail: string;
-  readonly sessionToken: string;
 }
 
 async function contextFor(session: ActiveSession): Promise<ApiContext | null> {
@@ -27,7 +26,6 @@ async function contextFor(session: ActiveSession): Promise<ApiContext | null> {
     ...membership,
     userName: session.user.name,
     userEmail: session.user.email,
-    sessionToken: session.session.token,
   };
 }
 

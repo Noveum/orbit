@@ -1,6 +1,8 @@
 'use client';
 
 import { RealtimeProvider } from '@orbit/realtime-client/react';
+import { useCallback } from 'react';
+import { fetchRealtimeTicket } from '@/lib/realtime/ticket.ts';
 import type { InboxItem } from './data.ts';
 import { InboxView } from './inbox-view.tsx';
 
@@ -11,7 +13,6 @@ export interface InboxRealtimeProps {
   readonly userId: string;
   readonly organizationId: string;
   readonly realtimeUrl: string;
-  readonly token: string;
 }
 
 export function InboxRealtime({
@@ -21,10 +22,10 @@ export function InboxRealtime({
   userId,
   organizationId,
   realtimeUrl,
-  token,
 }: InboxRealtimeProps) {
+  const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
   return (
-    <RealtimeProvider url={realtimeUrl} token={token} organizationId={organizationId}>
+    <RealtimeProvider url={realtimeUrl} organizationId={organizationId} fetchTicket={fetchTicket}>
       <InboxView
         items={items}
         unreadCount={unreadCount}
