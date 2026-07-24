@@ -18,7 +18,7 @@ import {
   unique,
 } from '@orbit/shared';
 import { randomUUIDv7 } from 'bun';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
 import {
   canAdvance,
@@ -80,10 +80,20 @@ export async function applyGithubEvent(
   if (repo === undefined || !repo.enabled) return EMPTY;
 
   const now = input.now ?? new Date();
-  const identifiers =
+  const textIdentifiers =
     event.pullRequest === null
       ? extractIssueIdentifiers(event.checks?.headBranch ?? '')
       : extractIssueIdentifiers(`${event.pullRequest.headRef} ${event.pullRequest.title}`);
+  const linkedIdentifiers =
+    event.pullRequest === null && event.checks !== null
+      ? await identifiersFromGitLinks(
+          database,
+          repo.organizationId,
+          event.repository.fullName,
+          event.checks.prNumbers,
+        )
+      : [];
+  const identifiers = unique([...textIdentifiers, ...linkedIdentifiers]);
   if (identifiers.length === 0) {
     return { ...EMPTY, handled: true, organizationId: repo.organizationId };
   }
@@ -200,18 +210,19 @@ async function applyToIssue(
         updatedAt: now,
       },
     })
-    .returning();
+    .returning({ ...getTableColumns(gitLink), inserted: sql<boolean>`xmax = 0` });
   if (linkRow === undefined) return { actions, notificationEvents, gitLink: null };
+  const { inserted, ...link } = linkRow;
 
   actions.push(
     buildAction({
-      syncId: linkRow.syncId,
+      syncId: link.syncId,
       organizationId: repo.organizationId,
-      scopes: [scopes.issue(linked.id), scopes.team(linked.teamId)],
-      action: existing === undefined ? 'insert' : 'update',
+      scopes: linkScopes(linked),
+      action: inserted ? 'insert' : 'update',
       model: 'git_link',
-      modelId: linkRow.id,
-      data: serializeGitLink(linkRow),
+      modelId: link.id,
+      data: serializeGitLink(link),
       actor,
       at: now,
     }),
@@ -225,7 +236,7 @@ async function applyToIssue(
     notificationEvents.push({ ...notification, organizationId: repo.organizationId });
   }
 
-  return { actions, notificationEvents, gitLink: linkRow };
+  return { actions, notificationEvents, gitLink: link };
 }
 
 function resolveLinkState(
@@ -331,7 +342,11 @@ function pullRequestNotification(context: {
     };
   }
 
-  if (event.review !== null && event.review.decision !== 'dismissed') {
+  if (
+    event.review !== null &&
+    event.action === 'submitted' &&
+    event.review.decision !== 'dismissed'
+  ) {
     const type = notificationTypeForReview(event.review.decision);
     return {
       ...base,
@@ -376,11 +391,39 @@ function checksNotification(context: {
   };
 }
 
+function linkScopes(linked: LinkedIssue): string[] {
+  const list = [scopes.issue(linked.id), scopes.team(linked.teamId), scopes.user(linked.creatorId)];
+  if (linked.assigneeId !== null) list.push(scopes.user(linked.assigneeId));
+  return list;
+}
+
 function audienceIds(linked: LinkedIssue, extra: string | null): string[] {
   const ids = [linked.creatorId];
   if (linked.assigneeId !== null) ids.push(linked.assigneeId);
   if (extra !== null) ids.push(extra);
   return unique(ids.concat(linked.subscriberIds));
+}
+
+async function identifiersFromGitLinks(
+  database: GithubDatabase,
+  organizationId: string,
+  repository: string,
+  prNumbers: readonly number[],
+): Promise<string[]> {
+  if (prNumbers.length === 0) return [];
+  const rows = await database
+    .select({ identifier: issue.identifier })
+    .from(gitLink)
+    .innerJoin(issue, eq(issue.id, gitLink.issueId))
+    .where(
+      and(
+        eq(gitLink.organizationId, organizationId),
+        eq(gitLink.provider, 'github'),
+        eq(gitLink.repository, repository),
+        inArray(gitLink.number, [...prNumbers]),
+      ),
+    );
+  return rows.map((row) => row.identifier);
 }
 
 async function loadLinkedIssues(

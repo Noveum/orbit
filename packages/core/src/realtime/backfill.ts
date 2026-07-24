@@ -463,7 +463,12 @@ const LOADERS: Record<SyncModel, Loader> = {
   git_link: async (principal, since, limit) =>
     (
       await db
-        .select({ row: schema.gitLink, teamId: schema.issue.teamId })
+        .select({
+          row: schema.gitLink,
+          teamId: schema.issue.teamId,
+          creatorId: schema.issue.creatorId,
+          assigneeId: schema.issue.assigneeId,
+        })
         .from(schema.gitLink)
         .innerJoin(schema.issue, eq(schema.issue.id, schema.gitLink.issueId))
         .where(
@@ -474,10 +479,15 @@ const LOADERS: Record<SyncModel, Loader> = {
         )
         .orderBy(asc(schema.gitLink.syncId))
         .limit(limit)
-    ).map(({ row, teamId }) => ({
+    ).map(({ row, teamId, creatorId, assigneeId }) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes: [scopes.issue(row.issueId), scopes.team(teamId)],
+      scopes: [
+        scopes.issue(row.issueId),
+        scopes.team(teamId),
+        scopes.user(creatorId),
+        ...(assigneeId === null ? [] : [scopes.user(assigneeId)]),
+      ],
       data: row,
     })),
 };

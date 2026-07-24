@@ -179,7 +179,9 @@ function toReviewDecision(state: string): ReviewDecision {
 
 export function parseGithubEvent(eventName: string, body: unknown): NormalizedGithubEvent | null {
   if (eventName === 'pull_request') {
-    const parsed = pullRequestEventSchema.parse(body);
+    const result = pullRequestEventSchema.safeParse(body);
+    if (!result.success) return null;
+    const parsed = result.data;
     return {
       action: parsed.action,
       repository: {
@@ -194,7 +196,9 @@ export function parseGithubEvent(eventName: string, body: unknown): NormalizedGi
     };
   }
   if (eventName === 'pull_request_review') {
-    const parsed = reviewEventSchema.parse(body);
+    const result = reviewEventSchema.safeParse(body);
+    if (!result.success) return null;
+    const parsed = result.data;
     return {
       action: parsed.action,
       repository: {
@@ -213,7 +217,9 @@ export function parseGithubEvent(eventName: string, body: unknown): NormalizedGi
     };
   }
   if (eventName === 'check_suite') {
-    const parsed = checkSuiteEventSchema.parse(body);
+    const result = checkSuiteEventSchema.safeParse(body);
+    if (!result.success) return null;
+    const parsed = result.data;
     return {
       action: parsed.action,
       repository: {
