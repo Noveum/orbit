@@ -100,7 +100,7 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
 }
 
 const bodyClassName =
-  'prose-orbit text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1';
+  'prose-orbit break-words text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1';
 
 export function CommentBody({ body, bodyHtml }: { body: string; bodyHtml: string }) {
   if (bodyHtml.length === 0) {

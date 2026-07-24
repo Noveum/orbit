@@ -6,7 +6,7 @@ import type { DocHeading } from './outline.ts';
 import { extractHeadings, sameHeadings } from './outline.ts';
 
 export const docProseClassName = cn(
-  'prose-orbit max-w-none text-base text-muted leading-7',
+  'prose-orbit max-w-none break-words text-base text-muted leading-7',
   '[&_h1]:mt-8 [&_h1]:mb-3 [&_h1]:scroll-mt-24 [&_h1]:font-semibold [&_h1]:text-text [&_h1]:text-xl',
   '[&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:scroll-mt-24 [&_h2]:font-semibold [&_h2]:text-lg [&_h2]:text-text',
   '[&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:scroll-mt-24 [&_h3]:font-medium [&_h3]:text-base [&_h3]:text-text',
