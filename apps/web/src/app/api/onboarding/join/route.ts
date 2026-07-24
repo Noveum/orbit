@@ -26,7 +26,6 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
-    await advanceOnboarding(session.user.id, { step: 'workspace', via: 'join' });
     const onboarding = await advanceOnboarding(session.user.id, { step: 'invite' });
     return { onboarding, organizationId };
   });

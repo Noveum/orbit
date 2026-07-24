@@ -43,8 +43,8 @@ async function loadStatus(executor: Executor, userId: string): Promise<Onboardin
     .limit(1);
   const row = requireRow(user, 'That account does not exist.');
   const state = row.onboardingState as OnboardingState;
-  const hasWorkspace = await hasAnyWorkspace(executor, userId);
   const completed = row.onboardingCompletedAt !== null;
+  const hasWorkspace = completed ? true : await hasAnyWorkspace(executor, userId);
   return {
     userId,
     name: row.name,

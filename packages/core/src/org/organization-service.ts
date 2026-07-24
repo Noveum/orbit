@@ -75,6 +75,28 @@ export async function createOrganization(
       .limit(1);
     const actor = { type: 'user', id: userId, name: creator?.name ?? 'Someone' } as const;
 
+    const seededActions: SyncAction[] = [];
+    let teamData: typeof bootstrap.team = bootstrap.team;
+    if (options.seed === true) {
+      const seeded = await seedStarterContent(tx, {
+        organizationId: organization.id,
+        organizationName: organization.name,
+        team: { id: bootstrap.team.id, key: bootstrap.team.key },
+        creatorId: userId,
+        states: bootstrap.states,
+        cycle: bootstrap.cycle,
+        syncId,
+        actor,
+      });
+      seededActions.push(...seeded.actions);
+      const [freshTeam] = await tx
+        .select()
+        .from(schema.team)
+        .where(eq(schema.team.id, bootstrap.team.id))
+        .limit(1);
+      teamData = freshTeam ?? bootstrap.team;
+    }
+
     const actions: SyncAction[] = [
       buildSyncAction({
         syncId,
@@ -93,24 +115,11 @@ export async function createOrganization(
         action: 'insert',
         model: 'team',
         modelId: bootstrap.team.id,
-        data: bootstrap.team,
+        data: teamData,
         actor,
       }),
+      ...seededActions,
     ];
-
-    if (options.seed === true) {
-      const seeded = await seedStarterContent(tx, {
-        organizationId: organization.id,
-        organizationName: organization.name,
-        team: { id: bootstrap.team.id, key: bootstrap.team.key },
-        creatorId: userId,
-        states: bootstrap.states,
-        cycle: bootstrap.cycle,
-        syncId,
-        actor,
-      });
-      actions.push(...seeded.actions);
-    }
 
     return {
       organization,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { createUser, createWorkspace, resetDatabase } from '../test-support.ts';
 import { advanceOnboarding, getOnboardingStatus } from './onboarding-service.ts';
+import { createOrganization } from './organization-service.ts';
 
 beforeEach(async () => {
   await resetDatabase();
@@ -30,6 +31,7 @@ describe('advanceOnboarding', () => {
   it('marks the workspace step done via create and moves to invites', async () => {
     const user = await createUser('Nia New');
     await advanceOnboarding(user.id, { step: 'profile' });
+    await createOrganization(user.id, { name: 'Nia Co', slug: 'nia-co' });
     const status = await advanceOnboarding(user.id, {
       step: 'workspace',
       via: 'create',
@@ -43,6 +45,7 @@ describe('advanceOnboarding', () => {
   it('completes onboarding after the final step and never resets it', async () => {
     const user = await createUser('Nia New');
     await advanceOnboarding(user.id, { step: 'profile' });
+    await createOrganization(user.id, { name: 'Nia Co', slug: 'nia-co' });
     await advanceOnboarding(user.id, { step: 'workspace', via: 'create' });
     await advanceOnboarding(user.id, { step: 'invite' });
     const done = await advanceOnboarding(user.id, { step: 'theme', theme: 'dark' });

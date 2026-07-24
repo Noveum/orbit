@@ -2,7 +2,7 @@
 
 import { ONBOARDING_STEPS, type OnboardingStep } from '@orbit/shared/constants';
 import { Check } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useState } from 'react';
 import { cn } from '@/lib/cn.ts';
 import { InviteStep } from './steps/invite-step.tsx';
@@ -35,6 +35,7 @@ export interface OnboardingFlowProps {
 
 export function OnboardingFlow({ initialStep, status, invites, landingPath }: OnboardingFlowProps) {
   const [step, setStep] = useState<OnboardingStep>(initialStep);
+  const reduceMotion = useReducedMotion();
 
   function onNext(next: OnboardingStatusView): void {
     if (next.completed || next.step === 'done') {
@@ -81,9 +82,10 @@ export function OnboardingFlow({ initialStep, status, invites, landingPath }: On
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={step}
-          initial={{ opacity: 0, y: 6 }}
+          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.16 }}
         >
           {step === 'profile' ? (
             <ProfileStep

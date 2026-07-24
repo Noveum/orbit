@@ -75,11 +75,8 @@ export function isReservedWorkspaceSlug(slug: string): boolean {
   return RESERVED_WORKSPACE_SLUGS.has(slug.trim().toLowerCase());
 }
 
-export function workspaceReady(
-  state: OnboardingState,
-  options: { hasWorkspace: boolean },
-): boolean {
-  return state.workspaceCreate === true || state.workspaceJoin === true || options.hasWorkspace;
+export function workspaceReady(options: { hasWorkspace: boolean }): boolean {
+  return options.hasWorkspace;
 }
 
 export function resolveOnboardingStep(
@@ -87,7 +84,7 @@ export function resolveOnboardingStep(
   options: { hasWorkspace: boolean },
 ): OnboardingStep | typeof ONBOARDING_DONE {
   if (state.profileComplete !== true) return 'profile';
-  if (!workspaceReady(state, options)) return 'workspace';
+  if (!workspaceReady(options)) return 'workspace';
   if (state.workspaceInvite !== true) return 'invite';
   if (state.themeSet !== true) return 'theme';
   return ONBOARDING_DONE;

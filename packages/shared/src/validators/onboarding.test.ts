@@ -28,28 +28,32 @@ describe('resolveOnboardingStep', () => {
     expect(resolveOnboardingStep({ profileComplete: true }, { hasWorkspace: false })).toBe(
       'workspace',
     );
+    expect(resolveOnboardingStep({ profileComplete: true }, { hasWorkspace: true })).toBe('invite');
     expect(
       resolveOnboardingStep(
-        { profileComplete: true, workspaceCreate: true },
-        { hasWorkspace: false },
-      ),
-    ).toBe('invite');
-    expect(
-      resolveOnboardingStep(
-        { profileComplete: true, workspaceJoin: true, workspaceInvite: true },
-        { hasWorkspace: false },
+        { profileComplete: true, workspaceInvite: true },
+        { hasWorkspace: true },
       ),
     ).toBe('theme');
     expect(
       resolveOnboardingStep(
-        { profileComplete: true, workspaceCreate: true, workspaceInvite: true, themeSet: true },
-        { hasWorkspace: false },
+        { profileComplete: true, workspaceInvite: true, themeSet: true },
+        { hasWorkspace: true },
       ),
     ).toBe('done');
   });
 
   it('treats an existing workspace as satisfying the workspace step', () => {
     expect(resolveOnboardingStep({ profileComplete: true }, { hasWorkspace: true })).toBe('invite');
+  });
+
+  it('does not let client-attested flags advance the workspace step without a real workspace', () => {
+    expect(
+      resolveOnboardingStep(
+        { profileComplete: true, workspaceCreate: true, workspaceJoin: true },
+        { hasWorkspace: false },
+      ),
+    ).toBe('workspace');
   });
 });
 
