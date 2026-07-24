@@ -89,6 +89,12 @@ export function IssuePeek({ issue, onClose, onOpen }: IssuePeekProps) {
           data-testid="issue-peek"
           aria-label={`Peek ${issue.identifier}`}
           style={{ width }}
+          onInteractOutside={(event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest('[data-testid^="issue-row-"], [data-testid^="issue-card-"]')) {
+              event.preventDefault();
+            }
+          }}
           className={cn(
             'fixed inset-y-0 right-0 z-50 flex max-w-[90vw] flex-col border-border border-l bg-surface shadow-pop',
             'data-[state=open]:animate-panel-in data-[state=closed]:animate-panel-out',
