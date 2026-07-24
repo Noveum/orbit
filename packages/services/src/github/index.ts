@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type NotificationType, STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared';
 import { z } from 'zod';
 
+export * from './app.ts';
 export * from './apply.ts';
 
 export function verifyGithubSignature(
