@@ -1,6 +1,15 @@
 'use client';
 
-import { Check, ChevronsUpDown, LogOut, Plus, Settings, SunMoon, UserCog } from 'lucide-react';
+import {
+  Check,
+  ChevronsUpDown,
+  Home,
+  LogOut,
+  Plus,
+  Settings,
+  SunMoon,
+  UserCog,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useState } from 'react';
@@ -132,6 +141,10 @@ export function WorkspaceSwitcher({
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />
+        <DropdownMenuItem data-testid="home-link" onSelect={() => router.push('/home')}>
+          <Home className="size-4" aria-hidden="true" />
+          Home
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => router.push('/settings/general')}>
           <Settings className="size-4" aria-hidden="true" />
           Workspace settings
