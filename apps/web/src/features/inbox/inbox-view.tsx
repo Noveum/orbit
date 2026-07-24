@@ -109,10 +109,15 @@ function toInboxItem(data: Record<string, unknown>): InboxItem | null {
 interface InboxPatch {
   readonly rows: readonly InboxItem[];
   readonly unreadDelta: number;
+  readonly mentionDelta: number;
 }
 
 function readChange(read: boolean): number {
   return read ? -1 : 1;
+}
+
+function unreadMentionCount(item: InboxItem): number {
+  return !item.read && item.type === 'mention' ? 1 : 0;
 }
 
 function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
@@ -125,6 +130,7 @@ function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
     return {
       rows: patch.rows.filter((row) => row.id !== item.id),
       unreadDelta: patch.unreadDelta - (previous.read ? 0 : 1),
+      mentionDelta: patch.mentionDelta - unreadMentionCount(previous),
     };
   }
   if (previous === undefined) {
@@ -132,12 +138,14 @@ function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
     return {
       rows: [item, ...patch.rows],
       unreadDelta: patch.unreadDelta + (item.read ? 0 : 1),
+      mentionDelta: patch.mentionDelta + unreadMentionCount(item),
     };
   }
   const change = previous.read === item.read ? 0 : readChange(item.read);
   return {
     rows: patch.rows.map((row) => (row.id === item.id ? item : row)),
     unreadDelta: patch.unreadDelta + change,
+    mentionDelta: patch.mentionDelta + (unreadMentionCount(item) - unreadMentionCount(previous)),
   };
 }
 
@@ -148,7 +156,7 @@ export function applyNotificationDeltas(
 ): InboxPatch {
   return actions
     .filter((action) => action.model === 'notification' && action.originClientId !== tabClientId)
-    .reduce(applyOne, { rows, unreadDelta: 0 });
+    .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0 });
 }
 
 export interface InboxViewProps {
@@ -179,6 +187,9 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
         if (patch.rows !== rows) setRows(patch.rows);
         if (patch.unreadDelta !== 0) {
           setUnread((current) => Math.max(0, current + patch.unreadDelta));
+        }
+        if (patch.mentionDelta !== 0) {
+          setMentions((current) => Math.max(0, current + patch.mentionDelta));
         }
       },
       [rows],
@@ -235,7 +246,9 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
 
   const remove = useCallback(async () => {
     if (current === undefined) return;
+    const wasUnreadMention = !current.read && current.type === 'mention';
     setRows((list) => list.filter((row) => row.id !== current.id));
+    if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
     applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
   }, [current, applyServerCount]);
 

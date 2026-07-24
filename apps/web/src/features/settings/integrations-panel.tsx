@@ -148,9 +148,10 @@ function GithubSection({
               placeholder="acme/web"
             />
           </label>
-          <label className="flex flex-col gap-1 text-2xs text-faint">
+          <label htmlFor="gh-team" className="flex flex-col gap-1 text-2xs text-faint">
             Team
             <select
+              id="gh-team"
               value={teamId}
               onChange={(event) => setTeamId(event.target.value)}
               className="h-8 rounded-md border border-border bg-surface px-2 text-dense text-text"
@@ -297,9 +298,10 @@ function SlackSection({
               placeholder="engineering"
             />
           </label>
-          <label className="flex flex-col gap-1 text-2xs text-faint">
+          <label htmlFor="slack-team" className="flex flex-col gap-1 text-2xs text-faint">
             Team
             <select
+              id="slack-team"
               value={teamId}
               onChange={(event) => setTeamId(event.target.value)}
               className="h-8 rounded-md border border-border bg-surface px-2 text-dense text-text"
