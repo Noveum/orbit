@@ -21,6 +21,11 @@ export interface MagicLinkProps {
   readonly email: string;
 }
 
+export interface ResetPasswordProps {
+  readonly url: string;
+  readonly email: string;
+}
+
 export interface InviteProps {
   readonly organizationName: string;
   readonly inviterName: string;
@@ -114,6 +119,35 @@ export async function magicLinkEmail(props: MagicLinkProps): Promise<EmailConten
       props.url,
       '',
       'The link expires shortly and can be used once.',
+    ].join('\n'),
+  };
+}
+
+export async function resetPasswordEmail(props: ResetPasswordProps): Promise<EmailContent> {
+  const subject = 'Reset your Orbit password';
+  const html = await render(
+    <Layout
+      preview="Reset your Orbit password"
+      heading="Reset your password"
+      footer={`This reset was requested for ${props.email}. It expires shortly and can be used once. If you did not ask for it, ignore this email.`}
+    >
+      <Text style={paragraphStyle}>Click the button below to choose a new password.</Text>
+      <Button href={props.url} style={buttonStyle}>
+        Reset password
+      </Button>
+      <LinkLine url={props.url} />
+    </Layout>,
+  );
+  return {
+    subject,
+    html,
+    text: [
+      'Reset your Orbit password',
+      '',
+      `Use this link to reset the password for ${props.email}:`,
+      props.url,
+      '',
+      'The link expires shortly and can be used once. If you did not ask for it, ignore this email.',
     ].join('\n'),
   };
 }

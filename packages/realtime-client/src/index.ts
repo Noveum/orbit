@@ -6,6 +6,7 @@ import type {
 } from '@orbit/shared/events';
 import {
   ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+  SESSION_REVOKED_CLOSE_CODE,
   serverMessageSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
@@ -21,6 +22,7 @@ export interface RealtimeClientOptions {
   onStatus?: (status: RealtimeStatus) => void;
   onResume?: (since: number) => void;
   onDenied?: (scopes: string[]) => void;
+  onTerminal?: (code: number) => void;
   maxBackoffMs?: number;
 }
 
@@ -40,6 +42,7 @@ const NORMAL_CLOSURE = 1000;
 
 const TERMINAL_CLOSE_CODES: readonly number[] = [
   UNAUTHORIZED_CLOSE_CODE,
+  SESSION_REVOKED_CLOSE_CODE,
   ORGANIZATION_FORBIDDEN_CLOSE_CODE,
 ];
 
@@ -146,9 +149,11 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     };
     next.onclose = (event) => {
       if (socket === next) socket = null;
-      if (TERMINAL_CLOSE_CODES.includes(event.code)) disposed = true;
+      const terminal = TERMINAL_CLOSE_CODES.includes(event.code);
+      if (terminal) disposed = true;
       if (disposed) {
         setStatus('closed');
+        if (terminal) options.onTerminal?.(event.code);
         return;
       }
       scheduleReconnect();

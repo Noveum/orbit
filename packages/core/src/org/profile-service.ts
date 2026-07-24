@@ -23,7 +23,6 @@ export async function updateProfile(userId: string, input: unknown): Promise<Use
   const values: Partial<typeof schema.user.$inferInsert> = {};
   if (parsed.name !== undefined) values.name = parsed.name;
   if (parsed.handle !== undefined) values.handle = parsed.handle;
-  if (parsed.image !== undefined) values.image = parsed.image;
   if (parsed.timezone !== undefined) values.timezone = parsed.timezone;
 
   if (parsed.handle !== undefined) {

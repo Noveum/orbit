@@ -1,5 +1,11 @@
-import type { Actor, SyncAction, SyncActionKind, SyncModel } from '@orbit/shared/events';
-import { REDIS_DELTA_CHANNEL } from '@orbit/shared/events';
+import type {
+  Actor,
+  ControlMessage,
+  SyncAction,
+  SyncActionKind,
+  SyncModel,
+} from '@orbit/shared/events';
+import { REDIS_CONTROL_CHANNEL, REDIS_DELTA_CHANNEL } from '@orbit/shared/events';
 import { RedisClient } from 'bun';
 
 export interface BuildSyncActionInput {
@@ -51,6 +57,13 @@ export async function publishDeltas(actions: SyncAction[]): Promise<void> {
   const redis = connection();
   if (redis === null) return;
   await redis.publish(REDIS_DELTA_CHANNEL, JSON.stringify(actions));
+}
+
+export async function publishSessionRevoked(userId: string): Promise<void> {
+  const redis = connection();
+  if (redis === null) return;
+  const message: ControlMessage = { type: 'session_revoked', userId };
+  await redis.publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
 }
 
 export function closeRealtime(): Promise<void> {

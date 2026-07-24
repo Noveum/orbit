@@ -17,15 +17,16 @@ import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import type { Doc, DocCollection, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
+import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
-import { useArchiveDoc, useDoc, useUpdateDoc } from '@/lib/query/use-docs.ts';
+import { useArchiveDoc, useDoc, useDocs, useUpdateDoc } from '@/lib/query/use-docs.ts';
 import { DocEditor } from './doc-editor.tsx';
 import { DocHistory } from './doc-history.tsx';
 import { DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
+import { useDocsTree } from './use-docs-tree.ts';
 
 const STATUS_LABEL = {
   saved: 'Saved',
@@ -74,14 +75,18 @@ export function descendantIds(docs: readonly DocSummary[], rootId: string): Set<
 
 export interface DocSurfaceProps {
   readonly docId: string;
-  readonly docs: readonly DocSummary[];
-  readonly collections: readonly DocCollection[];
-  readonly projects: readonly { readonly id: string; readonly name: string }[];
   readonly canWrite: boolean;
   readonly canPublish: boolean;
   readonly startEditing: boolean;
-  readonly onUnsavedChange: (docId: string | null) => void;
-  readonly onToggleTree: () => void;
+}
+
+function useDocList() {
+  const list = useDocs('');
+  return {
+    docs: list.data?.docs ?? [],
+    collections: list.data?.collections ?? [],
+    projects: list.data?.projects ?? [],
+  };
 }
 
 export function DocSurface(props: DocSurfaceProps) {
@@ -112,24 +117,22 @@ export function DocSurface(props: DocSurfaceProps) {
 
 function LoadedDoc({
   detail,
-  docs,
-  collections,
-  projects,
   canWrite,
   canPublish,
   startEditing,
-  onUnsavedChange,
-  onToggleTree,
 }: DocSurfaceProps & { readonly detail: DocDetail }) {
   const router = useRouter();
+  const { docs, collections, projects } = useDocList();
+  const { toggle, setUnsavedDocId } = useDocsTree();
   const update = useUpdateDoc(detail.doc.id);
   const archive = useArchiveDoc();
   const [editing, setEditing] = useState(startEditing && canWrite);
   const [status, setStatus] = useState<SaveStatus>('saved');
 
   useEffect(() => {
-    onUnsavedChange(editing && status !== 'saved' ? detail.doc.id : null);
-  }, [editing, status, detail.doc.id, onUnsavedChange]);
+    setUnsavedDocId(editing && status !== 'saved' ? detail.doc.id : null);
+    return () => setUnsavedDocId(null);
+  }, [editing, status, detail.doc.id, setUnsavedDocId]);
 
   const collectionName =
     collections.find((entry) => entry.id === detail.doc.collectionId)?.name ?? null;
@@ -146,7 +149,7 @@ function LoadedDoc({
           aria-label="Toggle doc tree"
           data-testid="toggle-doc-tree"
           className="size-7 px-0 lg:hidden"
-          onClick={onToggleTree}
+          onClick={toggle}
         >
           <PanelLeft className="size-4" aria-hidden="true" />
         </Button>

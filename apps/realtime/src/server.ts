@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   clientMessageSchema,
   connectionOrganizationIdSchema,
+  controlMessageSchema,
   DELTA_BATCH_WINDOW_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
@@ -9,8 +10,10 @@ import {
   PRESENCE_TTL_MS,
   type PresenceKind,
   presenceMessageSchema,
+  REDIS_CONTROL_CHANNEL,
   REDIS_DELTA_CHANNEL,
   REDIS_PRESENCE_CHANNEL,
+  SESSION_REVOKED_CLOSE_CODE,
   type SyncAction,
   syncActionSchema,
   UNAUTHORIZED_CLOSE_CODE,
@@ -23,6 +26,7 @@ import {
   type ConnectionRejection,
   memberDeleteSchema,
   membershipStillValid,
+  sessionStillValid,
 } from './auth.ts';
 import { Connection, type SocketData } from './connection.ts';
 import { errorFields, logger } from './logger.ts';
@@ -156,6 +160,46 @@ export async function createRealtimeServer(
     });
     connections.delete(connection.id);
     connection.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE, 'membership_revoked');
+  }
+
+  async function revalidateSession(connection: Connection): Promise<void> {
+    let valid = false;
+    try {
+      valid = await sessionStillValid(connection.principal.sessionToken);
+    } catch (error: unknown) {
+      logger.error('session revalidation failed, closing to fail closed', {
+        connectionId: connection.id,
+        ...errorFields(error),
+      });
+    }
+    if (valid) return;
+    logger.info('closing connection for a revoked session', {
+      connectionId: connection.id,
+      userId: connection.principal.userId,
+    });
+    connections.delete(connection.id);
+    connection.close(SESSION_REVOKED_CLOSE_CODE, 'session_revoked');
+  }
+
+  function revalidateSessionsFor(userId: string): void {
+    for (const connection of connections.values()) {
+      if (connection.principal.userId !== userId) continue;
+      revalidateSession(connection).catch((error: unknown) => {
+        logger.error('session revalidation failed', {
+          connectionId: connection.id,
+          ...errorFields(error),
+        });
+      });
+    }
+  }
+
+  function deliverControl(payload: string): void {
+    const parsed = controlMessageSchema.safeParse(parseJson(payload));
+    if (!parsed.success) {
+      logger.warn('discarded malformed control message', { channel: REDIS_CONTROL_CHANNEL });
+      return;
+    }
+    revalidateSessionsFor(parsed.data.userId);
   }
 
   function revalidateAffected(action: SyncAction): void {
@@ -388,10 +432,11 @@ export async function createRealtimeServer(
   };
 
   await subscriber.subscribe(
-    [REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL],
+    [REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL, REDIS_CONTROL_CHANNEL],
     (message: string, channel: string) => {
       if (channel === REDIS_DELTA_CHANNEL) deliverDelta(message);
       else if (channel === REDIS_PRESENCE_CHANNEL) deliverPresence(message);
+      else if (channel === REDIS_CONTROL_CHANNEL) deliverControl(message);
     },
   );
   let closing = false;

@@ -1,34 +1,12 @@
-import { createDoc, listDocCollections, listDocs } from '@orbit/core';
-import { and, db, eq, isNull, schema } from '@orbit/db';
-import { summarize } from '@orbit/services/markdown';
+import { createDoc } from '@orbit/core';
+import { docFilterSchema } from '@orbit/shared/validators';
+import { docListPayload } from '@/lib/api/docs.ts';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 
 export async function GET(request: Request): Promise<Response> {
-  return await handle(async (principal) => {
-    const [docs, collections, projects] = await Promise.all([
-      listDocs(principal, searchParamsOf(request)),
-      listDocCollections(principal),
-      db
-        .select({ id: schema.project.id, name: schema.project.name })
-        .from(schema.project)
-        .where(
-          and(
-            eq(schema.project.organizationId, principal.organizationId),
-            isNull(schema.project.archivedAt),
-          ),
-        ),
-    ]);
-
-    return {
-      docs: docs.map((doc) => ({
-        ...doc,
-        publishToken: doc.publishToken === null ? null : 'set',
-        excerpt: summarize(doc.excerpt, 140),
-      })),
-      collections,
-      projects,
-    };
-  });
+  return await handle(async (principal) =>
+    docListPayload(principal, docFilterSchema.parse(searchParamsOf(request))),
+  );
 }
 
 export async function POST(request: Request): Promise<Response> {

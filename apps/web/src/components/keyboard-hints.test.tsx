@@ -6,7 +6,7 @@ import { Sidebar } from '@/components/layout/sidebar.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { Kbd, keyGlyph } from '@/components/ui/kbd.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
-import { DocsWorkspace } from '@/features/docs/docs-workspace.tsx';
+import { DocsSidebar } from '@/features/docs/docs-sidebar.tsx';
 import { InboxView } from '@/features/inbox/inbox-view.tsx';
 import { IssueProperties } from '@/features/issues/issue-properties.tsx';
 import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx';
@@ -24,6 +24,7 @@ import * as issuesQuery from '@/lib/query/use-issues.ts';
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
   usePathname: () => '/inbox',
+  useParams: () => ({}),
 }));
 
 mock.module('next-themes', () => ({
@@ -127,7 +128,7 @@ function Surfaces({ extra }: { readonly extra?: ReactNode }) {
           <ShortcutsOverlay open onOpenChange={noop} />
           <IssueProperties issue={issue} />
           <InboxView items={[]} unreadCount={0} unreadMentions={0} userId="user_1" />
-          <DocsWorkspace docId={null} canWrite canPublish={false} />
+          <DocsSidebar canWrite />
           {extra}
         </IssueWorkspaceProvider>
       </HotkeyProvider>
