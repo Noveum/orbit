@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { StorageDriver } from '@orbit/services/storage';
 import { db, eq, schema } from '@orbit/db';
+import type { StorageDriver } from '@orbit/services/storage';
 import { createUser, resetDatabase } from '../test-support.ts';
 import {
   avatarPublicUrl,
@@ -122,7 +122,9 @@ describe('avatar-service', () => {
     const user = await createUser('Otto OAuth');
     const { driver, puts } = fakeDriver();
     globalThis.fetch = mock(() =>
-      Promise.resolve(new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })),
+      Promise.resolve(
+        new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+      ),
     ) as unknown as typeof fetch;
 
     const ok = await ingestExternalAvatar(user.id, 'https://provider.example/page', driver);
