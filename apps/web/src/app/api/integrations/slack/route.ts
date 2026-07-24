@@ -15,6 +15,7 @@ import {
 } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
+import { assertTeamInWorkspace } from '@/lib/workspace.ts';
 
 const requestSchema = z.discriminatedUnion('action', [
   slackInstallSchema.extend({ action: z.literal('install') }),
@@ -56,6 +57,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const integrationId = await slackIntegrationId(principal.organizationId);
     if (input.action === 'connect') {
+      if (input.teamId !== null) await assertTeamInWorkspace(principal, input.teamId);
       await connectSlackChannel(db, {
         organizationId: principal.organizationId,
         integrationId,

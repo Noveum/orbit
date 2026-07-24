@@ -1,14 +1,13 @@
 import { and, db, desc, eq, schema } from '@orbit/db';
-import { idSchema } from '@orbit/shared/validators';
-import { z } from 'zod';
+import { assertCan } from '@orbit/shared/policy';
+import { gitLinksQuerySchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, searchParamsOf } from '@/lib/api/handler.ts';
-
-const querySchema = z.object({ issueId: idSchema });
 
 export async function GET(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const { principal } = await apiContext();
-    const { issueId } = querySchema.parse(searchParamsOf(request));
+    assertCan(principal, 'issue:read');
+    const { issueId } = gitLinksQuerySchema.parse(searchParamsOf(request));
     const pulls = await db
       .select({
         id: schema.gitLink.id,

@@ -3,6 +3,7 @@ import { assertCan } from '@orbit/shared/policy';
 import { githubLinkRepositorySchema, githubUnlinkRepositorySchema } from '@orbit/shared/validators';
 import { randomUUIDv7 } from 'bun';
 import { apiContext, handleRoute, readJson, searchParamsOf } from '@/lib/api/handler.ts';
+import { assertTeamInWorkspace } from '@/lib/workspace.ts';
 
 export async function GET(): Promise<Response> {
   return await handleRoute(async () => {
@@ -37,6 +38,7 @@ export async function POST(request: Request): Promise<Response> {
     const { principal } = await apiContext();
     assertCan(principal, 'integration:manage');
     const input = githubLinkRepositorySchema.parse(await readJson(request));
+    await assertTeamInWorkspace(principal, input.teamId);
 
     const externalId = input.installationId.length > 0 ? input.installationId : 'default';
     const integrationId = await ensureIntegration(

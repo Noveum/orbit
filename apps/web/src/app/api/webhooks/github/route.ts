@@ -4,6 +4,7 @@ import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from 'bun';
 import { publish } from '@/lib/api/handler.ts';
+import { absoluteUrl } from '@/lib/env.ts';
 
 const SIGNATURE_HEADER = 'x-hub-signature-256';
 const EVENT_HEADER = 'x-github-event';
@@ -35,13 +36,28 @@ export async function POST(request: Request): Promise<Response> {
     .onConflictDoNothing()
     .returning({ id: schema.webhookDelivery.id });
   if (claimed.length === 0) {
-    return Response.json({ status: 'duplicate' });
+    const [existing] = await db
+      .select({ status: schema.webhookDelivery.status })
+      .from(schema.webhookDelivery)
+      .where(deliveryMatch(deliveryId))
+      .limit(1);
+    if (existing === undefined || existing.status === 'processed') {
+      return Response.json({ status: 'duplicate' });
+    }
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'received', event: eventName })
+      .where(deliveryMatch(deliveryId));
   }
 
   let body: unknown;
   try {
     body = JSON.parse(raw);
   } catch {
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'failed' })
+      .where(deliveryMatch(deliveryId));
     return Response.json({ error: 'invalid json' }, { status: 400 });
   }
 
@@ -61,11 +77,10 @@ export async function POST(request: Request): Promise<Response> {
     await publish(outcome.actions);
 
     if (outcome.organizationId !== null && outcome.slackText !== null) {
-      const appUrl = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
       await dispatchSlackMessage(db, {
         organizationId: outcome.organizationId,
         teamIds: outcome.teamIds,
-        text: `${outcome.slackText}: ${appUrl}/inbox`,
+        text: `${outcome.slackText}: ${absoluteUrl('/inbox')}`,
       });
     }
 
