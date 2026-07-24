@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import type { CSSProperties, ReactNode } from 'react';
+import { OrbitWordmark } from '@/components/brand/orbit-logo.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { cn } from '@/lib/cn.ts';
 import { EnterToSignIn } from './enter-to-sign-in.tsx';
@@ -31,26 +32,6 @@ const primaryCta =
   'inline-flex h-10 items-center justify-center rounded-md bg-accent px-5 text-sm font-medium text-accent-contrast transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)] hover:bg-accent-hover active:scale-[0.985]';
 
 const quietLink = 'text-muted transition-[color] duration-[var(--duration-fast)] hover:text-text';
-
-function Wordmark({ compact = false }: { compact?: boolean }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <svg viewBox="0 0 20 20" className="size-5" aria-hidden="true">
-        <circle
-          cx="10"
-          cy="10"
-          r="7"
-          fill="none"
-          strokeWidth="1.5"
-          className="stroke-text"
-          opacity="0.85"
-        />
-        <circle cx="15.6" cy="5.4" r="2.1" className="fill-accent" />
-      </svg>
-      {compact ? null : <span className="text-base font-semibold tracking-tight">Orbit</span>}
-    </span>
-  );
-}
 
 function StackSwap({
   base,
@@ -109,7 +90,7 @@ function LandingHeader() {
     <header className="landing-header hairline-b sticky top-0 z-40">
       <div className="mx-auto flex h-14 w-full max-w-6xl 2xl:max-w-7xl items-center justify-between px-5 sm:px-8">
         <Link href="/" className="rounded-sm" aria-label="Orbit home">
-          <Wordmark />
+          <OrbitWordmark />
         </Link>
         <nav aria-label="Landing sections" className="hidden items-center gap-6 text-sm md:flex">
           <a href="#features" className={quietLink}>
@@ -767,7 +748,7 @@ function LandingFooter() {
     <footer className="border-t border-border">
       <div className="mx-auto flex w-full max-w-6xl 2xl:max-w-7xl flex-col justify-between gap-8 px-5 py-12 sm:px-8 md:flex-row md:items-center">
         <div className="flex flex-col gap-2">
-          <Wordmark />
+          <OrbitWordmark />
           <p className="text-sm text-muted">The free, realtime, keyboard-first work tracker.</p>
         </div>
         <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
