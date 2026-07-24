@@ -1,12 +1,14 @@
 'use client';
 
 import { Menu, PanelRight } from 'lucide-react';
+import Link from 'next/link';
 import { Fragment, type ReactNode } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { TopBarDisplayMenu } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 
 export interface Breadcrumb {
   readonly label: string;
@@ -61,9 +63,18 @@ export function TopBar({
                     </li>
                   ) : null}
                   <li className={cn('min-w-0 truncate', last ? 'block' : 'hidden sm:block')}>
-                    <span className={last ? 'font-medium text-text' : 'text-muted'}>
-                      {crumb.label}
-                    </span>
+                    {crumb.href === undefined ? (
+                      <span className={last ? 'font-medium text-text' : 'text-muted'}>
+                        {crumb.label}
+                      </span>
+                    ) : (
+                      <Link
+                        href={crumb.href}
+                        className={cn('block truncate rounded-xs text-muted', tabHover)}
+                      >
+                        {crumb.label}
+                      </Link>
+                    )}
                   </li>
                 </Fragment>
               );
