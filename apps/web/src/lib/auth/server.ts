@@ -12,7 +12,7 @@ import { nextCookies } from 'better-auth/next-js';
 import { magicLink, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
-import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
+import { absoluteUrl, mcpServerUrl, serverEnv } from '@/lib/env.ts';
 
 export const MCP_SCOPES = [
   'openid',
@@ -25,6 +25,7 @@ export const MCP_SCOPES = [
 
 export const MCP_CONSENT_PATH = '/oauth/authorize';
 export const MCP_LOGIN_PATH = '/login';
+export const MCP_AUTHORIZE_START_PATH = '/api/oauth/start';
 
 const passkeyAssertionSchema = z.object({ response: z.object({ id: z.string().min(1) }) });
 
@@ -183,6 +184,7 @@ export const auth = betterAuth({
         consentPage: MCP_CONSENT_PATH,
         allowDynamicClientRegistration: true,
         scopes: [...MCP_SCOPES],
+        metadata: { authorization_endpoint: absoluteUrl(MCP_AUTHORIZE_START_PATH) },
       },
     }),
     nextCookies(),

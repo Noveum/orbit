@@ -8,13 +8,9 @@ import { listDevUsers } from '@/lib/api/dev-users.ts';
 import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
+import { mcpContinueUrl, safeCallback } from './continue-url.ts';
 
 export const metadata: Metadata = { title: 'Sign in' };
-
-export function safeCallback(value: string | string[] | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  return /^\/(?!\/)/.test(value) ? value : undefined;
-}
 
 export default async function LoginPage({
   searchParams,
@@ -22,7 +18,7 @@ export default async function LoginPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const callbackUrl = safeCallback(params['next']);
+  const callbackUrl = mcpContinueUrl(params) ?? safeCallback(params['next']);
   const errorCode = authErrorCode(params['error']);
   const session = await getSession();
   if (session !== null) redirect(callbackUrl ?? '/my-issues');

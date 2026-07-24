@@ -1,4 +1,4 @@
-import { and, db, desc, eq, isNull, schema } from '@orbit/db';
+import { and, db, desc, eq, gt, isNull, schema } from '@orbit/db';
 import { notFound, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { newId } from '../internal.ts';
@@ -55,6 +55,48 @@ export async function verifyMcpAccessToken(
     organizationId: grant.organizationId,
     scopes: tokenRow.scopes,
   };
+}
+
+export interface McpClient {
+  readonly clientId: string;
+  readonly name: string;
+  readonly icon: string | null;
+}
+
+export async function getMcpClient(clientId: string): Promise<McpClient | null> {
+  const [row] = await db
+    .select({
+      clientId: schema.oauthApplication.clientId,
+      name: schema.oauthApplication.name,
+      icon: schema.oauthApplication.icon,
+    })
+    .from(schema.oauthApplication)
+    .where(eq(schema.oauthApplication.clientId, clientId))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function userHasPasskey(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: schema.passkey.id })
+    .from(schema.passkey)
+    .where(eq(schema.passkey.userId, userId))
+    .limit(1);
+  return row !== undefined;
+}
+
+export async function passkeyVerifiedWithin(
+  userId: string,
+  windowMs: number,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const threshold = new Date(now.getTime() - windowMs);
+  const [row] = await db
+    .select({ lastUsedAt: schema.passkey.lastUsedAt })
+    .from(schema.passkey)
+    .where(and(eq(schema.passkey.userId, userId), gt(schema.passkey.lastUsedAt, threshold)))
+    .limit(1);
+  return row !== undefined;
 }
 
 export interface RecordMcpGrantInput {
