@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import type { DisplayProperty } from '@orbit/shared/filters';
+import { DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { render, screen } from '@testing-library/react';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
@@ -69,6 +71,85 @@ describe('IssueCard', () => {
 
     rerender(<IssueCard issue={issue()} labels={[]} assignee={undefined} dragging />);
     expect(screen.getByTestId('issue-card-ENG-4').className).toContain('-translate-y-0.5');
+  });
+});
+
+const state: WorkflowState = {
+  id: 'state_todo',
+  teamId: 'team_1',
+  name: 'In progress',
+  category: 'started',
+  color: '#f2c94c',
+  position: 1,
+};
+const creator: Member = {
+  id: 'user_9',
+  name: 'Ravi Kapoor',
+  email: 'ravi@noveum.ai',
+  image: null,
+  handle: 'ravi',
+  role: 'member',
+};
+const project = { name: 'Website', color: '#2f80ed' };
+const cycle = { name: 'Cycle 7' };
+
+function fullCard(properties: readonly DisplayProperty[]) {
+  return (
+    <IssueCard
+      issue={issue({
+        milestoneId: 'ms_1',
+        dueDate: '2026-03-04T00:00:00.000Z',
+        startedAt: '2026-03-01T00:00:00.000Z',
+        completedAt: '2026-03-05T00:00:00.000Z',
+      })}
+      labels={[label]}
+      assignee={member}
+      state={state}
+      creator={creator}
+      project={project}
+      cycle={cycle}
+      subIssueCount={2}
+      properties={properties}
+    />
+  );
+}
+
+describe('IssueCard display properties', () => {
+  it('renders every property that is toggled on', async () => {
+    render(fullCard([...DISPLAY_PROPERTIES]));
+
+    expect(screen.getByLabelText('Urgent')).toBeInTheDocument();
+    expect(screen.getByLabelText('In progress')).toBeInTheDocument();
+    expect(screen.getByText('ENG-4')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByText('Bug')).toBeInTheDocument();
+    expect(screen.getByTitle('Sub-issues')).toHaveTextContent('2');
+    expect(screen.getByText('Website')).toBeInTheDocument();
+    expect(screen.getByText('Cycle 7')).toBeInTheDocument();
+    expect(screen.getByTitle('On a milestone')).toBeInTheDocument();
+    expect(screen.getByTitle('Due date')).toBeInTheDocument();
+    expect(screen.getByTitle('Started')).toBeInTheDocument();
+    expect(screen.getByTitle('Completed')).toBeInTheDocument();
+    expect(screen.getByTitle('Created')).toBeInTheDocument();
+    expect(screen.getByTitle('Updated')).toBeInTheDocument();
+    expect(await screen.findByText('RK')).toBeInTheDocument();
+    expect(await screen.findByText('AR')).toBeInTheDocument();
+  });
+
+  it('hides every property that is toggled off', () => {
+    render(fullCard([]));
+
+    expect(screen.getByText('Presence should expire after 45 seconds')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Urgent')).toBeNull();
+    expect(screen.queryByLabelText('In progress')).toBeNull();
+    expect(screen.queryByText('ENG-4')).toBeNull();
+    expect(screen.queryByText('Bug')).toBeNull();
+    expect(screen.queryByTitle('Sub-issues')).toBeNull();
+    expect(screen.queryByTitle('Project')).toBeNull();
+    expect(screen.queryByTitle('Cycle')).toBeNull();
+    expect(screen.queryByTitle('On a milestone')).toBeNull();
+    expect(screen.queryByTitle('Due date')).toBeNull();
+    expect(screen.queryByTitle('Created')).toBeNull();
   });
 });
 

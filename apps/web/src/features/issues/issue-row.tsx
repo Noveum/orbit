@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 
@@ -26,41 +27,6 @@ export interface IssueRowProps {
   readonly onOpen: () => void;
   readonly onToggleSelected: () => void;
   readonly onFocus: () => void;
-}
-
-function shortDate(value: string | null): string | null {
-  if (value === null) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function Chip({ label, color, title }: { label: string; color?: string; title: string }) {
-  return (
-    <span
-      title={title}
-      className="hidden shrink-0 items-center gap-1 rounded-sm border border-border px-1 text-2xs text-muted md:flex"
-    >
-      {color === undefined ? null : (
-        <span
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: color }}
-          aria-hidden="true"
-        />
-      )}
-      <span className="max-w-24 truncate">{label}</span>
-    </span>
-  );
-}
-
-function DateChip({ value, title }: { value: string | null; title: string }) {
-  const label = shortDate(value);
-  if (label === null) return null;
-  return (
-    <span data-numeric title={title} className="shrink-0 text-2xs text-faint">
-      {label}
-    </span>
-  );
 }
 
 export function IssueRow({
@@ -185,17 +151,24 @@ function RowMeta({ issue, creator, project, cycle, subIssueCount, properties }: 
         </span>
       ) : null}
       {shows('project') && project !== undefined ? (
-        <Chip label={project.name} color={project.color} title="Project" />
+        <MetaChip
+          label={project.name}
+          color={project.color}
+          title="Project"
+          className="hidden md:flex"
+        />
       ) : null}
-      {shows('cycle') && cycle !== undefined ? <Chip label={cycle.name} title="Cycle" /> : null}
+      {shows('cycle') && cycle !== undefined ? (
+        <MetaChip label={cycle.name} title="Cycle" className="hidden md:flex" />
+      ) : null}
       {shows('milestone') && issue.milestoneId !== null ? (
-        <Chip label="Milestone" title="On a milestone" />
+        <MetaChip label="Milestone" title="On a milestone" className="hidden md:flex" />
       ) : null}
-      {shows('dueDate') ? <DateChip value={issue.dueDate} title="Due date" /> : null}
-      {shows('started') ? <DateChip value={issue.startedAt} title="Started" /> : null}
-      {shows('completed') ? <DateChip value={issue.completedAt} title="Completed" /> : null}
-      {shows('created') ? <DateChip value={issue.createdAt} title="Created" /> : null}
-      {shows('updated') ? <DateChip value={issue.updatedAt} title="Updated" /> : null}
+      {shows('dueDate') ? <MetaDate value={issue.dueDate} title="Due date" /> : null}
+      {shows('started') ? <MetaDate value={issue.startedAt} title="Started" /> : null}
+      {shows('completed') ? <MetaDate value={issue.completedAt} title="Completed" /> : null}
+      {shows('created') ? <MetaDate value={issue.createdAt} title="Created" /> : null}
+      {shows('updated') ? <MetaDate value={issue.updatedAt} title="Updated" /> : null}
       {shows('estimate') && issue.estimate !== null ? (
         <span data-numeric className="w-5 text-right text-2xs text-faint">
           {issue.estimate}

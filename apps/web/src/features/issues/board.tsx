@@ -26,7 +26,7 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { type MoveInput, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
@@ -38,6 +38,15 @@ export interface BoardProps {
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
   readonly properties?: readonly DisplayProperty[];
+}
+
+interface CardLookups {
+  readonly labelById: ReadonlyMap<string, Label>;
+  readonly memberById: ReadonlyMap<string, Member>;
+  readonly stateById: ReadonlyMap<string, WorkflowState>;
+  readonly projectById: ReadonlyMap<string, Project>;
+  readonly cycleById: ReadonlyMap<string, Cycle>;
+  readonly childCounts: ReadonlyMap<string, number>;
 }
 
 export function planDrop(
@@ -70,16 +79,50 @@ export function planDrop(
   };
 }
 
+function IssueCardView({
+  issue,
+  lookups,
+  properties,
+  dragging = false,
+  onOpen,
+}: {
+  issue: Issue;
+  lookups: CardLookups;
+  properties: readonly DisplayProperty[];
+  dragging?: boolean;
+  onOpen?: (id: string) => void;
+}) {
+  return (
+    <IssueCard
+      issue={issue}
+      dragging={dragging}
+      properties={properties}
+      labels={issue.labelIds.flatMap((id) => {
+        const label = lookups.labelById.get(id);
+        return label === undefined ? [] : [label];
+      })}
+      assignee={issue.assigneeId === null ? undefined : lookups.memberById.get(issue.assigneeId)}
+      state={lookups.stateById.get(issue.stateId)}
+      creator={lookups.memberById.get(issue.creatorId)}
+      project={issue.projectId === null ? undefined : lookups.projectById.get(issue.projectId)}
+      cycle={issue.cycleId === null ? undefined : lookups.cycleById.get(issue.cycleId)}
+      subIssueCount={lookups.childCounts.get(issue.id) ?? 0}
+      {...(onOpen === undefined ? {} : { onOpen })}
+    />
+  );
+}
+
 function SortableCard({
   issue,
+  lookups,
   properties,
   onOpen,
 }: {
   issue: Issue;
+  lookups: CardLookups;
   properties: readonly DisplayProperty[];
   onOpen: (id: string) => void;
 }) {
-  const { labelById, memberById } = useWorkspace();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: issue.id,
     data: { stateId: issue.stateId },
@@ -99,16 +142,7 @@ function SortableCard({
       {...attributes}
       {...listeners}
     >
-      <IssueCard
-        issue={issue}
-        onOpen={onOpen}
-        properties={properties}
-        labels={issue.labelIds.flatMap((id) => {
-          const label = labelById.get(id);
-          return label === undefined ? [] : [label];
-        })}
-        assignee={issue.assigneeId === null ? undefined : memberById.get(issue.assigneeId)}
-      />
+      <IssueCardView issue={issue} lookups={lookups} properties={properties} onOpen={onOpen} />
     </li>
   );
 }
@@ -119,13 +153,31 @@ export function Board({
   draggable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
 }: BoardProps) {
-  const { labelById, memberById, openQuickCreate } = useWorkspace();
+  const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const router = useRouter();
   const move = useMoveIssue(teamId);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
   const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
+  );
+  const cycleById = useMemo(() => new Map(cycles.map((cycle) => [cycle.id, cycle])), [cycles]);
+  const childCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const issue of issues) {
+      if (issue.parentId === null) continue;
+      counts.set(issue.parentId, (counts.get(issue.parentId) ?? 0) + 1);
+    }
+    return counts;
+  }, [issues]);
+  const lookups = useMemo<CardLookups>(
+    () => ({ labelById, memberById, stateById, projectById, cycleById, childCounts }),
+    [labelById, memberById, stateById, projectById, cycleById, childCounts],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -153,6 +205,7 @@ export function Board({
           group={group}
           draggable={draggable}
           properties={properties}
+          lookups={lookups}
           onCreate={() => openQuickCreate()}
           onOpen={setPeekId}
         />
@@ -191,18 +244,7 @@ export function Board({
 
       <DragOverlay dropAnimation={{ duration: 140, easing: 'cubic-bezier(0.22,0.61,0.36,1)' }}>
         {activeIssue === undefined ? null : (
-          <IssueCard
-            issue={activeIssue}
-            dragging
-            properties={properties}
-            labels={activeIssue.labelIds.flatMap((id) => {
-              const label = labelById.get(id);
-              return label === undefined ? [] : [label];
-            })}
-            assignee={
-              activeIssue.assigneeId === null ? undefined : memberById.get(activeIssue.assigneeId)
-            }
-          />
+          <IssueCardView issue={activeIssue} lookups={lookups} properties={properties} dragging />
         )}
       </DragOverlay>
 
@@ -215,18 +257,34 @@ interface BoardColumnProps {
   readonly group: IssueGroup;
   readonly draggable: boolean;
   readonly properties: readonly DisplayProperty[];
+  readonly lookups: CardLookups;
   readonly onCreate: () => void;
   readonly onOpen: (id: string) => void;
 }
 
-function BoardColumn({ group, draggable, properties, onCreate, onOpen }: BoardColumnProps) {
+function BoardColumn({
+  group,
+  draggable,
+  properties,
+  lookups,
+  onCreate,
+  onOpen,
+}: BoardColumnProps) {
   const { setNodeRef } = useDroppable({ id: group.id, data: { isColumn: true } });
 
   const cards = group.issues.map((issue) =>
     draggable ? (
-      <SortableCard key={issue.id} issue={issue} properties={properties} onOpen={onOpen} />
+      <SortableCard
+        key={issue.id}
+        issue={issue}
+        lookups={lookups}
+        properties={properties}
+        onOpen={onOpen}
+      />
     ) : (
-      <StaticCard key={issue.id} issue={issue} properties={properties} onOpen={onOpen} />
+      <li key={issue.id} className="list-none">
+        <IssueCardView issue={issue} lookups={lookups} properties={properties} onOpen={onOpen} />
+      </li>
     ),
   );
 
@@ -272,31 +330,5 @@ function BoardColumn({ group, draggable, properties, onCreate, onOpen }: BoardCo
         <ul className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0">{cards}</ul>
       )}
     </section>
-  );
-}
-
-function StaticCard({
-  issue,
-  properties,
-  onOpen,
-}: {
-  issue: Issue;
-  properties: readonly DisplayProperty[];
-  onOpen: (id: string) => void;
-}) {
-  const { labelById, memberById } = useWorkspace();
-  return (
-    <li className="list-none">
-      <IssueCard
-        issue={issue}
-        onOpen={onOpen}
-        properties={properties}
-        labels={issue.labelIds.flatMap((id) => {
-          const label = labelById.get(id);
-          return label === undefined ? [] : [label];
-        })}
-        assignee={issue.assigneeId === null ? undefined : memberById.get(issue.assigneeId)}
-      />
-    </li>
   );
 }
