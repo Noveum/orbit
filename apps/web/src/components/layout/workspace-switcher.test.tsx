@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
@@ -8,6 +8,7 @@ const push = mock();
 const refresh = mock();
 const setActive = mock();
 const assign = mock();
+const realLocation = window.location;
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push, refresh }),
@@ -38,6 +39,10 @@ beforeEach(() => {
   setActive.mockReset();
   assign.mockClear();
   Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+});
+
+afterEach(() => {
+  Object.defineProperty(window, 'location', { value: realLocation, writable: true });
 });
 
 async function openMenu(): Promise<void> {
