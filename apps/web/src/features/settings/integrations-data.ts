@@ -114,7 +114,8 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
         credentials: schema.integration.credentials,
       })
       .from(schema.integration)
-      .where(eq(schema.integration.organizationId, principal.organizationId)),
+      .where(eq(schema.integration.organizationId, principal.organizationId))
+      .orderBy(desc(schema.integration.createdAt)),
     db
       .select({
         id: schema.githubRepositorySync.id,

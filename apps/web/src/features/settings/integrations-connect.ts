@@ -1,7 +1,6 @@
-import { db, schema } from '@orbit/db';
-import { ensureSlackIntegration } from '@orbit/services';
+import { db } from '@orbit/db';
+import { ensureGithubInstallation, ensureSlackIntegration } from '@orbit/services';
 import { internal } from '@orbit/shared/errors';
-import { randomUUIDv7 } from 'bun';
 import { z } from 'zod';
 
 const SLACK_OAUTH_ACCESS_URL = 'https://slack.com/api/oauth.v2.access';
@@ -12,23 +11,11 @@ export async function persistGithubInstallation(input: {
   readonly userId: string;
   readonly installationId: string;
 }): Promise<void> {
-  await db
-    .insert(schema.integration)
-    .values({
-      id: randomUUIDv7(),
-      organizationId: input.organizationId,
-      provider: 'github',
-      externalId: input.installationId,
-      connectedById: input.userId,
-    })
-    .onConflictDoUpdate({
-      target: [
-        schema.integration.organizationId,
-        schema.integration.provider,
-        schema.integration.externalId,
-      ],
-      set: { connectedById: input.userId, updatedAt: new Date() },
-    });
+  await ensureGithubInstallation(db, {
+    organizationId: input.organizationId,
+    connectedById: input.userId,
+    installationId: input.installationId,
+  });
 }
 
 const oauthAccessSchema = z.object({
