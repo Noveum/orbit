@@ -3,9 +3,9 @@ import {
   resolveIssueUnfurls,
   resolveSlackContext,
   SlackClient,
-  slackEventSchema,
   verifySlackSignature,
 } from '@orbit/services';
+import { slackEventSchema } from '@orbit/shared/validators';
 
 const SIGNATURE_HEADER = 'x-slack-signature';
 const TIMESTAMP_HEADER = 'x-slack-request-timestamp';
@@ -64,7 +64,7 @@ async function unfurlLinks(
     .limit(1);
   if (integrationRow === undefined) return;
 
-  const context = await resolveSlackContext(db, integrationRow.organizationId);
+  const context = await resolveSlackContext(db, integrationRow.organizationId, slackTeamId);
   if (context === null || context.token === null) return;
 
   const unfurls = await resolveIssueUnfurls(

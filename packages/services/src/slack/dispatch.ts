@@ -24,11 +24,17 @@ export interface SlackContext {
 export async function resolveSlackContext(
   database: SlackDatabase,
   organizationId: string,
+  externalId?: string,
 ): Promise<SlackContext | null> {
+  const filters = [
+    eq(integration.organizationId, organizationId),
+    eq(integration.provider, 'slack'),
+  ];
+  if (externalId !== undefined) filters.push(eq(integration.externalId, externalId));
   const [row] = await database
     .select({ id: integration.id, credentials: integration.credentials })
     .from(integration)
-    .where(and(eq(integration.organizationId, organizationId), eq(integration.provider, 'slack')))
+    .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
   const parsed = credentialsSchema.safeParse(row.credentials);

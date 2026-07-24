@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 export const SLACK_REPLAY_WINDOW_SECONDS = 300;
 export const SLACK_API_BASE = 'https://slack.com/api';
+export const SLACK_REQUEST_TIMEOUT_MS = 10_000;
 
 export function verifySlackSignature(
   rawBody: string,
@@ -124,31 +125,12 @@ export function buildUnfurl(url: string, issue: SlackIssue): SlackUnfurl {
   return { [url]: { blocks: issueBlocks(issue) } };
 }
 
-export const slackUrlVerificationSchema = z.object({
-  type: z.literal('url_verification'),
-  challenge: z.string().min(1).max(1024),
-});
-
-export const slackEventCallbackSchema = z.object({
-  type: z.literal('event_callback'),
-  team_id: z.string().min(1).max(64),
-  event: z.object({
-    type: z.string().min(1).max(64),
-    channel: z.string().max(64).optional(),
-    message_ts: z.string().max(64).optional(),
-    links: z
-      .array(z.object({ url: z.string().max(2048), domain: z.string().max(255).optional() }))
-      .max(20)
-      .optional(),
-  }),
-});
-
-export const slackEventSchema = z.discriminatedUnion('type', [
-  slackUrlVerificationSchema,
+export {
+  type SlackEvent,
   slackEventCallbackSchema,
-]);
-
-export type SlackEvent = z.infer<typeof slackEventSchema>;
+  slackEventSchema,
+  slackUrlVerificationSchema,
+} from '@orbit/shared/validators';
 
 export const slashCommandSchema = z.object({
   command: z.string().min(1).max(64),
@@ -341,6 +323,7 @@ export class SlackClient {
         'content-type': 'application/json; charset=utf-8',
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
     if (response.status === 429) throw rateLimited('Slack is rate limiting Orbit.');
     if (!response.ok) throw internal(`Slack ${method} returned HTTP ${response.status}.`);
