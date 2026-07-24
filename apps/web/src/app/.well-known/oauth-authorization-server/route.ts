@@ -1,11 +1,18 @@
-import { oAuthDiscoveryMetadata } from 'better-auth/plugins';
-import { auth } from '@/lib/auth/server.ts';
-import { metadataPreflight } from '../metadata-headers.ts';
+import { auth, MCP_AUTHORIZE_START_PATH } from '@/lib/auth/server.ts';
+import { absoluteUrl } from '@/lib/env.ts';
+import { METADATA_CORS_HEADERS, metadataPreflight } from '../metadata-headers.ts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export const GET = oAuthDiscoveryMetadata(auth);
+export async function GET(): Promise<Response> {
+  const metadata = await auth.api.getMcpOAuthConfig();
+  const patched = {
+    ...metadata,
+    authorization_endpoint: absoluteUrl(MCP_AUTHORIZE_START_PATH),
+  };
+  return Response.json(patched, { headers: METADATA_CORS_HEADERS });
+}
 
 export function OPTIONS(): Response {
   return metadataPreflight();
