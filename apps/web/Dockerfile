@@ -50,6 +50,7 @@ RUN addgroup -S orbit && adduser -S orbit -G orbit
 COPY --from=doppler /usr/bin/doppler /usr/bin/doppler
 COPY --from=installer --chown=orbit:orbit /app/apps/web/.next/standalone ./
 COPY --from=installer --chown=orbit:orbit /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=installer --chown=orbit:orbit /app/apps/web/public ./apps/web/public
 USER orbit
 EXPOSE 3000
 CMD ["/usr/bin/doppler", "run", "--", "bun", "apps/web/server.js"]
