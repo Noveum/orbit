@@ -12,7 +12,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
-import { publicDocPath } from '@/lib/docs/paths.ts';
+import { publicDocUrl } from '@/lib/docs/paths.ts';
+import { publicAppUrl } from '@/lib/env.ts';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { useShareDoc } from '@/lib/query/use-docs.ts';
 
@@ -54,8 +55,8 @@ export function DocShareMenu({ doc }: DocShareMenuProps) {
   const [copied, setCopied] = useState(false);
 
   const current = visibilityOption(doc.visibility);
-  const path = publicDocPath(doc);
-  const url = path === null ? null : new URL(path, window.location.origin).toString();
+  const origin = typeof window === 'undefined' ? publicAppUrl() : window.location.origin;
+  const url = publicDocUrl(doc, origin);
 
   const copy = async () => {
     if (url === null) return;
