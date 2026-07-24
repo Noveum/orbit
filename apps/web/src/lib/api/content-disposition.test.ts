@@ -26,12 +26,15 @@ describe('dispositionFor', () => {
     );
   });
 
-  it('keeps the presigned value ascii when the name has non latin1 characters', () => {
-    const disposition = dispositionFor('application/pdf', 'Designing–Data’s–O’Reilly (2017).pdf');
+  it('keeps the presigned value ascii and round trips the real name via filename*', () => {
+    const fileName = 'Designing–Data’s–O’Reilly (2017).pdf';
+    const disposition = dispositionFor('application/pdf', fileName);
     expect(/^[\x20-\x7e]*$/.test(disposition)).toBe(true);
     expect(disposition.startsWith('inline; filename="Designing_Data_s_O_Reilly (2017).pdf"')).toBe(
       true,
     );
-    expect(disposition).toContain("filename*=UTF-8''");
+    const encoded = disposition.split("filename*=UTF-8''")[1];
+    expect(encoded).toBeDefined();
+    expect(decodeURIComponent(encoded ?? '')).toBe(fileName);
   });
 });
