@@ -1,7 +1,7 @@
 import { landingMetadata, landingStructuredData } from '@/features/landing/landing-meta.ts';
 import { LandingPage } from '@/features/landing/landing-page.tsx';
 
-export const metadata = landingMetadata('/home');
+export const metadata = landingMetadata('/');
 
 export default function HomeLandingPage() {
   return (

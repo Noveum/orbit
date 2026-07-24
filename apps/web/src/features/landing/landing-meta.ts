@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
-import { publicAppUrl } from '@/lib/env.ts';
+import { absoluteUrl, publicAppUrl } from '@/lib/env.ts';
 
 const TITLE = 'Orbit: the free, realtime, keyboard-first work tracker';
 const DESCRIPTION =
   'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, cycles, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
 
-export function landingMetadata(canonical: string): Metadata {
+export function landingMetadata(canonicalPath: string): Metadata {
+  const canonical = absoluteUrl(canonicalPath);
   return {
     title: { absolute: TITLE },
     description: DESCRIPTION,

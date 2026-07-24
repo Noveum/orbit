@@ -2,10 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import { landingMetadata, landingStructuredData } from './landing-meta.ts';
 
 describe('landingMetadata', () => {
-  it('canonicalises each entry point independently and stays indexable', () => {
-    expect(landingMetadata('/').alternates?.canonical).toBe('/');
-    expect(landingMetadata('/home').alternates?.canonical).toBe('/home');
-    expect(landingMetadata('/home').robots).toMatchObject({ index: true, follow: true });
+  it('builds an absolute, indexable canonical shared by the open graph url', () => {
+    const meta = landingMetadata('/');
+    const canonical = String(meta.alternates?.canonical);
+    expect(canonical).toMatch(/^https?:\/\//);
+    expect(meta.robots).toMatchObject({ index: true, follow: true });
+    expect(meta.openGraph?.url).toBe(canonical);
   });
 });
 
