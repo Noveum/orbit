@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AnchorHTMLAttributes } from 'react';
@@ -6,12 +6,16 @@ import { ResetPasswordForm } from './reset-password-form.tsx';
 
 const resetPassword = mock();
 const toast = mock();
-const assign = mock();
+const push = mock();
 
 mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
     resetPassword: (...args: unknown[]) => resetPassword(...args),
   },
+}));
+
+mock.module('next/navigation', () => ({
+  useRouter: () => ({ push, refresh: mock() }),
 }));
 
 mock.module('@/components/ui/toast.tsx', () => ({
@@ -24,18 +28,12 @@ mock.module('next/link', () => ({
   ),
 }));
 
-const realLocation = window.location;
 const PASSWORD = 'correct-horse-battery';
 
 beforeEach(() => {
   resetPassword.mockReset();
   toast.mockClear();
-  assign.mockClear();
-  Object.defineProperty(window, 'location', { value: { assign }, writable: true });
-});
-
-afterEach(() => {
-  Object.defineProperty(window, 'location', { value: realLocation, writable: true });
+  push.mockClear();
 });
 
 describe('ResetPasswordForm', () => {
@@ -51,7 +49,7 @@ describe('ResetPasswordForm', () => {
     await waitFor(() => {
       expect(resetPassword).toHaveBeenCalledWith({ newPassword: PASSWORD, token: 'tok-123' });
     });
-    expect(assign).toHaveBeenCalledWith('/login?reset=success');
+    expect(push).toHaveBeenCalledWith('/login');
   });
 
   it('shows a friendly message and no form when the token is missing', () => {

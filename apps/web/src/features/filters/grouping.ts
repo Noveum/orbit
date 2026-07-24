@@ -131,8 +131,10 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
       return [issue.projectId ?? UNGROUPED_ID];
     case 'cycle':
       return [issue.cycleId ?? UNGROUPED_ID];
-    case 'label':
-      return issue.labelIds.length === 0 ? [UNGROUPED_ID] : issue.labelIds;
+    case 'label': {
+      const ids = Array.isArray(issue.labelIds) ? issue.labelIds : [];
+      return ids.length === 0 ? [UNGROUPED_ID] : ids;
+    }
     case 'none':
       return ['all'];
   }

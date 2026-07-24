@@ -3,6 +3,7 @@
 import { MIN_PASSWORD_LENGTH } from '@orbit/shared/validators';
 import { KeyRound, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -19,6 +20,7 @@ const TOO_SHORT = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
 const MISMATCH = 'Those passwords do not match.';
 
 export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
+  const router = useRouter();
   const { toast } = useToast();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -65,7 +67,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
         description: 'Sign in with your new password.',
         tone: 'success',
       });
-      window.location.assign('/login?reset=success');
+      router.push('/login');
     } catch (caught) {
       setError(messageOf(caught));
       setBusy(false);

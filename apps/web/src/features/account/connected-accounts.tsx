@@ -54,6 +54,7 @@ export function ConnectedAccounts({
       const result = await authClient.linkSocial({
         provider,
         callbackURL: '/settings/account/connections',
+        errorCallbackURL: '/settings/account/connections',
       });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     } catch (caught) {

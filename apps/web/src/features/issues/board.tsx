@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
@@ -29,6 +30,7 @@ import type { Issue } from '@/lib/query/schemas.ts';
 import { type MoveInput, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
+import { IssuePeek } from './issue-peek.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardProps {
@@ -71,9 +73,11 @@ export function planDrop(
 function SortableCard({
   issue,
   properties,
+  onOpen,
 }: {
   issue: Issue;
   properties: readonly DisplayProperty[];
+  onOpen: (id: string) => void;
 }) {
   const { labelById, memberById } = useWorkspace();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -97,6 +101,7 @@ function SortableCard({
     >
       <IssueCard
         issue={issue}
+        onOpen={onOpen}
         properties={properties}
         labels={issue.labelIds.flatMap((id) => {
           const label = labelById.get(id);
@@ -115,8 +120,10 @@ export function Board({
   properties = DEFAULT_DISPLAY_PROPERTIES,
 }: BoardProps) {
   const { labelById, memberById, openQuickCreate } = useWorkspace();
+  const router = useRouter();
   const move = useMoveIssue(teamId);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [peekId, setPeekId] = useState<string | null>(null);
 
   const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
   const sensors = useSensors(
@@ -125,6 +132,7 @@ export function Board({
   );
 
   const activeIssue = issues.find((issue) => issue.id === activeId);
+  const peekIssue = issues.find((issue) => issue.id === peekId);
 
   const onDragStart = (event: DragStartEvent) => {
     setActiveId(String(event.active.id));
@@ -146,12 +154,30 @@ export function Board({
           draggable={draggable}
           properties={properties}
           onCreate={() => openQuickCreate()}
+          onOpen={setPeekId}
         />
       ))}
     </div>
   );
 
-  if (!draggable) return columns;
+  const peek = (
+    <IssuePeek
+      issue={peekIssue}
+      onClose={() => setPeekId(null)}
+      onOpen={() => {
+        if (peekIssue !== undefined) router.push(`/issue/${peekIssue.identifier}`);
+      }}
+    />
+  );
+
+  if (!draggable) {
+    return (
+      <>
+        {columns}
+        {peek}
+      </>
+    );
+  }
 
   return (
     <DndContext
@@ -179,6 +205,8 @@ export function Board({
           />
         )}
       </DragOverlay>
+
+      {peek}
     </DndContext>
   );
 }
@@ -188,16 +216,17 @@ interface BoardColumnProps {
   readonly draggable: boolean;
   readonly properties: readonly DisplayProperty[];
   readonly onCreate: () => void;
+  readonly onOpen: (id: string) => void;
 }
 
-function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProps) {
+function BoardColumn({ group, draggable, properties, onCreate, onOpen }: BoardColumnProps) {
   const { setNodeRef } = useDroppable({ id: group.id, data: { isColumn: true } });
 
   const cards = group.issues.map((issue) =>
     draggable ? (
-      <SortableCard key={issue.id} issue={issue} properties={properties} />
+      <SortableCard key={issue.id} issue={issue} properties={properties} onOpen={onOpen} />
     ) : (
-      <StaticCard key={issue.id} issue={issue} properties={properties} />
+      <StaticCard key={issue.id} issue={issue} properties={properties} onOpen={onOpen} />
     ),
   );
 
@@ -249,15 +278,18 @@ function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProp
 function StaticCard({
   issue,
   properties,
+  onOpen,
 }: {
   issue: Issue;
   properties: readonly DisplayProperty[];
+  onOpen: (id: string) => void;
 }) {
   const { labelById, memberById } = useWorkspace();
   return (
     <li className="list-none">
       <IssueCard
         issue={issue}
+        onOpen={onOpen}
         properties={properties}
         labels={issue.labelIds.flatMap((id) => {
           const label = labelById.get(id);

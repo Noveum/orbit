@@ -3,6 +3,7 @@
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import Link from 'next/link';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member } from '@/lib/query/schemas.ts';
@@ -15,6 +16,11 @@ export interface IssueCardProps {
   readonly dragging?: boolean;
   readonly properties?: readonly DisplayProperty[];
   readonly className?: string;
+  readonly onOpen?: (issueId: string) => void;
+}
+
+function isPlainClick(event: ReactMouseEvent<HTMLElement>): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 export function IssueCard({
@@ -24,14 +30,21 @@ export function IssueCard({
   dragging = false,
   properties = DEFAULT_DISPLAY_PROPERTIES,
   className,
+  onOpen,
 }: IssueCardProps) {
   const shows = (property: DisplayProperty) => properties.includes(property);
+
+  const open = (event: ReactMouseEvent<HTMLElement>) => {
+    if (onOpen === undefined || event.defaultPrevented || !isPlainClick(event)) return;
+    event.preventDefault();
+    onOpen(issue.id);
+  };
 
   return (
     <article
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(
-        'flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
+        'relative flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
         'transition-[transform,box-shadow,opacity,background-color,border-color] ease-[var(--ease-standard)] motion-reduce:transition-none',
         'duration-[var(--duration-instant)] hover:duration-[var(--duration-base)]',
         'hover:border-border-strong hover:bg-surface-2',
@@ -58,7 +71,9 @@ export function IssueCard({
 
       <Link
         href={`/issue/${issue.identifier}`}
-        className="line-clamp-3 text-dense text-text leading-snug hover:text-accent"
+        onClick={open}
+        draggable={false}
+        className="line-clamp-3 text-dense text-text leading-snug after:absolute after:inset-0 hover:text-accent"
       >
         {issue.title}
       </Link>

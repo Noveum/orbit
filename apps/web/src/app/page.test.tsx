@@ -25,7 +25,7 @@ describe('HomePage', () => {
   });
 
   it('renders the landing hero for a logged-out visitor', async () => {
-    render(await HomePage());
+    render(await HomePage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
       'Issue tracking at the speed of typing.',
     );
@@ -34,6 +34,8 @@ describe('HomePage', () => {
 
   it('redirects a logged-in visitor to their issues', async () => {
     sessionHolder.value = { user: { id: 'user-1' } };
-    await expect(HomePage()).rejects.toThrow('redirect:/my-issues');
+    await expect(HomePage({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+      'redirect:/my-issues',
+    );
   });
 });

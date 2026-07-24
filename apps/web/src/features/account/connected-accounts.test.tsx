@@ -144,6 +144,7 @@ describe('ConnectedAccounts', () => {
       expect(linkSocial).toHaveBeenCalledWith({
         provider: 'google',
         callbackURL: '/settings/account/connections',
+        errorCallbackURL: '/settings/account/connections',
       });
     });
   });

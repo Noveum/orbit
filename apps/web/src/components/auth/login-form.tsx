@@ -16,8 +16,6 @@ export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
   readonly passwordEnabled?: boolean;
-  readonly errorMessage?: string;
-  readonly notice?: string;
 }
 
 type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | 'forgot' | null;
@@ -126,37 +124,6 @@ function SocialButtons({
   );
 }
 
-function LoginBanners({
-  errorMessage,
-  notice,
-}: {
-  readonly errorMessage?: string | undefined;
-  readonly notice?: string | undefined;
-}) {
-  return (
-    <>
-      {errorMessage ? (
-        <p
-          role="alert"
-          data-testid="login-error"
-          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-center text-danger text-xs"
-        >
-          {errorMessage}
-        </p>
-      ) : null}
-      {notice ? (
-        <p
-          role="status"
-          data-testid="login-notice"
-          className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-center text-success text-xs"
-        >
-          {notice}
-        </p>
-      ) : null}
-    </>
-  );
-}
-
 function ForgotPasswordButton({
   sending,
   disabled,
@@ -182,8 +149,6 @@ export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
   passwordEnabled = false,
-  errorMessage,
-  notice,
 }: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
@@ -217,7 +182,11 @@ export function LoginForm({
 
   const signInWithSocial = (provider: 'google' | 'github') =>
     withPending(provider, async () => {
-      const result = await authClient.signIn.social({ provider, callbackURL: callbackUrl });
+      const result = await authClient.signIn.social({
+        provider,
+        callbackURL: callbackUrl,
+        errorCallbackURL: '/login',
+      });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
 
@@ -274,8 +243,6 @@ export function LoginForm({
             : 'Passwordless by design. Pick how you want in.'}
         </p>
       </div>
-
-      <LoginBanners errorMessage={errorMessage} notice={notice} />
 
       <Button
         variant="primary"

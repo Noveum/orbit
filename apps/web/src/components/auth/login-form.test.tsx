@@ -16,14 +16,10 @@ beforeEach(() => {
   requestPasswordReset.mockReset();
 });
 
-function renderForm(passwordEnabled: boolean, errorMessage?: string) {
+function renderForm(passwordEnabled: boolean) {
   render(
     <ToastProvider>
-      <LoginForm
-        providers={[]}
-        passwordEnabled={passwordEnabled}
-        {...(errorMessage === undefined ? {} : { errorMessage })}
-      />
+      <LoginForm providers={[]} passwordEnabled={passwordEnabled} />
     </ToastProvider>,
   );
 }
@@ -46,18 +42,6 @@ describe('LoginForm', () => {
     expect(screen.getByText('Create an account with a password')).toBeDefined();
     expect(screen.getByText('Email me a link')).toBeDefined();
     expect(screen.getByText('Continue with passkey')).toBeDefined();
-  });
-
-  it('shows a graceful alert when a sign in error is passed', () => {
-    renderForm(false, 'That email is outside the organizations allowed to use this Orbit.');
-    const alert = screen.getByTestId('login-error');
-    expect(alert).toHaveTextContent('outside the organizations allowed');
-    expect(alert).toHaveAttribute('role', 'alert');
-  });
-
-  it('renders no alert without an error', () => {
-    renderForm(false);
-    expect(screen.queryByTestId('login-error')).toBeNull();
   });
 
   it('hides the forgot password affordance while password auth is off', () => {
@@ -84,14 +68,5 @@ describe('LoginForm', () => {
         redirectTo: '/reset-password',
       });
     });
-  });
-
-  it('surfaces a success notice after a reset', () => {
-    render(
-      <ToastProvider>
-        <LoginForm providers={[]} passwordEnabled={true} notice="Your password was reset." />
-      </ToastProvider>,
-    );
-    expect(screen.getByTestId('login-notice')).toHaveTextContent('Your password was reset.');
   });
 });

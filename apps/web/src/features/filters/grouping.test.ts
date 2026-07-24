@@ -66,6 +66,11 @@ describe('groupKeysOf', () => {
     ]);
   });
 
+  it('does not throw when an imported issue has a non-array labelIds', () => {
+    const malformed = issue({ labelIds: null as unknown as string[] });
+    expect(groupKeysOf(malformed, 'label')).toEqual(['none']);
+  });
+
   it('falls back to the unset bucket when a field is empty', () => {
     expect(groupKeysOf(issue(), 'label')).toEqual(['none']);
     expect(groupKeysOf(issue(), 'assignee')).toEqual(['none']);
