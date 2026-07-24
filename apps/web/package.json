@@ -61,6 +61,7 @@
     "motion": "^12.34.2",
     "next": "^16.2.11",
     "next-themes": "^0.4.6",
+    "prettier": "^3.5.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwind-merge": "^3.3.1",
