@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { z } from 'zod';
 import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
 import { devLoginEnabled } from '@/lib/api/dev-login.ts';
@@ -19,13 +20,12 @@ export function safeCallback(value: string | string[] | undefined): string | und
   return /^\/(?!\/)/.test(value) ? value : undefined;
 }
 
-export function signInErrorMessage(
-  error: string | string[] | undefined,
-  description: string | string[] | undefined,
-): string | undefined {
-  if (typeof error !== 'string' || error.length === 0) return undefined;
-  if (error === EMAIL_DOMAIN_NOT_ALLOWED) return EMAIL_DOMAIN_BLOCKED_MESSAGE;
-  if (typeof description === 'string' && description.length > 0) return description;
+const signInErrorCodeSchema = z.string().min(1).max(64);
+
+export function signInErrorMessage(error: string | string[] | undefined): string | undefined {
+  const parsed = signInErrorCodeSchema.safeParse(error);
+  if (!parsed.success) return undefined;
+  if (parsed.data === EMAIL_DOMAIN_NOT_ALLOWED) return EMAIL_DOMAIN_BLOCKED_MESSAGE;
   return 'Something went wrong signing you in. Try again.';
 }
 
@@ -40,7 +40,7 @@ export default async function LoginPage({
   if (session !== null) redirect(callbackUrl ?? '/my-issues');
 
   const devUsers = devLoginEnabled() ? await listDevUsers() : [];
-  const errorMessage = signInErrorMessage(params['error'], params['error_description']);
+  const errorMessage = signInErrorMessage(params['error']);
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg px-5 py-12">

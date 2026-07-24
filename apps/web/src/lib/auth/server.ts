@@ -102,7 +102,6 @@ export const auth = betterAuth({
   appName: 'Orbit',
   baseURL: serverEnv().BETTER_AUTH_URL,
   secret: serverEnv().BETTER_AUTH_SECRET,
-  onAPIError: { errorURL: '/login' },
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
   ...rateLimit(),
@@ -131,6 +130,19 @@ export const auth = betterAuth({
           return Promise.resolve({
             data: { ...user, handle: handleFor(user.email, user.name) },
           });
+        },
+      },
+    },
+    session: {
+      create: {
+        before: async (session) => {
+          const [row] = await db
+            .select({ email: schema.user.email })
+            .from(schema.user)
+            .where(eq(schema.user.id, session.userId))
+            .limit(1);
+          if (row !== undefined) assertSignUpAllowed(row.email);
+          return { data: session };
         },
       },
     },

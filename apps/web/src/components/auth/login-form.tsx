@@ -163,7 +163,11 @@ export function LoginForm({
 
   const signInWithSocial = (provider: 'google' | 'github') =>
     withPending(provider, async () => {
-      const result = await authClient.signIn.social({ provider, callbackURL: callbackUrl });
+      const result = await authClient.signIn.social({
+        provider,
+        callbackURL: callbackUrl,
+        errorCallbackURL: '/login',
+      });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
 
