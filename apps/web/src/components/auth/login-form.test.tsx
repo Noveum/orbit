@@ -3,10 +3,14 @@ import { render, screen } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { LoginForm } from './login-form.tsx';
 
-function renderForm(passwordEnabled: boolean) {
+function renderForm(passwordEnabled: boolean, errorMessage?: string) {
   render(
     <ToastProvider>
-      <LoginForm providers={[]} passwordEnabled={passwordEnabled} />
+      <LoginForm
+        providers={[]}
+        passwordEnabled={passwordEnabled}
+        {...(errorMessage === undefined ? {} : { errorMessage })}
+      />
     </ToastProvider>,
   );
 }
@@ -29,5 +33,17 @@ describe('LoginForm', () => {
     expect(screen.getByText('Create an account with a password')).toBeDefined();
     expect(screen.getByText('Email me a link')).toBeDefined();
     expect(screen.getByText('Continue with passkey')).toBeDefined();
+  });
+
+  it('shows a graceful alert when a sign in error is passed', () => {
+    renderForm(false, 'That email is outside the organizations allowed to use this Orbit.');
+    const alert = screen.getByTestId('login-error');
+    expect(alert).toHaveTextContent('outside the organizations allowed');
+    expect(alert).toHaveAttribute('role', 'alert');
+  });
+
+  it('renders no alert without an error', () => {
+    renderForm(false);
+    expect(screen.queryByTestId('login-error')).toBeNull();
   });
 });

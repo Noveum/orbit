@@ -16,6 +16,7 @@ export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
   readonly passwordEnabled?: boolean;
+  readonly errorMessage?: string;
 }
 
 type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | null;
@@ -128,6 +129,7 @@ export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
   passwordEnabled = false,
+  errorMessage,
 }: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
@@ -205,6 +207,16 @@ export function LoginForm({
             : 'Passwordless by design. Pick how you want in.'}
         </p>
       </div>
+
+      {errorMessage ? (
+        <p
+          role="alert"
+          data-testid="login-error"
+          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-center text-danger text-xs"
+        >
+          {errorMessage}
+        </p>
+      ) : null}
 
       <Button
         variant="primary"

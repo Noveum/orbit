@@ -79,14 +79,19 @@ function rateLimit() {
   };
 }
 
+export const EMAIL_DOMAIN_NOT_ALLOWED = 'EMAIL_DOMAIN_NOT_ALLOWED';
+
+export const EMAIL_DOMAIN_BLOCKED_MESSAGE =
+  'That email is outside the organizations allowed to use this Orbit. Ask an admin to invite you.';
+
 function assertSignUpAllowed(email: string): void {
   try {
     assertEmailDomainAllowed(email);
   } catch (error: unknown) {
     if (error instanceof DomainError && error.code === 'forbidden') {
       throw new APIError('FORBIDDEN', {
-        code: 'EMAIL_DOMAIN_NOT_ALLOWED',
-        message: error.message,
+        code: EMAIL_DOMAIN_NOT_ALLOWED,
+        message: EMAIL_DOMAIN_BLOCKED_MESSAGE,
       });
     }
     throw error;
@@ -97,6 +102,7 @@ export const auth = betterAuth({
   appName: 'Orbit',
   baseURL: serverEnv().BETTER_AUTH_URL,
   secret: serverEnv().BETTER_AUTH_SECRET,
+  onAPIError: { errorURL: '/login' },
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
   ...rateLimit(),
@@ -134,6 +140,7 @@ export const auth = betterAuth({
     magicLink({
       sendMagicLink: async ({ email, url, token }, request) => {
         if (isDevLoginRequest(request)) return;
+        assertSignUpAllowed(email);
         const content = await magicLinkEmail({ url, email });
         await sendEmail(db, {
           to: email,
