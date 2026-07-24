@@ -45,47 +45,33 @@ function tree(docs: readonly DocSummary[], collections: readonly DocCollection[]
   );
 }
 
-function viewportOf(): HTMLElement {
-  const viewport = document.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
-  if (viewport === null) throw new Error('viewport not found');
-  return viewport;
+function scrollerOf(): HTMLElement {
+  const scroller = document.querySelector<HTMLElement>('[data-testid="doc-tree-scroll"]');
+  if (scroller === null) throw new Error('scroller not found');
+  return scroller;
 }
 
-describe('doc tree scroll preservation', () => {
-  it('keeps the scroll position when the docs data changes under the user', () => {
+describe('doc tree scroller', () => {
+  it('is a plain native overflow scroller, not a hijacked one', () => {
+    render(tree([summary('d0', 'Doc 0')], []));
+    expect(scrollerOf().className).toContain('overflow-y-auto');
+    expect(document.querySelector('[data-radix-scroll-area-viewport]')).toBeNull();
+  });
+
+  it('leaves the scroll position alone when the docs data changes under the user', () => {
     const docsA = Array.from({ length: 40 }, (_, index) => summary(`d${index}`, `Doc ${index}`));
     const view = render(tree(docsA, []));
 
-    const viewport = viewportOf();
+    const scroller = scrollerOf();
     act(() => {
-      viewport.scrollTop = 250;
-      viewport.dispatchEvent(new Event('scroll'));
+      scroller.scrollTop = 250;
     });
-    expect(viewport.scrollTop).toBe(250);
 
-    viewport.scrollTop = 0;
     const docsB = [summary('dNew', 'Doc New'), ...docsA];
     act(() => {
       view.rerender(tree(docsB, []));
     });
 
-    expect(viewportOf().scrollTop).toBe(250);
-  });
-
-  it('does not move the scroll on a re-render that keeps the same docs', () => {
-    const docs = Array.from({ length: 40 }, (_, index) => summary(`d${index}`, `Doc ${index}`));
-    const view = render(tree(docs, []));
-
-    const viewport = viewportOf();
-    act(() => {
-      viewport.scrollTop = 180;
-      viewport.dispatchEvent(new Event('scroll'));
-    });
-
-    act(() => {
-      view.rerender(tree(docs.slice(), []));
-    });
-
-    expect(viewportOf().scrollTop).toBe(180);
+    expect(scrollerOf().scrollTop).toBe(250);
   });
 });
