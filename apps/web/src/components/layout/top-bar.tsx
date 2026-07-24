@@ -13,8 +13,7 @@ export interface Breadcrumb {
   readonly href?: string;
 }
 
-export const contentWidthClassName =
-  'mx-auto w-full max-w-page 3xl:max-w-[110rem] 4xl:max-w-[120rem]';
+export const contentWidthClassName = 'w-full';
 
 export interface TopBarProps {
   readonly breadcrumbs: readonly Breadcrumb[];
