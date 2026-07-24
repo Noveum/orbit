@@ -1,6 +1,8 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
@@ -91,10 +93,17 @@ function renderList() {
     { states: [todo], members: [], projects: [], cycles: [], labels: [] },
     { showEmptyGroups: false, ordering: 'manual' },
   );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
   render(
-    <HotkeyProvider>
-      <IssueList teamId="team_1" states={[todo]} groups={groups} />
-    </HotkeyProvider>,
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <HotkeyProvider>
+          <IssueList teamId="team_1" states={[todo]} groups={groups} />
+        </HotkeyProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
   );
 }
 
