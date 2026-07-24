@@ -2,18 +2,9 @@
 
 import { renderMarkdown } from '@orbit/services/markdown';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Paperclip, Table2 } from 'lucide-react';
-import {
-  type ClipboardEvent,
-  type DragEvent,
-  type KeyboardEvent,
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Table2 } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
-import { Kbd } from '@/components/ui/kbd.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -21,27 +12,30 @@ import { messageOf } from '@/lib/query/fetcher.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import { useBootstrap } from '@/lib/query/use-issues.ts';
 import { DocBody } from './doc-body.tsx';
+import {
+  MarkdownCodeEditor,
+  type MarkdownCodeEditorHandle,
+  type ModKey,
+} from './editor/markdown-code-editor.tsx';
 import { RichTextEditor, type UploadedAttachment } from './editor/rich-text-editor.tsx';
 import {
   attachmentMarkdown,
   type EditResult,
   insertBlock,
   linkSelection,
-  replaceSlashQuery,
+  type Selection,
   SNIPPETS,
   type SnippetName,
   wrapSelection,
 } from './markdown-input.ts';
 import { type UploadOptions, uploadDocFile } from './upload.ts';
 
-const SLASH_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bold }[] = [
+const SNIPPET_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bold }[] = [
   { name: 'heading', label: 'Heading', icon: Heading2 },
   { name: 'table', label: 'Table', icon: Table2 },
   { name: 'code', label: 'Code block', icon: Code2 },
   { name: 'tasks', label: 'Task list', icon: ListChecks },
 ];
-
-const DISMISS_SLASH = new Set(['Escape', ' ', 'Enter', 'Backspace']);
 
 export type EditorMode = 'rich' | 'markdown';
 
@@ -56,11 +50,9 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
   const { toast } = useToast();
   const client = useQueryClient();
   const bootstrap = useBootstrap(null);
-  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const cmRef = useRef<MarkdownCodeEditorHandle>(null);
   const [mode, setMode] = useState<EditorMode>('rich');
   const [preview, setPreview] = useState(false);
-  const [slashOpen, setSlashOpen] = useState(false);
-  const [dropping, setDropping] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [percent, setPercent] = useState(0);
 
@@ -69,35 +61,22 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
     [mode, preview, content],
   );
 
-  const applyEdit = useCallback(
-    (result: EditResult) => {
-      onChange(result.value);
-      requestAnimationFrame(() => {
-        const area = areaRef.current;
-        if (area === null) return;
-        area.focus();
-        area.setSelectionRange(result.start, result.end);
-      });
-    },
-    [onChange],
-  );
+  const applyEdit = useCallback((result: EditResult) => {
+    cmRef.current?.applyEdit(result);
+  }, []);
 
-  const selection = useCallback(() => {
-    const area = areaRef.current;
-    if (area === null) return { value: content, start: content.length, end: content.length };
-    return { value: area.value, start: area.selectionStart, end: area.selectionEnd };
+  const selection = useCallback((): Selection => {
+    return (
+      cmRef.current?.getSelection() ?? {
+        value: content,
+        start: content.length,
+        end: content.length,
+      }
+    );
   }, [content]);
 
   const insertSnippet = useCallback(
-    (name: SnippetName, fromSlash: boolean) => {
-      setSlashOpen(false);
-      const current = selection();
-      applyEdit(
-        fromSlash
-          ? replaceSlashQuery(current, SNIPPETS[name])
-          : insertBlock(current, SNIPPETS[name]),
-      );
-    },
+    (name: SnippetName) => applyEdit(insertBlock(selection(), SNIPPETS[name])),
     [applyEdit, selection],
   );
 
@@ -142,39 +121,22 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
     [applyEdit, selection, upload],
   );
 
-  const modActions: Record<string, () => void> = {
-    s: onForceSave,
-    b: () => applyEdit(wrapSelection(selection(), '**')),
-    i: () => applyEdit(wrapSelection(selection(), '_')),
-    k: () => applyEdit(linkSelection(selection())),
-  };
+  const onModKey = useCallback(
+    (key: ModKey) => {
+      if (key === 's') return onForceSave();
+      if (key === 'b') return applyEdit(wrapSelection(selection(), '**'));
+      if (key === 'i') return applyEdit(wrapSelection(selection(), '_'));
+      applyEdit(linkSelection(selection()));
+    },
+    [applyEdit, selection, onForceSave],
+  );
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    const run = event.metaKey || event.ctrlKey ? modActions[event.key.toLowerCase()] : undefined;
-    if (run !== undefined) {
-      event.preventDefault();
-      run();
-      return;
-    }
-    if (event.key === '/' && !slashOpen) setSlashOpen(true);
-    else if (slashOpen && DISMISS_SLASH.has(event.key)) {
-      if (event.key === 'Escape') event.preventDefault();
-      setSlashOpen(false);
-    }
-  };
-
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = [...event.clipboardData.files];
-    if (files.length === 0) return;
-    event.preventDefault();
-    uploadFiles(files).catch(() => undefined);
-  };
-
-  const onDrop = (event: DragEvent<HTMLTextAreaElement>) => {
-    event.preventDefault();
-    setDropping(false);
-    uploadFiles([...event.dataTransfer.files]).catch(() => undefined);
-  };
+  const onFiles = useCallback(
+    (files: readonly File[]) => {
+      uploadFiles(files).catch(() => undefined);
+    },
+    [uploadFiles],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
@@ -197,10 +159,9 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
           ))}
         </div>
 
-        <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
-
         {mode === 'markdown' ? (
           <>
+            <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
             <Tooltip label="Bold" shortcut={['mod', 'b']} side="bottom">
               <Button
                 variant="ghost"
@@ -235,7 +196,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
               </Button>
             </Tooltip>
 
-            {SLASH_ITEMS.map((item) => (
+            {SNIPPET_ITEMS.map((item) => (
               <Tooltip key={item.name} label={item.label} side="bottom">
                 <Button
                   variant="ghost"
@@ -243,19 +204,14 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
                   aria-label={item.label}
                   data-testid={`insert-${item.name}`}
                   className="size-7 px-0"
-                  onClick={() => insertSnippet(item.name, false)}
+                  onClick={() => insertSnippet(item.name)}
                 >
                   <item.icon className="size-3.5" aria-hidden="true" />
                 </Button>
               </Tooltip>
             ))}
           </>
-        ) : (
-          <span className="flex items-center gap-1 text-2xs text-faint">
-            <Paperclip className="size-3.5" aria-hidden="true" />
-            Drop or paste a file to attach it
-          </span>
-        )}
+        ) : null}
 
         <span className="ml-auto flex items-center gap-2">
           {uploading ? (
@@ -263,9 +219,6 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
               Uploading {percent}%
             </span>
           ) : null}
-          <span className="hidden items-center gap-1 text-2xs text-faint sm:flex">
-            Type <Kbd keys={['/']} /> to insert
-          </span>
           {mode === 'markdown' ? (
             <Button
               variant={preview ? 'primary' : 'secondary'}
@@ -298,49 +251,18 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
           className={cn(
             'relative grid min-h-0 flex-1',
             preview ? 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1' : 'grid-cols-1',
-            dropping && 'ring-2 ring-accent ring-inset',
           )}
         >
-          <div className="relative min-h-0 overflow-y-auto">
-            <textarea
-              ref={areaRef}
+          <div className="relative min-h-0">
+            <MarkdownCodeEditor
+              handleRef={cmRef}
               value={content}
-              data-testid="doc-editor-input"
-              aria-label="Doc markdown"
-              spellCheck={false}
-              onChange={(event) => onChange(event.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={onPaste}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setDropping(true);
-              }}
-              onDragLeave={() => setDropping(false)}
-              onDrop={onDrop}
-              className="min-h-full w-full resize-none bg-transparent px-6 py-6 font-mono text-dense text-text leading-6 outline-none placeholder:text-faint"
-              placeholder="Write markdown. Drop a file to attach it."
+              onChange={onChange}
+              onModKey={onModKey}
+              onFiles={onFiles}
+              ariaLabel="Doc markdown"
+              testId="doc-editor-input"
             />
-
-            {slashOpen ? (
-              <div
-                data-testid="slash-menu"
-                className="absolute top-3 left-6 z-20 w-56 rounded-lg border border-border bg-surface p-1 shadow-pop"
-              >
-                <p className="px-2 py-1 text-2xs text-faint">Insert</p>
-                {SLASH_ITEMS.map((item) => (
-                  <button
-                    key={item.name}
-                    type="button"
-                    data-testid={`slash-${item.name}`}
-                    onClick={() => insertSnippet(item.name, true)}
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-dense text-muted hover:bg-surface-2 hover:text-text"
-                  >
-                    <item.icon className="size-3.5" aria-hidden="true" />
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </div>
 
           {preview ? (

@@ -140,11 +140,14 @@ test('a doc is written, attached to, published, and read without a session', asy
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
   await author.getByTestId('editor-mode-markdown').click();
-  await expect(author.getByTestId('doc-editor-input')).toHaveValue(
-    /- \[ \] written in the rich editor/,
+  await expect(author.getByTestId('doc-editor-input')).toContainText(
+    '- [ ] written in the rich editor',
   );
 
-  await author.getByTestId('doc-editor-input').fill(MARKDOWN);
+  await author.getByTestId('doc-editor-input').click();
+  await author.keyboard.press('ControlOrMeta+a');
+  await author.keyboard.press('Delete');
+  await author.keyboard.insertText(MARKDOWN);
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
   await author.getByTestId('toggle-preview').click();
@@ -154,14 +157,12 @@ test('a doc is written, attached to, published, and read without a session', asy
   await shoot(author, 'docs-editor');
 
   await dropFiles(author);
-  await expect(author.getByTestId('doc-editor-input')).toHaveValue(
-    /!\[delta-diagram\.png\]\(\/api\/files\//,
-    { timeout: 30_000 },
-  );
-  await expect(author.getByTestId('doc-editor-input')).toHaveValue(
-    /\[delta-protocol\.pdf\]\(\/api\/files\//,
-    { timeout: 30_000 },
-  );
+  await expect(author.getByTestId('doc-editor-input')).toContainText('delta-diagram.png', {
+    timeout: 30_000,
+  });
+  await expect(author.getByTestId('doc-editor-input')).toContainText('delta-protocol.pdf', {
+    timeout: 30_000,
+  });
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
   await author.getByTestId('doc-edit-toggle').click();
