@@ -230,6 +230,8 @@ jobs:
       ORBIT_E2E_BASE_URL: http://localhost:3000
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -269,6 +271,18 @@ jobs:
           done
           echo "web never became healthy" >&2
           cat "$RUNNER_TEMP/web.log" >&2 || true
+          exit 1
+      - name: Wait for the realtime server to answer its health check
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS "http://localhost:${REALTIME_PORT}/health" >/dev/null 2>&1; then
+              echo "realtime is up after ${attempt} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "realtime never became healthy" >&2
+          cat "$RUNNER_TEMP/realtime.log" >&2 || true
           exit 1
       - name: Run the end-to-end suite
         run: bun run test:e2e
