@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import type { Comment, Issue } from './schemas.ts';
+import type { Comment, DocComment, Issue } from './schemas.ts';
 import {
   applyCommentDelta,
+  applyDocCommentDelta,
   applyIssueDelta,
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
@@ -247,6 +248,54 @@ describe('applyCommentDelta', () => {
     const list = [comment({ syncId: 9 })];
     const stale = { ...comment({ body: 'Old', syncId: 8 }).comment };
     expect(applyCommentDelta(list, action({ model: 'comment', data: stale }))).toBe(list);
+  });
+});
+
+function docComment(overrides: Partial<DocComment['comment']> = {}): DocComment {
+  return {
+    comment: {
+      id: 'doc_comment_1',
+      docId: 'doc_1',
+      authorId: 'user_1',
+      parentId: null,
+      body: 'First',
+      editedAt: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      deletedAt: null,
+      syncId: 5,
+      ...overrides,
+    },
+    bodyHtml: '<p>First</p>',
+  };
+}
+
+describe('applyDocCommentDelta', () => {
+  it('appends a doc comment posted by someone else with the plain text fallback', () => {
+    const next = applyDocCommentDelta(
+      [docComment()],
+      action({
+        model: 'doc_comment',
+        action: 'insert',
+        data: { ...docComment({ id: 'doc_comment_2', body: 'Second' }).comment },
+      }),
+    );
+    expect(next).toHaveLength(2);
+    expect(next[1]?.comment.body).toBe('Second');
+    expect(next[1]?.bodyHtml).toBe('');
+  });
+
+  it('drops a doc comment on delete or soft delete', () => {
+    const deleted = { ...docComment().comment, deletedAt: '2026-01-02T00:00:00.000Z', syncId: 7 };
+    expect(
+      applyDocCommentDelta([docComment()], action({ model: 'doc_comment', data: deleted })),
+    ).toEqual([]);
+  });
+
+  it('ignores an out of order doc comment edit', () => {
+    const list = [docComment({ syncId: 9 })];
+    const stale = { ...docComment({ body: 'Old', syncId: 8 }).comment };
+    expect(applyDocCommentDelta(list, action({ model: 'doc_comment', data: stale }))).toBe(list);
   });
 });
 

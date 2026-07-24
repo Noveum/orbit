@@ -144,6 +144,24 @@ export const commentSchema = z.object({
 
 export type Comment = z.infer<typeof commentSchema>;
 
+export const docCommentSchema = z.object({
+  comment: z.object({
+    id: z.string(),
+    docId: z.string(),
+    authorId: z.string(),
+    parentId: z.string().nullable(),
+    body: z.string(),
+    editedAt: nullableTimestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    deletedAt: nullableTimestamp,
+    syncId: z.number(),
+  }),
+  bodyHtml: z.string(),
+});
+
+export type DocComment = z.infer<typeof docCommentSchema>;
+
 export const bootstrapSchema = z.object({
   userId: z.string(),
   organizationId: z.string(),
@@ -301,6 +319,11 @@ export const commentListSchema = z.object({
   nextCursor: z.string().nullable().default(null),
 });
 export const commentEnvelopeSchema = z.object({ comment: commentSchema });
+export const docCommentListSchema = z.object({
+  comments: z.array(docCommentSchema),
+  nextCursor: z.string().nullable().default(null),
+});
+export const docCommentEnvelopeSchema = z.object({ comment: docCommentSchema });
 export const reactionResultSchema = z.object({ emoji: z.string(), active: z.boolean() });
 export const deletedSchema = z.object({ deleted: z.boolean() });
 export const subscribedSchema = z.object({ subscribed: z.boolean() });

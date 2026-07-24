@@ -1,11 +1,12 @@
 import {
+  finalizeMcpConsent,
   listOrganizationsForUser,
   passkeyVerifiedWithin,
   recordMcpGrant,
   userHasPasskey,
 } from '@orbit/core';
-import { headers as nextHeaders } from 'next/headers';
-import { auth } from '@/lib/auth/server.ts';
+import { toDomainError } from '@orbit/shared/errors';
+import { z } from 'zod';
 import { getSession } from '@/lib/auth/session.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 
@@ -14,56 +15,58 @@ export const dynamic = 'force-dynamic';
 
 const PASSKEY_STEP_UP_WINDOW_MS = 120_000;
 
-function redirectTo(url: string): Response {
-  return new Response(null, { status: 303, headers: { location: url } });
-}
-
-function consentError(reason: string): Response {
-  return redirectTo(`/oauth/authorize?consent_error=${encodeURIComponent(reason)}`);
-}
+const decisionSchema = z.object({
+  decision: z.enum(['allow', 'deny']),
+  consentCode: z.string().min(1),
+  clientId: z.string().min(1),
+  scope: z.string(),
+  organizationId: z.string().min(1),
+});
 
 export async function POST(request: Request): Promise<Response> {
   const origin = request.headers.get('origin');
   if (origin !== null && origin !== publicAppUrl()) {
-    return new Response('Invalid origin.', { status: 403 });
+    return Response.json({ error: 'invalid_origin' }, { status: 403 });
   }
 
   const session = await getSession();
-  if (session === null) return new Response('Sign in to continue.', { status: 401 });
+  if (session === null) return Response.json({ error: 'unauthorized' }, { status: 401 });
 
-  const form = await request.formData();
-  const decision = String(form.get('decision') ?? '');
-  const consentCode = String(form.get('consent_code') ?? '');
-  const clientId = String(form.get('client_id') ?? '');
-  const scope = String(form.get('scope') ?? '');
-  const organizationId = String(form.get('organization_id') ?? '');
-  if (consentCode.length === 0) return consentError('missing_consent_code');
-
-  const requestHeaders = await nextHeaders();
-
-  if (decision !== 'allow') {
-    const denied = await auth.api.oAuthConsent({
-      body: { accept: false, consent_code: consentCode },
-      headers: requestHeaders,
-    });
-    return redirectTo(denied.redirectURI);
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'invalid_request' }, { status: 400 });
   }
+  const parsed = decisionSchema.safeParse(body);
+  if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
+  const { decision, consentCode, clientId, scope, organizationId } = parsed.data;
+  const userId = session.user.id;
 
-  if (await userHasPasskey(session.user.id)) {
-    const fresh = await passkeyVerifiedWithin(session.user.id, PASSKEY_STEP_UP_WINDOW_MS);
-    if (!fresh) return consentError('passkey_required');
+  try {
+    if (decision === 'deny') {
+      const denied = await finalizeMcpConsent({ userId, consentCode, accept: false });
+      return Response.json({ redirectUri: denied.redirectUri });
+    }
+
+    if (await userHasPasskey(userId)) {
+      const fresh = await passkeyVerifiedWithin(userId, PASSKEY_STEP_UP_WINDOW_MS);
+      if (!fresh) return Response.json({ status: 'passkey_required' });
+    }
+
+    const organizations = await listOrganizationsForUser(userId);
+    if (!organizations.some((entry) => entry.organization.id === organizationId)) {
+      return Response.json({ error: 'invalid_workspace' }, { status: 400 });
+    }
+
+    await recordMcpGrant({ clientId, userId, organizationId, scopes: scope });
+    const approved = await finalizeMcpConsent({ userId, consentCode, accept: true });
+    return Response.json({ redirectUri: approved.redirectUri });
+  } catch (error) {
+    const domain = toDomainError(error);
+    console.error('mcp consent decision failed', { code: domain.code, message: domain.message });
+    const message =
+      domain.status >= 500 ? 'Something went wrong. Try connecting again.' : domain.message;
+    return Response.json({ error: domain.code, message }, { status: domain.status });
   }
-
-  const organizations = await listOrganizationsForUser(session.user.id);
-  if (!organizations.some((entry) => entry.organization.id === organizationId)) {
-    return consentError('invalid_workspace');
-  }
-
-  await recordMcpGrant({ clientId, userId: session.user.id, organizationId, scopes: scope });
-
-  const approved = await auth.api.oAuthConsent({
-    body: { accept: true, consent_code: consentCode },
-    headers: requestHeaders,
-  });
-  return redirectTo(approved.redirectURI);
 }

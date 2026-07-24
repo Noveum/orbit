@@ -325,6 +325,26 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
+  doc_comment: async (principal, since, limit) =>
+    (
+      await db
+        .select()
+        .from(schema.docComment)
+        .where(
+          and(
+            eq(schema.docComment.organizationId, principal.organizationId),
+            gt(schema.docComment.syncId, since),
+          ),
+        )
+        .orderBy(asc(schema.docComment.syncId))
+        .limit(limit)
+    ).map((row) => ({
+      modelId: row.id,
+      syncId: row.syncId,
+      scopes: [scopes.organization(row.organizationId), scopes.doc(row.docId)],
+      data: row,
+    })),
+
   reaction: async (principal, since, limit) =>
     (
       await db

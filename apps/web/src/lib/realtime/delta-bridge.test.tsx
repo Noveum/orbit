@@ -197,6 +197,37 @@ describe('DeltaBridge root invalidation', () => {
   });
 });
 
+describe('DeltaBridge doc comments', () => {
+  it('patches only the cache for the doc the comment belongs to', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.docComments('doc_a'), []);
+    client.setQueryData(queryKeys.docComments('doc_b'), []);
+    act(() =>
+      capturedHandler?.([
+        action({
+          model: 'doc_comment',
+          modelId: 'dc_1',
+          scopes: ['org:org_1', 'doc:doc_a'],
+          data: {
+            id: 'dc_1',
+            docId: 'doc_a',
+            authorId: 'user_1',
+            parentId: null,
+            body: 'Hi',
+            editedAt: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            deletedAt: null,
+            syncId: 12,
+          },
+        }),
+      ]),
+    );
+    expect(client.getQueryData(queryKeys.docComments('doc_a'))).toHaveLength(1);
+    expect(client.getQueryData(queryKeys.docComments('doc_b'))).toHaveLength(0);
+  });
+});
+
 describe('DeltaBridge reconnect backfill', () => {
   it('replays the catch up endpoint instead of refetching the visible list', async () => {
     const client = mount();
