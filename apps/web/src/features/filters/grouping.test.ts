@@ -130,3 +130,36 @@ describe('groupIssues', () => {
     ).toHaveLength(1);
   });
 });
+
+describe('sub grouping', () => {
+  it('splits each group into ordered sub groups', () => {
+    const groups = groupIssues(
+      [
+        issue({ id: 'a', priority: 1, labelIds: ['label_bug'] }),
+        issue({ id: 'b', priority: 1 }),
+        issue({ id: 'c', priority: 4, labelIds: ['label_perf'] }),
+      ],
+      'priority',
+      context,
+      { ...options, subGroupBy: 'label' },
+    );
+
+    expect(groups.map((group) => group.title)).toEqual(['Urgent', 'Low']);
+    expect(groups[0]?.subGroups.map((sub) => sub.title)).toEqual(['Bug', 'No label']);
+    expect(groups[1]?.subGroups.map((sub) => sub.title)).toEqual(['Performance']);
+  });
+
+  it('leaves sub groups empty when sub grouping is off or equals the grouping', () => {
+    const rows = [issue({ id: 'a', priority: 1 })];
+    expect(groupIssues(rows, 'priority', context, options)[0]?.subGroups).toEqual([]);
+    expect(
+      groupIssues(rows, 'priority', context, { ...options, subGroupBy: 'priority' })[0]?.subGroups,
+    ).toEqual([]);
+  });
+
+  it('groups by creator and by estimate', () => {
+    expect(groupKeysOf(issue({ creatorId: 'user_9' }), 'creator')).toEqual(['user_9']);
+    expect(groupKeysOf(issue({ estimate: 5 }), 'estimate')).toEqual(['5']);
+    expect(groupKeysOf(issue({ estimate: null }), 'estimate')).toEqual(['none']);
+  });
+});

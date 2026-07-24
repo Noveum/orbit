@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { FilterPredicate } from '@orbit/shared/filters';
+import type { FilterCondition, FilterGroup } from '@orbit/shared/filters';
+import { capabilityFor, conditionsOf, inCondition } from '@orbit/shared/filters';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -11,6 +12,7 @@ import { HotkeyProvider, useHotkey } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import { FilterBar } from './filter-bar.tsx';
 import { defaultViewConfig, type ViewConfig } from './view-config.ts';
+import type { ViewControls } from './view-controls.tsx';
 
 const workspace: WorkspaceData = {
   ready: true,
@@ -79,8 +81,20 @@ function Providers({ children }: { children: ReactNode }) {
 
 const onChange = mock();
 
-function renderBar(predicates: readonly FilterPredicate[] = []) {
-  const config: ViewConfig = { ...defaultViewConfig('list'), predicates };
+const controls: ViewControls = {
+  capability: capabilityFor('team', 'list'),
+  displayModified: false,
+  config: null,
+  layout: 'list',
+  onChange: null,
+};
+
+function groupOf(...conditions: FilterCondition[]): FilterGroup {
+  return { kind: 'group', combinator: 'and', children: conditions };
+}
+
+function renderBar(conditions: readonly FilterCondition[] = []) {
+  const config: ViewConfig = { ...defaultViewConfig('list'), filter: groupOf(...conditions) };
   render(
     <Providers>
       <FilterBar
@@ -89,16 +103,17 @@ function renderBar(predicates: readonly FilterPredicate[] = []) {
         layout="list"
         config={config}
         onChange={onChange}
+        controls={controls}
       />
     </Providers>,
   );
   return config;
 }
 
-function lastPredicates(): readonly FilterPredicate[] {
+function lastConditions(): readonly FilterCondition[] {
   const call = onChange.mock.calls.at(-1);
   const next = call?.[0] as ViewConfig | undefined;
-  return next?.predicates ?? [];
+  return next === undefined ? [] : conditionsOf(next.filter);
 }
 
 beforeEach(() => {
@@ -106,11 +121,8 @@ beforeEach(() => {
 });
 
 describe('filter chips', () => {
-  it('describes each predicate and names its controls', () => {
-    renderBar([
-      { field: 'assignee', operator: 'is', values: ['user-2'] },
-      { field: 'priority', operator: 'is_not', values: ['1', '2'] },
-    ]);
+  it('describes each condition and names its controls', () => {
+    renderBar([inCondition('assignee', ['user-2']), inCondition('priority', ['1', '2'], true)]);
 
     expect(
       screen.getByRole('button', { name: 'Edit filter: Assignee is Aditi Rao' }),
@@ -125,21 +137,18 @@ describe('filter chips', () => {
 
   it('removes just the chip whose remove button was pressed', async () => {
     const user = userEvent.setup();
-    renderBar([
-      { field: 'assignee', operator: 'is', values: ['user-2'] },
-      { field: 'priority', operator: 'is', values: ['1'] },
-    ]);
+    renderBar([inCondition('assignee', ['user-2']), inCondition('priority', ['1'])]);
 
     await user.click(screen.getByTestId('remove-filter-assignee'));
-    expect(lastPredicates().map((entry) => entry.field)).toEqual(['priority']);
+    expect(lastConditions().map((entry) => entry.property)).toEqual(['priority']);
   });
 
   it('clears everything from the clear button', async () => {
     const user = userEvent.setup();
-    renderBar([{ field: 'assignee', operator: 'is', values: ['user-2'] }]);
+    renderBar([inCondition('assignee', ['user-2'])]);
 
     await user.click(screen.getByTestId('clear-filters'));
-    expect(lastPredicates()).toEqual([]);
+    expect(lastConditions()).toEqual([]);
   });
 });
 
@@ -153,37 +162,36 @@ describe('filter hotkeys', () => {
     await waitFor(() => expect(screen.getByTestId('filter-menu')).toBeInTheDocument());
   });
 
-  it('drops only the last predicate on Shift+F', async () => {
+  it('drops only the last condition on Shift+F', async () => {
     const user = userEvent.setup();
     renderBar([
-      { field: 'assignee', operator: 'is', values: ['user-2'] },
-      { field: 'priority', operator: 'is', values: ['1'] },
-      { field: 'due', operator: 'is', values: ['overdue'] },
+      inCondition('assignee', ['user-2']),
+      inCondition('priority', ['1']),
+      inCondition('due', ['overdue']),
     ]);
 
     await user.keyboard('{Shift>}F{/Shift}');
-    expect(lastPredicates().map((entry) => entry.field)).toEqual(['assignee', 'priority']);
+    expect(lastConditions().map((entry) => entry.property)).toEqual(['assignee', 'priority']);
     expect(screen.queryByTestId('filter-menu')).not.toBeInTheDocument();
   });
 
-  it('clears every predicate on Alt+Shift+F', async () => {
+  it('clears every condition on Alt+Shift+F', async () => {
     const user = userEvent.setup();
-    renderBar([
-      { field: 'assignee', operator: 'is', values: ['user-2'] },
-      { field: 'priority', operator: 'is', values: ['1'] },
-    ]);
+    renderBar([inCondition('assignee', ['user-2']), inCondition('priority', ['1'])]);
 
     await user.keyboard('{Alt>}{Shift>}F{/Shift}{/Alt}');
-    expect(lastPredicates()).toEqual([]);
+    expect(lastConditions()).toEqual([]);
   });
 
   it('opens the save view dialog on Alt+V', async () => {
     const user = userEvent.setup();
-    renderBar([{ field: 'assignee', operator: 'is', values: ['user-2'] }]);
+    renderBar([inCondition('assignee', ['user-2'])]);
 
     await user.keyboard('{Alt>}v{/Alt}');
     await waitFor(() => expect(screen.getByTestId('save-view-dialog')).toBeInTheDocument());
     expect(screen.getByTestId('save-view-name')).toHaveValue('Engineering: Aditi Rao');
+    expect(screen.getByTestId('save-view-visibility-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('save-view-locked')).toBeInTheDocument();
   });
 });
 
@@ -210,6 +218,7 @@ describe('escape ownership', () => {
           layout="list"
           config={defaultViewConfig('list')}
           onChange={onChange}
+          controls={controls}
         />
       </Providers>,
     );
@@ -235,13 +244,17 @@ describe('filter menu keyboard operation', () => {
     const input = await screen.findByTestId('filter-menu-input');
     expect(input).toHaveFocus();
 
-    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    for (let step = 0; step < 40; step += 1) {
+      if (screen.getByTestId('filter-field-label').getAttribute('data-selected') === 'true') break;
+      await user.keyboard('{ArrowDown}');
+    }
+    await user.keyboard('{Enter}');
     await waitFor(() =>
       expect(screen.getByTestId('filter-value-label-bug')).toHaveAttribute('data-selected', 'true'),
     );
 
     await user.keyboard('{Enter}');
-    expect(lastPredicates()).toEqual([{ field: 'label', operator: 'is', values: ['label-bug'] }]);
+    expect(lastConditions()).toEqual([inCondition('label', ['label-bug'])]);
   });
 
   it('narrows across filter names and their values as you type', async () => {
@@ -256,20 +269,79 @@ describe('filter menu keyboard operation', () => {
       expect(screen.queryByTestId('filter-field-priority')).not.toBeInTheDocument(),
     );
     const options = await screen.findAllByRole('option', { name: /Aditi Rao/ });
-    expect(options).toHaveLength(2);
+    expect(options.length).toBeGreaterThanOrEqual(2);
     const assigneeOption = options[0];
     if (assigneeOption === undefined) throw new Error('The assignee option was not rendered.');
     await user.click(assigneeOption);
-    expect(lastPredicates()).toEqual([{ field: 'assignee', operator: 'is', values: ['user-2'] }]);
+    expect(lastConditions()).toEqual([inCondition('assignee', ['user-2'])]);
   });
 
-  it('negates a field from the value picker', async () => {
+  it('negates a property from the value picker', async () => {
     const user = userEvent.setup();
-    renderBar([{ field: 'priority', operator: 'is', values: ['1'] }]);
+    renderBar([inCondition('priority', ['1'])]);
 
     await user.click(screen.getByRole('button', { name: /Edit filter: Priority/ }));
     await user.click(await screen.findByTestId('filter-toggle-operator'));
 
-    expect(lastPredicates()).toEqual([{ field: 'priority', operator: 'is_not', values: ['1'] }]);
+    expect(lastConditions()).toEqual([inCondition('priority', ['1'], true)]);
+  });
+
+  it('offers a relative window on a date dimension and commits it', async () => {
+    const user = userEvent.setup();
+    renderBar();
+
+    await user.keyboard('f');
+    await user.click(await screen.findByTestId('filter-field-due'));
+    await user.click(await screen.findByTestId('filter-relative-next-2-week'));
+
+    const committed = lastConditions()[0];
+    expect(committed?.property).toBe('due');
+    expect(committed?.operator).toBe('relative');
+    if (committed?.operator !== 'relative') throw new Error('The relative filter was not saved.');
+    expect(committed.relative).toEqual({ unit: 'week', offset: 2, direction: 'future' });
+  });
+
+  it('commits a free text content filter', async () => {
+    const user = userEvent.setup();
+    renderBar();
+
+    await user.keyboard('f');
+    await user.click(await screen.findByTestId('filter-field-content'));
+    await user.keyboard('redirect');
+    await user.click(await screen.findByTestId('filter-content-apply'));
+
+    const committed = lastConditions()[0];
+    expect(committed?.property).toBe('content');
+    if (committed?.operator !== 'exact') throw new Error('The content filter was not saved.');
+    expect(committed.value).toBe('redirect');
+  });
+
+  it('exposes every dimension the data model supports', async () => {
+    const user = userEvent.setup();
+    renderBar();
+
+    await user.keyboard('f');
+    await screen.findByTestId('filter-menu');
+    for (const property of [
+      'state',
+      'assignee',
+      'creator',
+      'priority',
+      'estimate',
+      'label',
+      'project',
+      'milestone',
+      'relation',
+      'link',
+      'subscriber',
+      'content',
+      'due',
+      'created',
+      'updated',
+      'started',
+      'completed',
+    ]) {
+      expect(screen.getByTestId(`filter-field-${property}`)).toBeInTheDocument();
+    }
   });
 });

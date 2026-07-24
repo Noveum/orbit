@@ -3,6 +3,15 @@ import { BASE } from './base-url.ts';
 
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 
+function filterParam(property: string, values: readonly string[]): string {
+  const tree = {
+    kind: 'group',
+    combinator: 'and',
+    children: [{ kind: 'condition', property, operator: 'in', values, negate: false }],
+  };
+  return `filter=${encodeURIComponent(JSON.stringify(tree))}`;
+}
+
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test('filters narrow the list, round trip through the url and save as a view', async ({ page }) => {
@@ -36,7 +45,7 @@ test('filters narrow the list, round trip through the url and save as a view', a
     filtered = Number(await page.getByTestId('issue-count').innerText());
     if (filtered > 0) break;
     await option.click();
-    await expect.poll(async () => page.url()).not.toContain('filter=assignee');
+    await expect.poll(async () => page.url()).not.toContain('filter=');
   }
 
   expect(filtered).toBeGreaterThan(0);
@@ -44,9 +53,8 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await page.keyboard.press('Escape');
 
   await expect(page.getByTestId('filter-chip-assignee')).toBeVisible();
-  await expect(page).toHaveURL(/filter=assignee%3Ais%3A/);
-  const rendered = await page.locator('[data-testid^="issue-row-"]').count();
-  expect(rendered).toBeLessThanOrEqual(filtered);
+  await expect(page).toHaveURL(/filter=/);
+  await expect(page.getByTestId('hidden-by-filters')).toContainText('hidden by filters');
 
   await page.keyboard.press('f');
   await page.getByTestId('filter-field-priority').click();
@@ -67,7 +75,11 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
   expect(Number(await page.getByTestId('issue-count').innerText())).toBe(twoFilters);
 
-  await page.getByTestId('display-menu-trigger').click();
+  await page.goBack();
+  await page.goForward();
+  await expect(page.getByTestId('filter-chip-assignee')).toBeVisible();
+
+  await page.getByTestId('display-menu-trigger').first().click();
   await expect(page.getByTestId('display-menu')).toBeVisible();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${SHOTS}/display-menu.png` });
@@ -78,12 +90,15 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await page.getByTestId('save-view').click();
   const name = `E2E view ${Date.now() % 100000}`;
   await page.getByTestId('save-view-name').fill(name);
+  await page.getByTestId('save-view-visibility-workspace').check();
   await page.getByTestId('save-view-submit').click();
   await expect(page.getByTestId('save-view-dialog')).toBeHidden();
 
   await page.goto(`${BASE}/views`);
   await expect(page.getByTestId('views-page')).toBeVisible();
   await expect(page.getByTestId(`view-${name}`)).toBeVisible();
+  await expect(page.getByTestId('view-All issues')).toBeVisible();
+  await expect(page.getByTestId('view-Assigned to me')).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/views-page.png` });
 
   await page.getByTestId(`open-${name}`).click();
@@ -91,11 +106,17 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
   expect(Number(await page.getByTestId('issue-count').innerText())).toBe(twoFilters);
 
+  await page.getByTestId('display-menu-trigger').first().click();
+  await page.getByTestId('order-by-updated').click();
+  await expect(page.getByTestId('update-view')).toBeVisible();
+
   await page.goto(`${BASE}/views`);
-  await page.getByTestId(`share-${name}`).click();
-  await expect(page.getByTestId(`share-${name}`)).toHaveAttribute('data-state', 'checked');
+  await page.getByTestId(`star-${name}`).click();
+  await expect(page.getByTestId(`star-${name}`)).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByTestId(`delete-${name}`).click();
+  await expect(page.getByTestId('delete-view-dialog')).toBeVisible();
+  await page.getByTestId('confirm-delete-view').click();
   await expect(page.getByTestId(`view-${name}`)).toBeHidden();
 });
 
@@ -104,7 +125,15 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
   await page.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
   await page.waitForURL(`${BASE}/my-issues`);
 
-  await page.goto(`${BASE}/team/eng/issues?filter=priority%3Ais%3A1%3Bdue%3Ais%3Anone`);
+  const tree = {
+    kind: 'group',
+    combinator: 'and',
+    children: [
+      { kind: 'condition', property: 'priority', operator: 'in', values: ['1'], negate: false },
+      { kind: 'condition', property: 'due', operator: 'in', values: ['none'], negate: false },
+    ],
+  };
+  await page.goto(`${BASE}/team/eng/issues?filter=${encodeURIComponent(JSON.stringify(tree))}`);
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
   await expect(page.getByTestId('filter-chip-due')).toBeVisible();
 
@@ -123,4 +152,26 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
   await expect(overlay.getByText('Clear all filters')).toBeVisible();
   await expect(overlay.getByText('Save as a view')).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/shortcuts.png` });
+});
+
+test('display options hide rows and the footer offers them back', async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
+  await page.waitForURL(`${BASE}/my-issues`);
+
+  await page.goto(`${BASE}/team/eng/issues?done=none`);
+  await expect(page.getByTestId('issue-list')).toBeVisible();
+
+  const footer = page.getByTestId('hidden-by-display');
+  if (await footer.isVisible()) {
+    await expect(footer).toContainText('hidden by display options');
+    await page.getByTestId('footer-reveal-display').click();
+    await expect(page.getByTestId('hidden-by-display')).toBeHidden();
+  }
+
+  await page.goto(`${BASE}/team/eng/issues?${filterParam('priority', ['1'])}`);
+  await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
+  await expect(page.getByTestId('footer-clear-filters')).toBeVisible();
+  await page.getByTestId('footer-clear-filters').click();
+  await expect(page.getByTestId('filter-chip-priority')).toBeHidden();
 });

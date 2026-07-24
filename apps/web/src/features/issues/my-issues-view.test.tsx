@@ -1,12 +1,17 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { assignedSearch } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from './workspace-provider.tsx';
 
-mock.module('next/navigation', () => ({ useRouter: () => ({ push: mock() }) }));
+mock.module('next/navigation', () => ({
+  useRouter: () => ({ push: mock(), replace: mock() }),
+  usePathname: () => '/my-issues',
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 let workspace: WorkspaceData;
 mock.module('./workspace-provider.tsx', () => ({ useWorkspace: () => workspace }));
@@ -106,7 +111,9 @@ function renderEmptyCacheView(): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <MyIssuesView />
+      <HotkeyProvider>
+        <MyIssuesView />
+      </HotkeyProvider>
     </QueryClientProvider>,
   );
 }
@@ -141,7 +148,9 @@ function renderView(viewerId = 'me'): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <MyIssuesView />
+      <HotkeyProvider>
+        <MyIssuesView />
+      </HotkeyProvider>
     </QueryClientProvider>,
   );
 }
@@ -176,5 +185,12 @@ describe('MyIssuesView', () => {
 
     expect(screen.queryByTestId('my-issues-list')).toBeNull();
     expect(screen.getByText('Nothing assigned to you')).toBeInTheDocument();
+  });
+
+  it('groups the rows so the display options have something to act on', () => {
+    workspace = buildWorkspace();
+    renderView();
+
+    expect(screen.getByTestId('issue-group-Todo')).toBeInTheDocument();
   });
 });

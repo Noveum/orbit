@@ -1,9 +1,9 @@
 'use client';
 
+import type { DisplayProperty } from '@orbit/shared/filters';
+import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
-import type { IssueProperty } from '@/features/filters/view-config.ts';
-import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -16,12 +16,51 @@ export interface IssueRowProps {
   readonly state: WorkflowState | undefined;
   readonly labels: readonly Label[];
   readonly assignee: Member | undefined;
+  readonly creator?: Member | undefined;
+  readonly project?: { readonly name: string; readonly color: string } | undefined;
+  readonly cycle?: { readonly name: string } | undefined;
+  readonly subIssueCount?: number;
   readonly active: boolean;
   readonly selected: boolean;
-  readonly properties?: readonly IssueProperty[];
+  readonly properties?: readonly DisplayProperty[];
   readonly onOpen: () => void;
   readonly onToggleSelected: () => void;
   readonly onFocus: () => void;
+}
+
+function shortDate(value: string | null): string | null {
+  if (value === null) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function Chip({ label, color, title }: { label: string; color?: string; title: string }) {
+  return (
+    <span
+      title={title}
+      className="hidden shrink-0 items-center gap-1 rounded-sm border border-border px-1 text-2xs text-muted md:flex"
+    >
+      {color === undefined ? null : (
+        <span
+          className="size-1.5 rounded-full"
+          style={{ backgroundColor: color }}
+          aria-hidden="true"
+        />
+      )}
+      <span className="max-w-24 truncate">{label}</span>
+    </span>
+  );
+}
+
+function DateChip({ value, title }: { value: string | null; title: string }) {
+  const label = shortDate(value);
+  if (label === null) return null;
+  return (
+    <span data-numeric title={title} className="shrink-0 text-2xs text-faint">
+      {label}
+    </span>
+  );
 }
 
 export function IssueRow({
@@ -29,14 +68,18 @@ export function IssueRow({
   state,
   labels,
   assignee,
+  creator,
+  project,
+  cycle,
+  subIssueCount = 0,
   active,
   selected,
-  properties = ISSUE_PROPERTIES,
+  properties = DEFAULT_DISPLAY_PROPERTIES,
   onOpen,
   onToggleSelected,
   onFocus,
 }: IssueRowProps) {
-  const shows = (property: IssueProperty) => properties.includes(property);
+  const shows = (property: DisplayProperty) => properties.includes(property);
 
   return (
     <div
@@ -103,11 +146,14 @@ export function IssueRow({
           ))}
         </span>
       ) : null}
-      {shows('estimate') && issue.estimate !== null ? (
-        <span data-numeric className="w-5 text-right text-2xs text-faint">
-          {issue.estimate}
-        </span>
-      ) : null}
+      <RowMeta
+        issue={issue}
+        creator={creator}
+        project={project}
+        cycle={cycle}
+        subIssueCount={subIssueCount}
+        properties={properties}
+      />
       {shows('assignee') ? <RowAssignee assignee={assignee} /> : null}
     </div>
   );
@@ -118,4 +164,46 @@ function RowAssignee({ assignee }: { assignee: Member | undefined }) {
     return <span className="size-4.5 rounded-full border border-border border-dashed" />;
   }
   return <Avatar name={assignee.name} src={assignee.image} size="xs" />;
+}
+
+interface RowMetaProps {
+  readonly issue: Issue;
+  readonly creator: Member | undefined;
+  readonly project: { readonly name: string; readonly color: string } | undefined;
+  readonly cycle: { readonly name: string } | undefined;
+  readonly subIssueCount: number;
+  readonly properties: readonly DisplayProperty[];
+}
+
+function RowMeta({ issue, creator, project, cycle, subIssueCount, properties }: RowMetaProps) {
+  const shows = (property: DisplayProperty) => properties.includes(property);
+  return (
+    <>
+      {shows('subIssues') && subIssueCount > 0 ? (
+        <span data-numeric className="shrink-0 text-2xs text-faint" title="Sub-issues">
+          {subIssueCount}
+        </span>
+      ) : null}
+      {shows('project') && project !== undefined ? (
+        <Chip label={project.name} color={project.color} title="Project" />
+      ) : null}
+      {shows('cycle') && cycle !== undefined ? <Chip label={cycle.name} title="Cycle" /> : null}
+      {shows('milestone') && issue.milestoneId !== null ? (
+        <Chip label="Milestone" title="On a milestone" />
+      ) : null}
+      {shows('dueDate') ? <DateChip value={issue.dueDate} title="Due date" /> : null}
+      {shows('started') ? <DateChip value={issue.startedAt} title="Started" /> : null}
+      {shows('completed') ? <DateChip value={issue.completedAt} title="Completed" /> : null}
+      {shows('created') ? <DateChip value={issue.createdAt} title="Created" /> : null}
+      {shows('updated') ? <DateChip value={issue.updatedAt} title="Updated" /> : null}
+      {shows('estimate') && issue.estimate !== null ? (
+        <span data-numeric className="w-5 text-right text-2xs text-faint">
+          {issue.estimate}
+        </span>
+      ) : null}
+      {shows('creator') && creator !== undefined ? (
+        <Avatar name={creator.name} src={creator.image} size="xs" />
+      ) : null}
+    </>
+  );
 }

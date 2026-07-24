@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db } from '@orbit/db';
+import { conditionsOf, inCondition, VIRTUAL_VIEW_IDS } from '@orbit/shared/filters';
 import { createTeam } from '../org/team-service.ts';
 import {
   addMember,
@@ -10,7 +11,8 @@ import {
 } from '../test-support.ts';
 import { createIssue } from './issue-service.ts';
 import { createLabel, deleteLabel, listLabels, updateLabel } from './label-service.ts';
-import { createView, deleteView, listViews, updateView } from './view-service.ts';
+import type { ViewRecord } from './view-service.ts';
+import { createView, deleteView, listViews, setViewFavorite, updateView } from './view-service.ts';
 import {
   createWorkflowState,
   defaultStateFor,
@@ -120,27 +122,73 @@ describe('views', () => {
   it('creates a private view, updates it, and hides it from others', async () => {
     const created = await createView(workspace.admin, {
       name: 'My work',
-      filter: { assigneeId: workspace.admin.userId },
-      groupBy: 'state',
+      filter: {
+        filter: { kind: 'group', combinator: 'and', children: [inCondition('assignee', ['x'])] },
+        groupBy: 'state',
+      },
     });
-    expect(created.view.shared).toBe('false');
+    expect(created.view.shared).toBe(false);
     expect(created.view.layout).toBe('list');
+    expect(created.view.virtual).toBe(false);
 
-    const updated = await updateView(workspace.admin, created.view.id, { layout: 'board' });
+    const updated = await updateView(workspace.admin, created.view.id, {
+      filter: { ...created.view.state, layout: 'board' },
+    });
     expect(updated.view.layout).toBe('board');
     expect(updated.view.name).toBe('My work');
     expect(updated.view.groupBy).toBe('state');
 
     const { principal } = await addMember(workspace, 'member');
-    expect(await listViews(principal)).toHaveLength(0);
+    expect(saved(await listViews(principal))).toHaveLength(0);
 
-    await updateView(workspace.admin, created.view.id, { shared: true });
-    expect(await listViews(principal)).toHaveLength(1);
+    await updateView(workspace.admin, created.view.id, {
+      filter: { ...created.view.state, layout: 'board', visibility: 'workspace' },
+    });
+    expect(saved(await listViews(principal))).toHaveLength(1);
 
     await deleteView(workspace.admin, created.view.id);
-    expect(await listViews(workspace.admin)).toHaveLength(0);
+    expect(saved(await listViews(workspace.admin))).toHaveLength(0);
+  });
+
+  it('injects the four built-in views for every viewer and refuses to change them', async () => {
+    const views = await listViews(workspace.admin);
+    const builtIn = views.filter((view) => view.virtual);
+    expect(builtIn.map((view) => view.id)).toEqual([...VIRTUAL_VIEW_IDS]);
+
+    const assigned = builtIn.find((view) => view.id === 'virtual:assigned');
+    expect(
+      conditionsOf(assigned?.state.filter ?? { kind: 'group', combinator: 'and', children: [] }),
+    ).toEqual([inCondition('assignee', [workspace.admin.userId])]);
+
+    await expect(updateView(workspace.admin, 'virtual:all', { name: 'Nope' })).rejects.toThrow();
+    await expect(deleteView(workspace.admin, 'virtual:all')).rejects.toThrow();
+  });
+
+  it('stars a view, sorts it first, and refuses to delete a locked one', async () => {
+    const plain = await createView(workspace.admin, {
+      name: 'Zebra',
+      filter: { groupBy: 'state' },
+    });
+    const locked = await createView(workspace.admin, {
+      name: 'Alpha',
+      filter: { groupBy: 'state', locked: true },
+    });
+
+    await setViewFavorite(workspace.admin, plain.view.id, { favorite: true });
+    const starred = saved(await listViews(workspace.admin));
+    expect(starred[0]?.name).toBe('Zebra');
+    expect(starred[0]?.favorite).toBe(true);
+
+    await expect(deleteView(workspace.admin, locked.view.id)).rejects.toThrow();
+
+    await setViewFavorite(workspace.admin, plain.view.id, { favorite: false });
+    expect(saved(await listViews(workspace.admin))[0]?.name).toBe('Alpha');
   });
 });
+
+function saved(views: readonly ViewRecord[]): ViewRecord[] {
+  return views.filter((view) => !view.virtual);
+}
 
 describe('workflow state reads are team scoped', () => {
   it('refuses a team the reader is not on and a team in another workspace', async () => {

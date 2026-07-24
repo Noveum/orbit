@@ -1,25 +1,22 @@
-import type { FilterPredicate, IssueOrdering } from '@orbit/shared/filters';
-import { encodeFilterPredicates } from '@orbit/shared/filters';
+import type { FilterGroup, IssueOrdering } from '@orbit/shared/filters';
+import { emptyFilterGroup, encodeFilter } from '@orbit/shared/filters';
 
 export interface IssueQuery {
-  readonly predicates: readonly FilterPredicate[];
+  readonly filter: FilterGroup;
   readonly orderBy: IssueOrdering;
-  readonly includeSubIssues: boolean;
 }
 
 export const DEFAULT_ISSUE_QUERY: IssueQuery = {
-  predicates: [],
+  filter: emptyFilterGroup(),
   orderBy: 'manual',
-  includeSubIssues: true,
 };
 
 export const ISSUE_PAGE_SIZE = 100;
 
 function searchParams(query: IssueQuery): URLSearchParams {
   const params = new URLSearchParams({ limit: String(ISSUE_PAGE_SIZE), orderBy: query.orderBy });
-  if (!query.includeSubIssues) params.set('includeSubIssues', 'false');
-  const predicates = encodeFilterPredicates(query.predicates);
-  if (predicates.length > 0) params.set('predicates', predicates);
+  const filter = encodeFilter(query.filter);
+  if (filter.length > 0) params.set('filter', filter);
   return params;
 }
 

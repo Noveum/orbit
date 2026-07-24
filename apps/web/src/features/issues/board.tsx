@@ -19,11 +19,11 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { DisplayProperty } from '@orbit/shared/filters';
+import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import type { IssueProperty } from '@/features/filters/view-config.ts';
-import { ISSUE_PROPERTIES } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { type MoveInput, useMoveIssue } from '@/lib/query/use-issues.ts';
@@ -35,7 +35,7 @@ export interface BoardProps {
   readonly teamId: string;
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
-  readonly properties?: readonly IssueProperty[];
+  readonly properties?: readonly DisplayProperty[];
 }
 
 export function planDrop(
@@ -73,7 +73,7 @@ function SortableCard({
   properties,
 }: {
   issue: Issue;
-  properties: readonly IssueProperty[];
+  properties: readonly DisplayProperty[];
 }) {
   const { labelById, memberById } = useWorkspace();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -112,7 +112,7 @@ export function Board({
   teamId,
   groups,
   draggable = true,
-  properties = ISSUE_PROPERTIES,
+  properties = DEFAULT_DISPLAY_PROPERTIES,
 }: BoardProps) {
   const { labelById, memberById, openQuickCreate } = useWorkspace();
   const move = useMoveIssue(teamId);
@@ -186,7 +186,7 @@ export function Board({
 interface BoardColumnProps {
   readonly group: IssueGroup;
   readonly draggable: boolean;
-  readonly properties: readonly IssueProperty[];
+  readonly properties: readonly DisplayProperty[];
   readonly onCreate: () => void;
 }
 
@@ -246,7 +246,13 @@ function BoardColumn({ group, draggable, properties, onCreate }: BoardColumnProp
   );
 }
 
-function StaticCard({ issue, properties }: { issue: Issue; properties: readonly IssueProperty[] }) {
+function StaticCard({
+  issue,
+  properties,
+}: {
+  issue: Issue;
+  properties: readonly DisplayProperty[];
+}) {
   const { labelById, memberById } = useWorkspace();
   return (
     <li className="list-none">
