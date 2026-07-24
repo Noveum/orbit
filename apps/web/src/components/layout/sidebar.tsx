@@ -1,6 +1,6 @@
 'use client';
 
-import { PanelLeft, Search } from 'lucide-react';
+import { PanelLeft, Search, X } from 'lucide-react';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { ScrollArea } from '@/components/ui/scroll-area.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
@@ -15,9 +15,10 @@ export interface SidebarProps {
   readonly user: ShellUser;
   readonly sections: readonly NavSection[];
   readonly collapsed: boolean;
+  readonly touch?: boolean;
   readonly onToggleCollapsed: () => void;
   readonly onOpenPalette: () => void;
-  readonly onNavigate?: () => void;
+  readonly onNavigate?: (() => void) | null;
 }
 
 export function Sidebar({
@@ -26,40 +27,59 @@ export function Sidebar({
   user,
   sections,
   collapsed,
+  touch = false,
   onToggleCollapsed,
   onOpenPalette,
-  onNavigate,
+  onNavigate = null,
 }: SidebarProps) {
+  const toggle = (
+    <button
+      type="button"
+      onClick={onToggleCollapsed}
+      aria-label={touch ? 'Close navigation' : 'Toggle sidebar'}
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-md text-faint',
+        'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text',
+        touch ? 'size-11' : 'size-7 3xl:size-8',
+      )}
+    >
+      {touch ? (
+        <X className="size-5" aria-hidden="true" />
+      ) : (
+        <PanelLeft className="size-4" aria-hidden="true" />
+      )}
+    </button>
+  );
+
   return (
     <div className="flex h-full flex-col gap-1 border-border border-r bg-surface">
-      <div className={cn('flex items-center gap-1 p-2', collapsed && 'flex-col')}>
+      <div className={cn('flex items-center gap-1 p-2 3xl:p-3', collapsed && 'flex-col')}>
         <div className="min-w-0 flex-1">
           <WorkspaceSwitcher
             workspace={workspace}
             workspaces={workspaces}
             user={user}
             collapsed={collapsed}
+            touch={touch}
           />
         </div>
-        <Tooltip label="Toggle sidebar" shortcut={['[']} side="bottom">
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            aria-label="Toggle sidebar"
-            className="hidden size-7 shrink-0 items-center justify-center rounded-md text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text lg:flex"
-          >
-            <PanelLeft className="size-4" aria-hidden="true" />
-          </button>
-        </Tooltip>
+        {touch ? (
+          toggle
+        ) : (
+          <Tooltip label="Toggle sidebar" shortcut={['[']} side="bottom">
+            {toggle}
+          </Tooltip>
+        )}
       </div>
 
-      <div className="px-2 pb-1">
+      <div className="px-2 pb-1 3xl:px-3">
         <button
           type="button"
           onClick={onOpenPalette}
           className={cn(
-            'flex h-9 w-full items-center gap-2 rounded-md border border-border bg-surface-2 px-2 text-dense text-faint sm:h-7',
+            'flex w-full items-center gap-2 rounded-md border border-border bg-surface-2 px-2 text-dense text-faint',
             'transition-colors duration-[var(--duration-fast)] hover:border-border-strong hover:text-muted',
+            touch ? 'h-11' : 'h-7 3xl:h-8',
             collapsed && 'justify-center px-0',
           )}
         >
@@ -67,14 +87,17 @@ export function Sidebar({
           {collapsed ? null : (
             <>
               <span className="flex-1 text-left">Search</span>
-              <Kbd keys={['mod', 'k']} />
+              {touch ? null : <Kbd keys={['mod', 'k']} />}
             </>
           )}
         </button>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <nav aria-label="Workspace" className="flex flex-col gap-4 px-2 pb-4">
+        <nav
+          aria-label="Workspace"
+          className="flex flex-col gap-4 px-2 pb-4 3xl:gap-5 3xl:px-3 3xl:pb-6"
+        >
           {sections.map((section) => (
             <div key={section.id} className="flex flex-col gap-0.5">
               {section.title !== undefined && !collapsed ? (
@@ -87,7 +110,8 @@ export function Sidebar({
                   key={link.href}
                   link={link}
                   collapsed={collapsed}
-                  {...(onNavigate === undefined ? {} : { onNavigate })}
+                  touch={touch}
+                  onNavigate={onNavigate}
                 />
               ))}
             </div>

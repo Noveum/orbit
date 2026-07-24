@@ -50,7 +50,7 @@ export function DevSignIn({ users, callbackUrl = '/my-issues' }: DevSignInProps)
               onClick={() => {
                 signIn(user.email);
               }}
-              className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-dense transition-colors duration-[var(--duration-fast)] hover:border-border hover:bg-surface-2 disabled:opacity-50"
+              className="flex w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-dense transition-colors duration-[var(--duration-fast)] not-disabled:hover:border-border not-disabled:hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Avatar name={user.name} src={user.image} size="sm" />
               <span className="min-w-0 flex-1 truncate">Continue as {user.name}</span>

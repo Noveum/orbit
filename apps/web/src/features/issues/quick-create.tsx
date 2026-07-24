@@ -93,7 +93,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             placeholder="Issue title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            className="h-9 border-0 px-0 font-medium text-base shadow-none focus-visible:outline-none"
+            className="h-9 border-0 px-0 font-medium text-base shadow-none"
           />
           <Textarea
             data-testid="quick-create-description"
@@ -101,7 +101,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             placeholder="Add a description, markdown works."
             value={description}
             onChange={(event) => setDescription(event.target.value)}
-            className="resize-none border-0 px-0 shadow-none focus-visible:outline-none"
+            className="resize-none border-0 px-0 shadow-none"
           />
 
           <div className="flex flex-wrap items-center gap-1.5">

@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/select.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { PendingInviteView, TeamBadge } from './data.ts';
 
 export interface EmailParseResult {
@@ -215,7 +217,10 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
             {invites.map((invite) => (
               <li
                 key={invite.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5"
+                className={cn(
+                  'flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5',
+                  cardHover,
+                )}
               >
                 <span className="flex items-center gap-2">
                   <span className="text-dense text-text">{invite.email}</span>

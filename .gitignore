@@ -20,9 +20,11 @@ uploads/
 playwright-report/
 test-results/
 blob-report/
+.artifacts/
 
 extras/
 
 .claude/worktrees/
 
 next-env.d.ts
+.artifacts/

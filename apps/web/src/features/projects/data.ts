@@ -4,6 +4,7 @@ import {
   listProjectUpdates,
   type ProjectProgress,
   projectProgress,
+  projectProgressSeries,
 } from '@orbit/core';
 import { and, count, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
 import { renderPlainText } from '@orbit/services/markdown';
@@ -12,7 +13,7 @@ import { PROJECT_HEALTHS, PROJECT_STATUSES } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { buildProjectSeries, type ProgressPoint } from './series.ts';
+import type { ProgressPoint } from './series.ts';
 
 export interface PersonRef {
   readonly id: string;
@@ -116,11 +117,7 @@ export interface ProjectDetail {
   readonly series: ProgressPoint[];
 }
 
-export async function getProjectDetail(
-  principal: Principal,
-  slug: string,
-  now: Date = new Date(),
-): Promise<ProjectDetail> {
+export async function getProjectDetail(principal: Principal, slug: string): Promise<ProjectDetail> {
   assertCan(principal, 'project:read');
   const [project] = await db
     .select()
@@ -134,7 +131,7 @@ export async function getProjectDetail(
     .limit(1);
   if (project === undefined) throw notFound('That project does not exist.');
 
-  const [progress, milestones, updates, teams, issues] = await Promise.all([
+  const [progress, milestones, updates, teams, series] = await Promise.all([
     projectProgress(principal, project.id),
     listMilestones(principal, project.id),
     listProjectUpdates(principal, project.id, 20),
@@ -143,10 +140,7 @@ export async function getProjectDetail(
       .from(schema.projectTeam)
       .innerJoin(schema.team, eq(schema.team.id, schema.projectTeam.teamId))
       .where(eq(schema.projectTeam.projectId, project.id)),
-    db
-      .select({ createdAt: schema.issue.createdAt, completedAt: schema.issue.completedAt })
-      .from(schema.issue)
-      .where(and(eq(schema.issue.projectId, project.id), isNull(schema.issue.archivedAt))),
+    projectProgressSeries(principal, project.id),
   ]);
 
   const people = await loadPeople([
@@ -189,6 +183,6 @@ export async function getProjectDetail(
         author: people.get(update.authorId) ?? null,
       }))
       .reverse(),
-    series: buildProjectSeries(issues, now),
+    series,
   };
 }

@@ -9,6 +9,10 @@ const serverEnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  ORBIT_PASSWORD_AUTH: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -18,4 +22,14 @@ let cached: ServerEnv | null = null;
 export function serverEnv(): ServerEnv {
   if (cached === null) cached = serverEnvSchema.parse(process.env);
   return cached;
+}
+
+const publicAppUrlSchema = z.url().default('http://localhost:3000');
+
+export function publicAppUrl(): string {
+  return publicAppUrlSchema.parse(process.env['NEXT_PUBLIC_APP_URL']).replace(/\/+$/, '');
+}
+
+export function absoluteUrl(path: string): string {
+  return new URL(path, `${publicAppUrl()}/`).toString();
 }

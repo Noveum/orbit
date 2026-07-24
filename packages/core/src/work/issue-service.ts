@@ -1,10 +1,10 @@
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
-import { SORT_ORDER_STEP } from '@orbit/shared/constants';
-import { notFound, validationFailed } from '@orbit/shared/errors';
+import { type IssueRelationType, SORT_ORDER_STEP } from '@orbit/shared/constants';
+import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, isInTeam, teamScope } from '@orbit/shared/policy';
 import { issueIdentifier, parseIssueIdentifier, sortOrderBetween } from '@orbit/shared/utils';
 import {
   issueBulkUpdateSchema,
@@ -15,9 +15,11 @@ import {
   issueUpdateSchema,
   paginationSchema,
 } from '@orbit/shared/validators';
-import type { SQL } from 'drizzle-orm';
+import { getTableColumns, type SQL } from 'drizzle-orm';
+import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
+import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { buildPredicateFilters, today } from './issue-predicates.ts';
@@ -29,12 +31,39 @@ export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
 export const REBALANCE_THRESHOLD = 0.0001;
 
-const INVERSE_RELATION = {
+export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
   blocks: 'blocked_by',
   blocked_by: 'blocks',
   related: 'related',
-  duplicate_of: 'duplicate_of',
-} as const;
+  duplicate_of: 'duplicated_by',
+  duplicated_by: 'duplicate_of',
+};
+
+export const PARENT_CHAIN_LIMIT = 10;
+
+async function assertParentAllowed(
+  executor: Executor,
+  organizationId: string,
+  issueId: string,
+  parentId: string,
+): Promise<void> {
+  let cursor: string | null = parentId;
+  let depth = 0;
+  while (cursor !== null) {
+    if (cursor === issueId) {
+      throw conflict('An issue cannot be its own parent, directly or through its parent chain.');
+    }
+    depth += 1;
+    if (depth > PARENT_CHAIN_LIMIT) throw conflict('That parent chain is too deep.');
+    const rows: { parentId: string | null }[] = await executor
+      .select({ parentId: schema.issue.parentId })
+      .from(schema.issue)
+      .where(and(eq(schema.issue.id, cursor), eq(schema.issue.organizationId, organizationId)))
+      .limit(1);
+    const parent = requireRow(rows[0], 'That parent issue does not exist.');
+    cursor = parent.parentId;
+  }
+}
 
 export function issueScopes(
   row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
@@ -66,23 +95,14 @@ function issueAction(
   });
 }
 
-async function allocateIssueNumber(executor: Executor, teamId: string): Promise<number> {
+async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<number> {
   const [row] = await executor
     .update(schema.team)
     .set({ issueCounter: sql`${schema.team.issueCounter} + 1` })
-    .where(eq(schema.team.id, teamId))
-    .returning({ issueCounter: schema.team.issueCounter, key: schema.team.key });
+    .where(and(eq(schema.team.id, team.id), eq(schema.team.organizationId, team.organizationId)))
+    .returning({ issueCounter: schema.team.issueCounter });
   if (row === undefined) throw notFound('That team does not exist.');
   return row.issueCounter;
-}
-
-async function teamKey(executor: Executor, teamId: string): Promise<string> {
-  const [row] = await executor
-    .select({ key: schema.team.key })
-    .from(schema.team)
-    .where(eq(schema.team.id, teamId))
-    .limit(1);
-  return requireRow(row, 'That team does not exist.').key;
 }
 
 async function topOfColumn(executor: Executor, teamId: string, stateId: string): Promise<number> {
@@ -187,10 +207,100 @@ async function describeValue(executor: Executor, field: string, value: unknown):
   return name === null ? value : { id: value, name };
 }
 
+const BATCH_NAME_LOADERS: Record<
+  string,
+  (executor: Executor, ids: readonly string[]) => Promise<Map<string, string>>
+> = {
+  stateId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.workflowState.id, name: schema.workflowState.name })
+        .from(schema.workflowState)
+        .where(inArray(schema.workflowState.id, [...ids])),
+    ),
+  assigneeId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.user.id, name: schema.user.name })
+        .from(schema.user)
+        .where(inArray(schema.user.id, [...ids])),
+    ),
+  projectId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.project.id, name: schema.project.name })
+        .from(schema.project)
+        .where(inArray(schema.project.id, [...ids])),
+    ),
+  cycleId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.cycle.id, name: schema.cycle.name })
+        .from(schema.cycle)
+        .where(inArray(schema.cycle.id, [...ids])),
+    ),
+  milestoneId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.milestone.id, name: schema.milestone.name })
+        .from(schema.milestone)
+        .where(inArray(schema.milestone.id, [...ids])),
+    ),
+  parentId: async (executor, ids) =>
+    await namesOf(
+      executor
+        .select({ id: schema.issue.id, name: schema.issue.identifier })
+        .from(schema.issue)
+        .where(inArray(schema.issue.id, [...ids])),
+    ),
+};
+
+async function namesOf(
+  query: Promise<{ id: string; name: string }[]>,
+): Promise<Map<string, string>> {
+  return new Map((await query).map((row) => [row.id, row.name]));
+}
+
 interface FieldChange {
   readonly field: string;
   readonly from: unknown;
   readonly to: unknown;
+}
+
+async function describeChanges(
+  executor: Executor,
+  changes: readonly FieldChange[],
+): Promise<Map<string, unknown>> {
+  const wanted = new Map<string, Set<string>>();
+  for (const change of changes) {
+    if (BATCH_NAME_LOADERS[change.field] === undefined) continue;
+    const bucket = wanted.get(change.field) ?? new Set<string>();
+    for (const value of [change.from, change.to]) {
+      if (typeof value === 'string') bucket.add(value);
+    }
+    wanted.set(change.field, bucket);
+  }
+
+  const described = new Map<string, unknown>();
+  for (const [field, ids] of wanted) {
+    const load = BATCH_NAME_LOADERS[field];
+    if (load === undefined || ids.size === 0) continue;
+    const names = await load(executor, [...ids]);
+    for (const id of ids) {
+      const name = names.get(id);
+      described.set(`${field}:${id}`, name === undefined ? id : { id, name });
+    }
+  }
+  return described;
+}
+
+function describedValue(
+  described: ReadonlyMap<string, unknown>,
+  field: string,
+  value: unknown,
+): unknown {
+  if (typeof value !== 'string') return value ?? null;
+  return described.get(`${field}:${value}`) ?? value;
 }
 
 function collectIssueChanges(
@@ -229,15 +339,36 @@ function collectIssueChanges(
 
 async function loadIssue(
   executor: Executor,
-  organizationId: string,
+  principal: Principal,
   issueId: string,
 ): Promise<IssueRow> {
   const [row] = await executor
     .select()
     .from(schema.issue)
-    .where(and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, organizationId)))
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, principal.organizationId)),
+    )
     .limit(1);
-  return requireRow(row, 'That issue does not exist.');
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
+}
+
+async function replaceLabelsFor(
+  executor: Executor,
+  issueIds: readonly string[],
+  labelIds: readonly string[],
+): Promise<void> {
+  if (issueIds.length === 0) return;
+  await executor.delete(schema.issueLabel).where(inArray(schema.issueLabel.issueId, [...issueIds]));
+  const unique = [...new Set(labelIds)];
+  if (unique.length === 0) return;
+  await executor
+    .insert(schema.issueLabel)
+    .values(
+      issueIds.flatMap((issueId) => unique.map((labelId) => ({ id: newId(), issueId, labelId }))),
+    )
+    .onConflictDoNothing();
 }
 
 async function replaceLabels(
@@ -245,25 +376,35 @@ async function replaceLabels(
   issueId: string,
   labelIds: readonly string[],
 ): Promise<void> {
-  await executor.delete(schema.issueLabel).where(eq(schema.issueLabel.issueId, issueId));
-  if (labelIds.length === 0) return;
-  await executor
-    .insert(schema.issueLabel)
-    .values([...new Set(labelIds)].map((labelId) => ({ id: newId(), issueId, labelId })))
-    .onConflictDoNothing();
+  await replaceLabelsFor(executor, [issueId], labelIds);
+}
+
+async function subscribeToIssues(
+  executor: Executor,
+  pairs: readonly { issueId: string; userId: string | null }[],
+): Promise<void> {
+  const rows = pairs.flatMap((pair) =>
+    pair.userId === null ? [] : [{ id: newId(), issueId: pair.issueId, userId: pair.userId }],
+  );
+  if (rows.length === 0) return;
+  await executor.insert(schema.issueSubscription).values(rows).onConflictDoNothing();
 }
 
 async function subscribeUsers(
   executor: Executor,
   issueId: string,
   userIds: readonly (string | null)[],
+  syncId: number,
 ): Promise<void> {
   const unique = [...new Set(userIds.filter((id): id is string => id !== null))];
   if (unique.length === 0) return;
   await executor
     .insert(schema.issueSubscription)
-    .values(unique.map((userId) => ({ id: newId(), issueId, userId })))
-    .onConflictDoNothing();
+    .values(unique.map((userId) => ({ id: newId(), issueId, userId, syncId })))
+    .onConflictDoUpdate({
+      target: [schema.issueSubscription.issueId, schema.issueSubscription.userId],
+      set: { syncId },
+    });
 }
 
 export interface CreatedIssue {
@@ -274,31 +415,34 @@ export interface CreatedIssue {
 export async function createIssue(principal: Principal, input: unknown): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
-  assertInTeam(principal, parsed.teamId);
 
   return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parsed.teamId, tx);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const state =
       parsed.stateId === undefined
-        ? await initialStateFor(tx, parsed.teamId)
+        ? await initialStateFor(tx, team.id)
         : await stateOf(tx, parsed.stateId);
-    if (state.teamId !== parsed.teamId) {
+    if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
 
-    const number = await allocateIssueNumber(tx, parsed.teamId);
-    const key = await teamKey(tx, parsed.teamId);
+    const number = await allocateIssueNumber(tx, team);
     const now = new Date();
+    const id = newId();
+    if (parsed.parentId !== null) {
+      await assertParentAllowed(tx, principal.organizationId, id, parsed.parentId);
+    }
 
     const [created] = await tx
       .insert(schema.issue)
       .values({
-        id: newId(),
+        id,
         organizationId: principal.organizationId,
-        teamId: parsed.teamId,
+        teamId: team.id,
         number,
-        identifier: issueIdentifier(key, number),
+        identifier: issueIdentifier(team.key, number),
         title: parsed.title,
         description: parsed.description,
         stateId: state.id,
@@ -311,7 +455,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         parentId: parsed.parentId,
         estimate: parsed.estimate,
         dueDate: toDateString(parsed.dueDate) ?? null,
-        sortOrder: await topOfColumn(tx, parsed.teamId, state.id),
+        sortOrder: await topOfColumn(tx, team.id, state.id),
         ...stateTimestamps(state.category, now),
         syncId,
       })
@@ -319,7 +463,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const issue = requireRow(created, 'The issue could not be created.');
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId]);
+    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -342,56 +486,142 @@ export interface UpdatedIssue {
   readonly actions: SyncAction[];
 }
 
+interface PendingUpdate {
+  readonly current: IssueRow;
+  readonly values: IssueValues;
+  readonly changes: FieldChange[];
+}
+
+async function loadIssues(
+  executor: Executor,
+  organizationId: string,
+  issueIds: readonly string[],
+): Promise<Map<string, IssueRow>> {
+  const rows = await executor
+    .select()
+    .from(schema.issue)
+    .where(
+      and(inArray(schema.issue.id, [...issueIds]), eq(schema.issue.organizationId, organizationId)),
+    );
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+function updateGroups(pending: readonly PendingUpdate[]): Map<string, PendingUpdate[]> {
+  const groups = new Map<string, PendingUpdate[]>();
+  for (const entry of pending) {
+    const key = JSON.stringify(Object.entries(entry.values).sort());
+    const bucket = groups.get(key) ?? [];
+    bucket.push(entry);
+    groups.set(key, bucket);
+  }
+  return groups;
+}
+
+async function applyIssueUpdates(
+  tx: Executor,
+  principal: Principal,
+  issueIds: readonly string[],
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+): Promise<UpdatedIssue[]> {
+  const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  const now = new Date();
+  const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
+
+  const pending: PendingUpdate[] = [];
+  for (const issueId of issueIds) {
+    const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
+    assertInTeam(principal, teamScope(current));
+
+    const { values, changes } = collectIssueChanges(current, parsed);
+    if (values.parentId !== undefined && values.parentId !== null) {
+      await assertParentAllowed(tx, principal.organizationId, current.id, values.parentId);
+    }
+    if (values.stateId !== undefined) {
+      if (state === null || state.teamId !== current.teamId) {
+        throw validationFailed('That status belongs to another team.');
+      }
+      Object.assign(values, applyStateTimestamps(current, state.category, now));
+    }
+    pending.push({ current, values, changes });
+  }
+
+  const labelsChanged = parsed.labelIds !== undefined;
+  const changing = pending.filter((entry) => entry.changes.length > 0 || labelsChanged);
+  if (changing.length === 0) {
+    return pending.map((entry) => ({ issue: entry.current, changes: [], actions: [] }));
+  }
+
+  const syncId = await nextSyncId(tx);
+  const actor = await principalActor(tx, principal);
+
+  const updated = new Map<string, IssueRow>();
+  for (const [, group] of updateGroups(changing)) {
+    const first = group[0];
+    if (first === undefined) continue;
+    const rows = await tx
+      .update(schema.issue)
+      .set({ ...first.values, updatedAt: now, syncId })
+      .where(
+        inArray(
+          schema.issue.id,
+          group.map((entry) => entry.current.id),
+        ),
+      )
+      .returning();
+    for (const row of rows) updated.set(row.id, row);
+  }
+
+  if (parsed.labelIds !== undefined) {
+    await replaceLabelsFor(
+      tx,
+      changing.map((entry) => entry.current.id),
+      parsed.labelIds,
+    );
+  }
+
+  const assigned = changing
+    .filter((entry) => entry.values.assigneeId !== undefined)
+    .map((entry) => ({ issueId: entry.current.id, userId: entry.values.assigneeId ?? null }));
+  await subscribeToIssues(tx, assigned);
+
+  const described = await describeChanges(
+    tx,
+    changing.flatMap((entry) => entry.changes),
+  );
+  await appendActivities(
+    tx,
+    changing.flatMap((entry) =>
+      entry.changes.map((change) => ({
+        organizationId: principal.organizationId,
+        issueId: entry.current.id,
+        actor,
+        field: change.field,
+        from: describedValue(described, change.field, change.from),
+        to: describedValue(described, change.field, change.to),
+        syncId,
+      })),
+    ),
+  );
+
+  return pending.map((entry) => {
+    const issue = updated.get(entry.current.id);
+    if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
+    return {
+      issue,
+      changes: entry.changes,
+      actions: [issueAction(issue, syncId, actor, 'update')],
+    };
+  });
+}
+
 async function applyIssueUpdate(
   tx: Executor,
   principal: Principal,
   issueId: string,
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue> {
-  const current = await loadIssue(tx, principal.organizationId, issueId);
-  assertInTeam(principal, current.teamId);
-
-  const { values, changes } = collectIssueChanges(current, parsed);
-  const now = new Date();
-  if (values.stateId !== undefined) {
-    const state = await stateOf(tx, values.stateId);
-    if (state.teamId !== current.teamId) {
-      throw validationFailed('That status belongs to another team.');
-    }
-    Object.assign(values, applyStateTimestamps(current, state.category, now));
-  }
-
-  const labelsChanged = parsed.labelIds !== undefined;
-  if (changes.length === 0 && !labelsChanged) {
-    return { issue: current, changes: [], actions: [] };
-  }
-
-  const syncId = await nextSyncId(tx);
-  const actor = await principalActor(tx, principal);
-  const [updated] = await tx
-    .update(schema.issue)
-    .set({ ...values, updatedAt: now, syncId })
-    .where(eq(schema.issue.id, issueId))
-    .returning();
-  const issue = requireRow(updated, 'That issue does not exist.');
-
-  if (parsed.labelIds !== undefined) await replaceLabels(tx, issueId, parsed.labelIds);
-  if (values.assigneeId !== undefined) await subscribeUsers(tx, issueId, [values.assigneeId]);
-
-  const described = await Promise.all(
-    changes.map(async (change) => ({
-      organizationId: principal.organizationId,
-      issueId,
-      actor,
-      field: change.field,
-      from: await describeValue(tx, change.field, change.from),
-      to: await describeValue(tx, change.field, change.to),
-      syncId,
-    })),
-  );
-  await appendActivities(tx, described);
-
-  return { issue, changes, actions: [issueAction(issue, syncId, actor, 'update')] };
+  const [result] = await applyIssueUpdates(tx, principal, [issueId], parsed);
+  return requireRow(result, 'That issue does not exist.');
 }
 
 export async function updateIssue(
@@ -453,11 +683,10 @@ export async function moveIssue(
   const parsed = issueMoveSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    const current = await loadIssue(tx, principal, issueId);
 
-    const teamId = parsed.teamId ?? current.teamId;
-    assertInTeam(principal, teamId);
+    const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
+    const teamId = team.id;
     const state =
       parsed.stateId === undefined
         ? await stateOf(tx, current.stateId)
@@ -479,10 +708,10 @@ export async function moveIssue(
     const now = new Date();
     const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
     if (teamId !== current.teamId) {
-      const number = await allocateIssueNumber(tx, teamId);
+      const number = await allocateIssueNumber(tx, team);
       values.teamId = teamId;
       values.number = number;
-      values.identifier = issueIdentifier(await teamKey(tx, teamId), number);
+      values.identifier = issueIdentifier(team.key, number);
     }
     if (state.id !== current.stateId) {
       values.stateId = state.id;
@@ -531,14 +760,16 @@ export async function bulkUpdateIssues(
   const parsed = issueBulkUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const issues: IssueRow[] = [];
-    const actions: SyncAction[] = [];
-    for (const issueId of new Set(parsed.issueIds)) {
-      const result = await applyIssueUpdate(tx, principal, issueId, parsed.patch);
-      issues.push(result.issue);
-      actions.push(...result.actions);
-    }
-    return { issues, actions };
+    const results = await applyIssueUpdates(
+      tx,
+      principal,
+      [...new Set(parsed.issueIds)],
+      parsed.patch,
+    );
+    return {
+      issues: results.map((result) => result.issue),
+      actions: results.flatMap((result) => result.actions),
+    };
   });
 }
 
@@ -550,8 +781,7 @@ async function setArchived(
   assertCan(principal, 'issue:update');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -599,8 +829,7 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
   assertCan(principal, 'issue:delete');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, current.teamId);
+    const current = await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -622,14 +851,29 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
   });
 }
 
-const issueListSchema = issueFilterSchema.extend(paginationSchema.shape);
+const issueListSchema = issueFilterSchema
+  .extend(paginationSchema.shape)
+  .extend({ select: z.enum(['list', 'full']).default('list') });
 export type IssueListInput = typeof issueListSchema;
 
+const ISSUE_COLUMNS = getTableColumns(schema.issue);
+const ISSUE_LIST_COLUMNS = { ...ISSUE_COLUMNS, description: sql<string>`''` };
+
+function visibleTeamFilters(principal: Principal): SQL[] {
+  if (principal.role === 'admin') return [];
+  if (principal.teamIds.length === 0) return [sql`false`];
+  return [inArray(schema.issue.teamId, [...principal.teamIds])];
+}
+
 function buildIssueFilters(
-  organizationId: string,
+  principal: Principal,
   filter: ReturnType<typeof issueListSchema.parse>,
 ): SQL[] {
-  const filters: SQL[] = [eq(schema.issue.organizationId, organizationId)];
+  const organizationId = principal.organizationId;
+  const filters: SQL[] = [
+    eq(schema.issue.organizationId, organizationId),
+    ...visibleTeamFilters(principal),
+  ];
   if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
   if (filter.projectId !== undefined) filters.push(eq(schema.issue.projectId, filter.projectId));
   if (filter.cycleId !== undefined) filters.push(eq(schema.issue.cycleId, filter.cycleId));
@@ -750,7 +994,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = buildIssueFilters(principal.organizationId, filter);
+  const filters = buildIssueFilters(principal, filter);
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -762,7 +1006,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
 
   const direction = ordering.descending ? desc : asc;
   const rows = await db
-    .select()
+    .select(filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS)
     .from(schema.issue)
     .where(and(...filters))
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
@@ -783,7 +1027,7 @@ export async function getIssueCounts(
 ): Promise<{ stateId: string; total: number }[]> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const filters = buildIssueFilters(principal.organizationId, filter);
+  const filters = buildIssueFilters(principal, filter);
   return await db
     .select({ stateId: schema.issue.stateId, total: count() })
     .from(schema.issue)
@@ -803,7 +1047,9 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
     .from(schema.issue)
     .where(and(eq(schema.issue.organizationId, principal.organizationId), match))
     .limit(1);
-  return requireRow(row, 'That issue does not exist.');
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
 }
 
 export async function listIssueLabels(
@@ -811,7 +1057,7 @@ export async function listIssueLabels(
   issueId: string,
 ): Promise<{ labelId: string }[]> {
   assertCan(principal, 'issue:read');
-  await loadIssue(db, principal.organizationId, issueId);
+  await loadIssue(db, principal, issueId);
   return await db
     .select({ labelId: schema.issueLabel.labelId })
     .from(schema.issueLabel)
@@ -830,9 +1076,8 @@ export async function setRelation(
   }
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal.organizationId, issueId);
-    const target = await loadIssue(tx, principal.organizationId, parsed.relatedIssueId);
-    assertInTeam(principal, source.teamId);
+    const source = await loadIssue(tx, principal, issueId);
+    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -904,8 +1149,7 @@ export async function removeRelation(
   const parsed = issueRelationSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal.organizationId, issueId);
-    assertInTeam(principal, source.teamId);
+    await loadIssue(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -975,10 +1219,10 @@ export async function subscribe(
   assertCan(principal, 'issue:read');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal.organizationId, issueId);
+    const current = await loadIssue(tx, principal, issueId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    await subscribeUsers(tx, issueId, [principal.userId]);
+    await subscribeUsers(tx, issueId, [principal.userId], syncId);
     return {
       subscribed: true,
       actions: [
@@ -987,9 +1231,9 @@ export async function subscribe(
           organizationId: principal.organizationId,
           scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
           action: 'insert',
-          model: 'notification',
+          model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,
-          data: { issueId, userId: principal.userId, identifier: current.identifier },
+          data: { issueId, userId: principal.userId, identifier: current.identifier, syncId },
           actor,
         }),
       ],
@@ -1022,9 +1266,9 @@ export async function unsubscribe(
           organizationId: principal.organizationId,
           scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
           action: 'delete',
-          model: 'notification',
+          model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,
-          data: { issueId, userId: principal.userId },
+          data: { issueId, userId: principal.userId, syncId },
           actor,
         }),
       ],
@@ -1037,9 +1281,15 @@ export async function listSubscribers(
   issueId: string,
 ): Promise<{ userId: string }[]> {
   assertCan(principal, 'issue:read');
-  await loadIssue(db, principal.organizationId, issueId);
+  await loadIssue(db, principal, issueId);
   return await db
     .select({ userId: schema.issueSubscription.userId })
     .from(schema.issueSubscription)
-    .where(eq(schema.issueSubscription.issueId, issueId));
+    .innerJoin(schema.issue, eq(schema.issue.id, schema.issueSubscription.issueId))
+    .where(
+      and(
+        eq(schema.issueSubscription.issueId, issueId),
+        eq(schema.issue.organizationId, principal.organizationId),
+      ),
+    );
 }

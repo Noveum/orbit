@@ -85,12 +85,30 @@ async function originClientId(): Promise<string | null> {
 
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
   if (actions.length === 0) return;
-  const origin = await originClientId();
-  if (origin === null) {
-    await publishDeltas([...actions]);
-    return;
+  try {
+    const origin = await originClientId();
+    const stamped =
+      origin === null
+        ? [...actions]
+        : actions.map((action) => ({ ...action, originClientId: origin }));
+    await publishDeltas(stamped);
+  } catch (error: unknown) {
+    console.error('Could not publish realtime deltas, the write is already committed.', error);
   }
-  await publishDeltas(actions.map((action) => ({ ...action, originClientId: origin })));
+}
+
+const REVALIDATE_HEADERS = { 'cache-control': 'private, no-cache' } as const;
+
+export async function cachedJson(
+  request: Request,
+  version: string,
+  build: () => Promise<unknown>,
+): Promise<Response> {
+  const etag = `W/"${version}"`;
+  if (request.headers.get('if-none-match') === etag) {
+    return new Response(null, { status: 304, headers: { etag, ...REVALIDATE_HEADERS } });
+  }
+  return Response.json(await build(), { headers: { etag, ...REVALIDATE_HEADERS } });
 }
 
 export async function readJson(request: Request): Promise<unknown> {

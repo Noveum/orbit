@@ -1,6 +1,7 @@
 'use client';
 
 import type { PresenceKind, PresenceMessage, SyncAction } from '@orbit/shared/events';
+import { isFresh, PRESENCE_TTL_MS } from '@orbit/shared/events';
 import {
   createContext,
   type ReactNode,
@@ -14,6 +15,7 @@ import {
 import { createRealtimeClient, type RealtimeClient, type RealtimeStatus } from './index.ts';
 
 export type DeltaHandler = (actions: SyncAction[]) => void;
+export type ResumeHandler = (since: number) => void;
 
 type PresenceByScope = ReadonlyMap<string, readonly PresenceMessage[]>;
 
@@ -22,6 +24,8 @@ interface RealtimeContextValue {
   presence: PresenceByScope;
   retainScopes: (scopes: readonly string[]) => () => void;
   addDeltaHandler: (handler: DeltaHandler) => () => void;
+  addResumeHandler: (handler: ResumeHandler) => () => void;
+  observeSyncId: (syncId: number) => void;
   publishPresence: (scope: string, kind: PresenceKind) => void;
 }
 
@@ -55,6 +59,7 @@ export function RealtimeProvider({ url, token, organizationId, children }: Realt
   const clientRef = useRef<RealtimeClient | null>(null);
   const configRef = useRef('');
   const handlersRef = useRef(new Set<DeltaHandler>());
+  const resumeHandlersRef = useRef(new Set<ResumeHandler>());
   const countsRef = useRef(new Map<string, number>());
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -74,9 +79,16 @@ export function RealtimeProvider({ url, token, organizationId, children }: Realt
         url,
         token,
         organizationId,
-        onStatus: setStatus,
+        onStatus: (next) => {
+          if (next !== 'open') setPresence(new Map());
+          setStatus(next);
+        },
         onDelta: (actions) => {
           for (const handler of handlersRef.current) handler(actions);
+        },
+        onResume: (since) => {
+          setPresence(new Map());
+          for (const handler of resumeHandlersRef.current) handler(since);
         },
         onPresence: (messages) => setPresence((current) => mergePresence(current, messages)),
       });
@@ -123,13 +135,40 @@ export function RealtimeProvider({ url, token, organizationId, children }: Realt
     };
   }, []);
 
+  const addResumeHandler = useCallback((handler: ResumeHandler) => {
+    resumeHandlersRef.current.add(handler);
+    return () => {
+      resumeHandlersRef.current.delete(handler);
+    };
+  }, []);
+
+  const observeSyncId = useCallback((syncId: number) => {
+    clientRef.current?.observe(syncId);
+  }, []);
+
   const publishPresence = useCallback((scope: string, kind: PresenceKind) => {
     clientRef.current?.setPresence(scope, kind);
   }, []);
 
   const value = useMemo(
-    () => ({ status, presence, retainScopes, addDeltaHandler, publishPresence }),
-    [status, presence, retainScopes, addDeltaHandler, publishPresence],
+    () => ({
+      status,
+      presence,
+      retainScopes,
+      addDeltaHandler,
+      addResumeHandler,
+      observeSyncId,
+      publishPresence,
+    }),
+    [
+      status,
+      presence,
+      retainScopes,
+      addDeltaHandler,
+      addResumeHandler,
+      observeSyncId,
+      publishPresence,
+    ],
   );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
@@ -163,7 +202,12 @@ export function usePresence(scope: string): ScopePresence {
     (kind: PresenceKind) => publishPresence(scope, kind),
     [scope, publishPresence],
   );
-  return { others: presence.get(scope) ?? EMPTY_PRESENCE, setPresence };
+  const stored = presence.get(scope) ?? EMPTY_PRESENCE;
+  const others = useMemo(
+    () => stored.filter((message) => isFresh(message.at, PRESENCE_TTL_MS)),
+    [stored],
+  );
+  return { others, setPresence };
 }
 
 export function useDeltaHandler(handler: DeltaHandler): void {
@@ -173,4 +217,17 @@ export function useDeltaHandler(handler: DeltaHandler): void {
     handlerRef.current = handler;
   }, [handler]);
   useEffect(() => addDeltaHandler((actions) => handlerRef.current(actions)), [addDeltaHandler]);
+}
+
+export function useResumeHandler(handler: ResumeHandler): void {
+  const { addResumeHandler } = useRealtimeContext();
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
+  useEffect(() => addResumeHandler((since) => handlerRef.current(since)), [addResumeHandler]);
+}
+
+export function useObserveSyncId(): (syncId: number) => void {
+  return useRealtimeContext().observeSyncId;
 }

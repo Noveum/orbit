@@ -3,6 +3,13 @@ import { S3StorageDriver } from './s3.ts';
 import type { StorageDriver } from './types.ts';
 
 export { assertSafeKey, FILE_ROUTE } from './key.ts';
+export {
+  type AttachmentOwner,
+  type AttachmentParentType,
+  assertUploadParent,
+  isPubliclyReadable,
+  type StorageExecutor,
+} from './parent.ts';
 export { type S3Config, S3StorageDriver, s3ConfigSchema } from './s3.ts';
 export {
   STORAGE_KINDS,
@@ -28,12 +35,24 @@ export function storageDriver(): StorageDriver {
   return cachedDriver;
 }
 
+const POD_IDENTITY_VARIABLES = [
+  'AWS_WEB_IDENTITY_TOKEN_FILE',
+  'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+  'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
+] as const;
+
 export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): StorageDriver {
   const accessKeyId = readEnv(env, 'S3_ACCESS_KEY_ID');
   const secretAccessKey = readEnv(env, 'S3_SECRET_ACCESS_KEY');
   if ((accessKeyId === undefined) !== (secretAccessKey === undefined)) {
     throw validationFailed(
       'Set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither to use the ambient AWS credentials.',
+    );
+  }
+  const assumedRole = POD_IDENTITY_VARIABLES.filter((name) => readEnv(env, name) !== undefined);
+  if (accessKeyId !== undefined && assumedRole.length > 0) {
+    throw validationFailed(
+      `Object storage has both explicit keys and an assumed pod role (${assumedRole.join(', ')}). Pick one: production uses the pod role, so clear S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.`,
     );
   }
   const endpoint = readEnv(env, 'S3_ENDPOINT');

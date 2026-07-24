@@ -32,7 +32,7 @@ import {
   type SnippetName,
   wrapSelection,
 } from './markdown-input.ts';
-import { uploadDocFile } from './upload.ts';
+import { type UploadOptions, uploadDocFile } from './upload.ts';
 
 const SLASH_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bold }[] = [
   { name: 'heading', label: 'Heading', icon: Heading2 },
@@ -62,6 +62,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
   const [slashOpen, setSlashOpen] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [percent, setPercent] = useState(0);
 
   const html = useMemo(
     () => (mode === 'markdown' && preview ? renderMarkdown(content) : ''),
@@ -101,9 +102,9 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
   );
 
   const upload = useCallback(
-    async (file: File): Promise<UploadedAttachment> => {
+    async (file: File, options: UploadOptions = {}): Promise<UploadedAttachment> => {
       try {
-        const uploaded = await uploadDocFile(docId, file);
+        const uploaded = await uploadDocFile(docId, file, options);
         await client.invalidateQueries({ queryKey: queryKeys.doc(docId) });
         return uploaded;
       } catch (error: unknown) {
@@ -118,9 +119,13 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
     async (files: readonly File[]) => {
       if (files.length === 0) return;
       setUploading(true);
+      setPercent(0);
       try {
         for (const file of files) {
-          const uploaded = await upload(file);
+          const uploaded = await upload(file, {
+            onProgress: ({ loaded, total }) =>
+              setPercent(total === 0 ? 0 : Math.round((loaded / total) * 100)),
+          });
           applyEdit(
             insertBlock(
               selection(),
@@ -253,7 +258,11 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
         )}
 
         <span className="ml-auto flex items-center gap-2">
-          {uploading ? <span className="text-2xs text-faint">Uploading…</span> : null}
+          {uploading ? (
+            <span className="text-2xs text-faint" data-testid="upload-progress" aria-live="polite">
+              Uploading {percent}%
+            </span>
+          ) : null}
           <span className="hidden items-center gap-1 text-2xs text-faint sm:flex">
             Type <Kbd keys={['/']} /> to insert
           </span>

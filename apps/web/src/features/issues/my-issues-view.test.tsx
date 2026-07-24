@@ -1,8 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { teamIssuesQuery } from '@/lib/query/use-issues.ts';
+import { assignedSearch } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from './workspace-provider.tsx';
 
 mock.module('next/navigation', () => ({ useRouter: () => ({ push: mock() }) }));
@@ -110,17 +111,34 @@ function renderEmptyCacheView(): void {
   );
 }
 
-function renderView(): void {
+function renderView(viewerId = 'me'): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  client.setQueryData(teamIssuesQuery('team_eng').queryKey, [
-    issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
-    issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
-  ]);
-  client.setQueryData(teamIssuesQuery('team_des').queryKey, [
-    issue({ id: 'c', identifier: 'DES-9', teamId: 'team_des', assigneeId: 'me', sortOrder: 10 }),
-  ]);
+  client.setQueryData(queryKeys.assignedIssues(viewerId, assignedSearch(viewerId)), {
+    pages: [
+      {
+        issues: [
+          issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
+          issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
+        ],
+        nextCursor: null,
+      },
+      {
+        issues: [
+          issue({
+            id: 'c',
+            identifier: 'DES-9',
+            teamId: 'team_des',
+            assigneeId: 'me',
+            sortOrder: 10,
+          }),
+        ],
+        nextCursor: null,
+      },
+    ],
+    pageParams: [null, 'cursor-1'],
+  });
   render(
     <QueryClientProvider client={client}>
       <MyIssuesView />
@@ -129,7 +147,7 @@ function renderView(): void {
 }
 
 describe('MyIssuesView', () => {
-  it('merges every team query and renders only the viewer rows', () => {
+  it('merges every loaded page and renders only the viewer rows', () => {
     workspace = buildWorkspace();
     renderView();
 
@@ -154,7 +172,7 @@ describe('MyIssuesView', () => {
 
   it('shows the empty state when nothing is assigned to the viewer', () => {
     workspace = { ...buildWorkspace(), userId: 'nobody' };
-    renderView();
+    renderView('nobody');
 
     expect(screen.queryByTestId('my-issues-list')).toBeNull();
     expect(screen.getByText('Nothing assigned to you')).toBeInTheDocument();

@@ -1,8 +1,10 @@
+import { nextSyncId } from '@orbit/core';
 import { and, db, eq, schema } from '@orbit/db';
 import { snooze, unreadCount } from '@orbit/services/notifications';
 import { notFound } from '@orbit/shared/errors';
 import { z } from 'zod';
-import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
+import { apiContext, handleRoute, publish, readJson } from '@/lib/api/handler.ts';
+import { notificationActions } from '../deltas.ts';
 
 interface RouteParams {
   readonly params: Promise<{ id: string }>;
@@ -14,7 +16,7 @@ const snoozeRequestSchema = z.object({
 
 export async function PATCH(request: Request, { params }: RouteParams): Promise<Response> {
   return await handleRoute(async () => {
-    const { principal } = await apiContext();
+    const { principal, userName } = await apiContext();
     const { id } = await params;
     const parsed = snoozeRequestSchema.parse(await readJson(request));
     const record = await snooze(db, {
@@ -23,6 +25,7 @@ export async function PATCH(request: Request, { params }: RouteParams): Promise<
       notificationId: id,
       until: new Date(Date.now() + parsed.snoozeHours * 3_600_000),
     });
+    await publish(notificationActions(principal, userName, 'update', [record]));
     return {
       notification: record,
       unreadCount: await unreadCount(db, principal.userId, principal.organizationId),
@@ -32,7 +35,7 @@ export async function PATCH(request: Request, { params }: RouteParams): Promise<
 
 export async function DELETE(_request: Request, { params }: RouteParams): Promise<Response> {
   return await handleRoute(async () => {
-    const { principal } = await apiContext();
+    const { principal, userName } = await apiContext();
     const { id } = await params;
     const deleted = await db
       .delete(schema.notification)
@@ -43,8 +46,14 @@ export async function DELETE(_request: Request, { params }: RouteParams): Promis
           eq(schema.notification.organizationId, principal.organizationId),
         ),
       )
-      .returning({ id: schema.notification.id });
-    if (deleted.length === 0) throw notFound('That notification does not exist.');
+      .returning();
+    const removed = deleted[0];
+    if (removed === undefined) throw notFound('That notification does not exist.');
+    await publish(
+      notificationActions(principal, userName, 'delete', [
+        { ...removed, syncId: await nextSyncId(db) },
+      ]),
+    );
     return {
       deletedId: id,
       unreadCount: await unreadCount(db, principal.userId, principal.organizationId),

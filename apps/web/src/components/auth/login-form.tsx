@@ -1,6 +1,6 @@
 'use client';
 
-import { Fingerprint, Loader2, MailCheck } from 'lucide-react';
+import { Fingerprint, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -9,22 +9,130 @@ import { authClient } from '@/lib/auth/client.ts';
 import { GithubMark, GoogleMark } from './provider-icons.tsx';
 
 const DEFAULT_CALLBACK_URL = '/my-issues';
+const MIN_PASSWORD_LENGTH = 12;
 
 export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
+  readonly passwordEnabled?: boolean;
 }
 
-type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | null;
+type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | null;
 
 function messageOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
   return fallback;
 }
 
-export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: LoginFormProps) {
+function NameField({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  return (
+    <>
+      <label htmlFor="login-name" className="sr-only">
+        Full name
+      </label>
+      <Input
+        id="login-name"
+        type="text"
+        name="name"
+        autoComplete="name"
+        required
+        placeholder="Your name"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </>
+  );
+}
+
+interface PasswordFieldProps {
+  readonly creatingAccount: boolean;
+  readonly value: string;
+  readonly onChange: (next: string) => void;
+  readonly busy: boolean;
+  readonly disabled: boolean;
+}
+
+function PasswordField({ creatingAccount, value, onChange, busy, disabled }: PasswordFieldProps) {
+  return (
+    <>
+      <label htmlFor="login-password" className="sr-only">
+        Password
+      </label>
+      <Input
+        id="login-password"
+        type="password"
+        name="password"
+        autoComplete={creatingAccount ? 'new-password' : 'current-password'}
+        required
+        minLength={MIN_PASSWORD_LENGTH}
+        placeholder="Password"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <Button type="submit" variant="primary" size="md" block disabled={disabled}>
+        {busy ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <KeyRound className="size-4" aria-hidden="true" />
+        )}
+        {creatingAccount ? 'Create account' : 'Sign in with password'}
+      </Button>
+    </>
+  );
+}
+
+const SOCIAL_LABELS = {
+  google: { label: 'Continue with Google', Mark: GoogleMark },
+  github: { label: 'Continue with GitHub', Mark: GithubMark },
+} as const;
+
+function SocialButtons({
+  providers,
+  disabled,
+  onSelect,
+}: {
+  readonly providers: readonly string[];
+  readonly disabled: boolean;
+  readonly onSelect: (provider: 'google' | 'github') => void;
+}) {
+  const available = (['google', 'github'] as const).filter((provider) =>
+    providers.includes(provider),
+  );
+  if (available.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {available.map((provider) => {
+        const { label, Mark } = SOCIAL_LABELS[provider];
+        return (
+          <Button
+            key={provider}
+            variant="secondary"
+            size="md"
+            block
+            disabled={disabled}
+            onClick={() => {
+              onSelect(provider);
+            }}
+          >
+            <Mark className="size-4" />
+            {label}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function LoginForm({
+  providers,
+  callbackUrl = DEFAULT_CALLBACK_URL,
+  passwordEnabled = false,
+}: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
   const [linkSent, setLinkSent] = useState(false);
 
@@ -56,8 +164,16 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
 
-  const sendMagicLink = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitPassword = () =>
+    withPending('password', async () => {
+      const result = creatingAccount
+        ? await authClient.signUp.email({ email, password, name, callbackURL: callbackUrl })
+        : await authClient.signIn.email({ email, password, callbackURL: callbackUrl });
+      if (result.error) throw new Error(result.error.message ?? 'Check your details and retry.');
+      window.location.assign(callbackUrl);
+    });
+
+  const sendMagicLink = () =>
     withPending('magic-link', async () => {
       const result = await authClient.signIn.magicLink({ email, callbackURL: callbackUrl });
       if (result.error) throw new Error(result.error.message ?? 'Could not send the link.');
@@ -67,6 +183,14 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
         description: `A sign in link is on its way to ${email}.`,
       });
     });
+
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (passwordEnabled) {
+      submitPassword();
+      return;
+    }
+    sendMagicLink();
   };
 
   return (
@@ -76,7 +200,11 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
           O
         </span>
         <h1 className="font-medium text-text text-xl">Sign in to Orbit</h1>
-        <p className="text-muted text-xs">Passwordless by design. Pick how you want in.</p>
+        <p className="text-muted text-xs">
+          {passwordEnabled
+            ? 'Pick how you want in.'
+            : 'Passwordless by design. Pick how you want in.'}
+        </p>
       </div>
 
       <Button
@@ -96,38 +224,11 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
         Continue with passkey
       </Button>
 
-      {providers.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          {providers.includes('google') ? (
-            <Button
-              variant="secondary"
-              size="md"
-              block
-              disabled={pending !== null}
-              onClick={() => {
-                signInWithSocial('google');
-              }}
-            >
-              <GoogleMark className="size-4" />
-              Continue with Google
-            </Button>
-          ) : null}
-          {providers.includes('github') ? (
-            <Button
-              variant="secondary"
-              size="md"
-              block
-              disabled={pending !== null}
-              onClick={() => {
-                signInWithSocial('github');
-              }}
-            >
-              <GithubMark className="size-4" />
-              Continue with GitHub
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <SocialButtons
+        providers={providers}
+        disabled={pending !== null}
+        onSelect={signInWithSocial}
+      />
 
       <div className="flex items-center gap-3">
         <span className="h-px flex-1 bg-border" />
@@ -135,7 +236,8 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
         <span className="h-px flex-1 bg-border" />
       </div>
 
-      <form onSubmit={sendMagicLink} className="flex flex-col gap-2">
+      <form onSubmit={onSubmit} className="flex flex-col gap-2">
+        {passwordEnabled && creatingAccount ? <NameField value={name} onChange={setName} /> : null}
         <label htmlFor="login-email" className="sr-only">
           Email address
         </label>
@@ -149,12 +251,28 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
+        {passwordEnabled ? (
+          <PasswordField
+            creatingAccount={creatingAccount}
+            value={password}
+            onChange={setPassword}
+            busy={pending === 'password'}
+            disabled={pending !== null || email.length === 0 || password.length === 0}
+          />
+        ) : null}
         <Button
-          type="submit"
+          type={passwordEnabled ? 'button' : 'submit'}
           variant="secondary"
           size="md"
           block
           disabled={pending !== null || email.length === 0}
+          {...(passwordEnabled
+            ? {
+                onClick: () => {
+                  sendMagicLink();
+                },
+              }
+            : {})}
         >
           {pending === 'magic-link' ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -168,8 +286,20 @@ export function LoginForm({ providers, callbackUrl = DEFAULT_CALLBACK_URL }: Log
         ) : null}
       </form>
 
+      {passwordEnabled ? (
+        <button
+          type="button"
+          className="text-center text-muted text-xs underline-offset-2 hover:underline"
+          onClick={() => setCreatingAccount((current) => !current)}
+        >
+          {creatingAccount ? 'I already have an account' : 'Create an account with a password'}
+        </button>
+      ) : null}
+
       <p className="text-center text-2xs text-faint">
-        Orbit never asks for a password. Sessions expire after 30 days.
+        {passwordEnabled
+          ? 'Passkeys and links still work. Sessions expire after 30 days.'
+          : 'Orbit never asks for a password. Sessions expire after 30 days.'}
       </p>
     </div>
   );

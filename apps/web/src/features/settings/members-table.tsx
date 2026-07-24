@@ -14,6 +14,8 @@ import {
   SelectValue,
 } from '@/components/ui/select.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 import type { MemberView } from './data.ts';
 
 const ROLE_LABELS: Record<OrgRole, string> = {
@@ -63,7 +65,7 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[52rem] border-collapse text-dense">
+      <table className="row-stack w-full border-collapse md:min-w-[52rem] text-dense">
         <thead>
           <tr className="border-border border-b text-2xs text-faint uppercase">
             <th scope="col" className="px-3 py-2 text-left font-medium">
@@ -88,7 +90,10 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
         </thead>
         <tbody>
           {members.map((member) => (
-            <tr key={member.memberId} className="border-border border-b last:border-b-0">
+            <tr
+              key={member.memberId}
+              className={cn('border-border border-b last:border-b-0', rowHover)}
+            >
               <td className="px-3 py-2 align-top">
                 <span className="flex items-center gap-2">
                   <Avatar name={member.name} src={member.image} size="sm" />
@@ -100,8 +105,10 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
                   </span>
                 </span>
               </td>
-              <td className="px-3 py-2 align-top text-muted">{member.email}</td>
-              <td className="px-3 py-2 align-top">
+              <td data-label="Email" className="px-3 py-2 align-top text-muted">
+                {member.email}
+              </td>
+              <td data-label="Role" className="px-3 py-2 align-top">
                 <Select
                   value={member.role}
                   disabled={!canManage || busyId === member.memberId}
@@ -134,7 +141,7 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
                   </p>
                 )}
               </td>
-              <td className="px-3 py-2 align-top">
+              <td data-label="Teams" className="px-3 py-2 align-top">
                 <span className="flex flex-wrap gap-1">
                   {member.teams.length === 0 ? (
                     <span className="text-faint text-xs">No teams</span>
@@ -147,7 +154,7 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
                   )}
                 </span>
               </td>
-              <td className="px-3 py-2 align-top text-muted tabular">
+              <td data-label="Joined" className="px-3 py-2 align-top text-muted tabular">
                 {formatJoined(member.joinedAt)}
               </td>
               <td className="px-3 py-2 text-right align-top">

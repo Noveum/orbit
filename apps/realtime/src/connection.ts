@@ -7,6 +7,8 @@ export interface ConnectionLimits {
   readonly batchWindowMs: number;
   readonly maxSubscriptions: number;
   readonly maxBufferedBytes: number;
+  readonly messageBurst: number;
+  readonly messagesPerSecond: number;
 }
 
 export type SocketData =
@@ -18,13 +20,41 @@ export class Connection {
   lastSeenAt = Date.now();
   private readonly pending = new Map<string, SyncAction>();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private tokens: number;
+  private refilledAt = Date.now();
+  private throttled = false;
+  private watermark = 0;
 
   constructor(
     readonly id: string,
     private readonly socket: ServerWebSocket<SocketData>,
     readonly principal: ConnectionPrincipal,
     private readonly limits: ConnectionLimits,
-  ) {}
+  ) {
+    this.tokens = limits.messageBurst;
+  }
+
+  takeToken(now = Date.now()): boolean {
+    const elapsedSeconds = Math.max(0, now - this.refilledAt) / 1_000;
+    this.refilledAt = now;
+    this.tokens = Math.min(
+      this.limits.messageBurst,
+      this.tokens + elapsedSeconds * this.limits.messagesPerSecond,
+    );
+    if (this.tokens < 1) return false;
+    this.tokens -= 1;
+    return true;
+  }
+
+  announceThrottled(): boolean {
+    if (this.throttled) return false;
+    this.throttled = true;
+    return true;
+  }
+
+  clearThrottle(): void {
+    this.throttled = false;
+  }
 
   get organizationId(): string {
     return this.principal.organizationId;
@@ -34,11 +64,17 @@ export class Connection {
     return this.scopes.size;
   }
 
-  addScopes(scopes: readonly string[]): void {
+  addScopes(scopes: readonly string[]): string[] {
+    const rejected: string[] = [];
     for (const scope of scopes) {
-      if (this.scopes.size >= this.limits.maxSubscriptions) return;
+      if (this.scopes.has(scope)) continue;
+      if (this.scopes.size >= this.limits.maxSubscriptions) {
+        rejected.push(scope);
+        continue;
+      }
       this.scopes.add(scope);
     }
+    return rejected;
   }
 
   removeScopes(scopes: readonly string[]): void {
@@ -61,7 +97,12 @@ export class Connection {
     this.socket.send(JSON.stringify(message));
   }
 
+  advanceWatermark(syncId: number): void {
+    if (syncId > this.watermark) this.watermark = syncId;
+  }
+
   queueDelta(action: SyncAction): void {
+    if (action.syncId <= this.watermark) return;
     const key = `${action.model}|${action.modelId}|${action.action}`;
     const existing = this.pending.get(key);
     if (existing === undefined || existing.syncId <= action.syncId) {
