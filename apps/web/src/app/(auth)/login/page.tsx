@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
 import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
 import { devLoginEnabled } from '@/lib/api/dev-login.ts';
 import { listDevUsers } from '@/lib/api/dev-users.ts';
+import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 
@@ -21,6 +23,7 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const callbackUrl = safeCallback(params['next']);
+  const errorCode = authErrorCode(params['error']);
   const session = await getSession();
   if (session !== null) redirect(callbackUrl ?? '/my-issues');
 
@@ -38,6 +41,7 @@ export default async function LoginPage({
           <DevSignIn users={devUsers} callbackUrl={callbackUrl ?? '/my-issues'} />
         ) : null}
       </div>
+      {errorCode === undefined ? null : <AuthErrorNotice code={errorCode} />}
     </main>
   );
 }
