@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { SettingsNav } from '@/features/settings/settings-nav.tsx';
+import { passwordAuthEnabled } from '@/lib/auth/server.ts';
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,7 +13,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
         </p>
       </header>
       <div className="border-border border-b pb-4">
-        <SettingsNav />
+        <SettingsNav passwordEnabled={passwordAuthEnabled} />
       </div>
       {children}
     </div>

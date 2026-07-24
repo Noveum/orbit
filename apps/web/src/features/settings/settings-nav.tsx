@@ -39,11 +39,37 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
   },
 ];
 
-export function SettingsNav() {
+const PASSWORD_SECTION: SettingsSection = {
+  href: '/settings/account/password',
+  label: 'Password',
+};
+
+function groupsFor(passwordEnabled: boolean): readonly SettingsGroup[] {
+  if (!passwordEnabled) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((group) => {
+    if (group.id !== 'account') return group;
+    const at = group.sections.findIndex((section) => section.href === '/settings/account/passkeys');
+    const insertAt = at === -1 ? group.sections.length : at + 1;
+    return {
+      ...group,
+      sections: [
+        ...group.sections.slice(0, insertAt),
+        PASSWORD_SECTION,
+        ...group.sections.slice(insertAt),
+      ],
+    };
+  });
+}
+
+export interface SettingsNavProps {
+  readonly passwordEnabled?: boolean;
+}
+
+export function SettingsNav({ passwordEnabled = false }: SettingsNavProps) {
   const pathname = usePathname();
   return (
     <nav aria-label="Settings sections" className="flex flex-col gap-4 sm:flex-row sm:gap-8">
-      {SETTINGS_GROUPS.map((group) => (
+      {groupsFor(passwordEnabled).map((group) => (
         <div key={group.id} className="flex flex-col gap-1">
           <p className="px-2 font-medium text-2xs text-faint uppercase tracking-wide">
             {group.title}
