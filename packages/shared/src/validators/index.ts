@@ -9,6 +9,7 @@ export * from './issue.ts';
 export * from './label.ts';
 export * from './milestone.ts';
 export * from './notification.ts';
+export * from './onboarding.ts';
 export * from './organization.ts';
 export * from './profile.ts';
 export * from './project.ts';
