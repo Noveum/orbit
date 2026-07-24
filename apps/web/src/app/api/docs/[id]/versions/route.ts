@@ -16,7 +16,6 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
       versions: versions.map((version) => ({
         id: version.id,
         title: version.title,
-        content: version.content,
         ownedById: version.ownedById,
         restoredFromId: version.restoredFromId,
         lastSavedAt: version.lastSavedAt,

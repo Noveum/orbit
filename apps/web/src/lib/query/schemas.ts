@@ -255,7 +255,6 @@ export const docDetailSchema = z.object({
 export const docVersionSchema = z.object({
   id: z.string(),
   title: z.string(),
-  content: z.string(),
   ownedById: z.string(),
   restoredFromId: z.string().nullable(),
   lastSavedAt: timestamp,
