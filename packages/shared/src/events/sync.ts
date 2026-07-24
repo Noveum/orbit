@@ -7,6 +7,7 @@ export const SYNC_MODELS = [
   'issue_relation',
   'issue_subscription',
   'comment',
+  'doc_comment',
   'reaction',
   'attachment',
   'project',

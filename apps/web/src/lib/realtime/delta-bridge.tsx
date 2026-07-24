@@ -16,16 +16,18 @@ import {
   ASSIGNED_SCOPE,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
+  DOC_COMMENTS_ROOT,
   DOC_ROOT,
   DOCS_ROOT,
   ISSUE_ROOT,
   ISSUES_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
-import type { Comment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
+import type { Comment, DocComment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
 import type { IssueBelongs, IssuePages } from '@/lib/query/sync.ts';
 import {
   applyCommentDelta,
+  applyDocCommentDelta,
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
@@ -100,6 +102,17 @@ function patchCommentCaches(
   }
 }
 
+function patchDocCommentCaches(client: QueryClient, action: SyncAction): void {
+  const targetDocId = action.data['docId'];
+  for (const query of client.getQueryCache().findAll({ queryKey: [DOC_COMMENTS_ROOT] })) {
+    if (query.queryKey[1] !== targetDocId) continue;
+    const current = query.state.data as readonly DocComment[] | undefined;
+    if (current === undefined) continue;
+    const next = applyDocCommentDelta(current, action);
+    if (next !== current) client.setQueryData(query.queryKey, next);
+  }
+}
+
 function patchSubscription(
   client: QueryClient,
   action: SyncAction,
@@ -137,6 +150,10 @@ function routeAction(
   }
   if (action.model === 'reaction') {
     patchCommentCaches(client, action, applyReactionDelta);
+    return;
+  }
+  if (action.model === 'doc_comment') {
+    patchDocCommentCaches(client, action);
     return;
   }
   if (action.model === 'issue_subscription') {

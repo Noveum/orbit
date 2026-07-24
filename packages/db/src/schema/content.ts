@@ -143,6 +143,35 @@ export const docVersion = pgTable(
   (table) => [index('doc_version_doc_idx').on(table.docId, table.lastSavedAt)],
 );
 
+export const docComment = pgTable(
+  'doc_comment',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    docId: text('doc_id')
+      .notNull()
+      .references(() => doc.id, { onDelete: 'cascade' }),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    parentId: text('parent_id').references((): AnyPgColumn => docComment.id, {
+      onDelete: 'set null',
+    }),
+    body: text('body').notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('doc_comment_doc_idx').on(table.docId, table.createdAt),
+    index('doc_comment_parent_idx').on(table.parentId),
+  ],
+);
+
 export const attachment = pgTable(
   'attachment',
   {

@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 export * from './app.ts';
 export * from './apply.ts';
+export * from './install.ts';
 
 export function verifyGithubSignature(
   rawBody: string,
