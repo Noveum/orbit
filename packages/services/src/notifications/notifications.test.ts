@@ -22,6 +22,7 @@ import {
   parseClock,
   snooze,
   unreadCount,
+  unreadCounters,
 } from './index.ts';
 
 interface Fixture {
@@ -297,6 +298,25 @@ describe('inbox reads and writes', () => {
         }),
       ).toBe(4);
       expect(await unreadCount(tx, fixture.adaId, fixture.organizationId)).toBe(0);
+    });
+  });
+
+  it('splits unread counters into mentions and everything else', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [
+        eventFor(fixture, {
+          userIds: [fixture.adaId],
+          type: 'pr_review_requested',
+          entityId: 'iss_a',
+        }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'comment_created', entityId: 'iss_b' }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'mention', entityId: 'iss_c' }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'mention', entityId: 'iss_d' }),
+      ]);
+      const counters = await unreadCounters(tx, fixture.adaId, fixture.organizationId);
+      expect(counters.mentions).toBe(2);
+      expect(counters.total).toBe(4);
     });
   });
 

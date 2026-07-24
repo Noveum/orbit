@@ -15,6 +15,7 @@ export default async function InboxPage() {
     <InboxRealtime
       items={inbox.items}
       unreadCount={inbox.unreadCount}
+      unreadMentions={inbox.unreadMentions}
       userId={context.principal.userId}
       organizationId={context.principal.organizationId}
       realtimeUrl={process.env['NEXT_PUBLIC_REALTIME_URL'] ?? DEFAULT_REALTIME_URL}

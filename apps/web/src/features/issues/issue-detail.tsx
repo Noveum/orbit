@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
+import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
 import { cn } from '@/lib/cn.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
@@ -241,6 +242,8 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
               </ul>
             </section>
           ) : null}
+
+          <IssuePullRequests issueId={issue.id} />
 
           <CommentThread
             issueId={issue.id}

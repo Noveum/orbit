@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 export const SLACK_REPLAY_WINDOW_SECONDS = 300;
 export const SLACK_API_BASE = 'https://slack.com/api';
+export const SLACK_REQUEST_TIMEOUT_MS = 10_000;
 
 export function verifySlackSignature(
   rawBody: string,
@@ -123,6 +124,13 @@ export interface SlackUnfurl {
 export function buildUnfurl(url: string, issue: SlackIssue): SlackUnfurl {
   return { [url]: { blocks: issueBlocks(issue) } };
 }
+
+export {
+  type SlackEvent,
+  slackEventCallbackSchema,
+  slackEventSchema,
+  slackUrlVerificationSchema,
+} from '@orbit/shared/validators';
 
 export const slashCommandSchema = z.object({
   command: z.string().min(1).max(64),
@@ -262,6 +270,18 @@ export class SlackClient {
     return { channel: body.channel ?? input.channel, ts: body.ts ?? input.ts };
   }
 
+  async unfurl(input: {
+    readonly channel: string;
+    readonly ts: string;
+    readonly unfurls: SlackUnfurl;
+  }): Promise<void> {
+    await this.call('chat.unfurl', slackResponseSchema, {
+      channel: input.channel,
+      ts: input.ts,
+      unfurls: input.unfurls,
+    });
+  }
+
   async openView(triggerId: string, view: Record<string, unknown>): Promise<string> {
     const body = await this.call('views.open', viewResponseSchema, {
       trigger_id: triggerId,
@@ -303,6 +323,7 @@ export class SlackClient {
         'content-type': 'application/json; charset=utf-8',
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
     if (response.status === 429) throw rateLimited('Slack is rate limiting Orbit.');
     if (!response.ok) throw internal(`Slack ${method} returned HTTP ${response.status}.`);

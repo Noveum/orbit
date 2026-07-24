@@ -106,6 +106,14 @@ async function seedOrganizationAndUsers(): Promise<Map<string, string>> {
       image: null,
       handle: entry.handle,
       timezone: 'Asia/Kolkata',
+      onboardingStep: 'done',
+      onboardingState: {
+        profileComplete: true,
+        workspaceCreate: true,
+        workspaceInvite: true,
+        themeSet: true,
+      },
+      onboardingCompletedAt: daysAgo(200),
       createdAt: daysAgo(200),
       updatedAt: daysAgo(2),
     };

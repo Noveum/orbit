@@ -23,7 +23,9 @@ export async function POST(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const session = await getSession();
     if (session === null) throw unauthorized();
-    const bootstrap = await createOrganization(session.user.id, await readJson(request));
+    const bootstrap = await createOrganization(session.user.id, await readJson(request), {
+      seed: true,
+    });
     await publish(bootstrap.actions);
     return {
       organization: {
