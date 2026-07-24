@@ -3,6 +3,7 @@ export * from './analytics/index.ts';
 export * from './auth/mcp-token.ts';
 export * from './content/attachment-service.ts';
 export * from './content/comment-service.ts';
+export * from './content/doc-comment-service.ts';
 export * from './content/doc-service.ts';
 export * from './internal.ts';
 export * from './org/active-organization.ts';
