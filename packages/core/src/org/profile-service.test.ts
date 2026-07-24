@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, eq, schema } from '@orbit/db';
 import { createUser, resetDatabase } from '../test-support.ts';
 import { updateProfile } from './profile-service.ts';
 
@@ -7,20 +8,28 @@ beforeEach(async () => {
 });
 
 describe('updateProfile', () => {
-  it('saves the display name, handle, avatar and timezone', async () => {
+  it('saves the display name, handle and timezone', async () => {
     const user = await createUser('Nia New');
 
     const updated = await updateProfile(user.id, {
       name: 'Nia Newton',
       handle: 'nia-newton',
-      image: 'https://example.com/nia.png',
       timezone: 'Asia/Kolkata',
     });
 
     expect(updated.name).toBe('Nia Newton');
     expect(updated.handle).toBe('nia-newton');
-    expect(updated.image).toBe('https://example.com/nia.png');
     expect(updated.timezone).toBe('Asia/Kolkata');
+  });
+
+  it('never lets the profile update touch the avatar image', async () => {
+    const user = await createUser('Nia New');
+    await updateProfile(user.id, { name: 'Nia N.', image: 'https://evil.example.com/x.png' });
+    const [row] = await db
+      .select({ image: schema.user.image })
+      .from(schema.user)
+      .where(eq(schema.user.id, user.id));
+    expect(row?.image ?? null).toBeNull();
   });
 
   it('leaves untouched fields alone', async () => {
