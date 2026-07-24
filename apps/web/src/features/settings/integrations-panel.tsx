@@ -5,6 +5,7 @@ import { type ReactNode, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
 import type {
   ConnectedChannel,
   IntegrationSettings,
@@ -12,6 +13,12 @@ import type {
   LinkedRepository,
 } from './integrations-data.ts';
 import { claudeCodeCommand, cursorInstallHref, vscodeInstallHref } from './mcp-install-links.ts';
+import {
+  type PickerChannel,
+  type PickerRepository,
+  useChannelSearch,
+  useRepositorySearch,
+} from './use-integration-lists.ts';
 
 function teamName(teams: readonly IntegrationTeam[], teamId: string | null): string {
   if (teamId === null) return 'Workspace-wide';
@@ -141,43 +148,95 @@ function ConnectCta({
   return <ConnectLink href={href} label={label} variant="primary" />;
 }
 
-function TeamSelect({
-  id,
+function LinkedRepoRow({
+  repo,
   teams,
-  value,
-  onChange,
-  allowWorkspace,
+  canManage,
+  onCall,
 }: {
-  id: string;
+  repo: LinkedRepository;
   teams: readonly IntegrationTeam[];
-  value: string;
-  onChange: (value: string) => void;
-  allowWorkspace?: boolean;
+  canManage: boolean;
+  onCall: CallFn;
 }) {
   return (
-    <select
-      id={id}
-      aria-label="Team"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      className="h-8 rounded-md border border-border bg-surface px-2 text-dense text-text"
-    >
-      {allowWorkspace === true ? <option value="">Workspace-wide</option> : null}
-      {teams.map((team) => (
-        <option key={team.id} value={team.id}>
-          {team.name}
-        </option>
-      ))}
-    </select>
+    <li className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0">
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate font-mono text-dense text-text">{repo.repositoryName}</span>
+        <span className="text-2xs text-faint">{teamName(teams, repo.teamId)}</span>
+      </span>
+      {canManage ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            onCall(
+              `/api/integrations/github?repositoryId=${encodeURIComponent(repo.repositoryId)}`,
+              'DELETE',
+              {},
+            )
+          }
+        >
+          Unlink
+        </Button>
+      ) : null}
+    </li>
   );
 }
 
-interface RepoRow {
-  readonly repositoryId: string;
-  readonly repositoryName: string;
-  readonly defaultBranch: string;
-  readonly installationId: string;
-  readonly linked: LinkedRepository | null;
+function RepoPicker({
+  open,
+  onOpenChange,
+  settings,
+  onCall,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  settings: IntegrationSettings;
+  onCall: CallFn;
+}) {
+  const query = useRepositorySearch(open);
+  const linkedIds = new Set(settings.repositories.map((repo) => repo.repositoryId));
+  const byId = new Map<string, PickerRepository>();
+  for (const page of query.data?.pages ?? []) {
+    for (const repo of page.repositories) {
+      if (!byId.has(repo.repositoryId)) byId.set(repo.repositoryId, repo);
+    }
+  }
+  const items: PickerItem[] = [...byId.values()].map((repo) => ({
+    id: repo.repositoryId,
+    label: repo.repositoryName,
+    linked: linkedIds.has(repo.repositoryId),
+  }));
+
+  return (
+    <IntegrationPicker
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Link a repository"
+      description="Search your installed repositories and map one to a team."
+      searchPlaceholder="Search repositories…"
+      items={items}
+      isLoading={query.isLoading}
+      isError={query.isError}
+      hasNextPage={query.hasNextPage}
+      isFetchingNextPage={query.isFetchingNextPage}
+      onLoadMore={() => query.fetchNextPage()}
+      teams={settings.teams}
+      submitLabel="Link"
+      onSubmit={async (item, teamId) => {
+        const repo = byId.get(item.id);
+        if (repo === undefined || teamId === null) return;
+        await onCall('/api/integrations/github', 'POST', {
+          repositoryId: repo.repositoryId,
+          repositoryName: repo.repositoryName,
+          installationId: repo.installationId,
+          defaultBranch: repo.defaultBranch,
+          teamId,
+        });
+      }}
+    />
+  );
 }
 
 function GithubSection({
@@ -189,26 +248,7 @@ function GithubSection({
   canManage: boolean;
   onCall: CallFn;
 }) {
-  const linkedById = new Map(settings.repositories.map((repo) => [repo.repositoryId, repo]));
-  const availableIds = new Set(settings.availableRepositories.map((repo) => repo.repositoryId));
-  const rows: RepoRow[] = [
-    ...settings.availableRepositories.map((repo) => ({
-      repositoryId: repo.repositoryId,
-      repositoryName: repo.repositoryName,
-      defaultBranch: repo.defaultBranch,
-      installationId: repo.installationId,
-      linked: linkedById.get(repo.repositoryId) ?? null,
-    })),
-    ...settings.repositories
-      .filter((repo) => !availableIds.has(repo.repositoryId))
-      .map((repo) => ({
-        repositoryId: repo.repositoryId,
-        repositoryName: repo.repositoryName,
-        defaultBranch: 'main',
-        installationId: '',
-        linked: repo,
-      })),
-  ];
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <IntegrationCard
@@ -219,15 +259,11 @@ function GithubSection({
       {settings.githubConnected ? (
         <div className="flex flex-col gap-2.5">
           <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
-            {rows.length === 0 ? (
-              <li className="px-3 py-2.5 text-faint text-xs">
-                {settings.githubReposError
-                  ? 'Could not load repositories from GitHub. Try again shortly.'
-                  : 'No repositories are shared with Orbit yet. Add some on GitHub.'}
-              </li>
+            {settings.repositories.length === 0 ? (
+              <li className="px-3 py-2.5 text-faint text-xs">No repositories linked yet.</li>
             ) : (
-              rows.map((repo) => (
-                <RepoMappingRow
+              settings.repositories.map((repo) => (
+                <LinkedRepoRow
                   key={repo.repositoryId}
                   repo={repo}
                   teams={settings.teams}
@@ -238,10 +274,23 @@ function GithubSection({
             )}
           </ul>
           {canManage ? (
-            <ConnectLink
-              href="/api/integrations/github/start"
-              label="Add or remove repositories on GitHub"
-              variant="secondary"
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
+                Link a repository
+              </Button>
+              <ConnectLink
+                href="/api/integrations/github/start"
+                label="Add or remove repositories on GitHub"
+                variant="secondary"
+              />
+            </div>
+          ) : null}
+          {canManage ? (
+            <RepoPicker
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              settings={settings}
+              onCall={onCall}
             />
           ) : null}
         </div>
@@ -258,70 +307,13 @@ function GithubSection({
   );
 }
 
-function RepoAction({
-  repo,
-  teams,
-  onCall,
-}: {
-  repo: RepoRow;
-  teams: readonly IntegrationTeam[];
-  onCall: CallFn;
-}) {
-  const [teamId, setTeamId] = useState(teams[0]?.id ?? '');
-
-  if (repo.linked !== null) {
-    return (
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() =>
-          onCall(
-            `/api/integrations/github?repositoryId=${encodeURIComponent(repo.repositoryId)}`,
-            'DELETE',
-            {},
-          )
-        }
-      >
-        Unlink
-      </Button>
-    );
-  }
-
-  return (
-    <span className="flex items-center gap-2">
-      <TeamSelect
-        id={`gh-team-${repo.repositoryId}`}
-        teams={teams}
-        value={teamId}
-        onChange={setTeamId}
-      />
-      <Button
-        variant="primary"
-        size="sm"
-        disabled={teamId === ''}
-        onClick={() =>
-          onCall('/api/integrations/github', 'POST', {
-            repositoryId: repo.repositoryId,
-            repositoryName: repo.repositoryName,
-            installationId: repo.installationId,
-            defaultBranch: repo.defaultBranch,
-            teamId,
-          })
-        }
-      >
-        Link
-      </Button>
-    </span>
-  );
-}
-
-function RepoMappingRow({
-  repo,
+function LinkedChannelRow({
+  channel,
   teams,
   canManage,
   onCall,
 }: {
-  repo: RepoRow;
+  channel: ConnectedChannel;
   teams: readonly IntegrationTeam[];
   canManage: boolean;
   onCall: CallFn;
@@ -329,20 +321,80 @@ function RepoMappingRow({
   return (
     <li className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0">
       <span className="flex min-w-0 flex-col">
-        <span className="truncate font-mono text-dense text-text">{repo.repositoryName}</span>
-        <span className="text-2xs text-faint">
-          {repo.linked === null ? 'Not linked' : teamName(teams, repo.linked.teamId)}
-        </span>
+        <span className="truncate text-dense text-text">#{channel.channelName}</span>
+        <span className="text-2xs text-faint">{teamName(teams, channel.teamId)}</span>
       </span>
-      {canManage ? <RepoAction repo={repo} teams={teams} onCall={onCall} /> : null}
+      {canManage ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            onCall('/api/integrations/slack', 'POST', {
+              action: 'disconnect',
+              channelId: channel.channelId,
+            })
+          }
+        >
+          Disconnect
+        </Button>
+      ) : null}
     </li>
   );
 }
 
-interface ChannelRow {
-  readonly channelId: string;
-  readonly channelName: string;
-  readonly connected: ConnectedChannel | null;
+function ChannelPicker({
+  open,
+  onOpenChange,
+  settings,
+  onCall,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  settings: IntegrationSettings;
+  onCall: CallFn;
+}) {
+  const query = useChannelSearch(open);
+  const connectedIds = new Set(settings.channels.map((channel) => channel.channelId));
+  const byId = new Map<string, PickerChannel>();
+  for (const page of query.data?.pages ?? []) {
+    for (const channel of page.channels) {
+      if (!byId.has(channel.channelId)) byId.set(channel.channelId, channel);
+    }
+  }
+  const items: PickerItem[] = [...byId.values()].map((channel) => ({
+    id: channel.channelId,
+    label: `#${channel.channelName}`,
+    linked: connectedIds.has(channel.channelId),
+  }));
+
+  return (
+    <IntegrationPicker
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Connect a channel"
+      description="Search channels Orbit can see and map one to a team, or the whole workspace."
+      searchPlaceholder="Search channels…"
+      items={items}
+      isLoading={query.isLoading}
+      isError={query.isError}
+      hasNextPage={query.hasNextPage}
+      isFetchingNextPage={query.isFetchingNextPage}
+      onLoadMore={() => query.fetchNextPage()}
+      teams={settings.teams}
+      allowWorkspace
+      submitLabel="Connect"
+      onSubmit={async (item, teamId) => {
+        const channel = byId.get(item.id);
+        if (channel === undefined) return;
+        await onCall('/api/integrations/slack', 'POST', {
+          action: 'connect',
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          teamId,
+        });
+      }}
+    />
+  );
 }
 
 function SlackSection({
@@ -354,22 +406,7 @@ function SlackSection({
   canManage: boolean;
   onCall: CallFn;
 }) {
-  const connectedById = new Map(settings.channels.map((channel) => [channel.channelId, channel]));
-  const availableIds = new Set(settings.availableChannels.map((channel) => channel.channelId));
-  const rows: ChannelRow[] = [
-    ...settings.availableChannels.map((channel) => ({
-      channelId: channel.channelId,
-      channelName: channel.channelName,
-      connected: connectedById.get(channel.channelId) ?? null,
-    })),
-    ...settings.channels
-      .filter((channel) => !availableIds.has(channel.channelId))
-      .map((channel) => ({
-        channelId: channel.channelId,
-        channelName: channel.channelName,
-        connected: channel,
-      })),
-  ];
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <IntegrationCard
@@ -380,15 +417,11 @@ function SlackSection({
       {settings.slackHasToken ? (
         <div className="flex flex-col gap-2.5">
           <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
-            {rows.length === 0 ? (
-              <li className="px-3 py-2.5 text-faint text-xs">
-                {settings.slackChannelsError
-                  ? 'Could not load channels from Slack. Try again shortly.'
-                  : 'No channels are visible to Orbit yet. Invite Orbit to a channel in Slack.'}
-              </li>
+            {settings.channels.length === 0 ? (
+              <li className="px-3 py-2.5 text-faint text-xs">No channels connected yet.</li>
             ) : (
-              rows.map((channel) => (
-                <ChannelMappingRow
+              settings.channels.map((channel) => (
+                <LinkedChannelRow
                   key={channel.channelId}
                   channel={channel}
                   teams={settings.teams}
@@ -399,10 +432,23 @@ function SlackSection({
             )}
           </ul>
           {canManage ? (
-            <ConnectLink
-              href="/api/integrations/slack/start"
-              label="Reconnect Slack"
-              variant="secondary"
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
+                Connect a channel
+              </Button>
+              <ConnectLink
+                href="/api/integrations/slack/start"
+                label="Reconnect Slack"
+                variant="secondary"
+              />
+            </div>
+          ) : null}
+          {canManage ? (
+            <ChannelPicker
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              settings={settings}
+              onCall={onCall}
             />
           ) : null}
         </div>
@@ -416,85 +462,6 @@ function SlackSection({
         />
       )}
     </IntegrationCard>
-  );
-}
-
-function ChannelAction({
-  channel,
-  teams,
-  onCall,
-}: {
-  channel: ChannelRow;
-  teams: readonly IntegrationTeam[];
-  onCall: CallFn;
-}) {
-  const [teamId, setTeamId] = useState('');
-
-  if (channel.connected !== null) {
-    return (
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() =>
-          onCall('/api/integrations/slack', 'POST', {
-            action: 'disconnect',
-            channelId: channel.channelId,
-          })
-        }
-      >
-        Disconnect
-      </Button>
-    );
-  }
-
-  return (
-    <span className="flex items-center gap-2">
-      <TeamSelect
-        id={`slack-team-${channel.channelId}`}
-        teams={teams}
-        value={teamId}
-        onChange={setTeamId}
-        allowWorkspace
-      />
-      <Button
-        variant="primary"
-        size="sm"
-        onClick={() =>
-          onCall('/api/integrations/slack', 'POST', {
-            action: 'connect',
-            channelId: channel.channelId,
-            channelName: channel.channelName,
-            teamId: teamId === '' ? null : teamId,
-          })
-        }
-      >
-        Connect
-      </Button>
-    </span>
-  );
-}
-
-function ChannelMappingRow({
-  channel,
-  teams,
-  canManage,
-  onCall,
-}: {
-  channel: ChannelRow;
-  teams: readonly IntegrationTeam[];
-  canManage: boolean;
-  onCall: CallFn;
-}) {
-  return (
-    <li className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0">
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-dense text-text">#{channel.channelName}</span>
-        <span className="text-2xs text-faint">
-          {channel.connected === null ? 'Not connected' : teamName(teams, channel.connected.teamId)}
-        </span>
-      </span>
-      {canManage ? <ChannelAction channel={channel} teams={teams} onCall={onCall} /> : null}
-    </li>
   );
 }
 

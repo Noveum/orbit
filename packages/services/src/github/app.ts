@@ -45,7 +45,12 @@ const repositorySchema = z.object({
   default_branch: z.string().min(1).max(255).default('main'),
 });
 
-const repositoriesSchema = z.object({ repositories: z.array(repositorySchema).default([]) });
+const repositoriesSchema = z.object({
+  total_count: z.number().int().nonnegative().default(0),
+  repositories: z.array(repositorySchema).default([]),
+});
+
+const GITHUB_REPOSITORY_PAGE_SIZE = 30;
 
 export interface GithubInstalledRepository {
   readonly repositoryId: string;
@@ -120,6 +125,52 @@ export async function fetchInstalledRepositories(
   const token = await githubInstallationToken(input);
   return listInstallationRepositories({
     token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+    ...(input.apiBase === undefined ? {} : { apiBase: input.apiBase }),
+  });
+}
+
+export interface GithubRepositoryPage {
+  readonly repositories: GithubInstalledRepository[];
+  readonly hasMore: boolean;
+}
+
+export async function listInstallationRepositoryPage(input: {
+  readonly token: string;
+  readonly page: number;
+  readonly perPage?: number;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly apiBase?: string;
+}): Promise<GithubRepositoryPage> {
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const perPage = input.perPage ?? GITHUB_REPOSITORY_PAGE_SIZE;
+  const page = Math.max(1, input.page);
+  const body = await githubJson(
+    fetchImpl,
+    `${base}/installation/repositories?per_page=${perPage}&page=${page}`,
+    { headers: { authorization: `Bearer ${input.token}` } },
+    repositoriesSchema,
+    'installation repositories',
+  );
+  return {
+    repositories: body.repositories.map((repository) => ({
+      repositoryId: String(repository.id),
+      repositoryName: repository.full_name,
+      defaultBranch: repository.default_branch,
+    })),
+    hasMore: page * perPage < body.total_count,
+  };
+}
+
+export async function fetchInstalledRepositoryPage(
+  input: GithubAppRequest & { readonly page: number; readonly perPage?: number },
+): Promise<GithubRepositoryPage> {
+  const token = await githubInstallationToken(input);
+  return listInstallationRepositoryPage({
+    token,
+    page: input.page,
+    ...(input.perPage === undefined ? {} : { perPage: input.perPage }),
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
     ...(input.apiBase === undefined ? {} : { apiBase: input.apiBase }),
   });

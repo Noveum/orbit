@@ -1,9 +1,14 @@
 'use client';
 
-import { Command } from 'cmdk';
 import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -48,7 +53,7 @@ export function matchParents(
   const matches =
     query.length === 0
       ? parents
-      : parents.filter((entry) => entry.title.toLowerCase().includes(query));
+      : parents.filter((entry) => (entry.title ?? '').toLowerCase().includes(query));
   return { shown: matches.slice(0, limit), hiddenCount: Math.max(matches.length - limit, 0) };
 }
 
@@ -268,9 +273,9 @@ function LoadedDoc({
 }
 
 const nestItemClassName =
-  'flex h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2 text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
+  'flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md px-2 text-left text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
 
-function NestPicker({
+export function NestPicker({
   parents,
   currentParentId,
   onSelect,
@@ -281,11 +286,38 @@ function NestPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listId = 'nest-under-list';
   const { shown, hiddenCount } = matchParents(parents, search, NEST_PICKER_LIMIT);
+
+  const options: readonly { readonly id: string | null; readonly label: string }[] = [
+    { id: null, label: 'Top level' },
+    ...shown.map((entry) => ({ id: entry.id, label: entry.title })),
+  ];
+  const activeIndex = Math.min(active, options.length - 1);
 
   const choose = (parentId: string | null) => {
     onSelect(parentId);
+    setSearch('');
+    setActive(0);
     setOpen(false);
+  };
+
+  const optionId = (id: string | null) => (id === null ? 'nest-under-none' : `nest-under-${id}`);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActive(Math.min(activeIndex + 1, options.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActive(Math.max(activeIndex - 1, 0));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const option = options[activeIndex];
+      if (option !== undefined) choose(option.id);
+    }
   };
 
   return (
@@ -293,7 +325,10 @@ function NestPicker({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) setSearch('');
+        if (!next) {
+          setSearch('');
+          setActive(0);
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -310,54 +345,57 @@ function NestPicker({
       <PopoverContent
         align="end"
         className="w-64 p-0"
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          inputRef.current?.focus();
+        }}
       >
-        <Command shouldFilter={false} label="Nest under">
-          <div className="flex items-center gap-2 border-border border-b px-2.5">
-            <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
-            <Command.Input
-              autoFocus
-              value={search}
-              onValueChange={setSearch}
-              data-testid="doc-parent-search"
-              aria-label="Search docs to nest under"
-              placeholder="Search docs..."
-              className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
-            />
-          </div>
-          <Command.List className="max-h-72 overflow-y-auto p-1.5">
-            <Command.Item
-              value="__top_level__"
-              data-testid="nest-under-none"
+        <div className="flex items-center gap-2 border-border border-b px-2.5">
+          <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
+          <input
+            ref={inputRef}
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setActive(event.target.value.trim().length > 0 ? 1 : 0);
+            }}
+            onKeyDown={onKeyDown}
+            data-testid="doc-parent-search"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={optionId(options[activeIndex]?.id ?? null)}
+            aria-label="Search docs to nest under"
+            placeholder="Search docs..."
+            className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
+          />
+        </div>
+        <div id={listId} role="listbox" className="max-h-72 overflow-y-auto p-1.5">
+          {options.map((option, index) => (
+            <button
+              key={option.id ?? '__top_level__'}
+              type="button"
+              id={optionId(option.id)}
+              role="option"
+              aria-selected={index === activeIndex}
+              data-selected={index === activeIndex}
+              data-testid={optionId(option.id)}
               className={nestItemClassName}
-              onSelect={() => choose(null)}
+              onMouseMove={() => setActive(index)}
+              onClick={() => choose(option.id)}
             >
-              <span className="flex-1 truncate">Top level</span>
-              {currentParentId === null ? (
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {currentParentId === option.id ? (
                 <Check className="size-3.5 text-accent" aria-hidden="true" />
               ) : null}
-            </Command.Item>
-            {shown.map((entry) => (
-              <Command.Item
-                key={entry.id}
-                value={entry.id}
-                data-testid={`nest-under-${entry.id}`}
-                className={nestItemClassName}
-                onSelect={() => choose(entry.id)}
-              >
-                <span className="min-w-0 flex-1 truncate">{entry.title}</span>
-                {currentParentId === entry.id ? (
-                  <Check className="size-3.5 text-accent" aria-hidden="true" />
-                ) : null}
-              </Command.Item>
-            ))}
-            {hiddenCount > 0 ? (
-              <p className="px-2 py-1.5 text-2xs text-faint">
-                Showing the first {NEST_PICKER_LIMIT}. Refine your search to see more.
-              </p>
-            ) : null}
-          </Command.List>
-        </Command>
+            </button>
+          ))}
+          {hiddenCount > 0 ? (
+            <p className="px-2 py-1.5 text-2xs text-faint">
+              Showing the first {NEST_PICKER_LIMIT}. Refine your search to see more.
+            </p>
+          ) : null}
+        </div>
       </PopoverContent>
     </Popover>
   );

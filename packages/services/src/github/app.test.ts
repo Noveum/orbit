@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
-import { fetchInstalledRepositories, githubAppJwt } from './app.ts';
+import { fetchInstalledRepositories, fetchInstalledRepositoryPage, githubAppJwt } from './app.ts';
 
 const { privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
@@ -64,5 +64,60 @@ describe('fetchInstalledRepositories', () => {
     ]);
     expect(calls[0]).toContain('/app/installations/9001/access_tokens');
     expect(calls[1]).toContain('/installation/repositories');
+  });
+});
+
+function pagedFetch(totalCount: number): typeof globalThis.fetch {
+  return ((url: string) => {
+    if (url.includes('access_tokens')) {
+      return Promise.resolve(new Response(JSON.stringify({ token: 'ghs_x' }), { status: 201 }));
+    }
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          total_count: totalCount,
+          repositories: [{ id: 1, full_name: 'acme/a', default_branch: 'main' }],
+        }),
+        { status: 200 },
+      ),
+    );
+  }) as unknown as typeof globalThis.fetch;
+}
+
+describe('fetchInstalledRepositoryPage', () => {
+  it('requests the given page and reports more while the total exceeds it', async () => {
+    const calls: string[] = [];
+    const inner = pagedFetch(70);
+    const fetchImpl = ((url: string, init?: RequestInit) => {
+      calls.push(url);
+      return inner(url, init);
+    }) as unknown as typeof globalThis.fetch;
+
+    const page = await fetchInstalledRepositoryPage({
+      appId: '123456',
+      privateKey,
+      installationId: '99',
+      page: 2,
+      perPage: 30,
+      fetch: fetchImpl,
+    });
+
+    expect(page.repositories).toEqual([
+      { repositoryId: '1', repositoryName: 'acme/a', defaultBranch: 'main' },
+    ]);
+    expect(page.hasMore).toBe(true);
+    expect(calls.some((url) => url.includes('per_page=30&page=2'))).toBe(true);
+  });
+
+  it('reports no more once the page reaches the total', async () => {
+    const page = await fetchInstalledRepositoryPage({
+      appId: '123456',
+      privateKey,
+      installationId: '99',
+      page: 2,
+      perPage: 30,
+      fetch: pagedFetch(45),
+    });
+    expect(page.hasMore).toBe(false);
   });
 });
