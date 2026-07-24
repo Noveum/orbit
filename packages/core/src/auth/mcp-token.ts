@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { and, db, desc, eq, gt, isNull, schema } from '@orbit/db';
-import { notFound, unauthorized } from '@orbit/shared/errors';
+import { forbidden, notFound, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { z } from 'zod';
 import { newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
 
@@ -182,4 +184,84 @@ export async function revokeMcpGrant(
         eq(schema.oauthAccessToken.userId, userId),
       ),
     );
+}
+
+const CONSENT_CODE_TTL_MS = 600_000;
+
+const mcpConsentValueSchema = z.object({
+  clientId: z.string().min(1),
+  redirectURI: z.string().min(1),
+  scope: z.array(z.string()),
+  userId: z.string().min(1),
+  requireConsent: z.boolean().optional(),
+  state: z.string().nullable().optional(),
+});
+
+function authorizationCode(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+export interface FinalizeMcpConsentInput {
+  readonly userId: string;
+  readonly consentCode: string;
+  readonly accept: boolean;
+}
+
+export async function finalizeMcpConsent(
+  input: FinalizeMcpConsentInput,
+  now: Date = new Date(),
+): Promise<{ redirectUri: string }> {
+  const invalid = unauthorized('This authorization request is invalid or has expired.');
+
+  const [record] = await db
+    .select()
+    .from(schema.verification)
+    .where(eq(schema.verification.identifier, input.consentCode))
+    .limit(1);
+  if (record === undefined) throw invalid;
+  if (record.expiresAt.getTime() <= now.getTime()) throw invalid;
+
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(record.value) as Record<string, unknown>;
+  } catch {
+    throw invalid;
+  }
+  const value = mcpConsentValueSchema.parse(raw);
+  if (value.userId !== input.userId) {
+    throw forbidden('This authorization request belongs to another account.');
+  }
+  if (value.requireConsent !== true) throw invalid;
+
+  const redirect = new URL(value.redirectURI);
+  if (!input.accept) {
+    await db
+      .delete(schema.verification)
+      .where(eq(schema.verification.identifier, input.consentCode));
+    redirect.searchParams.set('error', 'access_denied');
+    redirect.searchParams.set('error_description', 'User denied access');
+    if (value.state != null) redirect.searchParams.set('state', value.state);
+    return { redirectUri: redirect.toString() };
+  }
+
+  const code = authorizationCode();
+  await db
+    .update(schema.verification)
+    .set({
+      identifier: code,
+      value: JSON.stringify({ ...raw, requireConsent: false }),
+      expiresAt: new Date(now.getTime() + CONSENT_CODE_TTL_MS),
+    })
+    .where(eq(schema.verification.identifier, input.consentCode));
+  await db.insert(schema.oauthConsent).values({
+    id: newId(),
+    clientId: value.clientId,
+    userId: input.userId,
+    scopes: value.scope.join(' '),
+    consentGiven: true,
+  });
+
+  redirect.searchParams.set('code', code);
+  if (value.state != null) redirect.searchParams.set('state', value.state);
+  return { redirectUri: redirect.toString() };
 }

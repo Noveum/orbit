@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import { createOrganization } from '../org/organization-service.ts';
-import { createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
+import { createUser, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
+  finalizeMcpConsent,
   getMcpClient,
   listMcpGrants,
   passkeyVerifiedWithin,
@@ -177,3 +178,103 @@ async function createOrganizationFor(userId: string): Promise<string> {
   });
   return bootstrap.organization.id;
 }
+
+async function createConsentCode(
+  userId: string,
+  overrides: Partial<{
+    requireConsent: boolean;
+    expiresAt: Date;
+    redirectURI: string;
+    state: string;
+  }> = {},
+): Promise<string> {
+  const consentCode = randomUUID().replace(/-/g, '');
+  const clientId = await createClient();
+  await db.insert(schema.verification).values({
+    id: randomUUID(),
+    identifier: consentCode,
+    value: JSON.stringify({
+      clientId,
+      redirectURI: overrides.redirectURI ?? 'http://127.0.0.1:9876/callback',
+      scope: ['openid', 'orbit.read', 'orbit.write'],
+      userId,
+      requireConsent: overrides.requireConsent ?? true,
+      state: overrides.state ?? 'xyz',
+      codeChallenge: 'challenge',
+      codeChallengeMethod: 'S256',
+    }),
+    expiresAt: overrides.expiresAt ?? new Date(Date.now() + 600_000),
+  });
+  return consentCode;
+}
+
+describe('finalizeMcpConsent', () => {
+  it('mints a code, records consent, and preserves PKCE on accept', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const { redirectUri } = await finalizeMcpConsent({
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: true,
+    });
+
+    const url = new URL(redirectUri);
+    const code = url.searchParams.get('code');
+    expect(code).not.toBeNull();
+    expect(url.searchParams.get('state')).toBe('xyz');
+
+    const [old] = await db
+      .select()
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode));
+    expect(old).toBeUndefined();
+
+    const [minted] = await db
+      .select()
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, code ?? ''));
+    const value = JSON.parse(minted?.value ?? '{}');
+    expect(value.requireConsent).toBe(false);
+    expect(value.codeChallenge).toBe('challenge');
+
+    const [consent] = await db.select().from(schema.oauthConsent);
+    expect(consent?.consentGiven).toBe(true);
+  });
+
+  it('returns an access_denied redirect and clears the code on deny', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const { redirectUri } = await finalizeMcpConsent({
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: false,
+    });
+    expect(new URL(redirectUri).searchParams.get('error')).toBe('access_denied');
+    const rows = await db
+      .select()
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('rejects an expired request', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id, {
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    await expect(
+      finalizeMcpConsent({ userId: workspace.adminUser.id, consentCode, accept: true }),
+    ).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('refuses a request that belongs to another account', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const stranger = await createUser('Stranger');
+    await expect(
+      finalizeMcpConsent({ userId: stranger.id, consentCode, accept: true }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('rejects an unknown consent code', async () => {
+    await expect(
+      finalizeMcpConsent({ userId: workspace.adminUser.id, consentCode: 'nope', accept: true }),
+    ).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+});
