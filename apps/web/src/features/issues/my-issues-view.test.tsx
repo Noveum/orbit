@@ -1,11 +1,13 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { assignedSearch } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from './workspace-provider.tsx';
+import * as workspaceProvider from './workspace-provider.tsx';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock() }),
@@ -14,7 +16,10 @@ mock.module('next/navigation', () => ({
 }));
 
 let workspace: WorkspaceData;
-mock.module('./workspace-provider.tsx', () => ({ useWorkspace: () => workspace }));
+mock.module('./workspace-provider.tsx', () => ({
+  ...workspaceProvider,
+  useWorkspace: () => workspace,
+}));
 
 const { MyIssuesView, assignedTo } = await import('./my-issues-view.tsx');
 
@@ -111,9 +116,11 @@ function renderEmptyCacheView(): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <HotkeyProvider>
-        <MyIssuesView />
-      </HotkeyProvider>
+      <ToastProvider>
+        <HotkeyProvider>
+          <MyIssuesView />
+        </HotkeyProvider>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -148,9 +155,11 @@ function renderView(viewerId = 'me'): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <HotkeyProvider>
-        <MyIssuesView />
-      </HotkeyProvider>
+      <ToastProvider>
+        <HotkeyProvider>
+          <MyIssuesView />
+        </HotkeyProvider>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -192,5 +201,17 @@ describe('MyIssuesView', () => {
     renderView();
 
     expect(screen.getByTestId('issue-group-Todo')).toBeInTheDocument();
+  });
+
+  it('opens the peek panel when a row is clicked instead of navigating away', () => {
+    workspace = buildWorkspace();
+    renderView();
+
+    expect(screen.queryByTestId('issue-peek')).toBeNull();
+    const row = screen.getByTestId('issue-row-ENG-1');
+    act(() => {
+      fireEvent.click(within(row).getByRole('button', { name: 'Ship it' }));
+    });
+    expect(screen.getByTestId('issue-peek')).toBeInTheDocument();
   });
 });

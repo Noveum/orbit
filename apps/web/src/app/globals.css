@@ -301,6 +301,26 @@
   --animate-tooltip-out: tooltip-out var(--duration-fast) var(--ease-in);
   --animate-drawer-in: drawer-in var(--duration-base) var(--ease-out);
   --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-in);
+  --animate-panel-in: panel-in var(--duration-base) var(--ease-out);
+  --animate-panel-out: panel-out var(--duration-fast) var(--ease-in);
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes panel-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @keyframes drawer-in {
