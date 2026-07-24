@@ -1,21 +1,24 @@
 'use client';
 
 import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, Ref } from 'react';
 import { cn } from '@/lib/cn.ts';
 
 export function ScrollArea({
   className,
   children,
+  viewportRef,
   ...props
-}: ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  readonly viewportRef?: Ref<HTMLDivElement>;
+}) {
   return (
     <ScrollAreaPrimitive.Root
       scrollHideDelay={400}
       className={cn('relative overflow-hidden', className)}
       {...props}
     >
-      <ScrollAreaPrimitive.Viewport className="size-full [&>div]:!block">
+      <ScrollAreaPrimitive.Viewport ref={viewportRef} className="size-full [&>div]:!block">
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollAreaPrimitive.Scrollbar

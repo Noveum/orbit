@@ -2,7 +2,7 @@
 
 import { FolderPlus, MoreHorizontal, Plus, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -18,6 +18,8 @@ import { revealOnHover } from '@/lib/interaction.ts';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
 
 const RECENT_MS = 24 * 60 * 60 * 1000;
+
+const useStableLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export interface DocGroup {
   readonly id: string;
@@ -207,6 +209,26 @@ export function DocTree({
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const now = Date.now();
 
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const lastScrollTop = useRef(0);
+  const treeSignature = docs.map((doc) => doc.id).join('|');
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    const remember = () => {
+      lastScrollTop.current = viewport.scrollTop;
+    };
+    viewport.addEventListener('scroll', remember, { passive: true });
+    return () => viewport.removeEventListener('scroll', remember);
+  }, []);
+
+  useStableLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    if (viewport.scrollTop !== lastScrollTop.current) viewport.scrollTop = lastScrollTop.current;
+  }, [treeSignature]);
+
   const submitDraft = () => {
     const name = (draftName ?? '').trim();
     setDraftName(null);
@@ -257,7 +279,7 @@ export function DocTree({
         ) : null}
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div className="flex flex-col gap-4 p-2">
           {draftName === null ? null : (
             <Input
