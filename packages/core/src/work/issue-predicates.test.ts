@@ -171,6 +171,27 @@ describe('label conditions', () => {
     expect(await titlesMatching(inCondition('label', [bug.id]))).toEqual(['Broken']);
     expect(await titlesMatching(inCondition('label', [bug.id], true))).toEqual(['Fine']);
   });
+
+  it('keeps unlabelled issues when none is combined with a label', async () => {
+    const { label: bug } = await createLabel(workspace.admin, {
+      name: 'Bug',
+      color: '#ff0000',
+      teamId: workspace.teamId,
+    });
+    const { label: chore } = await createLabel(workspace.admin, {
+      name: 'Chore',
+      color: '#00ff00',
+      teamId: workspace.teamId,
+    });
+    await newIssue('Broken', { labelIds: [bug.id] });
+    await newIssue('Tidy', { labelIds: [chore.id] });
+    await newIssue('Bare');
+
+    expect(await titlesMatching(inCondition('label', [bug.id, 'none']))).toEqual([
+      'Bare',
+      'Broken',
+    ]);
+  });
 });
 
 describe('date conditions', () => {

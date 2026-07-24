@@ -179,7 +179,6 @@ export async function updateView(
       values.groupBy = parsed.filter.groupBy;
       values.shared = String(parsed.filter.visibility !== 'private');
     }
-    if (parsed.shared !== undefined) values.shared = String(parsed.shared);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -268,6 +267,7 @@ export async function setViewFavorite(
         .delete(schema.favorite)
         .where(
           and(
+            eq(schema.favorite.organizationId, principal.organizationId),
             eq(schema.favorite.userId, principal.userId),
             eq(schema.favorite.entityType, VIEW_FAVORITE_ENTITY),
             eq(schema.favorite.entityId, viewId),

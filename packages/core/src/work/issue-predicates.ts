@@ -89,10 +89,16 @@ function membershipPredicate(
   all: SQL,
   matching: (ids: readonly string[]) => SQL,
 ): SQL | null {
-  const ids = values.filter((value) => value !== UNSET_FILTER_VALUE);
   if (values.length === 0) return null;
-  if (ids.length === 0) return negate ? all : not(all);
-  const positive = matching(ids);
+  const ids = values.filter((value) => value !== UNSET_FILTER_VALUE);
+  const matchesUnset = ids.length !== values.length;
+
+  const parts: SQL[] = [];
+  if (ids.length > 0) parts.push(matching(ids));
+  if (matchesUnset) parts.push(not(all));
+
+  const positive = anyOf(parts);
+  if (positive === null) return null;
   return negate ? not(positive) : positive;
 }
 

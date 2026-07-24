@@ -13,9 +13,6 @@ export const viewUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     filter: viewStateSchema,
-    layout: z.enum(VIEW_LAYOUTS),
-    groupBy: z.enum(GROUP_BY_FIELDS),
-    shared: z.boolean(),
   })
   .partial();
 

@@ -91,10 +91,10 @@ async function fetchAllIssues(search: string, signal: AbortSignal): Promise<read
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const result = await fetchIssuePage(search, cursor, signal);
     issues.push(...result.issues);
-    if (result.nextCursor === null) return issues;
+    if (result.nextCursor === null) break;
     cursor = result.nextCursor;
   }
-  throw new Error(`Stopped after ${MAX_PAGES} pages of issues with more still to load.`);
+  return issues;
 }
 
 export function teamIssuesQuery(teamId: string) {
