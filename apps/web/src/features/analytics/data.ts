@@ -40,7 +40,10 @@ function estimateName(key: string): string {
   return `${key} pt${key === '1' ? '' : 's'}`;
 }
 
-async function loadCycleOptions(principal: Principal, now: Date): Promise<CycleOption[]> {
+export async function loadCycleOptions(
+  principal: Principal,
+  now: Date = new Date(),
+): Promise<CycleOption[]> {
   const rows = await db
     .select({
       id: schema.cycle.id,
@@ -73,47 +76,42 @@ async function loadCycleOptions(principal: Principal, now: Date): Promise<CycleO
   }));
 }
 
-export interface DashboardData {
-  readonly measure: Measure;
-  readonly series: ScopePoint[];
+export function loadScopeSeries(principal: Principal, measure: Measure): Promise<ScopePoint[]> {
+  return scopeSeries(principal, WORKSPACE, measure, 'week');
+}
+
+export interface Distributions {
   readonly byAssignee: DistributionSlice[];
   readonly byProject: DistributionSlice[];
   readonly byLabel: DistributionSlice[];
   readonly byEstimate: DistributionSlice[];
-  readonly breakdown: ChartResult;
-  readonly cycles: CycleOption[];
-  readonly savedViews: SavedAnalyticsViewPayload[];
 }
 
-export async function loadDashboard(
+export async function loadDistributions(
   principal: Principal,
   measure: Measure,
-  now: Date = new Date(),
-): Promise<DashboardData> {
-  assertCan(principal, 'project:read');
-  const [series, byAssignee, byProject, byLabelRaw, byEstimateRaw, breakdown, cycles, savedRows] =
-    await Promise.all([
-      scopeSeries(principal, WORKSPACE, measure, 'week'),
-      workDistribution(principal, WORKSPACE, 'assignee', measure),
-      workDistribution(principal, WORKSPACE, 'project', measure),
-      workDistribution(principal, WORKSPACE, 'label', measure),
-      workDistribution(principal, WORKSPACE, 'estimate', measure),
-      stateGroupBreakdown(principal, WORKSPACE, 'assignee', measure),
-      loadCycleOptions(principal, now),
-      listSavedAnalyticsViews(principal),
-    ]);
-
+): Promise<Distributions> {
+  const [byAssignee, byProject, byLabel, byEstimateRaw] = await Promise.all([
+    workDistribution(principal, WORKSPACE, 'assignee', measure),
+    workDistribution(principal, WORKSPACE, 'project', measure),
+    workDistribution(principal, WORKSPACE, 'label', measure),
+    workDistribution(principal, WORKSPACE, 'estimate', measure),
+  ]);
   return {
-    measure,
-    series,
     byAssignee,
     byProject,
-    byLabel: byLabelRaw,
+    byLabel,
     byEstimate: byEstimateRaw.map((slice) => ({ ...slice, name: estimateName(slice.key) })),
-    breakdown,
-    cycles,
-    savedViews: savedRows.map(toSavedAnalyticsViewPayload),
   };
+}
+
+export function loadBreakdown(principal: Principal, measure: Measure): Promise<ChartResult> {
+  return stateGroupBreakdown(principal, WORKSPACE, 'assignee', measure);
+}
+
+export async function loadSavedViews(principal: Principal): Promise<SavedAnalyticsViewPayload[]> {
+  const rows = await listSavedAnalyticsViews(principal);
+  return rows.map(toSavedAnalyticsViewPayload);
 }
 
 export interface CycleBundle {
