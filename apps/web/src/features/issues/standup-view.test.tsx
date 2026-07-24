@@ -1,6 +1,7 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { emptyFilterGroup } from '@orbit/shared/filters';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
@@ -22,6 +23,8 @@ mock.module('./workspace-provider.tsx', () => ({
 }));
 
 const { StandupView } = await import('./standup-view.tsx');
+
+const DEFAULT_SEARCH = allIssuesSearch({ filter: emptyFilterGroup(), orderBy: 'manual' });
 
 function issue(overrides: Partial<Issue>): Issue {
   return {
@@ -90,7 +93,7 @@ function seededClient(issues: readonly Issue[]): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  client.setQueryData(queryKeys.allIssues(allIssuesSearch()), {
+  client.setQueryData(queryKeys.allIssues(DEFAULT_SEARCH), {
     pages: [
       { issues: issues.slice(0, 2), nextCursor: null },
       { issues: issues.slice(2), nextCursor: null },
@@ -101,57 +104,82 @@ function seededClient(issues: readonly Issue[]): QueryClient {
 }
 
 function renderStandup(
-  layout: 'list' | 'board',
-  client: QueryClient = seededClient([
+  issues: readonly Issue[] = [
     issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
     issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
     issue({ id: 'c', identifier: 'DES-9', teamId: 'team_des', assigneeId: null, sortOrder: 10 }),
-  ]),
+  ],
 ): void {
   render(
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={seededClient(issues)}>
       <ToastProvider>
         <HotkeyProvider>
-          <StandupView layout={layout} />
+          <StandupView />
         </HotkeyProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
 }
 
+beforeEach(() => {
+  window.localStorage.clear();
+  workspace = buildWorkspace();
+});
+
+afterEach(() => {
+  cleanup();
+});
+
 describe('StandupView', () => {
-  it('shows every team and project issue regardless of who they belong to', () => {
-    workspace = buildWorkspace();
-    renderStandup('list');
+  it('shows every team and project issue, grouped by project by default', () => {
+    renderStandup();
 
     expect(screen.getByTestId('issue-row-ENG-1')).toBeInTheDocument();
     expect(screen.getByTestId('issue-row-ENG-2')).toBeInTheDocument();
     expect(screen.getByTestId('issue-row-DES-9')).toBeInTheDocument();
     expect(screen.getByTestId('issue-count')).toHaveTextContent('3');
-  });
-
-  it('defaults to grouping by project rather than per-team state', () => {
-    workspace = buildWorkspace();
-    renderStandup('list');
-
     expect(screen.getByTestId('issue-group-No project')).toBeInTheDocument();
     expect(screen.queryByTestId('issue-group-Todo')).toBeNull();
   });
 
-  it('renders every issue as a card in the board layout', () => {
-    workspace = buildWorkspace();
-    renderStandup('board');
+  it('offers a filter bar but hides the workspace save-view button', () => {
+    renderStandup();
 
-    expect(screen.queryByTestId('standup-list')).toBeNull();
-    expect(screen.getByTestId('issue-card-ENG-1')).toBeInTheDocument();
-    expect(screen.getByTestId('issue-card-DES-9')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('add-filter')).toBeInTheDocument();
+    expect(screen.queryByTestId('save-view')).toBeNull();
   });
 
-  it('shows the empty state when no issues exist anywhere', () => {
-    workspace = buildWorkspace();
-    renderStandup('list', seededClient([]));
+  it('toggles between list and board layouts in place', () => {
+    renderStandup();
 
+    expect(screen.getByTestId('standup-list')).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByTestId('standup-board-toggle'));
+    });
     expect(screen.queryByTestId('standup-list')).toBeNull();
-    expect(screen.getByText('No issues yet')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-card-ENG-1')).toBeInTheDocument();
+  });
+
+  it('keeps Save disabled until something changes, then persists and restores it', () => {
+    renderStandup();
+
+    expect(screen.getByTestId('save-standup')).toBeDisabled();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('standup-board-toggle'));
+    });
+    expect(screen.getByTestId('save-standup')).not.toBeDisabled();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('save-standup'));
+    });
+    expect(screen.getByTestId('save-standup')).toBeDisabled();
+    expect(window.localStorage.getItem('orbit.standup.me')).toContain('"layout":"board"');
+
+    cleanup();
+    renderStandup();
+    expect(screen.queryByTestId('standup-list')).toBeNull();
+    expect(screen.getByTestId('issue-card-ENG-1')).toBeInTheDocument();
   });
 });

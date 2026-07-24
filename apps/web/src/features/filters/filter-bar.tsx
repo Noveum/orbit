@@ -30,6 +30,7 @@ export interface FilterBarProps {
   readonly issues?: readonly Issue[];
   readonly savedView?: View | null;
   readonly dirty?: boolean;
+  readonly showSaveView?: boolean;
 }
 
 export function FilterBar({
@@ -42,6 +43,7 @@ export function FilterBar({
   issues = [],
   savedView = null,
   dirty = false,
+  showSaveView = true,
 }: FilterBarProps) {
   const workspace = useWorkspace();
   const updateView = useUpdateView();
@@ -84,6 +86,7 @@ export function FilterBar({
     label: 'Save as a view',
     section: 'View',
     scope: 'filters',
+    enabled: showSaveView,
   });
   useHotkey('escape', () => setTarget(null), {
     label: 'Close the filter menu',
@@ -175,10 +178,17 @@ export function FilterBar({
             Save changes
           </Button>
         ) : null}
-        <Button size="sm" variant="ghost" data-testid="save-view" onClick={() => setSaveOpen(true)}>
-          <Bookmark className="size-3.5" aria-hidden="true" />
-          Save view
-        </Button>
+        {showSaveView ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="save-view"
+            onClick={() => setSaveOpen(true)}
+          >
+            <Bookmark className="size-3.5" aria-hidden="true" />
+            Save view
+          </Button>
+        ) : null}
         <DisplayMenu
           config={config}
           capability={controls.capability}
@@ -187,14 +197,16 @@ export function FilterBar({
         />
       </div>
 
-      <SaveViewDialog
-        open={saveOpen}
-        onOpenChange={setSaveOpen}
-        config={config}
-        layout={layout}
-        teamId={teamId}
-        suggestedName={suggestName(teamName, conditions, fields)}
-      />
+      {showSaveView ? (
+        <SaveViewDialog
+          open={saveOpen}
+          onOpenChange={setSaveOpen}
+          config={config}
+          layout={layout}
+          teamId={teamId}
+          suggestedName={suggestName(teamName, conditions, fields)}
+        />
+      ) : null}
     </div>
   );
 }

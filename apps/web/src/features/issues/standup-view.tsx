@@ -1,42 +1,53 @@
 'use client';
 
-import { Columns3, LayoutList, List } from 'lucide-react';
-import Link from 'next/link';
+import { dropLastCondition, isEmptyFilter } from '@orbit/shared/filters';
+import { Columns3, LayoutList, List, Save, SearchX } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
-import { DisplayMenu } from '@/features/filters/display-menu.tsx';
+import { FilterBar } from '@/features/filters/filter-bar.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
-import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAllIssues } from '@/lib/query/use-issues.ts';
 import { Board } from './board.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
+import { useStandupPrefs } from './use-standup-prefs.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 const MAX_BOARD_AUTOLOAD_PAGES = 10;
 
-export function StandupView({ layout }: { layout: ViewLayoutMode }) {
+export function StandupView() {
   const router = useRouter();
   const workspace = useWorkspace();
-  const { config, setConfig } = useViewConfig(null, layout, 'saved_view', 'project');
+  const prefs = useStandupPrefs(workspace.userId);
+  const { config, layout, setConfig, setLayout, save, dirty } = prefs;
   const controls = useProvideViewControls('saved_view', layout, config);
+  const filtered = !isEmptyFilter(config.filter);
 
-  const all = useAllIssues();
+  const all = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, prefs.ready);
   const sentinel = useRef<HTMLDivElement>(null);
   const boardAutoLoads = useRef(0);
   const [peekId, setPeekId] = useState<string | null>(null);
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = all;
+  const searchKey = `${JSON.stringify(config.filter)}|${config.orderBy}|${layout}`;
+  const prevSearchKey = useRef(searchKey);
+
   useEffect(() => {
+    if (prevSearchKey.current !== searchKey) {
+      prevSearchKey.current = searchKey;
+      boardAutoLoads.current = 0;
+    }
     if (layout === 'board') {
       if (hasNextPage && !isFetchingNextPage && boardAutoLoads.current < MAX_BOARD_AUTOLOAD_PAGES) {
         boardAutoLoads.current += 1;
@@ -53,7 +64,7 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [layout, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [searchKey, layout, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const loading = all.isPending;
   const issues = useMemo(() => sortIssues(all.data ?? []), [all.data]);
@@ -81,7 +92,7 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
     },
   );
 
-  if (!workspace.ready) {
+  if (!(workspace.ready && prefs.ready)) {
     return (
       <div className="flex flex-col gap-2 p-4">
         <Skeleton className="h-7 w-48" />
@@ -92,7 +103,25 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
   }
 
   let body: ReactNode;
-  if (shown.issues.length === 0) {
+  if (shown.issues.length === 0 && filtered && !loading) {
+    body = (
+      <EmptyState
+        icon={<SearchX strokeWidth={1.75} aria-hidden="true" />}
+        title="No issues match these filters"
+        description="Loosen a filter to widen the search."
+        className="flex-1"
+        action={
+          <Button
+            size="sm"
+            data-testid="clear-last-filter"
+            onClick={() => setConfig({ ...config, filter: dropLastCondition(config.filter) })}
+          >
+            Clear the last filter
+          </Button>
+        }
+      />
+    );
+  } else if (shown.issues.length === 0) {
     body = (
       <EmptyState
         icon={<LayoutList strokeWidth={1.75} aria-hidden="true" />}
@@ -156,22 +185,38 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
           {shown.issues.length}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <StandupToggle layout={layout} />
-          <DisplayMenu
-            config={config}
-            capability={controls.capability}
-            modified={controls.displayModified}
-            onChange={setConfig}
-          />
+          <StandupToggle layout={layout} onChange={setLayout} />
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="save-standup"
+            aria-label="Save Standup setup"
+            disabled={!dirty}
+            onClick={save}
+          >
+            <Save className="size-3.5" aria-hidden="true" />
+            Save
+          </Button>
         </div>
       </div>
+
+      <FilterBar
+        teamId={null}
+        teamName="Standup"
+        layout={layout}
+        config={config}
+        onChange={setConfig}
+        controls={controls}
+        issues={shown.issues}
+        showSaveView={false}
+      />
 
       {body}
 
       <HiddenFooter
         hiddenByFilters={0}
         hiddenByDisplay={shown.hidden}
-        onClearFilters={() => undefined}
+        onClearFilters={() => setConfig({ ...config, filter: { ...config.filter, children: [] } })}
         onRevealDisplay={() =>
           setConfig({
             ...config,
@@ -194,28 +239,35 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
   );
 }
 
-function StandupToggle({ layout }: { layout: ViewLayoutMode }) {
-  const itemClass =
-    'flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)]';
+function StandupToggle({
+  layout,
+  onChange,
+}: {
+  layout: ViewLayoutMode;
+  onChange: (next: ViewLayoutMode) => void;
+}) {
+  const itemClass = cn('flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs', tabHover);
 
   return (
     <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-      <Link
-        href="/standup"
+      <button
+        type="button"
         data-testid="standup-list-toggle"
+        onClick={() => onChange('list')}
         className={cn(itemClass, layout === 'list' ? 'bg-surface-2 text-text' : 'text-faint')}
       >
         <List className="size-3.5" aria-hidden="true" />
         List
-      </Link>
-      <Link
-        href="/standup/board"
+      </button>
+      <button
+        type="button"
         data-testid="standup-board-toggle"
+        onClick={() => onChange('board')}
         className={cn(itemClass, layout === 'board' ? 'bg-surface-2 text-text' : 'text-faint')}
       >
         <Columns3 className="size-3.5" aria-hidden="true" />
         Board
-      </Link>
+      </button>
     </div>
   );
 }

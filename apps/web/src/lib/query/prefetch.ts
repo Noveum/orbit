@@ -3,7 +3,12 @@ import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { bootstrapPayload } from '@/lib/api/bootstrap.ts';
 import { attachLabels } from '@/lib/api/issues.ts';
-import { DEFAULT_ISSUE_QUERY, ISSUE_PAGE_SIZE, issueSearch } from './issue-search.ts';
+import {
+  assignedSearch,
+  DEFAULT_ISSUE_QUERY,
+  ISSUE_PAGE_SIZE,
+  issueSearch,
+} from './issue-search.ts';
 import { queryKeys } from './keys.ts';
 import type { Bootstrap, IssuePage } from './schemas.ts';
 import { bootstrapSchema, issueListSchema } from './schemas.ts';
@@ -22,6 +27,28 @@ async function serverIssuePage(principal: Principal, teamId: string): Promise<Is
     issues: await attachLabels(page.issues),
     nextCursor: page.nextCursor,
   });
+}
+
+async function serverAssignedPage(principal: Principal): Promise<IssuePage> {
+  const page = await listIssues(principal, {
+    assigneeId: principal.userId,
+    orderBy: 'updated',
+    limit: ISSUE_PAGE_SIZE,
+  });
+  return asWire(issueListSchema, {
+    issues: await attachLabels(page.issues),
+    nextCursor: page.nextCursor,
+  });
+}
+
+export async function dehydratedAssignedIssues(principal: Principal) {
+  const client = new QueryClient();
+  const search = assignedSearch(principal.userId);
+  client.setQueryData(queryKeys.assignedIssues(principal.userId, search), {
+    pages: [await serverAssignedPage(principal)],
+    pageParams: [null],
+  });
+  return dehydrate(client);
 }
 
 export async function dehydratedWorkspace(principal: Principal) {

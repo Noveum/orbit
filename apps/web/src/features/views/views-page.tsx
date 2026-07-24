@@ -122,10 +122,7 @@ function ViewRow({ view }: { view: View }) {
 
   const href = ((): string => {
     if (view.id === 'virtual:standup') {
-      return `/standup${layout === 'board' ? '/board' : ''}${withViewParam(
-        viewConfigSearch(config, layout),
-        view.id,
-      )}`;
+      return '/standup';
     }
     if (team === null) {
       return `/views?${VIEW_PARAM}=${encodeURIComponent(view.id)}`;

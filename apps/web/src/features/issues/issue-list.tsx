@@ -49,6 +49,9 @@ export interface IssueListProps {
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly properties?: readonly DisplayProperty[];
+  readonly hasMore?: boolean;
+  readonly loadingMore?: boolean;
+  readonly onLoadMore?: (() => void) | undefined;
 }
 
 export function IssueList({
@@ -56,6 +59,9 @@ export function IssueList({
   states,
   groups,
   properties = DEFAULT_DISPLAY_PROPERTIES,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: IssueListProps) {
   const router = useRouter();
   const { labelById, memberById, stateById, projects, cycles } = useWorkspace();
@@ -90,6 +96,13 @@ export function IssueList({
     estimateSize: (index) => (rows[index]?.kind === 'issue' ? ROW_HEIGHT : HEADER_HEIGHT),
     overscan: 12,
   });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  useEffect(() => {
+    if (!hasMore || onLoadMore === undefined || loadingMore) return;
+    const last = virtualItems.at(-1);
+    if (last !== undefined && last.index >= rows.length - 8) onLoadMore();
+  }, [hasMore, loadingMore, onLoadMore, virtualItems, rows.length]);
 
   const activeRow = rows[activeIndex];
   const activeIssue = activeRow?.kind === 'issue' ? activeRow.issue : undefined;
@@ -209,6 +222,11 @@ export function IssueList({
             );
           })}
         </div>
+        {loadingMore ? (
+          <div className="px-3 py-2" aria-hidden="true">
+            <div className="h-8 animate-pulse rounded-md bg-surface-2/60" />
+          </div>
+        ) : null}
       </div>
 
       {selected.length > 0 ? (

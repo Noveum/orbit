@@ -91,6 +91,7 @@ describe('command palette', () => {
       /Go to Projects/,
       /Go to Cycles/,
       /Go to Views/,
+      /Go to Analytics/,
       /Go to Docs/,
       /Go to Engineering issues/,
       /Go to Engineering board/,

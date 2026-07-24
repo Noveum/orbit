@@ -23,7 +23,7 @@ import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
@@ -38,7 +38,13 @@ export interface BoardProps {
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
   readonly properties?: readonly DisplayProperty[];
+  readonly hasMore?: boolean;
+  readonly loadingMore?: boolean;
+  readonly onLoadMore?: (() => void) | undefined;
 }
+
+const INITIAL_VISIBLE = 15;
+const VISIBLE_STEP = 15;
 
 interface CardLookups {
   readonly labelById: ReadonlyMap<string, Label>;
@@ -152,6 +158,9 @@ export function Board({
   groups,
   draggable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const router = useRouter();
@@ -206,6 +215,9 @@ export function Board({
           draggable={draggable}
           properties={properties}
           lookups={lookups}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={onLoadMore}
           onCreate={() => openQuickCreate()}
           onOpen={setPeekId}
         />
@@ -258,6 +270,9 @@ interface BoardColumnProps {
   readonly draggable: boolean;
   readonly properties: readonly DisplayProperty[];
   readonly lookups: CardLookups;
+  readonly hasMore: boolean;
+  readonly loadingMore: boolean;
+  readonly onLoadMore: (() => void) | undefined;
   readonly onCreate: () => void;
   readonly onOpen: (id: string) => void;
 }
@@ -267,12 +282,60 @@ function BoardColumn({
   draggable,
   properties,
   lookups,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   onCreate,
   onOpen,
 }: BoardColumnProps) {
   const { setNodeRef } = useDroppable({ id: group.id, data: { isColumn: true } });
+  const scrollRef = useRef<HTMLUListElement | null>(null);
+  const sentinelRef = useRef<HTMLLIElement | null>(null);
+  const scrolledRef = useRef(false);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
 
-  const cards = group.issues.map((issue) =>
+  const total = group.issues.length;
+  const hasHiddenLocal = visibleCount < total;
+  const visibleIssues = useMemo(
+    () => group.issues.slice(0, visibleCount),
+    [group.issues, visibleCount],
+  );
+
+  const canFetchMore = hasMore && onLoadMore !== undefined;
+  const wantsSentinel = hasHiddenLocal || canFetchMore;
+
+  useEffect(() => {
+    const node = sentinelRef.current;
+    const root = scrollRef.current;
+    if (node === null || root === null || !wantsSentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        if (hasHiddenLocal) {
+          setVisibleCount((count) => Math.min(count + VISIBLE_STEP, total));
+        } else if (scrolledRef.current && canFetchMore) {
+          onLoadMore?.();
+        }
+      },
+      { root, rootMargin: '240px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [wantsSentinel, hasHiddenLocal, canFetchMore, total, onLoadMore]);
+
+  const markScrolled = useCallback(() => {
+    scrolledRef.current = true;
+  }, []);
+
+  const setScrollNode = useCallback(
+    (node: HTMLUListElement | null) => {
+      scrollRef.current = node;
+      if (draggable) setNodeRef(node);
+    },
+    [draggable, setNodeRef],
+  );
+
+  const cards = visibleIssues.map((issue) =>
     draggable ? (
       <SortableCard
         key={issue.id}
@@ -287,6 +350,19 @@ function BoardColumn({
       </li>
     ),
   );
+
+  const footer = (
+    <>
+      {loadingMore && !hasHiddenLocal ? (
+        <li className="h-[4.75rem] shrink-0 animate-pulse list-none rounded-lg bg-surface-3/50" />
+      ) : null}
+      {wantsSentinel ? (
+        <li ref={sentinelRef} className="h-px shrink-0 list-none" aria-hidden="true" />
+      ) : null}
+    </>
+  );
+
+  const listClass = 'flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0';
 
   return (
     <section
@@ -316,18 +392,19 @@ function BoardColumn({
 
       {draggable ? (
         <SortableContext
-          items={group.issues.map((issue) => issue.id)}
+          items={visibleIssues.map((issue) => issue.id)}
           strategy={verticalListSortingStrategy}
         >
-          <ul
-            ref={setNodeRef}
-            className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0"
-          >
+          <ul ref={setScrollNode} onScroll={markScrolled} className={listClass}>
             {cards}
+            {footer}
           </ul>
         </SortableContext>
       ) : (
-        <ul className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0">{cards}</ul>
+        <ul ref={scrollRef} onScroll={markScrolled} className={listClass}>
+          {cards}
+          {footer}
+        </ul>
       )}
     </section>
   );

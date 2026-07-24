@@ -189,6 +189,11 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         layout={layout}
         empty={shown.issues.length === 0}
         loading={issues.isPending}
+        hasMore={issues.hasNextPage}
+        loadingMore={issues.isFetchingNextPage}
+        onLoadMore={() => {
+          issues.fetchNextPage().catch(() => undefined);
+        }}
         onClearLastFilter={() => setConfig({ ...config, filter: dropLastCondition(config.filter) })}
       />
 
@@ -225,6 +230,9 @@ interface TeamContentProps {
   readonly layout: ViewLayoutMode;
   readonly empty: boolean;
   readonly loading: boolean;
+  readonly hasMore: boolean;
+  readonly loadingMore: boolean;
+  readonly onLoadMore: () => void;
   readonly onClearLastFilter: () => void;
 }
 
@@ -236,6 +244,9 @@ function TeamContent({
   layout,
   empty,
   loading,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   onClearLastFilter,
 }: TeamContentProps) {
   if (loading) return <ListSkeleton layout={layout} />;
@@ -274,6 +285,9 @@ function TeamContent({
         groups={groups}
         draggable={config.groupBy === 'state' && config.orderBy === 'manual'}
         properties={config.display.properties}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
       />
     );
   }
@@ -283,6 +297,9 @@ function TeamContent({
       states={states}
       groups={groups}
       properties={config.display.properties}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
     />
   );
 }
