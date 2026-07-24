@@ -15,6 +15,12 @@ describe('password authentication', () => {
     );
   });
 
+  it('exposes the MCP OAuth provider for one-click clients', () => {
+    expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
+      expect.arrayContaining(['mcp']),
+    );
+  });
+
   it('hashes with argon2id and verifies the hash', async () => {
     const hash = await Bun.password.hash('a-very-long-password', { algorithm: 'argon2id' });
     expect(hash.startsWith('$argon2id$')).toBe(true);
