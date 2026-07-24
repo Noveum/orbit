@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -175,5 +175,104 @@ describe('Board peek', () => {
     });
 
     expect(screen.getByRole('button', { name: 'Resize panel' })).toBeInTheDocument();
+  });
+});
+
+type IntersectCallback = (entries: readonly { isIntersecting: boolean }[]) => void;
+const windowObservers: IntersectCallback[] = [];
+const realIntersectionObserver = globalThis.IntersectionObserver;
+
+class WindowStubObserver {
+  constructor(callback: IntersectCallback) {
+    windowObservers.push(callback);
+  }
+  observe = mock();
+  unobserve = mock();
+  disconnect = mock();
+  takeRecords = mock();
+}
+
+function manyIssues(count: number): Issue[] {
+  return Array.from({ length: count }, (_, index) =>
+    issue({
+      id: `issue_w${index}`,
+      number: index + 1,
+      identifier: `ENG-${index + 1}`,
+      title: `Windowed ${index + 1}`,
+      sortOrder: (index + 1) * 1024,
+    }),
+  );
+}
+
+function renderWindowedBoard(count: number, onLoadMore?: () => void) {
+  const groups = groupIssues(
+    manyIssues(count),
+    'state',
+    { states: [todo], members: [], projects: [], cycles: [], labels: [] },
+    { showEmptyGroups: false, ordering: 'manual' },
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <HotkeyProvider>
+          <Board
+            teamId="team_1"
+            groups={groups}
+            draggable={false}
+            hasMore={onLoadMore !== undefined}
+            onLoadMore={onLoadMore}
+          />
+        </HotkeyProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function fireIntersection() {
+  act(() => {
+    for (const notify of windowObservers) notify([{ isIntersecting: true }]);
+  });
+}
+
+describe('Board windowing', () => {
+  beforeEach(() => {
+    windowObservers.length = 0;
+    Object.defineProperty(globalThis, 'IntersectionObserver', {
+      writable: true,
+      configurable: true,
+      value: WindowStubObserver,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'IntersectionObserver', {
+      writable: true,
+      configurable: true,
+      value: realIntersectionObserver,
+    });
+  });
+
+  it('caps the initial window and reveals more when the column scrolls', () => {
+    renderWindowedBoard(20);
+    expect(screen.getAllByTestId(/^issue-card-/)).toHaveLength(15);
+
+    fireIntersection();
+
+    expect(screen.getAllByTestId(/^issue-card-/)).toHaveLength(20);
+  });
+
+  it('only fetches the next page after the column has been scrolled', () => {
+    const onLoadMore = mock();
+    renderWindowedBoard(10, onLoadMore);
+
+    fireIntersection();
+    expect(onLoadMore).not.toHaveBeenCalled();
+
+    fireEvent.scroll(screen.getByTestId('board-column-Todo').querySelector('ul') as HTMLElement);
+    fireIntersection();
+    expect(onLoadMore).toHaveBeenCalled();
   });
 });
