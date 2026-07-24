@@ -1,3 +1,4 @@
+import { listMcpGrants } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
 import { loadIntegrationSettings } from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
@@ -6,7 +7,16 @@ import { mcpServerUrl } from '@/lib/env.ts';
 
 export default async function IntegrationsSettingsPage() {
   const { principal } = await pageContext();
-  const settings = await loadIntegrationSettings(principal);
+  const [settings, grants] = await Promise.all([
+    loadIntegrationSettings(principal),
+    listMcpGrants(principal.userId),
+  ]);
+  const mcpConnections = grants.map((grant) => ({
+    id: grant.id,
+    clientName: grant.clientName,
+    organizationName: grant.organizationName,
+    lastUsedAt: grant.lastUsedAt === null ? null : grant.lastUsedAt.toISOString(),
+  }));
 
   return (
     <section className="flex flex-col gap-5">
@@ -21,6 +31,7 @@ export default async function IntegrationsSettingsPage() {
         settings={settings}
         canManage={can(principal, 'integration:manage')}
         mcpUrl={mcpServerUrl()}
+        mcpConnections={mcpConnections}
       />
     </section>
   );

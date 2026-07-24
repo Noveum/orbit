@@ -7,19 +7,33 @@ import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import type { IntegrationSettings, IntegrationTeam } from './integrations-data.ts';
+import { claudeCodeCommand, cursorInstallHref, vscodeInstallHref } from './mcp-install-links.ts';
 
 function teamName(teams: readonly IntegrationTeam[], teamId: string | null): string {
   if (teamId === null) return 'Workspace-wide';
   return teams.find((team) => team.id === teamId)?.name ?? 'Unknown team';
 }
 
+export interface McpConnection {
+  readonly id: string;
+  readonly clientName: string;
+  readonly organizationName: string;
+  readonly lastUsedAt: string | null;
+}
+
 export interface IntegrationsPanelProps {
   readonly settings: IntegrationSettings;
   readonly canManage: boolean;
   readonly mcpUrl: string;
+  readonly mcpConnections: readonly McpConnection[];
 }
 
-export function IntegrationsPanel({ settings, canManage, mcpUrl }: IntegrationsPanelProps) {
+export function IntegrationsPanel({
+  settings,
+  canManage,
+  mcpUrl,
+  mcpConnections,
+}: IntegrationsPanelProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +57,7 @@ export function IntegrationsPanel({ settings, canManage, mcpUrl }: IntegrationsP
 
       <GithubSection settings={settings} canManage={canManage} onCall={call} />
       <SlackSection settings={settings} canManage={canManage} onCall={call} />
-      <McpSection mcpUrl={mcpUrl} onError={setError} />
+      <McpSection mcpUrl={mcpUrl} connections={mcpConnections} onError={setError} onCall={call} />
     </div>
   );
 }
@@ -351,46 +365,135 @@ function SlackSection({
   );
 }
 
-function McpSection({ mcpUrl, onError }: { mcpUrl: string; onError: (message: string) => void }) {
+function CopyRow({
+  value,
+  label,
+  testId,
+  onError,
+}: {
+  value: string;
+  label: string;
+  testId?: string;
+  onError: (message: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   async function copy(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(mcpUrl);
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      onError('Could not copy the MCP URL. Select and copy it manually.');
+      onError('Could not copy to the clipboard. Select and copy it manually.');
     }
   }
 
   return (
+    <div className="flex items-center gap-2">
+      <code
+        {...(testId === undefined ? {} : { 'data-testid': testId })}
+        className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-dense text-text"
+      >
+        {value}
+      </code>
+      <Button variant="secondary" onClick={copy} aria-label={label}>
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  );
+}
+
+function formatLastUsed(iso: string | null): string {
+  if (iso === null) return 'Never used yet';
+  return `Last used ${new Date(iso).toLocaleDateString()}`;
+}
+
+function McpSection({
+  mcpUrl,
+  connections,
+  onError,
+  onCall,
+}: {
+  mcpUrl: string;
+  connections: readonly McpConnection[];
+  onError: (message: string) => void;
+  onCall: CallFn;
+}) {
+  return (
     <IntegrationCard
       title="MCP server"
-      description="Connect an MCP-aware AI client to Orbit. The server exposes read and write tools for issues and acts as whoever owns the API key you authenticate with."
-      status={<Badge tone="accent">Streamable HTTP</Badge>}
+      description="Connect an MCP-aware AI client to Orbit. Sign in with your Orbit account and choose a workspace: the client acts as you, within your permissions. No API key needed."
+      status={<Badge tone="accent">OAuth</Badge>}
     >
       <div className="flex flex-col gap-1.5">
         <span className="text-2xs text-faint">Server URL</span>
-        <div className="flex items-center gap-2">
-          <code
-            data-testid="mcp-url"
-            className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-dense text-text"
-          >
-            {mcpUrl}
-          </code>
-          <Button variant="secondary" onClick={copy} aria-label="Copy MCP server URL">
-            {copied ? 'Copied' : 'Copy'}
-          </Button>
-        </div>
+        <CopyRow value={mcpUrl} label="Copy MCP server URL" testId="mcp-url" onError={onError} />
       </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-2xs text-faint">Add to Claude Code</span>
+        <CopyRow
+          value={claudeCodeCommand(mcpUrl)}
+          label="Copy the Claude Code command"
+          onError={onError}
+        />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <a href={cursorInstallHref(mcpUrl)}>
+          <Button variant="secondary" size="sm">
+            Add to Cursor
+          </Button>
+        </a>
+        <a href={vscodeInstallHref(mcpUrl)}>
+          <Button variant="secondary" size="sm">
+            Add to VS Code
+          </Button>
+        </a>
+      </div>
+
       <ol className="flex flex-col gap-1 text-muted text-xs">
-        <li>Add the server URL above to your AI client as a streamable HTTP MCP server.</li>
-        <li>
-          Authenticate with an Orbit API key sent as a bearer token. Keys are issued by an admin.
-        </li>
+        <li>Add Orbit to your MCP client with a link above, or point it at the server URL.</li>
+        <li>Your browser opens: sign in to Orbit, pick a workspace, and approve.</li>
         <li>Ask the client to call get_me to confirm the connection.</li>
       </ol>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-2xs text-faint">Connected clients</span>
+        <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
+          {connections.length === 0 ? (
+            <li className="px-3 py-2.5 text-faint text-xs">No clients connected yet.</li>
+          ) : (
+            connections.map((connection) => (
+              <li
+                key={connection.id}
+                className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-dense text-text">{connection.clientName}</span>
+                  <span className="text-2xs text-faint">
+                    {connection.organizationName} · {formatLastUsed(connection.lastUsedAt)}
+                  </span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Disconnect ${connection.clientName}`}
+                  onClick={() =>
+                    onCall(
+                      `/api/integrations/mcp?grantId=${encodeURIComponent(connection.id)}`,
+                      'DELETE',
+                      {},
+                    )
+                  }
+                >
+                  Disconnect
+                </Button>
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
     </IntegrationCard>
   );
 }

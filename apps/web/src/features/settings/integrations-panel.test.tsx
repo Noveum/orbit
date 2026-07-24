@@ -60,7 +60,9 @@ afterEach(() => {
 
 describe('IntegrationsPanel', () => {
   it('lists linked repositories with their team and an unlink action', () => {
-    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
+    render(
+      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
+    );
     expect(screen.getByText('acme/web')).toBeInTheDocument();
     expect(screen.getAllByText('Engineering').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Unlink' })).toBeEnabled();
@@ -68,7 +70,7 @@ describe('IntegrationsPanel', () => {
 
   it('links a repository through the github endpoint', async () => {
     const user = userEvent.setup();
-    render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} />);
+    render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} mcpConnections={[]} />);
 
     await user.type(screen.getByLabelText('Repository'), 'acme/api');
     await user.type(screen.getByLabelText('Repository id'), '99');
@@ -87,7 +89,9 @@ describe('IntegrationsPanel', () => {
 
   it('unlinks a repository through the github endpoint', async () => {
     const user = userEvent.setup();
-    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
+    render(
+      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
+    );
 
     await user.click(screen.getByRole('button', { name: 'Unlink' }));
 
@@ -104,7 +108,9 @@ describe('IntegrationsPanel', () => {
       configurable: true,
       value: { writeText },
     });
-    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
+    render(
+      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
+    );
 
     expect(screen.getByTestId('mcp-url')).toHaveTextContent(MCP_URL);
     await user.click(screen.getByRole('button', { name: 'Copy MCP server URL' }));
@@ -113,8 +119,53 @@ describe('IntegrationsPanel', () => {
     });
   });
 
+  it('offers a one-click Claude Code command and drops the admin API key copy', () => {
+    render(
+      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
+    );
+    expect(
+      screen.getByRole('button', { name: 'Copy the Claude Code command' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No API key needed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/issued by an admin/i)).toBeNull();
+  });
+
+  it('lists connected clients and disconnects one through the mcp endpoint', async () => {
+    const user = userEvent.setup();
+    render(
+      <IntegrationsPanel
+        settings={CONNECTED}
+        canManage
+        mcpUrl={MCP_URL}
+        mcpConnections={[
+          {
+            id: 'grant-1',
+            clientName: 'Claude Desktop',
+            organizationName: 'Nova',
+            lastUsedAt: null,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Claude Desktop')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Disconnect Claude Desktop' }));
+
+    await waitFor(() => {
+      expect(lastRequest?.method).toBe('DELETE');
+    });
+    expect(lastRequest?.url).toBe('/api/integrations/mcp?grantId=grant-1');
+  });
+
   it('hides management affordances when the viewer cannot manage integrations', () => {
-    render(<IntegrationsPanel settings={CONNECTED} canManage={false} mcpUrl={MCP_URL} />);
+    render(
+      <IntegrationsPanel
+        settings={CONNECTED}
+        canManage={false}
+        mcpUrl={MCP_URL}
+        mcpConnections={[]}
+      />,
+    );
     expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
     expect(screen.queryByLabelText('Repository')).toBeNull();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
