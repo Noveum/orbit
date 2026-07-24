@@ -143,12 +143,11 @@ KUBE_API_SERVER=http://127.0.0.1:8080 ./extras/scripts/docker-build-push.sh -y
 
 Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
 
-The CodeBuild pipeline (`buildspec.yml`) runs the schema migration as a job at
-the deploy image tag, waits for it to complete, and only then rolls out web,
-realtime and mcp. A failed migration aborts the deploy before any new code goes
-live, so a schema change can no longer leave production querying columns that do
-not exist. The hand script above does not migrate: run `k8s/migrate.sh` after it
-when a deploy carries a schema change.
+The CodeBuild pipeline (`buildspec.yml`) builds and pushes web, realtime and mcp
+and rolls them out. It never runs a schema migration. Migrations are applied
+locally against the target database (reach prod through `extras/prod-tunnel`),
+never by a job in the cluster, so any schema change must be pushed before the
+code that depends on it ships.
 
 ## Git
 
