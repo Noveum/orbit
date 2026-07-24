@@ -3,6 +3,7 @@ export * from './doc.ts';
 export * from './estimate.ts';
 export * from './issue.ts';
 export * from './notification.ts';
+export * from './onboarding.ts';
 export * from './ordering.ts';
 export * from './organization.ts';
 export * from './pattern.ts';
