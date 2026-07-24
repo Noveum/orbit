@@ -17,9 +17,10 @@ export interface LoginFormProps {
   readonly callbackUrl?: string;
   readonly passwordEnabled?: boolean;
   readonly errorMessage?: string;
+  readonly notice?: string;
 }
 
-type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | null;
+type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | 'forgot' | null;
 
 function messageOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
@@ -125,11 +126,64 @@ function SocialButtons({
   );
 }
 
+function LoginBanners({
+  errorMessage,
+  notice,
+}: {
+  readonly errorMessage?: string | undefined;
+  readonly notice?: string | undefined;
+}) {
+  return (
+    <>
+      {errorMessage ? (
+        <p
+          role="alert"
+          data-testid="login-error"
+          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-center text-danger text-xs"
+        >
+          {errorMessage}
+        </p>
+      ) : null}
+      {notice ? (
+        <p
+          role="status"
+          data-testid="login-notice"
+          className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-center text-success text-xs"
+        >
+          {notice}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function ForgotPasswordButton({
+  sending,
+  disabled,
+  onClick,
+}: {
+  readonly sending: boolean;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="self-start text-muted text-xs underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {sending ? 'Sending reset link...' : 'Forgot password?'}
+    </button>
+  );
+}
+
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
   passwordEnabled = false,
   errorMessage,
+  notice,
 }: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
@@ -187,6 +241,19 @@ export function LoginForm({
       });
     });
 
+  const forgotPassword = () =>
+    withPending('forgot', async () => {
+      const result = await authClient.requestPasswordReset({
+        email,
+        redirectTo: '/reset-password',
+      });
+      if (result.error) throw new Error(result.error.message ?? 'Could not send the reset email.');
+      toast({
+        title: 'Check your email',
+        description: `If ${email} has a password, a reset link is on its way.`,
+      });
+    });
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (passwordEnabled) {
@@ -208,15 +275,7 @@ export function LoginForm({
         </p>
       </div>
 
-      {errorMessage ? (
-        <p
-          role="alert"
-          data-testid="login-error"
-          className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-center text-danger text-xs"
-        >
-          {errorMessage}
-        </p>
-      ) : null}
+      <LoginBanners errorMessage={errorMessage} notice={notice} />
 
       <Button
         variant="primary"
@@ -269,6 +328,15 @@ export function LoginForm({
             onChange={setPassword}
             busy={pending === 'password'}
             disabled={pending !== null || email.length === 0 || password.length === 0}
+          />
+        ) : null}
+        {passwordEnabled && !creatingAccount ? (
+          <ForgotPasswordButton
+            sending={pending === 'forgot'}
+            disabled={pending !== null || email.length === 0}
+            onClick={() => {
+              forgotPassword();
+            }}
           />
         ) : null}
         <Button

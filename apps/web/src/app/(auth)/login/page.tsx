@@ -41,6 +41,10 @@ export default async function LoginPage({
 
   const devUsers = devLoginEnabled() ? await listDevUsers() : [];
   const errorMessage = signInErrorMessage(params['error'], params['error_description']);
+  const notice =
+    passwordAuthEnabled && params['reset'] === 'success'
+      ? 'Your password was reset. Sign in with your new password.'
+      : undefined;
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg px-5 py-12">
@@ -50,6 +54,7 @@ export default async function LoginPage({
           passwordEnabled={passwordAuthEnabled}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
           {...(errorMessage === undefined ? {} : { errorMessage })}
+          {...(notice === undefined ? {} : { notice })}
         />
         {devUsers.length > 0 ? (
           <DevSignIn users={devUsers} callbackUrl={callbackUrl ?? '/my-issues'} />
