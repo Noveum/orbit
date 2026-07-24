@@ -112,10 +112,11 @@ jobs:
       - name: Build every service image
         run: |
           set -eu
+          docker build -f Dockerfile.deps -t orbit-deps:build .
           for target in web realtime mcp; do
-            docker build -f "apps/$target/Dockerfile" -t "orbit-$target:ci" .
+            docker build --build-arg DEPS_IMAGE=orbit-deps:build -f "apps/$target/Dockerfile" -t "orbit-$target:ci" .
           done
-          docker build -f packages/db/Dockerfile -t orbit-migrate:ci .
+          docker build --build-arg DEPS_IMAGE=orbit-deps:build -f packages/db/Dockerfile -t orbit-migrate:ci .
 
       - name: The web image must boot on Bun and serve its health endpoint
         run: |

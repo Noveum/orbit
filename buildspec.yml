@@ -32,19 +32,30 @@ phases:
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - 'if [ -z "$IMAGE_TAG" ]; then echo "ERROR: could not resolve the source commit"; exit 1; fi'
       - echo "Image tag is $IMAGE_TAG"
-      - for NAME in web realtime mcp migrate; do docker pull $ECR/orbit-$NAME:latest || true; done
+      - for NAME in deps web realtime mcp migrate; do docker pull $ECR/orbit-$NAME:latest || true; done
       - export ECR IMAGE_TAG
 
   build:
     commands:
       - |
         set -e
+        DEPS_IMAGE="orbit-deps:build"
+        docker build \
+          --cache-from "$ECR/orbit-deps:latest" \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          -t "$DEPS_IMAGE" \
+          -t "$ECR/orbit-deps:latest" \
+          -t "$ECR/orbit-deps:$IMAGE_TAG" \
+          -f Dockerfile.deps .
+        echo "deps image built"
+
         build_image() {
           NAME="$1"
           DOCKERFILE="$2"
           docker build \
             --cache-from "$ECR/orbit-$NAME:latest" \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --build-arg DEPS_IMAGE="$DEPS_IMAGE" \
             --secret id=DOPPLER_TOKEN,env=DOPPLER_TOKEN_BUILD \
             -t "$ECR/orbit-$NAME:latest" \
             -t "$ECR/orbit-$NAME:$IMAGE_TAG" \
@@ -72,6 +83,9 @@ phases:
           docker push "$ECR/orbit-$1:latest"
           docker push "$ECR/orbit-$1:$IMAGE_TAG"
         }
+
+        push_image deps
+        echo "deps image pushed"
 
         push_image web & WEB_PID=$!
         push_image realtime & REALTIME_PID=$!
