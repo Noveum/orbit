@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import type { IntegrationSettings } from './integrations-data.ts';
-import { IntegrationsPanel } from './integrations-panel.tsx';
+import { IntegrationsPanel, type McpConnection } from './integrations-panel.tsx';
 
 const refresh = mock();
 
@@ -24,30 +26,10 @@ const CONNECTED: IntegrationSettings = {
       enabled: true,
     },
   ],
-  availableRepositories: [
-    {
-      repositoryId: '123456',
-      repositoryName: 'acme/web',
-      defaultBranch: 'main',
-      installationId: '77',
-    },
-    {
-      repositoryId: '654321',
-      repositoryName: 'acme/api',
-      defaultBranch: 'trunk',
-      installationId: '77',
-    },
-  ],
-  githubReposError: false,
   slackConnected: true,
   slackHasToken: true,
   slackConnectEnabled: true,
   channels: [{ channelId: 'C0123', channelName: 'engineering', teamId: 'team-1', enabled: true }],
-  availableChannels: [
-    { channelId: 'C0123', channelName: 'engineering' },
-    { channelId: 'C0999', channelName: 'design' },
-  ],
-  slackChannelsError: false,
   teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
 };
 
@@ -55,14 +37,10 @@ const EMPTY: IntegrationSettings = {
   githubConnected: false,
   githubConnectEnabled: true,
   repositories: [],
-  availableRepositories: [],
-  githubReposError: false,
   slackConnected: false,
   slackHasToken: false,
   slackConnectEnabled: true,
   channels: [],
-  availableChannels: [],
-  slackChannelsError: false,
   teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
 };
 
@@ -71,6 +49,28 @@ const UNCONFIGURED: IntegrationSettings = {
   githubConnectEnabled: false,
   slackConnectEnabled: false,
 };
+
+function Providers({ children }: { children: ReactNode }) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
+
+function renderPanel(
+  settings: IntegrationSettings,
+  canManage: boolean,
+  mcpConnections: readonly McpConnection[] = [],
+) {
+  return render(
+    <Providers>
+      <IntegrationsPanel
+        settings={settings}
+        canManage={canManage}
+        mcpUrl={MCP_URL}
+        mcpConnections={mcpConnections}
+      />
+    </Providers>,
+  );
+}
 
 const realFetch = globalThis.fetch;
 let lastRequest: { url: string; method: string; body: unknown } | null = null;
@@ -94,7 +94,7 @@ afterEach(() => {
 
 describe('IntegrationsPanel', () => {
   it('offers one-click connect actions as the primary path when nothing is connected', () => {
-    render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} mcpConnections={[]} />);
+    renderPanel(EMPTY, true);
     const github = screen.getByRole('link', { name: 'Connect GitHub' });
     expect(github).toHaveAttribute('href', '/api/integrations/github/start');
     const slack = screen.getByRole('link', { name: 'Add to Slack' });
@@ -102,49 +102,36 @@ describe('IntegrationsPanel', () => {
   });
 
   it('never exposes a webhook secret or raw token entry', () => {
-    render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} mcpConnections={[]} />);
+    renderPanel(EMPTY, true);
     expect(screen.queryByText(/GITHUB_WEBHOOK_SECRET/)).toBeNull();
     expect(screen.queryByLabelText('Bot token')).toBeNull();
     expect(screen.queryByLabelText('Repository id')).toBeNull();
   });
 
   it('hides connect actions and explains configuration is pending when the app is not set up', () => {
-    render(
-      <IntegrationsPanel settings={UNCONFIGURED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(UNCONFIGURED, true);
     expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Add to Slack' })).toBeNull();
     expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
   });
 
-  it('links a discovered repository with its API-provided id and installation', async () => {
+  it('opens a searchable repository picker to link a repo', async () => {
     const user = userEvent.setup();
-    render(
-      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(CONNECTED, true);
+    await user.click(screen.getByRole('button', { name: 'Link a repository' }));
+    expect(await screen.findByPlaceholderText('Search repositories…')).toBeInTheDocument();
+  });
 
-    expect(screen.getByText('acme/api')).toBeInTheDocument();
-    const linkButton = screen.getByRole('button', { name: 'Link' });
-    await user.click(linkButton);
-
-    await waitFor(() => {
-      expect(lastRequest?.url).toBe('/api/integrations/github');
-    });
-    expect(lastRequest?.method).toBe('POST');
-    expect(lastRequest?.body).toEqual({
-      repositoryId: '654321',
-      repositoryName: 'acme/api',
-      installationId: '77',
-      defaultBranch: 'trunk',
-      teamId: 'team-1',
-    });
+  it('opens a searchable channel picker to connect a channel', async () => {
+    const user = userEvent.setup();
+    renderPanel(CONNECTED, true);
+    await user.click(screen.getByRole('button', { name: 'Connect a channel' }));
+    expect(await screen.findByPlaceholderText('Search channels…')).toBeInTheDocument();
   });
 
   it('unlinks a linked repository through the github endpoint', async () => {
     const user = userEvent.setup();
-    render(
-      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(CONNECTED, true);
 
     await user.click(screen.getByRole('button', { name: 'Unlink' }));
 
@@ -154,24 +141,16 @@ describe('IntegrationsPanel', () => {
     expect(lastRequest?.url).toBe('/api/integrations/github?repositoryId=123456');
   });
 
-  it('maps a discovered Slack channel to a team without typing an id', async () => {
+  it('disconnects a connected Slack channel through the slack endpoint', async () => {
     const user = userEvent.setup();
-    render(
-      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(CONNECTED, true);
 
-    expect(screen.getByText('#design')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Connect' }));
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
 
     await waitFor(() => {
       expect(lastRequest?.url).toBe('/api/integrations/slack');
     });
-    expect(lastRequest?.body).toEqual({
-      action: 'connect',
-      channelId: 'C0999',
-      channelName: 'design',
-      teamId: null,
-    });
+    expect(lastRequest?.body).toEqual({ action: 'disconnect', channelId: 'C0123' });
   });
 
   it('shows the MCP server URL and copies it to the clipboard', async () => {
@@ -181,9 +160,7 @@ describe('IntegrationsPanel', () => {
       configurable: true,
       value: { writeText },
     });
-    render(
-      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(CONNECTED, true);
 
     expect(screen.getByTestId('mcp-url')).toHaveTextContent(MCP_URL);
     await user.click(screen.getByRole('button', { name: 'Copy MCP server URL' }));
@@ -193,24 +170,16 @@ describe('IntegrationsPanel', () => {
   });
 
   it('hides management affordances when the viewer cannot manage integrations', () => {
-    render(
-      <IntegrationsPanel
-        settings={CONNECTED}
-        canManage={false}
-        mcpUrl={MCP_URL}
-        mcpConnections={[]}
-      />,
-    );
+    renderPanel(CONNECTED, false);
     expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Link a repository' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
     expect(screen.queryByRole('link', { name: /repositories on GitHub/ })).toBeNull();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 
   it('offers a one-click Claude Code command and drops the admin API key copy', () => {
-    render(
-      <IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} mcpConnections={[]} />,
-    );
+    renderPanel(CONNECTED, true);
     expect(
       screen.getByRole('button', { name: 'Copy the Claude Code command' }),
     ).toBeInTheDocument();
@@ -220,21 +189,14 @@ describe('IntegrationsPanel', () => {
 
   it('lists connected clients and disconnects one through the mcp endpoint', async () => {
     const user = userEvent.setup();
-    render(
-      <IntegrationsPanel
-        settings={CONNECTED}
-        canManage
-        mcpUrl={MCP_URL}
-        mcpConnections={[
-          {
-            id: 'grant-1',
-            clientName: 'Claude Desktop',
-            organizationName: 'Nova',
-            lastUsedAt: null,
-          },
-        ]}
-      />,
-    );
+    renderPanel(CONNECTED, true, [
+      {
+        id: 'grant-1',
+        clientName: 'Claude Desktop',
+        organizationName: 'Nova',
+        lastUsedAt: null,
+      },
+    ]);
 
     expect(screen.getByText('Claude Desktop')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Disconnect Claude Desktop' }));
