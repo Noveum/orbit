@@ -1,5 +1,5 @@
 import { and, asc, count, db, desc, eq, ilike, isNull, ne, or, schema, sql } from '@orbit/db';
-import { conflict, validationFailed } from '@orbit/shared/errors';
+import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -28,6 +28,7 @@ export type DocVersionRow = typeof schema.docVersion.$inferSelect;
 export type AttachmentRow = typeof schema.attachment.$inferSelect;
 
 const MAX_DEPTH = 32;
+const DOC_BACKLINK_LIMIT = 50;
 const VERSION_COALESCE_MS = 5 * 60 * 1000;
 
 export function docSlug(title: string): string {
@@ -116,20 +117,29 @@ async function assertParent(
 ): Promise<void> {
   if (docId !== null && parentId === docId) throw validationFailed('A doc cannot nest in itself.');
 
-  let cursor: string | null = parentId;
-  for (let depth = 0; depth < MAX_DEPTH && cursor !== null; depth += 1) {
-    const rows: { id: string; parentId: string | null }[] = await executor
-      .select({ id: schema.doc.id, parentId: schema.doc.parentId })
-      .from(schema.doc)
-      .where(
-        and(eq(schema.doc.id, cursor), eq(schema.doc.organizationId, principal.organizationId)),
-      )
-      .limit(1);
-    const parent = requireRow(rows[0], 'That parent doc does not exist.');
-    if (docId !== null && parent.parentId === docId) {
-      throw validationFailed('A doc cannot nest inside its own child.');
-    }
-    cursor = parent.parentId;
+  const rows = await executor.execute<{ found: number | string; cycle: number | string }>(sql`
+    with recursive ancestors as (
+      select id, parent_id, 1 as depth
+      from doc
+      where id = ${parentId} and organization_id = ${principal.organizationId}
+      union all
+      select d.id, d.parent_id, a.depth + 1
+      from doc d
+      join ancestors a on d.id = a.parent_id
+      where a.depth < ${MAX_DEPTH} and d.organization_id = ${principal.organizationId}
+    )
+    select
+      count(*)::int as found,
+      (count(*) filter (where id = ${docId}))::int as cycle
+    from ancestors
+  `);
+
+  const summary = rows[0];
+  if (summary === undefined || Number(summary['found']) === 0) {
+    throw notFound('That parent doc does not exist.');
+  }
+  if (Number(summary['cycle']) > 0) {
+    throw validationFailed('A doc cannot nest inside its own child.');
   }
 }
 
@@ -244,7 +254,7 @@ export async function listDocBacklinks(doc: DocRow): Promise<DocBacklink[]> {
       ),
     )
     .orderBy(asc(schema.doc.title))
-    .limit(50);
+    .limit(DOC_BACKLINK_LIMIT);
 }
 
 async function detailFor(doc: DocRow): Promise<DocDetail> {
