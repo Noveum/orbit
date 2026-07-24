@@ -501,12 +501,10 @@ export async function catchUp(
 ): Promise<SyncCatchupResult> {
   assertCan(principal, 'issue:read');
   const perModel = Math.max(1, limit);
-  const loaded = await Promise.all(
-    SYNC_CATCHUP_MODELS.map(async (model) => ({
-      model,
-      rows: await LOADERS[model](principal, since, perModel + 1),
-    })),
-  );
+  const loaded: { model: SyncModel; rows: BackfilledRow[] }[] = [];
+  for (const model of SYNC_CATCHUP_MODELS) {
+    loaded.push({ model, rows: await LOADERS[model](principal, since, perModel + 1) });
+  }
 
   const all: SyncAction[] = [];
   let saturated = false;
