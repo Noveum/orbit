@@ -7,6 +7,7 @@ import { InboxView } from './inbox-view.tsx';
 export interface InboxRealtimeProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
+  readonly unreadMentions: number;
   readonly userId: string;
   readonly organizationId: string;
   readonly realtimeUrl: string;
@@ -16,6 +17,7 @@ export interface InboxRealtimeProps {
 export function InboxRealtime({
   items,
   unreadCount,
+  unreadMentions,
   userId,
   organizationId,
   realtimeUrl,
@@ -23,7 +25,12 @@ export function InboxRealtime({
 }: InboxRealtimeProps) {
   return (
     <RealtimeProvider url={realtimeUrl} token={token} organizationId={organizationId}>
-      <InboxView items={items} unreadCount={unreadCount} userId={userId} />
+      <InboxView
+        items={items}
+        unreadCount={unreadCount}
+        unreadMentions={unreadMentions}
+        userId={userId}
+      />
     </RealtimeProvider>
   );
 }

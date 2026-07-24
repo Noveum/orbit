@@ -24,6 +24,7 @@ export const PERMISSIONS = [
   'doc:publish',
   'member:invite',
   'member:manage',
+  'integration:manage',
   'org:manage',
 ] as const;
 
@@ -64,6 +65,7 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   ...MEMBER_PERMISSIONS,
   'team:manage',
   'member:manage',
+  'integration:manage',
   'org:manage',
 ];
 

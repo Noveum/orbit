@@ -14,8 +14,27 @@ export const NOTIFICATION_TYPES = [
   'triage_added',
   'invite_accepted',
   'member_joined',
+  'pr_review_requested',
+  'pr_review_submitted',
+  'pr_approved',
+  'pr_merged',
+  'pr_closed',
+  'pr_checks_failed',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+export const PULL_REQUEST_NOTIFICATION_TYPES = [
+  'pr_review_requested',
+  'pr_review_submitted',
+  'pr_approved',
+  'pr_merged',
+  'pr_closed',
+  'pr_checks_failed',
+] as const satisfies readonly NotificationType[];
+
+export function isPullRequestNotification(type: NotificationType): boolean {
+  return (PULL_REQUEST_NOTIFICATION_TYPES as readonly string[]).includes(type);
+}
 
 export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'push'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
