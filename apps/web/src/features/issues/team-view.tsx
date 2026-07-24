@@ -56,7 +56,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
   const teamId = team?.id ?? null;
 
   const { config, setConfig } = useViewConfig(teamId, layout, 'team');
-  const controls = useProvideViewControls('team', layout, config, setConfig);
+  const controls = useProvideViewControls('team', layout, config);
   const filtered = !isEmptyFilter(config.filter);
 
   const seed = workspace.seedIssues.filter((issue) => issue.teamId === teamId);
