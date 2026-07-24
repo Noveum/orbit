@@ -1,6 +1,7 @@
 'use client';
 
-import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil } from 'lucide-react';
+import { Command } from 'cmdk';
+import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -14,6 +15,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import type { Doc, DocCollection, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
@@ -31,6 +33,21 @@ const STATUS_LABEL = {
   saving: 'Saving…',
   error: 'Save failed',
 } as const;
+
+const NEST_PICKER_LIMIT = 50;
+
+export function matchParents(
+  parents: readonly DocSummary[],
+  search: string,
+  limit: number,
+): { readonly shown: DocSummary[]; readonly hiddenCount: number } {
+  const query = search.trim().toLowerCase();
+  const matches =
+    query.length === 0
+      ? parents
+      : parents.filter((entry) => entry.title.toLowerCase().includes(query));
+  return { shown: matches.slice(0, limit), hiddenCount: Math.max(matches.length - limit, 0) };
+}
 
 export function descendantIds(docs: readonly DocSummary[], rootId: string): Set<string> {
   const children = new Map<string, string[]>();
@@ -118,7 +135,7 @@ function LoadedDoc({
     collections.find((entry) => entry.id === detail.doc.collectionId)?.name ?? null;
   const projectName = projects.find((entry) => entry.id === detail.doc.projectId)?.name ?? null;
   const blocked = useMemo(() => descendantIds(docs, detail.doc.id), [docs, detail.doc.id]);
-  const parents = docs.filter((entry) => !blocked.has(entry.id)).slice(0, 50);
+  const parents = useMemo(() => docs.filter((entry) => !blocked.has(entry.id)), [docs, blocked]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -180,43 +197,11 @@ function LoadedDoc({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Nest doc"
-                  data-testid="doc-parent"
-                  className="size-7 px-0"
-                >
-                  <Indent className="size-4" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
-                <DropdownMenuLabel>Nest under</DropdownMenuLabel>
-                <DropdownMenuItem
-                  data-testid="nest-under-none"
-                  onSelect={() => update.mutate({ parentId: null })}
-                >
-                  <span className="flex-1">Top level</span>
-                  {detail.doc.parentId === null ? (
-                    <Check className="size-3.5 text-accent" aria-hidden="true" />
-                  ) : null}
-                </DropdownMenuItem>
-                {parents.map((entry) => (
-                  <DropdownMenuItem
-                    key={entry.id}
-                    data-testid={`nest-under-${entry.id}`}
-                    onSelect={() => update.mutate({ parentId: entry.id })}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{entry.title}</span>
-                    {detail.doc.parentId === entry.id ? (
-                      <Check className="size-3.5 text-accent" aria-hidden="true" />
-                    ) : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <NestPicker
+              parents={parents}
+              currentParentId={detail.doc.parentId}
+              onSelect={(parentId) => update.mutate({ parentId })}
+            />
 
             <Button
               variant="ghost"
@@ -272,6 +257,102 @@ function LoadedDoc({
         </div>
       )}
     </div>
+  );
+}
+
+const nestItemClassName =
+  'flex h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2 text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
+
+function NestPicker({
+  parents,
+  currentParentId,
+  onSelect,
+}: {
+  readonly parents: readonly DocSummary[];
+  readonly currentParentId: string | null;
+  readonly onSelect: (parentId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const { shown, hiddenCount } = matchParents(parents, search, NEST_PICKER_LIMIT);
+
+  const choose = (parentId: string | null) => {
+    onSelect(parentId);
+    setOpen(false);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setSearch('');
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Nest doc"
+          data-testid="doc-parent"
+          className="size-7 px-0"
+        >
+          <Indent className="size-4" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-64 p-0"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <Command shouldFilter={false} label="Nest under">
+          <div className="flex items-center gap-2 border-border border-b px-2.5">
+            <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
+            <Command.Input
+              autoFocus
+              value={search}
+              onValueChange={setSearch}
+              data-testid="doc-parent-search"
+              aria-label="Search docs to nest under"
+              placeholder="Search docs..."
+              className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
+            />
+          </div>
+          <Command.List className="max-h-72 overflow-y-auto p-1.5">
+            <Command.Item
+              value="__top_level__"
+              data-testid="nest-under-none"
+              className={nestItemClassName}
+              onSelect={() => choose(null)}
+            >
+              <span className="flex-1 truncate">Top level</span>
+              {currentParentId === null ? (
+                <Check className="size-3.5 text-accent" aria-hidden="true" />
+              ) : null}
+            </Command.Item>
+            {shown.map((entry) => (
+              <Command.Item
+                key={entry.id}
+                value={entry.id}
+                data-testid={`nest-under-${entry.id}`}
+                className={nestItemClassName}
+                onSelect={() => choose(entry.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                {currentParentId === entry.id ? (
+                  <Check className="size-3.5 text-accent" aria-hidden="true" />
+                ) : null}
+              </Command.Item>
+            ))}
+            {hiddenCount > 0 ? (
+              <p className="px-2 py-1.5 text-2xs text-faint">
+                Showing the first {NEST_PICKER_LIMIT}. Refine your search to see more.
+              </p>
+            ) : null}
+          </Command.List>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

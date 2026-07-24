@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:tes
 import { renderMarkdown, summarize } from '@orbit/services/markdown';
 import { act, renderHook } from '@testing-library/react';
 import { publicDocPath, publicDocUrl } from '@/lib/docs/paths.ts';
-import { descendantIds } from './doc-surface.tsx';
+import { descendantIds, matchParents } from './doc-surface.tsx';
 import { docTreeOf } from './doc-tree.tsx';
 import {
   attachmentMarkdown,
@@ -205,6 +205,21 @@ describe('doc nesting', () => {
     const blocked = descendantIds(docs, 'root');
     expect([...blocked].sort()).toEqual(['child', 'root']);
     expect(blocked.has('other')).toBe(false);
+  });
+
+  it('filters parents by title and caps the list, reporting how many are hidden', () => {
+    const many = Array.from({ length: 120 }, (_, index) => summary(`doc-${index}`, null));
+    const capped = matchParents(many, '', 50);
+    expect(capped.shown).toHaveLength(50);
+    expect(capped.hiddenCount).toBe(70);
+
+    const searched = matchParents(
+      [summary('alpha', null), summary('beta', null), summary('alphabet', null)],
+      'ALPHA',
+      50,
+    );
+    expect(searched.shown.map((entry) => entry.id)).toEqual(['alpha', 'alphabet']);
+    expect(searched.hiddenCount).toBe(0);
   });
 });
 
