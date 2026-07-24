@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 import type { DocHeading } from './outline.ts';
-import { sameHeadings, withHeadingIds } from './outline.ts';
+import { extractHeadings, sameHeadings } from './outline.ts';
 
 export const docProseClassName = cn(
   'prose-orbit max-w-none text-base text-muted leading-7',
@@ -40,21 +40,21 @@ export function DocBody({ html, onHeadings, className }: DocBodyProps) {
   const previous = useRef<DocHeading[]>([]);
   notify.current = onHeadings;
 
-  const outlined = useMemo(() => withHeadingIds(html), [html]);
+  const headings = useMemo(() => extractHeadings(html), [html]);
 
   useEffect(() => {
     if (notify.current === undefined) return;
-    if (sameHeadings(outlined.headings, previous.current)) return;
-    previous.current = outlined.headings;
-    notify.current(outlined.headings);
-  }, [outlined]);
+    if (sameHeadings(headings, previous.current)) return;
+    previous.current = headings;
+    notify.current(headings);
+  }, [headings]);
 
   return (
     <div
       data-testid="doc-body"
       className={cn(docProseClassName, className)}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized by @orbit/services/markdown
-      dangerouslySetInnerHTML={{ __html: outlined.html }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }

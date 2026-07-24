@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { HEADING_SCROLL_OFFSET, scrollContainerOf } from './doc-scroll.ts';
+import { scrollContainerOf } from './doc-scroll.ts';
 import type { DocHeading } from './outline.ts';
 
-export const SCROLL_SPY_OFFSET = HEADING_SCROLL_OFFSET;
+export const SCROLL_SPY_OFFSET = 96;
 
 export interface HeadingTop {
   readonly id: string;
@@ -47,7 +47,7 @@ export function useScrollSpy(headings: readonly DocHeading[]): string | null {
         id: node.id,
         top: node.getBoundingClientRect().top - containerTop,
       }));
-      setActiveId(activeHeadingId(tops, HEADING_SCROLL_OFFSET));
+      setActiveId(activeHeadingId(tops, SCROLL_SPY_OFFSET));
     };
 
     update();

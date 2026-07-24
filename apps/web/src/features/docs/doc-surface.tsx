@@ -249,7 +249,7 @@ function LoadedDoc({
       {editing ? (
         <EditSession doc={detail.doc} save={update.mutateAsync} onStatusChange={setStatus} />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto motion-reduce:scroll-auto">
           <DocReader
             doc={detail.doc}
             contentHtml={detail.contentHtml}

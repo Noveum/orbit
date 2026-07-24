@@ -1,4 +1,4 @@
-import { truncate } from '@orbit/shared/utils';
+import { slugify, truncate } from '@orbit/shared/utils';
 import { Marked } from 'marked';
 import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
@@ -8,12 +8,45 @@ export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 const UNSAFE_URL = /^\s*(javascript|vbscript|file|data):/i;
 const BLOCK_END = /<\/(p|h[1-6]|li|blockquote|pre|tr|table|ul|ol)>/gi;
 const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
+const HEADING_TAG = /<h([1-3])((?:\s[^>]*)?)>([\s\S]*?)<\/h\1>/gi;
+const EXISTING_ID = /\sid="[^"]*"/gi;
 
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false });
 
 export function renderMarkdown(source: string): string {
   if (source.trim().length === 0) return '';
   return sanitizeHtml(marked.parse(source, { async: false }));
+}
+
+function headingSlug(text: string): string {
+  const base = slugify(text);
+  return base.length === 0 ? 'section' : base;
+}
+
+function uniqueHeadingId(text: string, used: Map<string, number>): string {
+  const base = headingSlug(text);
+  let suffix = used.get(base) ?? 0;
+  let id = suffix === 0 ? base : `${base}-${suffix}`;
+  while (used.has(id)) {
+    suffix += 1;
+    id = `${base}-${suffix}`;
+  }
+  used.set(base, suffix + 1);
+  if (id !== base) used.set(id, 0);
+  return id;
+}
+
+export function renderMarkdownWithHeadingIds(source: string): string {
+  const used = new Map<string, number>();
+  return renderMarkdown(source).replace(
+    HEADING_TAG,
+    (match: string, level: string, attrs: string, inner: string) => {
+      const text = decodeEntities(htmlToText(inner)).replace(/\s+/g, ' ').trim();
+      if (text.length === 0) return match;
+      const id = uniqueHeadingId(text, used);
+      return `<h${level}${attrs.replace(EXISTING_ID, '')} id="${id}">${inner}</h${level}>`;
+    },
+  );
 }
 
 export function renderPlainText(source: string): string {

@@ -1,5 +1,5 @@
 import { getPublishedDoc } from '@orbit/core';
-import { renderMarkdown, summarize } from '@orbit/services/markdown';
+import { renderMarkdownWithHeadingIds, summarize } from '@orbit/services/markdown';
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { DocReader } from '@/features/docs/doc-reader.tsx';
@@ -95,7 +95,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
           archivedAt: null,
           publishToken: null,
         }}
-        contentHtml={renderMarkdown(detail.doc.content)}
+        contentHtml={renderMarkdownWithHeadingIds(detail.doc.content)}
         attachments={detail.attachments.map((attachment) => ({
           id: attachment.id,
           parentType: attachment.parentType,

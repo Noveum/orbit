@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
-import { prefersReducedMotion, scrollHeadingIntoView } from './doc-scroll.ts';
+import { prefersReducedMotion } from './doc-scroll.ts';
 import type { DocHeading } from './outline.ts';
 
 export interface DocOutlineProps {
@@ -30,12 +30,6 @@ export function DocOutline({ headings, activeId }: DocOutlineProps) {
 
   if (headings.length < 2) return null;
 
-  const jumpTo = (heading: DocHeading) => {
-    if (document.getElementById(heading.id) === null) return;
-    scrollHeadingIntoView(heading.id);
-    window.history.replaceState(null, '', `#${heading.id}`);
-  };
-
   return (
     <nav
       ref={navRef}
@@ -53,11 +47,6 @@ export function DocOutline({ headings, activeId }: DocOutlineProps) {
               href={`#${heading.id}`}
               data-heading={heading.id}
               aria-current={activeId === heading.id ? 'location' : undefined}
-              onClick={(event) => {
-                if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-                event.preventDefault();
-                jumpTo(heading);
-              }}
               className={cn(
                 'block border-l py-1 text-dense transition-colors duration-[var(--duration-fast)]',
                 heading.level === 1 && 'pl-3',

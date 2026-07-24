@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { renderMarkdown } from '@orbit/services/markdown';
+import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { DocReader } from './doc-reader.tsx';
 
@@ -82,7 +81,7 @@ function renderReader() {
   return render(
     <DocReader
       doc={doc}
-      contentHtml={renderMarkdown(MARKDOWN)}
+      contentHtml={renderMarkdownWithHeadingIds(MARKDOWN)}
       attachments={[]}
       author={{ name: 'Pulkit', image: null }}
       followers={1}
@@ -157,36 +156,16 @@ describe('doc outline scroll spy', () => {
     expect(activeText()).not.toBe('Checklist');
   });
 
-  it('scrolls the clicked heading, not the one above it, and puts it in the url', async () => {
+  it('points each outline link at the anchor the body actually rendered', async () => {
     tops.set('intro', 200);
     tops.set('rules', 900);
     tops.set('checklist', 1600);
-    const scrolledTo: number[] = [];
-    const realScrollTo = window.scrollTo;
-    Object.defineProperty(window, 'scrollTo', {
-      writable: true,
-      configurable: true,
-      value: (options: ScrollToOptions) => {
-        if (typeof options?.top === 'number') scrolledTo.push(options.top);
-      },
-    });
-    const user = userEvent.setup();
     renderReader();
     await screen.findByTestId('doc-outline');
 
     const link = screen.getByTestId('doc-outline').querySelector('[data-heading="rules"]');
-    expect(link).not.toBeNull();
-    if (link !== null) await user.click(link);
-
-    expect(scrolledTo).toContain(900 - 96);
-    expect(scrolledTo).not.toContain(200 - 96);
-    expect(window.location.hash).toBe('#rules');
-
-    Object.defineProperty(window, 'scrollTo', {
-      writable: true,
-      configurable: true,
-      value: realScrollTo,
-    });
+    expect(link?.getAttribute('href')).toBe('#rules');
+    expect(screen.getByTestId('doc-body').querySelector('#rules')).not.toBeNull();
   });
 
   it('shows the docs that link here', async () => {

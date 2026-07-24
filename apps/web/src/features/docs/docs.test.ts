@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
-import { renderMarkdown, summarize } from '@orbit/services/markdown';
+import { renderMarkdown, renderMarkdownWithHeadingIds, summarize } from '@orbit/services/markdown';
 import { act, renderHook } from '@testing-library/react';
 import { publicDocPath, publicDocUrl } from '@/lib/docs/paths.ts';
 import { descendantIds, matchParents } from './doc-surface.tsx';
@@ -12,7 +12,7 @@ import {
   SNIPPETS,
   wrapSelection,
 } from './markdown-input.ts';
-import { readTimeMinutes, sameHeadings, slugify, withHeadingIds } from './outline.ts';
+import { extractHeadings, readTimeMinutes, sameHeadings } from './outline.ts';
 import {
   canonicalDocUrl,
   isIndexable,
@@ -24,9 +24,9 @@ import { uploadContentType, uploadDocFile } from './upload.ts';
 import { AUTOSAVE_DELAY_MS, useAutosave } from './use-autosave.ts';
 import { activeHeadingId } from './use-scroll-spy.ts';
 
-describe('withHeadingIds', () => {
+describe('extractHeadings', () => {
   it('reads the headings the reader actually rendered, including indented and setext ones', () => {
-    const html = renderMarkdown(
+    const html = renderMarkdownWithHeadingIds(
       [
         '  # Realtime **protocol**',
         '',
@@ -43,7 +43,7 @@ describe('withHeadingIds', () => {
       ].join('\n'),
     );
 
-    expect(withHeadingIds(html).headings).toEqual([
+    expect(extractHeadings(html)).toEqual([
       { id: 'realtime-protocol', text: 'Realtime protocol', level: 1 },
       { id: 'action-shape', text: 'Action shape', level: 1 },
       { id: 'rules', text: 'Rules', level: 3 },
@@ -51,31 +51,32 @@ describe('withHeadingIds', () => {
   });
 
   it('survives an unbalanced fence rather than swallowing every heading after it', () => {
-    const html = renderMarkdown('## Setup\n\n```ts\nconst a = 1;\n\n## Teardown\n');
-    expect(withHeadingIds(html).headings.map((entry) => entry.text)).toEqual(['Setup']);
+    const html = renderMarkdownWithHeadingIds('## Setup\n\n```ts\nconst a = 1;\n\n## Teardown\n');
+    expect(extractHeadings(html).map((entry) => entry.text)).toEqual(['Setup']);
   });
 
-  it('bakes the ids into the html so a rerender cannot wipe them', () => {
-    const outlined = withHeadingIds(renderMarkdown('## Setup\n\n## Setup\n'));
-    expect(outlined.headings.map((entry) => entry.id)).toEqual(['setup', 'setup-1']);
-    expect(outlined.html).toBe('<h2 id="setup">Setup</h2>\n<h2 id="setup-1">Setup</h2>\n');
-    expect(withHeadingIds(outlined.html).html).toBe(outlined.html);
-    expect(slugify('   ')).toBe('section');
+  it('reads the same ids no matter how many times it runs over the html', () => {
+    const html = renderMarkdownWithHeadingIds('## Setup\n\n## Setup\n');
+    expect(extractHeadings(html).map((entry) => entry.id)).toEqual(['setup', 'setup-1']);
+    expect(extractHeadings(html).map((entry) => entry.id)).toEqual(['setup', 'setup-1']);
   });
 
   it('keeps ids unique when a later heading slugifies onto an earlier suffixed id', () => {
-    const outlined = withHeadingIds(renderMarkdown('## Setup\n\n## Setup\n\n## Setup 1\n'));
-    expect(outlined.headings.map((entry) => entry.id)).toEqual(['setup', 'setup-1', 'setup-1-1']);
+    const html = renderMarkdownWithHeadingIds('## Setup\n\n## Setup\n\n## Setup 1\n');
+    expect(extractHeadings(html).map((entry) => entry.id)).toEqual([
+      'setup',
+      'setup-1',
+      'setup-1-1',
+    ]);
   });
 
   it('reads through inline markup and entities to the heading text', () => {
-    const outlined = withHeadingIds(renderMarkdown('## Batch & `sync_id`\n'));
-    expect(outlined.headings[0]).toEqual({
+    const html = renderMarkdownWithHeadingIds('## Batch & `sync_id`\n');
+    expect(extractHeadings(html)[0]).toEqual({
       id: 'batch-sync-id',
       text: 'Batch & sync_id',
       level: 2,
     });
-    expect(outlined.html).toContain('id="batch-sync-id"');
   });
 
   it('compares heading lists by id so the reader does not loop on every render', () => {

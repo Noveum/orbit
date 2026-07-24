@@ -1,5 +1,5 @@
 import { getDoc } from '@orbit/core';
-import { renderMarkdown } from '@orbit/services/markdown';
+import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { isDomainError } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
@@ -21,7 +21,7 @@ async function docDetail(principal: Principal, docId: string): Promise<DocDetail
     const detail = await getDoc(principal, docId);
     return asWire(docDetailSchema, {
       ...detail,
-      contentHtml: renderMarkdown(detail.doc.content),
+      contentHtml: renderMarkdownWithHeadingIds(detail.doc.content),
     });
   } catch (error) {
     if (isDomainError(error) && error.code === 'not_found') return null;

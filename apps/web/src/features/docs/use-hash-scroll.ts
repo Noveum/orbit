@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import { scrollHeadingIntoView } from './doc-scroll.ts';
 
 export function hashTargetId(hash: string): string | null {
   if (hash.length <= 1) return null;
@@ -18,14 +17,12 @@ export function scrollToHash(): void {
   if (typeof window === 'undefined') return;
   const id = hashTargetId(window.location.hash);
   if (id === null) return;
-  scrollHeadingIntoView(id);
+  document.getElementById(id)?.scrollIntoView();
 }
 
 export function useHashScroll(readySignature: string): void {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run the scroll once the rendered headings change so a deep link lands after the content mounts
+  // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run the scroll once the rendered headings mount so a deep link opened on a client-loaded doc still lands on its target
   useEffect(() => {
     scrollToHash();
-    window.addEventListener('hashchange', scrollToHash);
-    return () => window.removeEventListener('hashchange', scrollToHash);
   }, [readySignature]);
 }

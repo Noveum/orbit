@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { renderMarkdown } from '@orbit/services/markdown';
+import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { render, waitFor } from '@testing-library/react';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { DocReader } from './doc-reader.tsx';
@@ -8,12 +8,6 @@ import { hashTargetId } from './use-hash-scroll.ts';
 const MARKDOWN = ['## Intro', '', 'body', '', '## Rules', '', 'body', '', '## Checklist'].join(
   '\n',
 );
-
-const HEADING_TOP = new Map<string, number>([
-  ['intro', 200],
-  ['rules', 900],
-  ['checklist', 1600],
-]);
 
 const doc: Doc = {
   id: 'doc_1',
@@ -34,40 +28,26 @@ const doc: Doc = {
   archivedAt: null,
 };
 
-const scrolledTo: number[] = [];
-const realRect = Element.prototype.getBoundingClientRect;
-const realScrollTo = window.scrollTo;
+const scrolledIds: string[] = [];
+const realScrollIntoView = Element.prototype.scrollIntoView;
 
 beforeEach(() => {
-  scrolledTo.length = 0;
-  Object.defineProperty(window, 'scrollTo', {
-    writable: true,
-    configurable: true,
-    value: (options: ScrollToOptions) => {
-      if (typeof options?.top === 'number') scrolledTo.push(options.top);
-    },
-  });
-  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
+  scrolledIds.length = 0;
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
     writable: true,
     configurable: true,
     value(this: Element) {
-      const top = this.isConnected ? (HEADING_TOP.get(this.id) ?? 0) : 0;
-      return { top, bottom: top + 24, left: 0, right: 0, width: 200, height: 24 } as DOMRect;
+      scrolledIds.push(this.id);
     },
   });
 });
 
 afterEach(() => {
   window.location.hash = '';
-  Object.defineProperty(window, 'scrollTo', {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
     writable: true,
     configurable: true,
-    value: realScrollTo,
-  });
-  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
-    writable: true,
-    configurable: true,
-    value: realRect,
+    value: realScrollIntoView,
   });
 });
 
@@ -75,7 +55,7 @@ function reader(which: Doc) {
   return (
     <DocReader
       doc={which}
-      contentHtml={renderMarkdown(MARKDOWN)}
+      contentHtml={renderMarkdownWithHeadingIds(MARKDOWN)}
       attachments={[]}
       author={{ name: 'Pulkit', image: null }}
       followers={1}
@@ -83,10 +63,6 @@ function reader(which: Doc) {
       projectName={null}
     />
   );
-}
-
-function renderReader() {
-  return render(reader(doc));
 }
 
 describe('hash target id', () => {
@@ -99,26 +75,26 @@ describe('hash target id', () => {
 });
 
 describe('reader hash deep link', () => {
-  it('scrolls the heading that matches the url hash into view on mount', async () => {
+  it('brings the heading that matches the url hash into view on mount', async () => {
     window.location.hash = '#rules';
-    renderReader();
-    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
+    render(reader(doc));
+    await waitFor(() => expect(scrolledIds).toContain('rules'));
   });
 
   it('does not scroll anywhere when there is no hash', async () => {
     window.location.hash = '';
-    renderReader();
+    render(reader(doc));
     await waitFor(() => expect(document.querySelector('#rules')).not.toBeNull());
-    expect(scrolledTo).toHaveLength(0);
+    expect(scrolledIds).toHaveLength(0);
   });
 
   it('scrolls again after switching to another doc that shares the heading id', async () => {
     window.location.hash = '#rules';
     const view = render(reader(doc));
-    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
+    await waitFor(() => expect(scrolledIds).toContain('rules'));
 
-    scrolledTo.length = 0;
+    scrolledIds.length = 0;
     view.rerender(reader({ ...doc, id: 'doc_2' }));
-    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
+    await waitFor(() => expect(scrolledIds).toContain('rules'));
   });
 });

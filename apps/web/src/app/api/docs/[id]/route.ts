@@ -1,5 +1,5 @@
 import { archiveDoc, getDoc, updateDoc } from '@orbit/core';
-import { renderMarkdown } from '@orbit/services/markdown';
+import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { handle, publish, readJson } from '@/lib/api/handler.ts';
 
 interface RouteContext {
@@ -10,7 +10,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
   const { id } = await context.params;
   return await handle(async (principal) => {
     const detail = await getDoc(principal, id);
-    return { ...detail, contentHtml: renderMarkdown(detail.doc.content) };
+    return { ...detail, contentHtml: renderMarkdownWithHeadingIds(detail.doc.content) };
   });
 }
 
@@ -20,7 +20,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return await handle(async (principal) => {
     const saved = await updateDoc(principal, id, body);
     await publish(saved.actions);
-    return { doc: saved.doc, contentHtml: renderMarkdown(saved.doc.content) };
+    return { doc: saved.doc, contentHtml: renderMarkdownWithHeadingIds(saved.doc.content) };
   });
 }
 

@@ -4,6 +4,7 @@ import {
   extractIssueIdentifiers,
   extractMentions,
   renderMarkdown,
+  renderMarkdownWithHeadingIds,
   renderPlainText,
   summarize,
 } from './index.ts';
@@ -105,6 +106,47 @@ describe('renderMarkdown xss', () => {
     const html = renderMarkdown('```\n<script>alert(1)</script>\n```');
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('renderMarkdownWithHeadingIds', () => {
+  it('leaves renderMarkdown untouched so only the reader paths carry ids', () => {
+    expect(renderMarkdown('# Title')).toBe('<h1>Title</h1>\n');
+  });
+
+  it('gives each heading the slug of its own text so anchors and hashes agree', () => {
+    const html = renderMarkdownWithHeadingIds(
+      ['# Global rules', '', '## Delete a branch', '', 'body'].join('\n'),
+    );
+    expect(html).toContain('<h1 id="global-rules">Global rules</h1>');
+    expect(html).toContain('<h2 id="delete-a-branch">Delete a branch</h2>');
+  });
+
+  it('only tags h1 through h3', () => {
+    const html = renderMarkdownWithHeadingIds('### `Rules`\n\n#### Too deep');
+    expect(html).toContain('<h3 id="rules">');
+    expect(html).toContain('<h4>Too deep</h4>');
+  });
+
+  it('bakes stable, unique ids that survive a re-run', () => {
+    const html = renderMarkdownWithHeadingIds('## Setup\n\n## Setup\n');
+    expect(html).toBe('<h2 id="setup">Setup</h2>\n<h2 id="setup-1">Setup</h2>\n');
+    expect(renderMarkdownWithHeadingIds('## Setup\n\n## Setup\n')).toBe(html);
+  });
+
+  it('keeps ids unique when a later heading slugifies onto an earlier suffixed id', () => {
+    const html = renderMarkdownWithHeadingIds('## Setup\n\n## Setup\n\n## Setup 1\n');
+    expect(html).toContain('id="setup"');
+    expect(html).toContain('id="setup-1"');
+    expect(html).toContain('id="setup-1-1"');
+  });
+
+  it('reads through inline markup and entities to build the slug', () => {
+    expect(renderMarkdownWithHeadingIds('## Batch & `sync_id`\n')).toContain('id="batch-sync-id"');
+  });
+
+  it('falls back to a section slug when the heading slugifies to nothing', () => {
+    expect(renderMarkdownWithHeadingIds('## @@@\n')).toContain('id="section"');
   });
 });
 

@@ -1,5 +1,4 @@
 import { decodeEntities, htmlToText } from '@orbit/services/markdown';
-import { slugify as baseSlugify } from '@orbit/shared/utils';
 
 export interface DocHeading {
   readonly id: string;
@@ -7,49 +6,17 @@ export interface DocHeading {
   readonly level: number;
 }
 
-export interface OutlinedHtml {
-  readonly html: string;
-  readonly headings: DocHeading[];
-}
+const HEADING_WITH_ID = /<h([1-3])[^>]*?\sid="([^"]+)"[^>]*>([\s\S]*?)<\/h\1>/gi;
 
-const HEADING_TAG = /<h([1-3])((?:\s[^>]*)?)>([\s\S]*?)<\/h\1>/gi;
-const EXISTING_ID = /\sid="[^"]*"/gi;
-
-export function slugify(text: string): string {
-  const base = baseSlugify(text);
-  return base.length === 0 ? 'section' : base;
-}
-
-export function uniqueHeadingId(text: string, used: Map<string, number>): string {
-  const base = slugify(text);
-  let suffix = used.get(base) ?? 0;
-  let id = suffix === 0 ? base : `${base}-${suffix}`;
-  while (used.has(id)) {
-    suffix += 1;
-    id = `${base}-${suffix}`;
-  }
-  used.set(base, suffix + 1);
-  if (id !== base) used.set(id, 0);
-  return id;
-}
-
-export function withHeadingIds(html: string): OutlinedHtml {
-  const used = new Map<string, number>();
+export function extractHeadings(html: string): DocHeading[] {
   const headings: DocHeading[] = [];
-
-  const rewritten = html.replace(
-    HEADING_TAG,
-    (match, level: string, attrs: string, inner: string) => {
-      const text = decodeEntities(htmlToText(inner)).replace(/\s+/g, ' ').trim();
-      if (text.length === 0) return match;
-
-      const id = uniqueHeadingId(text, used);
-      headings.push({ id, text, level: Number.parseInt(level, 10) });
-      return `<h${level}${attrs.replace(EXISTING_ID, '')} id="${id}">${inner}</h${level}>`;
-    },
-  );
-
-  return { html: rewritten, headings };
+  for (const match of html.matchAll(HEADING_WITH_ID)) {
+    const [, level, id, inner] = match;
+    if (level === undefined || id === undefined || inner === undefined) continue;
+    const text = decodeEntities(htmlToText(inner)).replace(/\s+/g, ' ').trim();
+    headings.push({ id, text, level: Number.parseInt(level, 10) });
+  }
+  return headings;
 }
 
 export function sameHeadings(left: readonly DocHeading[], right: readonly DocHeading[]): boolean {
