@@ -1,19 +1,23 @@
 'use client';
 
 import { PanelLeft, Search, X } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { ScrollArea } from '@/components/ui/scroll-area.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { NavSection, ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
+import type { NavLink, ShellUser, ShellWorkspace, SidebarNav } from '@/lib/navigation.ts';
+import { useSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
 import { NavItem } from './nav-item.tsx';
+import { SidebarSection } from './sidebar-section.tsx';
+import { SidebarTeam } from './sidebar-team.tsx';
 import { WorkspaceSwitcher } from './workspace-switcher.tsx';
 
 export interface SidebarProps {
   readonly workspace: ShellWorkspace;
   readonly workspaces: readonly ShellWorkspace[];
   readonly user: ShellUser;
-  readonly sections: readonly NavSection[];
+  readonly nav: SidebarNav;
   readonly collapsed: boolean;
   readonly touch?: boolean;
   readonly onToggleCollapsed: () => void;
@@ -21,17 +25,26 @@ export interface SidebarProps {
   readonly onNavigate?: (() => void) | null;
 }
 
+function activeTeamKey(pathname: string): string | null {
+  if (!pathname.startsWith('/team/')) return null;
+  return pathname.split('/')[2]?.toLowerCase() ?? null;
+}
+
 export function Sidebar({
   workspace,
   workspaces,
   user,
-  sections,
+  nav,
   collapsed,
   touch = false,
   onToggleCollapsed,
   onOpenPalette,
   onNavigate = null,
 }: SidebarProps) {
+  const pathname = usePathname();
+  const disclosure = useSidebarDisclosure();
+  const currentTeam = activeTeamKey(pathname);
+
   const toggle = (
     <button
       type="button"
@@ -50,6 +63,31 @@ export function Sidebar({
       )}
     </button>
   );
+
+  const renderLink = (link: NavLink) => (
+    <NavItem
+      key={link.href}
+      link={link}
+      collapsed={collapsed}
+      touch={touch}
+      onNavigate={onNavigate}
+    />
+  );
+
+  const teams = nav.teams.map((team) => {
+    const fallbackOpen = team.key.toLowerCase() === currentTeam;
+    return (
+      <SidebarTeam
+        key={team.id}
+        team={team}
+        collapsed={collapsed}
+        touch={touch}
+        open={disclosure.isOpen(`team:${team.id}`, fallbackOpen)}
+        onToggle={() => disclosure.toggle(`team:${team.id}`, fallbackOpen)}
+        onNavigate={onNavigate}
+      />
+    );
+  });
 
   return (
     <div className="flex h-full flex-col gap-1 border-border border-r bg-surface">
@@ -94,29 +132,47 @@ export function Sidebar({
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <nav
-          aria-label="Workspace"
-          className="flex flex-col gap-4 px-2 pb-4 3xl:gap-5 3xl:px-3 3xl:pb-6"
-        >
-          {sections.map((section) => (
-            <div key={section.id} className="flex flex-col gap-0.5">
-              {section.title !== undefined && !collapsed ? (
-                <p className="px-2 pt-1 pb-1 font-medium text-2xs text-faint uppercase tracking-wide">
-                  {section.title}
-                </p>
-              ) : null}
-              {section.links.map((link) => (
-                <NavItem
-                  key={link.href}
-                  link={link}
-                  collapsed={collapsed}
-                  touch={touch}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </div>
-          ))}
-        </nav>
+        {collapsed ? (
+          <nav
+            aria-label="Workspace"
+            className="flex flex-col items-stretch gap-0.5 px-2 pb-4 3xl:px-3 3xl:pb-6"
+          >
+            {nav.personal.map(renderLink)}
+            <div className="my-1 h-px bg-border" aria-hidden="true" />
+            {nav.workspace.links.map(renderLink)}
+            {teams.length > 0 ? (
+              <>
+                <div className="my-1 h-px bg-border" aria-hidden="true" />
+                {teams}
+              </>
+            ) : null}
+          </nav>
+        ) : (
+          <nav
+            aria-label="Workspace"
+            className="flex flex-col gap-3 px-2 pb-4 3xl:gap-4 3xl:px-3 3xl:pb-6"
+          >
+            <div className="flex flex-col gap-0.5">{nav.personal.map(renderLink)}</div>
+
+            <SidebarSection
+              title={nav.workspace.title}
+              open={disclosure.isOpen('section:workspace', true)}
+              onToggle={() => disclosure.toggle('section:workspace', true)}
+            >
+              {nav.workspace.links.map(renderLink)}
+            </SidebarSection>
+
+            {teams.length > 0 ? (
+              <SidebarSection
+                title="Teams"
+                open={disclosure.isOpen('section:teams', true)}
+                onToggle={() => disclosure.toggle('section:teams', true)}
+              >
+                {teams}
+              </SidebarSection>
+            ) : null}
+          </nav>
+        )}
       </ScrollArea>
     </div>
   );

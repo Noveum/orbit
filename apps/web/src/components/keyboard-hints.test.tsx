@@ -16,7 +16,7 @@ import {
   HotkeyProvider,
   useHotkeyList,
 } from '@/lib/keyboard/index.ts';
-import { buildNavigation } from '@/lib/navigation.ts';
+import { buildNavigation, buildSidebarNav } from '@/lib/navigation.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
@@ -92,7 +92,9 @@ const issue: Issue = {
   labelIds: [],
 };
 
-const sections = buildNavigation([{ id: 'team_1', key: 'ENG', name: 'Engineering' }], 3);
+const TEAMS = [{ id: 'team_1', key: 'ENG', name: 'Engineering' }];
+const sections = buildNavigation(TEAMS, 3);
+const sidebarNav = buildSidebarNav(TEAMS, 3);
 
 const noop = () => undefined;
 
@@ -113,7 +115,7 @@ function Surfaces({ extra }: { readonly extra?: ReactNode }) {
             workspace={{ id: 'org_1', name: 'Noveum', slug: 'noveum' }}
             workspaces={[]}
             user={{ name: 'Pulkit', email: 'pulkit@noveum.ai', image: null }}
-            sections={sections}
+            nav={sidebarNav}
             collapsed={false}
             onToggleCollapsed={noop}
             onOpenPalette={noop}

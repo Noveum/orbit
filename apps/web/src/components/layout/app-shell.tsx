@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import {
   buildNavigation,
+  buildSidebarNav,
   type ShellTeam,
   type ShellUser,
   type ShellWorkspace,
@@ -52,6 +53,7 @@ export function AppShell({
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const sections = useMemo(() => buildNavigation(teams, inboxCount), [teams, inboxCount]);
+  const sidebarNav = useMemo(() => buildSidebarNav(teams, inboxCount), [teams, inboxCount]);
 
   useEffect(() => {
     if (isDesktop) setDrawerOpen(false);
@@ -81,7 +83,7 @@ export function AppShell({
       workspace={workspace}
       workspaces={workspaces}
       user={user}
-      sections={sections}
+      nav={sidebarNav}
       collapsed={!touch && collapsed}
       touch={touch}
       onToggleCollapsed={toggleSidebar}
