@@ -36,7 +36,7 @@ export const issueSchema = z.object({
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: nullableTimestamp,
-  labelIds: z.array(z.string()).default([]),
+  labelIds: z.array(z.string()).catch([]).default([]),
 });
 
 export type Issue = z.infer<typeof issueSchema>;

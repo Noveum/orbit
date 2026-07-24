@@ -88,7 +88,7 @@ export default async function AnalyticsPage({ searchParams }: PageProps) {
         )}
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 4xl:grid-cols-4">
         <Card>
           <BarChart
             title="By assignee"

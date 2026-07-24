@@ -221,7 +221,10 @@ export function buildFilterFields(
         })),
         unsetOption('No label'),
       ],
-      countOf: (issue) => (issue.labelIds.length === 0 ? [UNSET_FILTER_VALUE] : issue.labelIds),
+      countOf: (issue) => {
+        const ids = Array.isArray(issue.labelIds) ? issue.labelIds : [];
+        return ids.length === 0 ? [UNSET_FILTER_VALUE] : ids;
+      },
     },
     {
       property: 'project',
@@ -305,7 +308,9 @@ export function countValues(
   const read = definition.countOf;
   if (read === null) return counts;
   for (const issue of issues) {
-    for (const key of read(issue)) counts.set(key, (counts.get(key) ?? 0) + 1);
+    const keys = read(issue);
+    if (!Array.isArray(keys)) continue;
+    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
 }

@@ -15,12 +15,12 @@ import {
 } from '@/components/ui/dialog.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
-import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { buildFilterFields, describeCondition } from '@/features/filters/filter-fields.tsx';
 import { VIEW_PARAM, withViewParam } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { viewConfigFromState, viewConfigSearch } from '@/features/filters/view-config.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { View } from '@/lib/query/schemas.ts';
 import {
@@ -44,14 +44,7 @@ export function ViewsPage() {
   const shared = rows.filter((view) => !view.virtual && view.ownerId !== workspace.userId);
 
   if (views.isPending) {
-    return (
-      <div className="flex flex-col gap-3 px-6 py-6" data-testid="views-skeleton">
-        <Skeleton className="h-6 w-32" />
-        {[0, 1, 2].map((index) => (
-          <Skeleton key={index} className="h-16 w-full rounded-lg" />
-        ))}
-      </div>
-    );
+    return <ViewsSkeleton />;
   }
 
   return (
