@@ -120,13 +120,21 @@ function ViewRow({ view }: { view: View }) {
   const owner = workspace.members.find((member) => member.id === view.ownerId);
   const editable = !(view.virtual || view.locked) && view.ownerId === workspace.userId;
 
-  const href =
-    team === null
-      ? `/views?${VIEW_PARAM}=${encodeURIComponent(view.id)}`
-      : `/team/${team.key.toLowerCase()}/${layout === 'board' ? 'board' : 'issues'}${withViewParam(
-          viewConfigSearch(config, layout),
-          view.id,
-        )}`;
+  const href = ((): string => {
+    if (view.id === 'virtual:standup') {
+      return `/standup${layout === 'board' ? '/board' : ''}${withViewParam(
+        viewConfigSearch(config, layout),
+        view.id,
+      )}`;
+    }
+    if (team === null) {
+      return `/views?${VIEW_PARAM}=${encodeURIComponent(view.id)}`;
+    }
+    return `/team/${team.key.toLowerCase()}/${layout === 'board' ? 'board' : 'issues'}${withViewParam(
+      viewConfigSearch(config, layout),
+      view.id,
+    )}`;
+  })();
 
   const submitRename = () => {
     const trimmed = name.trim();

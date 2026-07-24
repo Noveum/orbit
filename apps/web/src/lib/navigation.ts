@@ -13,6 +13,7 @@ import {
   Settings,
   Sun,
   Target,
+  Users,
 } from 'lucide-react';
 import type { HotkeySection } from '@/lib/keyboard/index.ts';
 
@@ -67,6 +68,7 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
       links: [
         { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
         { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
+        { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
         { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
       ],
