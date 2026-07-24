@@ -1,6 +1,6 @@
 import type { ServerMessage, SyncAction } from '@orbit/shared/events';
 import type { ServerWebSocket } from 'bun';
-import type { ConnectionPrincipal, ConnectionRejection } from './auth.ts';
+import type { ConnectionPrincipal } from './auth.ts';
 import { logger } from './logger.ts';
 
 export interface ConnectionLimits {
@@ -11,9 +11,11 @@ export interface ConnectionLimits {
   readonly messagesPerSecond: number;
 }
 
-export type SocketData =
-  | { readonly rejection: ConnectionRejection }
-  | { readonly principal: ConnectionPrincipal; connection: Connection | null };
+export interface SocketData {
+  connection: Connection | null;
+  authenticating: boolean;
+  authTimer: ReturnType<typeof setTimeout> | undefined;
+}
 
 export class Connection {
   readonly scopes = new Set<string>();

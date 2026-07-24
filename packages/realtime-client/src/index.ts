@@ -1,4 +1,5 @@
 import type {
+  AuthMessage,
   ClientMessage,
   PresenceKind,
   PresenceMessage,
@@ -15,8 +16,7 @@ export type RealtimeStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
 export interface RealtimeClientOptions {
   url: string;
-  token: string;
-  organizationId: string;
+  fetchTicket: () => Promise<string>;
   onDelta?: (actions: SyncAction[]) => void;
   onPresence?: (messages: PresenceMessage[]) => void;
   onStatus?: (status: RealtimeStatus) => void;
@@ -49,13 +49,6 @@ const TERMINAL_CLOSE_CODES: readonly number[] = [
 function backoffDelay(attempt: number, maxBackoffMs: number): number {
   const exponential = Math.min(maxBackoffMs, BASE_BACKOFF_MS * 2 ** attempt);
   return Math.round(exponential * (0.5 + Math.random() * 0.5));
-}
-
-function endpoint(url: string, token: string, organizationId: string): string {
-  const target = new URL(url);
-  target.searchParams.set('token', token);
-  target.searchParams.set('organizationId', organizationId);
-  return target.toString();
 }
 
 export function createRealtimeClient(options: RealtimeClientOptions): RealtimeClient {
@@ -91,6 +84,25 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     if (syncId > maxSeenSyncId) maxSeenSyncId = syncId;
   }
 
+  function handleReady(): void {
+    attempt = 0;
+    const reconnected = resumed;
+    resumed = true;
+    setStatus('open');
+    sendSubscribe([...scopes]);
+    if (reconnected) options.onResume?.(maxSeenSyncId);
+  }
+
+  function handleDelta(actions: SyncAction[]): void {
+    for (const action of actions) observe(action.syncId);
+    options.onDelta?.(actions);
+  }
+
+  function handleDenied(denied: readonly string[]): void {
+    for (const scope of denied) scopes.delete(scope);
+    options.onDenied?.([...denied]);
+  }
+
   function receive(payload: string): void {
     let parsedJson: unknown;
     try {
@@ -101,9 +113,12 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     const parsed = serverMessageSchema.safeParse(parsedJson);
     if (!parsed.success) return;
     const message = parsed.data;
+    if (message.type === 'ready') {
+      handleReady();
+      return;
+    }
     if (message.type === 'delta') {
-      for (const action of message.actions) observe(action.syncId);
-      options.onDelta?.(message.actions);
+      handleDelta(message.actions);
       return;
     }
     if (message.type === 'presence') {
@@ -111,8 +126,7 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       return;
     }
     if (message.type === 'subscribed' && message.denied.length > 0) {
-      for (const scope of message.denied) scopes.delete(scope);
-      options.onDenied?.([...message.denied]);
+      handleDenied(message.denied);
     }
   }
 
@@ -123,41 +137,48 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     attempt += 1;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
-      try {
-        connect();
-      } catch {
-        scheduleReconnect();
-      }
+      connect();
     }, delay);
   }
 
   function connect(): void {
     if (disposed) return;
-    const next = new WebSocket(endpoint(options.url, options.token, options.organizationId));
-    socket = next;
-    next.onopen = () => {
-      attempt = 0;
-      const reconnected = resumed;
-      resumed = true;
-      setStatus('open');
-      sendSubscribe([...scopes]);
-      if (reconnected) options.onResume?.(maxSeenSyncId);
-    };
-    next.onmessage = (event) => {
-      const payload: unknown = event.data;
-      if (typeof payload === 'string') receive(payload);
-    };
-    next.onclose = (event) => {
-      if (socket === next) socket = null;
-      const terminal = TERMINAL_CLOSE_CODES.includes(event.code);
-      if (terminal) disposed = true;
-      if (disposed) {
-        setStatus('closed');
-        if (terminal) options.onTerminal?.(event.code);
-        return;
-      }
+    openSocket().catch(() => scheduleReconnect());
+  }
+
+  async function openSocket(): Promise<void> {
+    let ticket: string;
+    try {
+      ticket = await options.fetchTicket();
+    } catch {
       scheduleReconnect();
-    };
+      return;
+    }
+    if (disposed) return;
+    try {
+      const next = new WebSocket(options.url);
+      socket = next;
+      next.onopen = () => {
+        next.send(JSON.stringify({ type: 'auth', ticket } satisfies AuthMessage));
+      };
+      next.onmessage = (event) => {
+        const payload: unknown = event.data;
+        if (typeof payload === 'string') receive(payload);
+      };
+      next.onclose = (event) => {
+        if (socket === next) socket = null;
+        const terminal = TERMINAL_CLOSE_CODES.includes(event.code);
+        if (terminal) disposed = true;
+        if (disposed) {
+          setStatus('closed');
+          if (terminal) options.onTerminal?.(event.code);
+          return;
+        }
+        scheduleReconnect();
+      };
+    } catch {
+      scheduleReconnect();
+    }
   }
 
   connect();

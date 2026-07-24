@@ -14,6 +14,8 @@ import {
   createTeam,
   delay,
   redisUrl,
+  type SeedMember,
+  ticketFor,
 } from './test-helpers.ts';
 
 let server: RealtimeServer;
@@ -34,16 +36,17 @@ afterAll(async () => {
   await cleanupFixtures();
 });
 
-async function addSessionFor(userId: string): Promise<string> {
+async function addSessionFor(userId: string): Promise<SeedMember> {
   const token = `token_${randomUUID()}`;
+  const sessionId = `session_${randomUUID()}`;
   await db.insert(schema.session).values({
-    id: `session_${randomUUID()}`,
+    id: sessionId,
     token,
     userId,
     activeOrganizationId: organizationId,
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
   });
-  return token;
+  return { userId, token, sessionId, organizationId, name: 'Surviving' };
 }
 
 async function announceRevocation(userId: string): Promise<void> {
@@ -56,7 +59,7 @@ async function announceRevocation(userId: string): Promise<void> {
 describe('session revocation', () => {
   it('closes the socket whose session row was deleted', async () => {
     const member = await createMember({ organizationId, teamIds: [teamId] });
-    const client = await connectClient(server.port, member.token, organizationId);
+    const client = await connectClient(server.port, member, organizationId);
     await client.waitFor('ready');
 
     await db.delete(schema.session).where(eq(schema.session.token, member.token));
@@ -68,10 +71,10 @@ describe('session revocation', () => {
 
   it('keeps the other still-valid sessions of the same user connected', async () => {
     const member = await createMember({ organizationId, teamIds: [teamId] });
-    const survivingToken = await addSessionFor(member.userId);
+    const survivingSession = await addSessionFor(member.userId);
 
-    const revoked = await connectClient(server.port, member.token, organizationId);
-    const surviving = await connectClient(server.port, survivingToken, organizationId);
+    const revoked = await connectClient(server.port, member, organizationId);
+    const surviving = await connectClient(server.port, survivingSession, organizationId);
     await revoked.waitFor('ready');
     await surviving.waitFor('ready');
 
@@ -91,8 +94,7 @@ describe('session revocation', () => {
 
     const client = createRealtimeClient({
       url: `ws://127.0.0.1:${server.port}`,
-      token: member.token,
-      organizationId,
+      fetchTicket: () => Promise.resolve(ticketFor(member, organizationId)),
       maxBackoffMs: 200,
       onStatus: (status) => statuses.push(status),
       onTerminal: (code) => {

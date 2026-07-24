@@ -48,16 +48,16 @@ function mergePresence(current: PresenceByScope, messages: readonly PresenceMess
 
 export interface RealtimeProviderProps {
   url: string;
-  token: string;
   organizationId: string;
+  fetchTicket: () => Promise<string>;
   onTerminal?: (code: number) => void;
   children: ReactNode;
 }
 
 export function RealtimeProvider({
   url,
-  token,
   organizationId,
+  fetchTicket,
   onTerminal,
   children,
 }: RealtimeProviderProps) {
@@ -70,17 +70,22 @@ export function RealtimeProvider({
   const countsRef = useRef(new Map<string, number>());
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onTerminalRef = useRef(onTerminal);
+  const fetchTicketRef = useRef(fetchTicket);
 
   useEffect(() => {
     onTerminalRef.current = onTerminal;
   }, [onTerminal]);
 
   useEffect(() => {
+    fetchTicketRef.current = fetchTicket;
+  }, [fetchTicket]);
+
+  useEffect(() => {
     if (closeTimerRef.current !== undefined) {
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = undefined;
     }
-    const config = `${url}${SCOPE_SEPARATOR}${token}${SCOPE_SEPARATOR}${organizationId}`;
+    const config = `${url}${SCOPE_SEPARATOR}${organizationId}`;
     if (clientRef.current !== null && configRef.current !== config) {
       clientRef.current.close();
       clientRef.current = null;
@@ -89,8 +94,7 @@ export function RealtimeProvider({
       configRef.current = config;
       clientRef.current = createRealtimeClient({
         url,
-        token,
-        organizationId,
+        fetchTicket: () => fetchTicketRef.current(),
         onStatus: (next) => {
           if (next !== 'open') setPresence(new Map());
           setStatus(next);
@@ -115,7 +119,7 @@ export function RealtimeProvider({
         clientRef.current = null;
       }, 0);
     };
-  }, [url, token, organizationId]);
+  }, [url, organizationId]);
 
   const retainScopes = useCallback((requested: readonly string[]) => {
     const counts = countsRef.current;

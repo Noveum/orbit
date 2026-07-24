@@ -68,9 +68,9 @@ async function publish(action: ReturnType<typeof syncAction>): Promise<void> {
   await publisher.publish(DELTA_CHANNEL, JSON.stringify(action));
 }
 
-describe('client stated organization', () => {
-  it('authorizes the stated organization and delivers only its deltas', async () => {
-    const client = await connectClient(server.port, dual.token, orgB);
+describe('ticket organization', () => {
+  it('honors the organization named in the ticket and delivers only its deltas', async () => {
+    const client = await connectClient(server.port, dual, orgB);
     const ready = await client.waitFor('ready');
     expect(ready.organizationId).toBe(orgB);
 
@@ -106,23 +106,13 @@ describe('client stated organization', () => {
     client.close();
   });
 
-  it('rejects a stated organization the user does not belong to', async () => {
-    const client = await connectClient(server.port, dual.token, outsiderOrg);
+  it('rejects a ticket for an organization the user does not belong to', async () => {
+    const client = await connectClient(server.port, dual, outsiderOrg);
     expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
   });
 
-  it('rejects an empty stated organization instead of choosing one', async () => {
-    const client = await connectClient(server.port, ambiguous.token, '');
-    expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
-  });
-
-  it('rejects a stated organization longer than an identifier can be', async () => {
-    const client = await connectClient(server.port, ambiguous.token, 'x'.repeat(200));
-    expect(await client.waitForClose()).toBe(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
-  });
-
-  it('falls back to the oldest membership when the client states nothing', async () => {
-    const client = await connectClient(server.port, ambiguous.token);
+  it('honors the second workspace of a multi-organization member', async () => {
+    const client = await connectClient(server.port, ambiguous, orgA);
     const ready = await client.waitFor('ready');
     expect(ready.organizationId).toBe(orgA);
     client.close();

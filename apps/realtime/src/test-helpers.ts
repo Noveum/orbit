@@ -2,7 +2,24 @@ import { randomUUID } from 'node:crypto';
 import { db, eq, inArray, schema } from '@orbit/db';
 import type { ClientMessage, ServerMessage, SyncAction } from '@orbit/shared/events';
 import { serverMessageSchema } from '@orbit/shared/events';
+import { REALTIME_TICKET_TTL_MS, signRealtimeTicket } from '@orbit/shared/events/ticket';
 import { RedisClient } from 'bun';
+
+export function ticketSecret(): string {
+  return process.env['BETTER_AUTH_SECRET'] ?? 'dev-secret-change-me-in-production-0123456789abcdef';
+}
+
+export function ticketFor(member: SeedMember, organizationId?: string): string {
+  return signRealtimeTicket(
+    {
+      userId: member.userId,
+      organizationId: organizationId ?? member.organizationId,
+      sessionId: member.sessionId,
+      exp: Date.now() + REALTIME_TICKET_TTL_MS,
+    },
+    ticketSecret(),
+  );
+}
 
 const createdOrganizationIds: string[] = [];
 const createdUserIds: string[] = [];
@@ -39,6 +56,8 @@ export interface SeedMemberOptions {
 export interface SeedMember {
   userId: string;
   token: string;
+  sessionId: string;
+  organizationId: string;
   name: string;
 }
 
@@ -59,9 +78,10 @@ export async function createMember(options: SeedMemberOptions): Promise<SeedMemb
   });
 
   const token = `token_${randomUUID()}`;
+  const sessionId = `session_${randomUUID()}`;
   const expiresAt = options.expiresAt ?? new Date(Date.now() + 60 * 60 * 1000);
   await db.insert(schema.session).values({
-    id: `session_${randomUUID()}`,
+    id: sessionId,
     token,
     userId,
     activeOrganizationId:
@@ -71,7 +91,7 @@ export async function createMember(options: SeedMemberOptions): Promise<SeedMemb
     expiresAt,
   });
 
-  return { userId, token, name };
+  return { userId, token, sessionId, organizationId: options.organizationId, name };
 }
 
 export interface MembershipOptions {
@@ -173,12 +193,14 @@ export interface TestClient {
 
 export function connectClient(
   port: number,
-  token: string,
+  member: SeedMember,
   organizationId?: string,
 ): Promise<TestClient> {
-  const query = new URLSearchParams({ token });
-  if (organizationId !== undefined) query.set('organizationId', organizationId);
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/?${query.toString()}`);
+  return connectWithTicket(port, ticketFor(member, organizationId));
+}
+
+export function connectWithTicket(port: number, ticket: string): Promise<TestClient> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/`);
   const messages: ServerMessage[] = [];
   const listeners = new Set<() => void>();
   let closeCode: number | undefined;
@@ -253,6 +275,7 @@ export function connectClient(
       'open',
       () => {
         clearTimeout(timer);
+        socket.send(JSON.stringify({ type: 'auth', ticket }));
         resolve(client);
       },
       { once: true },
@@ -266,6 +289,29 @@ export function connectClient(
       { once: true },
     );
   });
+}
+
+export function maskedTextFrame(text: string): Buffer {
+  const payload = Buffer.from(text, 'utf8');
+  const mask = Buffer.from([
+    Math.floor(Math.random() * 256),
+    Math.floor(Math.random() * 256),
+    Math.floor(Math.random() * 256),
+    Math.floor(Math.random() * 256),
+  ]);
+  const masked = Buffer.alloc(payload.length);
+  for (let index = 0; index < payload.length; index += 1) {
+    const source = payload[index] ?? 0;
+    const key = mask[index % 4] ?? 0;
+    masked[index] = source ^ key;
+  }
+  const header: number[] = [0x81];
+  if (payload.length < 126) {
+    header.push(0x80 | payload.length);
+  } else {
+    header.push(0x80 | 126, (payload.length >> 8) & 0xff, payload.length & 0xff);
+  }
+  return Buffer.concat([Buffer.from(header), mask, masked]);
 }
 
 export function createPublisher(): RedisClient {

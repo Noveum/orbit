@@ -1,11 +1,12 @@
-import { selectActiveMembership } from '@orbit/core';
 import { and, db, eq, gt, schema } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import { authMessageSchema } from '@orbit/shared/events';
+import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
 import { z } from 'zod';
 
 export interface ConnectionPrincipal {
   readonly userId: string;
-  readonly sessionToken: string;
+  readonly sessionId: string;
   readonly name: string;
   readonly image: string | null;
   readonly organizationId: string;
@@ -44,12 +45,12 @@ interface SessionUser {
 async function toPrincipal(
   user: SessionUser,
   membership: { readonly organizationId: string; readonly role: string },
-  sessionToken: string,
+  sessionId: string,
 ): Promise<ConnectionPrincipal> {
   const role = roleSchema.parse(membership.role);
   return {
     userId: user.userId,
-    sessionToken,
+    sessionId,
     name: user.name,
     image: user.image,
     organizationId: membership.organizationId,
@@ -64,52 +65,76 @@ export type ConnectionAuthentication =
   | { readonly ok: true; readonly principal: ConnectionPrincipal }
   | { readonly ok: false; readonly reason: ConnectionRejection };
 
-export async function authenticateConnection(
-  token: string,
-  statedOrganizationId: string | null,
+export function readTicketFrame(
+  raw: string,
+  secret: string,
+  now?: number,
+): RealtimeTicketPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const frame = authMessageSchema.safeParse(parsed);
+  if (!frame.success) return null;
+  return verifyRealtimeTicket(frame.data.ticket, secret, now);
+}
+
+export async function authenticateTicket(
+  payload: RealtimeTicketPayload,
 ): Promise<ConnectionAuthentication> {
   const sessions = await db
     .select({
       userId: schema.user.id,
       name: schema.user.name,
       image: schema.user.image,
-      activeOrganizationId: schema.session.activeOrganizationId,
     })
     .from(schema.session)
     .innerJoin(schema.user, eq(schema.user.id, schema.session.userId))
-    .where(and(eq(schema.session.token, token), gt(schema.session.expiresAt, new Date())))
+    .where(
+      and(
+        eq(schema.session.id, payload.sessionId),
+        eq(schema.session.userId, payload.userId),
+        gt(schema.session.expiresAt, new Date()),
+      ),
+    )
     .limit(1);
 
   const found = sessions[0];
   if (found === undefined) return { ok: false, reason: 'unauthorized' };
 
   const memberships = await db
-    .select({
-      organizationId: schema.member.organizationId,
-      role: schema.member.role,
-      createdAt: schema.member.createdAt,
-    })
+    .select({ role: schema.member.role })
     .from(schema.member)
-    .where(eq(schema.member.userId, found.userId));
+    .where(
+      and(
+        eq(schema.member.userId, found.userId),
+        eq(schema.member.organizationId, payload.organizationId),
+      ),
+    )
+    .limit(1);
 
-  if (statedOrganizationId !== null) {
-    const stated = memberships.find((row) => row.organizationId === statedOrganizationId);
-    if (stated === undefined) return { ok: false, reason: 'organization_forbidden' };
-    return { ok: true, principal: await toPrincipal(found, stated, token) };
-  }
+  const membership = memberships[0];
+  if (membership === undefined) return { ok: false, reason: 'organization_forbidden' };
 
-  const active = selectActiveMembership(memberships, found.activeOrganizationId);
-  if (active === undefined) return { ok: false, reason: 'unauthorized' };
-  return { ok: true, principal: await toPrincipal(found, active, token) };
+  return {
+    ok: true,
+    principal: await toPrincipal(
+      found,
+      { organizationId: payload.organizationId, role: membership.role },
+      payload.sessionId,
+    ),
+  };
 }
 
 export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
 
-export async function sessionStillValid(sessionToken: string): Promise<boolean> {
+export async function sessionStillValid(sessionId: string): Promise<boolean> {
   const rows = await db
     .select({ id: schema.session.id })
     .from(schema.session)
-    .where(and(eq(schema.session.token, sessionToken), gt(schema.session.expiresAt, new Date())))
+    .where(and(eq(schema.session.id, sessionId), gt(schema.session.expiresAt, new Date())))
     .limit(1);
   return rows.length > 0;
 }

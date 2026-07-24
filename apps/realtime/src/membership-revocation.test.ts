@@ -54,7 +54,7 @@ async function publishMemberDelete(userId: string, organization: string): Promis
 describe('membership revocation', () => {
   it('closes the socket of a member who was removed', async () => {
     const removed = await createMember({ organizationId, teamIds: [teamId] });
-    const client = await connectClient(server.port, removed.token, organizationId);
+    const client = await connectClient(server.port, removed, organizationId);
     await client.waitFor('ready');
 
     await db
@@ -73,7 +73,7 @@ describe('membership revocation', () => {
 
   it('keeps a member connected when the delta only drops a team membership', async () => {
     const staying = await createMember({ organizationId, teamIds: [teamId] });
-    const client = await connectClient(server.port, staying.token, organizationId);
+    const client = await connectClient(server.port, staying, organizationId);
     await client.waitFor('ready');
 
     await db.delete(schema.teamMember).where(eq(schema.teamMember.userId, staying.userId));

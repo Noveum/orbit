@@ -8,6 +8,7 @@ import { authClient } from '@/lib/auth/client.ts';
 import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
 import { SessionProvider } from './session.tsx';
+import { fetchRealtimeTicket } from './ticket.ts';
 
 const SIGNED_OUT_CLOSE_CODES: readonly number[] = [
   SESSION_REVOKED_CLOSE_CODE,
@@ -16,7 +17,6 @@ const SIGNED_OUT_CLOSE_CODES: readonly number[] = [
 
 export interface WorkspaceRealtimeProps {
   readonly url: string;
-  readonly token: string;
   readonly userId: string;
   readonly organizationId: string;
   readonly teamIds: readonly string[];
@@ -25,7 +25,6 @@ export interface WorkspaceRealtimeProps {
 
 export function WorkspaceRealtime({
   url,
-  token,
   userId,
   organizationId,
   teamIds,
@@ -38,12 +37,14 @@ export function WorkspaceRealtime({
     });
   }, []);
 
+  const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
+
   return (
     <SessionProvider userId={userId}>
       <RealtimeProvider
         url={url}
-        token={token}
         organizationId={organizationId}
+        fetchTicket={fetchTicket}
         onTerminal={handleTerminal}
       >
         <DeltaBridge organizationId={organizationId} teamIds={teamIds} />

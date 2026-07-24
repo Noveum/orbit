@@ -70,7 +70,6 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     <HydrationBoundary state={await dehydratedWorkspace(membership.principal)}>
       <WorkspaceRealtime
         url={realtimeUrl()}
-        token={session.session.token}
         userId={membership.principal.userId}
         organizationId={membership.principal.organizationId}
         teamIds={teams.map((team) => team.id)}
