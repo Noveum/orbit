@@ -157,12 +157,18 @@ describe('doc outline scroll spy', () => {
     expect(activeText()).not.toBe('Checklist');
   });
 
-  it('scrolls to a heading and puts it in the url when the outline is clicked', async () => {
-    const scrollIntoView = mock();
-    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  it('scrolls the clicked heading, not the one above it, and puts it in the url', async () => {
+    tops.set('intro', 200);
+    tops.set('rules', 900);
+    tops.set('checklist', 1600);
+    const scrolledTo: number[] = [];
+    const realScrollTo = window.scrollTo;
+    Object.defineProperty(window, 'scrollTo', {
       writable: true,
       configurable: true,
-      value: scrollIntoView,
+      value: (options: ScrollToOptions) => {
+        if (typeof options?.top === 'number') scrolledTo.push(options.top);
+      },
     });
     const user = userEvent.setup();
     renderReader();
@@ -172,8 +178,15 @@ describe('doc outline scroll spy', () => {
     expect(link).not.toBeNull();
     if (link !== null) await user.click(link);
 
-    expect(scrollIntoView).toHaveBeenCalled();
+    expect(scrolledTo).toContain(900 - 96);
+    expect(scrolledTo).not.toContain(200 - 96);
     expect(window.location.hash).toBe('#rules');
+
+    Object.defineProperty(window, 'scrollTo', {
+      writable: true,
+      configurable: true,
+      value: realScrollTo,
+    });
   });
 
   it('shows the docs that link here', async () => {

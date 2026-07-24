@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { prefersReducedMotion, scrollHeadingIntoView } from './doc-scroll.ts';
 import type { DocHeading } from './outline.ts';
-import { prefersReducedMotion } from './use-scroll-spy.ts';
 
 export interface DocOutlineProps {
   readonly headings: readonly DocHeading[];
@@ -31,12 +31,8 @@ export function DocOutline({ headings, activeId }: DocOutlineProps) {
   if (headings.length < 2) return null;
 
   const jumpTo = (heading: DocHeading) => {
-    const target = document.getElementById(heading.id);
-    if (target === null) return;
-    target.scrollIntoView({
-      block: 'start',
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    });
+    if (document.getElementById(heading.id) === null) return;
+    scrollHeadingIntoView(heading.id);
     window.history.replaceState(null, '', `#${heading.id}`);
   };
 

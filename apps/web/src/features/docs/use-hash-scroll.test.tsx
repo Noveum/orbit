@@ -9,6 +9,12 @@ const MARKDOWN = ['## Intro', '', 'body', '', '## Rules', '', 'body', '', '## Ch
   '\n',
 );
 
+const HEADING_TOP = new Map<string, number>([
+  ['intro', 200],
+  ['rules', 900],
+  ['checklist', 1600],
+]);
+
 const doc: Doc = {
   id: 'doc_1',
   organizationId: 'org_1',
@@ -28,26 +34,40 @@ const doc: Doc = {
   archivedAt: null,
 };
 
-const scrolled: string[] = [];
-const realScrollIntoView = Element.prototype.scrollIntoView;
+const scrolledTo: number[] = [];
+const realRect = Element.prototype.getBoundingClientRect;
+const realScrollTo = window.scrollTo;
 
 beforeEach(() => {
-  scrolled.length = 0;
-  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  scrolledTo.length = 0;
+  Object.defineProperty(window, 'scrollTo', {
+    writable: true,
+    configurable: true,
+    value: (options: ScrollToOptions) => {
+      if (typeof options?.top === 'number') scrolledTo.push(options.top);
+    },
+  });
+  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
     writable: true,
     configurable: true,
     value(this: Element) {
-      scrolled.push(this.id);
+      const top = this.isConnected ? (HEADING_TOP.get(this.id) ?? 0) : 0;
+      return { top, bottom: top + 24, left: 0, right: 0, width: 200, height: 24 } as DOMRect;
     },
   });
 });
 
 afterEach(() => {
   window.location.hash = '';
-  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  Object.defineProperty(window, 'scrollTo', {
     writable: true,
     configurable: true,
-    value: realScrollIntoView,
+    value: realScrollTo,
+  });
+  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
+    writable: true,
+    configurable: true,
+    value: realRect,
   });
 });
 
@@ -82,23 +102,23 @@ describe('reader hash deep link', () => {
   it('scrolls the heading that matches the url hash into view on mount', async () => {
     window.location.hash = '#rules';
     renderReader();
-    await waitFor(() => expect(scrolled).toContain('rules'));
+    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
   });
 
   it('does not scroll anywhere when there is no hash', async () => {
     window.location.hash = '';
     renderReader();
     await waitFor(() => expect(document.querySelector('#rules')).not.toBeNull());
-    expect(scrolled).toHaveLength(0);
+    expect(scrolledTo).toHaveLength(0);
   });
 
   it('scrolls again after switching to another doc that shares the heading id', async () => {
     window.location.hash = '#rules';
     const view = render(reader(doc));
-    await waitFor(() => expect(scrolled).toContain('rules'));
+    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
 
-    scrolled.length = 0;
+    scrolledTo.length = 0;
     view.rerender(reader({ ...doc, id: 'doc_2' }));
-    await waitFor(() => expect(scrolled).toContain('rules'));
+    await waitFor(() => expect(scrolledTo).toContain(900 - 96));
   });
 });

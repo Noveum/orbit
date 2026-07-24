@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { HEADING_SCROLL_OFFSET, scrollContainerOf } from './doc-scroll.ts';
 import type { DocHeading } from './outline.ts';
 
-export const SCROLL_SPY_OFFSET = 96;
+export const SCROLL_SPY_OFFSET = HEADING_SCROLL_OFFSET;
 
 export interface HeadingTop {
   readonly id: string;
@@ -18,11 +19,6 @@ export function activeHeadingId(tops: readonly HeadingTop[], line: number): stri
     if (entry.top <= line) active = entry.id;
   }
   return active;
-}
-
-export function prefersReducedMotion(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function useScrollSpy(headings: readonly DocHeading[]): string | null {
@@ -42,12 +38,16 @@ export function useScrollSpy(headings: readonly DocHeading[]): string | null {
         .filter((node): node is HTMLElement => node !== null);
 
     const update = () => {
-      const tops = liveNodes().map((node) => ({
+      const nodes = liveNodes();
+      const first = nodes[0];
+      if (first === undefined) return;
+      const container = scrollContainerOf(first);
+      const containerTop = container === null ? 0 : container.getBoundingClientRect().top;
+      const tops = nodes.map((node) => ({
         id: node.id,
-        top: node.getBoundingClientRect().top,
+        top: node.getBoundingClientRect().top - containerTop,
       }));
-      if (tops.length === 0) return;
-      setActiveId(activeHeadingId(tops, SCROLL_SPY_OFFSET));
+      setActiveId(activeHeadingId(tops, HEADING_SCROLL_OFFSET));
     };
 
     update();
