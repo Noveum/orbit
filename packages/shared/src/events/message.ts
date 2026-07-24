@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { presenceKindSchema, presenceMessageSchema } from './presence.ts';
 import { syncActionSchema, syncCursorSchema } from './sync.ts';
 
+export const authMessageSchema = z.object({
+  type: z.literal('auth'),
+  ticket: z.string().min(1),
+});
+
+export type AuthMessage = z.infer<typeof authMessageSchema>;
+
 export const clientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('subscribe'),
