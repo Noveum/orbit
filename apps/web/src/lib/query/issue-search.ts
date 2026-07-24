@@ -31,3 +31,7 @@ export function assignedSearch(userId: string): string {
   params.set('assigneeId', userId);
   return params.toString();
 }
+
+export function allIssuesSearch(): string {
+  return searchParams({ ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' }).toString();
+}
