@@ -1,58 +1,9 @@
-import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { landingMetadata, landingStructuredData } from '@/features/landing/landing-meta.ts';
 import { LandingPage } from '@/features/landing/landing-page.tsx';
 import { getSession } from '@/lib/auth/session.ts';
-import { publicAppUrl } from '@/lib/env.ts';
 
-const TITLE = 'Orbit: the free, realtime, keyboard-first work tracker';
-const DESCRIPTION =
-  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, cycles, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
-
-export const metadata: Metadata = {
-  title: { absolute: TITLE },
-  description: DESCRIPTION,
-  alternates: { canonical: '/' },
-  robots: { index: true, follow: true },
-  openGraph: {
-    type: 'website',
-    url: '/',
-    siteName: 'Orbit',
-    title: TITLE,
-    description: DESCRIPTION,
-    locale: 'en_US',
-  },
-  twitter: {
-    card: 'summary',
-    title: TITLE,
-    description: DESCRIPTION,
-  },
-};
-
-function structuredData(): string {
-  return JSON.stringify({
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'Orbit',
-    applicationCategory: 'BusinessApplication',
-    operatingSystem: 'Web',
-    url: publicAppUrl(),
-    description: DESCRIPTION,
-    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-    featureList: [
-      'Issues and boards',
-      'Cycles and sprints',
-      'Projects',
-      'Docs with a rich editor',
-      'Realtime sync over WebSockets',
-      'Command palette and keyboard shortcuts',
-      'Filters and saved views',
-      'GitHub integration',
-      'Slack integration',
-      'Notifications',
-      'MCP server for agents',
-    ],
-  });
-}
+export const metadata = landingMetadata('/');
 
 export default async function HomePage() {
   const session = await getSession();
@@ -63,7 +14,7 @@ export default async function HomePage() {
       <script
         type="application/ld+json"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON-LD built from constants
-        dangerouslySetInnerHTML={{ __html: structuredData() }}
+        dangerouslySetInnerHTML={{ __html: landingStructuredData() }}
       />
       <LandingPage />
     </>

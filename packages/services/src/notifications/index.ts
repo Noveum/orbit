@@ -456,3 +456,35 @@ export async function unreadCount(
     );
   return rows[0]?.value ?? 0;
 }
+
+export interface UnreadCounters {
+  readonly total: number;
+  readonly mentions: number;
+}
+
+export async function unreadCounters(
+  database: NotificationDatabase,
+  userId: string,
+  organizationId: string,
+  at: Date = new Date(),
+): Promise<UnreadCounters> {
+  const rows = await database
+    .select({ type: notification.type, value: count() })
+    .from(notification)
+    .where(
+      and(
+        eq(notification.userId, userId),
+        eq(notification.organizationId, organizationId),
+        isNull(notification.readAt),
+        or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
+      ),
+    )
+    .groupBy(notification.type);
+  let total = 0;
+  let mentions = 0;
+  for (const row of rows) {
+    total += row.value;
+    if (row.type === 'mention') mentions += row.value;
+  }
+  return { total, mentions };
+}

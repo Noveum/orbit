@@ -121,4 +121,29 @@ describe('applyNotificationDeltas', () => {
     expect(patch.rows).toEqual([]);
     expect(patch.unreadDelta).toBe(0);
   });
+
+  it('raises the mention badge when a new unread mention arrives', () => {
+    const base = action();
+    const patch = applyNotificationDeltas(
+      [],
+      [{ ...base, data: { ...base.data, type: 'mention' } }],
+      TAB,
+    );
+    expect(patch.mentionDelta).toBe(1);
+    expect(patch.unreadDelta).toBe(1);
+  });
+
+  it('lowers the mention badge when an unread mention is deleted', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'mention' })],
+      [action({ action: 'delete' })],
+      TAB,
+    );
+    expect(patch.mentionDelta).toBe(-1);
+  });
+
+  it('lowers the mention badge when another tab reads a mention', () => {
+    const patch = applyNotificationDeltas([item({ type: 'mention' })], [read(action())], TAB);
+    expect(patch.mentionDelta).toBe(-1);
+  });
 });

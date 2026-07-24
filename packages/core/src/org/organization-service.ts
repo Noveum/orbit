@@ -10,6 +10,7 @@ import { newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { createStarterLabels, type LabelRow } from '../work/label-service.ts';
+import { seedStarterContent } from './starter-content.ts';
 import { bootstrapTeam, deriveTeamKey, type TeamBootstrap } from './team-service.ts';
 
 export type OrganizationRow = typeof schema.organization.$inferSelect;
@@ -27,6 +28,7 @@ export interface OrganizationBootstrap {
 export async function createOrganization(
   userId: string,
   input: unknown,
+  options: { seed?: boolean } = {},
 ): Promise<OrganizationBootstrap> {
   const parsed = organizationCreateSchema.parse(input);
 
@@ -73,34 +75,59 @@ export async function createOrganization(
       .limit(1);
     const actor = { type: 'user', id: userId, name: creator?.name ?? 'Someone' } as const;
 
+    const seededActions: SyncAction[] = [];
+    let teamData: typeof bootstrap.team = bootstrap.team;
+    if (options.seed === true) {
+      const seeded = await seedStarterContent(tx, {
+        organizationId: organization.id,
+        organizationName: organization.name,
+        team: { id: bootstrap.team.id, key: bootstrap.team.key },
+        creatorId: userId,
+        states: bootstrap.states,
+        cycle: bootstrap.cycle,
+        syncId,
+        actor,
+      });
+      seededActions.push(...seeded.actions);
+      const [freshTeam] = await tx
+        .select()
+        .from(schema.team)
+        .where(eq(schema.team.id, bootstrap.team.id))
+        .limit(1);
+      teamData = freshTeam ?? bootstrap.team;
+    }
+
+    const actions: SyncAction[] = [
+      buildSyncAction({
+        syncId,
+        organizationId: organization.id,
+        scopes: [scopes.organization(organization.id), scopes.user(userId)],
+        action: 'insert',
+        model: 'member',
+        modelId: member.id,
+        data: { ...member, organization },
+        actor,
+      }),
+      buildSyncAction({
+        syncId,
+        organizationId: organization.id,
+        scopes: [scopes.organization(organization.id), scopes.team(bootstrap.team.id)],
+        action: 'insert',
+        model: 'team',
+        modelId: bootstrap.team.id,
+        data: teamData,
+        actor,
+      }),
+      ...seededActions,
+    ];
+
     return {
       organization,
       member,
       team: bootstrap.team,
       states: bootstrap.states,
       labels,
-      actions: [
-        buildSyncAction({
-          syncId,
-          organizationId: organization.id,
-          scopes: [scopes.organization(organization.id), scopes.user(userId)],
-          action: 'insert',
-          model: 'member',
-          modelId: member.id,
-          data: { ...member, organization },
-          actor,
-        }),
-        buildSyncAction({
-          syncId,
-          organizationId: organization.id,
-          scopes: [scopes.organization(organization.id), scopes.team(bootstrap.team.id)],
-          action: 'insert',
-          model: 'team',
-          modelId: bootstrap.team.id,
-          data: bootstrap.team,
-          actor,
-        }),
-      ],
+      actions,
     };
   });
 }

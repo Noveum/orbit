@@ -34,6 +34,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { href: '/settings/members', label: 'Members' },
       { href: '/settings/teams', label: 'Teams' },
       { href: '/settings/notifications', label: 'Notifications' },
+      { href: '/settings/integrations', label: 'Integrations' },
     ],
   },
 ];

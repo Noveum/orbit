@@ -22,6 +22,7 @@ export const SYNC_MODELS = [
   'member',
   'invitation',
   'view',
+  'git_link',
 ] as const;
 
 export type SyncModel = (typeof SYNC_MODELS)[number];
