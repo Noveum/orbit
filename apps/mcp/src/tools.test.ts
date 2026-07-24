@@ -5,7 +5,7 @@ import {
   connect,
   createWorkspace,
   errorPayload,
-  mintKey,
+  mintToken,
   resetDatabase,
   startServer,
   type TestClient,
@@ -58,9 +58,9 @@ beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
   server = await startServer();
-  admin = await connect(server, await mintKey(workspace.organizationId, workspace.adminUser.id));
+  admin = await connect(server, await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(server, await mintKey(workspace.organizationId, guestMember.user.id));
+  guest = await connect(server, await mintToken(workspace.organizationId, guestMember.user.id));
 });
 
 afterAll(async () => {

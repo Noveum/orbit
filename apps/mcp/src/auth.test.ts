@@ -1,9 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { createApiKey, verifyApiKey } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import { verifyMcpAccessToken } from '@orbit/core';
+import { and, db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { HEALTH_PATH, MCP_PATH, type McpHttpServer } from './server.ts';
-import { createWorkspace, resetDatabase, startServer, type TestWorkspace } from './test-helpers.ts';
+import {
+  createWorkspace,
+  mintToken,
+  resetDatabase,
+  startServer,
+  type TestWorkspace,
+} from './test-helpers.ts';
 
 let workspace: TestWorkspace;
 let server: McpHttpServer;
@@ -18,12 +24,13 @@ afterAll(async () => {
   await server.close();
 });
 
-function newKey(name: string) {
-  return createApiKey({
-    organizationId: workspace.organizationId,
-    userId: workspace.adminUser.id,
-    name,
-  });
+async function clientIdOf(token: string): Promise<string> {
+  const [row] = await db
+    .select()
+    .from(schema.oauthAccessToken)
+    .where(eq(schema.oauthAccessToken.accessToken, token));
+  if (row === undefined) throw new Error('token not found');
+  return row.clientId;
 }
 
 function post(headers: Record<string, string>): Promise<Response> {
@@ -34,81 +41,88 @@ function post(headers: Record<string, string>): Promise<Response> {
   });
 }
 
-describe('api key verification', () => {
-  it('accepts a valid key and resolves the owner principal', async () => {
-    const created = await newKey('valid');
-    expect(created.key.startsWith('orb_')).toBe(true);
-    expect(created.apiKey.hashedKey).not.toContain(created.key);
-
-    const identity = await verifyApiKey(created.key);
+describe('access token verification', () => {
+  it('resolves the owner principal for a valid token and workspace', async () => {
+    const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
+    const identity = await verifyMcpAccessToken(token);
     expect(identity.principal.userId).toBe(workspace.adminUser.id);
     expect(identity.principal.organizationId).toBe(workspace.organizationId);
     expect(identity.principal.role).toBe('admin');
   });
 
-  it('touches lastUsedAt on a successful verification', async () => {
-    const created = await newKey('touched');
-    expect(created.apiKey.lastUsedAt).toBeNull();
-    await verifyApiKey(created.key);
-    const [row] = await db
+  it('touches lastUsedAt on the grant', async () => {
+    const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
+    const clientId = await clientIdOf(token);
+    await verifyMcpAccessToken(token);
+    const [grant] = await db
       .select()
-      .from(schema.apiKey)
-      .where(eq(schema.apiKey.id, created.apiKey.id));
-    expect(row?.lastUsedAt).toBeInstanceOf(Date);
+      .from(schema.mcpGrant)
+      .where(
+        and(
+          eq(schema.mcpGrant.clientId, clientId),
+          eq(schema.mcpGrant.userId, workspace.adminUser.id),
+        ),
+      );
+    expect(grant?.lastUsedAt).toBeInstanceOf(Date);
   });
 
-  it('rejects a revoked key', async () => {
-    const created = await newKey('revoked');
+  it('rejects an expired token', async () => {
+    const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
     await db
-      .update(schema.apiKey)
+      .update(schema.oauthAccessToken)
+      .set({ accessTokenExpiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.oauthAccessToken.accessToken, token));
+    await expect(verifyMcpAccessToken(token)).rejects.toBeInstanceOf(DomainError);
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('rejects a token whose grant was revoked', async () => {
+    const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
+    const clientId = await clientIdOf(token);
+    await db
+      .update(schema.mcpGrant)
       .set({ revokedAt: new Date() })
-      .where(eq(schema.apiKey.id, created.apiKey.id));
-    await expect(verifyApiKey(created.key)).rejects.toBeInstanceOf(DomainError);
-    await expect(verifyApiKey(created.key)).rejects.toMatchObject({ code: 'unauthorized' });
+      .where(eq(schema.mcpGrant.clientId, clientId));
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
   });
 
-  it('rejects an expired key', async () => {
-    const created = await newKey('expired');
-    await db
-      .update(schema.apiKey)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(schema.apiKey.id, created.apiKey.id));
-    await expect(verifyApiKey(created.key)).rejects.toMatchObject({ code: 'unauthorized' });
+  it('rejects an unknown token', async () => {
+    await expect(verifyMcpAccessToken('at_notarealtoken')).rejects.toMatchObject({
+      code: 'unauthorized',
+    });
   });
 
-  it('rejects a tampered key', async () => {
-    const created = await newKey('tampered');
-    const tampered = `${created.key.slice(0, -1)}${created.key.endsWith('a') ? 'b' : 'a'}`;
-    expect(tampered).not.toBe(created.key);
-    await expect(verifyApiKey(tampered)).rejects.toMatchObject({ code: 'unauthorized' });
-  });
-
-  it('rejects a key that does not carry the orbit prefix', async () => {
-    await expect(verifyApiKey('sk_live_nope')).rejects.toMatchObject({ code: 'unauthorized' });
+  it('rejects an empty token', async () => {
+    await expect(verifyMcpAccessToken('   ')).rejects.toMatchObject({ code: 'unauthorized' });
   });
 });
 
 describe('http transport', () => {
-  it('serves a health check without a key', async () => {
+  it('serves a health check without a token', async () => {
     const response = await fetch(`http://127.0.0.1:${server.port}${HEALTH_PATH}`);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: 'ok', service: 'mcp' });
   });
 
-  it('rejects an unauthenticated request', async () => {
+  it('challenges an unauthenticated request with WWW-Authenticate', async () => {
     const response = await post({});
     expect(response.status).toBe(401);
-    const body = (await response.json()) as { error?: { message?: string } };
-    expect(body.error?.message).toContain('API key');
+    const challenge = response.headers.get('www-authenticate') ?? '';
+    expect(challenge).toContain('Bearer resource_metadata=');
+    expect(challenge).toContain('/.well-known/oauth-protected-resource/mcp');
+    await response.body?.cancel();
   });
 
-  it('rejects a request with an unknown key', async () => {
-    const response = await post({ authorization: 'Bearer orb_notarealkeyatall' });
+  it('rejects a request with an unknown token', async () => {
+    const response = await post({ authorization: 'Bearer at_notarealtoken' });
     expect(response.status).toBe(401);
+    expect(response.headers.get('www-authenticate')).toContain('resource_metadata=');
+    await response.body?.cancel();
   });
 
   it('rejects a GET on the mcp endpoint', async () => {
     const response = await fetch(`http://127.0.0.1:${server.port}${MCP_PATH}`);
     expect(response.status).toBe(405);
+    await response.body?.cancel();
   });
 });

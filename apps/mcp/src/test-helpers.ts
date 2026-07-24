@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createApiKey, createOrganization, resolvePrincipal } from '@orbit/core';
+import { createOrganization, recordMcpGrant, resolvePrincipal } from '@orbit/core';
 import { db, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -81,13 +81,39 @@ export async function addMember(
   return { principal, user };
 }
 
-export async function mintKey(
+export const MCP_TEST_SCOPES = 'openid profile email orbit.read orbit.write';
+
+function token(prefix: string): string {
+  return `${prefix}${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`;
+}
+
+export async function mintToken(
   organizationId: string,
   userId: string,
-  name = 'test key',
+  name = 'Test client',
 ): Promise<string> {
-  const created = await createApiKey({ organizationId, userId, name });
-  return created.key;
+  const clientId = `orbit_test_${randomUUID().replace(/-/g, '')}`;
+  await db.insert(schema.oauthApplication).values({
+    id: randomUUID(),
+    name,
+    clientId,
+    redirectUrls: 'http://127.0.0.1:4321/callback',
+    type: 'public',
+    userId,
+  });
+  const accessToken = token('at_');
+  await db.insert(schema.oauthAccessToken).values({
+    id: randomUUID(),
+    accessToken,
+    refreshToken: token('rt_'),
+    accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+    refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
+    clientId,
+    userId,
+    scopes: MCP_TEST_SCOPES,
+  });
+  await recordMcpGrant({ clientId, userId, organizationId, scopes: MCP_TEST_SCOPES });
+  return accessToken;
 }
 
 export interface TestClient {
@@ -108,11 +134,11 @@ function payloadOf(result: CallToolResult): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-export async function connect(server: McpHttpServer, apiKey: string): Promise<TestClient> {
+export async function connect(server: McpHttpServer, accessToken: string): Promise<TestClient> {
   const client = new Client({ name: 'orbit-test', version: '0.0.0' });
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${server.port}${MCP_PATH}`),
-    { requestInit: { headers: { authorization: `Bearer ${apiKey}` } } },
+    { requestInit: { headers: { authorization: `Bearer ${accessToken}` } } },
   );
   await client.connect(transport as unknown as Transport);
   return {

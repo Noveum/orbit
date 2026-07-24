@@ -3,14 +3,18 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { verifyApiKey } from '@orbit/core';
+import { verifyMcpAccessToken } from '@orbit/core';
 import { toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { env } from './env.ts';
 import { errorFields, logger } from './logger.ts';
 import { registerTools } from './tools/index.ts';
 
 export const MCP_PATH = '/mcp';
 export const HEALTH_PATH = '/health';
+
+const RESOURCE_METADATA_URL = `${env.ORBIT_PUBLIC_URL}/.well-known/oauth-protected-resource/mcp`;
+export const WWW_AUTHENTICATE = `Bearer resource_metadata="${RESOURCE_METADATA_URL}"`;
 
 const SERVER_VERSION = '0.0.0';
 const JSONRPC_SERVER_ERROR = -32000;
@@ -33,7 +37,7 @@ export function createOrbitMcpServer(principal: Principal): McpServer {
 function bearerToken(request: IncomingMessage): string {
   const header = request.headers.authorization ?? '';
   if (!header.toLowerCase().startsWith('bearer ')) {
-    throw unauthorized('Send an Orbit API key as a bearer token.');
+    throw unauthorized('Sign in to Orbit to authorize this MCP client.');
   }
   return header.slice('bearer '.length).trim();
 }
@@ -56,7 +60,7 @@ function sendRpcError(response: ServerResponse, status: number, message: string)
 }
 
 async function handleMcpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const identity = await verifyApiKey(bearerToken(request));
+  const identity = await verifyMcpAccessToken(bearerToken(request));
   const server = createOrbitMcpServer(identity.principal);
   const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
   response.on('close', () => {
@@ -71,8 +75,8 @@ async function handleMcpRequest(request: IncomingMessage, response: ServerRespon
   await transport.handleRequest(request, response);
   logger.info('mcp request', {
     userId: identity.principal.userId,
-    organizationId: identity.principal.organizationId,
-    apiKeyId: identity.apiKey.id,
+    organizationId: identity.organizationId,
+    clientId: identity.clientId,
   });
 }
 
@@ -129,6 +133,7 @@ export async function createMcpHttpServer(
         response.end();
         return;
       }
+      if (domain.status === 401) response.setHeader('WWW-Authenticate', WWW_AUTHENTICATE);
       const safe = domain.status >= 500 ? 'Something went wrong on our side.' : domain.message;
       sendRpcError(response, domain.status, safe);
     });
