@@ -136,6 +136,7 @@ export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): Si
         { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
         { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
+        { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
         { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
       ],
     },
