@@ -27,7 +27,7 @@ export interface IssueDetailViewProps {
 }
 
 const descriptionClassName =
-  'prose-orbit w-full text-dense text-muted leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_h2]:mt-4 [&_h2]:font-medium [&_h2]:text-text [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5';
+  'prose-orbit w-full break-words text-dense text-muted leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_h2]:mt-4 [&_h2]:font-medium [&_h2]:text-text [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5';
 
 function Description({ body, html }: { body: string; html: string }) {
   if (html.length === 0) {
