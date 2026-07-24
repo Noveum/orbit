@@ -13,7 +13,6 @@ export const profileUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(64),
     handle: handleSchema,
-    image: z.string().url().max(2048).nullable(),
     timezone: z.string().trim().min(1).max(64),
   })
   .partial();

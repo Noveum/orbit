@@ -14,6 +14,7 @@ const MCP_URL = 'https://orbit.example.com/mcp';
 
 const CONNECTED: IntegrationSettings = {
   githubConnected: true,
+  githubConnectEnabled: true,
   repositories: [
     {
       id: 'sync-1',
@@ -23,19 +24,52 @@ const CONNECTED: IntegrationSettings = {
       enabled: true,
     },
   ],
+  availableRepositories: [
+    {
+      repositoryId: '123456',
+      repositoryName: 'acme/web',
+      defaultBranch: 'main',
+      installationId: '77',
+    },
+    {
+      repositoryId: '654321',
+      repositoryName: 'acme/api',
+      defaultBranch: 'trunk',
+      installationId: '77',
+    },
+  ],
+  githubReposError: false,
   slackConnected: true,
   slackHasToken: true,
+  slackConnectEnabled: true,
   channels: [{ channelId: 'C0123', channelName: 'engineering', teamId: 'team-1', enabled: true }],
+  availableChannels: [
+    { channelId: 'C0123', channelName: 'engineering' },
+    { channelId: 'C0999', channelName: 'design' },
+  ],
+  slackChannelsError: false,
   teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
 };
 
 const EMPTY: IntegrationSettings = {
   githubConnected: false,
+  githubConnectEnabled: true,
   repositories: [],
+  availableRepositories: [],
+  githubReposError: false,
   slackConnected: false,
   slackHasToken: false,
+  slackConnectEnabled: true,
   channels: [],
+  availableChannels: [],
+  slackChannelsError: false,
   teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
+};
+
+const UNCONFIGURED: IntegrationSettings = {
+  ...EMPTY,
+  githubConnectEnabled: false,
+  slackConnectEnabled: false,
 };
 
 const realFetch = globalThis.fetch;
@@ -59,33 +93,50 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
-  it('lists linked repositories with their team and an unlink action', () => {
-    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
-    expect(screen.getByText('acme/web')).toBeInTheDocument();
-    expect(screen.getAllByText('Engineering').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Unlink' })).toBeEnabled();
+  it('offers one-click connect actions as the primary path when nothing is connected', () => {
+    render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} />);
+    const github = screen.getByRole('link', { name: 'Connect GitHub' });
+    expect(github).toHaveAttribute('href', '/api/integrations/github/start');
+    const slack = screen.getByRole('link', { name: 'Add to Slack' });
+    expect(slack).toHaveAttribute('href', '/api/integrations/slack/start');
   });
 
-  it('links a repository through the github endpoint', async () => {
-    const user = userEvent.setup();
+  it('never exposes a webhook secret or raw token entry', () => {
     render(<IntegrationsPanel settings={EMPTY} canManage mcpUrl={MCP_URL} />);
+    expect(screen.queryByText(/GITHUB_WEBHOOK_SECRET/)).toBeNull();
+    expect(screen.queryByLabelText('Bot token')).toBeNull();
+    expect(screen.queryByLabelText('Repository id')).toBeNull();
+  });
 
-    await user.type(screen.getByLabelText('Repository'), 'acme/api');
-    await user.type(screen.getByLabelText('Repository id'), '99');
-    await user.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+  it('hides connect actions and explains configuration is pending when the app is not set up', () => {
+    render(<IntegrationsPanel settings={UNCONFIGURED} canManage mcpUrl={MCP_URL} />);
+    expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Add to Slack' })).toBeNull();
+    expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
+  });
+
+  it('links a discovered repository with its API-provided id and installation', async () => {
+    const user = userEvent.setup();
+    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
+
+    expect(screen.getByText('acme/api')).toBeInTheDocument();
+    const linkButton = screen.getByRole('button', { name: 'Link' });
+    await user.click(linkButton);
 
     await waitFor(() => {
       expect(lastRequest?.url).toBe('/api/integrations/github');
     });
     expect(lastRequest?.method).toBe('POST');
     expect(lastRequest?.body).toEqual({
-      repositoryId: '99',
+      repositoryId: '654321',
       repositoryName: 'acme/api',
+      installationId: '77',
+      defaultBranch: 'trunk',
       teamId: 'team-1',
     });
   });
 
-  it('unlinks a repository through the github endpoint', async () => {
+  it('unlinks a linked repository through the github endpoint', async () => {
     const user = userEvent.setup();
     render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
 
@@ -95,6 +146,24 @@ describe('IntegrationsPanel', () => {
       expect(lastRequest?.method).toBe('DELETE');
     });
     expect(lastRequest?.url).toBe('/api/integrations/github?repositoryId=123456');
+  });
+
+  it('maps a discovered Slack channel to a team without typing an id', async () => {
+    const user = userEvent.setup();
+    render(<IntegrationsPanel settings={CONNECTED} canManage mcpUrl={MCP_URL} />);
+
+    expect(screen.getByText('#design')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => {
+      expect(lastRequest?.url).toBe('/api/integrations/slack');
+    });
+    expect(lastRequest?.body).toEqual({
+      action: 'connect',
+      channelId: 'C0999',
+      channelName: 'design',
+      teamId: null,
+    });
   });
 
   it('shows the MCP server URL and copies it to the clipboard', async () => {
@@ -116,7 +185,8 @@ describe('IntegrationsPanel', () => {
   it('hides management affordances when the viewer cannot manage integrations', () => {
     render(<IntegrationsPanel settings={CONNECTED} canManage={false} mcpUrl={MCP_URL} />);
     expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
-    expect(screen.queryByLabelText('Repository')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Link' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /repositories on GitHub/ })).toBeNull();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 });

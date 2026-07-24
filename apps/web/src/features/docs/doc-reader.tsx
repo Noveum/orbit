@@ -11,6 +11,7 @@ import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import type { DocHeading } from './outline.ts';
 import { readTimeMinutes } from './outline.ts';
+import { useHashScroll } from './use-hash-scroll.ts';
 import { useScrollSpy } from './use-scroll-spy.ts';
 
 export interface DocReaderProps {
@@ -45,6 +46,7 @@ export function DocReader({
   const [headings, setHeadings] = useState<DocHeading[]>([]);
   const activeId = useScrollSpy(headings);
   const binding = doc.repoBinding;
+  useHashScroll(`${doc.id}:${headings.map((heading) => heading.id).join('|')}`);
 
   return (
     <article

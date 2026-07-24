@@ -9,6 +9,11 @@ const serverEnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_APP_SLUG: z.string().optional(),
+  SLACK_CLIENT_ID: z.string().optional(),
+  SLACK_CLIENT_SECRET: z.string().optional(),
   ORBIT_PASSWORD_AUTH: z
     .string()
     .optional()
@@ -22,6 +27,46 @@ let cached: ServerEnv | null = null;
 export function serverEnv(): ServerEnv {
   if (cached === null) cached = serverEnvSchema.parse(process.env);
   return cached;
+}
+
+export interface GithubAppConfig {
+  readonly slug: string;
+  readonly appId: string;
+  readonly privateKey: string;
+}
+
+export function githubAppConfig(): GithubAppConfig {
+  const env = serverEnv();
+  const rawKey = env.GITHUB_APP_PRIVATE_KEY ?? '';
+  return {
+    slug: env.GITHUB_APP_SLUG ?? '',
+    appId: env.GITHUB_APP_ID ?? '',
+    privateKey: rawKey.includes('\\n') ? rawKey.replace(/\\n/g, '\n') : rawKey,
+  };
+}
+
+export function githubConnectReady(): boolean {
+  return githubAppConfig().slug.length > 0;
+}
+
+export function githubDiscoveryReady(): boolean {
+  const config = githubAppConfig();
+  return config.appId.length > 0 && config.privateKey.length > 0;
+}
+
+export interface SlackAppConfig {
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
+export function slackAppConfig(): SlackAppConfig {
+  const env = serverEnv();
+  return { clientId: env.SLACK_CLIENT_ID ?? '', clientSecret: env.SLACK_CLIENT_SECRET ?? '' };
+}
+
+export function slackConnectReady(): boolean {
+  const config = slackAppConfig();
+  return config.clientId.length > 0 && config.clientSecret.length > 0;
 }
 
 const publicAppUrlSchema = z.url().default('http://localhost:3000');

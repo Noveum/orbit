@@ -15,6 +15,11 @@ describe('password authentication', () => {
     );
   });
 
+  it('lets an authenticated user link a provider whose email differs', () => {
+    expect(auth.options.account?.accountLinking?.enabled).toBe(true);
+    expect(auth.options.account?.accountLinking?.allowDifferentEmails).toBe(true);
+  });
+
   it('hashes with argon2id and verifies the hash', async () => {
     const hash = await Bun.password.hash('a-very-long-password', { algorithm: 'argon2id' });
     expect(hash.startsWith('$argon2id$')).toBe(true);

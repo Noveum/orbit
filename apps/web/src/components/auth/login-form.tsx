@@ -18,7 +18,7 @@ export interface LoginFormProps {
   readonly passwordEnabled?: boolean;
 }
 
-type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | null;
+type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | 'forgot' | null;
 
 function messageOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
@@ -124,6 +124,27 @@ function SocialButtons({
   );
 }
 
+function ForgotPasswordButton({
+  sending,
+  disabled,
+  onClick,
+}: {
+  readonly sending: boolean;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="self-start text-muted text-xs underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {sending ? 'Sending reset link...' : 'Forgot password?'}
+    </button>
+  );
+}
+
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
@@ -186,6 +207,19 @@ export function LoginForm({
       toast({
         title: 'Check your email',
         description: `A sign in link is on its way to ${email}.`,
+      });
+    });
+
+  const forgotPassword = () =>
+    withPending('forgot', async () => {
+      const result = await authClient.requestPasswordReset({
+        email,
+        redirectTo: '/reset-password',
+      });
+      if (result.error) throw new Error(result.error.message ?? 'Could not send the reset email.');
+      toast({
+        title: 'Check your email',
+        description: `If ${email} has a password, a reset link is on its way.`,
       });
     });
 
@@ -261,6 +295,15 @@ export function LoginForm({
             onChange={setPassword}
             busy={pending === 'password'}
             disabled={pending !== null || email.length === 0 || password.length === 0}
+          />
+        ) : null}
+        {passwordEnabled && !creatingAccount ? (
+          <ForgotPasswordButton
+            sending={pending === 'forgot'}
+            disabled={pending !== null || email.length === 0}
+            onClick={() => {
+              forgotPassword();
+            }}
           />
         ) : null}
         <Button

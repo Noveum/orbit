@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { render, screen } from '@testing-library/react';
-import { DocsSkeleton, NewDocSkeleton } from './docs-skeleton.tsx';
+import { DocPaneSkeleton, NewDocSkeleton } from './docs-skeleton.tsx';
 
 describe('docs skeletons', () => {
-  it('renders the docs workspace skeleton', () => {
-    render(<DocsSkeleton />);
-    expect(screen.getByTestId('docs-skeleton')).toBeInTheDocument();
+  it('renders the doc content pane skeleton', () => {
+    render(<DocPaneSkeleton />);
+    expect(screen.getByTestId('doc-pane-skeleton')).toBeInTheDocument();
   });
 
   it('renders the new doc skeleton', () => {

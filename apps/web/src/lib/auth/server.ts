@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
-import { assertEmailDomainAllowed, publishSessionRevoked } from '@orbit/core';
+import {
+  assertEmailDomainAllowed,
+  ingestExternalAvatar,
+  isExternalImageUrl,
+  publishSessionRevoked,
+} from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
-import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
+import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
@@ -64,6 +69,21 @@ function emailAndPassword() {
   return {
     enabled: true,
     minPasswordLength: 12,
+    sendResetPassword: async (
+      { user, url, token }: { user: { email: string }; url: string; token: string },
+      request?: Request,
+    ) => {
+      if (isDevLoginRequest(request)) return;
+      const content = await resetPasswordEmail({ url, email: user.email });
+      await sendEmail(db, {
+        to: user.email,
+        subject: content.subject,
+        html: content.html,
+        text: content.text,
+        template: 'reset-password',
+        idempotencyKey: `reset-password:${token}`,
+      });
+    },
     password: {
       hash: (password: string) => Bun.password.hash(password, { algorithm: 'argon2id' }),
       verify: ({ hash, password }: { hash: string; password: string }) =>
@@ -107,7 +127,9 @@ export const auth = betterAuth({
   emailAndPassword: emailAndPassword(),
   ...rateLimit(),
   socialProviders: socialProviders(),
-  account: { accountLinking: { enabled: true, allowUnlinkingAll: true } },
+  account: {
+    accountLinking: { enabled: true, allowUnlinkingAll: true, allowDifferentEmails: true },
+  },
   session: {
     expiresIn: SESSION_MAX_AGE_SECONDS,
     cookieCache: { enabled: true, maxAge: SESSION_CACHE_SECONDS },
@@ -136,6 +158,24 @@ export const auth = betterAuth({
             data: { ...user, handle: handleFor(user.email, user.name) },
           });
         },
+        after: async (user) => {
+          const image = user.image ?? null;
+          if (isExternalImageUrl(image)) await ingestExternalAvatar(user.id, image);
+        },
+      },
+    },
+    session: {
+      create: {
+        before: async (session) => {
+          const rows = await db
+            .select({ email: schema.user.email })
+            .from(schema.user)
+            .where(eq(schema.user.id, session.userId))
+            .limit(1);
+          const email = rows[0]?.email;
+          if (email !== undefined) assertSignUpAllowed(email);
+          return { data: session };
+        },
       },
     },
   },
@@ -144,6 +184,7 @@ export const auth = betterAuth({
     magicLink({
       sendMagicLink: async ({ email, url, token }, request) => {
         if (isDevLoginRequest(request)) return;
+        assertSignUpAllowed(email);
         const content = await magicLinkEmail({ url, email });
         await sendEmail(db, {
           to: email,
