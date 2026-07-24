@@ -1,14 +1,17 @@
 'use client';
 
 import { relativeTime } from '@orbit/shared/utils';
-import { Book, GitBranch, Users } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Book, GitBranch, Link2, Users } from 'lucide-react';
+import Link from 'next/link';
+import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import type { Attachment, Doc } from '@/lib/query/schemas.ts';
 import { DocAttachments } from './doc-attachments.tsx';
 import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
-import { outlineOf, readTimeMinutes } from './outline.ts';
+import type { DocHeading } from './outline.ts';
+import { readTimeMinutes } from './outline.ts';
+import { useScrollSpy } from './use-scroll-spy.ts';
 
 export interface DocReaderProps {
   readonly doc: Doc;
@@ -18,6 +21,7 @@ export interface DocReaderProps {
   readonly followers: number;
   readonly collectionName: string | null;
   readonly projectName: string | null;
+  readonly backlinks?: readonly { readonly id: string; readonly title: string }[];
 }
 
 function Pill({ children }: { children: React.ReactNode }) {
@@ -36,9 +40,10 @@ export function DocReader({
   followers,
   collectionName,
   projectName,
+  backlinks = [],
 }: DocReaderProps) {
-  const headings = useMemo(() => outlineOf(doc.content), [doc.content]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [headings, setHeadings] = useState<DocHeading[]>([]);
+  const activeId = useScrollSpy(headings);
   const binding = doc.repoBinding;
 
   return (
@@ -85,13 +90,29 @@ export function DocReader({
           </span>
         </div>
 
-        <DocBody
-          html={contentHtml}
-          headings={headings}
-          onActiveHeading={setActiveId}
-          className="mt-2"
-        />
+        <DocBody html={contentHtml} onHeadings={setHeadings} className="mt-2" />
         <DocAttachments attachments={attachments} />
+
+        {backlinks.length === 0 ? null : (
+          <section data-testid="doc-backlinks" className="mt-10 border-border border-t pt-5">
+            <h2 className="mb-2 font-medium text-2xs text-faint uppercase tracking-wide">
+              Linked from
+            </h2>
+            <ul className="flex flex-col gap-1">
+              {backlinks.map((entry) => (
+                <li key={entry.id}>
+                  <Link
+                    href={`/docs/${entry.id}`}
+                    className="flex items-center gap-2 text-dense text-muted transition-colors duration-[var(--duration-fast)] hover:text-text"
+                  >
+                    <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{entry.title}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
 
       <DocOutline headings={headings} activeId={activeId} />

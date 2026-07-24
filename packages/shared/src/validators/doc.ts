@@ -8,6 +8,7 @@ export const docCreateSchema = z.object({
   content: markdownSchema.default(''),
   projectId: idSchema.nullable().default(null),
   collectionId: idSchema.nullable().default(null),
+  parentId: idSchema.nullable().default(null),
   visibility: z.enum(DOC_VISIBILITIES).default('workspace'),
 });
 
@@ -17,12 +18,14 @@ export const docUpdateSchema = z
     content: markdownSchema,
     projectId: idSchema.nullable(),
     collectionId: idSchema.nullable(),
+    parentId: idSchema.nullable(),
     visibility: z.enum(DOC_VISIBILITIES),
   })
   .partial();
 
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),
+  rotateToken: z.boolean().default(false),
 });
 
 export const docFilterSchema = z.object({

@@ -197,7 +197,9 @@ export const docSchema = z.object({
   organizationId: z.string(),
   collectionId: z.string().nullable(),
   projectId: z.string().nullable(),
+  parentId: z.string().nullable(),
   title: z.string(),
+  slug: z.string(),
   content: z.string(),
   visibility: z.string(),
   publishToken: z.string().nullable(),
@@ -251,7 +253,19 @@ export const docDetailSchema = z.object({
   attachments: z.array(attachmentSchema),
   author: z.object({ id: z.string(), name: z.string(), image: z.string().nullable() }),
   followers: z.number(),
+  backlinks: z.array(z.object({ id: z.string(), title: z.string() })).default([]),
 });
+
+export const docVersionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  ownedById: z.string(),
+  restoredFromId: z.string().nullable(),
+  lastSavedAt: timestamp,
+});
+
+export type DocVersion = z.infer<typeof docVersionSchema>;
+export const docVersionListSchema = z.object({ versions: z.array(docVersionSchema) });
 
 export type DocDetail = z.infer<typeof docDetailSchema>;
 

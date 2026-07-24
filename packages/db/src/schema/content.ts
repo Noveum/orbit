@@ -93,6 +93,7 @@ export const doc = pgTable(
     parentId: text('parent_id').references((): AnyPgColumn => doc.id, { onDelete: 'set null' }),
     projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
+    slug: text('slug').notNull().default(''),
     content: text('content').notNull().default(''),
     visibility: text('visibility').notNull().default('workspace'),
     publishToken: text('publish_token').unique(),
@@ -123,25 +124,23 @@ export const docVersion = pgTable(
   'doc_version',
   {
     id: text('id').primaryKey(),
-    organizationId: text('organization_id')
-      .notNull()
-      .references(() => organization.id, { onDelete: 'cascade' }),
     docId: text('doc_id')
       .notNull()
       .references(() => doc.id, { onDelete: 'cascade' }),
-    version: integer('version').notNull(),
-    title: text('title').notNull(),
-    content: text('content').notNull().default(''),
-    authorId: text('author_id')
+    organizationId: text('organization_id')
       .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    content: text('content').notNull(),
+    ownedById: text('owned_by_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    restoredFromId: text('restored_from_id'),
+    lastSavedAt: timestamp('last_saved_at', { withTimezone: true }).notNull().defaultNow(),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
-    uniqueIndex('doc_version_unique').on(table.docId, table.version),
-    index('doc_version_doc_idx').on(table.docId, table.createdAt),
-  ],
+  (table) => [index('doc_version_doc_idx').on(table.docId, table.lastSavedAt)],
 );
 
 export const attachment = pgTable(

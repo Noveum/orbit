@@ -221,3 +221,30 @@ describe('sanitizer defects found by the adversarial audit', () => {
     expect(summarize('a < b & "c"', 40)).toBe('a < b & "c"');
   });
 });
+
+describe('toggle blocks', () => {
+  it('keeps a details disclosure whole so a stored toggle survives a render', () => {
+    const html = renderMarkdown(
+      '<details open>\n<summary>More</summary>\n\nHidden body\n\n</details>',
+    );
+    expect(html).toContain('<details open');
+    expect(html).toContain('<summary>More</summary>');
+    expect(html).toContain('Hidden body');
+    expect(html).toContain('</details>');
+  });
+
+  it('still strips a script hidden inside a disclosure', () => {
+    const html = renderMarkdown('<details><summary>x</summary><script>alert(1)</script></details>');
+    expect(html).toContain('<details>');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('alert(1)');
+  });
+
+  it('does not turn a github alert marker into anything but text', () => {
+    const html = renderMarkdown('> [!IMPORTANT]\n> read this');
+    expect(html).toBe('<blockquote>\n<p>[!IMPORTANT]\nread this</p>\n</blockquote>\n');
+    expect(html).not.toContain('markdown-alert');
+    expect(html).not.toContain('class=');
+    expect(html).not.toContain('<div');
+  });
+});

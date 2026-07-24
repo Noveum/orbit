@@ -126,6 +126,24 @@ test('a doc is written, attached to, published, and read without a session', asy
   await openNewDoc(author, () => author.getByTestId('new-doc').click());
 
   await author.getByTestId('doc-title-input').fill(title);
+
+  const surface = author.getByTestId('doc-rich-editor').locator('.ProseMirror');
+  await surface.click();
+  await author.keyboard.type('Rich text first. ');
+  await author.keyboard.type('/task');
+  await expect(author.getByTestId('slash-menu')).toBeVisible();
+  await expect(author.getByTestId('slash-task-list')).toBeVisible();
+  await author.keyboard.press('Enter');
+  await expect(author.getByTestId('slash-menu')).toHaveCount(0);
+  await expect(surface.locator('ul[data-type=taskList]')).toBeVisible();
+  await author.keyboard.type('written in the rich editor');
+  await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
+
+  await author.getByTestId('editor-mode-markdown').click();
+  await expect(author.getByTestId('doc-editor-input')).toHaveValue(
+    /- \[ \] written in the rich editor/,
+  );
+
   await author.getByTestId('doc-editor-input').fill(MARKDOWN);
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
@@ -182,12 +200,15 @@ test('a doc is written, attached to, published, and read without a session', asy
   await expect(author.getByTestId('doc-reader')).toBeVisible();
 
   await author.getByTestId('doc-publish').click();
-  await expect(author.getByTestId('doc-publish')).toHaveText('Unpublish', { timeout: 30_000 });
-  await author.getByTestId('doc-share').click();
+  await author.getByTestId('doc-visibility-public').click();
+  await expect(author.getByTestId('doc-publish')).toHaveText('Public', { timeout: 30_000 });
+
+  await author.getByTestId('doc-publish').click();
   const link = author.getByTestId('doc-copy-link');
   await expect(link).toBeVisible();
   const publishedUrl = ((await link.textContent()) ?? '').trim();
   expect(publishedUrl).toContain('/d/');
+  expect(new URL(publishedUrl).pathname).toMatch(/^\/d\/e2e-doc-\d+-[0-9a-f]{32,}$/);
   await author.keyboard.press('Escape');
 
   for (const scheme of ['light', 'dark'] as const) {
@@ -205,11 +226,43 @@ test('a doc is written, attached to, published, and read without a session', asy
     await expect(visitor.getByTestId('doc-editor')).toHaveCount(0);
     await expect(visitor.getByTestId('doc-edit-toggle')).toHaveCount(0);
     await expect(visitor.getByTestId('doc-search')).toHaveCount(0);
+    await expect(visitor.locator('meta[name=robots]')).toHaveCount(0);
+    await expect(visitor.getByTestId('doc-json-ld')).toHaveCount(1);
     await visitor.screenshot({ path: `${SHOTS}/docs-published-${scheme}.png` });
     await anonymous.close();
   }
 
-  await author.getByTestId('doc-share').click();
+  const bareToken = new URL(publishedUrl).pathname.split('-').at(-1) ?? '';
+  const bare = await browser.newContext();
+  const barePage = await bare.newPage();
+  await barePage.goto(`${BASE}/d/${bareToken}`);
+  await barePage.waitForURL((url) => url.pathname === new URL(publishedUrl).pathname);
+  await expect(barePage.getByTestId('published-doc')).toBeVisible();
+  await bare.close();
+
+  await author.getByTestId('doc-publish').click();
+  await author.getByTestId('doc-visibility-link').click();
+  await expect(author.getByTestId('doc-publish')).toHaveText('Unlisted', { timeout: 30_000 });
+
+  const unlisted = await browser.newContext();
+  const unlistedPage = await unlisted.newPage();
+  await unlistedPage.goto(publishedUrl);
+  await expect(unlistedPage.getByTestId('published-doc')).toBeVisible();
+  await expect(unlistedPage.locator('meta[name=robots]')).toHaveAttribute('content', /noindex/);
+  await expect(unlistedPage.locator('script[type="application/ld+json"]')).toHaveCount(0);
+  await unlisted.close();
+
+  await author.getByTestId('doc-publish').click();
+  await author.getByTestId('doc-rotate-link').click();
+  await expect(author.getByTestId('doc-publish')).toHaveText('Unlisted', { timeout: 30_000 });
+
+  const rotated = await browser.newContext();
+  const rotatedPage = await rotated.newPage();
+  const rotatedResponse = await rotatedPage.goto(publishedUrl);
+  expect(rotatedResponse?.status()).toBe(404);
+  await rotated.close();
+
+  await author.getByTestId('doc-publish').click();
   await author.getByTestId('doc-visibility-workspace').click();
   await expect(author.getByTestId('doc-publish')).toHaveText('Publish', { timeout: 30_000 });
 

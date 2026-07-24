@@ -3,6 +3,7 @@ import { Marked } from 'marked';
 import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 export { extractIssueIdentifiers, extractMentions } from '@orbit/shared/utils';
+export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 const UNSAFE_URL = /^\s*(javascript|vbscript|file|data):/i;
 const BLOCK_END = /<\/(p|h[1-6]|li|blockquote|pre|tr|table|ul|ol)>/gi;

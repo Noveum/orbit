@@ -1,50 +1,60 @@
+import { decodeEntities, htmlToText } from '@orbit/services/markdown';
+import { slugify as baseSlugify } from '@orbit/shared/utils';
+
 export interface DocHeading {
   readonly id: string;
   readonly text: string;
   readonly level: number;
 }
 
-const FENCE = /^\s*(```|~~~)/;
-const HEADING = /^(#{1,3})\s+(.+?)\s*#*\s*$/;
-const INLINE_MARKS = /[*_`~]/g;
-const LINK = /\[([^\]]+)\]\([^)]*\)/g;
+export interface OutlinedHtml {
+  readonly html: string;
+  readonly headings: DocHeading[];
+}
+
+const HEADING_TAG = /<h([1-3])((?:\s[^>]*)?)>([\s\S]*?)<\/h\1>/gi;
+const EXISTING_ID = /\sid="[^"]*"/gi;
 
 export function slugify(text: string): string {
-  const base = text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const base = baseSlugify(text);
   return base.length === 0 ? 'section' : base;
 }
 
-export function outlineOf(markdown: string): DocHeading[] {
-  const headings: DocHeading[] = [];
-  const used = new Map<string, number>();
-  let inFence = false;
-
-  for (const line of markdown.split('\n')) {
-    if (FENCE.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-
-    const match = HEADING.exec(line);
-    if (match === null) continue;
-    const hashes = match[1];
-    const raw = match[2];
-    if (hashes === undefined || raw === undefined) continue;
-
-    const text = raw.replace(LINK, '$1').replace(INLINE_MARKS, '').trim();
-    if (text.length === 0) continue;
-
-    const base = slugify(text);
-    const seen = used.get(base) ?? 0;
-    used.set(base, seen + 1);
-    headings.push({ id: seen === 0 ? base : `${base}-${seen}`, text, level: hashes.length });
+export function uniqueHeadingId(text: string, used: Map<string, number>): string {
+  const base = slugify(text);
+  let suffix = used.get(base) ?? 0;
+  let id = suffix === 0 ? base : `${base}-${suffix}`;
+  while (used.has(id)) {
+    suffix += 1;
+    id = `${base}-${suffix}`;
   }
+  used.set(base, suffix + 1);
+  if (id !== base) used.set(id, 0);
+  return id;
+}
 
-  return headings;
+export function withHeadingIds(html: string): OutlinedHtml {
+  const used = new Map<string, number>();
+  const headings: DocHeading[] = [];
+
+  const rewritten = html.replace(
+    HEADING_TAG,
+    (match, level: string, attrs: string, inner: string) => {
+      const text = decodeEntities(htmlToText(inner)).replace(/\s+/g, ' ').trim();
+      if (text.length === 0) return match;
+
+      const id = uniqueHeadingId(text, used);
+      headings.push({ id, text, level: Number.parseInt(level, 10) });
+      return `<h${level}${attrs.replace(EXISTING_ID, '')} id="${id}">${inner}</h${level}>`;
+    },
+  );
+
+  return { html: rewritten, headings };
+}
+
+export function sameHeadings(left: readonly DocHeading[], right: readonly DocHeading[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((heading, index) => heading.id === right[index]?.id);
 }
 
 export function readTimeMinutes(markdown: string): number {

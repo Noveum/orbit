@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { DOCS_ROOT, queryKeys } from './keys.ts';
-import type { Doc, DocCollection, DocDetail, DocList } from './schemas.ts';
+import type { Doc, DocCollection, DocDetail, DocList, DocVersion } from './schemas.ts';
 import {
   deletedSchema,
   docArchiveResultSchema,
@@ -14,6 +14,7 @@ import {
   docListSchema,
   docSaveResultSchema,
   docShareResultSchema,
+  docVersionListSchema,
 } from './schemas.ts';
 
 export interface DocPatch {
@@ -21,6 +22,12 @@ export interface DocPatch {
   readonly content?: string;
   readonly collectionId?: string | null;
   readonly projectId?: string | null;
+  readonly parentId?: string | null;
+}
+
+export interface DocShareInput {
+  readonly visibility: string;
+  readonly rotateToken?: boolean;
 }
 
 export function useDocs(search: string) {
@@ -57,6 +64,7 @@ export function useCreateDoc() {
       content?: string;
       collectionId?: string | null;
       projectId?: string | null;
+      parentId?: string | null;
     }): Promise<Doc> => {
       const result = await apiFetch('/api/docs', docEnvelopeSchema, {
         method: 'POST',
@@ -109,10 +117,10 @@ export function useShareDoc(docId: string) {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (visibility: string): Promise<{ doc: Doc; publishUrl: string | null }> =>
+    mutationFn: async (input: DocShareInput): Promise<{ doc: Doc; publishUrl: string | null }> =>
       await apiFetch(`/api/docs/${docId}/share`, docShareResultSchema, {
         method: 'POST',
-        body: { visibility },
+        body: { visibility: input.visibility, rotateToken: input.rotateToken ?? false },
       }),
     onSuccess: (result) => {
       client.setQueryData<DocDetail>(queryKeys.doc(docId), (current) =>
@@ -189,5 +197,40 @@ export function useDeleteCollection() {
     onSuccess: () => invalidateDocs(client),
     onError: (error) =>
       toast({ title: 'Could not delete', description: messageOf(error), tone: 'danger' }),
+  });
+}
+
+export function useDocVersions(docId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.docVersions(docId),
+    enabled,
+    queryFn: async ({ signal }): Promise<DocVersion[]> => {
+      const result = await apiFetch(`/api/docs/${docId}/versions`, docVersionListSchema, {
+        signal,
+      });
+      return result.versions;
+    },
+  });
+}
+
+export function useRestoreDocVersion(docId: string) {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (versionId: string): Promise<Doc> => {
+      const result = await apiFetch(`/api/docs/${docId}/versions`, docEnvelopeSchema, {
+        method: 'POST',
+        body: { versionId },
+      });
+      return result.doc;
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: queryKeys.doc(docId) }).catch(() => undefined);
+      client.invalidateQueries({ queryKey: queryKeys.docVersions(docId) }).catch(() => undefined);
+      invalidateDocs(client);
+    },
+    onError: (error) =>
+      toast({ title: 'Could not restore', description: messageOf(error), tone: 'danger' }),
   });
 }

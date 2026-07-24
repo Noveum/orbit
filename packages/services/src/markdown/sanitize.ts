@@ -30,6 +30,8 @@ const ALLOWED_TAGS = new Set([
   'span',
   'sup',
   'sub',
+  'details',
+  'summary',
 ]);
 
 const DROP_WITH_CONTENT = new Set([
@@ -82,6 +84,7 @@ const ALLOWED_ATTR = new Set([
   'height',
   'target',
   'rel',
+  'open',
 ]);
 
 const URL_ATTR = new Set(['href', 'src']);

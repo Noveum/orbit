@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { renderMarkdown, summarize } from '@orbit/services/markdown';
 import { act, renderHook } from '@testing-library/react';
+import { publicDocPath, publicDocUrl } from '@/lib/docs/paths.ts';
+import { descendantIds, matchParents } from './doc-surface.tsx';
+import { docTreeOf } from './doc-tree.tsx';
 import {
   attachmentMarkdown,
   insertBlock,
@@ -9,33 +12,244 @@ import {
   SNIPPETS,
   wrapSelection,
 } from './markdown-input.ts';
-import { outlineOf, readTimeMinutes, slugify } from './outline.ts';
+import { readTimeMinutes, sameHeadings, slugify, withHeadingIds } from './outline.ts';
+import {
+  canonicalDocUrl,
+  isIndexable,
+  publishedDocJsonLd,
+  publishedDocMetadata,
+} from './published-doc-meta.ts';
+import { templateById } from './templates.ts';
 import { uploadContentType, uploadDocFile } from './upload.ts';
 import { AUTOSAVE_DELAY_MS, useAutosave } from './use-autosave.ts';
+import { activeHeadingId } from './use-scroll-spy.ts';
 
-describe('outlineOf', () => {
-  it('collects headings, strips inline marks, and skips fenced code', () => {
-    const outline = outlineOf(
-      '# Realtime **protocol**\n\n```md\n# Not a heading\n```\n\n## Action shape\n\n### `Rules`\n\n#### Too deep\n',
+describe('withHeadingIds', () => {
+  it('reads the headings the reader actually rendered, including indented and setext ones', () => {
+    const html = renderMarkdown(
+      [
+        '  # Realtime **protocol**',
+        '',
+        'Action shape',
+        '============',
+        '',
+        '```md',
+        '# Not a heading',
+        '```',
+        '',
+        '### `Rules`',
+        '',
+        '#### Too deep',
+      ].join('\n'),
     );
-    expect(outline).toEqual([
+
+    expect(withHeadingIds(html).headings).toEqual([
       { id: 'realtime-protocol', text: 'Realtime protocol', level: 1 },
-      { id: 'action-shape', text: 'Action shape', level: 2 },
+      { id: 'action-shape', text: 'Action shape', level: 1 },
       { id: 'rules', text: 'Rules', level: 3 },
     ]);
   });
 
-  it('keeps duplicate headings addressable', () => {
-    expect(outlineOf('## Setup\n\n## Setup\n').map((entry) => entry.id)).toEqual([
-      'setup',
-      'setup-1',
-    ]);
+  it('survives an unbalanced fence rather than swallowing every heading after it', () => {
+    const html = renderMarkdown('## Setup\n\n```ts\nconst a = 1;\n\n## Teardown\n');
+    expect(withHeadingIds(html).headings.map((entry) => entry.text)).toEqual(['Setup']);
+  });
+
+  it('bakes the ids into the html so a rerender cannot wipe them', () => {
+    const outlined = withHeadingIds(renderMarkdown('## Setup\n\n## Setup\n'));
+    expect(outlined.headings.map((entry) => entry.id)).toEqual(['setup', 'setup-1']);
+    expect(outlined.html).toBe('<h2 id="setup">Setup</h2>\n<h2 id="setup-1">Setup</h2>\n');
+    expect(withHeadingIds(outlined.html).html).toBe(outlined.html);
     expect(slugify('   ')).toBe('section');
+  });
+
+  it('keeps ids unique when a later heading slugifies onto an earlier suffixed id', () => {
+    const outlined = withHeadingIds(renderMarkdown('## Setup\n\n## Setup\n\n## Setup 1\n'));
+    expect(outlined.headings.map((entry) => entry.id)).toEqual(['setup', 'setup-1', 'setup-1-1']);
+  });
+
+  it('reads through inline markup and entities to the heading text', () => {
+    const outlined = withHeadingIds(renderMarkdown('## Batch & `sync_id`\n'));
+    expect(outlined.headings[0]).toEqual({
+      id: 'batch-sync-id',
+      text: 'Batch & sync_id',
+      level: 2,
+    });
+    expect(outlined.html).toContain('id="batch-sync-id"');
+  });
+
+  it('compares heading lists by id so the reader does not loop on every render', () => {
+    const one = [{ id: 'a', text: 'A', level: 2 }];
+    expect(sameHeadings(one, [{ id: 'a', text: 'renamed', level: 2 }])).toBe(true);
+    expect(sameHeadings(one, [{ id: 'b', text: 'A', level: 2 }])).toBe(false);
+    expect(sameHeadings(one, [])).toBe(false);
   });
 
   it('never reports less than a minute of reading', () => {
     expect(readTimeMinutes('')).toBe(1);
     expect(readTimeMinutes('word '.repeat(660))).toBe(3);
+  });
+});
+
+describe('activeHeadingId', () => {
+  it('seeds the first heading at scroll top and never goes empty', () => {
+    const tops = [
+      { id: 'intro', top: 400 },
+      { id: 'rules', top: 900 },
+    ];
+    expect(activeHeadingId(tops, 96)).toBe('intro');
+    expect(activeHeadingId([], 96)).toBeNull();
+  });
+
+  it('follows the last heading that crossed the line', () => {
+    const tops = [
+      { id: 'intro', top: -800 },
+      { id: 'rules', top: -120 },
+      { id: 'checklist', top: 640 },
+    ];
+    expect(activeHeadingId(tops, 96)).toBe('rules');
+    expect(activeHeadingId([{ id: 'intro', top: -10 }], 96)).toBe('intro');
+  });
+});
+
+describe('published doc urls', () => {
+  it('builds a readable slug url and keeps a slugless doc addressable', () => {
+    expect(publicDocPath({ slug: 'delta-protocol', publishToken: 'abc123' })).toBe(
+      '/d/delta-protocol-abc123',
+    );
+    expect(publicDocPath({ slug: '', publishToken: 'abc123' })).toBe('/d/abc123');
+    expect(publicDocPath({ slug: 'x', publishToken: null })).toBeNull();
+    expect(publicDocUrl({ slug: 'a b', publishToken: 't' }, 'https://orbit.test')).toBe(
+      'https://orbit.test/d/a%20b-t',
+    );
+  });
+});
+
+describe('published doc seo', () => {
+  const base = {
+    title: 'Delta protocol',
+    summary: 'How deltas fan out.',
+    slug: 'delta-protocol',
+    publishToken: 'tok',
+    updatedAt: new Date('2026-05-02T00:00:00.000Z'),
+    createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    authorName: 'Pulkit',
+    origin: 'https://orbit.test',
+  };
+
+  it('treats an unlisted doc and a public doc differently', () => {
+    const unlisted = publishedDocMetadata({ ...base, visibility: 'link' });
+    const isPublic = publishedDocMetadata({ ...base, visibility: 'public' });
+
+    expect(isIndexable('link')).toBe(false);
+    expect(isIndexable('public')).toBe(true);
+    expect(unlisted.robots).toMatchObject({ index: false, follow: false });
+    expect(isPublic.robots).toMatchObject({ index: true, follow: true });
+    expect(publishedDocJsonLd({ ...base, visibility: 'link' })).toBeNull();
+
+    const jsonLd = publishedDocJsonLd({ ...base, visibility: 'public' });
+    expect(jsonLd).not.toBeNull();
+    expect(JSON.parse(jsonLd ?? '{}')).toMatchObject({
+      '@type': 'Article',
+      headline: 'Delta protocol',
+      url: 'https://orbit.test/d/delta-protocol-tok',
+    });
+  });
+
+  it('escapes user fields so a doc title cannot break out of the ld+json script tag', () => {
+    const jsonLd = publishedDocJsonLd({
+      ...base,
+      visibility: 'public',
+      title: '</script><script>alert(1)</script>',
+      summary: 'a & b',
+    });
+    expect(jsonLd).not.toBeNull();
+    expect(jsonLd).not.toContain('<');
+    expect(jsonLd).not.toContain('>');
+    expect(jsonLd).not.toContain('</script>');
+    expect(jsonLd).toContain('\\u003c');
+    const parsed = JSON.parse(jsonLd ?? '{}');
+    expect(parsed.headline).toBe('</script><script>alert(1)</script>');
+    expect(parsed.description).toBe('a & b');
+  });
+
+  it('points both modes at the canonical slug url', () => {
+    expect(canonicalDocUrl({ ...base, visibility: 'public' })).toBe(
+      'https://orbit.test/d/delta-protocol-tok',
+    );
+    expect(publishedDocMetadata({ ...base, visibility: 'link' }).alternates).toEqual({
+      canonical: 'https://orbit.test/d/delta-protocol-tok',
+    });
+  });
+});
+
+describe('doc nesting', () => {
+  function summary(id: string, parentId: string | null) {
+    return {
+      id,
+      organizationId: 'org',
+      collectionId: null,
+      projectId: null,
+      parentId,
+      title: id,
+      slug: id,
+      content: '',
+      visibility: 'workspace',
+      publishToken: null,
+      authorId: 'u',
+      repoBinding: null,
+      syncId: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      archivedAt: null,
+      excerpt: '',
+    };
+  }
+
+  it('renders three levels of depth from one flat list', () => {
+    const nodes = docTreeOf([
+      summary('grandchild', 'child'),
+      summary('root', null),
+      summary('child', 'root'),
+      summary('orphan', 'gone'),
+    ]);
+
+    expect(nodes.map((node) => [node.doc.id, node.depth])).toEqual([
+      ['root', 0],
+      ['child', 1],
+      ['grandchild', 2],
+      ['orphan', 0],
+    ]);
+  });
+
+  it('refuses to offer a doc its own subtree as a parent', () => {
+    const docs = [summary('root', null), summary('child', 'root'), summary('other', null)];
+    const blocked = descendantIds(docs, 'root');
+    expect([...blocked].sort()).toEqual(['child', 'root']);
+    expect(blocked.has('other')).toBe(false);
+  });
+
+  it('filters parents by title and caps the list, reporting how many are hidden', () => {
+    const many = Array.from({ length: 120 }, (_, index) => summary(`doc-${index}`, null));
+    const capped = matchParents(many, '', 50);
+    expect(capped.shown).toHaveLength(50);
+    expect(capped.hiddenCount).toBe(70);
+
+    const searched = matchParents(
+      [summary('alpha', null), summary('beta', null), summary('alphabet', null)],
+      'ALPHA',
+      50,
+    );
+    expect(searched.shown.map((entry) => entry.id)).toEqual(['alpha', 'alphabet']);
+    expect(searched.hiddenCount).toBe(0);
+  });
+});
+
+describe('doc templates', () => {
+  it('falls back to the blank template for an unknown id', () => {
+    expect(templateById('runbook').title).toBe('Runbook');
+    expect(templateById('nope').id).toBe('blank');
+    expect(templateById(null).id).toBe('blank');
   });
 });
 

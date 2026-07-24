@@ -23,6 +23,7 @@ mock.module('@/lib/auth/client.ts', () => ({
 }));
 
 const realFetch = globalThis.fetch;
+const realLocation = window.location;
 
 function mockFetch(status: number, body: unknown): ReturnType<typeof mock> {
   const spy = mock(() =>
@@ -42,6 +43,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  Object.defineProperty(window, 'location', { value: realLocation, writable: true });
 });
 
 describe('CreateWorkspaceForm', () => {
