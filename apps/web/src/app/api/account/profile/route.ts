@@ -1,8 +1,7 @@
-import { buildSyncAction, nextSyncId, updateProfile } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import { updateProfile } from '@orbit/core';
 import { unauthorized } from '@orbit/shared/errors';
-import { scopes } from '@orbit/shared/events';
 import { handleRoute, publish, readJson } from '@/lib/api/handler.ts';
+import { republishMemberships } from '@/lib/api/profile-sync.ts';
 import { getSession } from '@/lib/auth/session.ts';
 
 export async function PATCH(request: Request): Promise<Response> {
@@ -11,26 +10,7 @@ export async function PATCH(request: Request): Promise<Response> {
     if (session === null) throw unauthorized();
     const user = await updateProfile(session.user.id, await readJson(request));
 
-    const syncId = await nextSyncId(db);
-    const memberships = await db
-      .update(schema.member)
-      .set({ syncId })
-      .where(eq(schema.member.userId, user.id))
-      .returning();
-    await publish(
-      memberships.map((row) =>
-        buildSyncAction({
-          syncId: row.syncId,
-          organizationId: row.organizationId,
-          scopes: [scopes.organization(row.organizationId), scopes.user(row.userId)],
-          action: 'update',
-          model: 'member',
-          modelId: row.id,
-          data: row,
-          actor: { type: 'user', id: user.id, name: user.name },
-        }),
-      ),
-    );
+    await publish(await republishMemberships(user));
 
     return {
       user: {
