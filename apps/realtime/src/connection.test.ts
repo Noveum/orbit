@@ -6,6 +6,7 @@ import { Connection, type ConnectionLimits, type SocketData } from './connection
 
 const principal: ConnectionPrincipal = {
   userId: 'user_1',
+  sessionToken: 'token_1',
   name: 'Ada',
   image: null,
   organizationId: 'org_1',

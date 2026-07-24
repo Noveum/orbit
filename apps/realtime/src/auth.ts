@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 export interface ConnectionPrincipal {
   readonly userId: string;
+  readonly sessionToken: string;
   readonly name: string;
   readonly image: string | null;
   readonly organizationId: string;
@@ -43,10 +44,12 @@ interface SessionUser {
 async function toPrincipal(
   user: SessionUser,
   membership: { readonly organizationId: string; readonly role: string },
+  sessionToken: string,
 ): Promise<ConnectionPrincipal> {
   const role = roleSchema.parse(membership.role);
   return {
     userId: user.userId,
+    sessionToken,
     name: user.name,
     image: user.image,
     organizationId: membership.organizationId,
@@ -92,15 +95,24 @@ export async function authenticateConnection(
   if (statedOrganizationId !== null) {
     const stated = memberships.find((row) => row.organizationId === statedOrganizationId);
     if (stated === undefined) return { ok: false, reason: 'organization_forbidden' };
-    return { ok: true, principal: await toPrincipal(found, stated) };
+    return { ok: true, principal: await toPrincipal(found, stated, token) };
   }
 
   const active = selectActiveMembership(memberships, found.activeOrganizationId);
   if (active === undefined) return { ok: false, reason: 'unauthorized' };
-  return { ok: true, principal: await toPrincipal(found, active) };
+  return { ok: true, principal: await toPrincipal(found, active, token) };
 }
 
 export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
+
+export async function sessionStillValid(sessionToken: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: schema.session.id })
+    .from(schema.session)
+    .where(and(eq(schema.session.token, sessionToken), gt(schema.session.expiresAt, new Date())))
+    .limit(1);
+  return rows.length > 0;
+}
 
 export async function membershipStillValid(principal: ConnectionPrincipal): Promise<boolean> {
   const rows = await db

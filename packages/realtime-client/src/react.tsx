@@ -50,10 +50,17 @@ export interface RealtimeProviderProps {
   url: string;
   token: string;
   organizationId: string;
+  onTerminal?: (code: number) => void;
   children: ReactNode;
 }
 
-export function RealtimeProvider({ url, token, organizationId, children }: RealtimeProviderProps) {
+export function RealtimeProvider({
+  url,
+  token,
+  organizationId,
+  onTerminal,
+  children,
+}: RealtimeProviderProps) {
   const [status, setStatus] = useState<RealtimeStatus>('connecting');
   const [presence, setPresence] = useState<PresenceByScope>(() => new Map());
   const clientRef = useRef<RealtimeClient | null>(null);
@@ -62,6 +69,11 @@ export function RealtimeProvider({ url, token, organizationId, children }: Realt
   const resumeHandlersRef = useRef(new Set<ResumeHandler>());
   const countsRef = useRef(new Map<string, number>());
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onTerminalRef = useRef(onTerminal);
+
+  useEffect(() => {
+    onTerminalRef.current = onTerminal;
+  }, [onTerminal]);
 
   useEffect(() => {
     if (closeTimerRef.current !== undefined) {
@@ -91,6 +103,7 @@ export function RealtimeProvider({ url, token, organizationId, children }: Realt
           for (const handler of resumeHandlersRef.current) handler(since);
         },
         onPresence: (messages) => setPresence((current) => mergePresence(current, messages)),
+        onTerminal: (code) => onTerminalRef.current?.(code),
       });
       const retained = [...countsRef.current.keys()];
       if (retained.length > 0) clientRef.current.subscribe(retained);

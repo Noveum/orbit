@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
-import { assertEmailDomainAllowed } from '@orbit/core';
+import { assertEmailDomainAllowed, publishSessionRevoked } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
 import { magicLink, organization } from 'better-auth/plugins';
 import { z } from 'zod';
@@ -27,6 +27,12 @@ async function touchPasskeyLastUsed(body: unknown): Promise<void> {
 
 const SESSION_CACHE_SECONDS = 5 * 60;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+const SESSION_REVOKING_PATHS = new Set([
+  '/revoke-session',
+  '/revoke-sessions',
+  '/revoke-other-sessions',
+]);
 
 function socialProviders() {
   const env = serverEnv();
@@ -115,6 +121,10 @@ export const auth = betterAuth({
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === '/passkey/verify-authentication') await touchPasskeyLastUsed(ctx.body);
+      if (ctx.path !== undefined && SESSION_REVOKING_PATHS.has(ctx.path)) {
+        const authed = await getSessionFromCtx(ctx);
+        if (authed !== null) await publishSessionRevoked(authed.user.id);
+      }
     }),
   },
   databaseHooks: {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const UNAUTHORIZED_CLOSE_CODE = 4001;
+export const SESSION_REVOKED_CLOSE_CODE = 4002;
 export const ORGANIZATION_FORBIDDEN_CLOSE_CODE = 4003;
 
 export const connectionOrganizationIdSchema = z.string().min(1).max(128);

@@ -1,10 +1,18 @@
 'use client';
 
 import { RealtimeProvider } from '@orbit/realtime-client/react';
+import { SESSION_REVOKED_CLOSE_CODE, UNAUTHORIZED_CLOSE_CODE } from '@orbit/shared/events';
 import type { ReactNode } from 'react';
+import { useCallback } from 'react';
+import { authClient } from '@/lib/auth/client.ts';
 import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
 import { SessionProvider } from './session.tsx';
+
+const SIGNED_OUT_CLOSE_CODES: readonly number[] = [
+  SESSION_REVOKED_CLOSE_CODE,
+  UNAUTHORIZED_CLOSE_CODE,
+];
 
 export interface WorkspaceRealtimeProps {
   readonly url: string;
@@ -23,9 +31,21 @@ export function WorkspaceRealtime({
   teamIds,
   children,
 }: WorkspaceRealtimeProps) {
+  const handleTerminal = useCallback((code: number) => {
+    if (!SIGNED_OUT_CLOSE_CODES.includes(code)) return;
+    authClient.signOut().finally(() => {
+      window.location.href = '/login';
+    });
+  }, []);
+
   return (
     <SessionProvider userId={userId}>
-      <RealtimeProvider url={url} token={token} organizationId={organizationId}>
+      <RealtimeProvider
+        url={url}
+        token={token}
+        organizationId={organizationId}
+        onTerminal={handleTerminal}
+      >
         <DeltaBridge organizationId={organizationId} teamIds={teamIds} />
         {children}
         <ConnectionBanner />
