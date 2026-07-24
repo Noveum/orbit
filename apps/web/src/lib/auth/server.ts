@@ -101,7 +101,9 @@ export const auth = betterAuth({
   emailAndPassword: emailAndPassword(),
   ...rateLimit(),
   socialProviders: socialProviders(),
-  account: { accountLinking: { enabled: true, allowUnlinkingAll: true } },
+  account: {
+    accountLinking: { enabled: true, allowUnlinkingAll: true, allowDifferentEmails: true },
+  },
   session: {
     expiresIn: SESSION_MAX_AGE_SECONDS,
     cookieCache: { enabled: true, maxAge: SESSION_CACHE_SECONDS },
