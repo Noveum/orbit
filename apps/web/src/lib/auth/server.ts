@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import { assertEmailDomainAllowed } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
-import { inviteEmail, magicLinkEmail, sendEmail } from '@orbit/services/email';
+import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
@@ -58,6 +58,21 @@ function emailAndPassword() {
   return {
     enabled: true,
     minPasswordLength: 12,
+    sendResetPassword: async (
+      { user, url, token }: { user: { email: string }; url: string; token: string },
+      request?: Request,
+    ) => {
+      if (isDevLoginRequest(request)) return;
+      const content = await resetPasswordEmail({ url, email: user.email });
+      await sendEmail(db, {
+        to: user.email,
+        subject: content.subject,
+        html: content.html,
+        text: content.text,
+        template: 'reset-password',
+        idempotencyKey: `reset-password:${token}`,
+      });
+    },
     password: {
       hash: (password: string) => Bun.password.hash(password, { algorithm: 'argon2id' }),
       verify: ({ hash, password }: { hash: string; password: string }) =>
