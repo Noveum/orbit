@@ -307,7 +307,8 @@ export function countValues(
   const counts = new Map<string, number>();
   const read = definition.countOf;
   if (read === null) return counts;
-  for (const issue of issues) {
+  const list: readonly Issue[] = Array.isArray(issues) ? issues : [];
+  for (const issue of list) {
     const keys = read(issue);
     if (!Array.isArray(keys)) continue;
     for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);

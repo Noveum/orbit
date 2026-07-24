@@ -24,9 +24,20 @@ import { viewConfigToState } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
-import type { View, WorkflowState } from '@/lib/query/schemas.ts';
+import type { Issue, View, WorkflowState } from '@/lib/query/schemas.ts';
+import type { IssuePages } from '@/lib/query/sync.ts';
+import { flattenIssuePages } from '@/lib/query/sync.ts';
 import { teamIssuesQuery, useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
+
+function toIssueArray(data: unknown, fallback: readonly Issue[]): readonly Issue[] {
+  if (Array.isArray(data)) return data as readonly Issue[];
+  if (data !== null && typeof data === 'object' && 'pages' in data) {
+    return flattenIssuePages(data as IssuePages);
+  }
+  return fallback;
+}
+
 import { Board } from './board.tsx';
 import { IssueList } from './issue-list.tsx';
 import { ListSkeleton } from './list-skeleton.tsx';
@@ -100,9 +111,14 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
     ],
   );
 
+  const unfilteredRows = useMemo(
+    () => toIssueArray(unfiltered.data, rows),
+    [unfiltered.data, rows],
+  );
+
   const hiddenByFilters =
     filtered && unfiltered.data !== undefined
-      ? Math.max(0, unfiltered.data.length - rows.length)
+      ? Math.max(0, unfilteredRows.length - rows.length)
       : 0;
 
   const other = layout === 'board' ? 'issues' : 'board';
@@ -160,7 +176,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         config={config}
         onChange={setConfig}
         controls={controls}
-        issues={unfiltered.data ?? rows}
+        issues={unfilteredRows}
         savedView={savedView}
         dirty={savedView !== null && isDirty(config, layout, savedView)}
       />
