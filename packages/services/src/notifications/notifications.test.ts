@@ -316,7 +316,7 @@ describe('inbox reads and writes', () => {
       ]);
       const counters = await unreadCounters(tx, fixture.adaId, fixture.organizationId);
       expect(counters.mentions).toBe(2);
-      expect(counters.total).toBe(2);
+      expect(counters.total).toBe(4);
     });
   });
 

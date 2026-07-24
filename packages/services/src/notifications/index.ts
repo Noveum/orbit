@@ -483,8 +483,8 @@ export async function unreadCounters(
   let total = 0;
   let mentions = 0;
   for (const row of rows) {
+    total += row.value;
     if (row.type === 'mention') mentions += row.value;
-    else total += row.value;
   }
   return { total, mentions };
 }
