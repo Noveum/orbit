@@ -116,7 +116,6 @@ jobs:
           for target in web realtime mcp; do
             docker build --build-arg DEPS_IMAGE=orbit-deps:build -f "apps/$target/Dockerfile" -t "orbit-$target:ci" .
           done
-          docker build --build-arg DEPS_IMAGE=orbit-deps:build -f packages/db/Dockerfile -t orbit-migrate:ci .
 
       - name: The web image must boot on Bun and serve its health endpoint
         run: |
@@ -142,7 +141,7 @@ jobs:
       - name: Every image must run Bun as its runtime
         run: |
           set -eu
-          for image in orbit-web:ci orbit-realtime:ci orbit-mcp:ci orbit-migrate:ci; do
+          for image in orbit-web:ci orbit-realtime:ci orbit-mcp:ci; do
             VERSION=$(docker run --rm --entrypoint bun "$image" --version)
             echo "$image runs bun $VERSION"
             case "$VERSION" in
@@ -150,16 +149,6 @@ jobs:
               *) echo "$image does not run Bun" >&2; exit 1 ;;
             esac
           done
-
-      - name: The migrate image must run as a non-root user
-        run: |
-          set -eu
-          USER_ID=$(docker run --rm --entrypoint id orbit-migrate:ci -u)
-          echo "migrate image uid: $USER_ID"
-          if [ "$USER_ID" = "0" ]; then
-            echo "migrate image runs as root" >&2
-            exit 1
-          fi
 
       - name: Manifests must render with no placeholders left and validate
         run: |
@@ -190,4 +179,3 @@ jobs:
       - name: The deploy scripts must be syntactically valid
         run: |
           sh -n k8s/apply.sh
-          sh -n k8s/migrate.sh

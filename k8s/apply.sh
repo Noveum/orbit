@@ -123,5 +123,4 @@ else
     --cors-configuration "$(render "$HERE/s3-cors.json")"
 fi
 
-echo "done. run the migrate job separately with:"
-echo "  k8s/migrate.sh"
+echo "done. schema migrations are applied locally, not by any job in the cluster."

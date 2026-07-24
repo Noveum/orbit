@@ -45,7 +45,7 @@ export KUBE_SERVER=http://127.0.0.1:8080
 kubectl --server=$KUBE_SERVER get pods -n orbit
 ```
 
-`apply.sh` and `migrate.sh` both honour `KUBE_SERVER`. If the proxy is not
+`apply.sh` honours `KUBE_SERVER`. If the proxy is not
 running, fall back to a SOCKS tunnel, which routes your own credentials instead:
 
 ```
@@ -116,11 +116,9 @@ TLS mode to be full rather than flexible.
 The certificate is already valid for this name: the ALB serves a wildcard ACM
 certificate covering the zone, so nothing needs issuing.
 
-5. Create the schema:
-
-```
-./k8s/migrate.sh
-```
+5. Apply the schema locally with the Drizzle push against the target database
+   (use `extras/prod-tunnel` to reach prod). Migrations are never run by a job in
+   the cluster.
 
 ## Storage
 
@@ -252,20 +250,20 @@ aws secretsmanager get-secret-value --region us-east-1 \
 ## Continuous deployment
 
 A CodeBuild project runs `buildspec.yml` on every push to `main`. It first builds
-a shared `orbit-deps` image that runs `bun install` once, then builds the four
-service images (web, realtime, mcp, migrate) against it in parallel, pushes them
+a shared `orbit-deps` image that runs `bun install` once, then builds the three
+service images (web, realtime, mcp) against it in parallel, pushes them
 to ECR tagged with the short commit, then `kubectl set image` on the three
 deployments and waits for the rollouts. It runs inside the VPC, which is the only
 reason it can reach the private EKS endpoint and RDS.
 
 The `orbit-deps` image is a build-and-cache artifact, never deployed. It carries
 the installed `node_modules` as a single layer that every service image shares,
-so the dependency install is built and pushed once instead of four times, and it
+so the dependency install is built and pushed once instead of three times, and it
 gives the install step a cache that survives across fresh on-demand build hosts.
 
 CodeBuild never applies these manifests. The deployments must already exist, and
-the build fails loudly if they do not. Schema changes are never automatic: run
-`migrate.sh` yourself when the schema moves.
+the build fails loudly if they do not. Schema changes are never automatic and are
+never run in the cluster: apply them locally when the schema moves.
 
 ## Sharing the ALB
 
