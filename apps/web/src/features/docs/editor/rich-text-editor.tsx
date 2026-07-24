@@ -44,7 +44,7 @@ export interface RichTextEditorProps {
   readonly testId?: string;
   readonly className?: string;
   readonly autoFocus?: boolean;
-  readonly showToolbar?: boolean;
+  readonly toolbar?: 'full' | 'compact';
   readonly ariaLabel: string;
   readonly onSubmit?: () => void;
   readonly onForceSave?: () => void;
@@ -88,7 +88,7 @@ export function RichTextEditor({
   testId = 'rich-editor',
   className,
   autoFocus = false,
-  showToolbar = false,
+  toolbar,
   ariaLabel,
   onSubmit,
   onForceSave,
@@ -352,7 +352,7 @@ export function RichTextEditor({
       ref={containerRef}
       aria-label={ariaLabel}
       data-testid={testId}
-      className={cn('relative min-h-0', showToolbar && 'flex flex-1 flex-col', className)}
+      className={cn('relative min-h-0', toolbar === 'full' && 'flex flex-1 flex-col', className)}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}
@@ -360,14 +360,16 @@ export function RichTextEditor({
         if (onUpload !== undefined) event.preventDefault();
       }}
     >
-      {showToolbar && editor !== null ? (
+      {toolbar !== undefined && editor !== null ? (
         <EditorToolbar
           editor={editor}
+          compact={toolbar === 'compact'}
+          className={toolbar === 'compact' ? 'mb-2 border-border border-b pb-2' : ''}
           onPickFile={() => fileRef.current?.click()}
           testId={`${testId}-toolbar`}
         />
       ) : null}
-      <div className={showToolbar ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
+      <div className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
       </div>
 

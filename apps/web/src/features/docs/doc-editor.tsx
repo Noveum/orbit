@@ -241,7 +241,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
             members={bootstrap.data?.members ?? []}
             onUpload={upload}
             onForceSave={onForceSave}
-            showToolbar
+            toolbar="full"
             ariaLabel="Doc body"
             testId="doc-rich-editor"
           />

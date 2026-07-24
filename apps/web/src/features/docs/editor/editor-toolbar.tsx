@@ -40,7 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
-import { Tooltip } from '@/components/ui/tooltip.tsx';
+import { Tooltip, TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import { CALLOUT_LABEL, type CalloutTone } from './markdown.ts';
 
@@ -83,12 +83,16 @@ function insertCallout(editor: Editor, tone: CalloutTone): void {
 export interface EditorToolbarProps {
   readonly editor: Editor;
   readonly onPickFile: () => void;
+  readonly compact?: boolean;
+  readonly className?: string;
   readonly testId?: string;
 }
 
 export function EditorToolbar({
   editor,
   onPickFile,
+  compact = false,
+  className,
   testId = 'editor-toolbar',
 }: EditorToolbarProps) {
   const state = useEditorState({
@@ -122,191 +126,213 @@ export function EditorToolbar({
   };
 
   return (
-    <div
-      data-testid={testId}
-      className="sticky top-0 z-20 flex flex-wrap items-center gap-0.5 border-border border-b bg-surface/95 px-2 py-1 backdrop-blur-sm"
-    >
-      <ToolbarButton
-        label="Undo"
-        shortcut={['mod', 'z']}
-        icon={Undo2}
-        disabled={!state.canUndo}
-        onPress={() => editor.chain().focus().undo().run()}
-      />
-      <ToolbarButton
-        label="Redo"
-        shortcut={['mod', 'shift', 'z']}
-        icon={Redo2}
-        disabled={!state.canRedo}
-        onPress={() => editor.chain().focus().redo().run()}
-      />
+    <TooltipProvider>
+      <div
+        data-testid={testId}
+        className={cn(
+          'flex flex-wrap items-center gap-0.5',
+          compact
+            ? 'text-muted'
+            : 'sticky top-0 z-20 border-border border-b bg-surface/95 px-2 py-1 backdrop-blur-sm',
+          className,
+        )}
+      >
+        {compact ? null : (
+          <>
+            <ToolbarButton
+              label="Undo"
+              shortcut={['mod', 'z']}
+              icon={Undo2}
+              disabled={!state.canUndo}
+              onPress={() => editor.chain().focus().undo().run()}
+            />
+            <ToolbarButton
+              label="Redo"
+              shortcut={['mod', 'shift', 'z']}
+              icon={Redo2}
+              disabled={!state.canRedo}
+              onPress={() => editor.chain().focus().redo().run()}
+            />
 
-      <Divider />
+            <Divider />
 
-      <DropdownMenu>
-        <Tooltip label="Text style" side="bottom">
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-1.5"
-              data-testid={`${testId}-block`}
-              aria-label="Text style"
-            >
-              {current ? <current.icon className="size-3.5" aria-hidden="true" /> : null}
-              <span className="text-2xs">{current?.label ?? 'Style'}</span>
-              <ChevronDown className="size-3 text-faint" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-        </Tooltip>
-        <DropdownMenuContent align="start" className="min-w-40">
-          {BLOCK_OPTIONS.map((option) => (
-            <DropdownMenuItem
-              key={option.kind}
-              data-testid={`${testId}-block-${option.kind}`}
-              aria-current={state.block === option.kind}
-              onSelect={() => setBlock(option.kind)}
-              className={cn(state.block === option.kind && 'text-text')}
-            >
-              <option.icon className="size-3.5" aria-hidden="true" />
-              {option.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenu>
+              <Tooltip label="Text style" side="bottom">
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-1.5"
+                    data-testid={`${testId}-block`}
+                    aria-label="Text style"
+                  >
+                    {current ? <current.icon className="size-3.5" aria-hidden="true" /> : null}
+                    <span className="text-2xs">{current?.label ?? 'Style'}</span>
+                    <ChevronDown className="size-3 text-faint" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="min-w-40">
+                {BLOCK_OPTIONS.map((option) => (
+                  <DropdownMenuItem
+                    key={option.kind}
+                    data-testid={`${testId}-block-${option.kind}`}
+                    aria-current={state.block === option.kind}
+                    onSelect={() => setBlock(option.kind)}
+                    className={cn(state.block === option.kind && 'text-text')}
+                  >
+                    <option.icon className="size-3.5" aria-hidden="true" />
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-      <Divider />
+            <Divider />
+          </>
+        )}
 
-      <ToolbarButton
-        label="Bold"
-        shortcut={['mod', 'b']}
-        icon={Bold}
-        active={state.bold}
-        onPress={() => editor.chain().focus().toggleBold().run()}
-      />
-      <ToolbarButton
-        label="Italic"
-        shortcut={['mod', 'i']}
-        icon={Italic}
-        active={state.italic}
-        onPress={() => editor.chain().focus().toggleItalic().run()}
-      />
-      <ToolbarButton
-        label="Underline"
-        shortcut={['mod', 'u']}
-        icon={UnderlineIcon}
-        active={state.underline}
-        onPress={() => editor.chain().focus().toggleUnderline().run()}
-      />
-      <ToolbarButton
-        label="Strikethrough"
-        icon={Strikethrough}
-        active={state.strike}
-        onPress={() => editor.chain().focus().toggleStrike().run()}
-      />
-      <ToolbarButton
-        label="Highlight"
-        icon={Highlighter}
-        active={state.highlight}
-        onPress={() => editor.chain().focus().toggleHighlight().run()}
-      />
-      <ToolbarButton
-        label="Inline code"
-        icon={Code}
-        active={state.code}
-        onPress={() => editor.chain().focus().toggleCode().run()}
-      />
+        <ToolbarButton
+          label="Bold"
+          shortcut={['mod', 'b']}
+          icon={Bold}
+          active={state.bold}
+          onPress={() => editor.chain().focus().toggleBold().run()}
+        />
+        <ToolbarButton
+          label="Italic"
+          shortcut={['mod', 'i']}
+          icon={Italic}
+          active={state.italic}
+          onPress={() => editor.chain().focus().toggleItalic().run()}
+        />
+        <ToolbarButton
+          label="Strikethrough"
+          icon={Strikethrough}
+          active={state.strike}
+          onPress={() => editor.chain().focus().toggleStrike().run()}
+        />
+        {compact ? null : (
+          <ToolbarButton
+            label="Underline"
+            shortcut={['mod', 'u']}
+            icon={UnderlineIcon}
+            active={state.underline}
+            onPress={() => editor.chain().focus().toggleUnderline().run()}
+          />
+        )}
+        {compact ? null : (
+          <ToolbarButton
+            label="Highlight"
+            icon={Highlighter}
+            active={state.highlight}
+            onPress={() => editor.chain().focus().toggleHighlight().run()}
+          />
+        )}
+        <ToolbarButton
+          label="Inline code"
+          icon={Code}
+          active={state.code}
+          onPress={() => editor.chain().focus().toggleCode().run()}
+        />
 
-      <Divider />
+        <Divider />
 
-      <ToolbarButton
-        label="Bulleted list"
-        icon={List}
-        active={state.bulletList}
-        onPress={() => editor.chain().focus().toggleBulletList().run()}
-      />
-      <ToolbarButton
-        label="Numbered list"
-        icon={ListOrdered}
-        active={state.orderedList}
-        onPress={() => editor.chain().focus().toggleOrderedList().run()}
-      />
-      <ToolbarButton
-        label="Task list"
-        icon={ListChecks}
-        active={state.taskList}
-        onPress={() => editor.chain().focus().toggleTaskList().run()}
-      />
+        <ToolbarButton
+          label="Bulleted list"
+          icon={List}
+          active={state.bulletList}
+          onPress={() => editor.chain().focus().toggleBulletList().run()}
+        />
+        <ToolbarButton
+          label="Numbered list"
+          icon={ListOrdered}
+          active={state.orderedList}
+          onPress={() => editor.chain().focus().toggleOrderedList().run()}
+        />
+        {compact ? null : (
+          <ToolbarButton
+            label="Task list"
+            icon={ListChecks}
+            active={state.taskList}
+            onPress={() => editor.chain().focus().toggleTaskList().run()}
+          />
+        )}
 
-      <Divider />
+        <Divider />
 
-      <ToolbarButton
-        label="Quote"
-        icon={Quote}
-        active={state.blockquote}
-        onPress={() => editor.chain().focus().toggleBlockquote().run()}
-      />
-      <ToolbarButton
-        label="Code block"
-        icon={Code2}
-        active={state.codeBlock}
-        onPress={() => editor.chain().focus().toggleCodeBlock().run()}
-      />
+        <ToolbarButton
+          label="Quote"
+          icon={Quote}
+          active={state.blockquote}
+          onPress={() => editor.chain().focus().toggleBlockquote().run()}
+        />
+        <ToolbarButton
+          label="Code block"
+          icon={Code2}
+          active={state.codeBlock}
+          onPress={() => editor.chain().focus().toggleCodeBlock().run()}
+        />
 
-      <DropdownMenu>
-        <Tooltip label="Callout" side="bottom">
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="size-7 px-0"
-              data-testid={`${testId}-callout`}
-              aria-label="Callout"
-            >
-              <Info className="size-3.5" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-        </Tooltip>
-        <DropdownMenuContent align="start" className="min-w-40">
-          {(Object.keys(CALLOUT_LABEL) as CalloutTone[]).map((tone) => {
-            const Icon = CALLOUT_ICON[tone];
-            return (
-              <DropdownMenuItem
-                key={tone}
-                data-testid={`${testId}-callout-${tone}`}
-                onSelect={() => insertCallout(editor, tone)}
-              >
-                <Icon className="size-3.5" aria-hidden="true" />
-                {CALLOUT_LABEL[tone]}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        {compact ? null : (
+          <>
+            <DropdownMenu>
+              <Tooltip label="Callout" side="bottom">
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-7 px-0"
+                    data-testid={`${testId}-callout`}
+                    aria-label="Callout"
+                  >
+                    <Info className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="min-w-40">
+                {(Object.keys(CALLOUT_LABEL) as CalloutTone[]).map((tone) => {
+                  const Icon = CALLOUT_ICON[tone];
+                  return (
+                    <DropdownMenuItem
+                      key={tone}
+                      data-testid={`${testId}-callout-${tone}`}
+                      onSelect={() => insertCallout(editor, tone)}
+                    >
+                      <Icon className="size-3.5" aria-hidden="true" />
+                      {CALLOUT_LABEL[tone]}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-      <ToolbarButton
-        label="Table"
-        icon={Table2}
-        onPress={() =>
-          editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-        }
-      />
-      <ToolbarButton
-        label="Divider"
-        icon={Minus}
-        onPress={() => editor.chain().focus().setHorizontalRule().run()}
-      />
-      <ToolbarButton label="Image or file" icon={ImageIcon} onPress={onPickFile} />
+            <ToolbarButton
+              label="Table"
+              icon={Table2}
+              onPress={() =>
+                editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+              }
+            />
+            <ToolbarButton
+              label="Divider"
+              icon={Minus}
+              onPress={() => editor.chain().focus().setHorizontalRule().run()}
+            />
+            <ToolbarButton label="Image or file" icon={ImageIcon} onPress={onPickFile} />
+          </>
+        )}
 
-      <Divider />
+        <Divider />
 
-      <LinkControl
-        editor={editor}
-        active={state.link}
-        enabled={state.hasSelection || state.link}
-        testId={testId}
-      />
-    </div>
+        <LinkControl
+          editor={editor}
+          active={state.link}
+          enabled={state.hasSelection || state.link}
+          testId={testId}
+        />
+      </div>
+    </TooltipProvider>
   );
 }
 

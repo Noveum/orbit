@@ -80,6 +80,7 @@ export function CommentComposer({
           ariaLabel={submitLabel === 'Comment' ? 'Comment body' : submitLabel}
           testId={testId}
           autoFocus={autoFocus}
+          toolbar="compact"
           onSubmit={submit}
           {...(onCancel === undefined ? {} : { onCancel })}
         />

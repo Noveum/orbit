@@ -24,7 +24,7 @@ function Harness({
         }}
         ariaLabel="Body"
         testId="rich"
-        showToolbar
+        toolbar="full"
         onReady={onReady}
       />
     </TooltipProvider>
