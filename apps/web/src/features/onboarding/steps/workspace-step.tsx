@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/select.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { cardHover, tabHover } from '@/lib/interaction.ts';
 import { advanceStep } from '../api.ts';
 import type { OnboardingStatusView, PendingInviteView } from '../types.ts';
 
@@ -224,11 +226,12 @@ function JoinWorkspacePanel({
             <li key={invite.id}>
               <label
                 htmlFor={inputId}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors ${
+                className={cn(
+                  'flex cursor-pointer items-center gap-3 rounded-lg border p-3',
                   checked
                     ? 'border-accent bg-surface-2'
-                    : 'border-border bg-surface hover:bg-surface-2'
-                }`}
+                    : cn('border-border bg-surface', cardHover),
+                )}
               >
                 <Checkbox
                   id={inputId}
@@ -285,30 +288,33 @@ export function WorkspaceStep({ invites, onNext }: WorkspaceStepProps) {
       </header>
 
       {hasInvites ? (
-        <div className="flex gap-1 rounded-lg border border-border bg-surface p-1" role="tablist">
+        <fieldset className="flex gap-1 rounded-lg border border-border bg-surface p-1">
+          <legend className="sr-only">Workspace mode</legend>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === 'join'}
+            aria-pressed={mode === 'join'}
             onClick={() => setMode('join')}
-            className={`flex-1 rounded-md px-3 py-1.5 text-dense transition-colors ${
-              mode === 'join' ? 'bg-surface-2 text-text' : 'text-muted hover:text-text'
-            }`}
+            className={cn(
+              'flex-1 rounded-md px-3 py-1.5 text-dense',
+              tabHover,
+              mode === 'join' ? 'bg-surface-2 text-text' : 'text-muted',
+            )}
           >
             Join a workspace
           </button>
           <button
             type="button"
-            role="tab"
-            aria-selected={mode === 'create'}
+            aria-pressed={mode === 'create'}
             onClick={() => setMode('create')}
-            className={`flex-1 rounded-md px-3 py-1.5 text-dense transition-colors ${
-              mode === 'create' ? 'bg-surface-2 text-text' : 'text-muted hover:text-text'
-            }`}
+            className={cn(
+              'flex-1 rounded-md px-3 py-1.5 text-dense',
+              tabHover,
+              mode === 'create' ? 'bg-surface-2 text-text' : 'text-muted',
+            )}
           >
             Create a new one
           </button>
-        </div>
+        </fieldset>
       ) : null}
 
       {mode === 'join' ? (

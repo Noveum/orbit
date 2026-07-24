@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { messageOf } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 import { advanceStep } from '../api.ts';
 import type { OnboardingStatusView } from '../types.ts';
 
@@ -64,11 +65,12 @@ export function ThemeStep({ onNext }: ThemeStepProps) {
             <label
               key={option.value}
               className={cn(
-                'flex cursor-pointer flex-col items-center gap-2 rounded-lg border px-3 py-5 text-dense transition-colors',
+                'flex cursor-pointer flex-col items-center gap-2 rounded-lg border px-3 py-5 text-dense',
+                tabHover,
                 'focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2',
                 active
                   ? 'border-accent bg-surface-2 text-text'
-                  : 'border-border bg-surface text-muted hover:text-text',
+                  : 'border-border bg-surface text-muted',
               )}
             >
               <input
