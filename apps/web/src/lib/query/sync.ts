@@ -1,7 +1,7 @@
 import type { SyncAction } from '@orbit/shared/events';
 import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
-import type { Comment, Issue, IssuePage, Reaction } from './schemas.ts';
+import type { Comment, DocComment, Issue, IssuePage, Reaction } from './schemas.ts';
 import { issueSchema, reactionSchema } from './schemas.ts';
 
 const partialIssueSchema = issueSchema.partial().extend({
@@ -13,6 +13,19 @@ const partialIssueSchema = issueSchema.partial().extend({
 const commentDeltaSchema = z.object({
   id: z.string(),
   issueId: z.string(),
+  authorId: z.string(),
+  parentId: z.string().nullable().default(null),
+  body: z.string(),
+  editedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  deletedAt: z.string().nullable().default(null),
+  syncId: z.number(),
+});
+
+const docCommentDeltaSchema = z.object({
+  id: z.string(),
+  docId: z.string(),
   authorId: z.string(),
   parentId: z.string().nullable().default(null),
   body: z.string(),
@@ -148,6 +161,32 @@ export function applyCommentDelta(
 
   if (index === -1) {
     return [...comments, { comment: incoming, bodyHtml: '', reactions: [] }];
+  }
+
+  const existing = comments[index];
+  if (existing === undefined) return comments;
+  if (isStale(incoming.syncId, existing.comment.syncId)) return comments;
+
+  const next = [...comments];
+  next[index] = { ...existing, comment: incoming, bodyHtml: '' };
+  return next;
+}
+
+export function applyDocCommentDelta(
+  comments: readonly DocComment[],
+  action: SyncAction,
+): readonly DocComment[] {
+  const parsed = docCommentDeltaSchema.safeParse(action.data);
+  if (!parsed.success) return comments;
+  const incoming = parsed.data;
+  const index = comments.findIndex((entry) => entry.comment.id === incoming.id);
+
+  if (action.action === 'delete' || incoming.deletedAt !== null) {
+    return index === -1 ? comments : comments.filter((entry) => entry.comment.id !== incoming.id);
+  }
+
+  if (index === -1) {
+    return [...comments, { comment: incoming, bodyHtml: '' }];
   }
 
   const existing = comments[index];

@@ -17,9 +17,11 @@ import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
 import { useArchiveDoc, useDoc, useDocs, useUpdateDoc } from '@/lib/query/use-docs.ts';
+import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
 import { DocHistory } from './doc-history.tsx';
 import { DocReader } from './doc-reader.tsx';
@@ -122,6 +124,7 @@ function LoadedDoc({
   startEditing,
 }: DocSurfaceProps & { readonly detail: DocDetail }) {
   const router = useRouter();
+  const workspace = useWorkspace();
   const { docs, collections, projects } = useDocList();
   const { toggle, setUnsavedDocId } = useDocsTree();
   const update = useUpdateDoc(detail.doc.id);
@@ -257,6 +260,7 @@ function LoadedDoc({
             projectName={projectName}
             backlinks={detail.backlinks}
           />
+          <DocComments docId={detail.doc.id} members={workspace.members} />
         </div>
       )}
     </div>
