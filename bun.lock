@@ -112,6 +112,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@orbit/db": "workspace:*",
+        "@orbit/services": "workspace:*",
         "@orbit/shared": "workspace:*",
         "drizzle-orm": "0.45.2",
         "zod": "4.4.3",

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
-import { assertEmailDomainAllowed } from '@orbit/core';
+import { assertEmailDomainAllowed, ingestExternalAvatar, isExternalImageUrl } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
@@ -140,6 +140,10 @@ export const auth = betterAuth({
           return Promise.resolve({
             data: { ...user, handle: handleFor(user.email, user.name) },
           });
+        },
+        after: async (user) => {
+          const image = user.image ?? null;
+          if (isExternalImageUrl(image)) await ingestExternalAvatar(user.id, image);
         },
       },
     },
