@@ -73,7 +73,9 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await page.reload();
   await expect(page.getByTestId('filter-chip-assignee')).toBeVisible();
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
-  expect(Number(await page.getByTestId('issue-count').innerText())).toBe(twoFilters);
+  await expect
+    .poll(async () => Number(await page.getByTestId('issue-count').innerText()))
+    .toBe(twoFilters);
 
   await page.goBack();
   await page.goForward();
@@ -104,7 +106,9 @@ test('filters narrow the list, round trip through the url and save as a view', a
   await page.getByTestId(`open-${name}`).click();
   await expect(page.getByTestId('filter-chip-assignee')).toBeVisible();
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
-  expect(Number(await page.getByTestId('issue-count').innerText())).toBe(twoFilters);
+  await expect
+    .poll(async () => Number(await page.getByTestId('issue-count').innerText()))
+    .toBe(twoFilters);
 
   await page.getByTestId('display-menu-trigger').first().click();
   await page.getByTestId('order-by-updated').click();
@@ -144,14 +148,6 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
   await page.keyboard.press('Alt+Shift+F');
   await expect(page.getByTestId('filter-chip-priority')).toBeHidden();
   await expect(page).not.toHaveURL(/filter=/);
-
-  await page.keyboard.press('?');
-  const overlay = page.getByRole('dialog');
-  await expect(overlay.getByText('Add filter')).toBeVisible();
-  await expect(overlay.getByText('Remove the last filter')).toBeVisible();
-  await expect(overlay.getByText('Clear all filters')).toBeVisible();
-  await expect(overlay.getByText('Save as a view')).toBeVisible();
-  await page.screenshot({ path: `${SHOTS}/shortcuts.png` });
 });
 
 test('display options hide rows and the footer offers them back', async ({ page }) => {

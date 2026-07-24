@@ -48,7 +48,7 @@ test('one user in two tabs of the same browser sees issues, comments and reactio
   await expect(tabB.getByTestId('issue-detail')).toBeVisible();
 
   const body = `Comment from the other tab ${Date.now() % 1000000}`;
-  await tabA.getByTestId('comment-composer').fill(body);
+  await tabA.getByTestId('comment-composer').locator('.ProseMirror').fill(body);
   await tabA.getByTestId('comment-composer-submit').click();
   await expect(tabA.getByText(body)).toBeVisible();
 
