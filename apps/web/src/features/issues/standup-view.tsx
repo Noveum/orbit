@@ -22,6 +22,8 @@ import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
+const MAX_BOARD_AUTOLOAD_PAGES = 10;
+
 export function StandupView({ layout }: { layout: ViewLayoutMode }) {
   const router = useRouter();
   const workspace = useWorkspace();
@@ -30,12 +32,16 @@ export function StandupView({ layout }: { layout: ViewLayoutMode }) {
 
   const all = useAllIssues();
   const sentinel = useRef<HTMLDivElement>(null);
+  const boardAutoLoads = useRef(0);
   const [peekId, setPeekId] = useState<string | null>(null);
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = all;
   useEffect(() => {
     if (layout === 'board') {
-      if (hasNextPage && !isFetchingNextPage) fetchNextPage().catch(() => undefined);
+      if (hasNextPage && !isFetchingNextPage && boardAutoLoads.current < MAX_BOARD_AUTOLOAD_PAGES) {
+        boardAutoLoads.current += 1;
+        fetchNextPage().catch(() => undefined);
+      }
       return;
     }
     const node = sentinel.current;
