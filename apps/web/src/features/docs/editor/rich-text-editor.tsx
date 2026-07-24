@@ -45,6 +45,7 @@ export interface RichTextEditorProps {
   readonly className?: string;
   readonly autoFocus?: boolean;
   readonly toolbar?: 'full' | 'compact';
+  readonly editable?: boolean;
   readonly ariaLabel: string;
   readonly onSubmit?: () => void;
   readonly onForceSave?: () => void;
@@ -89,6 +90,7 @@ export function RichTextEditor({
   className,
   autoFocus = false,
   toolbar,
+  editable = true,
   ariaLabel,
   onSubmit,
   onForceSave,
@@ -136,6 +138,7 @@ export function RichTextEditor({
     extensions: editorExtensions(menuKeyRef, placeholder),
     content: toEditorHtml(renderMarkdown(value)),
     immediatelyRender: false,
+    editable,
     autofocus: autoFocus,
     editorProps: {
       attributes: {
@@ -159,6 +162,10 @@ export function RichTextEditor({
     emitted.current.add(value);
     editor.commands.setContent(toEditorHtml(renderMarkdown(value)), { emitUpdate: false });
   }, [editor, value]);
+
+  useEffect(() => {
+    if (editor !== null) editor.setEditable(editable);
+  }, [editor, editable]);
 
   const ready = useRef(onReady);
   ready.current = onReady;
@@ -352,7 +359,12 @@ export function RichTextEditor({
       ref={containerRef}
       aria-label={ariaLabel}
       data-testid={testId}
-      className={cn('relative min-h-0', toolbar === 'full' && 'flex flex-1 flex-col', className)}
+      className={cn(
+        'relative min-h-0',
+        toolbar === 'full' && 'flex flex-1 flex-col',
+        !editable && 'opacity-60',
+        className,
+      )}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}
@@ -360,7 +372,7 @@ export function RichTextEditor({
         if (onUpload !== undefined) event.preventDefault();
       }}
     >
-      {toolbar !== undefined && editor !== null ? (
+      {toolbar !== undefined && editable && editor !== null ? (
         <EditorToolbar
           editor={editor}
           compact={toolbar === 'compact'}

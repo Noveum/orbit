@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select.tsx';
-import { Textarea } from '@/components/ui/textarea.tsx';
+import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { healthLabel } from './health-chip.tsx';
 
@@ -48,17 +48,17 @@ export function UpdateComposer({ projectId, currentHealth, canPost }: UpdateComp
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-2.5">
-      <label htmlFor="project-update-body" className="sr-only">
-        Project update
-      </label>
-      <Textarea
-        id="project-update-body"
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        rows={3}
-        placeholder="What moved this week?"
-        disabled={!canPost || pending}
-      />
+      <div className="rounded-lg border border-border bg-surface px-3 py-2 focus-within:border-border-strong">
+        <RichTextEditor
+          value={body}
+          onChange={setBody}
+          placeholder="What moved this week?"
+          ariaLabel="Project update"
+          testId="project-update-body"
+          toolbar="compact"
+          editable={canPost && !pending}
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Select
           value={health}
