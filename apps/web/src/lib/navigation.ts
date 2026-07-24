@@ -21,6 +21,7 @@ export interface ShellTeam {
   readonly id: string;
   readonly key: string;
   readonly name: string;
+  readonly color?: string | undefined;
   readonly openIssues?: number | undefined;
 }
 
@@ -92,6 +93,72 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
       ],
     })),
   ];
+}
+
+export interface NavGroup {
+  readonly id: string;
+  readonly title: string;
+  readonly links: readonly NavLink[];
+}
+
+export interface NavTeamNode {
+  readonly id: string;
+  readonly key: string;
+  readonly name: string;
+  readonly color: string;
+  readonly href: string;
+  readonly count?: number | undefined;
+  readonly children: readonly NavLink[];
+}
+
+export interface SidebarNav {
+  readonly personal: readonly NavLink[];
+  readonly workspace: NavGroup;
+  readonly teams: readonly NavTeamNode[];
+}
+
+const DEFAULT_TEAM_COLOR = '#5A63C8';
+
+export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): SidebarNav {
+  return {
+    personal: [
+      { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
+      { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
+      { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
+    ],
+    workspace: {
+      id: 'workspace',
+      title: 'Workspace',
+      links: [
+        { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
+        { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
+        { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
+        { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
+        { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
+      ],
+    },
+    teams: teams.map((team) => {
+      const key = team.key.toLowerCase();
+      return {
+        id: team.id,
+        key: team.key,
+        name: team.name,
+        color: team.color ?? DEFAULT_TEAM_COLOR,
+        href: `/team/${key}/issues`,
+        count: team.openIssues,
+        children: [
+          {
+            href: `/team/${key}/issues`,
+            label: 'Issues',
+            icon: CircleDot,
+            count: team.openIssues,
+          },
+          { href: `/team/${key}/board`, label: 'Board', icon: Target },
+          { href: `/team/${key}/cycle/active`, label: 'Active cycle', icon: RefreshCcw },
+        ],
+      };
+    }),
+  };
 }
 
 export interface AppCommand {

@@ -302,6 +302,8 @@
   --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-in);
   --animate-panel-in: panel-in var(--duration-base) var(--ease-out);
   --animate-panel-out: panel-out var(--duration-fast) var(--ease-in);
+  --animate-accordion-in: accordion-in var(--duration-fast) var(--ease-out);
+  --animate-accordion-out: accordion-out var(--duration-instant) var(--ease-in);
 }
 
 @keyframes panel-in {
@@ -337,6 +339,28 @@
   }
   to {
     transform: translateX(-100%);
+  }
+}
+
+@keyframes accordion-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes accordion-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
   }
 }
 

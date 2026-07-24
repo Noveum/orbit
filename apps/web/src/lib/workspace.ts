@@ -22,7 +22,12 @@ export async function listTeamsForPrincipal(principal: Principal): Promise<Shell
     principal.role === 'admin' ? undefined : inArray(schema.team.id, [...principal.teamIds]);
 
   const rows = await db
-    .select({ id: schema.team.id, key: schema.team.key, name: schema.team.name })
+    .select({
+      id: schema.team.id,
+      key: schema.team.key,
+      name: schema.team.name,
+      color: schema.team.color,
+    })
     .from(schema.team)
     .where(
       and(
