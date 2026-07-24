@@ -53,6 +53,8 @@ function applyMarks(text: string, node: JSONContent): string {
   if (marks.some((mark) => markName(mark) === 'bold')) value = `**${value}**`;
   if (marks.some((mark) => markName(mark) === 'italic')) value = `_${value}_`;
   if (marks.some((mark) => markName(mark) === 'strike')) value = `~~${value}~~`;
+  if (marks.some((mark) => markName(mark) === 'underline')) value = `<u>${value}</u>`;
+  if (marks.some((mark) => markName(mark) === 'highlight')) value = `<mark>${value}</mark>`;
 
   const link = marks.find((mark) => markName(mark) === 'link');
   if (link !== undefined) {

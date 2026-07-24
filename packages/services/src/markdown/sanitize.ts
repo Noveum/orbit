@@ -17,6 +17,8 @@ const ALLOWED_TAGS = new Set([
   'em',
   'strong',
   'del',
+  'u',
+  'mark',
   'a',
   'img',
   'table',

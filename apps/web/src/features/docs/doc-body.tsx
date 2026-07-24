@@ -13,6 +13,8 @@ export const docProseClassName = cn(
   '[&_p]:my-4',
   '[&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2',
   '[&_strong]:font-semibold [&_strong]:text-text',
+  '[&_u]:underline [&_u]:underline-offset-2',
+  '[&_mark]:rounded-[0.2em] [&_mark]:bg-warning/25 [&_mark]:px-0.5 [&_mark]:text-text',
   '[&_blockquote]:my-4 [&_blockquote]:border-border-strong [&_blockquote]:border-l-2 [&_blockquote]:pl-4 [&_blockquote]:text-muted',
   '[&_blockquote>p:first-child>strong:first-child]:text-accent',
   '[&_hr]:my-8 [&_hr]:border-border',

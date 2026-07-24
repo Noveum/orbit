@@ -31,6 +31,12 @@ describe('renderMarkdown', () => {
     expect(html).toContain('href="https://orbit.dev"');
   });
 
+  it('keeps underline and highlight inline tags the editor emits', () => {
+    const html = renderMarkdown('An <u>underlined</u> and <mark>highlighted</mark> run.');
+    expect(html).toContain('<u>underlined</u>');
+    expect(html).toContain('<mark>highlighted</mark>');
+  });
+
   it('keeps fenced code blocks with a language class', () => {
     const html = renderMarkdown('```ts\nconst a: number = 1;\n```');
     expect(html).toContain('<pre>');

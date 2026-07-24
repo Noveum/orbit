@@ -65,6 +65,18 @@ describe('markdown round trip', () => {
     expect(roundTrip('- [x] done\n- [ ] next')).toBe('- [x] done\n- [ ] next');
   });
 
+  it('keeps underline and highlight marks that markdown alone cannot express', () => {
+    expect(roundTrip('An <u>underlined</u> word.')).toBe('An <u>underlined</u> word.');
+    expect(roundTrip('A <mark>highlighted</mark> word.')).toBe('A <mark>highlighted</mark> word.');
+  });
+
+  it('nests underline over an emphasised run without dropping either mark', () => {
+    const editor = mount('start');
+    editor.chain().focus().selectAll().toggleBold().toggleUnderline().run();
+    expect(docToMarkdown(editor.getJSON()).trimEnd()).toBe('<u>**start**</u>');
+    editor.destroy();
+  });
+
   it('round trips a callout as a labelled quote and a toggle as details', () => {
     expect(roundTrip('> **Warning**\n> Read the rollback step first.')).toBe(
       '> **Warning**\n> Read the rollback step first.',

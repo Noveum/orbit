@@ -1,5 +1,6 @@
 import { Extension, mergeAttributes, Node } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { TableKit } from '@tiptap/extension-table';
@@ -91,6 +92,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
       link: { openOnClick: false, autolink: true },
       heading: { levels: [1, 2, 3, 4] },
     }),
+    Highlight,
     CodeBlockLowlight.configure({ lowlight, defaultLanguage: 'ts' }),
     TaskList,
     TaskItem.configure({ nested: true }),
