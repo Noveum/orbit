@@ -1,7 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
+import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
@@ -15,9 +16,10 @@ function teamName(teams: readonly IntegrationTeam[], teamId: string | null): str
 export interface IntegrationsPanelProps {
   readonly settings: IntegrationSettings;
   readonly canManage: boolean;
+  readonly mcpUrl: string;
 }
 
-export function IntegrationsPanel({ settings, canManage }: IntegrationsPanelProps) {
+export function IntegrationsPanel({ settings, canManage, mcpUrl }: IntegrationsPanelProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +34,7 @@ export function IntegrationsPanel({ settings, canManage }: IntegrationsPanelProp
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-6">
       {error === null ? null : (
         <p role="alert" className="text-danger text-xs">
           {error}
@@ -41,11 +43,45 @@ export function IntegrationsPanel({ settings, canManage }: IntegrationsPanelProp
 
       <GithubSection settings={settings} canManage={canManage} onCall={call} />
       <SlackSection settings={settings} canManage={canManage} onCall={call} />
+      <McpSection mcpUrl={mcpUrl} onError={setError} />
     </div>
   );
 }
 
 type CallFn = (path: string, method: string, body: Record<string, unknown>) => Promise<void>;
+
+function IntegrationCard({
+  title,
+  description,
+  status,
+  children,
+}: {
+  title: string;
+  description: string;
+  status: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-medium text-dense text-text">{title}</h3>
+          {status}
+        </div>
+        <p className="text-muted text-xs">{description}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ConnectionBadge({ connected }: { connected: boolean }) {
+  return connected ? (
+    <Badge tone="success">Connected</Badge>
+  ) : (
+    <Badge tone="outline">Not connected</Badge>
+  );
+}
 
 function GithubSection({
   settings,
@@ -56,23 +92,18 @@ function GithubSection({
   canManage: boolean;
   onCall: CallFn;
 }) {
-  const [repositoryId, setRepositoryId] = useState('');
   const [repositoryName, setRepositoryName] = useState('');
+  const [repositoryId, setRepositoryId] = useState('');
   const [teamId, setTeamId] = useState(settings.teams[0]?.id ?? '');
+  const canSubmit =
+    repositoryName.trim().length > 0 && repositoryId.trim().length > 0 && teamId !== '';
 
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium text-dense text-text">GitHub</h3>
-        <span className="text-2xs text-faint">
-          {settings.githubConnected ? 'Connected' : 'Not connected'}
-        </span>
-      </div>
-      <p className="text-muted text-xs">
-        Link a repository to a team. Orbit receives verified webhooks, maps pull requests to issues
-        by branch name, and moves issues as reviews land.
-      </p>
-
+    <IntegrationCard
+      title="GitHub"
+      description="Link a repository to a team. Orbit posts pull request updates on the matching issue and links issues from branch names and PR text such as ENG-42."
+      status={<ConnectionBadge connected={settings.githubConnected} />}
+    >
       <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
         {settings.repositories.length === 0 ? (
           <li className="px-3 py-2.5 text-faint text-xs">No repositories linked yet.</li>
@@ -91,6 +122,7 @@ function GithubSection({
               {canManage ? (
                 <Button
                   variant="ghost"
+                  size="sm"
                   onClick={() =>
                     onCall(
                       `/api/integrations/github?repositoryId=${encodeURIComponent(repo.repositoryId)}`,
@@ -108,67 +140,69 @@ function GithubSection({
       </ul>
 
       {canManage ? (
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (
-              repositoryId.trim().length === 0 ||
-              repositoryName.trim().length === 0 ||
-              teamId === ''
-            ) {
-              return;
-            }
-            onCall('/api/integrations/github', 'POST', {
-              repositoryId: repositoryId.trim(),
-              repositoryName: repositoryName.trim(),
-              teamId,
-            });
-            setRepositoryId('');
-            setRepositoryName('');
-          }}
-        >
-          <label htmlFor="gh-repo-id" className="flex flex-col gap-1 text-2xs text-faint">
-            Repository id
-            <Input
-              id="gh-repo-id"
-              value={repositoryId}
-              onChange={(event) => setRepositoryId(event.target.value)}
-              className="h-8 w-32 text-xs"
-              placeholder="123456"
-            />
-          </label>
-          <label htmlFor="gh-repo-name" className="flex flex-col gap-1 text-2xs text-faint">
-            Repository name
-            <Input
-              id="gh-repo-name"
-              value={repositoryName}
-              onChange={(event) => setRepositoryName(event.target.value)}
-              className="h-8 w-56 text-xs"
-              placeholder="acme/web"
-            />
-          </label>
-          <label htmlFor="gh-team" className="flex flex-col gap-1 text-2xs text-faint">
-            Team
-            <select
-              id="gh-team"
-              value={teamId}
-              onChange={(event) => setTeamId(event.target.value)}
-              className="h-8 rounded-md border border-border bg-surface px-2 text-dense text-text"
-            >
-              {settings.teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button type="submit" variant="primary">
-            Link repository
-          </Button>
-        </form>
+        <div className="flex flex-col gap-2.5">
+          {settings.githubConnected ? null : (
+            <p className="rounded-lg border border-border border-dashed bg-surface-2 px-3 py-2 text-faint text-2xs">
+              Linking your first repository connects Orbit to GitHub. Point the repository webhook
+              at /api/webhooks/github and share the value set in GITHUB_WEBHOOK_SECRET.
+            </p>
+          )}
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canSubmit) return;
+              onCall('/api/integrations/github', 'POST', {
+                repositoryId: repositoryId.trim(),
+                repositoryName: repositoryName.trim(),
+                teamId,
+              });
+              setRepositoryName('');
+              setRepositoryId('');
+            }}
+          >
+            <label htmlFor="gh-repo-name" className="flex flex-col gap-1 text-2xs text-faint">
+              Repository
+              <Input
+                id="gh-repo-name"
+                value={repositoryName}
+                onChange={(event) => setRepositoryName(event.target.value)}
+                className="h-8 w-56 text-xs"
+                placeholder="acme/web"
+              />
+            </label>
+            <label htmlFor="gh-repo-id" className="flex flex-col gap-1 text-2xs text-faint">
+              Repository id
+              <Input
+                id="gh-repo-id"
+                value={repositoryId}
+                onChange={(event) => setRepositoryId(event.target.value)}
+                className="h-8 w-32 text-xs"
+                placeholder="123456"
+              />
+            </label>
+            <label htmlFor="gh-team" className="flex flex-col gap-1 text-2xs text-faint">
+              Team
+              <select
+                id="gh-team"
+                value={teamId}
+                onChange={(event) => setTeamId(event.target.value)}
+                className="h-8 rounded-md border border-border bg-surface px-2 text-dense text-text"
+              >
+                {settings.teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button type="submit" variant="primary">
+              {settings.githubConnected ? 'Link repository' : 'Connect GitHub'}
+            </Button>
+          </form>
+        </div>
       ) : null}
-    </section>
+    </IntegrationCard>
   );
 }
 
@@ -187,18 +221,11 @@ function SlackSection({
   const [teamId, setTeamId] = useState('');
 
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium text-dense text-text">Slack</h3>
-        <span className="text-2xs text-faint">
-          {settings.slackHasToken ? 'Connected' : 'Not connected'}
-        </span>
-      </div>
-      <p className="text-muted text-xs">
-        Connect a workspace token, then map a channel to a team. Orbit unfurls issue links and posts
-        pull request updates. One channel per team, one team per channel.
-      </p>
-
+    <IntegrationCard
+      title="Slack"
+      description="Add Orbit to your Slack workspace, then map a channel to a team. Orbit unfurls issue links and posts pull request updates. One channel per team, one team per channel."
+      status={<ConnectionBadge connected={settings.slackHasToken} />}
+    >
       {canManage ? (
         <form
           className="flex flex-wrap items-end gap-2"
@@ -223,8 +250,8 @@ function SlackSection({
               type="password"
             />
           </label>
-          <Button type="submit" variant="secondary">
-            Save token
+          <Button type="submit" variant={settings.slackHasToken ? 'secondary' : 'primary'}>
+            {settings.slackHasToken ? 'Update token' : 'Add to Slack'}
           </Button>
         </form>
       ) : null}
@@ -247,6 +274,7 @@ function SlackSection({
               {canManage ? (
                 <Button
                   variant="ghost"
+                  size="sm"
                   onClick={() =>
                     onCall('/api/integrations/slack', 'POST', {
                       action: 'disconnect',
@@ -319,6 +347,50 @@ function SlackSection({
           </Button>
         </form>
       ) : null}
-    </section>
+    </IntegrationCard>
+  );
+}
+
+function McpSection({ mcpUrl, onError }: { mcpUrl: string; onError: (message: string) => void }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(mcpUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      onError('Could not copy the MCP URL. Select and copy it manually.');
+    }
+  }
+
+  return (
+    <IntegrationCard
+      title="MCP server"
+      description="Connect an MCP-aware AI client to Orbit. The server exposes read and write tools for issues and acts as whoever owns the API key you authenticate with."
+      status={<Badge tone="accent">Streamable HTTP</Badge>}
+    >
+      <div className="flex flex-col gap-1.5">
+        <span className="text-2xs text-faint">Server URL</span>
+        <div className="flex items-center gap-2">
+          <code
+            data-testid="mcp-url"
+            className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-dense text-text"
+          >
+            {mcpUrl}
+          </code>
+          <Button variant="secondary" onClick={copy} aria-label="Copy MCP server URL">
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+        </div>
+      </div>
+      <ol className="flex flex-col gap-1 text-muted text-xs">
+        <li>Add the server URL above to your AI client as a streamable HTTP MCP server.</li>
+        <li>
+          Authenticate with an Orbit API key sent as a bearer token. Keys are issued by an admin.
+        </li>
+        <li>Ask the client to call get_me to confirm the connection.</li>
+      </ol>
+    </IntegrationCard>
   );
 }

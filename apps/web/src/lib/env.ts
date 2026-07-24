@@ -33,3 +33,13 @@ export function publicAppUrl(): string {
 export function absoluteUrl(path: string): string {
   return new URL(path, `${publicAppUrl()}/`).toString();
 }
+
+const mcpUrlSchema = z.url();
+
+export function mcpServerUrl(): string {
+  const explicit = process.env['NEXT_PUBLIC_MCP_URL'];
+  if (explicit !== undefined && explicit.trim().length > 0) {
+    return mcpUrlSchema.parse(explicit).replace(/\/+$/, '');
+  }
+  return absoluteUrl('/mcp').replace(/\/+$/, '');
+}
