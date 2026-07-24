@@ -17,11 +17,9 @@ export interface ProfileStepProps {
 
 export function ProfileStep({ name, handle, image, onNext }: ProfileStepProps) {
   const [displayName, setDisplayName] = useState(name);
-  const [avatarUrl, setAvatarUrl] = useState(image ?? '');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const trimmedAvatar = avatarUrl.trim();
   const ready = displayName.trim().length > 0;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -37,7 +35,6 @@ export function ProfileStep({ name, handle, image, onNext }: ProfileStepProps) {
         method: 'PATCH',
         body: {
           name: displayName.trim(),
-          image: trimmedAvatar.length === 0 ? null : trimmedAvatar,
         },
       });
       const status = await advanceStep({ step: 'profile' });
@@ -56,11 +53,7 @@ export function ProfileStep({ name, handle, image, onNext }: ProfileStepProps) {
       </header>
 
       <div className="flex items-center gap-3">
-        <Avatar
-          name={displayName}
-          src={trimmedAvatar.length === 0 ? null : trimmedAvatar}
-          size="lg"
-        />
+        <Avatar name={displayName} src={image} size="lg" />
         <div className="min-w-0">
           <p className="truncate font-medium text-dense text-text">
             {displayName.trim().length === 0 ? 'Your name' : displayName}
@@ -84,21 +77,6 @@ export function ProfileStep({ name, handle, image, onNext }: ProfileStepProps) {
             maxLength={64}
             autoComplete="name"
             autoFocus
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="onboarding-image" className="font-medium text-dense text-text">
-            Avatar URL
-            <span className="ml-1.5 font-normal text-faint text-xs">optional</span>
-          </label>
-          <Input
-            id="onboarding-image"
-            name="image"
-            type="url"
-            value={avatarUrl}
-            onChange={(event) => setAvatarUrl(event.target.value)}
-            placeholder="https://example.com/avatar.png"
           />
         </div>
       </fieldset>
