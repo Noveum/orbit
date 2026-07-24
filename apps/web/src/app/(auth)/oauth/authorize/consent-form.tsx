@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Fingerprint, Loader2 } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
@@ -28,15 +28,17 @@ export interface ConsentFormProps {
   readonly userEmail: string;
 }
 
+type Pending = 'allow' | 'deny' | null;
+
+interface DecisionResponse {
+  readonly status?: string;
+  readonly redirectUri?: string;
+  readonly message?: string;
+}
+
 function messageOf(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
   return 'Try again.';
-}
-
-function PasskeyIcon({ verifying, verified }: { verifying: boolean; verified: boolean }) {
-  if (verifying) return <Loader2 className="size-4 animate-spin" aria-hidden="true" />;
-  if (verified) return <Check className="size-4" aria-hidden="true" />;
-  return <Fingerprint className="size-4" aria-hidden="true" />;
 }
 
 export function ConsentForm({
@@ -51,30 +53,47 @@ export function ConsentForm({
 }: ConsentFormProps) {
   const { toast } = useToast();
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
-  const [verified, setVerified] = useState(!requirePasskey);
-  const [verifying, setVerifying] = useState(false);
+  const [pending, setPending] = useState<Pending>(null);
 
   const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
 
-  async function verifyPasskey(): Promise<void> {
-    setVerifying(true);
-    try {
+  async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
+    const response = await fetch('/oauth/authorize/decision', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision, consentCode, clientId, scope, organizationId }),
+    });
+    const data = (await response.json().catch(() => ({}))) as DecisionResponse;
+    if (response.status === 200) return data;
+    throw new Error(data.message ?? 'Could not complete the connection.');
+  }
+
+  async function decide(decision: 'allow' | 'deny', alreadyVerified: boolean): Promise<void> {
+    const data = await post(decision);
+    if (data.status === 'passkey_required') {
+      if (alreadyVerified) throw new Error('Passkey verification did not complete.');
       const result = await authClient.signIn.passkey();
-      if (result?.error) throw new Error(result.error.message ?? 'No passkey available.');
-      setVerified(true);
-    } catch (error: unknown) {
-      toast({ title: 'Passkey check failed', description: messageOf(error), tone: 'danger' });
-    } finally {
-      setVerifying(false);
+      if (result?.error) throw new Error(result.error.message ?? 'Passkey verification failed.');
+      await decide(decision, true);
+      return;
     }
+    if (typeof data.redirectUri !== 'string') {
+      throw new Error(data.message ?? 'Could not complete the connection.');
+    }
+    window.location.assign(data.redirectUri);
+  }
+
+  function run(decision: 'allow' | 'deny'): void {
+    if (pending !== null) return;
+    setPending(decision);
+    decide(decision, false).catch((error: unknown) => {
+      toast({ title: 'Could not connect', description: messageOf(error), tone: 'danger' });
+      setPending(null);
+    });
   }
 
   return (
-    <form method="post" action="/oauth/authorize/decision" className="flex flex-col gap-5">
-      <input type="hidden" name="consent_code" value={consentCode} />
-      <input type="hidden" name="client_id" value={clientId} />
-      <input type="hidden" name="scope" value={scope} />
-
+    <div className="flex flex-col gap-5">
       <p className="text-center text-muted text-sm">
         <span className="font-medium text-text">{clientName}</span> wants to act in Orbit as{' '}
         <span className="font-medium text-text">{userEmail}</span>.
@@ -83,9 +102,9 @@ export function ConsentForm({
       <label className="flex flex-col gap-1.5 text-2xs text-faint">
         Workspace
         <select
-          name="organization_id"
           value={organizationId}
           onChange={(event) => setOrganizationId(event.target.value)}
+          disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
           {organizations.map((organization) => (
@@ -110,42 +129,35 @@ export function ConsentForm({
         </div>
       ) : null}
 
-      {requirePasskey ? (
+      <div className="flex gap-2">
         <Button
           type="button"
-          variant="secondary"
+          variant="ghost"
           block
-          disabled={verified || verifying}
-          onClick={() => {
-            verifyPasskey();
-          }}
+          disabled={pending !== null}
+          onClick={() => run('deny')}
         >
-          <PasskeyIcon verifying={verifying} verified={verified} />
-          {verified ? 'Passkey verified' : 'Verify with your passkey'}
-        </Button>
-      ) : null}
-
-      <div className="flex gap-2">
-        <Button type="submit" name="decision" value="deny" variant="ghost" block>
           Deny
         </Button>
         <Button
-          type="submit"
-          name="decision"
-          value="allow"
+          type="button"
           variant="primary"
           block
-          disabled={!verified || organizationId === ''}
+          disabled={pending !== null || organizationId === ''}
+          onClick={() => run('allow')}
         >
+          {pending === 'allow' ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          ) : null}
           Approve
         </Button>
       </div>
 
-      {requirePasskey && !verified ? (
+      {requirePasskey ? (
         <p className="text-center text-2xs text-faint">
-          Verify with your passkey to approve this connection.
+          Approving prompts you to verify with your passkey.
         </p>
       ) : null}
-    </form>
+    </div>
   );
 }
