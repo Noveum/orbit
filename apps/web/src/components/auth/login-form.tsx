@@ -2,6 +2,7 @@
 
 import { Fingerprint, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
+import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
@@ -196,9 +197,7 @@ export function LoginForm({
   return (
     <div className="flex w-full max-w-[22rem] flex-col gap-5">
       <div className="flex flex-col gap-1.5 text-center">
-        <span className="mx-auto flex size-9 items-center justify-center rounded-lg bg-accent font-semibold text-accent-contrast text-base">
-          O
-        </span>
+        <OrbitMark size={36} className="mx-auto" />
         <h1 className="font-medium text-text text-xl">Sign in to Orbit</h1>
         <p className="text-muted text-xs">
           {passwordEnabled
