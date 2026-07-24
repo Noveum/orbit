@@ -1,9 +1,7 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { cn } from '@/lib/cn.ts';
-
-type Phase = 'idle' | 'in' | 'out';
 
 export interface CollapsibleProps {
   readonly open: boolean;
@@ -13,39 +11,35 @@ export interface CollapsibleProps {
 
 export function Collapsible({ open, children, className }: CollapsibleProps) {
   const [rendered, setRendered] = useState(open);
-  const [phase, setPhase] = useState<Phase>('idle');
-  const first = useRef(true);
+  const [expanded, setExpanded] = useState(open);
 
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
     if (open) {
       setRendered(true);
-      setPhase('in');
-    } else {
-      setPhase('out');
+      const frame = requestAnimationFrame(() => setExpanded(true));
+      return () => cancelAnimationFrame(frame);
     }
+    setExpanded(false);
+    return undefined;
   }, [open]);
 
   if (!rendered) return null;
 
   return (
     <div
+      data-state={expanded ? 'open' : 'closed'}
       className={cn(
-        'origin-top',
-        phase === 'in' && 'animate-accordion-in',
-        phase === 'out' && 'animate-accordion-out',
-        className,
+        'grid transition-[grid-template-rows,opacity] duration-[var(--duration-base)] ease-[var(--ease-out-orbit)]',
+        expanded ? 'opacity-100' : 'opacity-0',
       )}
-      onAnimationEnd={(event) => {
+      style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
+      onTransitionEnd={(event) => {
         if (event.target !== event.currentTarget) return;
-        if (phase === 'out') setRendered(false);
-        setPhase('idle');
+        if (event.propertyName !== 'grid-template-rows') return;
+        if (!expanded) setRendered(false);
       }}
     >
-      {children}
+      <div className={cn('min-h-0 overflow-hidden', className)}>{children}</div>
     </div>
   );
 }
