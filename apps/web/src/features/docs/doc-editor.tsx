@@ -281,13 +281,14 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
       </div>
 
       {mode === 'rich' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        <div className="flex min-h-0 flex-1 flex-col">
           <RichTextEditor
             value={content}
             onChange={onChange}
             members={bootstrap.data?.members ?? []}
             onUpload={upload}
             onForceSave={onForceSave}
+            showToolbar
             ariaLabel="Doc body"
             testId="doc-rich-editor"
           />

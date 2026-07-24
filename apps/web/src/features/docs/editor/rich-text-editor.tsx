@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn.ts';
 import type { Member } from '@/lib/query/schemas.ts';
 import { docProseClassName } from '../doc-body.tsx';
 import { findTrigger, matchSlashCommands, type SlashCommand } from './commands.ts';
+import { EditorToolbar } from './editor-toolbar.tsx';
 import {
   editorExtensions,
   type MenuKey,
@@ -43,6 +44,7 @@ export interface RichTextEditorProps {
   readonly testId?: string;
   readonly className?: string;
   readonly autoFocus?: boolean;
+  readonly showToolbar?: boolean;
   readonly ariaLabel: string;
   readonly onSubmit?: () => void;
   readonly onForceSave?: () => void;
@@ -86,6 +88,7 @@ export function RichTextEditor({
   testId = 'rich-editor',
   className,
   autoFocus = false,
+  showToolbar = false,
   ariaLabel,
   onSubmit,
   onForceSave,
@@ -349,7 +352,7 @@ export function RichTextEditor({
       ref={containerRef}
       aria-label={ariaLabel}
       data-testid={testId}
-      className={cn('relative min-h-0', className)}
+      className={cn('relative min-h-0', showToolbar && 'flex flex-1 flex-col', className)}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}
@@ -357,7 +360,16 @@ export function RichTextEditor({
         if (onUpload !== undefined) event.preventDefault();
       }}
     >
-      <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
+      {showToolbar && editor !== null ? (
+        <EditorToolbar
+          editor={editor}
+          onPickFile={() => fileRef.current?.click()}
+          testId={`${testId}-toolbar`}
+        />
+      ) : null}
+      <div className={showToolbar ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
+        <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
+      </div>
 
       {onUpload === undefined ? null : (
         <input
