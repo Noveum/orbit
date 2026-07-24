@@ -32,6 +32,8 @@ export function assignedSearch(userId: string): string {
   return params.toString();
 }
 
-export function allIssuesSearch(): string {
-  return searchParams({ ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' }).toString();
+export const ALL_ISSUES_QUERY: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' };
+
+export function allIssuesSearch(query: IssueQuery = ALL_ISSUES_QUERY): string {
+  return searchParams(query).toString();
 }
