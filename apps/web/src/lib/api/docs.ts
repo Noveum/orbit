@@ -2,10 +2,11 @@ import { listDocCollections, listDocs } from '@orbit/core';
 import { and, db, eq, isNull, schema } from '@orbit/db';
 import { summarize } from '@orbit/services/markdown';
 import type { Principal } from '@orbit/shared/policy';
+import type { DocFilterInput } from '@orbit/shared/validators';
 
 const DOC_EXCERPT_LENGTH = 140;
 
-export async function docListPayload(principal: Principal, filter: unknown = {}) {
+export async function docListPayload(principal: Principal, filter?: DocFilterInput) {
   const [docs, collections, projects] = await Promise.all([
     listDocs(principal, filter),
     listDocCollections(principal),

@@ -1,5 +1,6 @@
 import { getDoc } from '@orbit/core';
 import { renderMarkdown } from '@orbit/services/markdown';
+import { isDomainError } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { docListPayload } from '@/lib/api/docs.ts';
@@ -22,8 +23,9 @@ async function docDetail(principal: Principal, docId: string): Promise<DocDetail
       ...detail,
       contentHtml: renderMarkdown(detail.doc.content),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    if (isDomainError(error) && error.code === 'not_found') return null;
+    throw error;
   }
 }
 

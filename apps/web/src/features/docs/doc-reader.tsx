@@ -46,7 +46,7 @@ export function DocReader({
   const [headings, setHeadings] = useState<DocHeading[]>([]);
   const activeId = useScrollSpy(headings);
   const binding = doc.repoBinding;
-  useHashScroll(headings.map((heading) => heading.id).join('|'));
+  useHashScroll(`${doc.id}:${headings.map((heading) => heading.id).join('|')}`);
 
   return (
     <article

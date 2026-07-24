@@ -131,6 +131,7 @@ function LoadedDoc({
 
   useEffect(() => {
     setUnsavedDocId(editing && status !== 'saved' ? detail.doc.id : null);
+    return () => setUnsavedDocId(null);
   }, [editing, status, detail.doc.id, setUnsavedDocId]);
 
   const collectionName =

@@ -51,18 +51,22 @@ afterEach(() => {
   });
 });
 
-function renderReader() {
-  return render(
+function reader(which: Doc) {
+  return (
     <DocReader
-      doc={doc}
+      doc={which}
       contentHtml={renderMarkdown(MARKDOWN)}
       attachments={[]}
       author={{ name: 'Pulkit', image: null }}
       followers={1}
       collectionName={null}
       projectName={null}
-    />,
+    />
   );
+}
+
+function renderReader() {
+  return render(reader(doc));
 }
 
 describe('hash target id', () => {
@@ -86,5 +90,15 @@ describe('reader hash deep link', () => {
     renderReader();
     await waitFor(() => expect(document.querySelector('#rules')).not.toBeNull());
     expect(scrolled).toHaveLength(0);
+  });
+
+  it('scrolls again after switching to another doc that shares the heading id', async () => {
+    window.location.hash = '#rules';
+    const view = render(reader(doc));
+    await waitFor(() => expect(scrolled).toContain('rules'));
+
+    scrolled.length = 0;
+    view.rerender(reader({ ...doc, id: 'doc_2' }));
+    await waitFor(() => expect(scrolled).toContain('rules'));
   });
 });
