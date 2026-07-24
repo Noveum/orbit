@@ -1,4 +1,7 @@
-# Orbit
+<h1>
+  <img src="apps/web/public/logo.png" alt="" height="30" valign="middle" />
+  Orbit
+</h1>
 
 A free, realtime, keyboard-first work tracker. Issues, cycles, projects, and docs that update the moment anyone changes anything, with markdown everywhere, file attachments, notifications, Slack, and an MCP server for AI tooling.
 
