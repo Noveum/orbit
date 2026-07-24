@@ -302,8 +302,8 @@ describe('view state', () => {
 });
 
 describe('virtual views', () => {
-  it('names four built-in views', () => {
-    expect(VIRTUAL_VIEW_IDS).toHaveLength(4);
+  it('names five built-in views', () => {
+    expect(VIRTUAL_VIEW_IDS).toHaveLength(5);
     for (const id of VIRTUAL_VIEW_IDS) expect(isVirtualViewId(id)).toBe(true);
     expect(isVirtualViewId('anything-else')).toBe(false);
   });
@@ -319,6 +319,12 @@ describe('virtual views', () => {
     expect(conditionsOf(virtualViewState('virtual:subscribed', 'user-9').filter)).toEqual([
       inCondition('subscriber', ['user-9']),
     ]);
+  });
+
+  it('groups the standup view by project with no viewer filter', () => {
+    const state = virtualViewState('virtual:standup', 'user-1');
+    expect(conditionsOf(state.filter)).toEqual([]);
+    expect(state.groupBy).toBe('project');
   });
 });
 

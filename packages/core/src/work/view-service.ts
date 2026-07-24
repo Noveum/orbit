@@ -58,13 +58,14 @@ function toRecord(row: ViewRow, favorite: boolean): ViewRecord {
 }
 
 function virtualRecord(id: VirtualViewId, principal: Principal): ViewRecord {
+  const state = virtualViewState(id, principal.userId);
   return {
     id,
     ownerId: principal.userId,
     name: VIRTUAL_VIEW_NAMES[id],
-    state: virtualViewState(id, principal.userId),
-    layout: 'list',
-    groupBy: 'state',
+    state,
+    layout: state.layout,
+    groupBy: state.groupBy,
     shared: false,
     virtual: true,
     locked: true,
