@@ -137,6 +137,8 @@ export const docVersion = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     restoredFromId: text('restored_from_id'),
     lastSavedAt: timestamp('last_saved_at', { withTimezone: true }).notNull().defaultNow(),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('doc_version_doc_idx').on(table.docId, table.lastSavedAt)],
 );
