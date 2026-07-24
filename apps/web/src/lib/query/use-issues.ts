@@ -12,6 +12,8 @@ import {
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
+  ALL_ISSUES_QUERY,
+  allIssuesSearch,
   assignedSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
@@ -32,7 +34,14 @@ import type { IssuePages } from './sync.ts';
 import { flattenIssuePages, mapIssuePages, sortIssues } from './sync.ts';
 
 export type { IssueQuery };
-export { assignedSearch, DEFAULT_ISSUE_QUERY, ISSUE_PAGE_SIZE, issueSearch };
+export {
+  ALL_ISSUES_QUERY,
+  allIssuesSearch,
+  assignedSearch,
+  DEFAULT_ISSUE_QUERY,
+  ISSUE_PAGE_SIZE,
+  issueSearch,
+};
 
 export function bootstrapQueryOptions(teamKey: string | null) {
   return {
@@ -130,6 +139,16 @@ export function useAssignedIssues(userId: string | null) {
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.assignedIssues(userId ?? 'none', search), search),
     enabled: userId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useAllIssues(query: IssueQuery = ALL_ISSUES_QUERY, enabled = true) {
+  const search = allIssuesSearch(query);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.allIssues(search), search),
+    enabled,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
   });

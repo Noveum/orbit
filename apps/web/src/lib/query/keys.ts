@@ -1,4 +1,5 @@
 export const ASSIGNED_SCOPE = 'assigned';
+export const ALL_SCOPE = 'all';
 
 export const queryKeys = {
   bootstrap: (teamKey: string | null) => ['bootstrap', teamKey ?? 'default'] as const,
@@ -6,6 +7,7 @@ export const queryKeys = {
   issueTeam: (teamId: string) => ['issues', teamId] as const,
   assignedIssues: (userId: string, filter = '') =>
     ['issues', ASSIGNED_SCOPE, userId, filter] as const,
+  allIssues: (filter = '') => ['issues', ALL_SCOPE, filter] as const,
   issueCounts: (filter: string) => ['issue-counts', filter] as const,
   issue: (identifier: string) => ['issue', identifier] as const,
   comments: (issueId: string) => ['comments', issueId] as const,

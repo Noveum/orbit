@@ -659,6 +659,7 @@ export const VIRTUAL_VIEW_IDS = [
   'virtual:assigned',
   'virtual:created',
   'virtual:subscribed',
+  'virtual:standup',
 ] as const;
 
 export type VirtualViewId = (typeof VIRTUAL_VIEW_IDS)[number];
@@ -672,10 +673,10 @@ export const VIRTUAL_VIEW_NAMES: Record<VirtualViewId, string> = {
   'virtual:assigned': 'Assigned to me',
   'virtual:created': 'Created by me',
   'virtual:subscribed': 'Subscribed',
+  'virtual:standup': 'Standup',
 };
 
-const VIRTUAL_VIEW_PROPERTIES: Record<VirtualViewId, FilterProperty> = {
-  'virtual:all': 'state',
+const VIRTUAL_VIEW_PROPERTIES: Partial<Record<VirtualViewId, FilterProperty>> = {
   'virtual:assigned': 'assignee',
   'virtual:created': 'creator',
   'virtual:subscribed': 'subscriber',
@@ -683,8 +684,9 @@ const VIRTUAL_VIEW_PROPERTIES: Record<VirtualViewId, FilterProperty> = {
 
 export function virtualViewState(id: VirtualViewId, userId: string): ViewState {
   const base = defaultViewState('list');
-  if (id === 'virtual:all') return base;
+  if (id === 'virtual:standup') return { ...base, groupBy: 'project' };
   const property = VIRTUAL_VIEW_PROPERTIES[id];
+  if (property === undefined) return base;
   return {
     ...base,
     filter: { kind: 'group', combinator: 'and', children: [inCondition(property, [userId])] },

@@ -359,6 +359,9 @@ export const issue = pgTable(
     index('issue_cycle_idx').on(table.cycleId),
     index('issue_parent_idx').on(table.parentId),
     index('issue_sync_idx').on(table.organizationId, table.syncId),
+    index('issue_org_active_idx')
+      .on(table.organizationId, table.completedAt)
+      .where(sql`${table.archivedAt} is null`),
     index('issue_team_order_idx')
       .on(table.teamId, table.sortOrder, table.id)
       .where(sql`${table.archivedAt} is null`),
