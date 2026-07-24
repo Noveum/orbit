@@ -109,7 +109,8 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
       toast({ title: 'Profile updated', tone: 'success' });
       router.refresh();
     } catch (caught) {
-      if (caught instanceof ApiRequestError && caught.is('conflict')) setHandleError(caught.message);
+      if (caught instanceof ApiRequestError && caught.is('conflict'))
+        setHandleError(caught.message);
       else setFormError(messageOf(caught));
     } finally {
       setPending(false);
@@ -147,9 +148,7 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  void onRemovePhoto();
-                }}
+                onClick={onRemovePhoto}
                 disabled={avatarPending}
               >
                 Remove
@@ -171,7 +170,7 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
       <Dialog
         open={cropFile !== null}
         onOpenChange={(open) => {
-          if (!open && !avatarPending) setCropFile(null);
+          if (!(open || avatarPending)) setCropFile(null);
         }}
       >
         <DialogContent showClose={!avatarPending} className="max-w-md">
@@ -186,9 +185,7 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
               file={cropFile}
               pending={avatarPending}
               onCancel={() => setCropFile(null)}
-              onConfirm={(blob) => {
-                void onCropped(blob);
-              }}
+              onConfirm={onCropped}
             />
           )}
         </DialogContent>

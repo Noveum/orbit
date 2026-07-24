@@ -124,16 +124,19 @@ export function AvatarCropper({ file, pending = false, onCancel, onConfirm }: Av
       ) : (
         <>
           <div
-            role="group"
-            aria-label="Drag to reposition your photo"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             className="relative touch-none overflow-hidden rounded-full border border-border bg-surface-2 [&_img]:pointer-events-none"
-            style={{ width: VIEWPORT, height: VIEWPORT, cursor: natural === null ? 'default' : 'grab' }}
+            style={{
+              width: VIEWPORT,
+              height: VIEWPORT,
+              cursor: natural === null ? 'default' : 'grab',
+            }}
           >
             {objectUrl === null ? null : (
+              // biome-ignore lint/performance/noImgElement: the cropper draws from a raw element onto a canvas
               <img
                 ref={imageRef}
                 src={objectUrl}

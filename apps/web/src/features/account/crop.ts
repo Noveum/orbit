@@ -59,7 +59,12 @@ export function displayGeometry(
   viewport: number,
   zoom: number,
   offset: Point,
-): { readonly width: number; readonly height: number; readonly left: number; readonly top: number } {
+): {
+  readonly width: number;
+  readonly height: number;
+  readonly left: number;
+  readonly top: number;
+} {
   const scale = coverScale(natural, viewport) * zoom;
   const width = natural.width * scale;
   const height = natural.height * scale;

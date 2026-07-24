@@ -13,7 +13,7 @@ export function avatarPublicUrl(userId: string, version: number): string {
 }
 
 export function isAvatarUrl(image: string | null): boolean {
-  return image !== null && image.startsWith('/api/avatars/');
+  return (image ?? '').startsWith('/api/avatars/');
 }
 
 async function setImage(userId: string, image: string | null): Promise<UserRow> {

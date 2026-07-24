@@ -53,12 +53,44 @@ describe('ProfileForm', () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
     const [, init] = fetchSpy.mock.calls[0] as [string, { body: string }];
-    expect(JSON.parse(init.body)).toMatchObject({
+    const body = JSON.parse(init.body);
+    expect(body).toMatchObject({
       name: 'Pulkit S',
       handle: 'pulkit',
-      image: null,
       timezone: 'Asia/Kolkata',
     });
+    expect(body).not.toHaveProperty('image');
+  });
+
+  it('offers an upload control and no remove when there is no photo', () => {
+    render(<ProfileForm name="Pulkit Sharma" handle="pulkit" image={null} timezone="UTC" />);
+
+    expect(screen.getByRole('button', { name: 'Upload photo' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  });
+
+  it('removes the photo through the avatar endpoint', async () => {
+    const fetchSpy = mockFetch(200, { user: { image: null } });
+    const user = userEvent.setup();
+    render(
+      <ProfileForm
+        name="Pulkit Sharma"
+        handle="pulkit"
+        image="/api/avatars/u1?v=1"
+        timezone="UTC"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Change photo' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+    const [url, init] = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(url).toBe('/api/account/avatar');
+    expect(init.method).toBe('DELETE');
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
   });
 
   it('shows the handle conflict inline on the handle field', async () => {
