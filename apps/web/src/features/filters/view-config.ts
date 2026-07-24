@@ -41,13 +41,10 @@ export const EMPTY_GROUPS_PARAM = 'empty';
 export const COMPLETED_PARAM = 'done';
 export const PROPERTIES_PARAM = 'props';
 
-export function defaultViewConfig(
-  layout: ViewLayoutMode,
-  groupBy: GroupByField = 'state',
-): ViewConfig {
+export function defaultViewConfig(layout: ViewLayoutMode): ViewConfig {
   return {
     filter: { kind: 'group', combinator: 'and', children: [] },
-    groupBy,
+    groupBy: 'state',
     subGroupBy: 'none',
     orderBy: 'manual',
     display: defaultDisplayOptions(layout),
