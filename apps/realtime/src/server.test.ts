@@ -1,20 +1,25 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { scopes } from '@orbit/shared/events';
+import { signRealtimeTicket } from '@orbit/shared/events/ticket';
 import { connect, type RedisClient, type Socket } from 'bun';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
   connectClient,
+  connectWithTicket,
   createIssue,
   createMember,
   createOrganization,
   createPublisher,
   createTeam,
   delay,
+  maskedTextFrame,
   redisUrl,
   type SeedMember,
   syncAction,
+  ticketFor,
+  ticketSecret,
 } from './test-helpers.ts';
 
 const BATCH_WINDOW_MS = 80;
@@ -60,7 +65,7 @@ async function publish(action: ReturnType<typeof syncAction>): Promise<void> {
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const HANDSHAKE_SETTLE_MS = 25;
 
-async function connectSilently(port: number, token: string): Promise<Socket<undefined>> {
+async function connectSilently(port: number, member: SeedMember): Promise<Socket<undefined>> {
   let markUpgraded: (() => void) | undefined;
   let failUpgrade: ((error: Error) => void) | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -100,7 +105,7 @@ async function connectSilently(port: number, token: string): Promise<Socket<unde
 
   socket.write(
     [
-      `GET /?token=${encodeURIComponent(token)} HTTP/1.1`,
+      'GET / HTTP/1.1',
       `Host: 127.0.0.1:${port}`,
       'Upgrade: websocket',
       'Connection: Upgrade',
@@ -116,18 +121,19 @@ async function connectSilently(port: number, token: string): Promise<Socket<unde
   } finally {
     clearTimeout(timer);
   }
+  socket.write(maskedTextFrame(JSON.stringify({ type: 'auth', ticket: ticketFor(member) })));
   await delay(HANDSHAKE_SETTLE_MS);
   return socket;
 }
 
 describe('fan-out', () => {
   it('delivers a delta only to connections subscribed to the scope', async () => {
-    const subscribed = await connectClient(server.port, alice.token);
+    const subscribed = await connectClient(server.port, alice);
     await subscribed.waitFor('ready');
     subscribed.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await subscribed.waitFor('subscribed');
 
-    const other = await connectClient(server.port, bob.token);
+    const other = await connectClient(server.port, bob);
     await other.waitFor('ready');
     other.send({ type: 'subscribe', scopes: [scopes.team(teamB)] });
     await other.waitFor('subscribed');
@@ -151,7 +157,7 @@ describe('fan-out', () => {
   });
 
   it('never delivers a delta from another organization', async () => {
-    const client = await connectClient(server.port, carol.token);
+    const client = await connectClient(server.port, carol);
     await client.waitFor('ready');
     client.send({ type: 'subscribe', scopes: [scopes.organization(orgB)] });
     await client.waitFor('subscribed');
@@ -171,7 +177,7 @@ describe('fan-out', () => {
   });
 
   it('batches rapid actions into one delta and collapses duplicates', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await client.waitFor('subscribed');
@@ -203,8 +209,8 @@ describe('fan-out', () => {
 
 describe('multi tab and multi tenant fan-out', () => {
   it('delivers the same delta to both tabs of one user exactly once each', async () => {
-    const tabOne = await connectClient(server.port, alice.token);
-    const tabTwo = await connectClient(server.port, alice.token);
+    const tabOne = await connectClient(server.port, alice);
+    const tabTwo = await connectClient(server.port, alice);
     await tabOne.waitFor('ready');
     await tabTwo.waitFor('ready');
     tabOne.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
@@ -238,8 +244,8 @@ describe('multi tab and multi tenant fan-out', () => {
   });
 
   it('keeps two organizations apart even when both subscribe at the same moment', async () => {
-    const inside = await connectClient(server.port, alice.token);
-    const outside = await connectClient(server.port, carol.token);
+    const inside = await connectClient(server.port, alice);
+    const outside = await connectClient(server.port, carol);
     await inside.waitFor('ready');
     await outside.waitFor('ready');
     inside.send({ type: 'subscribe', scopes: [scopes.organization(orgA), scopes.team(teamA)] });
@@ -287,7 +293,7 @@ describe('multi tab and multi tenant fan-out', () => {
   });
 
   it('skips deltas the resubscribing client already applied', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.send({ type: 'subscribe', scopes: [scopes.team(teamA)], since: 500 });
     await client.waitFor('subscribed');
@@ -323,17 +329,33 @@ describe('authorization', () => {
       teamIds: [teamA],
       expiresAt: new Date(Date.now() - 60_000),
     });
-    const client = await connectClient(server.port, expired.token);
+    const client = await connectClient(server.port, expired);
     expect(await client.waitForClose()).toBe(4001);
   });
 
-  it('rejects an unknown token with 4001', async () => {
-    const client = await connectClient(server.port, 'token_does_not_exist');
+  it('rejects a forged ticket with 4001', async () => {
+    const client = await connectWithTicket(server.port, 'forged.ticket');
+    expect(await client.waitForClose()).toBe(4001);
+  });
+
+  it('rejects a ticket for a session that no longer exists with 4001', async () => {
+    const client = await connectWithTicket(
+      server.port,
+      signRealtimeTicket(
+        {
+          userId: alice.userId,
+          organizationId: orgA,
+          sessionId: 'session_does_not_exist',
+          exp: Date.now() + 60_000,
+        },
+        ticketSecret(),
+      ),
+    );
     expect(await client.waitForClose()).toBe(4001);
   });
 
   it('drops scopes for organizations and teams the connection does not belong to', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.send({
       type: 'subscribe',
@@ -357,14 +379,14 @@ describe('authorization', () => {
   it('scopes an issue subscription to the teams a member can read, matching the read path', async () => {
     const issueId = await createIssue(orgA, teamB, bob.userId);
 
-    const otherTeam = await connectClient(server.port, alice.token);
+    const otherTeam = await connectClient(server.port, alice);
     await otherTeam.waitFor('ready');
     otherTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
     const denied = await otherTeam.waitFor('subscribed');
     expect(denied.scopes).toEqual([]);
     expect(denied.denied).toEqual([scopes.issue(issueId)]);
 
-    const owningTeam = await connectClient(server.port, bob.token);
+    const owningTeam = await connectClient(server.port, bob);
     await owningTeam.waitFor('ready');
     owningTeam.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
     const granted = await owningTeam.waitFor('subscribed');
@@ -378,7 +400,7 @@ describe('authorization', () => {
   it('refuses an issue scope that belongs to another organization', async () => {
     const issueId = await createIssue(orgA, teamA, alice.userId);
 
-    const outsider = await connectClient(server.port, carol.token);
+    const outsider = await connectClient(server.port, carol);
     await outsider.waitFor('ready');
     outsider.send({ type: 'subscribe', scopes: [scopes.issue(issueId)] });
     const refused = await outsider.waitFor('subscribed');
@@ -389,7 +411,7 @@ describe('authorization', () => {
   });
 
   it('never fans out to a connection whose subscription was refused', async () => {
-    const client = await connectClient(server.port, carol.token);
+    const client = await connectClient(server.port, carol);
     await client.waitFor('ready');
     client.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     expect((await client.waitFor('subscribed')).scopes).toEqual([]);
@@ -410,7 +432,7 @@ describe('authorization', () => {
 
 describe('protocol', () => {
   it('answers a ping with a pong', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.send({ type: 'ping' });
     expect(await client.waitFor('pong')).toMatchObject({ type: 'pong' });
@@ -418,7 +440,7 @@ describe('protocol', () => {
   });
 
   it('unsubscribes and stops receiving deltas', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await client.waitFor('subscribed', (message) => message.scopes.length === 1);
@@ -439,7 +461,7 @@ describe('protocol', () => {
   });
 
   it('reports an invalid message without closing the socket', async () => {
-    const client = await connectClient(server.port, alice.token);
+    const client = await connectClient(server.port, alice);
     await client.waitFor('ready');
     client.socket.send('not json');
     expect(await client.waitFor('error')).toMatchObject({ code: 'invalid_message' });
@@ -453,7 +475,7 @@ describe('protocol', () => {
       messagesPerSecond: 0,
     });
     try {
-      const client = await connectClient(strict.port, alice.token);
+      const client = await connectClient(strict.port, alice);
       await client.waitFor('ready');
       for (let index = 0; index < 12; index += 1) client.send({ type: 'ping' });
 
@@ -487,17 +509,17 @@ describe('protocol', () => {
 
 describe('presence', () => {
   it('broadcasts to others in the scope but not to the sender', async () => {
-    const sender = await connectClient(server.port, alice.token);
+    const sender = await connectClient(server.port, alice);
     await sender.waitFor('ready');
     sender.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await sender.waitFor('subscribed');
 
-    const watcher = await connectClient(server.port, dave.token);
+    const watcher = await connectClient(server.port, dave);
     await watcher.waitFor('ready');
     watcher.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await watcher.waitFor('subscribed');
 
-    const bystander = await connectClient(server.port, bob.token);
+    const bystander = await connectClient(server.port, bob);
     await bystander.waitFor('ready');
     bystander.send({ type: 'subscribe', scopes: [scopes.team(teamB)] });
     await bystander.waitFor('subscribed');
@@ -521,7 +543,7 @@ describe('presence', () => {
   });
 
   it('refuses presence on a scope the connection cannot access', async () => {
-    const client = await connectClient(server.port, carol.token);
+    const client = await connectClient(server.port, carol);
     await client.waitFor('ready');
     client.send({ type: 'presence', scope: scopes.team(teamA), kind: 'viewing' });
     expect(await client.waitFor('error')).toMatchObject({ code: 'forbidden_scope' });
@@ -531,18 +553,18 @@ describe('presence', () => {
   it('replays a live viewer to a joiner and withholds one that outlived the ttl', async () => {
     const shortLived = await createRealtimeServer({ redisUrl: redisUrl(), presenceTtlMs: 120 });
     try {
-      const viewer = await connectClient(shortLived.port, alice.token);
+      const viewer = await connectClient(shortLived.port, alice);
       await viewer.waitFor('ready');
       viewer.send({ type: 'presence', scope: scopes.team(teamA), kind: 'viewing' });
 
-      const joiner = await connectClient(shortLived.port, dave.token);
+      const joiner = await connectClient(shortLived.port, dave);
       await joiner.waitFor('ready');
       joiner.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
       const replayed = await joiner.waitFor('presence');
       expect(replayed.messages.map((message) => message.userId)).toEqual([alice.userId]);
 
       await delay(200);
-      const late = await connectClient(shortLived.port, bob.token);
+      const late = await connectClient(shortLived.port, bob);
       await late.waitFor('ready');
       late.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
       await late.waitFor('subscribed');
@@ -563,12 +585,16 @@ describe('liveness', () => {
     const strict = await createRealtimeServer({
       redisUrl: redisUrl(),
       heartbeatIntervalMs: 25,
-      heartbeatTimeoutMs: 60,
+      heartbeatTimeoutMs: 150,
     });
     try {
-      const silent = await connectSilently(strict.port, alice.token);
-      expect(strict.stats().connections).toBe(1);
-      await delay(400);
+      const silent = await connectSilently(strict.port, alice);
+      const authorizedBy = Date.now() + 3_000;
+      while (strict.stats().connections === 0) {
+        if (Date.now() > authorizedBy) throw new Error('silent socket never authenticated');
+        await delay(10);
+      }
+      await delay(600);
       expect(strict.stats().connections).toBe(0);
       silent.end();
     } finally {

@@ -50,10 +50,26 @@ function Subscriber() {
   return null;
 }
 
+function deliverReady(socket: FakeWebSocket | undefined) {
+  socket?.onmessage?.({
+    data: JSON.stringify({
+      type: 'ready',
+      connectionId: 'connection_1',
+      userId: 'user_1',
+      organizationId: 'org_1',
+      scopes: [],
+    }),
+  });
+}
+
 function Tree() {
   return (
     <StrictMode>
-      <RealtimeProvider url="ws://localhost:3100" token="token_1" organizationId="org_1">
+      <RealtimeProvider
+        url="ws://localhost:3100"
+        organizationId="org_1"
+        fetchTicket={() => Promise.resolve('ticket_1')}
+      >
         <Subscriber />
         <Subscriber />
       </RealtimeProvider>
@@ -78,8 +94,20 @@ describe('RealtimeProvider under StrictMode', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0];
     expect(socket?.closed).toBe(false);
-    expect(socket?.url).toContain('token=token_1');
-    expect(socket?.url).toContain('organizationId=org_1');
+    expect(socket?.url).toBe('ws://localhost:3100');
+  });
+
+  it('sends the ticket as its first frame once the socket opens', async () => {
+    render(<Tree />);
+    await flush();
+    const socket = FakeWebSocket.instances[0];
+    act(() => {
+      socket?.open();
+    });
+
+    expect((socket?.sent ?? []).map((payload) => JSON.parse(payload))).toEqual([
+      { type: 'auth', ticket: 'ticket_1' },
+    ]);
   });
 
   it('subscribes to each scope once no matter how many consumers retain it', async () => {
@@ -88,6 +116,7 @@ describe('RealtimeProvider under StrictMode', () => {
     const socket = FakeWebSocket.instances[0];
     act(() => {
       socket?.open();
+      deliverReady(socket);
     });
 
     const subscribes = (socket?.sent ?? [])

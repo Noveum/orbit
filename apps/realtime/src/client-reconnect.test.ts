@@ -12,6 +12,7 @@ import {
   redisUrl,
   type SeedMember,
   syncAction,
+  ticketFor,
 } from './test-helpers.ts';
 
 const DELTA_CHANNEL = 'orbit:delta';
@@ -46,8 +47,7 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
 
   const client = createRealtimeClient({
     url: `ws://127.0.0.1:${port}`,
-    token: member.token,
-    organizationId,
+    fetchTicket: () => Promise.resolve(ticketFor(member, organizationId)),
     maxBackoffMs: 500,
     onStatus: (status) => statuses.push(status),
     onDelta: (actions) => received.push(...actions),

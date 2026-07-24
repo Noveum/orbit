@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   clientMessageSchema,
-  connectionOrganizationIdSchema,
   controlMessageSchema,
   DELTA_BATCH_WINDOW_MS,
   HEARTBEAT_INTERVAL_MS,
@@ -21,11 +20,12 @@ import {
 import { RedisClient, type Server, type ServerWebSocket, type WebSocketHandler } from 'bun';
 import { z } from 'zod';
 import {
-  authenticateConnection,
+  authenticateTicket,
   authorizeScope,
   type ConnectionRejection,
   memberDeleteSchema,
   membershipStillValid,
+  readTicketFrame,
   sessionStillValid,
 } from './auth.ts';
 import { Connection, type SocketData } from './connection.ts';
@@ -36,6 +36,7 @@ export const MAX_SUBSCRIPTIONS_PER_CONNECTION = 256;
 export const MAX_BUFFERED_BYTES = 1_048_576;
 export const MESSAGE_BURST = 60;
 export const MESSAGES_PER_SECOND = 20;
+export const AUTH_TIMEOUT_MS = 10_000;
 const SHUTDOWN_GRACE_MS = 1_000;
 const MAX_IDLE_TIMEOUT_SECONDS = 960;
 
@@ -43,6 +44,8 @@ export interface RealtimeServerOptions {
   port?: number;
   host?: string;
   redisUrl?: string;
+  ticketSecret?: string;
+  authTimeoutMs?: number;
   batchWindowMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
@@ -74,20 +77,6 @@ const CLOSE_CODES: Record<ConnectionRejection, number> = {
   unauthorized: UNAUTHORIZED_CLOSE_CODE,
   organization_forbidden: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
 };
-
-interface ConnectionCredentials {
-  readonly token: string;
-  readonly organizationId: string | null;
-}
-
-function credentialsFrom(url: URL): ConnectionCredentials | null {
-  const token = url.searchParams.get('token') ?? '';
-  const stated = url.searchParams.get('organizationId');
-  if (stated === null) return { token, organizationId: null };
-  const parsed = connectionOrganizationIdSchema.safeParse(stated);
-  if (!parsed.success) return null;
-  return { token, organizationId: parsed.data };
-}
 
 function parseJson(payload: string): unknown {
   try {
@@ -125,7 +114,12 @@ export async function createRealtimeServer(
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
   const presenceTtlMs = options.presenceTtlMs ?? PRESENCE_TTL_MS;
+  const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const redisUrl = options.redisUrl ?? process.env['REDIS_URL'] ?? 'redis://localhost:6380';
+  const ticketSecret = options.ticketSecret ?? process.env['BETTER_AUTH_SECRET'] ?? '';
+  if (ticketSecret.length === 0) {
+    throw new Error('BETTER_AUTH_SECRET is required to verify realtime tickets.');
+  }
 
   const connections = new Map<string, Connection>();
   const presence = new PresenceStore(presenceTtlMs);
@@ -165,7 +159,7 @@ export async function createRealtimeServer(
   async function revalidateSession(connection: Connection): Promise<void> {
     let valid = false;
     try {
-      valid = await sessionStillValid(connection.principal.sessionToken);
+      valid = await sessionStillValid(connection.principal.sessionId);
     } catch (error: unknown) {
       logger.error('session revalidation failed, closing to fail closed', {
         connectionId: connection.id,
@@ -350,37 +344,52 @@ export async function createRealtimeServer(
     await handlePresence(connection, message.scope, message.kind);
   }
 
-  function connectionOf(socket: ServerWebSocket<SocketData>): Connection | null {
-    const data = socket.data;
-    return 'rejection' in data ? null : data.connection;
-  }
-
-  async function socketDataFor(request: Request): Promise<SocketData> {
-    const credentials = credentialsFrom(new URL(request.url));
-    if (credentials === null) return { rejection: 'organization_forbidden' };
-    const authenticated = await authenticateConnection(
-      credentials.token,
-      credentials.organizationId,
-    );
-    if (!authenticated.ok) return { rejection: authenticated.reason };
-    return { principal: authenticated.principal, connection: null };
-  }
-
-  async function upgrade(
-    request: Request,
-    server: Server<SocketData>,
-  ): Promise<Response | undefined> {
-    let data: SocketData;
-    try {
-      data = await socketDataFor(request);
-    } catch (error: unknown) {
-      logger.error('connection rejected', errorFields(error));
-      data = { rejection: 'unauthorized' };
-    }
+  function upgrade(request: Request, server: Server<SocketData>): Response | undefined {
+    const data: SocketData = { connection: null, authenticating: false, authTimer: undefined };
     if (server.upgrade(request, { data })) return;
     return new Response(JSON.stringify({ status: 'upgrade_failed' }), {
       status: 400,
       headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  function clearAuthTimer(data: SocketData): void {
+    if (data.authTimer !== undefined) {
+      clearTimeout(data.authTimer);
+      data.authTimer = undefined;
+    }
+  }
+
+  async function authenticate(socket: ServerWebSocket<SocketData>, raw: string): Promise<void> {
+    const data = socket.data;
+    if (data.connection !== null || data.authenticating) return;
+    const payload = readTicketFrame(raw, ticketSecret);
+    if (payload === null) {
+      socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
+      return;
+    }
+    data.authenticating = true;
+    const authenticated = await authenticateTicket(payload);
+    if (socket.readyState !== WebSocket.OPEN) return;
+    if (!authenticated.ok) {
+      socket.close(CLOSE_CODES[authenticated.reason], authenticated.reason);
+      return;
+    }
+    clearAuthTimer(data);
+    const connection = new Connection(randomUUID(), socket, authenticated.principal, limits);
+    data.connection = connection;
+    connections.set(connection.id, connection);
+    connection.send({
+      type: 'ready',
+      connectionId: connection.id,
+      userId: authenticated.principal.userId,
+      organizationId: authenticated.principal.organizationId,
+      scopes: [],
+    });
+    logger.info('connection ready', {
+      connectionId: connection.id,
+      userId: authenticated.principal.userId,
+      organizationId: authenticated.principal.organizationId,
     });
   }
 
@@ -389,29 +398,23 @@ export async function createRealtimeServer(
     idleTimeout: idleTimeoutSeconds(heartbeatTimeoutMs, heartbeatIntervalMs),
     open(socket) {
       const data = socket.data;
-      if ('rejection' in data) {
-        socket.close(CLOSE_CODES[data.rejection], data.rejection);
-        return;
-      }
-      const connection = new Connection(randomUUID(), socket, data.principal, limits);
-      data.connection = connection;
-      connections.set(connection.id, connection);
-      connection.send({
-        type: 'ready',
-        connectionId: connection.id,
-        userId: data.principal.userId,
-        organizationId: data.principal.organizationId,
-        scopes: [],
-      });
-      logger.info('connection ready', {
-        connectionId: connection.id,
-        userId: data.principal.userId,
-        organizationId: data.principal.organizationId,
-      });
+      data.authTimer = setTimeout(() => {
+        data.authTimer = undefined;
+        if (data.connection === null) socket.close(UNAUTHORIZED_CLOSE_CODE, 'auth_timeout');
+      }, authTimeoutMs);
+      data.authTimer.unref();
     },
     message(socket, raw) {
-      const connection = connectionOf(socket);
-      if (connection === null) return;
+      const connection = socket.data.connection;
+      if (connection === null) {
+        authenticate(socket, raw.toString()).catch((error: unknown) => {
+          logger.error('authentication failed', errorFields(error));
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
+          }
+        });
+        return;
+      }
       handleMessage(connection, raw.toString()).catch((error: unknown) => {
         logger.error('message handling failed', {
           connectionId: connection.id,
@@ -420,14 +423,15 @@ export async function createRealtimeServer(
       });
     },
     pong(socket) {
-      const connection = connectionOf(socket);
+      const connection = socket.data.connection;
       if (connection === null) return;
       connection.lastSeenAt = Date.now();
     },
     close(socket) {
-      const connection = connectionOf(socket);
-      if (connection === null) return;
-      connections.delete(connection.id);
+      const data = socket.data;
+      clearAuthTimer(data);
+      if (data.connection === null) return;
+      connections.delete(data.connection.id);
     },
   };
 

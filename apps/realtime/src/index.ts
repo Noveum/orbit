@@ -6,6 +6,7 @@ import { createRealtimeServer } from './server.ts';
 const server = await createRealtimeServer({
   port: env.REALTIME_PORT,
   redisUrl: env.REDIS_URL,
+  ticketSecret: env.BETTER_AUTH_SECRET,
 });
 
 let shuttingDown = false;

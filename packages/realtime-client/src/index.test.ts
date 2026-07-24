@@ -66,6 +66,25 @@ function delta(syncId: number): SyncAction {
   };
 }
 
+const TICKET = 'ticket_1';
+
+function readyMessage(): ServerMessage {
+  return {
+    type: 'ready',
+    connectionId: 'connection_1',
+    userId: 'user_1',
+    organizationId: 'org_1',
+    scopes: [],
+  };
+}
+
+async function firstSocket(): Promise<FakeWebSocket> {
+  await wait(0);
+  const socket = FakeWebSocket.instances[0];
+  if (socket === undefined) throw new Error('socket was never created');
+  return socket;
+}
+
 describe('realtime client lifecycle', () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -76,18 +95,76 @@ describe('realtime client lifecycle', () => {
     FakeWebSocket.instances = [];
   });
 
-  it('treats an unauthorized close as terminal and never reconnects', async () => {
+  it('fetches a ticket, opens without it in the url, and authenticates in the first frame', async () => {
     const statuses: RealtimeStatus[] = [];
     const client = createRealtimeClient({
       url: 'ws://localhost:3100',
-      token: 'token_1',
-      organizationId: 'org_1',
+      fetchTicket: () => Promise.resolve(TICKET),
+      onStatus: (status) => statuses.push(status),
+    });
+
+    const socket = await firstSocket();
+    expect(socket.url).toBe('ws://localhost:3100');
+    socket.open();
+
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toEqual([
+      { type: 'auth', ticket: TICKET },
+    ]);
+    expect(statuses).not.toContain('open');
+
+    socket.deliver(readyMessage());
+    expect(client.status()).toBe('open');
+    client.close();
+  });
+
+  it('waits for ready before it subscribes', async () => {
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+    });
+
+    const socket = await firstSocket();
+    socket.open();
+    client.subscribe(['team:team_1']);
+    expect(subscribesOf(socket)).toEqual([{ scopes: ['team:team_1'], since: 0 }]);
+    client.close();
+  });
+
+  it('reconnects after a fetch failure', async () => {
+    const statuses: RealtimeStatus[] = [];
+    let attempts = 0;
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(new Error('nope')) : Promise.resolve(TICKET);
+      },
       maxBackoffMs: 10,
       onStatus: (status) => statuses.push(status),
     });
 
-    FakeWebSocket.instances[0]?.open();
-    FakeWebSocket.instances[0]?.close(UNAUTHORIZED_CLOSE_CODE);
+    await wait(60);
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+
+    expect(statuses).toContain('reconnecting');
+    expect(client.status()).toBe('open');
+    client.close();
+  });
+
+  it('treats an unauthorized close as terminal and never reconnects', async () => {
+    const statuses: RealtimeStatus[] = [];
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+      maxBackoffMs: 10,
+      onStatus: (status) => statuses.push(status),
+    });
+
+    const socket = await firstSocket();
+    socket.open();
+    socket.close(UNAUTHORIZED_CLOSE_CODE);
     await wait(60);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -99,13 +176,13 @@ describe('realtime client lifecycle', () => {
   it('treats a forbidden organization close as terminal too', async () => {
     const client = createRealtimeClient({
       url: 'ws://localhost:3100',
-      token: 'token_1',
-      organizationId: 'org_1',
+      fetchTicket: () => Promise.resolve(TICKET),
       maxBackoffMs: 10,
     });
 
-    FakeWebSocket.instances[0]?.open();
-    FakeWebSocket.instances[0]?.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
+    const socket = await firstSocket();
+    socket.open();
+    socket.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE);
     await wait(60);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -117,25 +194,26 @@ describe('realtime client lifecycle', () => {
     const resumes: number[] = [];
     const client = createRealtimeClient({
       url: 'ws://localhost:3100',
-      token: 'token_1',
-      organizationId: 'org_1',
+      fetchTicket: () => Promise.resolve(TICKET),
       maxBackoffMs: 10,
       onResume: (since) => resumes.push(since),
     });
 
-    const first = FakeWebSocket.instances[0];
-    first?.open();
+    const first = await firstSocket();
+    first.open();
+    first.deliver(readyMessage());
     client.subscribe(['team:team_1']);
-    first?.deliver({ type: 'delta', actions: [delta(70), delta(64)] });
+    first.deliver({ type: 'delta', actions: [delta(70), delta(64)] });
     expect(client.seen()).toBe(70);
     expect(resumes).toHaveLength(0);
 
-    first?.close(1006);
+    first.close(1006);
     await wait(60);
 
     const second = FakeWebSocket.instances[1];
     expect(second).toBeDefined();
     second?.open();
+    second?.deliver(readyMessage());
 
     expect(subscribesOf(second)).toEqual([{ scopes: ['team:team_1'], since: 70 }]);
     expect(resumes).toEqual([70]);
@@ -146,39 +224,40 @@ describe('realtime client lifecycle', () => {
     const denied: string[][] = [];
     const client = createRealtimeClient({
       url: 'ws://localhost:3100',
-      token: 'token_1',
-      organizationId: 'org_1',
+      fetchTicket: () => Promise.resolve(TICKET),
       maxBackoffMs: 10,
       onDenied: (scopes) => denied.push(scopes),
     });
 
-    const first = FakeWebSocket.instances[0];
-    first?.open();
+    const first = await firstSocket();
+    first.open();
+    first.deliver(readyMessage());
     client.subscribe(['team:team_1', 'team:not_mine']);
-    first?.deliver({ type: 'subscribed', scopes: ['team:team_1'], denied: ['team:not_mine'] });
+    first.deliver({ type: 'subscribed', scopes: ['team:team_1'], denied: ['team:not_mine'] });
     expect(denied).toEqual([['team:not_mine']]);
 
-    first?.close(1006);
+    first.close(1006);
     await wait(60);
     const second = FakeWebSocket.instances[1];
     second?.open();
+    second?.deliver(readyMessage());
 
     expect(subscribesOf(second)).toEqual([{ scopes: ['team:team_1'], since: 0 }]);
     client.close();
   });
 
-  it('reports presence messages without advancing the delta watermark', () => {
+  it('reports presence messages without advancing the delta watermark', async () => {
     const presence: PresenceMessage[][] = [];
     const client = createRealtimeClient({
       url: 'ws://localhost:3100',
-      token: 'token_1',
-      organizationId: 'org_1',
+      fetchTicket: () => Promise.resolve(TICKET),
       onPresence: (messages) => presence.push(messages),
     });
 
-    const socket = FakeWebSocket.instances[0];
-    socket?.open();
-    socket?.deliver({
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+    socket.deliver({
       type: 'presence',
       messages: [
         {
