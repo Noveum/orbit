@@ -1,10 +1,17 @@
+import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
 import { ConnectedAccounts } from '@/features/account/connected-accounts.tsx';
 import { countPasskeys, listConnectedAccounts } from '@/features/account/data.ts';
+import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders } from '@/lib/auth/server.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 
-export default async function ConnectedAccountsPage() {
+export default async function ConnectedAccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await requireSession();
+  const errorCode = authErrorCode((await searchParams)['error']);
   const [accounts, passkeyCount] = await Promise.all([
     listConnectedAccounts(),
     countPasskeys(session.user.id),
@@ -23,6 +30,9 @@ export default async function ConnectedAccountsPage() {
         passkeyCount={passkeyCount}
         availableProviders={enabledSocialProviders}
       />
+      {errorCode === undefined ? null : (
+        <AuthErrorNotice code={errorCode} title="Couldn't connect account" />
+      )}
     </section>
   );
 }
