@@ -130,11 +130,12 @@ describe('StandupView', () => {
     expect(screen.getByTestId('issue-count')).toHaveTextContent('3');
   });
 
-  it('groups the merged issues so display options have something to act on', () => {
+  it('defaults to grouping by project rather than per-team state', () => {
     workspace = buildWorkspace();
     renderStandup('list');
 
-    expect(screen.getByTestId('issue-group-Todo')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-group-No project')).toBeInTheDocument();
+    expect(screen.queryByTestId('issue-group-Todo')).toBeNull();
   });
 
   it('renders every issue as a card in the board layout', () => {

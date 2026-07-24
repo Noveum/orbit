@@ -1,6 +1,6 @@
 'use client';
 
-import type { FilterGroup } from '@orbit/shared/filters';
+import type { FilterGroup, GroupByField } from '@orbit/shared/filters';
 import {
   COMPLETED_WINDOWS,
   DISPLAY_PROPERTIES,
@@ -104,6 +104,7 @@ export function useViewConfig(
   teamId: string | null,
   layout: ViewLayoutMode,
   page: ViewPage = 'team',
+  defaultGroupBy: GroupByField = 'state',
 ): ViewConfigController {
   const router = useRouter();
   const pathname = usePathname();
@@ -115,10 +116,10 @@ export function useViewConfig(
   }, [teamId, layout]);
 
   const config = useMemo(() => {
-    const base = withStored(defaultViewConfig(layout), stored);
+    const base = withStored(defaultViewConfig(layout, defaultGroupBy), stored);
     const parsed = parseViewConfig(new URLSearchParams(searchParams.toString()), layout, base);
     return applyCapabilities(parsed, page, layout);
-  }, [searchParams, layout, stored, page]);
+  }, [searchParams, layout, stored, page, defaultGroupBy]);
 
   const carried = searchParams.get(VIEW_PARAM);
 

@@ -25,7 +25,7 @@ import { useWorkspace } from './workspace-provider.tsx';
 export function StandupView({ layout }: { layout: ViewLayoutMode }) {
   const router = useRouter();
   const workspace = useWorkspace();
-  const { config, setConfig } = useViewConfig(null, layout, 'saved_view');
+  const { config, setConfig } = useViewConfig(null, layout, 'saved_view', 'project');
   const controls = useProvideViewControls('saved_view', layout, config);
 
   const all = useAllIssues();
