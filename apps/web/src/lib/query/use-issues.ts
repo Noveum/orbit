@@ -144,10 +144,11 @@ export function useAssignedIssues(userId: string | null) {
   });
 }
 
-export function useAllIssues(query: IssueQuery = ALL_ISSUES_QUERY) {
+export function useAllIssues(query: IssueQuery = ALL_ISSUES_QUERY, enabled = true) {
   const search = allIssuesSearch(query);
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.allIssues(search), search),
+    enabled,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
   });

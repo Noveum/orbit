@@ -14,6 +14,7 @@ import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAllIssues } from '@/lib/query/use-issues.ts';
 import { Board } from './board.tsx';
@@ -33,7 +34,7 @@ export function StandupView() {
   const controls = useProvideViewControls('saved_view', layout, config);
   const filtered = !isEmptyFilter(config.filter);
 
-  const all = useAllIssues({ filter: config.filter, orderBy: config.orderBy });
+  const all = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, prefs.ready);
   const sentinel = useRef<HTMLDivElement>(null);
   const boardAutoLoads = useRef(0);
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -102,7 +103,7 @@ export function StandupView() {
   }
 
   let body: ReactNode;
-  if (shown.issues.length === 0 && filtered) {
+  if (shown.issues.length === 0 && filtered && !loading) {
     body = (
       <EmptyState
         icon={<SearchX strokeWidth={1.75} aria-hidden="true" />}
@@ -245,8 +246,7 @@ function StandupToggle({
   layout: ViewLayoutMode;
   onChange: (next: ViewLayoutMode) => void;
 }) {
-  const itemClass =
-    'flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)]';
+  const itemClass = cn('flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs', tabHover);
 
   return (
     <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
