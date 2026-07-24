@@ -5,7 +5,6 @@ import { Fragment, type ReactNode } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
-import { TopBarDisplayMenu } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
 
 export interface Breadcrumb {
@@ -73,7 +72,6 @@ export function TopBar({
 
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           {actions}
-          <TopBarDisplayMenu />
           {panelOpen === null ? null : (
             <Tooltip label="Toggle right panel" shortcut={[']']} side="bottom">
               <Button

@@ -84,9 +84,6 @@ const onChange = mock();
 const controls: ViewControls = {
   capability: capabilityFor('team', 'list'),
   displayModified: false,
-  config: null,
-  layout: 'list',
-  onChange: null,
 };
 
 function groupOf(...conditions: FilterCondition[]): FilterGroup {

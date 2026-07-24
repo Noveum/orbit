@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
+import { DisplayMenu } from '@/features/filters/display-menu.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
@@ -27,7 +28,7 @@ export function MyIssuesView() {
   const router = useRouter();
   const workspace = useWorkspace();
   const { config, setConfig } = useViewConfig(null, 'list', 'my_issues');
-  useProvideViewControls('my_issues', 'list', config, setConfig);
+  const controls = useProvideViewControls('my_issues', 'list', config);
 
   const assigned = useAssignedIssues(workspace.userId);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -90,6 +91,14 @@ export function MyIssuesView() {
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
           {shown.issues.length}
         </span>
+        <div className="ml-auto">
+          <DisplayMenu
+            config={config}
+            capability={controls.capability}
+            modified={controls.displayModified}
+            onChange={setConfig}
+          />
+        </div>
       </div>
 
       {shown.issues.length === 0 ? (
