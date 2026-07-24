@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
-import { Textarea } from '@/components/ui/textarea.tsx';
+import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { useCreateIssue } from '@/lib/query/use-issues.ts';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { PropertyMenu } from './property-menu.tsx';
@@ -95,13 +95,14 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             onChange={(event) => setTitle(event.target.value)}
             className="h-9 border-0 px-0 font-medium text-base shadow-none"
           />
-          <Textarea
-            data-testid="quick-create-description"
-            rows={4}
-            placeholder="Add a description, markdown works."
+          <RichTextEditor
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            className="resize-none border-0 px-0 shadow-none"
+            onChange={setDescription}
+            members={members}
+            placeholder="Add a description, markdown works."
+            ariaLabel="Issue description"
+            testId="quick-create-description"
+            toolbar="compact"
           />
 
           <div className="flex flex-wrap items-center gap-1.5">

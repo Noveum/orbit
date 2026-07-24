@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import { Textarea } from '@/components/ui/textarea.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
+import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
 import { cn } from '@/lib/cn.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
@@ -177,12 +177,15 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
           <section className="flex flex-col gap-2">
             {editingBody ? (
               <div className="flex flex-col gap-2">
-                <Textarea
+                <RichTextEditor
                   autoFocus
-                  data-testid="description-input"
-                  rows={8}
                   value={bodyDraft}
-                  onChange={(event) => setBodyDraft(event.target.value)}
+                  onChange={setBodyDraft}
+                  members={workspace.members}
+                  placeholder="Add a description, markdown works."
+                  ariaLabel="Issue description"
+                  testId="description-input"
+                  toolbar="compact"
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" variant="ghost" onClick={() => setEditingBody(false)}>

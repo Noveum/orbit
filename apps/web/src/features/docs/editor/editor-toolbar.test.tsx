@@ -9,9 +9,11 @@ import { RichTextEditor } from './rich-text-editor.tsx';
 function Harness({
   onChange,
   onReady,
+  variant = 'full',
 }: {
   onChange: (value: string) => void;
   onReady: (editor: Editor) => void;
+  variant?: 'full' | 'compact';
 }) {
   const [value, setValue] = useState('');
   return (
@@ -24,16 +26,19 @@ function Harness({
         }}
         ariaLabel="Body"
         testId="rich"
-        toolbar="full"
+        toolbar={variant}
         onReady={onReady}
       />
     </TooltipProvider>
   );
 }
 
-function mountEditor(onChange: (value: string) => void): Promise<Editor> {
+function mountEditor(
+  onChange: (value: string) => void,
+  variant: 'full' | 'compact' = 'full',
+): Promise<Editor> {
   return new Promise((resolve) => {
-    render(<Harness onChange={onChange} onReady={resolve} />);
+    render(<Harness onChange={onChange} onReady={resolve} variant={variant} />);
   });
 }
 
@@ -87,5 +92,32 @@ describe('rich text toolbar', () => {
     await waitFor(() =>
       expect(screen.getByTestId('rich-toolbar-block').textContent).toContain('Heading 2'),
     );
+  });
+});
+
+describe('compact rich text toolbar', () => {
+  it('shows the essential controls and hides the heavy blocks', async () => {
+    await mountEditor(mock(), 'compact');
+    const toolbar = await screen.findByTestId('rich-toolbar');
+    expect(within(toolbar).getByLabelText('Bold')).toBeInTheDocument();
+    expect(within(toolbar).getByLabelText('Bulleted list')).toBeInTheDocument();
+    expect(within(toolbar).getByLabelText('Code block')).toBeInTheDocument();
+    expect(within(toolbar).getByLabelText('Link')).toBeInTheDocument();
+    expect(screen.queryByTestId('rich-toolbar-block')).toBeNull();
+    expect(within(toolbar).queryByLabelText('Table')).toBeNull();
+    expect(within(toolbar).queryByLabelText('Task list')).toBeNull();
+  });
+
+  it('applies bold to the selection from the compact toolbar', async () => {
+    const onChange = mock();
+    const editor = await mountEditor(onChange, 'compact');
+    editor.chain().focus().insertContent('ship').run();
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+    await screen.findByTestId('rich-toolbar');
+
+    await userEvent
+      .setup()
+      .click(within(screen.getByTestId('rich-toolbar')).getByLabelText('Bold'));
+    await waitFor(() => expect(onChange.mock.calls.at(-1)?.[0]).toContain('**ship**'));
   });
 });
