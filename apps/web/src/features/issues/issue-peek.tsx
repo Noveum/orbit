@@ -1,10 +1,11 @@
 'use client';
 
-import { Button } from '@/components/ui/button.tsx';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { ArrowUpRight, X } from 'lucide-react';
+import { overlayClassName } from '@/components/ui/dialog.tsx';
+import { cn } from '@/lib/cn.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
-import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
-import { useWorkspace } from './workspace-provider.tsx';
+import { IssueDetailView } from './issue-detail.tsx';
 
 export interface IssuePeekProps {
   readonly issue: Issue | undefined;
@@ -13,56 +14,54 @@ export interface IssuePeekProps {
 }
 
 export function IssuePeek({ issue, onClose, onOpen }: IssuePeekProps) {
-  const { stateById, memberById } = useWorkspace();
   if (issue === undefined) return null;
 
-  const state = stateById.get(issue.stateId);
-  const assignee = issue.assigneeId === null ? undefined : memberById.get(issue.assigneeId);
-
   return (
-    <Dialog
+    <DialogPrimitive.Root
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
-      <DialogContent data-testid="issue-peek" className="max-w-xl">
-        <DialogTitle className="pr-8 font-medium text-lg text-text">{issue.title}</DialogTitle>
-        <p className="mt-1 text-2xs text-faint" data-numeric>
-          {issue.identifier}
-        </p>
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-dense">
-          <div>
-            <dt className="text-2xs text-faint uppercase">Status</dt>
-            <dd className="text-text">{state?.name ?? 'Unknown'}</dd>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className={overlayClassName} />
+        <DialogPrimitive.Content
+          data-testid="issue-peek"
+          aria-label={`Peek ${issue.identifier}`}
+          className={cn(
+            'fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-border border-l bg-surface shadow-pop',
+            'data-[state=open]:animate-panel-in data-[state=closed]:animate-panel-out',
+            'motion-reduce:animate-none',
+          )}
+        >
+          <div className="flex items-center justify-between border-border border-b px-3 py-2">
+            <span data-numeric className="text-2xs text-faint">
+              {issue.identifier}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onOpen}
+                aria-label="Open full page"
+                className="flex items-center gap-1 rounded-sm px-2 py-1 text-2xs text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
+              >
+                <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                Open
+              </button>
+              <DialogPrimitive.Close
+                aria-label="Close"
+                className="rounded-sm p-1 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </DialogPrimitive.Close>
+            </div>
           </div>
-          <div>
-            <dt className="text-2xs text-faint uppercase">Priority</dt>
-            <dd className="flex items-center gap-1.5 text-text">
-              <PriorityGlyph priority={issue.priority} />
-              {priorityLabel(issue.priority)}
-            </dd>
+          <DialogPrimitive.Title className="sr-only">{issue.title}</DialogPrimitive.Title>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <IssueDetailView identifier={issue.identifier} />
           </div>
-          <div>
-            <dt className="text-2xs text-faint uppercase">Assignee</dt>
-            <dd className="text-text">{assignee?.name ?? 'Unassigned'}</dd>
-          </div>
-          <div>
-            <dt className="text-2xs text-faint uppercase">Estimate</dt>
-            <dd className="text-text">{issue.estimate ?? 'None'}</dd>
-          </div>
-        </dl>
-        {issue.description.length > 0 ? (
-          <p className="mt-4 line-clamp-6 whitespace-pre-wrap text-dense text-muted">
-            {issue.description}
-          </p>
-        ) : null}
-        <div className="mt-5 flex justify-end">
-          <Button size="sm" variant="primary" onClick={onOpen}>
-            Open issue
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

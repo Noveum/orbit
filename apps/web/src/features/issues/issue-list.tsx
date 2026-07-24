@@ -192,7 +192,10 @@ export function IssueList({
                   projectById={projectById}
                   cycleById={cycleById}
                   childCounts={childCounts}
-                  onOpen={(identifier) => router.push(`/issue/${identifier}`)}
+                  onOpen={(identifier) => {
+                    const found = issues.find((entry) => entry.identifier === identifier);
+                    if (found !== undefined) setPeekId(found.id);
+                  }}
                   onFocus={() => setActiveIndex(item.index)}
                   onToggleSelected={(id) =>
                     setSelected((current) =>

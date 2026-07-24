@@ -2,7 +2,7 @@
 
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
@@ -14,6 +14,7 @@ import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
+import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
@@ -30,6 +31,7 @@ export function MyIssuesView() {
 
   const assigned = useAssignedIssues(workspace.userId);
   const sentinel = useRef<HTMLDivElement>(null);
+  const [peekId, setPeekId] = useState<string | null>(null);
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = assigned;
   useEffect(() => {
@@ -127,9 +129,9 @@ export function MyIssuesView() {
                       : workspace.memberById.get(issue.assigneeId)
                   }
                   creator={workspace.memberById.get(issue.creatorId)}
-                  active={false}
+                  active={peekId === issue.id}
                   selected={false}
-                  onOpen={() => router.push(`/issue/${issue.identifier}`)}
+                  onOpen={() => setPeekId(issue.id)}
                   onFocus={() => undefined}
                   onToggleSelected={() => undefined}
                 />
@@ -150,6 +152,15 @@ export function MyIssuesView() {
             display: { ...config.display, showSubIssues: true, showCompleted: 'all' },
           })
         }
+      />
+
+      <IssuePeek
+        issue={mine.find((issue) => issue.id === peekId)}
+        onClose={() => setPeekId(null)}
+        onOpen={() => {
+          const found = mine.find((issue) => issue.id === peekId);
+          if (found !== undefined) router.push(`/issue/${found.identifier}`);
+        }}
       />
     </div>
   );
