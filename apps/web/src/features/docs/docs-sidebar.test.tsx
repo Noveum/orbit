@@ -7,13 +7,14 @@ import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
-import { DocsWorkspace } from './docs-workspace.tsx';
+import { DocsShell } from './docs-shell.tsx';
 
 const push = mock();
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push, replace: mock(), refresh: mock() }),
   usePathname: () => '/docs',
+  useParams: () => ({}),
 }));
 
 mock.module('@/lib/query/use-docs.ts', () => ({
@@ -30,46 +31,75 @@ mock.module('@/lib/query/use-issues.ts', () => ({
   useCreateIssue: () => ({ mutate: mock(), isPending: false }),
 }));
 
-function Tree({ docs, canWrite }: { readonly docs: boolean; readonly canWrite: boolean }) {
-  const shell = (children: ReactNode) => (
+function shell(children: ReactNode) {
+  return (
     <TooltipProvider>
       <HotkeyProvider>
         <IssueWorkspaceProvider>{children}</IssueWorkspaceProvider>
       </HotkeyProvider>
     </TooltipProvider>
   );
-  return shell(docs ? <DocsWorkspace docId={null} canWrite={canWrite} canPublish={false} /> : null);
-}
-
-function mountShellThenDocs(canWrite = true) {
-  const view = render(<Tree docs={false} canWrite={canWrite} />);
-  view.rerender(<Tree docs canWrite={canWrite} />);
-  return view;
 }
 
 beforeEach(() => {
   push.mockClear();
 });
 
-describe('c on the docs page', () => {
-  it('creates a doc even though the workspace registered its own c first', async () => {
+describe('docs sidebar', () => {
+  it('creates a doc when c is pressed even though the workspace also binds c', async () => {
     const user = userEvent.setup();
-    mountShellThenDocs();
-    expect(screen.getByTestId('docs-workspace')).toBeInTheDocument();
+    render(
+      shell(
+        <DocsShell canWrite>
+          <div data-testid="pane-a" />
+        </DocsShell>,
+      ),
+    );
+    expect(screen.getByTestId('doc-tree')).toBeInTheDocument();
 
     await user.keyboard('c');
 
     expect(push).toHaveBeenCalledWith('/docs/new');
-    expect(screen.queryByTestId('quick-create')).not.toBeInTheDocument();
   });
 
-  it('does nothing rather than creating an issue when docs are read only', async () => {
+  it('does nothing on c when docs are read only', async () => {
     const user = userEvent.setup();
-    mountShellThenDocs(false);
+    render(
+      shell(
+        <DocsShell canWrite={false}>
+          <div data-testid="pane-a" />
+        </DocsShell>,
+      ),
+    );
 
     await user.keyboard('c');
 
     expect(push).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('quick-create')).not.toBeInTheDocument();
+  });
+
+  it('keeps the tree mounted and its state when the content pane changes', async () => {
+    const user = userEvent.setup();
+    const view = render(
+      shell(
+        <DocsShell canWrite>
+          <div data-testid="pane-a" />
+        </DocsShell>,
+      ),
+    );
+
+    await user.type(screen.getByTestId('doc-search'), 'engine');
+    expect(screen.getByTestId('doc-search')).toHaveValue('engine');
+
+    view.rerender(
+      shell(
+        <DocsShell canWrite>
+          <div data-testid="pane-b" />
+        </DocsShell>,
+      ),
+    );
+
+    expect(screen.getByTestId('pane-b')).toBeInTheDocument();
+    expect(screen.queryByTestId('pane-a')).not.toBeInTheDocument();
+    expect(screen.getByTestId('doc-search')).toHaveValue('engine');
   });
 });
