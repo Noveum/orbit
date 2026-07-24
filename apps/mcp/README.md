@@ -6,11 +6,11 @@ uses.
 
 - Endpoint: `POST http://localhost:3200/mcp`
 - Health: `GET http://localhost:3200/health`
-- Auth: `Authorization: Bearer orb_...`
+- Auth: OAuth 2.1 (discovery, PKCE, dynamic client registration). No API keys.
 
-Every call is resolved to the Orbit user who owns the API key. A tool can never do more than that
-person could do in the UI: a guest gets `forbidden` from `create_issue`, and nobody can touch a team
-they are not on.
+Every call is resolved to the Orbit user who signed in, acting in the workspace they chose when they
+approved the connection. A tool can never do more than that person could do in the UI: a guest gets
+`forbidden` from `create_issue`, and nobody can touch a team they are not on.
 
 ## Run it
 
@@ -18,20 +18,21 @@ they are not on.
 bun run infra:up
 bun run db:push
 bun run db:seed
-bun run --filter "@orbit/mcp" dev
+bun run dev
 ```
 
-`MCP_PORT` sets the port and defaults to `3200`.
+`MCP_PORT` sets the port and defaults to `3200`. `ORBIT_PUBLIC_URL` is the origin that serves the
+OAuth discovery documents (the web app), and defaults to `http://localhost:3000`. The MCP server
+uses it to build the `WWW-Authenticate` challenge it returns on `401`.
 
-## Mint an API key
+## How auth works
 
-```sh
-bun run --filter "@orbit/mcp" create-key --email pulkit@noveum.ai --name "Local agent"
-```
-
-Flags: `--email` (required), `--name`, `--org <slug>` when the user belongs to several workspaces,
-and `--expiresInDays`. The key is printed once. Only a SHA-256 hash of it is stored, so it cannot be
-shown again. Set `revoked_at` on the row in `api_key` to turn a key off.
+The web app hosts the OAuth server through better-auth. An unauthenticated request to `/mcp` gets a
+`401` with a `WWW-Authenticate` header pointing at
+`<ORBIT_PUBLIC_URL>/.well-known/oauth-protected-resource/mcp`. From there an MCP client discovers the
+authorization server, registers itself, runs the PKCE authorization-code flow (the user signs in to
+Orbit, picks a workspace, and approves), and presents the resulting access token as a bearer. The MCP
+server validates that token against the shared database and resolves it to a workspace principal.
 
 ## Connect a client
 
@@ -39,19 +40,22 @@ shown again. Set `revoked_at` on the row in `api_key` to turn a key off.
 claude mcp add --transport http orbit http://localhost:3200/mcp
 ```
 
-Add the key as a bearer token in your client configuration, for example:
+Point any MCP client at the server URL. No token goes in the config: the client discovers OAuth from
+the `401` and opens a browser for sign-in.
 
 ```json
 {
   "mcpServers": {
     "orbit": {
       "type": "http",
-      "url": "http://localhost:3200/mcp",
-      "headers": { "Authorization": "Bearer orb_your_key_here" }
+      "url": "http://localhost:3200/mcp"
     }
   }
 }
 ```
+
+In production the server URL is `https://orbit.noveum.ai/mcp` and the discovery documents are served
+from the same host. Manage or revoke connected clients under Settings, Integrations.
 
 ## Tools
 
@@ -92,7 +96,8 @@ can see exactly what the realtime stream carried.
 
 A domain error comes back as a tool result with `isError: true` and a JSON body such as
 `{"error":{"code":"forbidden","message":"Your role cannot issue create."}}`. Stack traces never leave
-the process. A missing or invalid key fails the HTTP request with `401` before any tool runs.
+the process. A missing or invalid token fails the HTTP request with `401`, and a `WWW-Authenticate`
+header points the client at the OAuth discovery documents, before any tool runs.
 
 ## Tests
 

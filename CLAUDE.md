@@ -91,6 +91,12 @@ domain verified in Resend, otherwise every send fails.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
   optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `Bun.password` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
+- **MCP auth.** OAuth only, no API keys. The web app hosts the OAuth server through the better-auth
+  `mcp` plugin: discovery under `/.well-known/oauth-*`, dynamic client registration, PKCE, and a
+  consent screen at `/oauth/authorize` where the user picks a workspace and re-verifies a passkey. The
+  standalone MCP server validates the access token against the shared database (`verifyMcpAccessToken`)
+  and returns a `WWW-Authenticate` challenge on `401`. A `mcp_grant` row binds a client and user to the
+  chosen workspace.
 - **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
   creation and on user creation, so it covers every provider. Empty means no restriction. A
   workspace can narrow it further with its own `allowedEmailDomains`.

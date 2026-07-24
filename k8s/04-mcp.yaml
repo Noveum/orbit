@@ -60,6 +60,8 @@ spec:
               value: production
             - name: MCP_PORT
               value: "3200"
+            - name: ORBIT_PUBLIC_URL
+              value: __ORBIT_ORIGIN__
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/ssl/rds/us-east-1-bundle.pem
           volumeMounts:
