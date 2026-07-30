@@ -99,11 +99,19 @@ async function dopplerTokenFromAws(): Promise<string> {
       '--output',
       'text',
     ],
-    { stdout: 'pipe', stderr: 'ignore' },
+    { stdout: 'pipe', stderr: 'pipe' },
   );
-  const raw = await new Response(proc.stdout).text();
+  const [raw, failure] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
   if ((await proc.exited) !== 0) {
-    throw new Error('Could not read orbit-app-secrets. Set DOPPLER_TOKEN_BUILD instead.');
+    const detail = failure.trim();
+    throw new Error(
+      `Could not read orbit-app-secrets. Set DOPPLER_TOKEN_BUILD instead.${
+        detail.length > 0 ? `\n  aws: ${detail}` : ''
+      }`,
+    );
   }
   const parsed: unknown = JSON.parse(raw);
   if (!isRecord(parsed) || typeof parsed['DOPPLER_TOKEN_BUILD'] !== 'string') {
@@ -225,18 +233,16 @@ function vercel(
   });
 }
 
-async function existingEnv(options: Options): Promise<Map<string, string>> {
+async function existingKeys(options: Options): Promise<Set<string>> {
   const response = await vercel(options, `/v9/projects/${options.projectId}/env`);
   if (!response.ok) {
     throw new Error(`Vercel returned ${response.status}: ${await response.text()}`);
   }
-  const byKey = new Map<string, string>();
+  const keys = new Set<string>();
   for (const entry of vercelEnvEntries(await response.json())) {
-    if (options.targets.some((target) => entry.target.includes(target))) {
-      byKey.set(entry.key, entry.id);
-    }
+    if (options.targets.some((target) => entry.target.includes(target))) keys.add(entry.key);
   }
-  return byKey;
+  return keys;
 }
 
 async function main(): Promise<void> {
@@ -247,7 +253,7 @@ async function main(): Promise<void> {
   const desired = await readDoppler(dopplerToken);
   for (const [key, value] of options.overrides) desired.set(key, value);
 
-  const existing = await existingEnv(options);
+  const existing = await existingKeys(options);
   const targets = [...options.targets];
 
   console.log(`project ${options.projectId}`);
@@ -255,23 +261,16 @@ async function main(): Promise<void> {
   console.log(`${desired.size} variables, ${existing.size} already set\n`);
 
   for (const [key, value] of [...desired].sort(([a], [b]) => a.localeCompare(b))) {
-    const previous = existing.get(key);
-    const action = previous === undefined ? 'create' : 'update';
-    console.log(`  ${action.padEnd(6)} ${key} (${value.length} chars)`);
+    console.log(
+      `  ${(existing.has(key) ? 'update' : 'create').padEnd(6)} ${key} (${value.length} chars)`,
+    );
     if (options.dryRun) continue;
 
-    if (previous !== undefined) {
-      const removed = await vercel(options, `/v9/projects/${options.projectId}/env/${previous}`, {
-        method: 'DELETE',
-        body: {},
-      });
-      if (!removed.ok) throw new Error(`Could not replace ${key}: ${await removed.text()}`);
-    }
-    const created = await vercel(options, `/v10/projects/${options.projectId}/env`, {
+    const written = await vercel(options, `/v10/projects/${options.projectId}/env?upsert=true`, {
       method: 'POST',
       body: { key, value, type: 'encrypted', target: targets },
     });
-    if (!created.ok) throw new Error(`Could not set ${key}: ${await created.text()}`);
+    if (!written.ok) throw new Error(`Could not set ${key}: ${await written.text()}`);
   }
 
   console.log(options.dryRun ? '\ndry run, nothing changed' : `\n${desired.size} variables synced`);
