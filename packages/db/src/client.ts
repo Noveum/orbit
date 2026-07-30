@@ -29,17 +29,31 @@ export function multiplexesConnections(url: string): boolean {
   }
 }
 
-const globalForDb = globalThis as unknown as { orbitPool?: SQL };
+export function poolCacheKey(url: string, max: number, prepare: boolean): string {
+  return JSON.stringify([url, max, prepare]);
+}
+
+interface CachedPool {
+  readonly key: string;
+  readonly sql: SQL;
+}
+
+const globalForDb = globalThis as unknown as { orbitPool?: CachedPool };
+
+const prepareStatements = !multiplexesConnections(connectionString);
+const cacheKey = poolCacheKey(connectionString, poolMax.data, prepareStatements);
+const cached = globalForDb.orbitPool;
 
 export const pool =
-  globalForDb.orbitPool ??
-  new SQL(connectionString, {
-    max: poolMax.data,
-    idleTimeout: 30,
-    prepare: !multiplexesConnections(connectionString),
-  });
+  cached?.key === cacheKey
+    ? cached.sql
+    : new SQL(connectionString, {
+        max: poolMax.data,
+        idleTimeout: 30,
+        prepare: prepareStatements,
+      });
 
-globalForDb.orbitPool = pool;
+globalForDb.orbitPool = { key: cacheKey, sql: pool };
 
 export const db = drizzle({ client: pool, schema, casing: 'snake_case' });
 
