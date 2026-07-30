@@ -19,6 +19,16 @@ if (!poolMax.success) {
   );
 }
 
+const TRANSACTION_POOLER_PORT = 6543;
+
+export function multiplexesConnections(url: string): boolean {
+  try {
+    return Number(new URL(url).port) === TRANSACTION_POOLER_PORT;
+  } catch {
+    return false;
+  }
+}
+
 const globalForDb = globalThis as unknown as { orbitPool?: SQL };
 
 export const pool =
@@ -26,11 +36,10 @@ export const pool =
   new SQL(connectionString, {
     max: poolMax.data,
     idleTimeout: 30,
+    prepare: !multiplexesConnections(connectionString),
   });
 
-if (process.env['NODE_ENV'] !== 'production') {
-  globalForDb.orbitPool = pool;
-}
+globalForDb.orbitPool = pool;
 
 export const db = drizzle({ client: pool, schema, casing: 'snake_case' });
 
