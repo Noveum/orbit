@@ -9,19 +9,11 @@ import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam, ShellWorkspace } from '@/lib/navigation.ts';
 import { dehydratedWorkspace } from '@/lib/query/prefetch.ts';
 import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
+import { configuredRealtimeUrl } from '@/lib/realtime/url.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
-const DEVELOPMENT_REALTIME_URL = 'ws://localhost:3100';
-
 function realtimeUrl(): string {
-  const configured = process.env['NEXT_PUBLIC_REALTIME_URL'];
-  if (configured !== undefined && configured.length > 0) return configured;
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(
-      'NEXT_PUBLIC_REALTIME_URL must be set so clients can reach the realtime server.',
-    );
-  }
-  return DEVELOPMENT_REALTIME_URL;
+  return configuredRealtimeUrl();
 }
 
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {

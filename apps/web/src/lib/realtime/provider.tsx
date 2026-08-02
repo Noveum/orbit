@@ -9,6 +9,7 @@ import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
 import { SessionProvider } from './session.tsx';
 import { fetchRealtimeTicket } from './ticket.ts';
+import { resolveRealtimeUrl } from './url.ts';
 
 const SIGNED_OUT_CLOSE_CODES: readonly number[] = [
   SESSION_REVOKED_CLOSE_CODE,
@@ -39,10 +40,13 @@ export function WorkspaceRealtime({
 
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
 
+  const socketUrl =
+    typeof window === 'undefined' ? url : resolveRealtimeUrl(url, window.location.origin);
+
   return (
     <SessionProvider userId={userId}>
       <RealtimeProvider
-        url={url}
+        url={socketUrl}
         organizationId={organizationId}
         fetchTicket={fetchTicket}
         onTerminal={handleTerminal}

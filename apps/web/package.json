@@ -26,6 +26,7 @@
     "@orbit/core": "workspace:*",
     "@orbit/db": "workspace:*",
     "@orbit/realtime-client": "workspace:*",
+    "@orbit/realtime-server": "workspace:*",
     "@orbit/services": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@radix-ui/react-avatar": "^1.1.10",
