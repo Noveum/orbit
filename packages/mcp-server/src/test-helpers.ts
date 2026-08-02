@@ -7,7 +7,7 @@ import { createOrganization, recordMcpGrant, resolvePrincipal } from '@orbit/cor
 import { db, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
-import { createMcpHttpServer, MCP_PATH, type McpHttpServer } from './server.ts';
+import { handleMcpRequest, MCP_PATH } from './server.ts';
 
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
 
@@ -134,12 +134,23 @@ function payloadOf(result: CallToolResult): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-export async function connect(server: McpHttpServer, accessToken: string): Promise<TestClient> {
+export const MCP_TEST_PUBLIC_URL = 'http://localhost:3000';
+export const MCP_TEST_ORIGIN = 'http://mcp.test';
+
+export function callMcp(request: Request): Promise<Response> {
+  return handleMcpRequest(request, { publicUrl: MCP_TEST_PUBLIC_URL });
+}
+
+function directFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+  return callMcp(new Request(typeof url === 'string' ? url : url.toString(), init));
+}
+
+export async function connect(accessToken: string): Promise<TestClient> {
   const client = new Client({ name: 'orbit-test', version: '0.0.0' });
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${server.port}${MCP_PATH}`),
-    { requestInit: { headers: { authorization: `Bearer ${accessToken}` } } },
-  );
+  const transport = new StreamableHTTPClientTransport(new URL(`${MCP_TEST_ORIGIN}${MCP_PATH}`), {
+    requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    fetch: directFetch,
+  });
   await client.connect(transport as unknown as Transport);
   return {
     client,
@@ -162,8 +173,4 @@ export function errorPayload(result: CallToolResult): { code: string; message: s
   if (typeof error !== 'object' || error === null) throw new Error('No error payload.');
   const shape = error as { code?: unknown; message?: unknown };
   return { code: String(shape.code), message: String(shape.message) };
-}
-
-export function startServer(): Promise<McpHttpServer> {
-  return createMcpHttpServer({ port: 0, host: '127.0.0.1', shutdownGraceMs: 25 });
 }

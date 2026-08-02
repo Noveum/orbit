@@ -24,8 +24,7 @@ bun run dev
 | Service | Port |
 | --- | --- |
 | web | 3000 |
-| realtime | 3100 |
-| mcp | 3200 |
+| realtime (development only) | 3100 |
 | postgres | 5434 |
 | redis | 6380 |
 | minio | 9010 |

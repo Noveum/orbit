@@ -11,21 +11,6 @@
         "typescript": "5.9.3",
       },
     },
-    "apps/mcp": {
-      "name": "@orbit/mcp",
-      "version": "0.0.0",
-      "dependencies": {
-        "@modelcontextprotocol/sdk": "1.29.0",
-        "@orbit/core": "workspace:*",
-        "@orbit/db": "workspace:*",
-        "@orbit/shared": "workspace:*",
-        "zod": "4.4.3",
-      },
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "typescript": "5.9.3",
-      },
-    },
     "apps/realtime": {
       "name": "@orbit/realtime",
       "version": "0.0.0",
@@ -61,6 +46,7 @@
         "@lezer/highlight": "^1.2.3",
         "@orbit/core": "workspace:*",
         "@orbit/db": "workspace:*",
+        "@orbit/mcp-server": "workspace:*",
         "@orbit/realtime-client": "workspace:*",
         "@orbit/realtime-server": "workspace:*",
         "@orbit/services": "workspace:*",
@@ -150,6 +136,21 @@
         "@types/bun": "1.3.14",
         "drizzle-kit": "0.31.10",
         "pg": "8.22.0",
+        "typescript": "5.9.3",
+      },
+    },
+    "packages/mcp-server": {
+      "name": "@orbit/mcp-server",
+      "version": "0.0.0",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "1.29.0",
+        "@orbit/core": "workspace:*",
+        "@orbit/db": "workspace:*",
+        "@orbit/shared": "workspace:*",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
         "typescript": "5.9.3",
       },
     },
@@ -547,7 +548,7 @@
 
     "@orbit/db": ["@orbit/db@workspace:packages/db"],
 
-    "@orbit/mcp": ["@orbit/mcp@workspace:apps/mcp"],
+    "@orbit/mcp-server": ["@orbit/mcp-server@workspace:packages/mcp-server"],
 
     "@orbit/realtime": ["@orbit/realtime@workspace:apps/realtime"],
 

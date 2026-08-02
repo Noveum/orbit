@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import type { McpHttpServer } from './server.ts';
 import {
   addMember,
   connect,
@@ -7,13 +6,11 @@ import {
   errorPayload,
   mintToken,
   resetDatabase,
-  startServer,
   type TestClient,
   type TestWorkspace,
 } from './test-helpers.ts';
 
 let workspace: TestWorkspace;
-let server: McpHttpServer;
 let admin: TestClient;
 let guest: TestClient;
 
@@ -57,16 +54,14 @@ async function newIssue(title: string, extra: Record<string, unknown> = {}): Pro
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  server = await startServer();
-  admin = await connect(server, await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(server, await mintToken(workspace.organizationId, guestMember.user.id));
+  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
 });
 
 afterAll(async () => {
   await admin.close();
   await guest.close();
-  await server.close();
 });
 
 describe('discovery', () => {

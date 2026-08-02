@@ -52,14 +52,21 @@ Bun does not load a parent directory `.env`, so a script running with its cwd in
 ## Layout
 
 ```
-apps/web         Next.js 16 app: UI, REST route handlers, auth, webhooks
-apps/realtime    Bun.serve WebSocket server, fans out deltas from Redis pub/sub
-apps/mcp         MCP server over streamable HTTP
-packages/db      Drizzle schema, migrations, client, seed
-packages/shared  Zod validators, domain types, event contracts, pure utils
-scripts/         repo tooling, written in TypeScript and run with bun
-extras/          working notes, task board, demo artifacts (not shipped)
+apps/web                  Next.js 16 app: UI, REST route handlers, auth, webhooks,
+                          the realtime socket at /api/ws and the MCP server at /mcp
+apps/realtime             Bun.serve WebSocket host, local development only, never deployed
+packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
+packages/mcp-server       MCP tools and the fetch handler behind /mcp
+packages/db               Drizzle schema, migrations, client, seed
+packages/shared           Zod validators, domain types, event contracts, pure utils
+scripts/                  repo tooling, written in TypeScript and run with bun
+extras/                   working notes, task board, demo artifacts (not shipped)
 ```
+
+Everything ships as one Next.js app on a single Vercel project. The realtime hub
+and the MCP tools live in packages so the app stays thin and both keep their own
+test suites. `apps/realtime` exists only so local development has a socket server,
+because a Vercel function cannot upgrade a connection under `next dev`.
 
 Cross-app code lives in `packages/shared`. If two apps need it, it belongs there, never duplicated.
 
@@ -75,7 +82,10 @@ bun run verify       lint + comment policy + typecheck + tests
 bun test             run one package's tests from inside that package
 ```
 
-Ports: web 3000, realtime 3100, mcp 3200, postgres 5434, redis 6380, minio 9010.
+Ports: web 3000, realtime 3100, postgres 5434, redis 6380, minio 9010. The realtime
+port is development only. In production the socket is served from the web app at
+`/api/ws`, and the client falls back to the same origin whenever
+`NEXT_PUBLIC_REALTIME_URL` is unset.
 
 Email goes out through Resend only. Set `RESEND_API_KEY` and an `EMAIL_FROM` on a
 domain verified in Resend, otherwise every send fails.

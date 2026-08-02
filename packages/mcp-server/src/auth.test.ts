@@ -1,27 +1,22 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { beforeAll, describe, expect, it } from 'bun:test';
 import { verifyMcpAccessToken } from '@orbit/core';
 import { and, db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
-import { HEALTH_PATH, MCP_PATH, type McpHttpServer } from './server.ts';
+import { MCP_PATH } from './server.ts';
 import {
+  callMcp,
   createWorkspace,
+  MCP_TEST_ORIGIN,
   mintToken,
   resetDatabase,
-  startServer,
   type TestWorkspace,
 } from './test-helpers.ts';
 
 let workspace: TestWorkspace;
-let server: McpHttpServer;
 
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  server = await startServer();
-});
-
-afterAll(async () => {
-  await server.close();
 });
 
 async function clientIdOf(token: string): Promise<string> {
@@ -34,11 +29,13 @@ async function clientIdOf(token: string): Promise<string> {
 }
 
 function post(headers: Record<string, string>): Promise<Response> {
-  return fetch(`http://127.0.0.1:${server.port}${MCP_PATH}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json', ...headers },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
-  });
+  return callMcp(
+    new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...headers },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    }),
+  );
 }
 
 describe('access token verification', () => {
@@ -98,12 +95,6 @@ describe('access token verification', () => {
 });
 
 describe('http transport', () => {
-  it('serves a health check without a token', async () => {
-    const response = await fetch(`http://127.0.0.1:${server.port}${HEALTH_PATH}`);
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ status: 'ok', service: 'mcp' });
-  });
-
   it('challenges an unauthenticated request with WWW-Authenticate', async () => {
     const response = await post({});
     expect(response.status).toBe(401);
@@ -121,8 +112,9 @@ describe('http transport', () => {
   });
 
   it('rejects a GET on the mcp endpoint', async () => {
-    const response = await fetch(`http://127.0.0.1:${server.port}${MCP_PATH}`);
+    const response = await callMcp(new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`));
     expect(response.status).toBe(405);
+    expect(response.headers.get('allow')).toBe('POST');
     await response.body?.cancel();
   });
 });

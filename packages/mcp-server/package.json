@@ -1,13 +1,12 @@
 {
-  "name": "@orbit/mcp",
+  "name": "@orbit/mcp-server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "bun --watch --env-file=../../.env src/index.ts",
-    "build": "bun build src/index.ts --target=bun --outdir=dist --minify",
-    "start": "bun dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "bun --env-file=../../.env test"
   },
