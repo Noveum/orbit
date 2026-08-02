@@ -1,7 +1,7 @@
 import type { ServerMessage, SyncAction } from '@orbit/shared/events';
-import type { ServerWebSocket } from 'bun';
 import type { ConnectionPrincipal } from './auth.ts';
 import { logger } from './logger.ts';
+import { type RealtimeSocket, SOCKET_OPEN } from './socket.ts';
 
 export interface ConnectionLimits {
   readonly batchWindowMs: number;
@@ -11,7 +11,7 @@ export interface ConnectionLimits {
   readonly messagesPerSecond: number;
 }
 
-export interface SocketData {
+export interface SocketState {
   connection: Connection | null;
   authenticating: boolean;
   authTimer: ReturnType<typeof setTimeout> | undefined;
@@ -29,7 +29,7 @@ export class Connection {
 
   constructor(
     readonly id: string,
-    private readonly socket: ServerWebSocket<SocketData>,
+    private readonly socket: RealtimeSocket,
     readonly principal: ConnectionPrincipal,
     private readonly limits: ConnectionLimits,
   ) {
@@ -89,8 +89,8 @@ export class Connection {
   }
 
   send(message: ServerMessage): void {
-    if (this.socket.readyState !== WebSocket.OPEN) return;
-    const buffered = this.socket.getBufferedAmount();
+    if (this.socket.readyState !== SOCKET_OPEN) return;
+    const buffered = this.socket.bufferedAmount();
     if (buffered > this.limits.maxBufferedBytes) {
       logger.warn('dropping slow connection', { connectionId: this.id, bufferedAmount: buffered });
       this.socket.terminate();
@@ -132,7 +132,7 @@ export class Connection {
       this.flushTimer = undefined;
     }
     this.pending.clear();
-    if (this.socket.readyState === WebSocket.OPEN) {
+    if (this.socket.readyState === SOCKET_OPEN) {
       this.socket.close(code, reason);
       return;
     }
@@ -144,6 +144,6 @@ export class Connection {
   }
 
   ping(): void {
-    if (this.socket.readyState === WebSocket.OPEN) this.socket.ping();
+    if (this.socket.readyState === SOCKET_OPEN) this.socket.ping();
   }
 }

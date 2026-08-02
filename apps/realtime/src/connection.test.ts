@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import type { ServerWebSocket } from 'bun';
 import type { ConnectionPrincipal } from './auth.ts';
-import { Connection, type ConnectionLimits, type SocketData } from './connection.ts';
+import { Connection, type ConnectionLimits } from './connection.ts';
+import type { RealtimeSocket } from './socket.ts';
 
 const principal: ConnectionPrincipal = {
   userId: 'user_1',
@@ -16,7 +16,7 @@ const principal: ConnectionPrincipal = {
 
 class FakeSocket {
   readyState = 1;
-  bufferedAmount = 0;
+  buffered = 0;
   sent: string[] = [];
   terminated = false;
   pings = 0;
@@ -26,8 +26,8 @@ class FakeSocket {
     this.sent.push(payload);
   }
 
-  getBufferedAmount(): number {
-    return this.bufferedAmount;
+  bufferedAmount(): number {
+    return this.buffered;
   }
 
   terminate(): void {
@@ -68,12 +68,7 @@ function build(overrides: Partial<ConnectionLimits> = {}) {
     messagesPerSecond: 10,
     ...overrides,
   };
-  const connection = new Connection(
-    'conn_1',
-    socket as unknown as ServerWebSocket<SocketData>,
-    principal,
-    limits,
-  );
+  const connection = new Connection('conn_1', socket as RealtimeSocket, principal, limits);
   return { socket, connection };
 }
 
@@ -99,7 +94,7 @@ describe('Connection', () => {
 
   it('drops a connection whose outbound buffer exceeds the threshold', () => {
     const { socket, connection } = build({ maxBufferedBytes: 16 });
-    socket.bufferedAmount = 17;
+    socket.buffered = 17;
     connection.send({ type: 'pong', at: new Date().toISOString() });
 
     expect(socket.sent).toHaveLength(0);
