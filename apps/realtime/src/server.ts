@@ -1,13 +1,13 @@
-import { HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS } from '@orbit/shared/events';
-import type { Server, WebSocketHandler } from 'bun';
 import {
   createRealtimeHub,
+  fromBunSocket,
+  logger,
   type RealtimeHubOptions,
   type RealtimeSession,
   type RealtimeStats,
-} from './hub.ts';
-import { logger } from './logger.ts';
-import { fromBunSocket } from './socket.ts';
+} from '@orbit/realtime-server';
+import { HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS } from '@orbit/shared/events';
+import type { Server, WebSocketHandler } from 'bun';
 
 export {
   AUTH_TIMEOUT_MS,
@@ -16,7 +16,7 @@ export {
   MESSAGE_BURST,
   MESSAGES_PER_SECOND,
   type RealtimeStats,
-} from './hub.ts';
+} from '@orbit/realtime-server';
 
 const SHUTDOWN_GRACE_MS = 1_000;
 const MAX_IDLE_TIMEOUT_SECONDS = 960;

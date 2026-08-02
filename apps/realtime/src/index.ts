@@ -1,6 +1,6 @@
 import { pool } from '@orbit/db';
+import { errorFields, logger } from '@orbit/realtime-server';
 import { env } from './env.ts';
-import { errorFields, logger } from './logger.ts';
 import { createRealtimeServer } from './server.ts';
 
 const server = await createRealtimeServer({
