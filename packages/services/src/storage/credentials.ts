@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { internal } from '@orbit/shared';
 
 export interface ResolvedCredentials {
@@ -27,7 +28,7 @@ async function assumeWebIdentityRole(
   tokenFile: string,
   region: string,
 ): Promise<ResolvedCredentials> {
-  const token = (await Bun.file(tokenFile).text()).trim();
+  const token = (await readFile(tokenFile, 'utf8')).trim();
   const endpoint = `https://sts.${region}.amazonaws.com/`;
   const body = new URLSearchParams({
     Action: 'AssumeRoleWithWebIdentity',

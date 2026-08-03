@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createCredentialResolver } from './credentials.ts';
 
 const realFetch = globalThis.fetch;
-const realFile = Bun.file;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
-  (Bun as { file: typeof Bun.file }).file = realFile;
 });
+
+async function tokenFile(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'orbit-web-identity-'));
+  const path = join(directory, 'token');
+  await writeFile(path, 'web-identity-token', 'utf8');
+  return path;
+}
 
 function stsResponse(accessKeyId: string, expiration: string): string {
   return `<?xml version="1.0"?>
@@ -39,9 +47,7 @@ describe('createCredentialResolver', () => {
   });
 
   it('assumes the role through web identity and caches the result', async () => {
-    (Bun as { file: typeof Bun.file }).file = (() => ({
-      text: () => Promise.resolve('web-identity-token'),
-    })) as unknown as typeof Bun.file;
+    const token = await tokenFile();
     let calls = 0;
     globalThis.fetch = mock(() => {
       calls += 1;
@@ -55,7 +61,7 @@ describe('createCredentialResolver', () => {
     const resolve = createCredentialResolver(
       'us-east-1',
       {},
-      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: '/token' },
+      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: token },
     );
     const first = await resolve();
     const second = await resolve();
@@ -66,9 +72,7 @@ describe('createCredentialResolver', () => {
   });
 
   it('refreshes when the cached credentials are about to expire', async () => {
-    (Bun as { file: typeof Bun.file }).file = (() => ({
-      text: () => Promise.resolve('web-identity-token'),
-    })) as unknown as typeof Bun.file;
+    const token = await tokenFile();
     let calls = 0;
     globalThis.fetch = mock(() => {
       calls += 1;
@@ -82,7 +86,7 @@ describe('createCredentialResolver', () => {
     const resolve = createCredentialResolver(
       'us-east-1',
       {},
-      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: '/token' },
+      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: token },
     );
     expect((await resolve())?.accessKeyId).toBe('KEY1');
     expect((await resolve())?.accessKeyId).toBe('KEY2');
@@ -90,9 +94,7 @@ describe('createCredentialResolver', () => {
   });
 
   it('keeps serving still-valid credentials when a refresh fails', async () => {
-    (Bun as { file: typeof Bun.file }).file = (() => ({
-      text: () => Promise.resolve('web-identity-token'),
-    })) as unknown as typeof Bun.file;
+    const token = await tokenFile();
     let calls = 0;
     globalThis.fetch = mock(() => {
       calls += 1;
@@ -109,7 +111,7 @@ describe('createCredentialResolver', () => {
     const resolve = createCredentialResolver(
       'us-east-1',
       {},
-      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: '/token' },
+      { AWS_ROLE_ARN: 'arn:aws:iam::1:role/orbit', AWS_WEB_IDENTITY_TOKEN_FILE: token },
     );
     expect((await resolve())?.accessKeyId).toBe('ASIA');
     expect((await resolve())?.accessKeyId).toBe('ASIA');

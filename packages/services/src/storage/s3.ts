@@ -1,5 +1,12 @@
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { internal, MAX_UPLOAD_BYTES } from '@orbit/shared';
-import { S3Client } from 'bun';
 import { z } from 'zod';
 import { createCredentialResolver, type ResolvedCredentials } from './credentials.ts';
 import { assertSafeKey } from './key.ts';
@@ -18,16 +25,14 @@ export const s3ConfigSchema = z.object({
 export type S3Config = z.input<typeof s3ConfigSchema>;
 
 const UPLOAD_URL_TTL_SECONDS = 900;
-const CREDENTIAL_PROBE_KEY = 'orbit-credential-probe';
-const SESSION_TOKEN_PARAM = 'X-Amz-Security-Token';
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
 
 export class S3StorageDriver implements StorageDriver {
   readonly name = 's3' as const;
+  private readonly bucket: string;
   private readonly base: {
-    bucket: string;
     region: string;
-    virtualHostedStyle: boolean;
+    forcePathStyle: boolean;
     endpoint?: string;
   };
   private readonly resolveCredentials: () => Promise<ResolvedCredentials | undefined>;
@@ -36,10 +41,10 @@ export class S3StorageDriver implements StorageDriver {
   constructor(config: S3Config) {
     const parsed = s3ConfigSchema.parse(config);
     const { accessKeyId, secretAccessKey, sessionToken, endpoint } = parsed;
+    this.bucket = parsed.bucket;
     this.base = {
-      bucket: parsed.bucket,
       region: parsed.region,
-      virtualHostedStyle: !(parsed.forcePathStyle ?? endpoint !== undefined),
+      forcePathStyle: parsed.forcePathStyle ?? endpoint !== undefined,
       ...(endpoint === undefined ? {} : { endpoint }),
     };
     this.resolveCredentials = createCredentialResolver(parsed.region, {
@@ -62,16 +67,15 @@ export class S3StorageDriver implements StorageDriver {
       ...(credentials === undefined
         ? {}
         : {
-            accessKeyId: credentials.accessKeyId,
-            secretAccessKey: credentials.secretAccessKey,
-            ...(credentials.sessionToken === undefined
-              ? {}
-              : { sessionToken: credentials.sessionToken }),
+            credentials: {
+              accessKeyId: credentials.accessKeyId,
+              secretAccessKey: credentials.secretAccessKey,
+              ...(credentials.sessionToken === undefined
+                ? {}
+                : { sessionToken: credentials.sessionToken }),
+            },
           }),
     });
-    if (credentials !== undefined && credentials.sessionToken === undefined) {
-      assertConfiguredCredentialsAreUsed(client);
-    }
     this.cached = { key, client };
     return client;
   }
@@ -79,11 +83,11 @@ export class S3StorageDriver implements StorageDriver {
   async createUploadTarget(key: string, contentType: string): Promise<UploadTarget> {
     assertSafeKey(key);
     const client = await this.client();
-    const url = client.presign(key, {
-      expiresIn: UPLOAD_URL_TTL_SECONDS,
-      method: 'PUT',
-      type: contentType,
-    });
+    const url = await getSignedUrl(
+      client,
+      new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),
+      { expiresIn: UPLOAD_URL_TTL_SECONDS },
+    );
     return {
       key,
       url,
@@ -97,7 +101,9 @@ export class S3StorageDriver implements StorageDriver {
   async put(key: string, body: Uint8Array, contentType: string): Promise<void> {
     assertSafeKey(key);
     const client = await this.client();
-    await client.write(key, body, { type: contentType });
+    await client.send(
+      new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }),
+    );
   }
 
   async getUrl(
@@ -107,30 +113,37 @@ export class S3StorageDriver implements StorageDriver {
   ): Promise<string> {
     assertSafeKey(key);
     const client = await this.client();
-    return client.presign(key, {
-      expiresIn: expiresInSeconds,
-      method: 'GET',
-      ...(options.contentType === undefined ? {} : { type: options.contentType }),
-      ...(options.disposition === undefined ? {} : { contentDisposition: options.disposition }),
-    });
+    return await getSignedUrl(
+      client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ...(options.contentType === undefined ? {} : { ResponseContentType: options.contentType }),
+        ...(options.disposition === undefined
+          ? {}
+          : { ResponseContentDisposition: options.disposition }),
+      }),
+      { expiresIn: expiresInSeconds },
+    );
   }
 
   async delete(key: string): Promise<void> {
     assertSafeKey(key);
     const client = await this.client();
-    await client.delete(key);
+    await client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
   async stat(key: string): Promise<StoredObject | null> {
     assertSafeKey(key);
     try {
       const client = await this.client();
-      const stats = await client.stat(key);
+      const stats = await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      const contentType = stats.ContentType ?? '';
       return {
         key,
-        size: stats.size,
-        contentType: stats.type.length === 0 ? DEFAULT_CONTENT_TYPE : stats.type,
-        updatedAt: stats.lastModified,
+        size: stats.ContentLength ?? 0,
+        contentType: contentType.length === 0 ? DEFAULT_CONTENT_TYPE : contentType,
+        updatedAt: stats.LastModified ?? new Date(0),
       };
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -139,21 +152,17 @@ export class S3StorageDriver implements StorageDriver {
   }
 }
 
-function assertConfiguredCredentialsAreUsed(client: S3Client): void {
-  const probe = client.presign(CREDENTIAL_PROBE_KEY, { expiresIn: 60, method: 'GET' });
-  if (!new URL(probe).searchParams.has(SESSION_TOKEN_PARAM)) return;
-  throw internal(
-    'Object storage has explicit keys, but the runtime is signing with an ambient AWS session token. Start the process with AWS_SESSION_TOKEN unset, or with S3_SESSION_TOKEN empty, so the configured keys are the only credentials.',
-  );
-}
-
 function isNotFound(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
-  const candidate = error as { name?: unknown; code?: unknown };
+  const candidate = error as {
+    name?: unknown;
+    Code?: unknown;
+    $metadata?: { httpStatusCode?: unknown };
+  };
   return (
-    candidate.code === 'NoSuchKey' ||
-    candidate.code === 'NotFound' ||
+    candidate.Code === 'NoSuchKey' ||
     candidate.name === 'NoSuchKey' ||
-    candidate.name === 'NotFound'
+    candidate.name === 'NotFound' ||
+    candidate.$metadata?.httpStatusCode === 404
   );
 }
