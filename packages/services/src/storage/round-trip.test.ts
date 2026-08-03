@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { createStorageDriver } from './index.ts';
 import type { StorageDriver } from './types.ts';
@@ -48,7 +49,7 @@ function allows(rules: readonly CorsRule[], request: Preflight): boolean {
 }
 
 async function loadRules(): Promise<CorsRule[]> {
-  const raw = await Bun.file(`${REPO_ROOT}/infra/s3-cors.json`).text();
+  const raw = await readFile(`${REPO_ROOT}/infra/s3-cors.json`, 'utf8');
   const document = corsDocumentSchema.parse(
     JSON.parse(raw.replaceAll(ORIGIN_PLACEHOLDER, PRODUCTION_ORIGIN)),
   );
@@ -88,9 +89,13 @@ describe('bucket CORS document', () => {
   });
 
   it('documents how it reaches the bucket', async () => {
-    const readme = await Bun.file(`${REPO_ROOT}/infra/README.md`).text();
-    expect(readme).toContain('put-bucket-cors');
-    expect(readme).toContain('s3-cors.json');
+    const readme = await readFile(`${REPO_ROOT}/infra/README.md`, 'utf8');
+    expect(readme).toContain(
+      "sed 's|__ORBIT_ORIGIN__|https://orbit.example.com|' infra/s3-cors.json > /tmp/cors.json",
+    );
+    expect(readme).toContain(
+      'aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp/cors.json',
+    );
   });
 });
 

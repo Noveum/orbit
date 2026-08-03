@@ -10,5 +10,5 @@ placeholder with the real origin:
 
 ```sh
 sed 's|__ORBIT_ORIGIN__|https://orbit.example.com|' infra/s3-cors.json > /tmp/cors.json
-aws s3api put-bucket-cors --bucket "$ORBIT_S3_BUCKET" --cors-configuration file:///tmp/cors.json
+aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp/cors.json
 ```

@@ -90,7 +90,7 @@ domain verified in Resend, otherwise every send fails.
 - **Server state.** TanStack Query for fetching, with optimistic mutations. The realtime stream invalidates and patches the cache; it never triggers a full refetch of a list the user is looking at.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
-  optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `Bun.password` (argon2id),
+  optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `@node-rs/argon2` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
 - **MCP auth.** OAuth only, no API keys. The web app hosts the OAuth server through the better-auth
   `mcp` plugin: discovery under `/.well-known/oauth-*`, dynamic client registration, PKCE, and a

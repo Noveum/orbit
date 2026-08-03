@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'bun:test';
-import { resolveRealtimeUrl } from './url.ts';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { configuredRealtimeUrl, resolveRealtimeUrl } from './url.ts';
 
 describe('resolveRealtimeUrl', () => {
   it('prefers an explicitly configured url', () => {
@@ -24,5 +24,30 @@ describe('resolveRealtimeUrl', () => {
 
   it('returns nothing when there is no origin to resolve against', () => {
     expect(resolveRealtimeUrl('', '')).toBe('');
+  });
+});
+
+describe('configuredRealtimeUrl', () => {
+  const key = 'NEXT_PUBLIC_REALTIME_URL';
+  const saved = process.env[key];
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  });
+
+  it('keeps a websocket url', () => {
+    process.env[key] = 'wss://orbit.example/api/ws';
+    expect(configuredRealtimeUrl()).toBe('wss://orbit.example/api/ws');
+  });
+
+  it('falls back to the same origin when the url is not a websocket', () => {
+    process.env[key] = 'https://orbit.example/api/ws';
+    expect(configuredRealtimeUrl()).toBe('');
+  });
+
+  it('falls back to the same origin when the url is malformed', () => {
+    process.env[key] = 'not a url';
+    expect(configuredRealtimeUrl()).toBe('');
   });
 });

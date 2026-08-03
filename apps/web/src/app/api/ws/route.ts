@@ -7,6 +7,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const HUB_UNAVAILABLE_CLOSE_CODE = 1011;
+const TOO_MUCH_BEFORE_READY_CLOSE_CODE = 1008;
+const MAX_BUFFERED_FRAMES = 32;
 
 function attach(socket: WebSocket): void {
   const buffered: string[] = [];
@@ -15,17 +17,22 @@ function attach(socket: WebSocket): void {
 
   socket.on('message', (data: RawData) => {
     const raw = data.toString();
-    if (session === null) {
-      buffered.push(raw);
+    if (session !== null) {
+      session.message(raw);
       return;
     }
-    session.message(raw);
+    if (buffered.length >= MAX_BUFFERED_FRAMES) {
+      socket.close(TOO_MUCH_BEFORE_READY_CLOSE_CODE, 'too_many_frames_before_ready');
+      return;
+    }
+    buffered.push(raw);
   });
   socket.on('pong', () => {
     session?.pong();
   });
   socket.on('close', () => {
     closed = true;
+    buffered.length = 0;
     session?.closed();
   });
 
