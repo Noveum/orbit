@@ -37,9 +37,9 @@ test('one user in two tabs of the same browser sees issues, comments and reactio
   await tabA.screenshot({ path: `${SHOTS}/same-user-tab-a.png` });
   await tabB.screenshot({ path: `${SHOTS}/same-user-tab-b.png` });
 
-  const identifier = (
-    (await tabA.locator('article', { hasText: title }).first().getAttribute('data-testid')) ?? ''
-  ).replace('issue-card-', '');
+  const card = tabA.locator('article[data-testid^="issue-card-"]', { hasText: title }).first();
+  await expect(card).toBeVisible();
+  const identifier = ((await card.getAttribute('data-testid')) ?? '').replace('issue-card-', '');
   expect(identifier).not.toBe('');
 
   await tabA.goto(`${BASE}/issue/${identifier}`);
@@ -54,10 +54,9 @@ test('one user in two tabs of the same browser sees issues, comments and reactio
 
   await expect(tabB.getByText(body)).toBeVisible({ timeout: PROPAGATION_TIMEOUT });
 
-  const commentId = (
-    (await tabA.locator('article[data-testid^="comment-"]').last().getAttribute('data-testid')) ??
-    ''
-  ).replace('comment-', '');
+  const posted = tabA.locator('article[data-testid^="comment-"]').last();
+  await expect(posted).toBeVisible();
+  const commentId = ((await posted.getAttribute('data-testid')) ?? '').replace('comment-', '');
   expect(commentId).not.toBe('');
 
   await tabA.getByTestId(`add-reaction-${commentId}`).click();
