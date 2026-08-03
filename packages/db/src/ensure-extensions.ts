@@ -1,9 +1,9 @@
-import { SQL } from 'bun';
+import postgres from 'postgres';
 
 const connectionString =
   process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 
-const sql = new SQL(connectionString);
+const sql = postgres(connectionString);
 
 await sql`create extension if not exists pg_trgm`;
-await sql.close();
+await sql.end();

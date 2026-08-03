@@ -1,5 +1,5 @@
-import { SQL } from 'bun';
-import { drizzle } from 'drizzle-orm/bun-sql';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema/index.ts';
 
@@ -33,9 +33,11 @@ export function poolCacheKey(url: string, max: number, prepare: boolean): string
   return JSON.stringify([url, max, prepare]);
 }
 
+type Pool = ReturnType<typeof postgres>;
+
 interface CachedPool {
   readonly key: string;
-  readonly sql: SQL;
+  readonly sql: Pool;
 }
 
 const globalForDb = globalThis as unknown as { orbitPool?: CachedPool };
@@ -47,9 +49,9 @@ const cached = globalForDb.orbitPool;
 export const pool =
   cached?.key === cacheKey
     ? cached.sql
-    : new SQL(connectionString, {
+    : postgres(connectionString, {
         max: poolMax.data,
-        idleTimeout: 30,
+        idle_timeout: 30,
         prepare: prepareStatements,
       });
 

@@ -62,12 +62,14 @@ export async function cycleBurndown(
   const cycle = await loadCycle(principal, cycleId);
   const weight = weightSql(measure);
   const today = isoDay(now);
+  const startsAt = cycle.startsAt.toISOString();
+  const endsAt = cycle.endsAt.toISOString();
 
   const rows = await db.execute<SeriesRow>(sql`
     with days as (
       select generate_series(
-        date_trunc('day', ${cycle.startsAt}::timestamptz),
-        date_trunc('day', ${cycle.endsAt}::timestamptz),
+        date_trunc('day', ${startsAt}::timestamptz),
+        date_trunc('day', ${endsAt}::timestamptz),
         interval '1 day'
       )::date as day
     ),
@@ -75,11 +77,11 @@ export async function cycleBurndown(
       select
         greatest(
           (created_at at time zone 'UTC')::date,
-          date_trunc('day', ${cycle.startsAt}::timestamptz)::date
+          date_trunc('day', ${startsAt}::timestamptz)::date
         ) as created_day,
         greatest(
           (completed_at at time zone 'UTC')::date,
-          date_trunc('day', ${cycle.startsAt}::timestamptz)::date
+          date_trunc('day', ${startsAt}::timestamptz)::date
         ) as completed_day,
         completed_at,
         ${weight} as weight
@@ -151,6 +153,7 @@ type ChurnActivityRow = {
 export async function cycleChurn(principal: Principal, cycleId: string): Promise<CycleChurn> {
   assertCan(principal, 'project:read');
   const cycle = await loadCycle(principal, cycleId);
+  const startsAt = cycle.startsAt.toISOString();
 
   const snapshots = await db
     .select({ total_issues: schema.cycleProgressSnapshot.totalIssues })
@@ -169,12 +172,12 @@ export async function cycleChurn(principal: Principal, cycleId: string): Promise
       count(*) filter (
         where field = 'cycleId'
           and coalesce(to_value ->> 'id', to_value #>> '{}') = ${cycleId}
-          and created_at > ${cycle.startsAt}::timestamptz
+          and created_at > ${startsAt}::timestamptz
       ) as added,
       count(*) filter (
         where field = 'cycleId'
           and coalesce(from_value ->> 'id', from_value #>> '{}') = ${cycleId}
-          and created_at > ${cycle.startsAt}::timestamptz
+          and created_at > ${startsAt}::timestamptz
       ) as removed
     from issue_activity
     where organization_id = ${principal.organizationId}
