@@ -1,4 +1,4 @@
-import { fromNodeSocket } from '@orbit/realtime-server';
+import { fromNodeSocket, type RealtimeSession } from '@orbit/realtime-server';
 import { experimental_upgradeWebSocket } from '@vercel/functions';
 import type { RawData, WebSocket } from 'ws';
 import { realtimeHub } from '@/lib/realtime/hub.ts';
@@ -6,19 +6,42 @@ import { realtimeHub } from '@/lib/realtime/hub.ts';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-export async function GET(): Promise<Response> {
-  const hub = await realtimeHub();
+const HUB_UNAVAILABLE_CLOSE_CODE = 1011;
 
-  return await experimental_upgradeWebSocket((socket: WebSocket) => {
-    const session = hub.accept(fromNodeSocket(socket));
-    socket.on('message', (data: RawData) => {
-      session.message(data.toString());
-    });
-    socket.on('pong', () => {
-      session.pong();
-    });
-    socket.on('close', () => {
-      session.closed();
-    });
+function attach(socket: WebSocket): void {
+  const buffered: string[] = [];
+  let session: RealtimeSession | null = null;
+  let closed = false;
+
+  socket.on('message', (data: RawData) => {
+    const raw = data.toString();
+    if (session === null) {
+      buffered.push(raw);
+      return;
+    }
+    session.message(raw);
   });
+  socket.on('pong', () => {
+    session?.pong();
+  });
+  socket.on('close', () => {
+    closed = true;
+    session?.closed();
+  });
+
+  realtimeHub()
+    .then((hub) => {
+      if (closed) return;
+      const accepted = hub.accept(fromNodeSocket(socket));
+      session = accepted;
+      for (const raw of buffered) accepted.message(raw);
+      buffered.length = 0;
+    })
+    .catch(() => {
+      socket.close(HUB_UNAVAILABLE_CLOSE_CODE, 'realtime_unavailable');
+    });
+}
+
+export async function GET(): Promise<Response> {
+  return await experimental_upgradeWebSocket(attach);
 }
