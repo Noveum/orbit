@@ -117,38 +117,23 @@ domain verified in Resend, otherwise every send fails.
 
 ## Deployment
 
-Every image is built `FROM oven/bun` and runs `bun` as its entrypoint. There is no
-`turbo prune`: each Dockerfile copies the root `package.json`, `bun.lock` and every
-workspace `package.json`, runs `bun install --frozen-lockfile`, then copies sources.
+Orbit is one Vercel project. The root directory is `apps/web`, the build runs
+`bun run build` there, and functions serve on the node runtime. Nothing is
+containerised and nothing runs in Kubernetes.
 
-`bun install --frozen-lockfile` exits 0 when there is no lockfile at all, so a
-`.dockerignore` mistake would silently produce a floating dependency tree instead
-of failing. Every Dockerfile asserts `test -s bun.lock` before installing. Keep
-that line.
+The node runtime is not optional. `/api/ws` upgrades through
+`experimental_upgradeWebSocket` from `@vercel/functions`, and Vercel only injects
+that upgrade bridge on node. Setting `bunVersion` in `apps/web/vercel.json` moves
+every function to the bun runtime, where the upgrade silently never happens and
+the client just retries against a socket that never opens.
 
-Bun's resident memory for the Next.js server runs roughly 60 to 80 percent above
-Node's, and Bun has no equivalent of `--max-old-space-size`, so there is no heap
-ceiling to set. The web pod is sized for that: 512Mi requested, 2Gi limit. Watch
-RSS after a deploy rather than assuming it plateaus.
+Upgrade before doing any other work in that route. Awaiting redis, the database
+or anything else first stops the handshake reaching a 101, so attach the hub
+after the socket is open and buffer whatever arrives in between.
 
-Rolling the web service back to Node means editing `apps/web/Dockerfile` (runner
-stage to `node:24-alpine`, `CMD` to `node`). Editing only the k8s manifest does
-nothing: in `oven/bun` images `node` is a symlink to `bun`, so
-`command: [..., "node", ...]` still runs Bun, silently.
-
-Deploy by hand with:
-
-```sh
-KUBE_API_SERVER=http://127.0.0.1:8080 ./extras/scripts/docker-build-push.sh -y
-```
-
-Name services to narrow it, for example `... docker-build-push.sh web mcp -y`.
-
-The CodeBuild pipeline (`buildspec.yml`) builds and pushes web, realtime and mcp
-and rolls them out. It never runs a schema migration. Migrations are applied
-locally against the target database (reach prod through `extras/prod-tunnel`),
-never by a job in the cluster, so any schema change must be pushed before the
-code that depends on it ships.
+Migrations are applied locally against the target database, never by a job in the
+platform, so any schema change must be pushed before the code that depends on it
+ships.
 
 ## Git
 
