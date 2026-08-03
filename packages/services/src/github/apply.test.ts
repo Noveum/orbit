@@ -9,7 +9,7 @@ import {
   user,
   workflowState,
 } from '@orbit/db/schema';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { type TestTransaction, withRollback } from '../test-database.ts';
 import { applyGithubEvent } from './apply.ts';

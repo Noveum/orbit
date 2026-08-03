@@ -1,5 +1,5 @@
 import { integration } from '@orbit/db/schema';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq, ne } from 'drizzle-orm';
 import type { GithubDatabase } from './apply.ts';
 

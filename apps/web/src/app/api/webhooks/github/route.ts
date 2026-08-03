@@ -2,7 +2,7 @@ import { and, db, eq, schema } from '@orbit/db';
 import { applyGithubEvent, dispatchSlackMessage, verifyGithubSignature } from '@orbit/services';
 import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { publish } from '@/lib/api/handler.ts';
 import { absoluteUrl } from '@/lib/env.ts';
 

@@ -16,7 +16,7 @@ import {
   unique,
   validationFailed,
 } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {
@@ -160,7 +160,7 @@ function planFor(
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
   const deferred = emailEnabled && !bypass && isWithinQuietHours(now, quietHours);
   return {
-    id: randomUUIDv7('hex', now),
+    id: randomUUIDv7(now),
     event,
     recipient,
     channels: ['inbox', ...(emailEnabled ? ['email'] : []), ...(slackEnabled ? ['slack'] : [])],

@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@orbit/db';
 import { emailDelivery } from '@orbit/db/schema';
 import { internal, toDomainError } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { createEmailTransport, type EmailTransport, emailMessageSchema } from './transports.ts';

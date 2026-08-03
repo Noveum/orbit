@@ -3,7 +3,7 @@ import { doc, organization, project, user } from '@orbit/db/schema';
 import { DomainError } from '@orbit/shared';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { type TestTransaction, withRollback } from '../test-database.ts';
 import { assertUploadParent, isPubliclyReadable } from './parent.ts';
 

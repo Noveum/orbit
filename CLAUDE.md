@@ -4,48 +4,39 @@ Free, realtime, keyboard-first work tracker. Linear-grade UX, Plane-grade breadt
 
 ## Hard rules
 
-1. **Bun is the runtime, the package manager, and the script runner.** There is no pnpm, no npm, no yarn, no Node runtime, no Turbo, and no `node_modules` produced by anything but `bun install`. Every command in this file starts with `bun`. Reach for a Bun built-in before adding a dependency.
+1. **Bun is the package manager and the script runner.** There is no pnpm, no npm, no yarn, no Turbo, and no `node_modules` produced by anything but `bun install`. Every command in this file starts with `bun`. The deployed runtime is node, so shipped code must not import a Bun built-in.
 2. **No comments in code.** Ever. `bun run check-comments` fails the build on any comment that is not a functional directive (`@ts-*`, `biome-ignore`, `eslint-*`, `/*! license */`). Make names and structure carry meaning.
 3. **No AI attribution.** Never mention Claude, Anthropic, Codex, or AI tooling in commits, branches, PRs, code, or docs.
 4. **No em-dash characters** in code, copy, docs, or commit messages. Use commas, colons, or separate sentences.
 5. **Strict types only.** `any` is a lint error. Non-null assertions are a lint error. `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` are on. Validate every external input with Zod.
 6. **Every check green before you finish.** `bun run verify` runs lint, comment policy, typecheck, and tests.
 
-## Bun first
+## Bun is the toolchain, not the runtime
 
-Prefer the built-in over the package. These are the ones this repo already relies on, and new code must use them rather than reintroducing an SDK:
+Bun installs, runs scripts, and runs tests. Shipped server code must not call a
+Bun built-in, because the web app runs on Vercel's node runtime: that is the only
+runtime where a Vercel function can upgrade a websocket, and `/api/ws` needs it.
+Anything imported from `bun` fails there with `Cannot find module 'bun'`.
 
 | Need | Use | Never use |
 | --- | --- | --- |
-| Postgres | `Bun.SQL` through `drizzle-orm/bun-sql` | `pg`, `postgres.js` |
-| Redis and pub/sub | `Bun.RedisClient` (`subscribe`, `unsubscribe`, `publish`) | `ioredis`, `node-redis` |
-| WebSocket server | `Bun.serve({ websocket })` and its native topic pub/sub | `ws`, `socket.io` |
-| Object storage | `Bun.S3Client` (`write`, `file`, `presign`, `stat`, `delete`) | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` |
-| Reading and writing files | `Bun.file()`, `Bun.write()` | `node:fs` |
+| Postgres | `postgres.js` through `drizzle-orm/postgres-js` | `Bun.SQL`, `drizzle-orm/bun-sql`, `pg` |
+| Redis and pub/sub | `ioredis` | `Bun.RedisClient`, `node-redis` |
+| Object storage | `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` | `Bun.S3Client` |
+| Reading and writing files | `node:fs/promises` | `Bun.file()`, `Bun.write()` |
+| Hashing passwords | `@node-rs/argon2` (argon2id) | `Bun.password`, `bcrypt` |
+| Sortable ids | `randomUUIDv7()` from `@orbit/shared/utils` | `Bun.randomUUIDv7()`, `ulid`, `nanoid` |
+| WebSocket server | `ws`, upgraded by `@vercel/functions` | `Bun.serve({ websocket })` in shipped code |
 | Running TypeScript | `bun file.ts` | `tsx`, `ts-node` |
-| Bundling a service | `bun build --target=bun` | `esbuild`, `rollup` |
 | Tests | `bun test` | `vitest`, `jest` |
 | Subprocesses | `Bun.spawn`, `Bun.$` | `node:child_process` |
-| Hashing passwords | `Bun.password` (argon2id) | `bcrypt`, `argon2` |
-| Sortable ids | `Bun.randomUUIDv7()` | `ulid`, `uuid`, `nanoid` |
-| Env files | `bun --env-file=...` | `dotenv` |
 | Workspace script running | `bun run --filter '<pattern>' <script>` | `turbo`, `nx`, `lerna` |
+| Env files | `bun --env-file=...` | `dotenv` |
+
+Test files and `apps/realtime` may use Bun built-ins, because both only ever run
+under Bun. `packages/realtime-server` is imported by the web app, so it may not.
 
 Bun does not implement `process.loadEnvFile`. Load the repository `.env` with `bun --env-file=../../.env` in the script, never from inside a config file.
-
-Bun's `S3Client` reads ambient `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
-`AWS_SESSION_TOKEN` and snapshots them when the process starts. Deleting them from
-`process.env` or `Bun.env` afterwards does nothing, and passing an empty or
-undefined `sessionToken` does not suppress them either. When explicit keys are also
-configured the ambient session token is still attached to the signature and every
-request fails with `InvalidTokenId`, which is exactly how a broken PDF upload
-presents. `S3StorageDriver` therefore presigns a probe URL at construction and
-refuses to start if a session token leaked in. If you hit that error locally,
-start the process with the variable unset:
-
-```
-env -u AWS_SESSION_TOKEN -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY bun run dev
-```
 
 Bun does not load a parent directory `.env`, so a script running with its cwd inside a workspace package needs `--env-file=../../.env` to see the repository environment.
 

@@ -1,7 +1,7 @@
 import { and, db, desc, eq, schema } from '@orbit/db';
 import { assertCan } from '@orbit/shared/policy';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { githubLinkRepositorySchema, githubUnlinkRepositorySchema } from '@orbit/shared/validators';
-import { randomUUIDv7 } from 'bun';
 import { apiContext, handleRoute, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 import { assertTeamInWorkspace } from '@/lib/workspace.ts';
 

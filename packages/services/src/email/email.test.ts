@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { emailDelivery } from '@orbit/db/schema';
 import { DomainError } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { withRollback } from '../test-database.ts';
 import {

@@ -18,6 +18,7 @@ import { magicLink, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
+import { hashPassword, verifyPassword } from './password.ts';
 
 export const MCP_SCOPES = [
   'openid',
@@ -98,9 +99,9 @@ function emailAndPassword() {
       });
     },
     password: {
-      hash: (password: string) => Bun.password.hash(password, { algorithm: 'argon2id' }),
+      hash: (password: string) => hashPassword(password),
       verify: ({ hash, password }: { hash: string; password: string }) =>
-        Bun.password.verify(password, hash),
+        verifyPassword(hash, password),
     },
   } as const;
 }

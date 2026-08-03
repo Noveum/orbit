@@ -19,6 +19,7 @@
     "test": "bun --env-file=../../.env test"
   },
   "dependencies": {
+    "uuid": "^14.0.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

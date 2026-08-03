@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { integration, organization, user } from '@orbit/db/schema';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq } from 'drizzle-orm';
 import { type TestTransaction, withRollback } from '../test-database.ts';
 import { ensureGithubInstallation } from './install.ts';

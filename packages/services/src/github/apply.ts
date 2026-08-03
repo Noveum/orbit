@@ -17,7 +17,7 @@ import {
   scopes,
   unique,
 } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
 import {

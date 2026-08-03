@@ -7,7 +7,7 @@ import {
   user,
 } from '@orbit/db/schema';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { type TestTransaction, withRollback } from '../test-database.ts';
 import {

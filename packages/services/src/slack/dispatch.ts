@@ -1,7 +1,7 @@
 import type { Database, Transaction } from '@orbit/db';
 import { integration, issue, slackChannelSync, team, user, workflowState } from '@orbit/db/schema';
 import { type Priority, parseIssueIdentifier } from '@orbit/shared';
-import { randomUUIDv7 } from 'bun';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {

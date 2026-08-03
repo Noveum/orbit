@@ -1,3 +1,4 @@
+import { v7 as uuidv7 } from 'uuid';
 import { SORT_ORDER_STEP } from '../constants/index.ts';
 
 export function slugify(input: string): string {
@@ -137,4 +138,8 @@ export function relativeTime(from: Date, now: Date = new Date()): string {
 
 export function assertNever(value: never, message = 'Unexpected value'): never {
   throw new Error(`${message}: ${JSON.stringify(value)}`);
+}
+
+export function randomUUIDv7(at?: Date): string {
+  return at === undefined ? uuidv7() : uuidv7({ msecs: at.getTime() });
 }
