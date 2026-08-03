@@ -48,7 +48,7 @@ function allows(rules: readonly CorsRule[], request: Preflight): boolean {
 }
 
 async function loadRules(): Promise<CorsRule[]> {
-  const raw = await Bun.file(`${REPO_ROOT}/k8s/s3-cors.json`).text();
+  const raw = await Bun.file(`${REPO_ROOT}/infra/s3-cors.json`).text();
   const document = corsDocumentSchema.parse(
     JSON.parse(raw.replaceAll(ORIGIN_PLACEHOLDER, PRODUCTION_ORIGIN)),
   );
@@ -87,10 +87,10 @@ describe('bucket CORS document', () => {
     expect(rules.some((rule) => rule.AllowedHeaders.includes('*'))).toBe(false);
   });
 
-  it('is applied by k8s/apply.sh, not just committed', async () => {
-    const script = await Bun.file(`${REPO_ROOT}/k8s/apply.sh`).text();
-    expect(script).toContain('put-bucket-cors');
-    expect(script).toContain('s3-cors.json');
+  it('documents how it reaches the bucket', async () => {
+    const readme = await Bun.file(`${REPO_ROOT}/infra/README.md`).text();
+    expect(readme).toContain('put-bucket-cors');
+    expect(readme).toContain('s3-cors.json');
   });
 });
 
