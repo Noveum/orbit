@@ -84,7 +84,7 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
     expect(statuses.at(-1)).toBe('open');
   } finally {
     client.close();
-    publisher.close();
+    publisher.disconnect();
     await second?.close();
   }
 });

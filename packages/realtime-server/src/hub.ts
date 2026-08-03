@@ -17,7 +17,7 @@ import {
   syncActionSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
-import { RedisClient } from 'bun';
+import { Redis } from 'ioredis';
 import { z } from 'zod';
 import {
   authenticateTicket,
@@ -109,8 +109,8 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
 
   const connections = new Map<string, Connection>();
   const presence = new PresenceStore(presenceTtlMs);
-  const subscriber = new RedisClient(redisUrl);
-  const publisher = new RedisClient(redisUrl);
+  const subscriber = new Redis(redisUrl, { maxRetriesPerRequest: null });
+  const publisher = new Redis(redisUrl, { maxRetriesPerRequest: 3 });
 
   function stats(): RealtimeStats {
     let subscriptions = 0;
@@ -118,7 +118,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     return {
       connections: connections.size,
       subscriptions,
-      redis: subscriber.connected ? 'ready' : 'disconnected',
+      redis: subscriber.status === 'ready' ? 'ready' : subscriber.status,
     };
   }
 
@@ -412,22 +412,20 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     };
   }
 
-  await subscriber.subscribe(
-    [REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL, REDIS_CONTROL_CHANNEL],
-    (message: string, channel: string) => {
-      if (channel === REDIS_DELTA_CHANNEL) deliverDelta(message);
-      else if (channel === REDIS_PRESENCE_CHANNEL) deliverPresence(message);
-      else if (channel === REDIS_CONTROL_CHANNEL) deliverControl(message);
-    },
-  );
+  subscriber.on('message', (channel: string, message: string) => {
+    if (channel === REDIS_DELTA_CHANNEL) deliverDelta(message);
+    else if (channel === REDIS_PRESENCE_CHANNEL) deliverPresence(message);
+    else if (channel === REDIS_CONTROL_CHANNEL) deliverControl(message);
+  });
+  await subscriber.subscribe(REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL, REDIS_CONTROL_CHANNEL);
 
   let closing = false;
-  subscriber.onclose = (error: Error): void => {
+  subscriber.on('error', (error: Error): void => {
     if (!closing) logger.error('redis subscriber error', errorFields(error));
-  };
-  publisher.onclose = (error: Error): void => {
+  });
+  publisher.on('error', (error: Error): void => {
     if (!closing) logger.error('redis publisher error', errorFields(error));
-  };
+  });
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
@@ -452,8 +450,8 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     clearInterval(sweeper);
     for (const connection of connections.values()) connection.close(1001, 'server shutting down');
     connections.clear();
-    subscriber.close();
-    publisher.close();
+    subscriber.disconnect();
+    publisher.disconnect();
     await Promise.resolve();
   }
 

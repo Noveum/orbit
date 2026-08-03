@@ -3,7 +3,7 @@ import { db, eq, inArray, schema } from '@orbit/db';
 import type { ClientMessage, ServerMessage, SyncAction } from '@orbit/shared/events';
 import { serverMessageSchema } from '@orbit/shared/events';
 import { REALTIME_TICKET_TTL_MS, signRealtimeTicket } from '@orbit/shared/events/ticket';
-import { RedisClient } from 'bun';
+import { Redis } from 'ioredis';
 
 export function ticketSecret(): string {
   return process.env['BETTER_AUTH_SECRET'] ?? 'dev-secret-change-me-in-production-0123456789abcdef';
@@ -314,8 +314,8 @@ export function maskedTextFrame(text: string): Buffer {
   return Buffer.concat([Buffer.from(header), mask, masked]);
 }
 
-export function createPublisher(): RedisClient {
-  return new RedisClient(redisUrl());
+export function createPublisher(): Redis {
+  return new Redis(redisUrl());
 }
 
 export function delay(ms: number): Promise<void> {

@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { scopes } from '@orbit/shared/events';
 import { signRealtimeTicket } from '@orbit/shared/events/ticket';
-import { connect, type RedisClient, type Socket } from 'bun';
+import { connect, type Socket } from 'bun';
+import type { Redis } from 'ioredis';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
@@ -26,7 +27,7 @@ const BATCH_WINDOW_MS = 80;
 const DELTA_CHANNEL = 'orbit:delta';
 
 let server: RealtimeServer;
-let publisher: RedisClient;
+let publisher: Redis;
 let orgA = '';
 let orgB = '';
 let teamA = '';
@@ -54,7 +55,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  publisher.close();
+  publisher.disconnect();
   await cleanupFixtures();
 });
 

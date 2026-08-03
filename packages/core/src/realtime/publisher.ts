@@ -6,7 +6,7 @@ import type {
   SyncModel,
 } from '@orbit/shared/events';
 import { REDIS_CONTROL_CHANNEL, REDIS_DELTA_CHANNEL } from '@orbit/shared/events';
-import { RedisClient } from 'bun';
+import { Redis } from 'ioredis';
 
 export interface BuildSyncActionInput {
   readonly syncId: number;
@@ -36,17 +36,17 @@ export function buildSyncAction(input: BuildSyncActionInput): SyncAction {
   };
 }
 
-let client: RedisClient | null = null;
+let client: Redis | null = null;
 
-function connection(): RedisClient | null {
+function connection(): Redis | null {
   const url = process.env['REDIS_URL'];
   if (url === undefined || url.length === 0) return null;
   if (client === null) {
-    const created = new RedisClient(url, { maxRetries: 3, enableOfflineQueue: true });
-    created.onclose = (error: Error) => {
+    const created = new Redis(url, { maxRetriesPerRequest: 3, enableOfflineQueue: true });
+    created.on('error', (error: Error) => {
       if (client !== created) return;
       console.error('[orbit] realtime publisher redis error:', error.message);
-    };
+    });
     client = created;
   }
   return client;
@@ -69,6 +69,6 @@ export async function publishSessionRevoked(userId: string): Promise<void> {
 export function closeRealtime(): Promise<void> {
   const open = client;
   client = null;
-  open?.close();
+  open?.disconnect();
   return Promise.resolve();
 }

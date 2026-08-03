@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import { createRealtimeClient, type RealtimeStatus } from '@orbit/realtime-client';
 import { REDIS_CONTROL_CHANNEL, SESSION_REVOKED_CLOSE_CODE } from '@orbit/shared/events';
-import type { RedisClient } from 'bun';
+import type { Redis } from 'ioredis';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
@@ -19,7 +19,7 @@ import {
 } from './test-helpers.ts';
 
 let server: RealtimeServer;
-let publisher: RedisClient;
+let publisher: Redis;
 let organizationId = '';
 let teamId = '';
 
@@ -32,7 +32,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  publisher.close();
+  publisher.disconnect();
   await cleanupFixtures();
 });
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { and, db, eq, schema } from '@orbit/db';
 import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, scopes } from '@orbit/shared/events';
-import type { RedisClient } from 'bun';
+import type { Redis } from 'ioredis';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   cleanupFixtures,
@@ -18,7 +18,7 @@ const BATCH_WINDOW_MS = 40;
 const DELTA_CHANNEL = 'orbit:delta';
 
 let server: RealtimeServer;
-let publisher: RedisClient;
+let publisher: Redis;
 let organizationId = '';
 let teamId = '';
 
@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  publisher.close();
+  publisher.disconnect();
   await cleanupFixtures();
 });
 

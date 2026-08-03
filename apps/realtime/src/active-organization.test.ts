@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { ORGANIZATION_FORBIDDEN_CLOSE_CODE, scopes } from '@orbit/shared/events';
-import type { RedisClient } from 'bun';
+import type { Redis } from 'ioredis';
 import { createRealtimeServer, type RealtimeServer } from './server.ts';
 import {
   addMembership,
@@ -21,7 +21,7 @@ const DELTA_CHANNEL = 'orbit:delta';
 const SETTLE_MS = 400;
 
 let server: RealtimeServer;
-let publisher: RedisClient;
+let publisher: Redis;
 let orgA = '';
 let orgB = '';
 let outsiderOrg = '';
@@ -60,7 +60,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  publisher.close();
+  publisher.disconnect();
   await cleanupFixtures();
 });
 

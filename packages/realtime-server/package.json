@@ -13,6 +13,7 @@
   "dependencies": {
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
+    "ioredis": "^6.0.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

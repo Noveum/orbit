@@ -3,7 +3,7 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createRealtimeHub, fromNodeSocket, type RealtimeHub } from '@orbit/realtime-server';
 import { scopes, UNAUTHORIZED_CLOSE_CODE } from '@orbit/shared/events';
-import type { RedisClient } from 'bun';
+import type { Redis } from 'ioredis';
 import { type RawData, WebSocketServer } from 'ws';
 import {
   cleanupFixtures,
@@ -25,7 +25,7 @@ const DELTA_CHANNEL = 'orbit:delta';
 let hub: RealtimeHub;
 let http: HttpServer;
 let sockets: WebSocketServer;
-let publisher: RedisClient;
+let publisher: Redis;
 let port = 0;
 let organizationId = '';
 let teamId = '';
@@ -74,7 +74,7 @@ afterAll(async () => {
     http.closeAllConnections();
     http.close(() => resolve());
   });
-  publisher.close();
+  publisher.disconnect();
   await cleanupFixtures();
 });
 
