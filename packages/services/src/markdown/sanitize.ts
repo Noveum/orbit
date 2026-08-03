@@ -205,14 +205,26 @@ function bunSanitizer(): HTMLRewriter {
   return rewriter;
 }
 
-function markupHolder(html: string): Element {
+interface Markup {
+  readonly nodes: ChildNode[];
+  html(): string;
+}
+
+function markupHolder(html: string): Markup {
   if (typeof globalThis.document !== 'undefined') {
     const template = globalThis.document.createElement('template');
     template.innerHTML = html;
-    return template.content as unknown as Element;
+    return {
+      nodes: Array.from(template.content.childNodes),
+      html: () => template.innerHTML,
+    };
   }
-  const parsed = parseHTML(`<!doctype html><html><body>${html}</body></html>`);
-  return parsed.document.body as unknown as Element;
+  const body = parseHTML(`<!doctype html><html><body>${html}</body></html>`).document
+    .body as unknown as Element;
+  return {
+    nodes: Array.from(body.childNodes) as ChildNode[],
+    html: () => body.innerHTML,
+  };
 }
 
 const COMMENT_NODE = 8;
@@ -261,8 +273,8 @@ function cleanDomNode(node: ChildNode): void {
 
 function sanitizeInDom(html: string): string {
   const holder = markupHolder(html);
-  for (const node of Array.from(holder.childNodes)) cleanDomNode(node);
-  return holder.innerHTML;
+  for (const node of holder.nodes) cleanDomNode(node);
+  return holder.html();
 }
 
 export function sanitizeHtml(html: string): string {
@@ -273,8 +285,8 @@ export function sanitizeHtml(html: string): string {
 
 const VOID_TEXT_TAGS = new Set(['br', 'hr', 'img', 'input']);
 
-function collectDomText(node: Node, parts: string[]): void {
-  for (const child of Array.from(node.childNodes)) {
+function collectDomText(nodes: readonly ChildNode[], parts: string[]): void {
+  for (const child of nodes) {
     if (child.nodeType === TEXT_NODE) {
       parts.push(child.textContent ?? '');
       continue;
@@ -282,13 +294,13 @@ function collectDomText(node: Node, parts: string[]): void {
     const element = asElement(child);
     if (element === null) continue;
     if (VOID_TEXT_TAGS.has(element.tagName.toLowerCase())) parts.push(' ');
-    collectDomText(element, parts);
+    collectDomText(Array.from(element.childNodes), parts);
   }
 }
 
 function textInDom(html: string): string {
   const parts: string[] = [];
-  collectDomText(markupHolder(html), parts);
+  collectDomText(markupHolder(html).nodes, parts);
   return parts.join('');
 }
 
