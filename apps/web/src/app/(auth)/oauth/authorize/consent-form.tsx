@@ -95,9 +95,10 @@ export function ConsentForm({
   function run(decision: 'allow' | 'deny'): void {
     if (pending !== null) return;
     setPending(decision);
+    setBlocked(null);
     decide(decision, false).catch((error: unknown) => {
       setPending(null);
-      setBlocked(messageOf(error));
+      if (decision === 'allow') setBlocked(messageOf(error));
       toast({ title: 'Could not connect', description: messageOf(error), tone: 'danger' });
     });
   }

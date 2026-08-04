@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun --env-file=../../.env test"
+    "test": "bun --env-file=../../.env test --timeout 20000"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

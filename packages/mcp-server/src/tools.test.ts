@@ -385,4 +385,27 @@ describe('sprints over mcp', () => {
     expect((closed['cycle'] as { completed: boolean }).completed).toBe(true);
     expect(closed['nextCycle']).toBeTruthy();
   });
+
+  it('rejects a date it cannot read, naming the field rather than failing deep inside', async () => {
+    const denied = await admin.call('create_cycle', {
+      team: workspace.teamKey,
+      startsAt: 'next Monday',
+      endsAt: '2031-02-02',
+    });
+    expect(denied.isError).toBe(true);
+    const [first] = denied.content;
+    const text = first !== undefined && first.type === 'text' ? first.text : '';
+    expect(text).toContain('startsAt');
+    expect(text).toContain('ISO 8601');
+  });
+
+  it('takes a plain date as readily as a full timestamp', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 100',
+      startsAt: '2032-01-05',
+      endsAt: '2032-01-19',
+    });
+    expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
+  });
 });

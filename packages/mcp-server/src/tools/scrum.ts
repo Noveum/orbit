@@ -29,6 +29,13 @@ import { resolveProject, resolveTeam, resolveUserId } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
 const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or team id.');
+const instant = z
+  .string()
+  .min(1)
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: 'Use an ISO 8601 date or timestamp, such as 2031-01-05 or 2031-01-05T09:00:00Z.',
+  });
+
 const heldOn = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -362,8 +369,8 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
       inputSchema: {
         team: teamRef,
         name: z.string().optional(),
-        startsAt: z.string().describe('ISO timestamp or date the sprint opens.'),
-        endsAt: z.string().describe('ISO timestamp or date the sprint closes.'),
+        startsAt: instant.describe('ISO timestamp or date the sprint opens.'),
+        endsAt: instant.describe('ISO timestamp or date the sprint closes.'),
       },
     },
     async (input) => {
@@ -389,8 +396,8 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
       inputSchema: {
         cycleId: z.string().min(1),
         name: z.string().optional(),
-        startsAt: z.string().optional(),
-        endsAt: z.string().optional(),
+        startsAt: instant.optional(),
+        endsAt: instant.optional(),
       },
     },
     async (input) => {
