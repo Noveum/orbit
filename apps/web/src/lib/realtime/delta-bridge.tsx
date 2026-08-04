@@ -13,6 +13,7 @@ import { useCallback, useMemo } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  ALL_SCOPE,
   ASSIGNED_SCOPE,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
@@ -31,6 +32,8 @@ import {
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
+  belongsInList,
+  searchOf,
 } from '@/lib/query/sync.ts';
 import { useCurrentUserId } from './session.tsx';
 
@@ -63,12 +66,14 @@ interface RootInvalidations {
 function membershipOf(key: QueryKey): IssueBelongs | null {
   const scope = key[1];
   if (typeof scope !== 'string') return null;
+  const search = searchOf(key);
   if (scope === ASSIGNED_SCOPE) {
     const userId = key[2];
     if (typeof userId !== 'string') return null;
-    return (issue: Issue) => issue.assigneeId === userId;
+    return (issue: Issue) => issue.assigneeId === userId && belongsInList(search, issue);
   }
-  return (issue: Issue) => issue.teamId === scope;
+  if (scope === ALL_SCOPE) return (issue: Issue) => belongsInList(search, issue);
+  return (issue: Issue) => issue.teamId === scope && belongsInList(search, issue);
 }
 
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {

@@ -41,7 +41,7 @@ import {
   issueSummarySchema,
 } from './schemas.ts';
 import type { IssuePages } from './sync.ts';
-import { flattenIssuePages, mapIssuePages, sortIssues } from './sync.ts';
+import { belongsInList, flattenIssuePages, mapIssuePages, searchOf, sortIssues } from './sync.ts';
 
 export type { IssueQuery };
 export {
@@ -214,22 +214,6 @@ export interface IssuePatch {
   readonly labelIds?: readonly string[];
 }
 
-function replaceIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
-  const index = issues.findIndex((issue) => issue.id === next.id);
-  if (index === -1) return issues;
-  const copy = [...issues];
-  copy[index] = next;
-  return copy;
-}
-
-function addIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
-  const index = issues.findIndex((issue) => issue.id === next.id);
-  if (index === -1) return [...issues, next];
-  const copy = [...issues];
-  copy[index] = next;
-  return copy;
-}
-
 type IssueListSnapshot = readonly [QueryKey, IssuePages | undefined][];
 
 function snapshotIssueLists(client: QueryClient): IssueListSnapshot {
@@ -240,12 +224,54 @@ function restoreIssueLists(client: QueryClient, snapshot: IssueListSnapshot): vo
   for (const [key, pages] of snapshot) client.setQueryData(key, pages);
 }
 
+function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
+  const index = issues.findIndex((issue) => issue.id === next.id);
+  if (!belongsInList(search, next)) {
+    return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
+  }
+  if (index === -1) return sortIssues([...issues, next]);
+  const copy = [...issues];
+  copy[index] = next;
+  return copy;
+}
+
+function eachIssueList(
+  client: QueryClient,
+  filters: { queryKey: QueryKey },
+  update: (issues: readonly Issue[], search: string) => readonly Issue[],
+): void {
+  for (const [key] of client.getQueriesData<IssuePages>(filters)) {
+    const search = searchOf(key);
+    client.setQueryData<IssuePages>(key, (current) =>
+      current === undefined ? current : mapIssuePages(current, (issues) => update(issues, search)),
+    );
+  }
+}
+
 function patchIssueLists(
   client: QueryClient,
   update: (issues: readonly Issue[]) => readonly Issue[],
 ): void {
-  client.setQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] }, (current) =>
-    current === undefined ? current : mapIssuePages(current, update),
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues) => update(issues));
+}
+
+function placeIssue(client: QueryClient, next: Issue): void {
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
+    reconcile(search, issues, next),
+  );
+}
+
+function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
+    let next = issues;
+    for (const issue of moved) next = reconcile(search, next, issue);
+    return sortIssues(next);
+  });
+}
+
+function addToTeamLists(client: QueryClient, teamId: string, next: Issue): void {
+  eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
+    reconcile(search, issues, next),
   );
 }
 
@@ -254,9 +280,7 @@ function patchTeamIssueLists(
   teamId: string,
   update: (issues: readonly Issue[]) => readonly Issue[],
 ): void {
-  client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(teamId) }, (current) =>
-    current === undefined ? current : mapIssuePages(current, update),
-  );
+  eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues) => update(issues));
 }
 
 export function useUpdateIssue(_teamId: string) {
@@ -284,7 +308,7 @@ export function useUpdateIssue(_teamId: string) {
         labelIds:
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
-      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
+      placeIssue(client, optimistic);
       if (previousDetail !== undefined) {
         client.setQueryData(queryKeys.issue(input.issue.identifier), {
           ...previousDetail,
@@ -304,7 +328,7 @@ export function useUpdateIssue(_teamId: string) {
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (issue) => {
-      patchIssueLists(client, (issues) => replaceIssue(issues, issue));
+      placeIssue(client, issue);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
         current === undefined ? current : { ...current, issue },
       );
@@ -341,7 +365,7 @@ export function useMoveIssue(teamId: string) {
         stateId: input.stateId,
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
+      placeIssue(client, optimistic);
       return { previous };
     },
     onError: (error, _input, context) => {
@@ -349,11 +373,7 @@ export function useMoveIssue(teamId: string) {
       toast({ title: 'Could not move that issue', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (moved) => {
-      patchIssueLists(client, (current) => {
-        let next = current;
-        for (const issue of moved) next = replaceIssue(next, issue);
-        return sortIssues(next);
-      });
+      placeIssues(client, moved);
     },
     onSettled: () => {
       patchTeamIssueLists(client, teamId, sortIssues);
@@ -394,7 +414,7 @@ export function useCreateIssue(teamId: string) {
       });
     },
     onSuccess: (issue) => {
-      patchTeamIssueLists(client, teamId, (issues) => sortIssues(addIssue(issues, issue)));
+      addToTeamLists(client, teamId, issue);
     },
   });
 }

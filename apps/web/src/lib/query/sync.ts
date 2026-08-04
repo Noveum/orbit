@@ -51,6 +51,30 @@ function definedFields(value: Record<string, unknown>): IssueDelta {
 
 export type IssueBelongs = (issue: Issue) => boolean;
 
+const SCOPED_PARAMS = ['teamId', 'stateId', 'assigneeId', 'projectId', 'cycleId'] as const;
+
+const ISSUE_FIELD_OF: Record<(typeof SCOPED_PARAMS)[number], keyof Issue> = {
+  teamId: 'teamId',
+  stateId: 'stateId',
+  assigneeId: 'assigneeId',
+  projectId: 'projectId',
+  cycleId: 'cycleId',
+};
+
+export function belongsInList(search: string, issue: Issue): boolean {
+  const params = new URLSearchParams(search);
+  return SCOPED_PARAMS.every((name) => {
+    const expected = params.get(name);
+    return expected === null || issue[ISSUE_FIELD_OF[name]] === expected;
+  });
+}
+
+export function searchOf(key: readonly unknown[]): string {
+  if (key.length < 3) return '';
+  const last = key.at(-1);
+  return typeof last === 'string' ? last : '';
+}
+
 export function applyIssueDelta(
   issues: readonly Issue[],
   action: SyncAction,

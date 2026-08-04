@@ -8,8 +8,10 @@ import {
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
+  belongsInList,
   flattenIssuePages,
   mapIssuePages,
+  searchOf,
   summarizeReactions,
 } from './sync.ts';
 
@@ -381,5 +383,35 @@ describe('issue pages', () => {
       TEAM,
     );
     expect(next?.pages[1]?.issues[0]?.title).toBe('Renamed');
+  });
+});
+
+describe('belongsInList', () => {
+  const base = issue({ id: 'issue_1', teamId: 'team_eng', stateId: 'state_todo' });
+
+  it('accepts anything when the search carries no scope', () => {
+    expect(belongsInList('limit=100&orderBy=manual', base)).toBe(true);
+  });
+
+  it('keeps a board column to its own status', () => {
+    expect(belongsInList('teamId=team_eng&stateId=state_todo', base)).toBe(true);
+    expect(belongsInList('teamId=team_eng&stateId=state_done', base)).toBe(false);
+  });
+
+  it('keeps a team list to its own team', () => {
+    expect(belongsInList('teamId=team_design', base)).toBe(false);
+  });
+
+  it('matches an unassigned issue only when no assignee is required', () => {
+    const unassigned = issue({ id: 'issue_2', assigneeId: null });
+    expect(belongsInList('limit=100', unassigned)).toBe(true);
+    expect(belongsInList('assigneeId=user_1', unassigned)).toBe(false);
+  });
+
+  it('reads the scope out of a query key', () => {
+    expect(searchOf(['issues', 'team_eng', 'teamId=team_eng&stateId=state_todo'])).toBe(
+      'teamId=team_eng&stateId=state_todo',
+    );
+    expect(searchOf(['issues'])).toBe('');
   });
 });
