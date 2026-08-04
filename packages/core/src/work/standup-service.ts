@@ -15,6 +15,7 @@ import {
   turnFocusSchema,
   turnUpdateSchema,
 } from '@orbit/shared/validators';
+import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -632,10 +633,12 @@ export async function openBlockers(
     .orderBy(desc(schema.standupBlocker.createdAt));
 }
 
-export async function setRotation(
-  principal: Principal,
-  input: unknown,
-): Promise<StandupRotationRow[]> {
+export interface SavedRotation {
+  readonly rotation: StandupRotationRow[];
+  readonly actions: SyncAction[];
+}
+
+export async function setRotation(principal: Principal, input: unknown): Promise<SavedRotation> {
   assertCan(principal, 'team:manage');
   const parsed = rotationSchema.parse(input);
   await requireTeam(principal, parsed.teamId);
@@ -647,22 +650,41 @@ export async function setRotation(
       parsed.members.map((member) => member.userId),
     );
     await tx.delete(schema.standupRotation).where(eq(schema.standupRotation.teamId, parsed.teamId));
-    if (parsed.members.length === 0) return [];
     const syncId = await nextSyncId(tx);
-    return await tx
-      .insert(schema.standupRotation)
-      .values(
-        parsed.members.map((member, index) => ({
-          id: newId(),
-          organizationId: principal.organizationId,
-          teamId: parsed.teamId,
-          userId: member.userId,
-          position: index,
-          facilitates: member.facilitates ? 1 : 0,
+    const actor = await principalActor(tx, principal);
+    const rotation =
+      parsed.members.length === 0
+        ? []
+        : await tx
+            .insert(schema.standupRotation)
+            .values(
+              parsed.members.map((member, index) => ({
+                id: newId(),
+                organizationId: principal.organizationId,
+                teamId: parsed.teamId,
+                userId: member.userId,
+                position: index,
+                facilitates: member.facilitates ? 1 : 0,
+                syncId,
+              })),
+            )
+            .returning();
+
+    return {
+      rotation,
+      actions: [
+        buildSyncAction({
           syncId,
-        })),
-      )
-      .returning();
+          organizationId: principal.organizationId,
+          scopes: [scopes.team(parsed.teamId)],
+          action: 'update',
+          model: 'standup_rotation',
+          modelId: parsed.teamId,
+          data: { teamId: parsed.teamId, rotation },
+          actor,
+        }),
+      ],
+    };
   });
 }
 

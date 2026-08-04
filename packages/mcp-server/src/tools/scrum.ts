@@ -107,6 +107,7 @@ function registerStandupTools(server: McpServer, principal: Principal): void {
         facilitator: z.string().optional().describe('Name, email, or id of the scrum master.'),
         participants: z
           .array(z.string())
+          .max(100)
           .optional()
           .describe('Names, emails, or ids to seat instead of the whole team.'),
       },
@@ -342,6 +343,7 @@ function registerStandupTools(server: McpServer, principal: Principal): void {
               facilitates: z.boolean().default(true),
             }),
           )
+          .max(100)
           .describe('In speaking order.'),
       },
     },
@@ -353,7 +355,9 @@ function registerStandupTools(server: McpServer, principal: Principal): void {
           facilitates: entry.facilitates,
         })),
       );
-      return { rotation: await setRotation(principal, { teamId, members }) };
+      const saved = await setRotation(principal, { teamId, members });
+      await publish(saved.actions);
+      return { rotation: saved.rotation };
     },
   );
 }

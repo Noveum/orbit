@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { scopes } from '@orbit/shared/events';
 import { createTeam } from '../org/team-service.ts';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
@@ -446,11 +447,13 @@ describe('only the team can be in the room', () => {
 
   it('still accepts a rotation and a facilitator drawn from the team', async () => {
     const { second } = await teamOfThree();
-    const rotation = await setRotation(workspace.admin, {
+    const saved = await setRotation(workspace.admin, {
       teamId: workspace.teamId,
       members: [{ userId: second.user.id, facilitates: true }],
     });
-    expect(rotation).toHaveLength(1);
+    expect(saved.rotation).toHaveLength(1);
+    expect(saved.actions[0]?.model).toBe('standup_rotation');
+    expect(saved.actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
 
     const { detail } = await openStandup(workspace.admin, {
       teamId: workspace.teamId,
