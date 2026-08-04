@@ -8,7 +8,7 @@ import {
   ISSUE_ORDERINGS,
 } from '@orbit/shared/filters';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import type { ViewConfig, ViewLayoutMode, ViewPage } from './view-config.ts';
 import {
@@ -100,6 +100,8 @@ export interface ViewConfigController {
   readonly setFilter: (next: FilterGroup) => void;
 }
 
+export const URL_SYNC_DELAY_MS = 300;
+
 export function useViewConfig(
   teamId: string | null,
   layout: ViewLayoutMode,
@@ -109,17 +111,40 @@ export function useViewConfig(
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [stored, setStored] = useState<StoredDisplay | null>(null);
+  const [pending, setPending] = useState<ViewConfig | null>(null);
+  const requestedSearch = useRef<string | null>(null);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     setStored(readStoredDisplay(teamId, layout));
   }, [teamId, layout]);
 
-  const config = useMemo(() => {
+  const fromUrl = useMemo(() => {
     const base = withStored(defaultViewConfig(layout), stored);
     const parsed = parseViewConfig(new URLSearchParams(searchParams.toString()), layout, base);
     return applyCapabilities(parsed, page, layout);
   }, [searchParams, layout, stored, page]);
 
+  const current = searchParams.toString();
+
+  useEffect(() => {
+    const requested = requestedSearch.current;
+    if (requested !== null && requested !== current && syncTimer.current !== undefined) {
+      clearTimeout(syncTimer.current);
+      syncTimer.current = undefined;
+    }
+    requestedSearch.current = null;
+    setPending(null);
+  }, [current]);
+
+  useEffect(
+    () => () => {
+      if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
+    },
+    [],
+  );
+
+  const config = pending ?? fromUrl;
   const carried = searchParams.get(VIEW_PARAM);
 
   const setConfig = useCallback(
@@ -127,8 +152,15 @@ export function useViewConfig(
       const sanitized = applyCapabilities(next, page, layout);
       writeStoredDisplay(teamId, layout, sanitized);
       setStored(toStored(sanitized));
+      setPending(sanitized);
+
       const search = withViewParam(viewConfigSearch(sanitized, layout), carried);
-      router.replace(`${pathname}${search}`, { scroll: false });
+      requestedSearch.current = search.replace(/^\?/, '');
+      if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
+      syncTimer.current = setTimeout(() => {
+        syncTimer.current = undefined;
+        router.replace(`${pathname}${search}`, { scroll: false });
+      }, URL_SYNC_DELAY_MS);
     },
     [router, pathname, teamId, layout, page, carried],
   );
