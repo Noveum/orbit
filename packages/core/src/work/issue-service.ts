@@ -410,56 +410,95 @@ export interface CreatedIssue {
   readonly actions: SyncAction[];
 }
 
+async function assertCycleInTeam(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+  cycleId: string,
+): Promise<void> {
+  const [row] = await executor
+    .select({ teamId: schema.cycle.teamId, organizationId: schema.cycle.organizationId })
+    .from(schema.cycle)
+    .where(eq(schema.cycle.id, cycleId))
+    .limit(1);
+  const cycle = requireRow(row, 'That sprint does not exist.');
+  if (cycle.organizationId !== organizationId || cycle.teamId !== teamId) {
+    throw validationFailed('That sprint belongs to another team.');
+  }
+}
+
+async function projectTeamIds(executor: Executor, projectId: string): Promise<string[]> {
+  const rows = await executor
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  return rows.map((row) => row.teamId);
+}
+
+async function assertProjectInTeam(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+  projectId: string,
+): Promise<void> {
+  const [row] = await executor
+    .select({ organizationId: schema.project.organizationId })
+    .from(schema.project)
+    .where(eq(schema.project.id, projectId))
+    .limit(1);
+  const project = requireRow(row, 'That project does not exist.');
+  if (project.organizationId !== organizationId) {
+    throw validationFailed('That project belongs to another workspace.');
+  }
+  const teams = await projectTeamIds(executor, projectId);
+  if (teams.length > 0 && !teams.includes(teamId)) {
+    throw validationFailed('That project belongs to another team.');
+  }
+}
+
+async function assertMilestoneInTeam(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+  milestoneId: string,
+  projectId: string | null | undefined,
+): Promise<void> {
+  const [row] = await executor
+    .select({
+      organizationId: schema.milestone.organizationId,
+      projectId: schema.milestone.projectId,
+    })
+    .from(schema.milestone)
+    .where(eq(schema.milestone.id, milestoneId))
+    .limit(1);
+  const milestone = requireRow(row, 'That milestone does not exist.');
+  if (milestone.organizationId !== organizationId) {
+    throw validationFailed('That milestone belongs to another workspace.');
+  }
+  if (projectId !== undefined && projectId !== null && projectId !== milestone.projectId) {
+    throw validationFailed('That milestone belongs to another project.');
+  }
+  const teams = await projectTeamIds(executor, milestone.projectId);
+  if (teams.length > 0 && !teams.includes(teamId)) {
+    throw validationFailed('That milestone belongs to another team.');
+  }
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
   teamId: string,
   values: Pick<IssueValues, 'cycleId' | 'projectId' | 'milestoneId'>,
 ): Promise<void> {
-  if (values.cycleId !== undefined && values.cycleId !== null) {
-    const [cycle] = await executor
-      .select({ teamId: schema.cycle.teamId, organizationId: schema.cycle.organizationId })
-      .from(schema.cycle)
-      .where(eq(schema.cycle.id, values.cycleId))
-      .limit(1);
-    const found = requireRow(cycle, 'That sprint does not exist.');
-    if (found.organizationId !== organizationId || found.teamId !== teamId) {
-      throw validationFailed('That sprint belongs to another team.');
-    }
+  const { cycleId, projectId, milestoneId } = values;
+  if (cycleId !== undefined && cycleId !== null) {
+    await assertCycleInTeam(executor, organizationId, teamId, cycleId);
   }
-
-  if (values.projectId !== undefined && values.projectId !== null) {
-    const [project] = await executor
-      .select({ organizationId: schema.project.organizationId })
-      .from(schema.project)
-      .where(eq(schema.project.id, values.projectId))
-      .limit(1);
-    const found = requireRow(project, 'That project does not exist.');
-    if (found.organizationId !== organizationId) {
-      throw validationFailed('That project belongs to another workspace.');
-    }
-    const teams = await executor
-      .select({ teamId: schema.projectTeam.teamId })
-      .from(schema.projectTeam)
-      .where(eq(schema.projectTeam.projectId, values.projectId));
-    if (teams.length > 0 && !teams.some((row) => row.teamId === teamId)) {
-      throw validationFailed('That project belongs to another team.');
-    }
+  if (projectId !== undefined && projectId !== null) {
+    await assertProjectInTeam(executor, organizationId, teamId, projectId);
   }
-
-  if (values.milestoneId !== undefined && values.milestoneId !== null) {
-    const [milestone] = await executor
-      .select({
-        organizationId: schema.milestone.organizationId,
-        projectId: schema.milestone.projectId,
-      })
-      .from(schema.milestone)
-      .where(eq(schema.milestone.id, values.milestoneId))
-      .limit(1);
-    const found = requireRow(milestone, 'That milestone does not exist.');
-    if (found.organizationId !== organizationId) {
-      throw validationFailed('That milestone belongs to another workspace.');
-    }
+  if (milestoneId !== undefined && milestoneId !== null) {
+    await assertMilestoneInTeam(executor, organizationId, teamId, milestoneId, projectId);
   }
 }
 

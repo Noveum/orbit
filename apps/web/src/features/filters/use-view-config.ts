@@ -131,6 +131,7 @@ export function useViewConfig(
     (search: string) => {
       syncTimer.current = undefined;
       nextWrite.current = null;
+      if (window.location.pathname !== pathname) return;
       syncedSearch.current = search.replace(/^\?/, '');
       window.history.replaceState(null, '', `${pathname}${search}`);
     },
@@ -178,7 +179,12 @@ export function useViewConfig(
       setPending(sanitized);
 
       const search = withViewParam(viewConfigSearch(sanitized, layout), carried);
-      if (search.replace(/^\?/, '') === syncedSearch.current) return;
+      if (search.replace(/^\?/, '') === syncedSearch.current) {
+        if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
+        syncTimer.current = undefined;
+        nextWrite.current = null;
+        return;
+      }
       nextWrite.current = search;
       if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
       syncTimer.current = setTimeout(() => write(search), URL_SYNC_DELAY_MS);

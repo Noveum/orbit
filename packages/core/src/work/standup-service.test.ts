@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { createTeam } from '../org/team-service.ts';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
   addBlocker,
@@ -238,5 +239,87 @@ describe('permissions', () => {
     await expect(openStandup(principal, { teamId: workspace.teamId })).rejects.toMatchObject({
       code: 'forbidden',
     });
+  });
+});
+
+describe('defects the review found', () => {
+  it('closes the speaker out when the standup is finished', async () => {
+    await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    await startStandup(workspace.admin, detail.standup.id);
+
+    const finished = await updateStandup(workspace.admin, detail.standup.id, {
+      status: 'finished',
+    });
+
+    expect(finished.detail.standup.currentTurnId).toBeNull();
+    expect(finished.detail.turns.every((turn) => turn.status !== 'speaking')).toBe(true);
+  });
+
+  it('moves the room on when the current speaker is marked absent', async () => {
+    await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    const id = detail.standup.id;
+    await startStandup(workspace.admin, id);
+
+    const first = detail.turns[0];
+    const second = detail.turns[1];
+    if (first === undefined || second === undefined) throw new Error('expected participants');
+
+    const after = await updateTurn(workspace.admin, id, first.id, { attendance: 'absent' });
+
+    expect(after.detail.standup.currentTurnId).toBe(second.id);
+    expect(after.detail.turns[0]?.status).toBe('skipped');
+  });
+
+  it('refuses to resolve a blocker through a standup that does not own it', async () => {
+    const mine = await openStandup(workspace.admin, {
+      teamId: workspace.teamId,
+      heldOn: '2030-03-01',
+    });
+    const other = await openStandup(workspace.admin, {
+      teamId: workspace.teamId,
+      heldOn: '2030-03-02',
+    });
+    const turn = mine.detail.turns[0];
+    if (turn === undefined) throw new Error('expected a participant');
+
+    const raised = await addBlocker(workspace.admin, mine.detail.standup.id, turn.id, {
+      summary: 'Blocked on infra',
+    });
+    const blocker = raised.detail.blockers[0];
+    if (blocker === undefined) throw new Error('expected a blocker');
+
+    await expect(
+      resolveBlocker(workspace.admin, other.detail.standup.id, blocker.id, { resolved: true }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    expect(await openBlockers(workspace.admin, workspace.teamId)).toHaveLength(1);
+  });
+
+  it('refuses to seat somebody who is not on the team', async () => {
+    const outsiderTeam = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { user: outsider } = await addMember(workspace, 'member', {
+      teamIds: [outsiderTeam.team.id],
+    });
+
+    await expect(
+      openStandup(workspace.admin, {
+        teamId: workspace.teamId,
+        heldOn: '2030-04-01',
+        participantIds: [outsider.id],
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('survives two facilitators opening the same room at once', async () => {
+    await teamOfThree();
+    const opened = await Promise.all([
+      openStandup(workspace.admin, { teamId: workspace.teamId, heldOn: '2030-05-01' }),
+      openStandup(workspace.admin, { teamId: workspace.teamId, heldOn: '2030-05-01' }),
+      openStandup(workspace.admin, { teamId: workspace.teamId, heldOn: '2030-05-01' }),
+    ]);
+    const ids = new Set(opened.map((result) => result.detail.standup.id));
+    expect(ids.size).toBe(1);
   });
 });

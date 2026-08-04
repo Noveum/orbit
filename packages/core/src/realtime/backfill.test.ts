@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, schema } from '@orbit/db';
 import { SYNC_MODELS } from '@orbit/shared/events';
-import { createDoc, createDocCollection } from '../content/doc-service.ts';
+import { createDoc, createDocCollection, setDocAccess } from '../content/doc-service.ts';
 import { newId } from '../internal.ts';
 import { createInvite } from '../org/invite-service.ts';
 import { addTeamMember, createTeam } from '../org/team-service.ts';
@@ -240,5 +240,47 @@ describe('catch up never crosses a team boundary', () => {
 
     const asAdmin = await catchUp(workspace.admin, 0);
     expect(asAdmin.actions.some((action) => action.model === 'invitation')).toBe(true);
+  });
+});
+
+describe('catch up respects document access', () => {
+  it('never returns a private doc body to somebody it was not shared with', async () => {
+    const { principal: other } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Compensation review',
+      content: 'Numbers nobody else should read.',
+      visibility: 'private',
+    });
+
+    const result = await catchUp(other, 0);
+    const payload = JSON.stringify(result.actions);
+    expect(payload).not.toContain('Numbers nobody else should read.');
+    expect(result.actions.some((action) => action.modelId === doc.id)).toBe(false);
+  });
+
+  it('returns a private doc once it is shared', async () => {
+    const { principal: invited, user: invitedUser } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Shared plan',
+      content: 'For a named few.',
+      visibility: 'private',
+    });
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'user', subjectId: invitedUser.id, level: 'read' },
+    ]);
+
+    const result = await catchUp(invited, 0);
+    expect(result.actions.some((action) => action.modelId === doc.id)).toBe(true);
+  });
+
+  it('keeps workspace docs reaching everyone', async () => {
+    const { principal: guest } = await addMember(workspace, 'guest', { teamIds: [] });
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Handbook',
+      content: 'Everybody reads this.',
+      visibility: 'workspace',
+    });
+    const result = await catchUp(guest, 0);
+    expect(result.actions.some((action) => action.modelId === doc.id)).toBe(true);
   });
 });

@@ -13,7 +13,7 @@ import {
   schema,
   sql,
 } from '@orbit/db';
-import { isRestricted } from '@orbit/shared/constants';
+import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -87,6 +87,7 @@ export interface SavedDocCollection {
 }
 
 function docScopes(row: DocRow): string[] {
+  if (isRestricted(row.visibility)) return [scopes.user(row.authorId), scopes.doc(row.id)];
   const list = [scopes.organization(row.organizationId), scopes.doc(row.id)];
   if (row.projectId !== null) list.push(scopes.project(row.projectId));
   return list;
@@ -111,7 +112,7 @@ function docAction(
 }
 
 function tokenFor(visibility: string, current: string | null): string | null {
-  if (visibility === 'workspace') return null;
+  if (!isExternallyShared(visibility)) return null;
   return current ?? newToken();
 }
 
@@ -378,7 +379,7 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
     .where(and(eq(schema.doc.publishToken, token), isNull(schema.doc.archivedAt)))
     .limit(1);
   if (doc === undefined) return null;
-  if (doc.visibility === 'workspace') return null;
+  if (!isExternallyShared(doc.visibility)) return null;
   return await detailFor(doc);
 }
 
@@ -403,13 +404,13 @@ export async function isPublishedDoc(docId: string): Promise<boolean> {
     .from(schema.doc)
     .where(eq(schema.doc.id, docId))
     .limit(1);
-  return row !== undefined && row.archivedAt === null && row.visibility !== 'workspace';
+  return row !== undefined && row.archivedAt === null && isExternallyShared(row.visibility);
 }
 
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docCreateSchema.parse(input);
-  if (parsed.visibility !== 'workspace') assertCan(principal, 'doc:publish');
+  if (isExternallyShared(parsed.visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
     await assertPlacement(tx, principal, parsed);
@@ -494,7 +495,7 @@ export async function updateDoc(
 ): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docUpdateSchema.parse(input);
-  if (parsed.visibility !== undefined && parsed.visibility !== 'workspace') {
+  if (parsed.visibility !== undefined && isExternallyShared(parsed.visibility)) {
     assertCan(principal, 'doc:publish');
   }
 

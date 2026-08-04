@@ -110,12 +110,27 @@ async function detailOf(
   return { standup, turns, blockers };
 }
 
+async function teamMemberIds(executor: Executor, teamId: string): Promise<Set<string>> {
+  const rows = await executor
+    .select({ userId: schema.teamMember.userId })
+    .from(schema.teamMember)
+    .where(eq(schema.teamMember.teamId, teamId));
+  return new Set(rows.map((row) => row.userId));
+}
+
 async function rosterFor(
   executor: Executor,
   teamId: string,
   requested: readonly string[] | undefined,
 ): Promise<string[]> {
-  if (requested !== undefined && requested.length > 0) return [...new Set(requested)];
+  if (requested !== undefined && requested.length > 0) {
+    const members = await teamMemberIds(executor, teamId);
+    const outsider = requested.find((userId) => !members.has(userId));
+    if (outsider !== undefined) {
+      throw conflict('Everyone in a standup has to be on the team.');
+    }
+    return [...new Set(requested)];
+  }
 
   const rotation = await executor
     .select({ userId: schema.standupRotation.userId })
@@ -172,6 +187,9 @@ export async function openStandup(
   const cycle = await activeCycle(principal, parsed.teamId);
 
   return await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`standup:${parsed.teamId}:${heldOn}`}))`,
+    );
     const [existing] = await tx
       .select()
       .from(schema.standup)
@@ -304,10 +322,17 @@ export async function updateStandup(
   if (parsed.status !== undefined) {
     values.status = parsed.status;
     if (parsed.status === 'running' && current.startedAt === null) values.startedAt = new Date();
-    if (parsed.status === 'finished') values.endedAt = new Date();
   }
 
-  return await db.transaction(async (tx) => await saveStandup(tx, principal, standupId, values));
+  return await db.transaction(async (tx) => {
+    if (parsed.status === 'finished') {
+      const now = new Date();
+      await closeSpeakingTurn(tx, await turnsOf(tx, standupId), current.currentTurnId, now);
+      values.endedAt = now;
+      values.currentTurnId = null;
+    }
+    return await saveStandup(tx, principal, standupId, values);
+  });
 }
 
 export async function startStandup(
@@ -470,11 +495,28 @@ export async function updateTurn(
       .returning({ id: schema.standupTurn.id });
     requireRow(updated, 'That turn does not belong to this standup.');
 
-    const clearCurrent =
-      parsed.attendance === 'absent' && current.currentTurnId === turnId
-        ? { currentTurnId: null }
-        : {};
-    return await saveStandup(tx, principal, standupId, clearCurrent);
+    if (parsed.attendance !== 'absent' || current.currentTurnId !== turnId) {
+      return await saveStandup(tx, principal, standupId, {});
+    }
+
+    const turns = await turnsOf(tx, standupId);
+    const index = nextTurnIndex(turns, turnId, 'next');
+    const target = index === -1 ? undefined : turns[index];
+    const now = new Date();
+    await tx
+      .update(schema.standupTurn)
+      .set({ status: 'skipped', updatedAt: now })
+      .where(eq(schema.standupTurn.id, turnId));
+    if (target !== undefined) {
+      await tx
+        .update(schema.standupTurn)
+        .set({ status: 'speaking', spokeAt: now, updatedAt: now })
+        .where(eq(schema.standupTurn.id, target.id));
+    }
+    return await saveStandup(tx, principal, standupId, {
+      currentTurnId: target?.id ?? null,
+      ...(target === undefined ? { status: 'finished', endedAt: now } : {}),
+    });
   });
 }
 
@@ -522,12 +564,19 @@ export async function resolveBlocker(
   await requireTeam(principal, current.teamId);
 
   return await db.transaction(async (tx) => {
+    const owned = tx
+      .select({ id: schema.standupBlocker.id })
+      .from(schema.standupBlocker)
+      .innerJoin(schema.standupTurn, eq(schema.standupTurn.id, schema.standupBlocker.turnId))
+      .where(
+        and(eq(schema.standupBlocker.id, blockerId), eq(schema.standupTurn.standupId, standupId)),
+      );
     const [updated] = await tx
       .update(schema.standupBlocker)
       .set({ resolvedAt: parsed.resolved ? new Date() : null })
       .where(
         and(
-          eq(schema.standupBlocker.id, blockerId),
+          inArray(schema.standupBlocker.id, owned),
           eq(schema.standupBlocker.organizationId, principal.organizationId),
         ),
       )

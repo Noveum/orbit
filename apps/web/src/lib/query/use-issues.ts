@@ -22,7 +22,7 @@ import {
   type IssueQuery,
   issueSearch,
 } from './issue-search.ts';
-import { ISSUES_ROOT, queryKeys } from './keys.ts';
+import { ISSUE_SUMMARY_ROOT, ISSUES_ROOT, queryKeys } from './keys.ts';
 import type {
   Bootstrap,
   Issue,
@@ -224,12 +224,17 @@ function restoreIssueLists(client: QueryClient, snapshot: IssueListSnapshot): vo
   for (const [key, pages] of snapshot) client.setQueryData(key, pages);
 }
 
-function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
+function reconcile(
+  search: string,
+  issues: readonly Issue[],
+  next: Issue,
+  admit: boolean,
+): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
   }
-  if (index === -1) return sortIssues([...issues, next]);
+  if (index === -1) return admit ? sortIssues([...issues, next]) : issues;
   const copy = [...issues];
   copy[index] = next;
   return copy;
@@ -257,22 +262,26 @@ function patchIssueLists(
 
 function placeIssue(client: QueryClient, next: Issue): void {
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
-    reconcile(search, issues, next),
+    reconcile(search, issues, next, false),
   );
 }
 
 function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
     let next = issues;
-    for (const issue of moved) next = reconcile(search, next, issue);
+    for (const issue of moved) next = reconcile(search, next, issue, false);
     return sortIssues(next);
   });
 }
 
 function addToTeamLists(client: QueryClient, teamId: string, next: Issue): void {
   eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
-    reconcile(search, issues, next),
+    reconcile(search, issues, next, true),
   );
+}
+
+function refreshCounts(client: QueryClient): void {
+  client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
 }
 
 function patchTeamIssueLists(
@@ -329,6 +338,7 @@ export function useUpdateIssue(_teamId: string) {
     },
     onSuccess: (issue) => {
       placeIssue(client, issue);
+      refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
         current === undefined ? current : { ...current, issue },
       );
@@ -377,6 +387,7 @@ export function useMoveIssue(teamId: string) {
     },
     onSettled: () => {
       patchTeamIssueLists(client, teamId, sortIssues);
+      refreshCounts(client);
     },
   });
 }
@@ -415,6 +426,7 @@ export function useCreateIssue(teamId: string) {
     },
     onSuccess: (issue) => {
       addToTeamLists(client, teamId, issue);
+      refreshCounts(client);
     },
   });
 }
@@ -441,6 +453,7 @@ export function useDeleteIssue(_teamId: string) {
     },
     onSettled: (_data, _error, issue) => {
       client.removeQueries({ queryKey: queryKeys.issue(issue.identifier) });
+      refreshCounts(client);
     },
   });
 }

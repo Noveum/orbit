@@ -1,5 +1,5 @@
-import { and, type Database, eq, schema, type Transaction } from '@orbit/db';
-import { isExternallyShared } from '@orbit/shared/constants';
+import { and, type Database, eq, inArray, or, schema, sql, type Transaction } from '@orbit/db';
+import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import { assertCan, isInTeam, type Principal } from '@orbit/shared/policy';
 
@@ -29,6 +29,50 @@ async function docFor(
     .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, organizationId)))
     .limit(1);
   return row;
+}
+
+async function docReadableBy(
+  executor: StorageExecutor,
+  principal: Principal,
+  docId: string,
+): Promise<{ readonly id: string } | undefined> {
+  const [row] = await executor
+    .select({
+      id: schema.doc.id,
+      visibility: schema.doc.visibility,
+      authorId: schema.doc.authorId,
+      archivedAt: schema.doc.archivedAt,
+    })
+    .from(schema.doc)
+    .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
+    .limit(1);
+  if (row === undefined) return undefined;
+  if (principal.role === 'admin') return row;
+  if (row.authorId === principal.userId) return row;
+  if (!isRestricted(row.visibility)) return row;
+
+  const grants = await executor
+    .select({ docId: schema.docAccess.docId })
+    .from(schema.docAccess)
+    .where(
+      and(
+        eq(schema.docAccess.docId, docId),
+        or(
+          and(
+            eq(schema.docAccess.subjectType, 'user'),
+            eq(schema.docAccess.subjectId, principal.userId),
+          ),
+          principal.teamIds.length === 0
+            ? sql`false`
+            : and(
+                eq(schema.docAccess.subjectType, 'team'),
+                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+              ),
+        ),
+      ),
+    )
+    .limit(1);
+  return grants.length > 0 ? row : undefined;
 }
 
 async function teamsOwning(
@@ -114,9 +158,9 @@ export async function assertAttachmentVisible(
     throw notFound('That file does not exist.');
   }
   if (attachment.parentType === 'doc') {
-    const row = await docFor(executor, attachment.organizationId, attachment.parentId);
-    if (row === undefined) throw notFound('That file does not exist.');
     assertCan(principal, 'doc:read');
+    const row = await docReadableBy(executor, principal, attachment.parentId);
+    if (row === undefined) throw notFound('That file does not exist.');
     return;
   }
   if (!isAttachmentParentType(attachment.parentType)) {

@@ -2,6 +2,7 @@ import { and, asc, db, eq, gt, inArray, or, schema } from '@orbit/db';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
+import { docReadFilter } from '../content/doc-service.ts';
 import { buildSyncAction } from './publisher.ts';
 
 export interface SyncCatchupResult {
@@ -26,6 +27,19 @@ type AttachmentParent = {
   readonly parentType: string;
   readonly parentId: string;
 };
+
+async function readableDocIds(
+  principal: Principal,
+  docIds: readonly string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(docIds)];
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .select({ id: schema.doc.id })
+    .from(schema.doc)
+    .where(and(inArray(schema.doc.id, ids), docReadFilter(principal)));
+  return new Set(rows.map((row) => row.id));
+}
 
 async function issueTeamsById(issueIds: readonly string[]): Promise<Map<string, string>> {
   const ids = [...new Set(issueIds)];
@@ -417,20 +431,22 @@ const LOADERS: Record<SyncModel, Loader> = {
   doc_comment: async (principal, since, limit) =>
     (
       await db
-        .select()
+        .select({ row: schema.docComment })
         .from(schema.docComment)
+        .innerJoin(schema.doc, eq(schema.doc.id, schema.docComment.docId))
         .where(
           and(
             eq(schema.docComment.organizationId, principal.organizationId),
+            docReadFilter(principal),
             gt(schema.docComment.syncId, since),
           ),
         )
         .orderBy(asc(schema.docComment.syncId))
         .limit(limit)
-    ).map((row) => ({
+    ).map(({ row }) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes: [scopes.organization(row.organizationId), scopes.doc(row.docId)],
+      scopes: [scopes.doc(row.docId)],
       data: row,
     })),
 
@@ -470,19 +486,25 @@ const LOADERS: Record<SyncModel, Loader> = {
       .orderBy(asc(schema.attachment.syncId))
       .limit(limit);
     const teams = await teamsByAttachmentParent(rows);
-    return rows.map((row) => ({
-      modelId: row.id,
-      syncId: row.syncId,
-      scopes:
-        row.parentType === 'doc'
-          ? [scopes.organization(row.organizationId), scopes.doc(row.parentId)]
-          : [
-              scopes.organization(row.organizationId),
-              scopes.issue(row.parentId),
-              ...(teams.get(row.id) ?? []).map(scopes.team),
-            ],
-      data: row,
-    }));
+    const readableDocs = await readableDocIds(
+      principal,
+      rows.filter((row) => row.parentType === 'doc').map((row) => row.parentId),
+    );
+    return rows
+      .filter((row) => row.parentType !== 'doc' || readableDocs.has(row.parentId))
+      .map((row) => ({
+        modelId: row.id,
+        syncId: row.syncId,
+        scopes:
+          row.parentType === 'doc'
+            ? [scopes.organization(row.organizationId), scopes.doc(row.parentId)]
+            : [
+                scopes.organization(row.organizationId),
+                scopes.issue(row.parentId),
+                ...(teams.get(row.id) ?? []).map(scopes.team),
+              ],
+        data: row,
+      }));
   },
 
   doc: async (principal, since, limit) =>
@@ -493,6 +515,7 @@ const LOADERS: Record<SyncModel, Loader> = {
         .where(
           and(
             eq(schema.doc.organizationId, principal.organizationId),
+            docReadFilter(principal),
             gt(schema.doc.syncId, since),
           ),
         )
