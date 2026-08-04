@@ -9,11 +9,10 @@ import { toDomainError } from '@orbit/shared/errors';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session.ts';
 import { publicAppUrl } from '@/lib/env.ts';
+import { FRESH_SESSION_WINDOW_MS, PASSKEY_STEP_UP_WINDOW_MS, signedInWithin } from '../step-up.ts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const PASSKEY_STEP_UP_WINDOW_MS = 120_000;
 
 const decisionSchema = z.object({
   decision: z.enum(['allow', 'deny']),
@@ -49,7 +48,8 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ redirectUri: denied.redirectUri });
     }
 
-    if (await userHasPasskey(userId)) {
+    const justSignedIn = signedInWithin(session.session.createdAt, FRESH_SESSION_WINDOW_MS);
+    if (!justSignedIn && (await userHasPasskey(userId))) {
       const fresh = await passkeyVerifiedWithin(userId, PASSKEY_STEP_UP_WINDOW_MS);
       if (!fresh) return Response.json({ status: 'passkey_required' });
     }
