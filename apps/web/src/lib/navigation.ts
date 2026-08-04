@@ -69,7 +69,7 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
       title: 'Workspace',
       links: [
         { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
-        { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
+        { href: '/sprints', label: 'Sprints', icon: RefreshCcw },
         { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
         { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
@@ -88,8 +88,8 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
         },
         { href: `/team/${team.key.toLowerCase()}/board`, label: 'Board', icon: Target },
         {
-          href: `/team/${team.key.toLowerCase()}/cycle/active`,
-          label: 'Active cycle',
+          href: `/team/${team.key.toLowerCase()}/sprint/active`,
+          label: 'Active sprint',
           icon: RefreshCcw,
         },
       ],
@@ -133,7 +133,7 @@ export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): Si
       title: 'Workspace',
       links: [
         { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
-        { href: '/cycles', label: 'Cycles', icon: RefreshCcw },
+        { href: '/sprints', label: 'Sprints', icon: RefreshCcw },
         { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
         { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
@@ -157,7 +157,7 @@ export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): Si
             count: team.openIssues,
           },
           { href: `/team/${key}/board`, label: 'Board', icon: Target },
-          { href: `/team/${key}/cycle/active`, label: 'Active cycle', icon: RefreshCcw },
+          { href: `/team/${key}/sprint/active`, label: 'Active sprint', icon: RefreshCcw },
         ],
       };
     }),

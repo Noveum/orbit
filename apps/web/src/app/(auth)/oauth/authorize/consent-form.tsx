@@ -7,8 +7,8 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { authClient } from '@/lib/auth/client.ts';
 
 const SCOPE_LABELS: Record<string, string> = {
-  'orbit.read': 'Read your issues, projects, cycles, docs, and workspace members',
-  'orbit.write': 'Create and update issues, comments, projects, and cycles',
+  'orbit.read': 'Read your issues, projects, sprints, docs, and workspace members',
+  'orbit.write': 'Create and update issues, comments, projects, and sprints',
   offline_access: 'Stay connected without signing in again',
 };
 

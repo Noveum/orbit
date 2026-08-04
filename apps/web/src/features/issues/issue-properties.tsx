@@ -228,7 +228,7 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
           open={openMenu === 'cycle'}
           onOpenChange={toggle('cycle')}
           options={[
-            { id: 'none', label: 'No cycle' },
+            { id: 'none', label: 'No sprint' },
             ...cycles.map((entry) => ({
               id: entry.id,
               label: entry.name.length > 0 ? entry.name : `Cycle ${entry.number}`,

@@ -126,8 +126,8 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     server,
     {
       name: 'list_cycles',
-      title: 'List cycles',
-      description: 'List the cycles of one team in number order.',
+      title: 'List sprints',
+      description: 'List the sprints of one team in number order.',
       readOnly: true,
       inputSchema: { team: teamRef },
     },
@@ -142,8 +142,8 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     server,
     {
       name: 'active_cycle',
-      title: 'Get the active cycle',
-      description: 'Return the cycle a team is currently running, or null when none is open.',
+      title: 'Get the active sprint',
+      description: 'Return the sprint a team is currently running, or null when none is open.',
       readOnly: true,
       inputSchema: { team: teamRef },
     },
@@ -158,13 +158,13 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     server,
     {
       name: 'cycle_progress',
-      title: 'Get cycle progress',
+      title: 'Get sprint progress',
       description:
-        'Return scope, started and completed counts for a cycle plus a day by day burn up series.',
+        'Return scope, started and completed counts for a sprint plus a day by day burn up series.',
       readOnly: true,
       inputSchema: {
         team: teamRef,
-        cycle: z.string().min(1).describe('Cycle name, number, id, or "active".'),
+        cycle: z.string().min(1).describe('Sprint name, number, id, or "active".'),
       },
     },
     async (args) => {
@@ -179,9 +179,9 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     server,
     {
       name: 'move_to_cycle',
-      title: 'Move an issue into a cycle',
+      title: 'Move an issue into a sprint',
       description:
-        'Put an issue into a cycle, or pass null to take it out of the cycle it is in. The cycle must belong to the issue team.',
+        'Put an issue into a sprint, or pass null to take it out of the sprint it is in. The sprint must belong to the issue team.',
       readOnly: false,
       inputSchema: {
         issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
@@ -190,7 +190,7 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
           .min(1)
           .nullable()
           .describe(
-            'Cycle name, number, id, "active", or null to remove the issue from its cycle.',
+            'Sprint name, number, id, "active", or null to remove the issue from its sprint.',
           ),
       },
     },
