@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'bun:test';
 import type { DisplayProperty } from '@orbit/shared/filters';
-import { DISPLAY_PROPERTIES } from '@orbit/shared/filters';
-import { render, screen } from '@testing-library/react';
+import { DEFAULT_DISPLAY_PROPERTIES, DISPLAY_PROPERTIES } from '@orbit/shared/filters';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as renderRaw, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { planDrop } from './board.tsx';
 import { IssueCard } from './issue-card.tsx';
+
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrap = (node: ReactElement) => (
+    <QueryClientProvider client={client}>
+      <ToastProvider>{node}</ToastProvider>
+    </QueryClientProvider>
+  );
+  const result = renderRaw(wrap(ui));
+  return { ...result, rerender: (next: ReactElement) => result.rerender(wrap(next)) };
+}
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -209,5 +223,31 @@ describe('board placement', () => {
   it('ignores a drop on itself or on an unknown target', () => {
     expect(planDrop(columns, issues, 'a', 'a')).toBeNull();
     expect(planDrop(columns, issues, 'a', 'nowhere')).toBeNull();
+  });
+});
+
+describe('card controls', () => {
+  it('offers the priority and status as buttons a facilitator can press', () => {
+    render(<IssueCard issue={issue()} labels={[]} assignee={undefined} state={state} />);
+
+    const priority = screen.getByTestId('card-priority-ENG-4');
+    const status = screen.getByTestId('card-status-ENG-4');
+    expect(priority.tagName).toBe('BUTTON');
+    expect(status.tagName).toBe('BUTTON');
+    expect(priority).toHaveAttribute('aria-label', 'Priority: Urgent');
+    expect(status).toHaveAttribute('aria-label', 'Status: In progress');
+  });
+
+  it('falls back to a plain glyph while the card is being dragged', () => {
+    render(<IssueCard issue={issue()} labels={[]} assignee={undefined} state={state} dragging />);
+    expect(screen.queryByTestId('card-priority-ENG-4')).toBeNull();
+    expect(screen.queryByTestId('card-status-ENG-4')).toBeNull();
+    expect(screen.getByLabelText('Urgent')).toBeInTheDocument();
+  });
+
+  it('carries the properties a board reader expects by default', () => {
+    expect([...DEFAULT_DISPLAY_PROPERTIES]).toEqual(
+      expect.arrayContaining(['priority', 'status', 'labels', 'project', 'created', 'assignee']),
+    );
   });
 });

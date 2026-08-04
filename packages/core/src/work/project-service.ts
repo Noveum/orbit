@@ -74,6 +74,23 @@ async function assertProjectInOrganization(
   requireRow(row, 'That project does not exist.');
 }
 
+export async function assertProjectVisible(
+  executor: Executor,
+  principal: Principal,
+  projectId: string,
+): Promise<void> {
+  await assertProjectInOrganization(executor, principal.organizationId, projectId);
+  if (principal.role === 'admin') return;
+  const teams = await executor
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  if (teams.length === 0) return;
+  if (!teams.some((row) => principal.teamIds.includes(row.teamId))) {
+    throw notFound('That project does not exist.');
+  }
+}
+
 async function replaceProjectTeams(
   executor: Executor,
   projectId: string,
@@ -469,6 +486,7 @@ export interface ProjectProgress {
   readonly scope: number;
   readonly started: number;
   readonly completed: number;
+  readonly canceled: number;
   readonly milestones: MilestoneProgress[];
 }
 
@@ -479,7 +497,7 @@ export async function projectProgress(
   projectId: string,
 ): Promise<ProjectProgress> {
   assertCan(principal, 'project:read');
-  await assertProjectInOrganization(db, principal.organizationId, projectId);
+  await assertProjectVisible(db, principal, projectId);
 
   const rows = await db
     .select({
@@ -507,9 +525,14 @@ export async function projectProgress(
   let scope = 0;
   let started = 0;
   let completed = 0;
+  let canceled = 0;
   const perMilestone = new Map<string, { scope: number; completed: number }>();
 
   for (const row of rows) {
+    if (row.category === 'canceled') {
+      canceled += row.total;
+      continue;
+    }
     scope += row.total;
     if (row.category === 'started' || row.category === 'review') started += row.total;
     if (row.category === 'completed') completed += row.total;
@@ -525,6 +548,7 @@ export async function projectProgress(
     scope,
     started,
     completed,
+    canceled,
     milestones: milestoneRows.map((milestone) => ({
       milestoneId: milestone.id,
       name: milestone.name,

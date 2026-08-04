@@ -7,9 +7,8 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
-import { PriorityGlyph } from './priority-glyph.tsx';
-import { StateGlyph } from './state-glyph.tsx';
 
 export interface IssueCardProps {
   readonly issue: Issue;
@@ -65,10 +64,8 @@ export function IssueCard({
       )}
     >
       <div className="flex items-center gap-2 text-2xs text-faint">
-        {shows('priority') ? <PriorityGlyph priority={issue.priority} /> : null}
-        {shows('status') && state !== undefined ? (
-          <StateGlyph category={state.category} color={state.color} title={state.name} />
-        ) : null}
+        {shows('priority') ? <PriorityControl issue={issue} disabled={dragging} /> : null}
+        {shows('status') ? <StatusControl issue={issue} state={state} disabled={dragging} /> : null}
         {shows('identifier') ? (
           <span data-numeric className="truncate whitespace-nowrap font-medium">
             {issue.identifier}
@@ -103,7 +100,9 @@ export function IssueCard({
           subIssueCount={subIssueCount}
           properties={properties}
         />
-        {shows('assignee') ? <CardAssignee assignee={assignee} /> : null}
+        {shows('assignee') ? (
+          <CardAssigneeSlot issue={issue} assignee={assignee} dragging={dragging} />
+        ) : null}
       </div>
     </article>
   );
@@ -127,6 +126,19 @@ function CardLabels({ labels }: { labels: readonly Label[] }) {
       ))}
     </>
   );
+}
+
+function CardAssigneeSlot({
+  issue,
+  assignee,
+  dragging,
+}: {
+  issue: Issue;
+  assignee: Member | undefined;
+  dragging: boolean;
+}) {
+  if (dragging) return <CardAssignee assignee={assignee} />;
+  return <AssigneeControl issue={issue} assignee={assignee} />;
 }
 
 function CardAssignee({ assignee }: { assignee: Member | undefined }) {

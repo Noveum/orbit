@@ -445,6 +445,8 @@ export const DEFAULT_DISPLAY_PROPERTIES: readonly DisplayProperty[] = [
   'status',
   'labels',
   'estimate',
+  'project',
+  'created',
   'assignee',
 ];
 

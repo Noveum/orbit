@@ -178,7 +178,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
         </div>
 
         <aside className="flex flex-col gap-4 rounded-lg border border-border p-4">
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-4 gap-2 text-center">
             <div className="flex flex-col">
               <span className="font-medium text-lg text-text tabular">{progress.scope}</span>
               <span className="text-2xs text-faint uppercase">Scope</span>
@@ -190,6 +190,10 @@ export default async function ProjectDetailPage({ params }: PageProps) {
             <div className="flex flex-col">
               <span className="font-medium text-lg text-text tabular">{progress.completed}</span>
               <span className="text-2xs text-faint uppercase">Done</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-medium text-faint text-lg tabular">{progress.canceled}</span>
+              <span className="text-2xs text-faint uppercase">Cancelled</span>
             </div>
           </div>
           {series.length === 0 ? (
