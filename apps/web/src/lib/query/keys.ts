@@ -17,6 +17,8 @@ export const queryKeys = {
   doc: (docId: string) => ['doc', docId] as const,
   docVersions: (docId: string) => ['doc', docId, 'versions'] as const,
   views: () => ['views'] as const,
+  standupToday: (teamId: string) => ['standup', 'today', teamId] as const,
+  standupHistory: (teamId: string) => ['standup', 'history', teamId] as const,
 } as const;
 
 export const ISSUES_ROOT = 'issues';
@@ -28,3 +30,4 @@ export const BOOTSTRAP_ROOT = 'bootstrap';
 export const DOCS_ROOT = 'docs';
 export const DOC_ROOT = 'doc';
 export const VIEWS_ROOT = 'views';
+export const STANDUP_ROOT = 'standup';

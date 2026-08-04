@@ -14,6 +14,7 @@ export * from './onboarding.ts';
 export * from './organization.ts';
 export * from './profile.ts';
 export * from './project.ts';
+export * from './standup.ts';
 export * from './team.ts';
 export * from './upload.ts';
 export * from './view.ts';

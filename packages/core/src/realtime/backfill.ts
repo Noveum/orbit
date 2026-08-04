@@ -510,6 +510,26 @@ const LOADERS: Record<SyncModel, Loader> = {
       ],
       data: row,
     })),
+
+  standup: async (principal, since, limit) =>
+    (
+      await db
+        .select()
+        .from(schema.standup)
+        .where(
+          and(
+            eq(schema.standup.organizationId, principal.organizationId),
+            gt(schema.standup.syncId, since),
+          ),
+        )
+        .orderBy(asc(schema.standup.syncId))
+        .limit(limit)
+    ).map((row) => ({
+      modelId: row.id,
+      syncId: row.syncId,
+      scopes: [scopes.organization(row.organizationId), scopes.team(row.teamId)],
+      data: row,
+    })),
 };
 
 export const SYNC_CATCHUP_MODELS = Object.keys(LOADERS) as SyncModel[];

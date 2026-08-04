@@ -15,6 +15,7 @@ import {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  assigneeInTeamSearch,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
@@ -47,6 +48,7 @@ export {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  assigneeInTeamSearch,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
@@ -145,6 +147,16 @@ export function useColumnIssues(
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
     enabled: enabled && teamId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useTeamMemberIssues(teamId: string | null, userId: string | null) {
+  const search = teamId === null || userId === null ? '' : assigneeInTeamSearch(teamId, userId);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
+    enabled: teamId !== null && userId !== null,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
   });
