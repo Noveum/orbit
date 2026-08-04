@@ -265,9 +265,9 @@ describe('catch up respects document access', () => {
       content: 'For a named few.',
       visibility: 'private',
     });
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'user', subjectId: invitedUser.id, level: 'read' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: invitedUser.id, level: 'read' }],
+    });
 
     const result = await catchUp(invited, 0);
     expect(result.actions.some((action) => action.modelId === doc.id)).toBe(true);

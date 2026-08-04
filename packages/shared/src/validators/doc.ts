@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DOC_VISIBILITIES } from '../constants/index.ts';
+import { DOC_ACCESS_LEVELS, DOC_ACCESS_SUBJECTS, DOC_VISIBILITIES } from '../constants/index.ts';
 import { idSchema } from './common.ts';
 import { booleanFlag } from './issue.ts';
 
@@ -32,6 +32,16 @@ export const docUpdateSchema = z
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),
   rotateToken: z.boolean().default(false),
+});
+
+export const docAccessGrantSchema = z.object({
+  subjectType: z.enum(DOC_ACCESS_SUBJECTS),
+  subjectId: idSchema,
+  level: z.enum(DOC_ACCESS_LEVELS),
+});
+
+export const docAccessSetSchema = z.object({
+  grants: z.array(docAccessGrantSchema).max(200),
 });
 
 export const docFilterSchema = z.object({

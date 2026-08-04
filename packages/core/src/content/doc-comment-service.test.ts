@@ -158,9 +158,9 @@ describe('a private doc keeps its conversation private', () => {
       visibility: 'private',
     });
     const { principal: invited, user } = await addMember(workspace, 'member');
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'user', subjectId: user.id, level: 'read' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: user.id, level: 'read' }],
+    });
 
     const { comment } = await createDocComment(invited, doc.id, { body: 'Looks right to me.' });
     expect(comment.body).toBe('Looks right to me.');

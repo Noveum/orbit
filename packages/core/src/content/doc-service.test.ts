@@ -430,9 +430,9 @@ describe('doc access', () => {
       visibility: 'private',
     });
 
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'user', subjectId: invitedUser.id, level: 'read' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: invitedUser.id, level: 'read' }],
+    });
 
     expect((await getDoc(invited, doc.id)).doc.id).toBe(doc.id);
     expect((await listDocs(invited, {})).some((row) => row.id === doc.id)).toBe(true);
@@ -451,9 +451,9 @@ describe('doc access', () => {
     });
 
     await expect(getDoc(designer, doc.id)).rejects.toMatchObject({ code: 'not_found' });
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'team', subjectId: team.team.id, level: 'read' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'team', subjectId: team.team.id, level: 'read' }],
+    });
     expect((await getDoc(designer, doc.id)).doc.id).toBe(doc.id);
   });
 
@@ -524,9 +524,9 @@ describe('a read grant does not become a write grant', () => {
       content: 'Read this, do not change it.',
       visibility: 'private',
     });
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'user', subjectId: readerUser.id, level: 'read' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: readerUser.id, level: 'read' }],
+    });
 
     expect((await getDoc(reader, doc.id)).doc.id).toBe(doc.id);
     await expect(updateDoc(reader, doc.id, { title: 'Hijacked' })).rejects.toMatchObject({
@@ -542,9 +542,9 @@ describe('a read grant does not become a write grant', () => {
       content: 'Edit away.',
       visibility: 'private',
     });
-    await setDocAccess(workspace.admin, doc.id, [
-      { subjectType: 'user', subjectId: editorUser.id, level: 'write' },
-    ]);
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: editorUser.id, level: 'write' }],
+    });
 
     const saved = await updateDoc(editor, doc.id, { title: 'Edited' });
     expect(saved.doc.title).toBe('Edited');
@@ -598,5 +598,93 @@ describe('backlinks respect who may read the linking doc', () => {
 
     const seen = await getDoc(member, target.id);
     expect(seen.backlinks.map((link) => link.title)).toContain('Onboarding');
+  });
+});
+
+describe('sharing a doc with named people', () => {
+  it('grants read to a person and lets them open a doc they could not see before', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Board deck',
+      content: 'Numbers.',
+      visibility: 'private',
+    });
+    const { principal: outsider, user } = await addMember(workspace, 'member');
+    await expect(getDoc(outsider, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+
+    const saved = await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: user.id, level: 'read' }],
+    });
+    expect(saved.grants).toHaveLength(1);
+    expect((await getDoc(outsider, doc.id)).doc.id).toBe(doc.id);
+  });
+
+  it('reaches the person it was shared with over realtime, not just the workspace', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Board deck',
+      content: 'Numbers.',
+      visibility: 'private',
+    });
+    const { user } = await addMember(workspace, 'member');
+    const saved = await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: user.id, level: 'read' }],
+    });
+    expect(saved.actions).toHaveLength(1);
+    expect(saved.actions[0]?.scopes).toContain(scopes.user(user.id));
+    expect(saved.actions[0]?.scopes).toContain(scopes.doc(doc.id));
+  });
+
+  it('refuses to share with somebody outside the workspace', async () => {
+    const { doc } = await createDoc(workspace.admin, { title: 'Board deck', content: 'x' });
+    const other = await createWorkspace('Vega');
+    await expect(
+      setDocAccess(workspace.admin, doc.id, {
+        grants: [{ subjectType: 'user', subjectId: other.adminUser.id, level: 'read' }],
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('lets a read grant read but not write, and a write grant do both', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Runbook',
+      content: 'Steps.',
+      visibility: 'private',
+    });
+    const reader = await addMember(workspace, 'member');
+    const writer = await addMember(workspace, 'member');
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [
+        { subjectType: 'user', subjectId: reader.user.id, level: 'read' },
+        { subjectType: 'user', subjectId: writer.user.id, level: 'write' },
+      ],
+    });
+
+    await expect(
+      updateDoc(reader.principal, doc.id, { content: 'Reader edit' }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    const edited = await updateDoc(writer.principal, doc.id, { content: 'Writer edit' });
+    expect(edited.doc.content).toBe('Writer edit');
+  });
+
+  it('keeps one row per subject when the same person is named twice', async () => {
+    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: 'x' });
+    const { user } = await addMember(workspace, 'member');
+    const saved = await setDocAccess(workspace.admin, doc.id, {
+      grants: [
+        { subjectType: 'user', subjectId: user.id, level: 'read' },
+        { subjectType: 'user', subjectId: user.id, level: 'write' },
+      ],
+    });
+    expect(saved.grants).toHaveLength(1);
+    expect(saved.grants[0]?.level).toBe('write');
+  });
+
+  it('stops somebody who is neither the author nor an admin from regranting it', async () => {
+    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: 'x' });
+    const { principal: member, user } = await addMember(workspace, 'member');
+    await expect(
+      setDocAccess(member, doc.id, {
+        grants: [{ subjectType: 'user', subjectId: user.id, level: 'write' }],
+      }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
   });
 });

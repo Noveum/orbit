@@ -12,6 +12,7 @@ export const queryKeys = {
   issueSummary: (search: string) => ['issue-summary', search] as const,
   issue: (identifier: string) => ['issue', identifier] as const,
   comments: (issueId: string) => ['comments', issueId] as const,
+  docAccess: (docId: string) => [DOC_ROOT, docId, 'access'] as const,
   docComments: (docId: string) => ['doc-comments', docId] as const,
   docs: (search: string) => ['docs', search] as const,
   doc: (docId: string) => ['doc', docId] as const,

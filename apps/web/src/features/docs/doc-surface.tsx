@@ -179,7 +179,12 @@ function LoadedDoc({
 
         <DocHistory docId={detail.doc.id} canWrite={canWrite} />
 
-        {canPublish ? <DocShareMenu doc={detail.doc} /> : null}
+        {canWrite ? (
+          <DocShareMenu
+            doc={detail.doc}
+            canManageAccess={canPublish || detail.doc.authorId === workspace.userId}
+          />
+        ) : null}
 
         {canWrite ? (
           <>
