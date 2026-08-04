@@ -1,12 +1,12 @@
 import { startStandup } from '@orbit/core';
-import { handle, publish } from '@/lib/api/handler.ts';
+import { handle, publish, routeId } from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
 }
 
 export async function POST(_request: Request, context: RouteContext): Promise<Response> {
-  const { id } = await context.params;
+  const id = routeId((await context.params).id, 'standup');
   return await handle(async (principal) => {
     const result = await startStandup(principal, id);
     await publish(result.actions);

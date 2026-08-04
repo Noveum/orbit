@@ -109,7 +109,7 @@ function RunningRoom({ teamId, teamName, detail, workload }: RunningRoomProps) {
 
   const move = useCallback(
     (direction: 'next' | 'previous') => {
-      if (!running) return;
+      if (!running || advance.isPending) return;
       advance.mutate({ standupId: standup.id, direction });
     },
     [standup.id, running, advance],
@@ -210,6 +210,7 @@ function RunningRoom({ teamId, teamName, detail, workload }: RunningRoomProps) {
             />
           ) : (
             <TurnPanel
+              key={current.id}
               standupId={standup.id}
               teamId={teamId}
               turn={current}

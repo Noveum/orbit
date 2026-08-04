@@ -155,7 +155,8 @@ function blockOf(node: JSONContent): string {
         .map((child) => child.text ?? '')
         .join('')
         .replace(/\n+$/, '');
-      return `\`\`\`${language}\n${text}\n\`\`\``;
+      const fence = '`'.repeat(longestBacktickRun(text) + 1);
+      return `${fence}${language}\n${text}\n${fence}`;
     }
     case 'horizontalRule':
       return '---';
@@ -198,16 +199,19 @@ function blocksOf(nodes: readonly JSONContent[] | undefined, separator: string):
     .join(separator);
 }
 
-const FENCE = /^```[^\n]*\n[\s\S]*?\n```$/;
+function longestBacktickRun(text: string): number {
+  let longest = 2;
+  for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return longest;
+}
 
-function collapseOutsideFences(markdown: string): string {
-  return markdown
-    .split(/(^```[^\n]*\n[\s\S]*?\n```$)/m)
-    .map((part) => (FENCE.test(part) ? part : part.replace(/\n{3,}/g, '\n\n')))
-    .join('');
+function tidy(node: JSONContent, markdown: string): string {
+  return node.type === 'codeBlock' ? markdown : markdown.replace(/\n{3,}/g, '\n\n');
 }
 
 export function docToMarkdown(doc: JSONContent): string {
-  const body = `${blocksOf(doc.content, '\n\n')}\n`;
-  return collapseOutsideFences(body).replace(/^\n+/, '');
+  const blocks = (doc.content ?? [])
+    .map((node) => tidy(node, blockOf(node)))
+    .filter((block) => block.length > 0);
+  return `${blocks.join('\n\n')}\n`.replace(/^\n+/, '');
 }

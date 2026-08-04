@@ -226,7 +226,7 @@ export function groupIssues(
   return definitionsWithExtras(groupBy, context, buckets.keys()).flatMap((definition) => {
     const rows = buckets.get(definition.id) ?? [];
     const total = options.totals?.[definition.id] ?? rows.length;
-    if (total === 0 && !options.showEmptyGroups) return [];
+    if (total === 0 && rows.length === 0 && !options.showEmptyGroups) return [];
     const sorted = ordered(rows, options.ordering);
     const subGroups =
       subGroupBy === 'none' || subGroupBy === groupBy

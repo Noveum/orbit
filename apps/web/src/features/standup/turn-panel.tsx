@@ -1,7 +1,7 @@
 'use client';
 
 import { AlertTriangle, Check, Plus } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { StateGlyph } from '@/features/issues/state-glyph.tsx';
@@ -53,11 +53,6 @@ export function TurnPanel({
   const workspace = useWorkspace();
   const [notes, setNotes] = useState(turn.notes);
   const [blocker, setBlocker] = useState('');
-
-  useEffect(() => {
-    setNotes(turn.notes);
-    setBlocker('');
-  }, [turn.notes]);
 
   const now = Date.now();
   const owned = useTeamMemberIssues(teamId, turn.userId);

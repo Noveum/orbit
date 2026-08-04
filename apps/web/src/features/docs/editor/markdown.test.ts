@@ -46,6 +46,24 @@ describe('a document survives being edited', () => {
     expect(docToMarkdown(doc)).toBe('One\n\nTwo\n');
   });
 
+  it('fences a block that itself contains a fence, so nothing leaks out', () => {
+    const doc: JSONContent = {
+      type: 'doc',
+      content: [
+        {
+          type: 'codeBlock',
+          attrs: { language: 'md' },
+          content: [{ type: 'text', text: 'Example:\n\n```\ninner\n```\n\n\ndone' }],
+        },
+      ],
+    };
+    const markdown = docToMarkdown(doc);
+    expect(markdown.startsWith('````md\n')).toBe(true);
+    expect(markdown).toContain('```\ninner\n```');
+    expect(markdown).toContain('\n\n\ndone');
+    expect(markdown.trimEnd().endsWith('````')).toBe(true);
+  });
+
   it('keeps every heading level the sanitizer allows', () => {
     for (const level of [1, 2, 3, 4, 5, 6]) {
       const doc: JSONContent = {

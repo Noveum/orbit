@@ -1,12 +1,14 @@
 import { updateTurn } from '@orbit/core';
-import { handle, publish, readJson } from '@/lib/api/handler.ts';
+import { handle, publish, readJson, routeId } from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string; turnId: string }>;
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
-  const { id, turnId } = await context.params;
+  const { id: rawId, turnId: rawTurnId } = await context.params;
+  const id = routeId(rawId, 'standup');
+  const turnId = routeId(rawTurnId, 'turn');
   const body = await readJson(request);
   return await handle(async (principal) => {
     const result = await updateTurn(principal, id, turnId, body);

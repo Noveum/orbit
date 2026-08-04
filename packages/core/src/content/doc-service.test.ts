@@ -515,3 +515,49 @@ describe('a doc body never travels on the wire', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('a read grant does not become a write grant', () => {
+  it('refuses an edit from somebody granted read only', async () => {
+    const { principal: reader, user: readerUser } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Board pack',
+      content: 'Read this, do not change it.',
+      visibility: 'private',
+    });
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'user', subjectId: readerUser.id, level: 'read' },
+    ]);
+
+    expect((await getDoc(reader, doc.id)).doc.id).toBe(doc.id);
+    await expect(updateDoc(reader, doc.id, { title: 'Hijacked' })).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(archiveDoc(reader, doc.id)).rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('allows an edit from somebody granted write', async () => {
+    const { principal: editor, user: editorUser } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Shared draft',
+      content: 'Edit away.',
+      visibility: 'private',
+    });
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'user', subjectId: editorUser.id, level: 'write' },
+    ]);
+
+    const saved = await updateDoc(editor, doc.id, { title: 'Edited' });
+    expect(saved.doc.title).toBe('Edited');
+  });
+
+  it('leaves a workspace doc editable by anyone who may write docs', async () => {
+    const { principal: member } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Handbook',
+      content: 'Everyone edits this.',
+      visibility: 'workspace',
+    });
+    const saved = await updateDoc(member, doc.id, { title: 'Handbook v2' });
+    expect(saved.doc.title).toBe('Handbook v2');
+  });
+});

@@ -14,7 +14,7 @@ import {
   sql,
 } from '@orbit/db';
 import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -185,6 +185,48 @@ async function grantedDocIds(
       ),
     );
   return rows.map((row) => row.docId);
+}
+
+async function writeGrantedDocIds(
+  executor: Executor,
+  principal: Principal,
+  docId: string,
+): Promise<boolean> {
+  const rows = await executor
+    .select({ docId: schema.docAccess.docId })
+    .from(schema.docAccess)
+    .where(
+      and(
+        eq(schema.docAccess.docId, docId),
+        eq(schema.docAccess.level, 'write'),
+        or(
+          and(
+            eq(schema.docAccess.subjectType, 'user'),
+            eq(schema.docAccess.subjectId, principal.userId),
+          ),
+          principal.teamIds.length === 0
+            ? sql`false`
+            : and(
+                eq(schema.docAccess.subjectType, 'team'),
+                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+              ),
+        ),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
+async function assertDocWritable(
+  executor: Executor,
+  principal: Principal,
+  doc: DocRow,
+): Promise<void> {
+  if (principal.role === 'admin') return;
+  if (doc.authorId === principal.userId) return;
+  if (!isRestricted(doc.visibility)) return;
+  if (await writeGrantedDocIds(executor, principal, doc.id)) return;
+  throw forbidden('You only have read access to that doc.');
 }
 
 async function loadDoc(executor: Executor, principal: Principal, docId: string): Promise<DocRow> {
@@ -506,6 +548,7 @@ export async function updateDoc(
 
   return await db.transaction(async (tx) => {
     const current = await loadDoc(tx, principal, docId);
+    await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
     await assertPlacement(tx, principal, parsed, docId);
 
@@ -556,6 +599,7 @@ export async function restoreDocVersion(
 
   return await db.transaction(async (tx) => {
     const current = await loadDoc(tx, principal, docId);
+    await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
 
     const [found] = await tx
@@ -592,7 +636,7 @@ export async function archiveDoc(
   assertCan(principal, 'doc:write');
 
   return await db.transaction(async (tx) => {
-    await loadDoc(tx, principal, docId);
+    await assertDocWritable(tx, principal, await loadDoc(tx, principal, docId));
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
@@ -620,6 +664,7 @@ export async function shareDoc(
 
   return await db.transaction(async (tx) => {
     const current = await loadDoc(tx, principal, docId);
+    await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
 
     const publishToken = tokenFor(visibility, rotateToken ? null : current.publishToken);
