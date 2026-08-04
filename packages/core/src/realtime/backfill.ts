@@ -28,6 +28,11 @@ type AttachmentParent = {
   readonly parentId: string;
 };
 
+function withoutBody<T extends { content: string }>(row: T): Omit<T, 'content'> {
+  const { content: _body, ...rest } = row;
+  return rest;
+}
+
 async function readableDocIds(
   principal: Principal,
   docIds: readonly string[],
@@ -532,7 +537,7 @@ const LOADERS: Record<SyncModel, Loader> = {
               scopes.doc(row.id),
               scopes.project(row.projectId),
             ],
-      data: { ...row, publishToken: row.publishToken === null ? null : 'redacted' },
+      data: { ...withoutBody(row), publishToken: row.publishToken === null ? null : 'redacted' },
     })),
 
   doc_collection: async (principal, since, limit) =>

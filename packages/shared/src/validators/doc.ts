@@ -1,11 +1,17 @@
 import { z } from 'zod';
 import { DOC_VISIBILITIES } from '../constants/index.ts';
-import { idSchema, markdownSchema } from './common.ts';
+import { idSchema } from './common.ts';
 import { booleanFlag } from './issue.ts';
+
+export const DOC_CONTENT_LIMIT = 500_000;
+
+export const docContentSchema = z.string().max(DOC_CONTENT_LIMIT, {
+  message: 'This document is too long to save. Split it into linked pages.',
+});
 
 export const docCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  content: markdownSchema.default(''),
+  content: docContentSchema.default(''),
   projectId: idSchema.nullable().default(null),
   collectionId: idSchema.nullable().default(null),
   parentId: idSchema.nullable().default(null),
@@ -15,7 +21,7 @@ export const docCreateSchema = z.object({
 export const docUpdateSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
-    content: markdownSchema,
+    content: docContentSchema,
     projectId: idSchema.nullable(),
     collectionId: idSchema.nullable(),
     parentId: idSchema.nullable(),

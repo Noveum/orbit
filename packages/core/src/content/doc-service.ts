@@ -106,9 +106,14 @@ function docAction(
     action,
     model: 'doc',
     modelId: row.id,
-    data: { ...row, publishToken: row.publishToken === null ? null : 'redacted' },
+    data: docAnnouncement(row),
     actor,
   });
+}
+
+function docAnnouncement(row: DocRow): Record<string, unknown> {
+  const { content: _body, publishToken, ...rest } = row;
+  return { ...rest, publishToken: publishToken === null ? null : 'redacted' };
 }
 
 function tokenFor(visibility: string, current: string | null): string | null {

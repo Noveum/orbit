@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
+import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { createTeam } from '../org/team-service.ts';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
@@ -475,5 +476,42 @@ describe('doc access', () => {
     });
     expect(doc.authorId).toBe(authorUser.id);
     expect((await getDoc(workspace.admin, doc.id)).doc.id).toBe(doc.id);
+  });
+});
+
+describe('a doc body never travels on the wire', () => {
+  it('announces a change without the content', async () => {
+    const secret = 'A body that should never appear in a delta payload.';
+    const { actions } = await createDoc(workspace.admin, {
+      title: 'Long doc',
+      content: secret,
+      visibility: 'workspace',
+    });
+
+    const payload = JSON.stringify(actions);
+    expect(actions.length).toBeGreaterThan(0);
+    expect(payload).not.toContain(secret);
+    expect(payload).toContain('Long doc');
+  });
+
+  it('accepts a document far larger than the old hundred kilobyte cap', async () => {
+    const long = 'x'.repeat(200_000);
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Very long',
+      content: long,
+      visibility: 'workspace',
+    });
+    const read = await getDoc(workspace.admin, doc.id);
+    expect(read.doc.content.length).toBe(200_000);
+  });
+
+  it('refuses a document past the doc limit with an explanation', async () => {
+    await expect(
+      createDoc(workspace.admin, {
+        title: 'Too long',
+        content: 'x'.repeat(DOC_CONTENT_LIMIT + 1),
+        visibility: 'workspace',
+      }),
+    ).rejects.toThrow();
   });
 });

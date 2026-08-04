@@ -198,6 +198,16 @@ function blocksOf(nodes: readonly JSONContent[] | undefined, separator: string):
     .join(separator);
 }
 
+const FENCE = /^```[^\n]*\n[\s\S]*?\n```$/;
+
+function collapseOutsideFences(markdown: string): string {
+  return markdown
+    .split(/(^```[^\n]*\n[\s\S]*?\n```$)/m)
+    .map((part) => (FENCE.test(part) ? part : part.replace(/\n{3,}/g, '\n\n')))
+    .join('');
+}
+
 export function docToMarkdown(doc: JSONContent): string {
-  return `${blocksOf(doc.content, '\n\n')}\n`.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+  const body = `${blocksOf(doc.content, '\n\n')}\n`;
+  return collapseOutsideFences(body).replace(/^\n+/, '');
 }

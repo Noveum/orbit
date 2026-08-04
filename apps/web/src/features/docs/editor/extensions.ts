@@ -90,7 +90,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
     StarterKit.configure({
       codeBlock: false,
       link: { openOnClick: false, autolink: true },
-      heading: { levels: [1, 2, 3, 4] },
+      heading: { levels: [1, 2, 3, 4, 5, 6] },
     }),
     Highlight,
     CodeBlockLowlight.configure({ lowlight, defaultLanguage: 'ts' }),
