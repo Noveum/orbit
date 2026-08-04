@@ -491,3 +491,12 @@ describe('a filtered list never invents a row the server did not return', () => 
     expect(admitsNewRows(filtered)).toBe(false);
   });
 });
+
+describe('an ordering name from the URL cannot reach the prototype', () => {
+  it('treats an inherited property name as manual rather than crashing', () => {
+    for (const name of ['__proto__', 'toString', 'constructor', 'hasOwnProperty']) {
+      expect(orderingOf(`orderBy=${encodeURIComponent(name)}`)).toBe('manual');
+      expect(() => sortForSearch(`orderBy=${encodeURIComponent(name)}`, [issue()])).not.toThrow();
+    }
+  });
+});

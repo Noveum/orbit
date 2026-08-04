@@ -1,5 +1,7 @@
 'use client';
 
+import { useScopeSubscription } from '@orbit/realtime-client/react';
+import { scopes } from '@orbit/shared/events';
 import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
@@ -98,6 +100,8 @@ function useDocList() {
 
 export function DocSurface(props: DocSurfaceProps) {
   const detail = useDoc(props.docId);
+  const docScopes = useMemo(() => [scopes.doc(props.docId)], [props.docId]);
+  useScopeSubscription(docScopes);
 
   if (detail.isPending) {
     return (

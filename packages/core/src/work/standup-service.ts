@@ -480,26 +480,17 @@ export async function focusTurn(
   await requireTeam(principal, current.teamId);
 
   return await db.transaction(async (tx) => {
+    const locked = await lockStandup(tx, principal, standupId);
     const now = new Date();
-    if (current.currentTurnId !== null && current.currentTurnId !== parsed.turnId) {
-      await tx
-        .update(schema.standupTurn)
-        .set({ status: 'done', updatedAt: now })
-        .where(
-          and(
-            eq(schema.standupTurn.id, current.currentTurnId),
-            eq(schema.standupTurn.status, 'speaking'),
-          ),
-        );
+    const turns = await turnsOf(tx, standupId);
+    if (locked.currentTurnId !== parsed.turnId) {
+      await closeSpeakingTurn(tx, turns, locked.currentTurnId, now);
     }
-    const [focused] = await tx
-      .update(schema.standupTurn)
-      .set({ status: 'speaking', spokeAt: now, updatedAt: now })
-      .where(
-        and(eq(schema.standupTurn.id, parsed.turnId), eq(schema.standupTurn.standupId, standupId)),
-      )
-      .returning({ id: schema.standupTurn.id });
-    requireRow(focused, 'That turn does not belong to this standup.');
+    const target = requireRow(
+      turns.find((turn) => turn.id === parsed.turnId),
+      'That turn does not belong to this standup.',
+    );
+    await activateTurn(tx, target, now);
     return await saveStandup(tx, principal, standupId, { currentTurnId: parsed.turnId });
   });
 }

@@ -332,15 +332,17 @@ describe('the clock the room keeps', () => {
     const first = started.detail.turns.find(
       (turn) => turn.id === started.detail.standup.currentTurnId,
     );
-    expect(first?.spokeAt).not.toBeNull();
+    if (first === undefined) throw new Error('expected a first speaker');
+    expect(first.spokeAt).not.toBeNull();
 
     const advanced = await advanceStandup(workspace.admin, detail.standup.id, {
       direction: 'next',
       markDone: true,
     });
-    const closed = advanced.detail.turns.find((turn) => turn.id === first?.id);
-    expect(closed?.status).toBe('done');
-    expect(closed?.durationSeconds).not.toBeNull();
+    const closed = advanced.detail.turns.find((turn) => turn.id === first.id);
+    if (closed === undefined) throw new Error('expected the first turn to survive');
+    expect(closed.status).toBe('done');
+    expect(closed.durationSeconds).not.toBeNull();
   });
 
   it('keeps the time a speaker already spent when the room comes back to them', async () => {
@@ -362,6 +364,27 @@ describe('the clock the room keeps', () => {
     });
     const total = again.detail.turns.find((turn) => turn.id === firstId)?.durationSeconds ?? 0;
     expect(total).toBeGreaterThanOrEqual(banked);
+  });
+
+  it('leaves exactly one person speaking when two facilitators jump at once', async () => {
+    const { second, third } = await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    await startStandup(workspace.admin, detail.standup.id);
+    const targets = detail.turns.filter((turn) =>
+      [second.user.id, third.user.id].includes(turn.userId),
+    );
+    expect(targets).toHaveLength(2);
+
+    await Promise.all(
+      targets.map((turn) =>
+        focusTurn(workspace.admin, detail.standup.id, { turnId: turn.id }).catch(() => undefined),
+      ),
+    );
+
+    const room = await findStandup(workspace.admin, workspace.teamId, detail.standup.heldOn);
+    const speaking = room?.turns.filter((turn) => turn.status === 'speaking') ?? [];
+    expect(speaking).toHaveLength(1);
+    expect(speaking[0]?.id).toBe(room?.standup.currentTurnId ?? '');
   });
 
   it('leaves exactly one person speaking when two facilitators advance at once', async () => {

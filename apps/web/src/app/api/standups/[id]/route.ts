@@ -6,14 +6,16 @@ interface RouteContext {
 }
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
-  const id = routeId((await context.params).id, 'standup');
-  return await handle(async (principal) => await getStandup(principal, id));
+  return await handle(async (principal) => {
+    const id = routeId((await context.params).id, 'standup');
+    return await getStandup(principal, id);
+  });
 }
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
-  const id = routeId((await context.params).id, 'standup');
-  const body = await readJson(request);
   return await handle(async (principal) => {
+    const id = routeId((await context.params).id, 'standup');
+    const body = await readJson(request);
     const result = await updateStandup(principal, id, body);
     await publish(result.actions);
     return result.detail;

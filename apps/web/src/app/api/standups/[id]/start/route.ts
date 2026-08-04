@@ -6,8 +6,8 @@ interface RouteContext {
 }
 
 export async function POST(_request: Request, context: RouteContext): Promise<Response> {
-  const id = routeId((await context.params).id, 'standup');
   return await handle(async (principal) => {
+    const id = routeId((await context.params).id, 'standup');
     const result = await startStandup(principal, id);
     await publish(result.actions);
     return result.detail;

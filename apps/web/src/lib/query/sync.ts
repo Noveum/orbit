@@ -315,7 +315,9 @@ function compareValues(left: string | number, right: string | number): number {
 
 export function orderingOf(search: string): IssueOrdering {
   const requested = new URLSearchParams(search).get('orderBy');
-  return requested !== null && requested in ORDER_READERS ? (requested as IssueOrdering) : 'manual';
+  return requested !== null && Object.hasOwn(ORDER_READERS, requested)
+    ? (requested as IssueOrdering)
+    : 'manual';
 }
 
 export function sortForSearch(search: string, issues: readonly Issue[]): Issue[] {
