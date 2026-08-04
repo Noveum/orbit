@@ -177,3 +177,33 @@ describe('scopeSeries and projectProgressSeries', () => {
     expect(series.at(-1)?.scope).toBe(3);
   });
 });
+
+describe('analytics never reaches past the teams you are on', () => {
+  it('leaves another team’s work out of the workspace numbers', async () => {
+    const engineering = await workDistribution(workspace.admin, WORKSPACE, 'assignee', 'issues');
+    const engineeringTotal = engineering.reduce((sum, row) => sum + row.value, 0);
+    expect(engineeringTotal).toBeGreaterThan(0);
+
+    const { principal: outsider } = await addMember(workspace, 'member', {
+      name: 'Des Designer',
+      teamIds: [],
+    });
+    const outside = await workDistribution(outsider, WORKSPACE, 'assignee', 'issues');
+    expect(outside.reduce((sum, row) => sum + row.value, 0)).toBe(0);
+  });
+
+  it('refuses to answer for a team the caller is not on, even when named directly', async () => {
+    const { principal: outsider } = await addMember(workspace, 'member', {
+      name: 'Des Designer',
+      teamIds: [],
+    });
+    const scoped: AnalyticsScope = { type: 'team', id: workspace.teamId };
+    const rows = await workDistribution(outsider, scoped, 'assignee', 'issues');
+    expect(rows.reduce((sum, row) => sum + row.value, 0)).toBe(0);
+  });
+
+  it('still answers in full for an admin', async () => {
+    const chart = await stateGroupBreakdown(workspace.admin, WORKSPACE, 'assignee', 'issues');
+    expect(chart.data.length).toBeGreaterThan(0);
+  });
+});

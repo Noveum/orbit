@@ -16,24 +16,32 @@ const connectionString =
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'host.docker.internal']);
 
-function assertLocalServer(url: string): void {
-  if (process.env['ORBIT_ALLOW_REMOTE_TEST_SETUP'] === '1') return;
-  let host: string;
-  let port: string;
+function hostOf(url: string): { host: string; port: string } {
   try {
     const parsed = new URL(url);
-    host = parsed.hostname;
-    port = parsed.port === '' ? '5432' : parsed.port;
+    return { host: parsed.hostname, port: parsed.port === '' ? '5432' : parsed.port };
   } catch {
     throw new Error('DATABASE_URL is not a valid connection string.');
   }
+}
+
+function assertLocalServer(url: string): void {
+  const { host, port } = hostOf(url);
   if (LOCAL_HOSTS.has(host)) return;
+  if (process.env['ORBIT_ALLOW_REMOTE_TEST_SETUP'] === '1') return;
   throw new Error(
     `Refusing to create test databases on ${host}:${port}. This creates six databases and pushes the whole schema into each, which must never happen on a deployed server. Point DATABASE_URL at the local stack from bun run infra:up, or set ORBIT_ALLOW_REMOTE_TEST_SETUP=1 if you are certain.`,
   );
 }
 
+function isRemote(url: string): boolean {
+  return !LOCAL_HOSTS.has(hostOf(url).host);
+}
+
 assertLocalServer(connectionString);
+
+const remote = isRemote(connectionString);
+const connectionOptions = remote ? { max: 1, ssl: 'verify-full' as const } : { max: 1 };
 
 function adminUrl(url: string): string {
   const parsed = new URL(url);
@@ -47,7 +55,7 @@ function databaseUrl(url: string, name: string): string {
   return parsed.toString();
 }
 
-const admin = postgres(adminUrl(connectionString), { max: 1 });
+const admin = postgres(adminUrl(connectionString), connectionOptions);
 
 for (const name of TEST_DATABASES) {
   if (!DATABASE_NAME.test(name)) {
@@ -66,7 +74,7 @@ await admin.end();
 
 for (const name of TEST_DATABASES) {
   const url = databaseUrl(connectionString, name);
-  const sql = postgres(url, { max: 1 });
+  const sql = postgres(url, connectionOptions);
   await sql`create extension if not exists pg_trgm`;
   await sql.end();
 }

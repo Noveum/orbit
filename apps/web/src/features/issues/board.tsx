@@ -178,7 +178,23 @@ export function Board({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
-  const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
+  const [columnRows, setColumnRows] = useState<ReadonlyMap<string, readonly Issue[]>>(new Map());
+  const publishRows = useCallback((groupId: string, rows: readonly Issue[]) => {
+    setColumnRows((current) =>
+      current.get(groupId) === rows ? current : new Map(current).set(groupId, rows),
+    );
+  }, []);
+
+  const loadedGroups = useMemo(
+    () =>
+      groups.map((group) => {
+        const rows = columnRows.get(group.id);
+        return rows === undefined || rows === group.issues ? group : { ...group, issues: rows };
+      }),
+    [groups, columnRows],
+  );
+
+  const issues = useMemo(() => loadedGroups.flatMap((group) => [...group.issues]), [loadedGroups]);
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
     [projects],
@@ -212,7 +228,12 @@ export function Board({
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
     if (event.over === null) return;
-    const placement = planDrop(groups, issues, String(event.active.id), String(event.over.id));
+    const placement = planDrop(
+      loadedGroups,
+      issues,
+      String(event.active.id),
+      String(event.over.id),
+    );
     if (placement !== null) move.mutate(placement);
   };
 
@@ -231,6 +252,7 @@ export function Board({
           columnSource={columnSource}
           onCreate={() => openQuickCreate()}
           onOpen={setPeekId}
+          onRows={publishRows}
         />
       ))}
     </div>
@@ -287,6 +309,7 @@ interface BoardColumnProps {
   readonly columnSource: BoardColumnSource | undefined;
   readonly onCreate: () => void;
   readonly onOpen: (id: string) => void;
+  readonly onRows: (groupId: string, issues: readonly Issue[]) => void;
 }
 
 function BoardColumn({
@@ -300,6 +323,7 @@ function BoardColumn({
   columnSource,
   onCreate,
   onOpen,
+  onRows,
 }: BoardColumnProps) {
   const owned = useColumnIssues(
     columnSource?.teamId ?? null,
@@ -309,6 +333,10 @@ function BoardColumn({
   );
   const ownsData = columnSource !== undefined;
   const issues = ownsData ? (owned.data ?? group.issues) : group.issues;
+
+  useEffect(() => {
+    onRows(group.id, issues);
+  }, [onRows, group.id, issues]);
   const columnHasMore = ownsData ? owned.hasNextPage : hasMore;
   const columnLoadingMore = ownsData ? owned.isFetchingNextPage : loadingMore;
   const loadMore = ownsData

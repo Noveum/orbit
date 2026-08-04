@@ -1,5 +1,5 @@
-import { and, db, eq, gt, schema } from '@orbit/db';
-import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import { and, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
+import { isRestricted, ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { authMessageSchema } from '@orbit/shared/events';
 import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
 import { z } from 'zod';
@@ -183,11 +183,42 @@ async function projectScopeAllowed(projectId: string, principal: ConnectionPrinc
 
 async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
   const rows = await db
-    .select({ organizationId: schema.doc.organizationId })
+    .select({
+      organizationId: schema.doc.organizationId,
+      visibility: schema.doc.visibility,
+      authorId: schema.doc.authorId,
+    })
     .from(schema.doc)
     .where(eq(schema.doc.id, docId))
     .limit(1);
-  return rows[0]?.organizationId === principal.organizationId;
+  const doc = rows[0];
+  if (doc === undefined || doc.organizationId !== principal.organizationId) return false;
+  if (principal.role === 'admin') return true;
+  if (doc.authorId === principal.userId) return true;
+  if (!isRestricted(doc.visibility)) return true;
+
+  const grants = await db
+    .select({ docId: schema.docAccess.docId })
+    .from(schema.docAccess)
+    .where(
+      and(
+        eq(schema.docAccess.docId, docId),
+        or(
+          and(
+            eq(schema.docAccess.subjectType, 'user'),
+            eq(schema.docAccess.subjectId, principal.userId),
+          ),
+          principal.teamIds.length === 0
+            ? sql`false`
+            : and(
+                eq(schema.docAccess.subjectType, 'team'),
+                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+              ),
+        ),
+      ),
+    )
+    .limit(1);
+  return grants.length > 0;
 }
 
 export async function authorizeScope(

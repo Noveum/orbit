@@ -217,7 +217,7 @@ async function writeGrantedDocIds(
   return rows.length > 0;
 }
 
-async function assertDocWritable(
+export async function assertDocWritable(
   executor: Executor,
   principal: Principal,
   doc: DocRow,
@@ -229,7 +229,11 @@ async function assertDocWritable(
   throw forbidden('You only have read access to that doc.');
 }
 
-async function loadDoc(executor: Executor, principal: Principal, docId: string): Promise<DocRow> {
+export async function loadReadableDoc(
+  executor: Executor,
+  principal: Principal,
+  docId: string,
+): Promise<DocRow> {
   const [row] = await executor
     .select()
     .from(schema.doc)
@@ -376,7 +380,11 @@ async function attachmentsFor(docId: string): Promise<AttachmentRow[]> {
     .orderBy(asc(schema.attachment.createdAt));
 }
 
-export async function listDocBacklinks(doc: DocRow): Promise<DocBacklink[]> {
+export async function listDocBacklinks(
+  doc: DocRow,
+  principal: Principal | null,
+): Promise<DocBacklink[]> {
+  if (principal === null) return [];
   return await db
     .select({ id: schema.doc.id, title: schema.doc.title })
     .from(schema.doc)
@@ -386,13 +394,14 @@ export async function listDocBacklinks(doc: DocRow): Promise<DocBacklink[]> {
         isNull(schema.doc.archivedAt),
         ne(schema.doc.id, doc.id),
         ilike(schema.doc.content, `%/docs/${doc.id}%`),
+        docReadFilter(principal),
       ),
     )
     .orderBy(asc(schema.doc.title))
     .limit(DOC_BACKLINK_LIMIT);
 }
 
-async function detailFor(doc: DocRow): Promise<DocDetail> {
+async function detailFor(doc: DocRow, principal: Principal | null): Promise<DocDetail> {
   const [author] = await db
     .select({ id: schema.user.id, name: schema.user.name, image: schema.user.image })
     .from(schema.user)
@@ -408,13 +417,13 @@ async function detailFor(doc: DocRow): Promise<DocDetail> {
     attachments: await attachmentsFor(doc.id),
     author: author ?? { id: doc.authorId, name: 'Someone', image: null },
     followers: followers?.total ?? 0,
-    backlinks: await listDocBacklinks(doc),
+    backlinks: await listDocBacklinks(doc, principal),
   };
 }
 
 export async function getDoc(principal: Principal, docId: string): Promise<DocDetail> {
   assertCan(principal, 'doc:read');
-  return await detailFor(await loadDoc(db, principal, docId));
+  return await detailFor(await loadReadableDoc(db, principal, docId), principal);
 }
 
 export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | null> {
@@ -427,7 +436,7 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
     .limit(1);
   if (doc === undefined) return null;
   if (!isExternallyShared(doc.visibility)) return null;
-  return await detailFor(doc);
+  return await detailFor(doc, null);
 }
 
 export async function listPublicDocs(): Promise<DocRow[]> {
@@ -547,7 +556,7 @@ export async function updateDoc(
   }
 
   return await db.transaction(async (tx) => {
-    const current = await loadDoc(tx, principal, docId);
+    const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
     await assertPlacement(tx, principal, parsed, docId);
@@ -581,7 +590,7 @@ export async function listDocVersions(
   docId: string,
 ): Promise<DocVersionRow[]> {
   assertCan(principal, 'doc:read');
-  await loadDoc(db, principal, docId);
+  await loadReadableDoc(db, principal, docId);
   return await db
     .select()
     .from(schema.docVersion)
@@ -598,7 +607,7 @@ export async function restoreDocVersion(
   assertCan(principal, 'doc:write');
 
   return await db.transaction(async (tx) => {
-    const current = await loadDoc(tx, principal, docId);
+    const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
 
@@ -636,7 +645,7 @@ export async function archiveDoc(
   assertCan(principal, 'doc:write');
 
   return await db.transaction(async (tx) => {
-    await assertDocWritable(tx, principal, await loadDoc(tx, principal, docId));
+    await assertDocWritable(tx, principal, await loadReadableDoc(tx, principal, docId));
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
@@ -663,7 +672,7 @@ export async function shareDoc(
   const { visibility, rotateToken } = docShareSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadDoc(tx, principal, docId);
+    const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
 
@@ -794,7 +803,7 @@ export async function listDocAccess(
   docId: string,
 ): Promise<(typeof schema.docAccess.$inferSelect)[]> {
   assertCan(principal, 'doc:read');
-  await loadDoc(db, principal, docId);
+  await loadReadableDoc(db, principal, docId);
   return await db
     .select()
     .from(schema.docAccess)
@@ -808,7 +817,7 @@ export async function setDocAccess(
   grants: readonly DocAccessGrant[],
 ): Promise<(typeof schema.docAccess.$inferSelect)[]> {
   assertCan(principal, 'doc:write');
-  const doc = await loadDoc(db, principal, docId);
+  const doc = await loadReadableDoc(db, principal, docId);
   if (principal.role !== 'admin' && doc.authorId !== principal.userId) {
     throw notFound('That doc does not exist.');
   }

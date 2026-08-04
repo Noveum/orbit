@@ -13,8 +13,10 @@ import { createMilestone, listMilestones, reorderMilestones } from './milestone-
 import {
   addProjectTeam,
   createProject,
+  getProject,
   listProjects,
   listProjectTeams,
+  listProjectUpdates,
   postProjectUpdate,
   projectProgress,
   removeProjectTeam,
@@ -238,5 +240,46 @@ describe('project scope maths', () => {
     await expect(projectProgress(outsider, project.id)).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+describe('a project stays inside the teams it belongs to', () => {
+  it('hides another team’s project from a member, and from every entry point', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Rebrand',
+      teamIds: [other.team.id],
+    });
+    const { principal: engineer } = await addMember(workspace, 'member');
+
+    expect((await listProjects(engineer)).map((row) => row.id)).not.toContain(project.id);
+    await expect(getProject(engineer, project.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(listProjectUpdates(engineer, project.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('still shows a project that belongs to no team in particular', async () => {
+    const { project } = await createProject(workspace.admin, { name: 'Company wiki' });
+    const { principal: engineer } = await addMember(workspace, 'member');
+    expect((await listProjects(engineer)).map((row) => row.id)).toContain(project.id);
+  });
+
+  it('refuses a status update written by somebody outside the project teams', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Rebrand',
+      teamIds: [other.team.id],
+    });
+    const { principal: lead } = await addMember(workspace, 'admin');
+    const { principal: engineer } = await addMember(workspace, 'member');
+
+    await expect(
+      postProjectUpdate(engineer, project.id, { health: 'on_track', body: 'All good.' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(
+      (await postProjectUpdate(lead, project.id, { health: 'on_track', body: 'All good.' })).update
+        .body,
+    ).toBe('All good.');
   });
 });

@@ -7,7 +7,7 @@ import {
   listDocComments,
   updateDocComment,
 } from './doc-comment-service.ts';
-import { createDoc } from './doc-service.ts';
+import { createDoc, setDocAccess } from './doc-service.ts';
 
 let workspace: Workspace;
 let docId: string;
@@ -132,5 +132,57 @@ describe('doc comment policy', () => {
     const actions = await deleteDocComment(workspace.admin, comment.id);
     expect(actions[0]?.action).toBe('delete');
     expect(actions[0]?.model).toBe('doc_comment');
+  });
+});
+
+describe('a private doc keeps its conversation private', () => {
+  it('hides the thread from somebody the doc was never shared with', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Compensation review',
+      content: 'Bob gets a raise.',
+      visibility: 'private',
+    });
+    await createDocComment(workspace.admin, doc.id, { body: 'Approved by finance.' });
+    const { principal: outsider } = await addMember(workspace, 'member');
+
+    await expect(listDocComments(outsider, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      createDocComment(outsider, doc.id, { body: 'Who else is on this list?' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('lets somebody the doc was shared with join the thread', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Compensation review',
+      content: 'Bob gets a raise.',
+      visibility: 'private',
+    });
+    const { principal: invited, user } = await addMember(workspace, 'member');
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'user', subjectId: user.id, level: 'read' },
+    ]);
+
+    const { comment } = await createDocComment(invited, doc.id, { body: 'Looks right to me.' });
+    expect(comment.body).toBe('Looks right to me.');
+    expect(await listDocComments(invited, doc.id)).toMatchObject({
+      comments: [{ id: comment.id }],
+    });
+  });
+
+  it('never announces a private doc comment on the workspace channel', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Compensation review',
+      content: 'Bob gets a raise.',
+      visibility: 'private',
+    });
+    const { actions } = await createDocComment(workspace.admin, doc.id, { body: 'Approved.' });
+
+    expect(actions[0]?.scopes).toContain(scopes.doc(doc.id));
+    expect(actions[0]?.scopes).not.toContain(scopes.organization(workspace.organizationId));
+  });
+
+  it('still announces a workspace doc comment to the workspace', async () => {
+    const { actions } = await createDocComment(workspace.admin, docId, { body: 'Ship it.' });
+    expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
   });
 });

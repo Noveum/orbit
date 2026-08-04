@@ -34,7 +34,9 @@ import {
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
+  awaitsServerRefresh,
   belongsInList,
+  flattenIssuePages,
   searchOf,
 } from '@/lib/query/sync.ts';
 import { useCurrentUserId } from './session.tsx';
@@ -86,8 +88,12 @@ function patchIssueCaches(client: QueryClient, action: SyncAction): void {
     if (belongs === null) continue;
     const current = query.state.data as IssuePages | undefined;
     if (current === undefined) continue;
-    const next = applyIssueDeltaToPages(current, action, belongs);
+    const search = searchOf(query.queryKey);
+    const next = applyIssueDeltaToPages(current, action, belongs, search);
     if (next !== current) client.setQueryData(query.queryKey, next);
+    if (awaitsServerRefresh(flattenIssuePages(current), action, belongs, search)) {
+      client.invalidateQueries({ queryKey: query.queryKey }).catch(() => undefined);
+    }
   }
 
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {

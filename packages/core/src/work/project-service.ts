@@ -10,6 +10,7 @@ import {
   projectUpdatePostSchema,
   projectUpdateSchema,
 } from '@orbit/shared/validators';
+import type { SQL } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -72,6 +73,26 @@ async function assertProjectInOrganization(
     .where(and(eq(schema.project.id, projectId), eq(schema.project.organizationId, organizationId)))
     .limit(1);
   requireRow(row, 'That project does not exist.');
+}
+
+export function visibleProjectFilter(principal: Principal): SQL {
+  if (principal.role === 'admin') return sql`true`;
+  const owned = db
+    .select({ projectId: schema.projectTeam.projectId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, schema.project.id));
+  const mine = db
+    .select({ projectId: schema.projectTeam.projectId })
+    .from(schema.projectTeam)
+    .where(
+      and(
+        eq(schema.projectTeam.projectId, schema.project.id),
+        principal.teamIds.length === 0
+          ? sql`false`
+          : inArray(schema.projectTeam.teamId, [...principal.teamIds]),
+      ),
+    );
+  return sql`(not exists ${owned} or exists ${mine})`;
 }
 
 export async function assertProjectVisible(
@@ -182,6 +203,7 @@ export async function updateProject(
   const parsed = projectUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await assertProjectVisible(tx, principal, projectId);
     const values = projectUpdateValues(parsed);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -226,6 +248,7 @@ export async function archiveProject(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
+    await assertProjectVisible(tx, principal, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
@@ -264,6 +287,7 @@ export async function deleteProject(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
+    await assertProjectVisible(tx, principal, projectId);
     const [existing] = await tx
       .select()
       .from(schema.project)
@@ -299,7 +323,10 @@ export async function listProjects(
   options: { includeArchived?: boolean } = {},
 ): Promise<ProjectRow[]> {
   assertCan(principal, 'project:read');
-  const filters = [eq(schema.project.organizationId, principal.organizationId)];
+  const filters = [
+    eq(schema.project.organizationId, principal.organizationId),
+    visibleProjectFilter(principal),
+  ];
   if (options.includeArchived !== true) filters.push(isNull(schema.project.archivedAt));
   return await db
     .select()
@@ -317,6 +344,7 @@ export async function getProject(principal: Principal, projectId: string): Promi
       and(
         eq(schema.project.id, projectId),
         eq(schema.project.organizationId, principal.organizationId),
+        visibleProjectFilter(principal),
       ),
     )
     .limit(1);
@@ -331,7 +359,7 @@ export async function addProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
-    await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    await assertProjectVisible(tx, principal, projectId);
     await assertTeamsInOrganization(tx, principal.organizationId, [teamId]);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -362,7 +390,7 @@ export async function removeProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
-    await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    await assertProjectVisible(tx, principal, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     await tx
@@ -390,7 +418,7 @@ export async function listProjectTeams(
   projectId: string,
 ): Promise<{ teamId: string }[]> {
   assertCan(principal, 'project:read');
-  await assertProjectInOrganization(db, principal.organizationId, projectId);
+  await assertProjectVisible(db, principal, projectId);
   return await db
     .select({ teamId: schema.projectTeam.teamId })
     .from(schema.projectTeam)
@@ -406,7 +434,7 @@ export async function postProjectUpdate(
   const parsed = projectUpdatePostSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    await assertProjectVisible(tx, principal, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [created] = await tx
@@ -460,7 +488,7 @@ export async function listProjectUpdates(
   limit = 20,
 ): Promise<ProjectUpdateRow[]> {
   assertCan(principal, 'project:read');
-  await assertProjectInOrganization(db, principal.organizationId, projectId);
+  await assertProjectVisible(db, principal, projectId);
   return await db
     .select()
     .from(schema.projectUpdate)

@@ -41,7 +41,13 @@ import {
   issueSummarySchema,
 } from './schemas.ts';
 import type { IssuePages } from './sync.ts';
-import { belongsInList, flattenIssuePages, mapIssuePages, searchOf, sortIssues } from './sync.ts';
+import {
+  belongsInList,
+  flattenIssuePages,
+  mapIssuePages,
+  searchOf,
+  sortForSearch,
+} from './sync.ts';
 
 export type { IssueQuery };
 export {
@@ -234,7 +240,7 @@ function reconcile(
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
   }
-  if (index === -1) return admit ? sortIssues([...issues, next]) : issues;
+  if (index === -1) return admit ? sortForSearch(search, [...issues, next]) : issues;
   const copy = [...issues];
   copy[index] = next;
   return copy;
@@ -270,7 +276,7 @@ function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
     let next = issues;
     for (const issue of moved) next = reconcile(search, next, issue, false);
-    return sortIssues(next);
+    return sortForSearch(search, next);
   });
 }
 
@@ -284,12 +290,10 @@ function refreshCounts(client: QueryClient): void {
   client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
 }
 
-function patchTeamIssueLists(
-  client: QueryClient,
-  teamId: string,
-  update: (issues: readonly Issue[]) => readonly Issue[],
-): void {
-  eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues) => update(issues));
+function resortTeamIssueLists(client: QueryClient, teamId: string): void {
+  eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
+    sortForSearch(search, issues),
+  );
 }
 
 export function useUpdateIssue(_teamId: string) {
@@ -386,7 +390,7 @@ export function useMoveIssue(teamId: string) {
       placeIssues(client, moved);
     },
     onSettled: () => {
-      patchTeamIssueLists(client, teamId, sortIssues);
+      resortTeamIssueLists(client, teamId);
       refreshCounts(client);
     },
   });

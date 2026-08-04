@@ -484,6 +484,20 @@ async function assertMilestoneInTeam(
   }
 }
 
+async function projectFitsTeam(
+  executor: Executor,
+  teamId: string,
+  projectId: string | null,
+): Promise<boolean> {
+  if (projectId === null) return false;
+  const rows = await executor
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  if (rows.length === 0) return true;
+  return rows.some((row) => row.teamId === teamId);
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
@@ -808,6 +822,11 @@ export async function moveIssue(
       values.teamId = teamId;
       values.number = number;
       values.identifier = issueIdentifier(team.key, number);
+      values.cycleId = null;
+      if (!(await projectFitsTeam(tx, teamId, current.projectId))) {
+        values.projectId = null;
+        values.milestoneId = null;
+      }
     }
     if (state.id !== current.stateId) {
       values.stateId = state.id;

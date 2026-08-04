@@ -118,6 +118,19 @@ async function teamMemberIds(executor: Executor, teamId: string): Promise<Set<st
   return new Set(rows.map((row) => row.userId));
 }
 
+async function assertOnTeam(
+  executor: Executor,
+  teamId: string,
+  userIds: readonly (string | null | undefined)[],
+): Promise<void> {
+  const wanted = userIds.filter((userId): userId is string => typeof userId === 'string');
+  if (wanted.length === 0) return;
+  const members = await teamMemberIds(executor, teamId);
+  if (wanted.some((userId) => !members.has(userId))) {
+    throw conflict('Everyone in a standup has to be on the team.');
+  }
+}
+
 async function rosterFor(
   executor: Executor,
   teamId: string,
@@ -200,6 +213,7 @@ export async function openStandup(
     }
 
     const roster = await rosterFor(tx, parsed.teamId, parsed.participantIds);
+    await assertOnTeam(tx, parsed.teamId, [parsed.facilitatorId]);
     const facilitator =
       parsed.facilitatorId === undefined
         ? await nextFacilitator(tx, parsed.teamId, roster)
@@ -319,15 +333,15 @@ export async function updateStandup(
 
   const values: Partial<typeof schema.standup.$inferInsert> = {};
   if (parsed.facilitatorId !== undefined) values.facilitatorId = parsed.facilitatorId;
-  if (parsed.status !== undefined) {
-    values.status = parsed.status;
-    if (parsed.status === 'running' && current.startedAt === null) values.startedAt = new Date();
-  }
+  if (parsed.status !== undefined) values.status = parsed.status;
 
   return await db.transaction(async (tx) => {
+    const locked = await lockStandup(tx, principal, standupId);
+    await assertOnTeam(tx, locked.teamId, [parsed.facilitatorId]);
+    if (parsed.status === 'running' && locked.startedAt === null) values.startedAt = new Date();
     if (parsed.status === 'finished') {
       const now = new Date();
-      await closeSpeakingTurn(tx, await turnsOf(tx, standupId), current.currentTurnId, now);
+      await closeSpeakingTurn(tx, await turnsOf(tx, standupId), locked.currentTurnId, now);
       values.endedAt = now;
       values.currentTurnId = null;
     }
@@ -345,20 +359,48 @@ export async function startStandup(
   if (current.status === 'finished') throw conflict('That standup has already finished.');
 
   return await db.transaction(async (tx) => {
+    const locked = await lockStandup(tx, principal, standupId);
+    if (locked.status === 'finished') throw conflict('That standup has already finished.');
+    const now = new Date();
     const turns = await turnsOf(tx, standupId);
     const first = turns.find((turn) => turn.attendance !== 'absent') ?? turns[0];
-    if (first !== undefined) {
-      await tx
-        .update(schema.standupTurn)
-        .set({ status: 'speaking', updatedAt: new Date() })
-        .where(eq(schema.standupTurn.id, first.id));
-    }
+    if (first !== undefined) await activateTurn(tx, first, now);
     return await saveStandup(tx, principal, standupId, {
       status: 'running',
-      startedAt: current.startedAt ?? new Date(),
-      currentTurnId: first?.id ?? null,
+      startedAt: locked.startedAt ?? now,
+      currentTurnId: locked.currentTurnId ?? first?.id ?? null,
     });
   });
+}
+
+async function lockStandup(tx: Executor, principal: Principal, id: string) {
+  const [row] = await tx
+    .select()
+    .from(schema.standup)
+    .where(
+      and(eq(schema.standup.id, id), eq(schema.standup.organizationId, principal.organizationId)),
+    )
+    .limit(1)
+    .for('update');
+  return requireRow(row, 'That standup does not exist.');
+}
+
+function accumulatedSeconds(turn: StandupTurnRow, now: Date): number | null {
+  if (turn.spokeAt === null) return turn.durationSeconds;
+  const elapsed = Math.max(0, Math.round((now.getTime() - turn.spokeAt.getTime()) / 1000));
+  return (turn.durationSeconds ?? 0) + elapsed;
+}
+
+async function activateTurn(tx: Executor, turn: StandupTurnRow, now: Date): Promise<void> {
+  const alreadySpeaking = turn.status === 'speaking' && turn.spokeAt !== null;
+  await tx
+    .update(schema.standupTurn)
+    .set({
+      status: 'speaking',
+      spokeAt: alreadySpeaking ? turn.spokeAt : now,
+      updatedAt: now,
+    })
+    .where(eq(schema.standupTurn.id, turn.id));
 }
 
 async function closeSpeakingTurn(
@@ -370,15 +412,11 @@ async function closeSpeakingTurn(
   if (currentTurnId === null) return;
   const speaking = turns.find((turn) => turn.id === currentTurnId);
   if (speaking === undefined || speaking.status !== 'speaking') return;
-  const seconds =
-    speaking.spokeAt === null
-      ? null
-      : Math.max(0, Math.round((now.getTime() - speaking.spokeAt.getTime()) / 1000));
   await tx
     .update(schema.standupTurn)
     .set({
       status: 'done',
-      durationSeconds: seconds,
+      durationSeconds: accumulatedSeconds(speaking, now),
       attendance: speaking.attendance === 'unknown' ? 'present' : speaking.attendance,
       updatedAt: now,
     })
@@ -412,20 +450,16 @@ export async function advanceStandup(
   await requireTeam(principal, current.teamId);
 
   return await db.transaction(async (tx) => {
+    const locked = await lockStandup(tx, principal, standupId);
     const turns = await turnsOf(tx, standupId);
     const now = new Date();
 
-    if (parsed.markDone) await closeSpeakingTurn(tx, turns, current.currentTurnId, now);
+    if (parsed.markDone) await closeSpeakingTurn(tx, turns, locked.currentTurnId, now);
 
-    const index = nextTurnIndex(turns, current.currentTurnId, parsed.direction);
+    const index = nextTurnIndex(turns, locked.currentTurnId, parsed.direction);
     const target = index === -1 ? undefined : turns[index];
 
-    if (target !== undefined) {
-      await tx
-        .update(schema.standupTurn)
-        .set({ status: 'speaking', spokeAt: now, updatedAt: now })
-        .where(eq(schema.standupTurn.id, target.id));
-    }
+    if (target !== undefined) await activateTurn(tx, target, now);
 
     const ending = target === undefined && parsed.direction === 'next';
     return await saveStandup(tx, principal, standupId, {
@@ -482,6 +516,7 @@ export async function updateTurn(
   await requireTeam(principal, current.teamId);
 
   return await db.transaction(async (tx) => {
+    const locked = await lockStandup(tx, principal, standupId);
     const values: Partial<typeof schema.standupTurn.$inferInsert> = { updatedAt: new Date() };
     if (parsed.attendance !== undefined) values.attendance = parsed.attendance;
     if (parsed.status !== undefined) values.status = parsed.status;
@@ -495,7 +530,7 @@ export async function updateTurn(
       .returning({ id: schema.standupTurn.id });
     requireRow(updated, 'That turn does not belong to this standup.');
 
-    if (parsed.attendance !== 'absent' || current.currentTurnId !== turnId) {
+    if (parsed.attendance !== 'absent' || locked.currentTurnId !== turnId) {
       return await saveStandup(tx, principal, standupId, {});
     }
 
@@ -507,12 +542,7 @@ export async function updateTurn(
       .update(schema.standupTurn)
       .set({ status: 'skipped', updatedAt: now })
       .where(eq(schema.standupTurn.id, turnId));
-    if (target !== undefined) {
-      await tx
-        .update(schema.standupTurn)
-        .set({ status: 'speaking', spokeAt: now, updatedAt: now })
-        .where(eq(schema.standupTurn.id, target.id));
-    }
+    if (target !== undefined) await activateTurn(tx, target, now);
     return await saveStandup(tx, principal, standupId, {
       currentTurnId: target?.id ?? null,
       ...(target === undefined ? { status: 'finished', endedAt: now } : {}),
@@ -620,6 +650,11 @@ export async function setRotation(
   await requireTeam(principal, parsed.teamId);
 
   return await db.transaction(async (tx) => {
+    await assertOnTeam(
+      tx,
+      parsed.teamId,
+      parsed.members.map((member) => member.userId),
+    );
     await tx.delete(schema.standupRotation).where(eq(schema.standupRotation.teamId, parsed.teamId));
     if (parsed.members.length === 0) return [];
     const syncId = await nextSyncId(tx);

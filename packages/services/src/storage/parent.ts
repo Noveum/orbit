@@ -2,6 +2,7 @@ import { and, type Database, eq, inArray, or, schema, sql, type Transaction } fr
 import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import { assertCan, isInTeam, type Principal } from '@orbit/shared/policy';
+import type { SQL } from 'drizzle-orm';
 
 export type StorageExecutor = Database | Transaction;
 
@@ -31,11 +32,31 @@ async function docFor(
   return row;
 }
 
-async function docReadableBy(
+interface DocAccessRow {
+  readonly id: string;
+  readonly visibility: string;
+  readonly authorId: string;
+  readonly archivedAt: Date | null;
+}
+
+function subjectMatches(principal: Principal): SQL | undefined {
+  return or(
+    and(eq(schema.docAccess.subjectType, 'user'), eq(schema.docAccess.subjectId, principal.userId)),
+    principal.teamIds.length === 0
+      ? sql`false`
+      : and(
+          eq(schema.docAccess.subjectType, 'team'),
+          inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+        ),
+  );
+}
+
+async function docAllowing(
   executor: StorageExecutor,
   principal: Principal,
   docId: string,
-): Promise<{ readonly id: string } | undefined> {
+  level: 'read' | 'write',
+): Promise<DocAccessRow | undefined> {
   const [row] = await executor
     .select({
       id: schema.doc.id,
@@ -57,22 +78,28 @@ async function docReadableBy(
     .where(
       and(
         eq(schema.docAccess.docId, docId),
-        or(
-          and(
-            eq(schema.docAccess.subjectType, 'user'),
-            eq(schema.docAccess.subjectId, principal.userId),
-          ),
-          principal.teamIds.length === 0
-            ? sql`false`
-            : and(
-                eq(schema.docAccess.subjectType, 'team'),
-                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-              ),
-        ),
+        level === 'write' ? eq(schema.docAccess.level, 'write') : undefined,
+        subjectMatches(principal),
       ),
     )
     .limit(1);
   return grants.length > 0 ? row : undefined;
+}
+
+async function docReadableBy(
+  executor: StorageExecutor,
+  principal: Principal,
+  docId: string,
+): Promise<DocAccessRow | undefined> {
+  return await docAllowing(executor, principal, docId, 'read');
+}
+
+async function docWritableBy(
+  executor: StorageExecutor,
+  principal: Principal,
+  docId: string,
+): Promise<DocAccessRow | undefined> {
+  return await docAllowing(executor, principal, docId, 'write');
 }
 
 async function teamsOwning(
@@ -134,7 +161,7 @@ export async function assertUploadParent(
   assertCan(principal, 'attachment:upload');
 
   if (parentType === 'doc') {
-    const row = await docFor(executor, principal.organizationId, parentId);
+    const row = await docWritableBy(executor, principal, parentId);
     if (row === undefined || row.archivedAt !== null) {
       throw notFound('That doc does not exist.');
     }

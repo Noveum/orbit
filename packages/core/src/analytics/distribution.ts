@@ -86,8 +86,18 @@ function joinClause(dimensions: readonly (ChartDimension | undefined)[]): SQL {
   return fragments.length === 0 ? sql`` : sql.join(fragments, sql` `);
 }
 
+function visibleTeamsClause(principal: Principal): SQL {
+  if (principal.role === 'admin') return sql``;
+  if (principal.teamIds.length === 0) return sql` and false`;
+  const ids = sql.join(
+    principal.teamIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  return sql` and i.team_id in (${ids})`;
+}
+
 function scopeClause(principal: Principal, scope: AnalyticsScope): SQL {
-  const base = sql`i.organization_id = ${principal.organizationId} and i.archived_at is null`;
+  const base = sql`i.organization_id = ${principal.organizationId} and i.archived_at is null${visibleTeamsClause(principal)}`;
   switch (scope.type) {
     case 'team':
       return sql`${base} and i.team_id = ${scope.id}`;

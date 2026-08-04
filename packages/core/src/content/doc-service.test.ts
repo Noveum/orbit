@@ -561,3 +561,42 @@ describe('a read grant does not become a write grant', () => {
     expect(saved.doc.title).toBe('Handbook v2');
   });
 });
+
+describe('backlinks respect who may read the linking doc', () => {
+  it('hides a private doc that links to one you can read', async () => {
+    const { doc: target } = await createDoc(workspace.admin, {
+      title: 'Deploy runbook',
+      content: 'How we ship.',
+      visibility: 'workspace',
+    });
+    await createDoc(workspace.admin, {
+      title: 'Layoff plan',
+      content: `See /docs/${target.id} before the announcement.`,
+      visibility: 'private',
+    });
+    const { principal: member } = await addMember(workspace, 'member');
+
+    const seen = await getDoc(member, target.id);
+    expect(seen.backlinks.map((link) => link.title)).not.toContain('Layoff plan');
+
+    const asAdmin = await getDoc(workspace.admin, target.id);
+    expect(asAdmin.backlinks.map((link) => link.title)).toContain('Layoff plan');
+  });
+
+  it('still shows a workspace doc that links to it', async () => {
+    const { doc: target } = await createDoc(workspace.admin, {
+      title: 'Deploy runbook',
+      content: 'How we ship.',
+      visibility: 'workspace',
+    });
+    await createDoc(workspace.admin, {
+      title: 'Onboarding',
+      content: `Read /docs/${target.id} on day one.`,
+      visibility: 'workspace',
+    });
+    const { principal: member } = await addMember(workspace, 'member');
+
+    const seen = await getDoc(member, target.id);
+    expect(seen.backlinks.map((link) => link.title)).toContain('Onboarding');
+  });
+});

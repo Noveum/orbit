@@ -10,6 +10,7 @@ import {
   stateNamed,
   type Workspace,
 } from '../test-support.ts';
+import { createCycle } from './cycle-service.ts';
 import {
   archiveIssue,
   bulkUpdateIssues,
@@ -29,6 +30,7 @@ import {
   unsubscribe,
   updateIssue,
 } from './issue-service.ts';
+import { createProject } from './project-service.ts';
 
 let workspace: Workspace;
 
@@ -295,6 +297,56 @@ describe('moveIssue', () => {
     expect(moved.issue.identifier).toBe('DSGN-1');
     expect(moved.issue.number).toBe(1);
     expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
+  });
+
+  it('drops the sprint and project links that belong to the team it left', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-01-01').toISOString(),
+      endsAt: new Date('2030-01-15').toISOString(),
+    });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Engineering only',
+      teamIds: [workspace.teamId],
+    });
+    const issue = await newIssue('Transferred', { cycleId: cycle.id, projectId: project.id });
+    expect(issue.cycleId).toBe(cycle.id);
+    expect(issue.projectId).toBe(project.id);
+
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const target = states.find((state) => state.category === 'unstarted');
+    if (target === undefined) throw new Error('missing target state');
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      teamId: team.id,
+      stateId: target.id,
+      beforeId: null,
+      afterId: null,
+    });
+
+    expect(moved.issue.teamId).toBe(team.id);
+    expect(moved.issue.cycleId).toBeNull();
+    expect(moved.issue.projectId).toBeNull();
+    expect(moved.issue.milestoneId).toBeNull();
+  });
+
+  it('keeps a project that spans the destination team', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const target = states.find((state) => state.category === 'unstarted');
+    if (target === undefined) throw new Error('missing target state');
+    const { project } = await createProject(workspace.admin, {
+      name: 'Cross team',
+      teamIds: [workspace.teamId, team.id],
+    });
+    const issue = await newIssue('Shared work', { projectId: project.id });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      teamId: team.id,
+      stateId: target.id,
+      beforeId: null,
+      afterId: null,
+    });
+    expect(moved.issue.projectId).toBe(project.id);
   });
 
   it('applies state timestamps when moving across columns', async () => {

@@ -1,4 +1,5 @@
 import type { SyncAction } from '@orbit/shared/events';
+import type { IssueOrdering } from '@orbit/shared/filters';
 import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
 import type { Comment, DocComment, Issue, IssuePage, Reaction } from './schemas.ts';
@@ -75,10 +76,29 @@ export function searchOf(key: readonly unknown[]): string {
   return typeof last === 'string' ? last : '';
 }
 
+export function admitsNewRows(search: string): boolean {
+  return (new URLSearchParams(search).get('filter') ?? '') === '';
+}
+
+export function awaitsServerRefresh(
+  issues: readonly Issue[],
+  action: SyncAction,
+  belongs: IssueBelongs,
+  search: string,
+): boolean {
+  if (action.action === 'delete' || action.action === 'archive') return false;
+  if (admitsNewRows(search)) return false;
+  const full = issueSchema.safeParse(action.data);
+  if (!full.success || full.data.archivedAt !== null) return false;
+  if (!belongs(full.data)) return false;
+  return !issues.some((issue) => issue.id === full.data.id);
+}
+
 export function applyIssueDelta(
   issues: readonly Issue[],
   action: SyncAction,
   belongs: IssueBelongs,
+  search = '',
 ): readonly Issue[] {
   const parsed = partialIssueSchema.safeParse(action.data);
   if (!parsed.success) return issues;
@@ -94,7 +114,8 @@ export function applyIssueDelta(
     if (!full.success) return issues;
     if (!belongs(full.data)) return issues;
     if (full.data.archivedAt !== null) return issues;
-    return [...issues, full.data];
+    if (!admitsNewRows(search)) return issues;
+    return sortForSearch(search, [...issues, full.data]);
   }
 
   const existing = issues[index];
@@ -143,9 +164,10 @@ export function applyIssueDeltaToPages(
   data: IssuePages | undefined,
   action: SyncAction,
   belongs: IssueBelongs,
+  search = '',
 ): IssuePages | undefined {
   if (data === undefined) return data;
-  return mapIssuePages(data, (issues) => applyIssueDelta(issues, action, belongs));
+  return mapIssuePages(data, (issues) => applyIssueDelta(issues, action, belongs, search));
 }
 
 export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?: string }>(
@@ -270,5 +292,38 @@ export function sortIssues(issues: readonly Issue[]): Issue[] {
   return [...issues].sort((left, right) => {
     if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
     return left.identifier.localeCompare(right.identifier);
+  });
+}
+
+const ORDER_READERS: Record<
+  IssueOrdering,
+  { readonly descending: boolean; readonly read: (issue: Issue) => string | number }
+> = {
+  manual: { descending: false, read: (issue) => issue.sortOrder },
+  priority: { descending: false, read: (issue) => (issue.priority === 0 ? 5 : issue.priority) },
+  created: { descending: true, read: (issue) => issue.createdAt },
+  updated: { descending: true, read: (issue) => issue.updatedAt },
+  due: { descending: false, read: (issue) => issue.dueDate ?? '9999-12-31' },
+  estimate: { descending: false, read: (issue) => issue.estimate ?? 9999 },
+  title: { descending: false, read: (issue) => issue.title.toLowerCase() },
+};
+
+function compareValues(left: string | number, right: string | number): number {
+  if (typeof left === 'number' && typeof right === 'number') return left - right;
+  return String(left).localeCompare(String(right));
+}
+
+export function orderingOf(search: string): IssueOrdering {
+  const requested = new URLSearchParams(search).get('orderBy');
+  return requested !== null && requested in ORDER_READERS ? (requested as IssueOrdering) : 'manual';
+}
+
+export function sortForSearch(search: string, issues: readonly Issue[]): Issue[] {
+  const ordering = ORDER_READERS[orderingOf(search)];
+  const sign = ordering.descending ? -1 : 1;
+  return [...issues].sort((left, right) => {
+    const primary = compareValues(ordering.read(left), ordering.read(right));
+    if (primary !== 0) return primary * sign;
+    return left.id.localeCompare(right.id) * sign;
   });
 }

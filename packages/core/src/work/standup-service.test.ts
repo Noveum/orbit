@@ -323,3 +323,117 @@ describe('defects the review found', () => {
     expect(ids.size).toBe(1);
   });
 });
+
+describe('the clock the room keeps', () => {
+  it('records the first speaker, whose turn start was never stamped before', async () => {
+    await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    const started = await startStandup(workspace.admin, detail.standup.id);
+    const first = started.detail.turns.find(
+      (turn) => turn.id === started.detail.standup.currentTurnId,
+    );
+    expect(first?.spokeAt).not.toBeNull();
+
+    const advanced = await advanceStandup(workspace.admin, detail.standup.id, {
+      direction: 'next',
+      markDone: true,
+    });
+    const closed = advanced.detail.turns.find((turn) => turn.id === first?.id);
+    expect(closed?.status).toBe('done');
+    expect(closed?.durationSeconds).not.toBeNull();
+  });
+
+  it('keeps the time a speaker already spent when the room comes back to them', async () => {
+    await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    await startStandup(workspace.admin, detail.standup.id);
+    const firstId = detail.turns[0]?.id;
+
+    const forward = await advanceStandup(workspace.admin, detail.standup.id, {
+      direction: 'next',
+      markDone: true,
+    });
+    const banked = forward.detail.turns.find((turn) => turn.id === firstId)?.durationSeconds ?? 0;
+
+    await advanceStandup(workspace.admin, detail.standup.id, { direction: 'previous' });
+    const again = await advanceStandup(workspace.admin, detail.standup.id, {
+      direction: 'next',
+      markDone: true,
+    });
+    const total = again.detail.turns.find((turn) => turn.id === firstId)?.durationSeconds ?? 0;
+    expect(total).toBeGreaterThanOrEqual(banked);
+  });
+
+  it('leaves exactly one person speaking when two facilitators advance at once', async () => {
+    await teamOfThree();
+    const { detail } = await openStandup(workspace.admin, { teamId: workspace.teamId });
+    await startStandup(workspace.admin, detail.standup.id);
+
+    await Promise.all([
+      advanceStandup(workspace.admin, detail.standup.id, { direction: 'next', markDone: true }),
+      advanceStandup(workspace.admin, detail.standup.id, { direction: 'next', markDone: true }),
+    ]);
+
+    const room = await findStandup(workspace.admin, workspace.teamId, detail.standup.heldOn);
+    const speaking = room?.turns.filter((turn) => turn.status === 'speaking') ?? [];
+    expect(speaking).toHaveLength(1);
+    expect(speaking[0]?.id).toBe(room?.standup.currentTurnId ?? '');
+    const current = room?.turns.find((turn) => turn.id === room.standup.currentTurnId);
+    expect(current?.position).toBe(2);
+  });
+});
+
+describe('only the team can be in the room', () => {
+  it('refuses a rotation that names somebody from another team', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { user: outsider } = await addMember(workspace, 'member', {
+      teamIds: [otherTeam.team.id],
+    });
+
+    await expect(
+      setRotation(workspace.admin, {
+        teamId: workspace.teamId,
+        members: [{ userId: outsider.id, facilitates: true }],
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('refuses a facilitator from another team, when opening and when reassigning', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { user: outsider } = await addMember(workspace, 'member', {
+      teamIds: [otherTeam.team.id],
+    });
+
+    await expect(
+      openStandup(workspace.admin, {
+        teamId: workspace.teamId,
+        heldOn: '2030-06-01',
+        facilitatorId: outsider.id,
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    const { detail } = await openStandup(workspace.admin, {
+      teamId: workspace.teamId,
+      heldOn: '2030-06-02',
+    });
+    await expect(
+      updateStandup(workspace.admin, detail.standup.id, { facilitatorId: outsider.id }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('still accepts a rotation and a facilitator drawn from the team', async () => {
+    const { second } = await teamOfThree();
+    const rotation = await setRotation(workspace.admin, {
+      teamId: workspace.teamId,
+      members: [{ userId: second.user.id, facilitates: true }],
+    });
+    expect(rotation).toHaveLength(1);
+
+    const { detail } = await openStandup(workspace.admin, {
+      teamId: workspace.teamId,
+      heldOn: '2030-06-03',
+      facilitatorId: second.user.id,
+    });
+    expect(detail.standup.facilitatorId).toBe(second.user.id);
+  });
+});
