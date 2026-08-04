@@ -71,7 +71,11 @@ describe('discovery', () => {
     expect(names).toContain('create_issue');
     expect(names).toContain('search_issues');
     expect(names).toContain('cycle_progress');
-    expect(names).toHaveLength(23);
+    expect(names).toContain('open_standup');
+    expect(names).toContain('run_standup');
+    expect(names).toContain('complete_cycle');
+    expect(names).toContain('create_milestone');
+    expect(names).toHaveLength(39);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeTruthy();
@@ -279,5 +283,106 @@ describe('admin', () => {
     });
     const invitation = invited['invitation'] as { email: string; role: string };
     expect(invitation).toMatchObject({ email: 'newcomer@orbit.test', role: 'member' });
+  });
+});
+
+describe('the scrum ceremony over mcp', () => {
+  it('opens a room, walks it, records a turn, and raises a blocker', async () => {
+    const opened = await admin.result('open_standup', {
+      team: workspace.teamKey,
+      heldOn: '2031-03-04',
+    });
+    const room = opened['standup'] as {
+      id: string;
+      status: string;
+      turns: { id: string; status: string }[];
+    };
+    expect(room.status).toBe('scheduled');
+    expect(room.turns.length).toBeGreaterThan(0);
+
+    const started = await admin.result('run_standup', { standupId: room.id, action: 'start' });
+    const running = started['standup'] as { status: string; currentTurnId: string | null };
+    expect(running.status).toBe('running');
+    expect(running.currentTurnId).not.toBeNull();
+
+    const firstTurn = room.turns[0];
+    if (firstTurn === undefined) throw new Error('expected a seated participant');
+
+    const recorded = await admin.result('record_standup_turn', {
+      standupId: room.id,
+      turnId: firstTurn.id,
+      notes: 'Shipped the board fix.',
+      attendance: 'present',
+    });
+    const withNotes = recorded['standup'] as { turns: { id: string; notes: string }[] };
+    expect(withNotes.turns.find((turn) => turn.id === firstTurn.id)?.notes).toBe(
+      'Shipped the board fix.',
+    );
+
+    const raised = await admin.result('raise_blocker', {
+      standupId: room.id,
+      turnId: firstTurn.id,
+      summary: 'Waiting on staging credentials.',
+    });
+    const blocked = raised['standup'] as { blockers: { id: string; summary: string }[] };
+    expect(blocked.blockers).toHaveLength(1);
+
+    const open = await admin.result('list_blockers', { team: workspace.teamKey });
+    expect((open['blockers'] as unknown[]).length).toBe(1);
+
+    const blocker = blocked.blockers[0];
+    if (blocker === undefined) throw new Error('expected a blocker');
+    await admin.result('resolve_blocker', {
+      standupId: room.id,
+      blockerId: blocker.id,
+      resolved: true,
+    });
+    const cleared = await admin.result('list_blockers', { team: workspace.teamKey });
+    expect((cleared['blockers'] as unknown[]).length).toBe(0);
+  });
+
+  it('reads back the room it opened, and reports nothing for a day with no standup', async () => {
+    await admin.result('open_standup', { team: workspace.teamKey, heldOn: '2031-05-06' });
+    const found = await admin.result('get_standup', {
+      team: workspace.teamKey,
+      heldOn: '2031-05-06',
+    });
+    expect((found['standup'] as { heldOn: string }).heldOn).toBe('2031-05-06');
+
+    const missing = await admin.result('get_standup', {
+      team: workspace.teamKey,
+      heldOn: '2031-05-07',
+    });
+    expect(missing['standup']).toBeNull();
+  });
+
+  it('refuses to seat a facilitator who is not on the team', async () => {
+    const denied = await admin.call('open_standup', {
+      team: workspace.teamKey,
+      heldOn: '2031-07-08',
+      facilitator: 'nobody@orbit.test',
+    });
+    expect(denied.isError).toBe(true);
+  });
+});
+
+describe('sprints over mcp', () => {
+  it('creates a sprint and closes it, rolling the unfinished work forward', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 99',
+      startsAt: '2031-01-05T00:00:00.000Z',
+      endsAt: '2031-01-19T00:00:00.000Z',
+    });
+    const sprint = created['cycle'] as { id: string; name: string; completed: boolean };
+    expect(sprint.name).toBe('Sprint 99');
+    expect(sprint.completed).toBe(false);
+
+    const renamed = await admin.result('update_cycle', { cycleId: sprint.id, name: 'Sprint 99b' });
+    expect((renamed['cycle'] as { name: string }).name).toBe('Sprint 99b');
+
+    const closed = await admin.result('complete_cycle', { cycleId: sprint.id });
+    expect((closed['cycle'] as { completed: boolean }).completed).toBe(true);
+    expect(closed['nextCycle']).toBeTruthy();
   });
 });

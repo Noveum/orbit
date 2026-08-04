@@ -4,10 +4,12 @@ import { registerAdminTools } from './admin.ts';
 import { registerIdentityTools } from './identity.ts';
 import { registerIssueTools } from './issues.ts';
 import { registerPlanningTools } from './planning.ts';
+import { registerScrumTools } from './scrum.ts';
 
 export function registerTools(server: McpServer, principal: Principal): void {
   registerIdentityTools(server, principal);
   registerIssueTools(server, principal);
   registerPlanningTools(server, principal);
+  registerScrumTools(server, principal);
   registerAdminTools(server, principal);
 }
