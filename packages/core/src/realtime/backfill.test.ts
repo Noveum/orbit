@@ -4,7 +4,7 @@ import { SYNC_MODELS } from '@orbit/shared/events';
 import { createDoc, createDocCollection } from '../content/doc-service.ts';
 import { newId } from '../internal.ts';
 import { createInvite } from '../org/invite-service.ts';
-import { addTeamMember } from '../org/team-service.ts';
+import { addTeamMember, createTeam } from '../org/team-service.ts';
 import {
   addMember,
   createUser,
@@ -14,6 +14,13 @@ import {
 } from '../test-support.ts';
 import { createIssue, subscribe, updateIssue } from '../work/issue-service.ts';
 import { catchUp, SYNC_CATCHUP_MODELS } from './backfill.ts';
+
+function teamKey(): string {
+  return `D${newId()
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 4)
+    .toUpperCase()}`;
+}
 
 let workspace: Workspace;
 
@@ -166,5 +173,72 @@ describe('catchUp', () => {
         ),
       ).toBe(true);
     }
+  });
+});
+
+describe('catch up never crosses a team boundary', () => {
+  it('hides another team and its issues from a member', async () => {
+    const outsider = await createTeam(workspace.admin, {
+      name: 'Design',
+      key: teamKey(),
+    });
+    const { principal: member } = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId],
+    });
+
+    const mine = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Visible to the member',
+    });
+    const theirs = await createIssue(workspace.admin, {
+      teamId: outsider.team.id,
+      title: 'Confidential to Design',
+    });
+
+    const result = await catchUp(member, 0);
+    const ids = new Set(result.actions.map((action) => action.modelId));
+
+    expect(ids.has(mine.issue.id)).toBe(true);
+    expect(ids.has(theirs.issue.id)).toBe(false);
+
+    const bodies = JSON.stringify(result.actions);
+    expect(bodies).toContain('Visible to the member');
+    expect(bodies).not.toContain('Confidential to Design');
+  });
+
+  it('still gives an admin the whole workspace', async () => {
+    const outsider = await createTeam(workspace.admin, {
+      name: 'Design',
+      key: teamKey(),
+    });
+    const theirs = await createIssue(workspace.admin, {
+      teamId: outsider.team.id,
+      title: 'Admin can see this',
+    });
+
+    const result = await catchUp(workspace.admin, 0);
+    expect(result.actions.some((action) => action.modelId === theirs.issue.id)).toBe(true);
+  });
+
+  it('gives a guest on no teams none of the workspace issues', async () => {
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Not for guests' });
+    const { principal: guest } = await addMember(workspace, 'guest', { teamIds: [] });
+
+    const result = await catchUp(guest, 0);
+    expect(JSON.stringify(result.actions)).not.toContain('Not for guests');
+  });
+
+  it('keeps pending invitations away from anyone who cannot invite', async () => {
+    await createInvite(workspace.admin, {
+      email: `secret.${newId().slice(0, 8)}@example.com`,
+      role: 'admin',
+    });
+    const { principal: contributor } = await addMember(workspace, 'contributor');
+
+    const asContributor = await catchUp(contributor, 0);
+    expect(asContributor.actions.some((action) => action.model === 'invitation')).toBe(false);
+
+    const asAdmin = await catchUp(workspace.admin, 0);
+    expect(asAdmin.actions.some((action) => action.model === 'invitation')).toBe(true);
   });
 });
