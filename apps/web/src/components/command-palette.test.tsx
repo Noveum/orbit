@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactNode, useState } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { HOTKEY_PRIORITY, HotkeyProvider, useHotkey } from '@/lib/keyboard/index.ts';
 import { buildNavigation } from '@/lib/navigation.ts';
+import { render, screen } from '@/test/render.tsx';
 
 const push = mock();
 const setTheme = mock();

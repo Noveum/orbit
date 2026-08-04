@@ -5,7 +5,7 @@ import type { LucideIcon } from 'lucide-react';
 import { ArrowRight, CircleDot, Search, SlidersHorizontal, Terminal, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { resolvedHotkeys, SECTION_ORDER } from '@/components/shortcuts-overlay.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
@@ -17,6 +17,7 @@ import {
   useHotkeyList,
 } from '@/lib/keyboard/index.ts';
 import { type AppCommand, buildCommands, type NavSection } from '@/lib/navigation.ts';
+import { useIssueSearch } from '@/lib/query/use-issue-search.ts';
 
 const PALETTE_BINDING = 'mod+k';
 const DISMISS_BINDING = 'escape';
@@ -110,6 +111,8 @@ export function CommandPalette({
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
   const registered = useHotkeyList();
+  const [term, setTerm] = useState('');
+  const { issues, searching } = useIssueSearch(open ? term : '');
 
   const commands = useMemo<AppCommand[]>(
     () =>
@@ -144,6 +147,16 @@ export function CommandPalette({
     entry.run();
   };
 
+  const openIssue = (identifier: string) => {
+    onOpenChange(false);
+    router.push(`/issue/${identifier}`);
+  };
+
+  const needle = term.trim().toLowerCase();
+  const matches = (entry: PaletteEntry) =>
+    needle.length === 0 ||
+    `${entry.section} ${entry.label} ${entry.binding ?? ''}`.toLowerCase().includes(needle);
+
   return (
     <>
       {commands.map((command) =>
@@ -157,34 +170,59 @@ export function CommandPalette({
           />
         ),
       )}
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) setTerm('');
+          onOpenChange(next);
+        }}
+      >
         <DialogContent
           showClose={false}
           aria-describedby={undefined}
           className="top-[12vh] max-w-xl translate-y-0 p-0"
         >
           <DialogTitle className="sr-only">Command palette</DialogTitle>
-          <Command
-            loop
-            className="flex flex-col overflow-hidden"
-            filter={(value, search) =>
-              value.toLowerCase().includes(search.toLowerCase().trim()) ? 1 : 0
-            }
-          >
+          <Command loop shouldFilter={false} className="flex flex-col overflow-hidden">
             <div className="flex items-center gap-2 border-border border-b px-3">
               <Search className="size-4 shrink-0 text-faint" aria-hidden="true" />
               <Command.Input
                 autoFocus
-                placeholder="Type a command or search"
+                value={term}
+                onValueChange={setTerm}
+                placeholder="Search issues, or type a command"
                 className="h-11 w-full bg-transparent text-base text-text outline-none placeholder:text-faint"
               />
             </div>
             <Command.List className="max-h-80 overflow-y-auto p-1.5">
               <Command.Empty className="px-2.5 py-6 text-center text-muted text-dense">
-                No matching commands.
+                {searching ? 'Searching…' : 'Nothing matches that.'}
               </Command.Empty>
+              {issues.length === 0 ? null : (
+                <Command.Group heading="Issues" className={groupClassName}>
+                  {issues.map((issue) => (
+                    <Command.Item
+                      key={issue.id}
+                      value={`issue-${issue.id}`}
+                      className={itemClassName}
+                      data-testid={`palette-issue-${issue.identifier}`}
+                      onSelect={() => openIssue(issue.identifier)}
+                    >
+                      <CircleDot
+                        className="size-4 shrink-0"
+                        strokeWidth={1.75}
+                        aria-hidden="true"
+                      />
+                      <span className="shrink-0 text-faint tabular-nums">{issue.identifier}</span>
+                      <span className="flex-1 truncate">{issue.title}</span>
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              )}
               {SECTION_ORDER.map((section) => {
-                const items = entries.filter((entry) => entry.section === section);
+                const items = entries.filter(
+                  (entry) => entry.section === section && matches(entry),
+                );
                 if (items.length === 0) return null;
                 return (
                   <Command.Group key={section} heading={section} className={groupClassName}>

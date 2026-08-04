@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { ShellTeam, ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
+import { fireEvent, render, screen, within } from '@/test/render.tsx';
 import { AppShell } from './app-shell.tsx';
 
 mock.module('next/navigation', () => ({

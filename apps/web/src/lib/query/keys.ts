@@ -31,3 +31,4 @@ export const DOCS_ROOT = 'docs';
 export const DOC_ROOT = 'doc';
 export const VIEWS_ROOT = 'views';
 export const STANDUP_ROOT = 'standup';
+export const SEARCH_ROOT = 'search';

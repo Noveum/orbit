@@ -42,6 +42,7 @@ import {
 } from './schemas.ts';
 import type { IssuePages } from './sync.ts';
 import {
+  admitsNewRows,
   belongsInList,
   flattenIssuePages,
   mapIssuePages,
@@ -230,20 +231,27 @@ function restoreIssueLists(client: QueryClient, snapshot: IssueListSnapshot): vo
   for (const [key, pages] of snapshot) client.setQueryData(key, pages);
 }
 
-function reconcile(
-  search: string,
-  issues: readonly Issue[],
-  next: Issue,
-  admit: boolean,
-): readonly Issue[] {
+function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
   }
-  if (index === -1) return admit ? sortForSearch(search, [...issues, next]) : issues;
-  const copy = [...issues];
-  copy[index] = next;
-  return copy;
+  if (index !== -1) {
+    const copy = [...issues];
+    copy[index] = next;
+    return copy;
+  }
+  if (!admitsNewRows(search)) return issues;
+  return sortForSearch(search, [...issues, next]);
+}
+
+function settleFilteredLists(client: QueryClient, moved: readonly Issue[]): void {
+  for (const [key] of client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })) {
+    const search = searchOf(key);
+    if (admitsNewRows(search)) continue;
+    if (!moved.some((issue) => belongsInList(search, issue))) continue;
+    client.invalidateQueries({ queryKey: key }).catch(() => undefined);
+  }
 }
 
 function eachIssueList(
@@ -268,22 +276,25 @@ function patchIssueLists(
 
 function placeIssue(client: QueryClient, next: Issue): void {
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
-    reconcile(search, issues, next, false),
+    reconcile(search, issues, next),
   );
+  settleFilteredLists(client, [next]);
 }
 
 function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
     let next = issues;
-    for (const issue of moved) next = reconcile(search, next, issue, false);
+    for (const issue of moved) next = reconcile(search, next, issue);
     return sortForSearch(search, next);
   });
+  settleFilteredLists(client, moved);
 }
 
 function addToTeamLists(client: QueryClient, teamId: string, next: Issue): void {
   eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
-    reconcile(search, issues, next, true),
+    reconcile(search, issues, next),
   );
+  settleFilteredLists(client, [next]);
 }
 
 function refreshCounts(client: QueryClient): void {

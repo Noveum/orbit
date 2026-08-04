@@ -1,5 +1,4 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { Sidebar } from '@/components/layout/sidebar.tsx';
@@ -20,6 +19,7 @@ import { buildNavigation, buildSidebarNav } from '@/lib/navigation.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
+import { render } from '@/test/render.tsx';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
