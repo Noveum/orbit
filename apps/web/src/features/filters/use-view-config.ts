@@ -7,7 +7,7 @@ import {
   GROUP_BY_FIELDS,
   ISSUE_ORDERINGS,
 } from '@orbit/shared/filters';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import type { ViewConfig, ViewLayoutMode, ViewPage } from './view-config.ts';
@@ -107,12 +107,12 @@ export function useViewConfig(
   layout: ViewLayoutMode,
   page: ViewPage = 'team',
 ): ViewConfigController {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [stored, setStored] = useState<StoredDisplay | null>(null);
   const [pending, setPending] = useState<ViewConfig | null>(null);
-  const requestedSearch = useRef<string | null>(null);
+  const syncedSearch = useRef(searchParams.toString());
+  const nextWrite = useRef<string | null>(null);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
@@ -127,22 +127,45 @@ export function useViewConfig(
 
   const current = searchParams.toString();
 
+  const write = useCallback(
+    (search: string) => {
+      syncTimer.current = undefined;
+      nextWrite.current = null;
+      syncedSearch.current = search.replace(/^\?/, '');
+      window.history.replaceState(null, '', `${pathname}${search}`);
+    },
+    [pathname],
+  );
+
+  const flush = useCallback(() => {
+    const queued = nextWrite.current;
+    if (queued === null) return;
+    if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
+    if (window.location.pathname !== pathname) return;
+    write(queued);
+  }, [pathname, write]);
+
   useEffect(() => {
-    const requested = requestedSearch.current;
-    if (requested !== null && requested !== current && syncTimer.current !== undefined) {
+    if (current === syncedSearch.current) {
+      if (syncTimer.current === undefined) setPending(null);
+      return;
+    }
+    if (syncTimer.current !== undefined) {
       clearTimeout(syncTimer.current);
       syncTimer.current = undefined;
     }
-    requestedSearch.current = null;
+    nextWrite.current = null;
+    syncedSearch.current = current;
     setPending(null);
   }, [current]);
 
-  useEffect(
-    () => () => {
-      if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
-    },
-    [],
-  );
+  useEffect(() => {
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
+  }, [flush]);
 
   const config = pending ?? fromUrl;
   const carried = searchParams.get(VIEW_PARAM);
@@ -155,14 +178,12 @@ export function useViewConfig(
       setPending(sanitized);
 
       const search = withViewParam(viewConfigSearch(sanitized, layout), carried);
-      requestedSearch.current = search.replace(/^\?/, '');
+      if (search.replace(/^\?/, '') === syncedSearch.current) return;
+      nextWrite.current = search;
       if (syncTimer.current !== undefined) clearTimeout(syncTimer.current);
-      syncTimer.current = setTimeout(() => {
-        syncTimer.current = undefined;
-        router.replace(`${pathname}${search}`, { scroll: false });
-      }, URL_SYNC_DELAY_MS);
+      syncTimer.current = setTimeout(() => write(search), URL_SYNC_DELAY_MS);
     },
-    [router, pathname, teamId, layout, page, carried],
+    [write, teamId, layout, page, carried],
   );
 
   const setFilter = useCallback(

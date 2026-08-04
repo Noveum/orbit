@@ -14,6 +14,27 @@ const DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
 const connectionString =
   process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'host.docker.internal']);
+
+function assertLocalServer(url: string): void {
+  if (process.env['ORBIT_ALLOW_REMOTE_TEST_SETUP'] === '1') return;
+  let host: string;
+  let port: string;
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    port = parsed.port === '' ? '5432' : parsed.port;
+  } catch {
+    throw new Error('DATABASE_URL is not a valid connection string.');
+  }
+  if (LOCAL_HOSTS.has(host)) return;
+  throw new Error(
+    `Refusing to create test databases on ${host}:${port}. This creates six databases and pushes the whole schema into each, which must never happen on a deployed server. Point DATABASE_URL at the local stack from bun run infra:up, or set ORBIT_ALLOW_REMOTE_TEST_SETUP=1 if you are certain.`,
+  );
+}
+
+assertLocalServer(connectionString);
+
 function adminUrl(url: string): string {
   const parsed = new URL(url);
   parsed.pathname = '/postgres';

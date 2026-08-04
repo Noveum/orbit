@@ -1,25 +1,21 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { act, render } from '@testing-library/react';
 
-const replaced: string[] = [];
 let search = '';
 
 mock.module('next/navigation', () => ({
-  useRouter: () => ({
-    replace: (url: string) => {
-      replaced.push(url);
-    },
-    push: () => undefined,
-  }),
+  useRouter: () => ({ replace: () => undefined, push: () => undefined }),
   usePathname: () => '/team/eng/issues',
   useSearchParams: () => new URLSearchParams(search),
 }));
 
 const { URL_SYNC_DELAY_MS, useViewConfig } = await import('./use-view-config.ts');
 
+type Ordering = 'manual' | 'priority' | 'created' | 'updated';
+
 interface Captured {
   readonly orderBy: string;
-  readonly setOrderBy: (value: 'manual' | 'priority' | 'created') => void;
+  readonly setOrderBy: (value: Ordering) => void;
 }
 
 let captured: Captured | null = null;
@@ -39,10 +35,19 @@ async function wait(ms: number): Promise<void> {
   });
 }
 
+function urlSearch(): string {
+  return window.location.search.replace(/^\?/, '');
+}
+
+function setUrl(next: string): void {
+  search = next;
+  const target = next === '' ? '/team/eng/issues' : `/team/eng/issues?${next}`;
+  window.history.replaceState(null, '', target);
+}
+
 describe('useViewConfig url sync', () => {
   beforeEach(() => {
-    replaced.length = 0;
-    search = '';
+    setUrl('');
     captured = null;
     window.localStorage.clear();
   });
@@ -54,43 +59,82 @@ describe('useViewConfig url sync', () => {
     act(() => captured?.setOrderBy('priority'));
 
     expect(captured?.orderBy).toBe('priority');
-    expect(replaced).toHaveLength(0);
+    expect(urlSearch()).toBe('');
   });
 
-  it('collapses a burst of changes into a single navigation', async () => {
+  it('collapses a burst of changes into a single url write', async () => {
     render(<Harness />);
 
     act(() => captured?.setOrderBy('priority'));
     act(() => captured?.setOrderBy('created'));
-    act(() => captured?.setOrderBy('manual'));
-    expect(replaced).toHaveLength(0);
+    act(() => captured?.setOrderBy('updated'));
+    expect(urlSearch()).toBe('');
 
-    await wait(URL_SYNC_DELAY_MS + 60);
+    await wait(URL_SYNC_DELAY_MS + 80);
 
-    expect(replaced).toHaveLength(1);
-    expect(captured?.orderBy).toBe('manual');
+    expect(urlSearch()).toContain('order=updated');
+    expect(captured?.orderBy).toBe('updated');
   });
 
-  it('writes the final state into the url so the view stays shareable', async () => {
-    render(<Harness />);
-
-    act(() => captured?.setOrderBy('priority'));
-    await wait(URL_SYNC_DELAY_MS + 60);
-
-    expect(replaced[0]).toContain('/team/eng/issues');
-    expect(replaced[0]).toContain('order=priority');
-  });
-
-  it('lets the url win when the browser navigates during the debounce', async () => {
+  it('keeps an edit made while the previous write is still in flight', async () => {
     const { rerender } = render(<Harness />);
 
     act(() => captured?.setOrderBy('priority'));
-    search = 'order=created';
-    act(() => rerender(<Harness />));
+    await wait(URL_SYNC_DELAY_MS + 80);
+    expect(urlSearch()).toContain('order=priority');
 
-    await wait(URL_SYNC_DELAY_MS + 60);
+    act(() => captured?.setOrderBy('created'));
+    search = 'order=priority';
+    act(() => rerender(<Harness />));
+    expect(captured?.orderBy).toBe('created');
+
+    await wait(URL_SYNC_DELAY_MS + 80);
 
     expect(captured?.orderBy).toBe('created');
-    expect(replaced).toHaveLength(0);
+    expect(urlSearch()).toContain('order=created');
+  });
+
+  it('flushes a pending edit when the view unmounts', () => {
+    const { unmount } = render(<Harness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    expect(urlSearch()).toBe('');
+
+    act(() => unmount());
+
+    expect(urlSearch()).toContain('order=priority');
+  });
+
+  it('lets a url the hook did not request win and cancels the pending write', async () => {
+    const { rerender } = render(<Harness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    setUrl('order=created');
+    act(() => rerender(<Harness />));
+
+    expect(captured?.orderBy).toBe('created');
+    await wait(URL_SYNC_DELAY_MS + 80);
+    expect(urlSearch()).toContain('order=created');
+  });
+
+  it('carries the saved view parameter through every write', async () => {
+    setUrl('view=view_1');
+    render(<Harness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    await wait(URL_SYNC_DELAY_MS + 80);
+
+    expect(urlSearch()).toContain('view=view_1');
+    expect(urlSearch()).toContain('order=priority');
+  });
+
+  it('writes nothing when the config already matches the url', async () => {
+    setUrl('order=priority');
+    render(<Harness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    await wait(URL_SYNC_DELAY_MS + 80);
+
+    expect(urlSearch()).toBe('order=priority');
   });
 });
