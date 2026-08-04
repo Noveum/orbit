@@ -9,7 +9,7 @@ const NAVIGABLE_ROUTES: readonly RegExp[] = [
   /^\/pulls$/,
   /^\/projects$/,
   /^\/projects\/[^/]+$/,
-  /^\/cycles$/,
+  /^\/sprints$/,
   /^\/views$/,
   /^\/docs$/,
   /^\/docs\/new$/,
@@ -29,7 +29,7 @@ const NAVIGABLE_ROUTES: readonly RegExp[] = [
   /^\/settings\/account\/sessions$/,
   /^\/team\/[^/]+\/issues$/,
   /^\/team\/[^/]+\/board$/,
-  /^\/team\/[^/]+\/cycle\/active$/,
+  /^\/team\/[^/]+\/sprint\/active$/,
   /^\/workspaces\/new$/,
 ];
 

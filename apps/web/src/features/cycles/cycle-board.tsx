@@ -137,8 +137,8 @@ export function CyclePanel({ cycle, upcoming, teamName }: CyclePanelProps) {
       {cycle === null ? (
         <EmptyState
           icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
-          title="No active cycle"
-          description={`${teamName} has no cycle running right now.`}
+          title="No active sprint"
+          description={`${teamName} has no sprint running right now.`}
         />
       ) : (
         <>

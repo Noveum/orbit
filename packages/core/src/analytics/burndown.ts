@@ -1,6 +1,7 @@
 import { and, asc, db, eq, schema, sql } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 import type { SQL } from 'drizzle-orm';
 import { requireRow, startOfUtcDay } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
@@ -130,7 +131,7 @@ export async function cycleBurndown(
 
   return {
     cycleId,
-    name: cycle.name.length > 0 ? cycle.name : `Cycle ${cycle.number}`,
+    name: sprintLabel(cycle),
     measure,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
@@ -290,7 +291,7 @@ export async function teamVelocity(
       const number = Number(row['number']);
       return {
         cycleId: String(row['cycle_id']),
-        name: name.length > 0 ? name : `Cycle ${number}`,
+        name: sprintLabel({ name, number }),
         number,
         planned: Number(row['planned']),
         completed: Number(row['completed']),

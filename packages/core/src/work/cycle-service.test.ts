@@ -41,14 +41,14 @@ async function firstCycle() {
 }
 
 describe('createCycle', () => {
-  it('numbers cycles in sequence and names them', async () => {
+  it('numbers sprints in sequence and names them', async () => {
     const { cycle, actions } = await createCycle(workspace.admin, {
       teamId: workspace.teamId,
       startsAt: daysFromNow(20),
       endsAt: daysFromNow(34),
     });
     expect(cycle.number).toBe(2);
-    expect(cycle.name).toBe('Cycle 2');
+    expect(cycle.name).toBe('Sprint 2');
     expect(actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
   });
 

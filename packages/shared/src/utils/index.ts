@@ -143,3 +143,7 @@ export function assertNever(value: never, message = 'Unexpected value'): never {
 export function randomUUIDv7(at?: Date): string {
   return at === undefined ? uuidv7() : uuidv7({ msecs: at.getTime() });
 }
+
+export function sprintLabel(sprint: { readonly name: string; readonly number: number }): string {
+  return sprint.name.trim().length > 0 ? sprint.name : `Sprint ${sprint.number}`;
+}

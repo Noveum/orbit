@@ -3,6 +3,7 @@ import { and, asc, db, eq, isNull, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 
 export interface CycleIssueView {
   readonly id: string;
@@ -139,7 +140,7 @@ export async function getActiveCycleView(
   ]);
   return {
     id: cycle.id,
-    name: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
+    name: sprintLabel(cycle),
     number: cycle.number,
     teamId: team.id,
     teamKey: team.key,
@@ -160,7 +161,7 @@ export async function listUpcomingCycleViews(
   const cycles = await upcomingCycles(principal, team.id, { now, limit: 6 });
   return cycles.map((cycle) => ({
     id: cycle.id,
-    name: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
+    name: sprintLabel(cycle),
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     teamKey: team.key,
