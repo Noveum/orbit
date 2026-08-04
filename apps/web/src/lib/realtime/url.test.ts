@@ -30,15 +30,24 @@ describe('resolveRealtimeUrl', () => {
 describe('configuredRealtimeUrl', () => {
   const key = 'NEXT_PUBLIC_REALTIME_URL';
   const saved = process.env[key];
+  const env = process.env as Record<string, string | undefined>;
+  const savedMode = env['NODE_ENV'];
 
   afterEach(() => {
     if (saved === undefined) delete process.env[key];
     else process.env[key] = saved;
+    env['NODE_ENV'] = savedMode;
   });
 
   it('keeps a websocket url', () => {
     process.env[key] = 'wss://orbit.example/api/ws';
     expect(configuredRealtimeUrl()).toBe('wss://orbit.example/api/ws');
+  });
+
+  it('ignores a configured url in production so the socket always follows the app origin', () => {
+    env['NODE_ENV'] = 'production';
+    process.env[key] = 'wss://realtime.orbit.example';
+    expect(configuredRealtimeUrl()).toBe('');
   });
 
   it('falls back to the same origin when the url is not a websocket', () => {

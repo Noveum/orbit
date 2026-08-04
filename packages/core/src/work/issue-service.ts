@@ -3,6 +3,7 @@ import { type IssueRelationType, SORT_ORDER_STEP } from '@orbit/shared/constants
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
+import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam, isInTeam, teamScope } from '@orbit/shared/policy';
 import { issueIdentifier, parseIssueIdentifier, sortOrderBetween } from '@orbit/shared/utils';
@@ -16,6 +17,7 @@ import {
   paginationSchema,
 } from '@orbit/shared/validators';
 import { getTableColumns, type SQL } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
@@ -857,7 +859,14 @@ const issueListSchema = issueFilterSchema
 export type IssueListInput = typeof issueListSchema;
 
 const ISSUE_COLUMNS = getTableColumns(schema.issue);
-const ISSUE_LIST_COLUMNS = { ...ISSUE_COLUMNS, description: sql<string>`''` };
+
+const {
+  description: _description,
+  organizationId: _organizationId,
+  stateEnteredAt: _stateEnteredAt,
+  estimatePointId: _estimatePointId,
+  ...ISSUE_LIST_COLUMNS
+} = ISSUE_COLUMNS;
 
 function visibleTeamFilters(principal: Principal): SQL[] {
   if (principal.role === 'admin') return [];
@@ -865,7 +874,7 @@ function visibleTeamFilters(principal: Principal): SQL[] {
   return [inArray(schema.issue.teamId, [...principal.teamIds])];
 }
 
-function buildIssueFilters(
+function buildScopeFilters(
   principal: Principal,
   filter: ReturnType<typeof issueListSchema.parse>,
 ): SQL[] {
@@ -923,8 +932,17 @@ function buildIssueFilters(
   if (!filter.includeSubIssues && filter.parentId === undefined) {
     filters.push(isNull(schema.issue.parentId));
   }
-  filters.push(...buildFilterFilters(filter.filter, { today: today() }));
   return filters;
+}
+
+function buildIssueFilters(
+  principal: Principal,
+  filter: ReturnType<typeof issueListSchema.parse>,
+): SQL[] {
+  return [
+    ...buildScopeFilters(principal, filter),
+    ...buildFilterFilters(filter.filter, { today: today() }),
+  ];
 }
 
 type OrderKey = ReturnType<typeof issueListSchema.parse>['orderBy'];
@@ -935,7 +953,7 @@ const ORDERINGS: Record<
     expression: SQL;
     descending: boolean;
     cast: string;
-    read: (row: IssueRow) => string | number;
+    read: (row: IssueListRow) => string | number;
   }
 > = {
   manual: {
@@ -997,8 +1015,17 @@ function decodeCursor(cursor: string): { value: string | number; id: string } {
   }
 }
 
+export type TrimmedIssueColumn =
+  | 'organizationId'
+  | 'description'
+  | 'estimatePointId'
+  | 'stateEnteredAt';
+
+export type IssueListRow = Omit<IssueRow, TrimmedIssueColumn> &
+  Partial<Pick<IssueRow, TrimmedIssueColumn>>;
+
 export interface IssuePage {
-  readonly issues: IssueRow[];
+  readonly issues: IssueListRow[];
   readonly nextCursor: string | null;
 }
 
@@ -1045,6 +1072,147 @@ export async function getIssueCounts(
     .from(schema.issue)
     .where(and(...filters))
     .groupBy(schema.issue.stateId);
+}
+
+export const FACET_PROPERTIES = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'label',
+  'project',
+  'cycle',
+  'milestone',
+] as const;
+
+export type FacetProperty = (typeof FACET_PROPERTIES)[number];
+
+export type FacetCounts = Record<FacetProperty, Record<string, number>>;
+
+export interface IssueSummary {
+  readonly total: number;
+  readonly scopeTotal: number;
+  readonly byState: Record<string, number>;
+  readonly groupTotals: Record<string, number>;
+  readonly facets: FacetCounts;
+}
+
+const UNSET_FACET_VALUE = UNSET_FILTER_VALUE;
+
+function tally(rows: readonly { key: string | null; total: number }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.key ?? UNSET_FACET_VALUE] = Number(row.total);
+  return counts;
+}
+
+async function facetOf(column: PgColumn, where: SQL | undefined): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ key: sql<string | null>`${column}::text`, total: count() })
+    .from(schema.issue)
+    .where(where)
+    .groupBy(column);
+  return tally(rows);
+}
+
+async function labelFacet(where: SQL | undefined): Promise<Record<string, number>> {
+  const [tagged, untagged] = await Promise.all([
+    db
+      .select({ key: sql<string | null>`${schema.issueLabel.labelId}`, total: count() })
+      .from(schema.issue)
+      .innerJoin(schema.issueLabel, eq(schema.issueLabel.issueId, schema.issue.id))
+      .where(where)
+      .groupBy(schema.issueLabel.labelId),
+    db
+      .select({ total: count() })
+      .from(schema.issue)
+      .where(
+        and(
+          where,
+          sql`not exists (select 1 from ${schema.issueLabel} where ${schema.issueLabel.issueId} = ${schema.issue.id})`,
+        ),
+      ),
+  ]);
+  const counts = tally(tagged);
+  const none = Number(untagged[0]?.total ?? 0);
+  if (none > 0) counts[UNSET_FACET_VALUE] = none;
+  return counts;
+}
+
+async function milestoneFacet(where: SQL | undefined): Promise<Record<string, number>> {
+  const rows = await db
+    .select({
+      key: sql<string>`case when ${schema.issue.milestoneId} is null then ${UNSET_FACET_VALUE} else 'any' end`,
+      total: count(),
+    })
+    .from(schema.issue)
+    .where(where)
+    .groupBy(sql`1`);
+  return tally(rows);
+}
+
+const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn> = {
+  state: () => schema.issue.stateId,
+  assignee: () => schema.issue.assigneeId,
+  creator: () => schema.issue.creatorId,
+  priority: () => schema.issue.priority,
+  estimate: () => schema.issue.estimate,
+  project: () => schema.issue.projectId,
+  cycle: () => schema.issue.cycleId,
+};
+
+function facetFor(
+  property: FacetProperty,
+  where: SQL | undefined,
+): Promise<Record<string, number>> {
+  if (property === 'label') return labelFacet(where);
+  if (property === 'milestone') return milestoneFacet(where);
+  return facetOf(FACET_COLUMNS[property](), where);
+}
+
+const summarySchema = issueListSchema.extend({
+  groupBy: z.enum(FACET_PROPERTIES).default('state'),
+});
+
+export async function getIssueSummary(
+  principal: Principal,
+  input: unknown = {},
+): Promise<IssueSummary> {
+  assertCan(principal, 'issue:read');
+  const filter = summarySchema.parse(input);
+  const scope = and(...buildScopeFilters(principal, filter));
+  const matching = and(...buildIssueFilters(principal, filter));
+
+  const [matchedStates, scopeTotal, groupTotals, facetRows] = await Promise.all([
+    db
+      .select({ stateId: schema.issue.stateId, total: count() })
+      .from(schema.issue)
+      .where(matching)
+      .groupBy(schema.issue.stateId),
+    db.select({ total: count() }).from(schema.issue).where(scope),
+    facetFor(filter.groupBy, matching),
+    Promise.all(FACET_PROPERTIES.map((property) => facetFor(property, scope))),
+  ]);
+
+  const byState: Record<string, number> = {};
+  let total = 0;
+  for (const row of matchedStates) {
+    byState[row.stateId] = Number(row.total);
+    total += Number(row.total);
+  }
+
+  const facets = {} as Record<FacetProperty, Record<string, number>>;
+  FACET_PROPERTIES.forEach((property, index) => {
+    facets[property] = facetRows[index] ?? {};
+  });
+
+  return {
+    total,
+    scopeTotal: Number(scopeTotal[0]?.total ?? 0),
+    byState,
+    groupTotals,
+    facets,
+  };
 }
 
 export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {

@@ -26,6 +26,26 @@ export function issueSearch(teamId: string, query: IssueQuery): string {
   return params.toString();
 }
 
+export function columnSearch(teamId: string, query: IssueQuery, stateId: string): string {
+  const params = searchParams(query);
+  params.set('teamId', teamId);
+  params.set('stateId', stateId);
+  return params.toString();
+}
+
+export function summarySearch(
+  teamId: string | null,
+  query: IssueQuery,
+  groupBy: string,
+  scope: Readonly<Record<string, string>> = {},
+): string {
+  const params = searchParams(query);
+  if (teamId !== null) params.set('teamId', teamId);
+  for (const [key, value] of Object.entries(scope)) params.set(key, value);
+  params.set('groupBy', groupBy);
+  return params.toString();
+}
+
 export function assignedSearch(userId: string): string {
   const params = searchParams({ ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' });
   params.set('assigneeId', userId);

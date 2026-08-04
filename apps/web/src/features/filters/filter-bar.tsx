@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
-import type { Issue, View } from '@/lib/query/schemas.ts';
+import type { IssueSummary, View } from '@/lib/query/schemas.ts';
 import { useUpdateView } from '@/lib/query/use-views.ts';
 import { DisplayMenu } from './display-menu.tsx';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
@@ -27,7 +27,7 @@ export interface FilterBarProps {
   readonly config: ViewConfig;
   readonly onChange: (next: ViewConfig) => void;
   readonly controls: ViewControls;
-  readonly issues?: readonly Issue[];
+  readonly facets?: IssueSummary['facets'] | undefined;
   readonly savedView?: View | null;
   readonly dirty?: boolean;
   readonly showSaveView?: boolean;
@@ -40,7 +40,7 @@ export function FilterBar({
   config,
   onChange,
   controls,
-  issues = [],
+  facets,
   savedView = null,
   dirty = false,
   showSaveView = true,
@@ -111,7 +111,7 @@ export function FilterBar({
           onOpenChange={(open) => setTarget(open ? condition.property : null)}
           fields={fields}
           filter={config.filter}
-          issues={issues}
+          facets={facets}
           onChange={setFilter}
           onRemove={() => setFilter(removeCondition(config.filter, condition.property))}
         />
@@ -122,7 +122,7 @@ export function FilterBar({
         onOpenChange={(open) => setTarget(open ? 'new' : null)}
         fields={fields}
         filter={config.filter}
-        issues={issues}
+        facets={facets}
         onChange={setFilter}
         anchor={
           <Button
@@ -229,7 +229,7 @@ interface FilterChipProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
-  readonly issues: readonly Issue[];
+  readonly facets: IssueSummary['facets'] | undefined;
   readonly onChange: (next: FilterGroup) => void;
   readonly onRemove: () => void;
 }
@@ -241,7 +241,7 @@ function FilterChip({
   onOpenChange,
   fields,
   filter,
-  issues,
+  facets,
   onChange,
   onRemove,
 }: FilterChipProps) {
@@ -259,7 +259,7 @@ function FilterChip({
         onOpenChange={onOpenChange}
         fields={fields}
         filter={filter}
-        issues={issues}
+        facets={facets}
         onChange={onChange}
         startProperty={condition.property}
         anchor={

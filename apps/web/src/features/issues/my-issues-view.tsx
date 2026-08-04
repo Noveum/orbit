@@ -5,9 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
 import { DisplayMenu } from '@/features/filters/display-menu.tsx';
-import { groupIssues } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
@@ -17,6 +15,7 @@ import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
+import { useIssueViewModel } from './use-issue-view-model.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export function assignedTo(issues: readonly Issue[], userId: string | null): Issue[] {
@@ -48,31 +47,23 @@ export function MyIssuesView() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const loading = assigned.isPending;
-  const mine = assignedTo(assigned.data ?? [], workspace.userId);
-
-  const shown = applyDisplayFilters(mine, config.display, workspace.stateById);
-
-  const states = useMemo(
-    () => [...workspace.states].sort((left, right) => left.position - right.position),
-    [workspace.states],
+  const mine = useMemo(
+    () => assignedTo(assigned.data ?? [], workspace.userId),
+    [assigned.data, workspace.userId],
   );
 
-  const groups = groupIssues(
-    shown.issues,
-    config.groupBy,
-    {
-      states,
-      members: workspace.members,
-      projects: workspace.projects,
-      cycles: workspace.cycles,
-      labels: workspace.labels,
-    },
-    {
-      showEmptyGroups: config.display.showEmptyGroups,
-      ordering: config.orderBy,
-      subGroupBy: config.subGroupBy,
-    },
+  const scope = useMemo(
+    () => (workspace.userId === null ? {} : { assigneeId: workspace.userId }),
+    [workspace.userId],
   );
+  const model = useIssueViewModel({
+    teamId: null,
+    config,
+    issues: mine,
+    scopeToTeam: false,
+    scope,
+  });
+  const groups = model.groups;
 
   if (!workspace.ready) {
     return (
@@ -89,7 +80,7 @@ export function MyIssuesView() {
       <div className="flex items-center gap-2 border-border border-b px-3 py-2">
         <h1 className="font-medium text-dense text-text">My issues</h1>
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
-          {shown.issues.length}
+          {model.total}
         </span>
         <div className="ml-auto">
           <DisplayMenu
@@ -101,7 +92,7 @@ export function MyIssuesView() {
         </div>
       </div>
 
-      {shown.issues.length === 0 ? (
+      {model.shownCount === 0 ? (
         <EmptyState
           icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
           title={loading ? 'Loading your issues' : 'Nothing assigned to you'}
@@ -152,8 +143,8 @@ export function MyIssuesView() {
       )}
 
       <HiddenFooter
-        hiddenByFilters={0}
-        hiddenByDisplay={shown.hidden}
+        hiddenByFilters={model.hiddenByFilters}
+        hiddenByDisplay={model.hiddenByDisplay}
         onClearFilters={() => undefined}
         onRevealDisplay={() =>
           setConfig({

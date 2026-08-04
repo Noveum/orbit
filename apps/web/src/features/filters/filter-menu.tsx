@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { IssueSummary } from '@/lib/query/schemas.ts';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { countValues, RELATIVE_PRESETS } from './filter-fields.tsx';
 
@@ -24,7 +24,7 @@ export interface FilterMenuProps {
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
   readonly onChange: (next: FilterGroup) => void;
-  readonly issues: readonly Issue[];
+  readonly facets: IssueSummary['facets'] | undefined;
   readonly startProperty?: FilterProperty | null;
   readonly anchor: ReactNode;
 }
@@ -35,7 +35,7 @@ export function FilterMenu({
   fields,
   filter,
   onChange,
-  issues,
+  facets,
   startProperty = null,
   anchor,
 }: FilterMenuProps) {
@@ -111,7 +111,7 @@ export function FilterMenu({
               <FieldPicker
                 fields={fields}
                 filter={filter}
-                issues={issues}
+                facets={facets}
                 searching={search.trim().length > 0}
                 onPickField={(next) => {
                   setSearch('');
@@ -123,7 +123,7 @@ export function FilterMenu({
               <ValuePicker
                 definition={active}
                 condition={conditionFor(filter, active.property)}
-                issues={issues}
+                facets={facets}
                 search={search}
                 onToggleValue={(value) => toggleValue(active.property, value)}
                 onToggleNegate={() => toggleNegate(active.property)}
@@ -140,7 +140,7 @@ export function FilterMenu({
 interface FieldPickerProps {
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
-  readonly issues: readonly Issue[];
+  readonly facets: IssueSummary['facets'] | undefined;
   readonly searching: boolean;
   readonly onPickField: (property: FilterProperty) => void;
   readonly onPickValue: (property: FilterProperty, value: string) => void;
@@ -149,7 +149,7 @@ interface FieldPickerProps {
 function FieldPicker({
   fields,
   filter,
-  issues,
+  facets,
   searching,
   onPickField,
   onPickValue,
@@ -191,7 +191,7 @@ function FieldPicker({
                 >
                   {option.icon}
                   <span className="flex-1 truncate">{option.label}</span>
-                  <ValueCount count={countValues(definition, issues).get(option.value)} />
+                  <ValueCount count={countValues(definition, facets).get(option.value)} />
                   <Selected
                     on={selectedValues(filter, definition.property).includes(option.value)}
                   />
@@ -212,7 +212,7 @@ function selectedValues(filter: FilterGroup, property: FilterProperty): readonly
 interface ValuePickerProps {
   readonly definition: FilterFieldDefinition;
   readonly condition: FilterCondition | undefined;
-  readonly issues: readonly Issue[];
+  readonly facets: IssueSummary['facets'] | undefined;
   readonly search: string;
   readonly onToggleValue: (value: string) => void;
   readonly onToggleNegate: () => void;
@@ -222,14 +222,14 @@ interface ValuePickerProps {
 function ValuePicker({
   definition,
   condition,
-  issues,
+  facets,
   search,
   onToggleValue,
   onToggleNegate,
   onCommit,
 }: ValuePickerProps) {
   const negated = condition?.negate === true;
-  const counts = countValues(definition, issues);
+  const counts = countValues(definition, facets);
   const chosen = condition?.operator === 'in' ? condition.values : [];
 
   return (

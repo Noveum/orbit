@@ -207,7 +207,6 @@ export function StandupView() {
         config={config}
         onChange={setConfig}
         controls={controls}
-        issues={shown.issues}
         showSaveView={false}
       />
 

@@ -8,6 +8,7 @@ const socketUrlSchema = z
   .catch('');
 
 export function configuredRealtimeUrl(): string {
+  if (process.env['NODE_ENV'] === 'production') return '';
   const configured = process.env['NEXT_PUBLIC_REALTIME_URL'] ?? '';
   if (configured.length === 0) return '';
   return socketUrlSchema.parse(configured);

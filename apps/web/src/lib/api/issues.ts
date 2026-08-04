@@ -1,11 +1,10 @@
-import type { IssueRow } from '@orbit/core';
 import { db, inArray, schema } from '@orbit/db';
 
-export interface IssueWithLabels extends IssueRow {
-  readonly labelIds: string[];
-}
+export type WithLabels<T> = T & { readonly labelIds: string[] };
 
-export async function attachLabels(issues: readonly IssueRow[]): Promise<IssueWithLabels[]> {
+export async function attachLabels<T extends { id: string }>(
+  issues: readonly T[],
+): Promise<WithLabels<T>[]> {
   if (issues.length === 0) return [];
   const links = await db
     .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })

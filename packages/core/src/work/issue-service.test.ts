@@ -17,6 +17,7 @@ import {
   deleteIssue,
   getIssue,
   getIssueCounts,
+  getIssueSummary,
   listIssues,
   listRelations,
   listSubscribers,
@@ -337,10 +338,23 @@ describe('listIssues', () => {
     await newIssue('Heavy issue', { description: 'A body long enough to matter on the wire.' });
 
     const listed = await listIssues(workspace.admin, {});
-    expect(listed.issues[0]?.description).toBe('');
+    const row = listed.issues[0];
+    expect(row?.description).toBeUndefined();
 
     const full = await listIssues(workspace.admin, { select: 'full' });
     expect(full.issues[0]?.description).toBe('A body long enough to matter on the wire.');
+  });
+
+  it('omits the columns no list surface reads so the page stays small on the wire', async () => {
+    await newIssue('Wire weight');
+
+    const [row] = (await listIssues(workspace.admin, {})).issues;
+    expect(row).toBeDefined();
+    for (const column of ['organizationId', 'description', 'estimatePointId', 'stateEnteredAt']) {
+      expect(Object.hasOwn(row ?? {}, column)).toBe(false);
+    }
+    expect(row?.id).toBeDefined();
+    expect(row?.sortOrder).toBeDefined();
   });
 
   it('hides archived issues unless asked', async () => {
@@ -404,6 +418,81 @@ describe('listIssues', () => {
     const byState = new Map(counts.map((row) => [row.stateId, row.total]));
     expect(byState.get(stateNamed(workspace, 'Done').id)).toBe(1);
     expect(byState.get(stateNamed(workspace, 'Todo').id)).toBe(1);
+  });
+});
+
+describe('getIssueSummary', () => {
+  it('reports the filtered total beside the unfiltered scope, so nothing has to be crawled', async () => {
+    const mine = await newIssue('Mine');
+    await newIssue('Theirs');
+    await newIssue('Also theirs');
+    await updateIssue(workspace.admin, mine.id, { assigneeId: workspace.admin.userId });
+
+    const summary = await getIssueSummary(workspace.admin, {
+      teamId: workspace.teamId,
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'assignee',
+            operator: 'in',
+            values: [workspace.admin.userId],
+            negate: false,
+          },
+        ],
+      },
+    });
+
+    expect(summary.total).toBe(1);
+    expect(summary.scopeTotal).toBe(3);
+  });
+
+  it('counts every facet value across the whole scope, not just a loaded page', async () => {
+    const done = await newIssue('Shipped');
+    await newIssue('Waiting');
+    await updateIssue(workspace.admin, done.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+      assigneeId: workspace.admin.userId,
+    });
+
+    const summary = await getIssueSummary(workspace.admin, { teamId: workspace.teamId });
+
+    expect(summary.facets.state[stateNamed(workspace, 'Done').id]).toBe(1);
+    expect(summary.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(summary.facets.assignee[workspace.admin.userId]).toBe(1);
+    expect(summary.facets.assignee['none']).toBe(1);
+    expect(summary.facets.project['none']).toBe(2);
+    expect(summary.facets.label['none']).toBe(2);
+    expect(summary.facets.milestone['none']).toBe(2);
+  });
+
+  it('leaves the facet counts untouched when a filter narrows the result', async () => {
+    const done = await newIssue('Shipped');
+    await newIssue('Waiting');
+    await updateIssue(workspace.admin, done.id, { stateId: stateNamed(workspace, 'Done').id });
+
+    const summary = await getIssueSummary(workspace.admin, {
+      teamId: workspace.teamId,
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'state',
+            operator: 'in',
+            values: [stateNamed(workspace, 'Done').id],
+            negate: false,
+          },
+        ],
+      },
+    });
+
+    expect(summary.total).toBe(1);
+    expect(summary.scopeTotal).toBe(2);
+    expect(summary.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
   });
 });
 

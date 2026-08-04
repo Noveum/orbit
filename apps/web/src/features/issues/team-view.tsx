@@ -6,17 +6,14 @@ import {
   isEmptyFilter,
   viewStateDirty,
 } from '@orbit/shared/filters';
-import { useQuery } from '@tanstack/react-query';
 import { Columns3, List, SearchX } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { groupIssues } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig, VIEW_PARAM } from '@/features/filters/use-view-config.ts';
 import type { ViewConfig, ViewLayoutMode } from '@/features/filters/view-config.ts';
@@ -24,24 +21,15 @@ import { viewConfigToState } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
-import type { Issue, View, WorkflowState } from '@/lib/query/schemas.ts';
-import type { IssuePages } from '@/lib/query/sync.ts';
-import { flattenIssuePages } from '@/lib/query/sync.ts';
-import { teamIssuesQuery, useIssues } from '@/lib/query/use-issues.ts';
+import type { View, WorkflowState } from '@/lib/query/schemas.ts';
+import { useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
-
-function toIssueArray(data: unknown, fallback: readonly Issue[]): readonly Issue[] {
-  if (Array.isArray(data)) return data as readonly Issue[];
-  if (data !== null && typeof data === 'object' && 'pages' in data) {
-    return flattenIssuePages(data as IssuePages);
-  }
-  return fallback;
-}
 
 import { Board } from './board.tsx';
 import { IssueList } from './issue-list.tsx';
 import { ListSkeleton } from './list-skeleton.tsx';
-import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
+import { useIssueViewModel } from './use-issue-view-model.ts';
+import { useWorkspace } from './workspace-provider.tsx';
 
 export interface TeamViewProps {
   readonly teamKey: string;
@@ -65,61 +53,11 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
     orderBy: config.orderBy,
   });
 
-  const unfiltered = useQuery({
-    ...teamIssuesQuery(teamId ?? 'none'),
-    enabled: teamId !== null && filtered,
-  });
-
   const views = useViews();
   const savedView = useSavedView(views.data ?? [], searchParams.get(VIEW_PARAM));
 
-  const states = useMemo(() => statesForTeam(workspace.states, teamId), [workspace.states, teamId]);
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
-
-  const shown = useMemo(
-    () => applyDisplayFilters(rows, config.display, workspace.stateById),
-    [rows, config.display, workspace.stateById],
-  );
-
-  const groups = useMemo(
-    () =>
-      groupIssues(
-        shown.issues,
-        config.groupBy,
-        {
-          states,
-          members: workspace.members,
-          projects: workspace.projects,
-          cycles: workspace.cycles.filter((cycle) => cycle.teamId === teamId),
-          labels: workspace.labels,
-        },
-        {
-          showEmptyGroups: config.display.showEmptyGroups,
-          ordering: config.orderBy,
-          subGroupBy: config.subGroupBy,
-        },
-      ),
-    [
-      shown.issues,
-      config.groupBy,
-      config.display.showEmptyGroups,
-      config.orderBy,
-      config.subGroupBy,
-      states,
-      workspace,
-      teamId,
-    ],
-  );
-
-  const unfilteredRows = useMemo(
-    () => toIssueArray(unfiltered.data, rows),
-    [unfiltered.data, rows],
-  );
-
-  const hiddenByFilters =
-    filtered && unfiltered.data !== undefined
-      ? Math.max(0, unfilteredRows.length - rows.length)
-      : 0;
+  const model = useIssueViewModel({ teamId, config, issues: rows });
 
   const other = layout === 'board' ? 'issues' : 'board';
   useHotkey(
@@ -154,7 +92,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
       <div className="flex items-center gap-2 border-border border-b px-3 py-2">
         <h1 className="font-medium text-dense text-text">{team.name}</h1>
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
-          {shown.issues.length}
+          {model.total}
         </span>
         <div className="ml-auto flex items-center gap-1">
           <ViewToggle teamKey={teamKey} layout={layout} />
@@ -176,18 +114,18 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         config={config}
         onChange={setConfig}
         controls={controls}
-        issues={unfilteredRows}
+        facets={model.facets}
         savedView={savedView}
         dirty={savedView !== null && isDirty(config, layout, savedView)}
       />
 
       <TeamContent
         teamId={teamId}
-        states={states}
-        groups={groups}
+        states={model.states}
+        groups={model.groups}
         config={config}
         layout={layout}
-        empty={shown.issues.length === 0}
+        empty={model.shownCount === 0}
         loading={issues.isPending}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
@@ -198,8 +136,8 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
       />
 
       <HiddenFooter
-        hiddenByFilters={hiddenByFilters}
-        hiddenByDisplay={shown.hidden}
+        hiddenByFilters={model.hiddenByFilters}
+        hiddenByDisplay={model.hiddenByDisplay}
         onClearFilters={clearFilters}
         onRevealDisplay={revealDisplay}
       />
@@ -288,6 +226,11 @@ function TeamContent({
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        columnSource={
+          config.groupBy === 'state'
+            ? { teamId, query: { filter: config.filter, orderBy: config.orderBy } }
+            : undefined
+        }
       />
     );
   }

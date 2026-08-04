@@ -35,7 +35,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { PriorityGlyph } from '@/features/issues/priority-glyph.tsx';
 import { StateGlyph } from '@/features/issues/state-glyph.tsx';
 import { statesForTeam, type WorkspaceData } from '@/features/issues/workspace-provider.tsx';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { FacetProperty, IssueSummary } from '@/lib/query/schemas.ts';
 import { PRIORITY_ORDER } from './grouping.ts';
 
 export interface FilterOption {
@@ -52,7 +52,7 @@ export interface FilterFieldDefinition {
   readonly icon: LucideIcon;
   readonly input: FilterInputKind;
   readonly options: readonly FilterOption[];
-  readonly countOf: ((issue: Issue) => readonly string[]) | null;
+  readonly facet: FacetProperty | null;
 }
 
 const FIELD_ICONS: Record<FilterProperty, LucideIcon> = {
@@ -137,10 +137,6 @@ function dateOptions(): FilterOption[] {
   }));
 }
 
-function idsOf(value: string | null): readonly string[] {
-  return [value ?? UNSET_FILTER_VALUE];
-}
-
 export function buildFilterFields(
   workspace: WorkspaceData,
   teamId: string | null,
@@ -167,25 +163,25 @@ export function buildFilterFields(
         label: state.name,
         icon: <StateGlyph category={state.category} color={state.color} />,
       })),
-      countOf: (issue) => [issue.stateId],
+      facet: 'state',
     },
     {
       property: 'assignee',
       input: 'values',
       options: [...people, unsetOption('No assignee')],
-      countOf: (issue) => idsOf(issue.assigneeId),
+      facet: 'assignee',
     },
     {
       property: 'creator',
       input: 'values',
       options: people,
-      countOf: (issue) => [issue.creatorId],
+      facet: 'creator',
     },
     {
       property: 'subscriber',
       input: 'values',
       options: [...people, unsetOption('No subscribers')],
-      countOf: null,
+      facet: null,
     },
     {
       property: 'priority',
@@ -195,7 +191,7 @@ export function buildFilterFields(
         label: PRIORITY_LABELS[priority],
         icon: <PriorityGlyph priority={priority} />,
       })),
-      countOf: (issue) => [String(issue.priority)],
+      facet: 'priority',
     },
     {
       property: 'estimate',
@@ -208,7 +204,7 @@ export function buildFilterFields(
           icon: glyph(Gauge),
         })),
       ],
-      countOf: (issue) => [issue.estimate === null ? UNSET_FILTER_VALUE : String(issue.estimate)],
+      facet: 'estimate',
     },
     {
       property: 'label',
@@ -221,10 +217,7 @@ export function buildFilterFields(
         })),
         unsetOption('No label'),
       ],
-      countOf: (issue) => {
-        const ids = Array.isArray(issue.labelIds) ? issue.labelIds : [];
-        return ids.length === 0 ? [UNSET_FILTER_VALUE] : ids;
-      },
+      facet: 'label',
     },
     {
       property: 'project',
@@ -237,7 +230,7 @@ export function buildFilterFields(
         })),
         unsetOption('No project'),
       ],
-      countOf: (issue) => idsOf(issue.projectId),
+      facet: 'project',
     },
     {
       property: 'cycle',
@@ -250,7 +243,7 @@ export function buildFilterFields(
         })),
         unsetOption('No cycle'),
       ],
-      countOf: (issue) => idsOf(issue.cycleId),
+      facet: 'cycle',
     },
     {
       property: 'milestone',
@@ -259,7 +252,7 @@ export function buildFilterFields(
         { value: 'any', label: 'Has a milestone', icon: glyph(Flag) },
         unsetOption('No milestone'),
       ],
-      countOf: (issue) => [issue.milestoneId === null ? UNSET_FILTER_VALUE : 'any'],
+      facet: 'milestone',
     },
     {
       property: 'relation',
@@ -269,7 +262,7 @@ export function buildFilterFields(
         label: RELATION_FILTER_LABELS[value],
         icon: glyph(Network),
       })),
-      countOf: null,
+      facet: null,
     },
     {
       property: 'link',
@@ -279,15 +272,15 @@ export function buildFilterFields(
         label: LINK_FILTER_LABELS[value],
         icon: glyph(Link2),
       })),
-      countOf: null,
+      facet: null,
     },
-    { property: 'content', input: 'text', options: [], countOf: null },
-    { property: 'due', input: 'dates', options: dateOptions(), countOf: null },
-    { property: 'created', input: 'dates', options: dateOptions(), countOf: null },
-    { property: 'updated', input: 'dates', options: dateOptions(), countOf: null },
-    { property: 'started', input: 'dates', options: dateOptions(), countOf: null },
-    { property: 'completed', input: 'dates', options: dateOptions(), countOf: null },
-    { property: 'stateAge', input: 'dates', options: dateOptions(), countOf: null },
+    { property: 'content', input: 'text', options: [], facet: null },
+    { property: 'due', input: 'dates', options: dateOptions(), facet: null },
+    { property: 'created', input: 'dates', options: dateOptions(), facet: null },
+    { property: 'updated', input: 'dates', options: dateOptions(), facet: null },
+    { property: 'started', input: 'dates', options: dateOptions(), facet: null },
+    { property: 'completed', input: 'dates', options: dateOptions(), facet: null },
+    { property: 'stateAge', input: 'dates', options: dateOptions(), facet: null },
   ];
 
   return definitions
@@ -300,20 +293,15 @@ export function buildFilterFields(
     .filter((definition) => definition.input !== 'values' || definition.options.length > 0);
 }
 
+const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
+
 export function countValues(
   definition: FilterFieldDefinition,
-  issues: readonly Issue[],
+  facets: IssueSummary['facets'] | undefined,
 ): ReadonlyMap<string, number> {
-  const counts = new Map<string, number>();
-  const read = definition.countOf;
-  if (read === null) return counts;
-  const list: readonly Issue[] = Array.isArray(issues) ? issues : [];
-  for (const issue of list) {
-    const keys = read(issue);
-    if (!Array.isArray(keys)) continue;
-    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return counts;
+  const property = definition.facet;
+  if (property === null || facets === undefined) return EMPTY_COUNTS;
+  return new Map(Object.entries(facets[property] ?? {}));
 }
 
 export function operatorLabel(condition: FilterCondition): string {

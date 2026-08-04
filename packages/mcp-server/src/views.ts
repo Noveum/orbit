@@ -1,4 +1,4 @@
-import { type IssueRow, listMembers, listWorkflowStates } from '@orbit/core';
+import { type IssueListRow, listMembers, listWorkflowStates } from '@orbit/core';
 import { PRIORITY_LABELS } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -40,7 +40,7 @@ export function deltaViews(actions: readonly SyncAction[]): DeltaView[] {
 }
 
 function toView(
-  row: IssueRow,
+  row: IssueListRow,
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
 ): IssueView {
@@ -67,7 +67,7 @@ function toView(
 
 export async function describeIssues(
   principal: Principal,
-  rows: readonly IssueRow[],
+  rows: readonly IssueListRow[],
 ): Promise<IssueView[]> {
   if (rows.length === 0) return [];
 
@@ -86,7 +86,7 @@ export async function describeIssues(
   return rows.map((row) => toView(row, stateNames, userNames));
 }
 
-export async function describeIssue(principal: Principal, row: IssueRow): Promise<IssueView> {
+export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {
   const [view] = await describeIssues(principal, [row]);
   if (view === undefined) throw new Error('The issue could not be described.');
   return view;

@@ -11,12 +11,12 @@ const nullableTimestamp = z.string().nullable();
 
 export const issueSchema = z.object({
   id: z.string(),
-  organizationId: z.string(),
+  organizationId: z.string().default(''),
   teamId: z.string(),
   number: z.number(),
   identifier: z.string(),
   title: z.string(),
-  description: z.string(),
+  description: z.string().default(''),
   stateId: z.string(),
   priority: z.number(),
   creatorId: z.string(),
@@ -31,7 +31,7 @@ export const issueSchema = z.object({
   startedAt: nullableTimestamp,
   completedAt: nullableTimestamp,
   canceledAt: nullableTimestamp,
-  stateEnteredAt: timestamp,
+  stateEnteredAt: timestamp.default(''),
   syncId: z.number(),
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -191,6 +191,58 @@ export const issueCountsSchema = z.object({
 });
 
 export type IssueCounts = z.infer<typeof issueCountsSchema>;
+
+export const FACET_PROPERTIES = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'label',
+  'project',
+  'cycle',
+  'milestone',
+] as const;
+
+export type FacetProperty = (typeof FACET_PROPERTIES)[number];
+
+const facetCounts = z.record(z.string(), z.number()).catch({}).default({});
+
+export const issueSummarySchema = z.object({
+  total: z.number(),
+  scopeTotal: z.number(),
+  byState: z.record(z.string(), z.number()).catch({}).default({}),
+  groupTotals: z.record(z.string(), z.number()).catch({}).default({}),
+  facets: z
+    .object({
+      state: facetCounts,
+      assignee: facetCounts,
+      creator: facetCounts,
+      priority: facetCounts,
+      estimate: facetCounts,
+      label: facetCounts,
+      project: facetCounts,
+      cycle: facetCounts,
+      milestone: facetCounts,
+    })
+    .catch(() => emptyFacets()),
+});
+
+export type IssueSummary = z.infer<typeof issueSummarySchema>;
+
+export function emptyFacets(): IssueSummary['facets'] {
+  return {
+    state: {},
+    assignee: {},
+    creator: {},
+    priority: {},
+    estimate: {},
+    label: {},
+    project: {},
+    cycle: {},
+    milestone: {},
+  };
+}
 
 export const issueEnvelopeSchema = z.object({ issue: issueSchema });
 

@@ -9,6 +9,7 @@ export const queryKeys = {
     ['issues', ASSIGNED_SCOPE, userId, filter] as const,
   allIssues: (filter = '') => ['issues', ALL_SCOPE, filter] as const,
   issueCounts: (filter: string) => ['issue-counts', filter] as const,
+  issueSummary: (search: string) => ['issue-summary', search] as const,
   issue: (identifier: string) => ['issue', identifier] as const,
   comments: (issueId: string) => ['comments', issueId] as const,
   docComments: (docId: string) => ['doc-comments', docId] as const,
@@ -19,6 +20,7 @@ export const queryKeys = {
 } as const;
 
 export const ISSUES_ROOT = 'issues';
+export const ISSUE_SUMMARY_ROOT = 'issue-summary';
 export const ISSUE_ROOT = 'issue';
 export const COMMENTS_ROOT = 'comments';
 export const DOC_COMMENTS_ROOT = 'doc-comments';

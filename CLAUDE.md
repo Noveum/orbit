@@ -74,9 +74,13 @@ bun test             run one package's tests from inside that package
 ```
 
 Ports: web 3000, realtime 3100, postgres 5434, redis 6380, minio 9010. The realtime
-port is development only. In production the socket is served from the web app at
-`/api/ws`, and the client falls back to the same origin whenever
-`NEXT_PUBLIC_REALTIME_URL` is unset.
+port is development only. In production the socket is always served from the web app
+at `/api/ws` on the page's own origin: `configuredRealtimeUrl()` ignores
+`NEXT_PUBLIC_REALTIME_URL` whenever `NODE_ENV` is `production`, so the variable is a
+local development override and nothing else. Never set it on a deployed environment.
+A value left over from the standalone realtime host sends the browser to a dead
+origin, and because the ticket still comes from the app the failure looks like an
+endless "Reconnecting to live updates" banner rather than an error.
 
 Email goes out through Resend only. Set `RESEND_API_KEY` and an `EMAIL_FROM` on a
 domain verified in Resend, otherwise every send fails.

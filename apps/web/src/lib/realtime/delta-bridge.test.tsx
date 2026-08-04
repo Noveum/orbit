@@ -12,6 +12,7 @@ let capturedResume: ((since: number) => void) | null = null;
 const observed: number[] = [];
 
 mock.module('@orbit/realtime-client/react', () => ({
+  useRealtimeStatus: () => 'open',
   useScopeSubscription: () => undefined,
   useDeltaHandler: (handler: (actions: SyncAction[]) => void) => {
     capturedHandler = handler;

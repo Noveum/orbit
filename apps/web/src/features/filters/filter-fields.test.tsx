@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { Issue } from '@/lib/query/schemas.ts';
+import { emptyFacets, type IssueSummary } from '@/lib/query/schemas.ts';
 import { countValues, type FilterFieldDefinition } from './filter-fields.tsx';
 
 const labelDef = {
@@ -7,23 +7,38 @@ const labelDef = {
   input: 'values',
   label: 'Label',
   options: [],
-  countOf: (issue: Issue) => (Array.isArray(issue.labelIds) ? issue.labelIds : []),
+  facet: 'label',
 } as unknown as FilterFieldDefinition;
 
+const uncountedDef = {
+  property: 'content',
+  input: 'text',
+  label: 'Content',
+  options: [],
+  facet: null,
+} as unknown as FilterFieldDefinition;
+
+function facetsWith(label: Record<string, number>): IssueSummary['facets'] {
+  return { ...emptyFacets(), label };
+}
+
 describe('countValues', () => {
-  it('never throws when the issues argument is not an array', () => {
-    const infiniteDataShape = { pages: [], pageParams: [] } as unknown as readonly Issue[];
-    expect(countValues(labelDef, infiniteDataShape).size).toBe(0);
-    expect(countValues(labelDef, undefined as unknown as readonly Issue[]).size).toBe(0);
+  it('reads the counts the server measured over the whole scope', () => {
+    const counts = countValues(labelDef, facetsWith({ bug: 412, perf: 97 }));
+    expect(counts.get('bug')).toBe(412);
+    expect(counts.get('perf')).toBe(97);
   });
 
-  it('counts values for a normal issue array', () => {
-    const rows = [
-      { labelIds: ['bug'] },
-      { labelIds: ['bug', 'perf'] },
-    ] as unknown as readonly Issue[];
-    const counts = countValues(labelDef, rows);
-    expect(counts.get('bug')).toBe(2);
-    expect(counts.get('perf')).toBe(1);
+  it('returns nothing before the summary has loaded', () => {
+    expect(countValues(labelDef, undefined).size).toBe(0);
+  });
+
+  it('returns nothing for a field the server does not count', () => {
+    expect(countValues(uncountedDef, facetsWith({ bug: 3 })).size).toBe(0);
+  });
+
+  it('survives a facet the server omitted', () => {
+    const partial = { ...emptyFacets() } as unknown as IssueSummary['facets'];
+    expect(countValues(labelDef, partial).size).toBe(0);
   });
 });

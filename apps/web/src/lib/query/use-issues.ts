@@ -15,13 +15,21 @@ import {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
 } from './issue-search.ts';
 import { ISSUES_ROOT, queryKeys } from './keys.ts';
-import type { Bootstrap, Issue, IssueCounts, IssueDetail, IssuePage } from './schemas.ts';
+import type {
+  Bootstrap,
+  Issue,
+  IssueCounts,
+  IssueDetail,
+  IssuePage,
+  IssueSummary,
+} from './schemas.ts';
 import {
   bootstrapSchema,
   issueCountsSchema,
@@ -29,6 +37,7 @@ import {
   issueEnvelopeSchema,
   issueListSchema,
   issueMoveResultSchema,
+  issueSummarySchema,
 } from './schemas.ts';
 import type { IssuePages } from './sync.ts';
 import { flattenIssuePages, mapIssuePages, sortIssues } from './sync.ts';
@@ -38,6 +47,7 @@ export {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
   issueSearch,
@@ -92,27 +102,18 @@ export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_I
   return pagedIssueOptions(queryKeys.issues(teamId, search), search);
 }
 
-const MAX_PAGES = 40;
-
-async function fetchAllIssues(search: string, signal: AbortSignal): Promise<readonly Issue[]> {
-  const issues: Issue[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await fetchIssuePage(search, cursor, signal);
-    issues.push(...result.issues);
-    if (result.nextCursor === null) break;
-    cursor = result.nextCursor;
-  }
-  return issues;
+export function issueSummaryQueryOptions(search: string, enabled = true) {
+  return {
+    queryKey: queryKeys.issueSummary(search),
+    enabled,
+    placeholderData: keepPreviousData,
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueSummary> =>
+      await apiFetch(`/api/issues/summary?${search}`, issueSummarySchema, { signal }),
+  };
 }
 
-export function teamIssuesQuery(teamId: string) {
-  const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
-  return {
-    queryKey: queryKeys.issues(teamId, search),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> =>
-      await fetchAllIssues(search, signal),
-  };
+export function useIssueSummary(search: string, enabled = true) {
+  return useQuery(issueSummaryQueryOptions(search, enabled));
 }
 
 function seedPages(seed: readonly Issue[] | undefined): IssuePages | undefined {
@@ -131,6 +132,21 @@ export function useIssues(
     enabled: teamId !== null,
     select: flattenIssuePages,
     placeholderData: seedPages(seed) ?? keepPreviousData,
+  });
+}
+
+export function useColumnIssues(
+  teamId: string | null,
+  query: IssueQuery,
+  stateId: string,
+  enabled: boolean,
+) {
+  const search = teamId === null ? '' : columnSearch(teamId, query, stateId);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
+    enabled: enabled && teamId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
   });
 }
 
