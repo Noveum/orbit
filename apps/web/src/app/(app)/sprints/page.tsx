@@ -2,7 +2,12 @@ import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
-import { getActiveCycleView, listUpcomingCycleViews } from '@/features/cycles/data.ts';
+import {
+  getActiveCycleView,
+  listPastSprintViews,
+  listUpcomingCycleViews,
+} from '@/features/cycles/data.ts';
+import { SprintHistory } from '@/features/cycles/sprint-history.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
@@ -27,6 +32,7 @@ export default async function SprintsPage() {
       team,
       cycle: await getActiveCycleView(principal, team),
       upcoming: await listUpcomingCycleViews(principal, team),
+      past: await listPastSprintViews(principal, team),
     })),
   );
 
@@ -39,12 +45,13 @@ export default async function SprintsPage() {
         </p>
       </header>
       {panels.map((panel) => (
-        <CyclePanel
-          key={panel.team.id}
-          cycle={panel.cycle}
-          upcoming={panel.upcoming}
-          teamName={panel.team.name}
-        />
+        <section key={panel.team.id} className="flex flex-col gap-4">
+          <CyclePanel cycle={panel.cycle} upcoming={panel.upcoming} teamName={panel.team.name} />
+          <div className="flex flex-col gap-2">
+            <h3 className="font-medium text-dense text-text">Past sprints</h3>
+            <SprintHistory sprints={panel.past} />
+          </div>
+        </section>
       ))}
     </div>
   );

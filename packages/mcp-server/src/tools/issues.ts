@@ -99,7 +99,7 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
           .string()
           .min(1)
           .optional()
-          .describe('Cycle name, number, id, or "active" for the running cycle.'),
+          .describe('Sprint name, number, id, or "active" for the running sprint.'),
         parent: issueRef.optional().describe('Parent issue, making this a sub issue.'),
         labels: labelsRef.optional(),
         estimate: z.number().int().min(0).max(100).optional().describe('Estimate points.'),
@@ -157,7 +157,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
           .nullable()
           .optional()
           .describe('Project name, slug, id or null.'),
-        cycle: z.string().min(1).nullable().optional().describe('Cycle name, number, id or null.'),
+        cycle: z.string().min(1).nullable().optional().describe('Sprint name, number, id or null.'),
         labels: labelsRef.optional(),
         estimate: z.number().int().min(0).max(100).nullable().optional(),
         dueDate: dueDateRef.nullable().optional(),
@@ -266,7 +266,7 @@ function registerSearchIssues(server: McpServer, principal: Principal): void {
           .string()
           .min(1)
           .optional()
-          .describe('Cycle name, number, id or "active". Needs team.'),
+          .describe('Sprint name, number, id or "active". Needs team.'),
         assignee: z
           .string()
           .min(1)

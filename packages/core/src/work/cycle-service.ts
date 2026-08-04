@@ -1,4 +1,19 @@
-import { and, asc, count, db, desc, eq, gt, isNull, lt, lte, ne, schema, sql } from '@orbit/db';
+import {
+  and,
+  asc,
+  count,
+  db,
+  desc,
+  eq,
+  gt,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  schema,
+  sql,
+} from '@orbit/db';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -339,6 +354,76 @@ export interface CompletedCycle {
   readonly actions: SyncAction[];
 }
 
+export interface SprintOutcome {
+  readonly scope: number;
+  readonly completed: number;
+  readonly canceled: number;
+  readonly rolledOver: number;
+  readonly points: { readonly scope: number; readonly completed: number };
+  readonly closedAt: string;
+}
+
+function outcomeOf(
+  rows: readonly { category: string; estimate: number | null }[],
+  rolledOver: number,
+  now: Date,
+): SprintOutcome {
+  const done = rows.filter((row) => row.category === 'completed');
+  const points = (list: readonly { estimate: number | null }[]) =>
+    list.reduce((total, row) => total + (row.estimate ?? 0), 0);
+  return {
+    scope: rows.length,
+    completed: done.length,
+    canceled: rows.filter((row) => row.category === 'canceled').length,
+    rolledOver,
+    points: { scope: points(rows), completed: points(done) },
+    closedAt: now.toISOString(),
+  };
+}
+
+export async function pastCycles(
+  principal: Principal,
+  teamId: string,
+  limit = 12,
+): Promise<CycleRow[]> {
+  assertCan(principal, 'project:read');
+  await requireTeam(principal, teamId);
+  return await db
+    .select()
+    .from(schema.cycle)
+    .where(
+      and(
+        eq(schema.cycle.teamId, teamId),
+        eq(schema.cycle.organizationId, principal.organizationId),
+        isNull(schema.cycle.archivedAt),
+        isNotNull(schema.cycle.completedAt),
+      ),
+    )
+    .orderBy(desc(schema.cycle.number))
+    .limit(Math.min(Math.max(limit, 1), 50));
+}
+
+export async function getCycleByNumber(
+  principal: Principal,
+  teamId: string,
+  number: number,
+): Promise<CycleRow | null> {
+  assertCan(principal, 'project:read');
+  await requireTeam(principal, teamId);
+  const [row] = await db
+    .select()
+    .from(schema.cycle)
+    .where(
+      and(
+        eq(schema.cycle.teamId, teamId),
+        eq(schema.cycle.organizationId, principal.organizationId),
+        eq(schema.cycle.number, number),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 export async function completeCycle(
   principal: Principal,
   cycleId: string,
@@ -400,6 +485,16 @@ export async function completeCycle(
         ),
       );
 
+    const atClose = await tx
+      .select({
+        stateId: schema.issue.stateId,
+        estimate: schema.issue.estimate,
+        category: schema.workflowState.category,
+      })
+      .from(schema.issue)
+      .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+      .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
+
     const rolled = await tx
       .update(schema.issue)
       .set({ cycleId: nextCycle.id, updatedAt: now, syncId })
@@ -414,7 +509,11 @@ export async function completeCycle(
 
     const [closed] = await tx
       .update(schema.cycle)
-      .set({ completedAt: now, syncId })
+      .set({
+        completedAt: now,
+        syncId,
+        progressSnapshot: { ...outcomeOf(atClose, rolled.length, now) },
+      })
       .where(eq(schema.cycle.id, cycleId))
       .returning();
     const completed = requireRow(closed, 'That cycle does not exist.');

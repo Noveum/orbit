@@ -174,7 +174,9 @@ function CardMeta({ issue, creator, project, cycle, subIssueCount, properties }:
       {shows('project') && project !== undefined ? (
         <MetaChip label={project.name} color={project.color} title="Project" />
       ) : null}
-      {shows('cycle') && cycle !== undefined ? <MetaChip label={cycle.name} title="Cycle" /> : null}
+      {shows('cycle') && cycle !== undefined ? (
+        <MetaChip label={cycle.name} title="Sprint" />
+      ) : null}
       {shows('milestone') && issue.milestoneId !== null ? (
         <MetaChip label="Milestone" title="On a milestone" />
       ) : null}

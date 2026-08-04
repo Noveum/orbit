@@ -1,4 +1,12 @@
-import { activeCycle, type CycleProgress, cycleProgress, upcomingCycles } from '@orbit/core';
+import {
+  activeCycle,
+  type CycleProgress,
+  cycleProgress,
+  getCycleByNumber,
+  pastCycles,
+  type SprintOutcome,
+  upcomingCycles,
+} from '@orbit/core';
 import { and, asc, db, eq, isNull, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
@@ -49,6 +57,14 @@ export interface UpcomingCycleView {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly teamKey: string;
+}
+
+function readOutcome(value: Record<string, unknown> | null): SprintOutcome | null {
+  if (value === null || typeof value !== 'object') return null;
+  const scope = value['scope'];
+  const completed = value['completed'];
+  if (typeof scope !== 'number' || typeof completed !== 'number') return null;
+  return value as unknown as SprintOutcome;
 }
 
 function toCategory(value: string): StateCategory {
@@ -166,4 +182,60 @@ export async function listUpcomingCycleViews(
     endsAt: cycle.endsAt.toISOString(),
     teamKey: team.key,
   }));
+}
+
+export interface PastSprintView {
+  readonly id: string;
+  readonly name: string;
+  readonly number: number;
+  readonly teamKey: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly completedAt: string;
+  readonly outcome: SprintOutcome | null;
+}
+
+export async function listPastSprintViews(
+  principal: Principal,
+  team: { id: string; key: string },
+  limit = 12,
+): Promise<PastSprintView[]> {
+  const rows = await pastCycles(principal, team.id, limit);
+  return rows.map((cycle) => ({
+    id: cycle.id,
+    name: sprintLabel(cycle),
+    number: cycle.number,
+    teamKey: team.key,
+    startsAt: cycle.startsAt.toISOString(),
+    endsAt: cycle.endsAt.toISOString(),
+    completedAt: (cycle.completedAt ?? cycle.endsAt).toISOString(),
+    outcome: readOutcome(cycle.progressSnapshot),
+  }));
+}
+
+export async function getSprintView(
+  principal: Principal,
+  team: { id: string; key: string; name: string },
+  number: number,
+): Promise<(CycleView & { readonly outcome: SprintOutcome | null }) | null> {
+  const cycle = await getCycleByNumber(principal, team.id, number);
+  if (cycle === null) return null;
+  const [progress, issues] = await Promise.all([
+    cycleProgress(principal, cycle.id),
+    loadCycleIssues(cycle.id),
+  ]);
+  return {
+    id: cycle.id,
+    name: sprintLabel(cycle),
+    number: cycle.number,
+    teamId: team.id,
+    teamKey: team.key,
+    teamName: team.name,
+    startsAt: cycle.startsAt.toISOString(),
+    endsAt: cycle.endsAt.toISOString(),
+    progress,
+    groups: issues.groups,
+    assignees: issues.assignees,
+    outcome: readOutcome(cycle.progressSnapshot),
+  };
 }

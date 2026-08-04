@@ -30,6 +30,7 @@ const NAVIGABLE_ROUTES: readonly RegExp[] = [
   /^\/team\/[^/]+\/issues$/,
   /^\/team\/[^/]+\/board$/,
   /^\/team\/[^/]+\/sprint\/active$/,
+  /^\/team\/[^/]+\/sprint\/\d+$/,
   /^\/workspaces\/new$/,
 ];
 

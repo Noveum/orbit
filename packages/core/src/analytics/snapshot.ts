@@ -6,7 +6,7 @@ import { newId, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
-const SNAPSHOT_ACTOR: Actor = { type: 'system', id: 'snapshot', name: 'Cycle snapshot' };
+const SNAPSHOT_ACTOR: Actor = { type: 'system', id: 'snapshot', name: 'Sprint snapshot' };
 
 interface Tally {
   total: number;

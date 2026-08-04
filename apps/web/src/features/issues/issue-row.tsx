@@ -159,7 +159,7 @@ function RowMeta({ issue, creator, project, cycle, subIssueCount, properties }: 
         />
       ) : null}
       {shows('cycle') && cycle !== undefined ? (
-        <MetaChip label={cycle.name} title="Cycle" className="hidden md:flex" />
+        <MetaChip label={cycle.name} title="Sprint" className="hidden md:flex" />
       ) : null}
       {shows('milestone') && issue.milestoneId !== null ? (
         <MetaChip label="Milestone" title="On a milestone" className="hidden md:flex" />

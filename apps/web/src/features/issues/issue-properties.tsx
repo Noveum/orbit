@@ -225,7 +225,7 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
 
       <PropertyRow label="Cycle">
         <PropertyMenu
-          title="Cycle"
+          title="Sprint"
           open={openMenu === 'cycle'}
           onOpenChange={toggle('cycle')}
           options={[

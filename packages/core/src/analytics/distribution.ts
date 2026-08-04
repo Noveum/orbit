@@ -50,7 +50,7 @@ const AXIS: Record<ChartDimension, AxisDef> = {
   },
   cycle: {
     key: sql`coalesce(cy.id, 'none')`,
-    label: sql`coalesce(nullif(cy.name, ''), 'Cycle ' || cy.number::text)`,
+    label: sql`coalesce(nullif(cy.name, ''), 'Sprint ' || cy.number::text)`,
     join: 'cycle',
   },
   created_month: {

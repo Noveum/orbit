@@ -17,7 +17,9 @@ import {
   cycleProgress,
   deleteCycle,
   getCycle,
+  getCycleByNumber,
   listCycles,
+  pastCycles,
   upcomingCycles,
   updateCycle,
 } from './cycle-service.ts';
@@ -314,6 +316,61 @@ describe('cycle writes are team scoped', () => {
     await expect(cycleBurndown(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
     await expect(teamVelocity(outsider, workspace.teamId)).rejects.toMatchObject({
       code: 'forbidden',
+    });
+  });
+});
+
+describe('a finished sprint keeps its own history', () => {
+  it('records what it shipped, because the rollover empties it of unfinished work', async () => {
+    const cycle = await firstCycle();
+    const shipped = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Shipped',
+      cycleId: cycle.id,
+    });
+    await updateIssue(workspace.admin, shipped.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Not finished',
+      cycleId: cycle.id,
+    });
+
+    const closed = await completeCycle(workspace.admin, cycle.id);
+    expect(closed.rolledOverIssueIds).toHaveLength(1);
+
+    const outcome = closed.cycle.progressSnapshot as Record<string, unknown> | null;
+    expect(outcome).not.toBeNull();
+    expect(outcome?.['scope']).toBe(2);
+    expect(outcome?.['completed']).toBe(1);
+    expect(outcome?.['rolledOver']).toBe(1);
+
+    const live = await cycleProgress(workspace.admin, cycle.id);
+    expect(live.scope).toBe(1);
+    expect(outcome?.['scope']).toBeGreaterThan(live.scope);
+  });
+
+  it('lists finished sprints newest first, and leaves the running one out', async () => {
+    const cycle = await firstCycle();
+    await completeCycle(workspace.admin, cycle.id);
+
+    const past = await pastCycles(workspace.admin, workspace.teamId);
+    expect(past.map((row) => row.id)).toEqual([cycle.id]);
+    expect(past[0]?.completedAt).not.toBeNull();
+  });
+
+  it('finds a sprint by its number, which is the handle a url can carry', async () => {
+    const cycle = await firstCycle();
+    const found = await getCycleByNumber(workspace.admin, workspace.teamId, cycle.number);
+    expect(found?.id).toBe(cycle.id);
+    expect(await getCycleByNumber(workspace.admin, workspace.teamId, 9999)).toBeNull();
+  });
+
+  it('keeps another team out of the history it asks for', async () => {
+    const outsider = await createWorkspace('Vega');
+    await expect(pastCycles(outsider.admin, workspace.teamId)).rejects.toMatchObject({
+      code: 'not_found',
     });
   });
 });
