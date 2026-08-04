@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
+import { createTeam } from '../org/team-service.ts';
 import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 import {
   archiveDoc,
@@ -15,6 +16,7 @@ import {
   listPublicDocs,
   publishedDocToken,
   restoreDocVersion,
+  setDocAccess,
   shareDoc,
   updateDoc,
   updateDocCollection,
@@ -398,5 +400,80 @@ describe('backlinks', () => {
     const detail = await getDoc(workspace.admin, target.id);
     expect(detail.backlinks.map((entry) => entry.id)).toEqual([linking.id]);
     expect((await getDoc(workspace.admin, linking.id)).backlinks).toEqual([]);
+  });
+});
+
+describe('doc access', () => {
+  it('keeps a private doc away from everyone but its author', async () => {
+    const { principal: other } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Compensation review',
+      content: 'Numbers nobody else should read.',
+      visibility: 'private',
+    });
+
+    await expect(getDoc(other, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+    const listed = await listDocs(other, {});
+    expect(listed.some((row) => row.id === doc.id)).toBe(false);
+
+    const asAuthor = await getDoc(workspace.admin, doc.id);
+    expect(asAuthor.doc.id).toBe(doc.id);
+  });
+
+  it('shares a private doc with exactly the people it was shared with', async () => {
+    const { principal: invited, user: invitedUser } = await addMember(workspace, 'member');
+    const { principal: stranger } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Shared plan',
+      content: 'For a named few.',
+      visibility: 'private',
+    });
+
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'user', subjectId: invitedUser.id, level: 'read' },
+    ]);
+
+    expect((await getDoc(invited, doc.id)).doc.id).toBe(doc.id);
+    expect((await listDocs(invited, {})).some((row) => row.id === doc.id)).toBe(true);
+    await expect(getDoc(stranger, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('shares with a whole team when the grant names one', async () => {
+    const team = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { principal: designer } = await addMember(workspace, 'member', {
+      teamIds: [team.team.id],
+    });
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Design brief',
+      content: 'For the design team.',
+      visibility: 'private',
+    });
+
+    await expect(getDoc(designer, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+    await setDocAccess(workspace.admin, doc.id, [
+      { subjectType: 'team', subjectId: team.team.id, level: 'read' },
+    ]);
+    expect((await getDoc(designer, doc.id)).doc.id).toBe(doc.id);
+  });
+
+  it('leaves workspace docs readable by everyone, as before', async () => {
+    const { principal: guest } = await addMember(workspace, 'guest');
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Handbook',
+      content: 'Everybody reads this.',
+      visibility: 'workspace',
+    });
+    expect((await getDoc(guest, doc.id)).doc.id).toBe(doc.id);
+  });
+
+  it('lets an admin reach a private doc they do not own', async () => {
+    const { principal: author, user: authorUser } = await addMember(workspace, 'member');
+    const { doc } = await createDoc(author, {
+      title: 'Personal notes',
+      content: 'Mine.',
+      visibility: 'private',
+    });
+    expect(doc.authorId).toBe(authorUser.id);
+    expect((await getDoc(workspace.admin, doc.id)).doc.id).toBe(doc.id);
   });
 });

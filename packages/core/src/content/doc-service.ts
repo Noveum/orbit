@@ -1,4 +1,19 @@
-import { and, asc, count, db, desc, eq, ilike, isNull, ne, or, schema, sql } from '@orbit/db';
+import {
+  and,
+  asc,
+  count,
+  db,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  ne,
+  or,
+  schema,
+  sql,
+} from '@orbit/db';
+import { isRestricted } from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -13,7 +28,7 @@ import {
   docShareSchema,
   docUpdateSchema,
 } from '@orbit/shared/validators';
-import { getTableColumns } from 'drizzle-orm';
+import { getTableColumns, type SQL } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -100,13 +115,82 @@ function tokenFor(visibility: string, current: string | null): string | null {
   return current ?? newToken();
 }
 
+export function docReadFilter(principal: Principal): SQL {
+  if (principal.role === 'admin') return sql`true`;
+  const open = inArray(schema.doc.visibility, ['workspace', 'link', 'public']);
+
+  const grants = db
+    .select({ docId: schema.docAccess.docId })
+    .from(schema.docAccess)
+    .where(
+      or(
+        and(
+          eq(schema.docAccess.subjectType, 'user'),
+          eq(schema.docAccess.subjectId, principal.userId),
+        ),
+        principal.teamIds.length === 0
+          ? sql`false`
+          : and(
+              eq(schema.docAccess.subjectType, 'team'),
+              inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+            ),
+      ),
+    );
+
+  const clause = or(
+    open,
+    eq(schema.doc.authorId, principal.userId),
+    inArray(schema.doc.id, grants),
+  );
+  return clause ?? sql`false`;
+}
+
+export function canReadDoc(principal: Principal, doc: DocRow, grants: readonly string[]): boolean {
+  if (principal.role === 'admin') return true;
+  if (doc.authorId === principal.userId) return true;
+  if (!isRestricted(doc.visibility)) return true;
+  return grants.includes(doc.id);
+}
+
+async function grantedDocIds(
+  executor: Executor,
+  principal: Principal,
+  docIds: readonly string[],
+): Promise<string[]> {
+  if (docIds.length === 0) return [];
+  const rows = await executor
+    .select({ docId: schema.docAccess.docId })
+    .from(schema.docAccess)
+    .where(
+      and(
+        inArray(schema.docAccess.docId, [...docIds]),
+        or(
+          and(
+            eq(schema.docAccess.subjectType, 'user'),
+            eq(schema.docAccess.subjectId, principal.userId),
+          ),
+          principal.teamIds.length === 0
+            ? sql`false`
+            : and(
+                eq(schema.docAccess.subjectType, 'team'),
+                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+              ),
+        ),
+      ),
+    );
+  return rows.map((row) => row.docId);
+}
+
 async function loadDoc(executor: Executor, principal: Principal, docId: string): Promise<DocRow> {
   const [row] = await executor
     .select()
     .from(schema.doc)
     .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
     .limit(1);
-  return requireRow(row, 'That doc does not exist.');
+  const doc = requireRow(row, 'That doc does not exist.');
+  const grants = await grantedDocIds(executor, principal, [doc.id]);
+  if (!canReadDoc(principal, doc, grants)) throw notFound('That doc does not exist.');
+  return doc;
 }
 
 async function assertParent(
@@ -204,7 +288,10 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
   assertCan(principal, 'doc:read');
   const filter = docFilterSchema.parse(input);
 
-  const conditions = [eq(schema.doc.organizationId, principal.organizationId)];
+  const conditions = [
+    eq(schema.doc.organizationId, principal.organizationId),
+    docReadFilter(principal),
+  ];
   if (!filter.includeArchived) conditions.push(isNull(schema.doc.archivedAt));
   if (filter.collectionId !== undefined) {
     conditions.push(eq(schema.doc.collectionId, filter.collectionId));
@@ -642,5 +729,57 @@ export async function deleteDocCollection(
     const collection = requireRow(removed, 'That collection does not exist.');
 
     return [collectionAction(collection, syncId, actor, 'delete')];
+  });
+}
+
+export interface DocAccessGrant {
+  readonly subjectType: 'user' | 'team';
+  readonly subjectId: string;
+  readonly level: 'read' | 'write';
+}
+
+export async function listDocAccess(
+  principal: Principal,
+  docId: string,
+): Promise<(typeof schema.docAccess.$inferSelect)[]> {
+  assertCan(principal, 'doc:read');
+  await loadDoc(db, principal, docId);
+  return await db
+    .select()
+    .from(schema.docAccess)
+    .where(eq(schema.docAccess.docId, docId))
+    .orderBy(asc(schema.docAccess.createdAt));
+}
+
+export async function setDocAccess(
+  principal: Principal,
+  docId: string,
+  grants: readonly DocAccessGrant[],
+): Promise<(typeof schema.docAccess.$inferSelect)[]> {
+  assertCan(principal, 'doc:write');
+  const doc = await loadDoc(db, principal, docId);
+  if (principal.role !== 'admin' && doc.authorId !== principal.userId) {
+    throw notFound('That doc does not exist.');
+  }
+
+  return await db.transaction(async (tx) => {
+    await tx.delete(schema.docAccess).where(eq(schema.docAccess.docId, docId));
+    if (grants.length === 0) return [];
+    const syncId = await nextSyncId(tx);
+    return await tx
+      .insert(schema.docAccess)
+      .values(
+        grants.map((grant) => ({
+          id: newId(),
+          organizationId: principal.organizationId,
+          docId,
+          subjectType: grant.subjectType,
+          subjectId: grant.subjectId,
+          level: grant.level,
+          grantedById: principal.userId,
+          syncId,
+        })),
+      )
+      .returning();
   });
 }

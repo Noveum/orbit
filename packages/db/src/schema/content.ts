@@ -80,6 +80,29 @@ export const docCollection = pgTable(
   (table) => [index('doc_collection_org_idx').on(table.organizationId)],
 );
 
+export const docAccess = pgTable(
+  'doc_access',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    docId: text('doc_id')
+      .notNull()
+      .references((): AnyPgColumn => doc.id, { onDelete: 'cascade' }),
+    subjectType: text('subject_type').notNull(),
+    subjectId: text('subject_id').notNull(),
+    level: text('level').notNull().default('read'),
+    grantedById: text('granted_by_id').references(() => user.id, { onDelete: 'set null' }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('doc_access_unique').on(table.docId, table.subjectType, table.subjectId),
+    index('doc_access_subject_idx').on(table.subjectType, table.subjectId),
+  ],
+);
+
 export const doc = pgTable(
   'doc',
   {

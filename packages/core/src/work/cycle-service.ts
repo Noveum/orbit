@@ -122,6 +122,7 @@ export async function updateCycle(
       )
       .limit(1);
     const current = requireRow(found, 'That cycle does not exist.');
+    assertInTeam(principal, teamScope(current));
 
     const values: Partial<typeof schema.cycle.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
@@ -183,6 +184,7 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
       )
       .limit(1);
     const cycle = requireRow(existing, 'That cycle does not exist.');
+    assertInTeam(principal, teamScope(cycle));
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);

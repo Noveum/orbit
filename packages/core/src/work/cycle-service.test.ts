@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { cycleBurndown, teamVelocity } from '../analytics/burndown.ts';
 import { createTeam } from '../org/team-service.ts';
 import {
   addMember,
@@ -14,6 +15,7 @@ import {
   completeCycle,
   createCycle,
   cycleProgress,
+  deleteCycle,
   getCycle,
   listCycles,
   upcomingCycles,
@@ -248,6 +250,70 @@ describe('cycle reads are team scoped', () => {
     if (foreign === undefined) throw new Error('missing seeded cycle');
     await expect(getCycle(workspace.admin, foreign.id)).rejects.toMatchObject({
       code: 'not_found',
+    });
+  });
+});
+
+describe('cycle writes are team scoped', () => {
+  it('refuses a member of another team renaming or deleting a sprint', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { principal: outsider } = await addMember(workspace, 'member', {
+      teamIds: [other.team.id],
+    });
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-01-06T00:00:00.000Z'),
+      endsAt: new Date('2030-01-20T00:00:00.000Z'),
+    });
+
+    await expect(updateCycle(outsider, cycle.id, { name: 'Hijacked' })).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(deleteCycle(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
+
+    const still = await getCycle(workspace.admin, cycle.id);
+    expect(still.name).not.toBe('Hijacked');
+  });
+
+  it('refuses putting an issue into another team sprint', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { cycle: theirs } = await createCycle(workspace.admin, {
+      teamId: other.team.id,
+      startsAt: new Date('2030-01-06T00:00:00.000Z'),
+      endsAt: new Date('2030-01-20T00:00:00.000Z'),
+    });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Mine',
+    });
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { cycleId: theirs.id }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Also mine',
+        cycleId: theirs.id,
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('keeps burndown and velocity inside the team', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { principal: outsider } = await addMember(workspace, 'member', {
+      teamIds: [other.team.id],
+    });
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-01-06T00:00:00.000Z'),
+      endsAt: new Date('2030-01-20T00:00:00.000Z'),
+    });
+
+    await expect(cycleBurndown(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(teamVelocity(outsider, workspace.teamId)).rejects.toMatchObject({
+      code: 'forbidden',
     });
   });
 });
