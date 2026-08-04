@@ -33,7 +33,7 @@ export interface StandupDetail {
 }
 
 function standupScopes(row: Pick<StandupRow, 'organizationId' | 'teamId' | 'id'>): string[] {
-  return [scopes.organization(row.organizationId), scopes.team(row.teamId), scopes.standup(row.id)];
+  return [scopes.team(row.teamId), scopes.standup(row.id)];
 }
 
 function standupAction(

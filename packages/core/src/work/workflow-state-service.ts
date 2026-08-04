@@ -29,7 +29,7 @@ export const DEFAULT_WORKFLOW_STATES: readonly {
 ];
 
 function stateScopes(row: WorkflowStateRow): string[] {
-  return [scopes.organization(row.organizationId), scopes.team(row.teamId)];
+  return [scopes.team(row.teamId)];
 }
 
 export async function createDefaultWorkflowStates(

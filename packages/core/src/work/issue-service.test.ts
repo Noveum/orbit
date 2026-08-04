@@ -106,7 +106,7 @@ describe('createIssue', () => {
     expect(activity[0]?.field).toBe('created');
   });
 
-  it('returns a sync action scoped to org, team, and issue', async () => {
+  it('scopes a sync action to the team and the issue, never to the whole organization', async () => {
     const { issue, actions } = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
       title: 'Scoped',
@@ -118,12 +118,9 @@ describe('createIssue', () => {
     expect(action?.action).toBe('insert');
     expect(action?.syncId).toBeGreaterThan(0);
     expect(action?.scopes).toEqual(
-      expect.arrayContaining([
-        scopes.organization(workspace.organizationId),
-        scopes.team(workspace.teamId),
-        scopes.issue(issue.id),
-      ]),
+      expect.arrayContaining([scopes.team(workspace.teamId), scopes.issue(issue.id)]),
     );
+    expect(action?.scopes).not.toContain(scopes.organization(workspace.organizationId));
     expect(action?.actor.id).toBe(workspace.admin.userId);
     expect(() => new Date(action?.at ?? '')).not.toThrow();
   });

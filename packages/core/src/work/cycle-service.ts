@@ -14,7 +14,7 @@ import { nextSyncId } from '../sync/sync-id.ts';
 export type CycleRow = typeof schema.cycle.$inferSelect;
 
 function cycleScopes(row: CycleRow): string[] {
-  return [scopes.organization(row.organizationId), scopes.team(row.teamId)];
+  return [scopes.team(row.teamId)];
 }
 
 async function assertCycleWindow(

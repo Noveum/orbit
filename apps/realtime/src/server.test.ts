@@ -377,6 +377,26 @@ describe('authorization', () => {
     client.close();
   });
 
+  it('never carries a team issue to somebody who only holds the organization scope', async () => {
+    const listener = await connectClient(server.port, alice);
+    await listener.waitFor('ready');
+    listener.send({ type: 'subscribe', scopes: [scopes.organization(orgA)] });
+    await listener.waitFor('subscribed');
+
+    await publish(
+      syncAction({
+        organizationId: orgA,
+        scopes: [scopes.team(teamB), scopes.issue('issue_secret')],
+        modelId: 'issue_secret',
+        syncId: 9100,
+      }),
+    );
+    await delay(BATCH_WINDOW_MS * 4);
+
+    expect(listener.messages.filter((message) => message.type === 'delta')).toHaveLength(0);
+    listener.close();
+  });
+
   it('scopes an issue subscription to the teams a member can read, matching the read path', async () => {
     const issueId = await createIssue(orgA, teamB, bob.userId);
 

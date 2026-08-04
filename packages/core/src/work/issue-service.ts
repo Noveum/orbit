@@ -70,11 +70,7 @@ async function assertParentAllowed(
 export function issueScopes(
   row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
 ): string[] {
-  const list = [
-    scopes.organization(row.organizationId),
-    scopes.team(row.teamId),
-    scopes.issue(row.id),
-  ];
+  const list = [scopes.team(row.teamId), scopes.issue(row.id)];
   if (row.projectId !== null) list.push(scopes.project(row.projectId));
   return list;
 }
@@ -1304,11 +1300,7 @@ export async function setRelation(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [
-            scopes.organization(principal.organizationId),
-            scopes.issue(row.issueId),
-            scopes.issue(row.relatedIssueId),
-          ],
+          scopes: [scopes.issue(row.issueId), scopes.issue(row.relatedIssueId)],
           action: 'insert',
           model: 'issue_relation',
           modelId: row.id,
@@ -1361,11 +1353,7 @@ export async function removeRelation(
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
-        scopes: [
-          scopes.organization(principal.organizationId),
-          scopes.issue(row.issueId),
-          scopes.issue(row.relatedIssueId),
-        ],
+        scopes: [scopes.issue(row.issueId), scopes.issue(row.relatedIssueId)],
         action: 'delete',
         model: 'issue_relation',
         modelId: row.id,

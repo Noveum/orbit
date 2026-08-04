@@ -170,7 +170,15 @@ async function projectScopeAllowed(projectId: string, principal: ConnectionPrinc
     .from(schema.project)
     .where(eq(schema.project.id, projectId))
     .limit(1);
-  return rows[0]?.organizationId === principal.organizationId;
+  if (rows[0]?.organizationId !== principal.organizationId) return false;
+  if (principal.role === 'admin') return true;
+  if (principal.teamIds.length === 0) return false;
+  const teams = await db
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  if (teams.length === 0) return true;
+  return teams.some((row) => principal.teamIds.includes(row.teamId));
 }
 
 async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
@@ -195,7 +203,7 @@ export async function authorizeScope(
     case 'org':
       return id === principal.organizationId;
     case 'team':
-      return principal.teamIds.includes(id);
+      return principal.role === 'admin' || principal.teamIds.includes(id);
     case 'user':
       return id === principal.userId;
     case 'issue':

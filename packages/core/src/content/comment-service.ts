@@ -43,11 +43,7 @@ async function loadIssueForComment(executor: Executor, principal: Principal, iss
 }
 
 function commentScopes(issue: { organizationId: string; teamId: string; id: string }): string[] {
-  return [
-    scopes.organization(issue.organizationId),
-    scopes.team(issue.teamId),
-    scopes.issue(issue.id),
-  ];
+  return [scopes.team(issue.teamId), scopes.issue(issue.id)];
 }
 
 async function loadComment(
