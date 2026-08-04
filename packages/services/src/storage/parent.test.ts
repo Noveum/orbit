@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'bun:test';
-import { doc, organization, project, user } from '@orbit/db/schema';
+import {
+  comment,
+  doc,
+  issue,
+  organization,
+  project,
+  projectTeam,
+  team,
+  user,
+  workflowState,
+} from '@orbit/db/schema';
 import { DomainError } from '@orbit/shared';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { type TestTransaction, withRollback } from '../test-database.ts';
-import { assertUploadParent, isPubliclyReadable } from './parent.ts';
+import { assertAttachmentVisible, assertUploadParent, isPubliclyReadable } from './parent.ts';
 
 interface Fixture {
   readonly organizationId: string;
@@ -14,6 +24,12 @@ interface Fixture {
   readonly publishedDocId: string;
   readonly archivedDocId: string;
   readonly projectId: string;
+  readonly openTeamId: string;
+  readonly closedTeamId: string;
+  readonly openIssueId: string;
+  readonly closedIssueId: string;
+  readonly closedCommentId: string;
+  readonly closedProjectId: string;
 }
 
 async function seed(tx: TestTransaction): Promise<Fixture> {
@@ -42,6 +58,81 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
     .insert(project)
     .values({ id: projectId, organizationId, name: 'Apollo', slug: `apollo-${suffix}` });
 
+  const openTeamId = `team_open_${suffix}`;
+  const closedTeamId = `team_closed_${suffix}`;
+  await tx.insert(team).values([
+    { id: openTeamId, organizationId, name: 'Open', key: `OP${suffix.slice(0, 4)}` },
+    { id: closedTeamId, organizationId, name: 'Closed', key: `CL${suffix.slice(0, 4)}` },
+  ]);
+
+  const openStateId = `st_open_${suffix}`;
+  const closedStateId = `st_closed_${suffix}`;
+  await tx.insert(workflowState).values([
+    {
+      id: openStateId,
+      organizationId,
+      teamId: openTeamId,
+      name: 'Todo',
+      category: 'unstarted',
+      color: '#888888',
+      position: 0,
+    },
+    {
+      id: closedStateId,
+      organizationId,
+      teamId: closedTeamId,
+      name: 'Todo',
+      category: 'unstarted',
+      color: '#888888',
+      position: 0,
+    },
+  ]);
+
+  const openIssueId = `iss_open_${suffix}`;
+  const closedIssueId = `iss_closed_${suffix}`;
+  await tx.insert(issue).values([
+    {
+      id: openIssueId,
+      organizationId,
+      teamId: openTeamId,
+      number: 1,
+      identifier: `OP${suffix.slice(0, 4)}-1`,
+      title: 'Mine',
+      stateId: openStateId,
+      creatorId: userId,
+    },
+    {
+      id: closedIssueId,
+      organizationId,
+      teamId: closedTeamId,
+      number: 1,
+      identifier: `CL${suffix.slice(0, 4)}-1`,
+      title: 'Not mine',
+      stateId: closedStateId,
+      creatorId: userId,
+    },
+  ]);
+
+  const closedCommentId = `cmt_closed_${suffix}`;
+  await tx.insert(comment).values({
+    id: closedCommentId,
+    organizationId,
+    issueId: closedIssueId,
+    authorId: userId,
+    body: 'Private discussion',
+  });
+
+  const closedProjectId = `prj_closed_${suffix}`;
+  await tx.insert(project).values({
+    id: closedProjectId,
+    organizationId,
+    name: 'Secret',
+    slug: `secret-${suffix}`,
+  });
+  await tx
+    .insert(projectTeam)
+    .values({ id: `pt_${suffix}`, projectId: closedProjectId, teamId: closedTeamId });
+
   return {
     organizationId,
     userId,
@@ -49,11 +140,22 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
     publishedDocId: `doc_pub_${suffix}`,
     archivedDocId: `doc_arc_${suffix}`,
     projectId,
+    openTeamId,
+    closedTeamId,
+    openIssueId,
+    closedIssueId,
+    closedCommentId,
+    closedProjectId,
   };
 }
 
-function principalFor(fixture: Fixture, role: OrgRole): Principal {
-  return { userId: fixture.userId, organizationId: fixture.organizationId, role, teamIds: [] };
+function principalFor(fixture: Fixture, role: OrgRole, teamIds: readonly string[] = []): Principal {
+  return {
+    userId: fixture.userId,
+    organizationId: fixture.organizationId,
+    role,
+    teamIds: [...teamIds],
+  };
 }
 
 async function statusOf(run: () => Promise<unknown>): Promise<number> {
@@ -178,6 +280,115 @@ describe('isPubliclyReadable', () => {
           }),
         ).toBe(false);
       }
+    });
+  });
+});
+
+describe('team scoped attachment visibility', () => {
+  it('serves a file attached to an issue in a team the reader belongs to', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const member = principalFor(fixture, 'member', [fixture.openTeamId]);
+      await assertAttachmentVisible(tx, member, {
+        organizationId: fixture.organizationId,
+        parentType: 'issue',
+        parentId: fixture.openIssueId,
+      });
+    });
+  });
+
+  it('hides a file attached to an issue in a team the reader is not on', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const member = principalFor(fixture, 'member', [fixture.openTeamId]);
+      expect(
+        await statusOf(() =>
+          assertAttachmentVisible(tx, member, {
+            organizationId: fixture.organizationId,
+            parentType: 'issue',
+            parentId: fixture.closedIssueId,
+          }),
+        ),
+      ).toBe(404);
+    });
+  });
+
+  it('hides a file attached to a comment on an issue in another team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const member = principalFor(fixture, 'member', [fixture.openTeamId]);
+      expect(
+        await statusOf(() =>
+          assertAttachmentVisible(tx, member, {
+            organizationId: fixture.organizationId,
+            parentType: 'comment',
+            parentId: fixture.closedCommentId,
+          }),
+        ),
+      ).toBe(404);
+    });
+  });
+
+  it('hides a file attached to a project owned by another team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const member = principalFor(fixture, 'member', [fixture.openTeamId]);
+      expect(
+        await statusOf(() =>
+          assertAttachmentVisible(tx, member, {
+            organizationId: fixture.organizationId,
+            parentType: 'project',
+            parentId: fixture.closedProjectId,
+          }),
+        ),
+      ).toBe(404);
+    });
+  });
+
+  it('lets an admin read across every team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const admin = principalFor(fixture, 'admin');
+      for (const parent of [
+        ['issue', fixture.closedIssueId],
+        ['comment', fixture.closedCommentId],
+        ['project', fixture.closedProjectId],
+      ] as const) {
+        await assertAttachmentVisible(tx, admin, {
+          organizationId: fixture.organizationId,
+          parentType: parent[0],
+          parentId: parent[1],
+        });
+      }
+    });
+  });
+
+  it('never crosses an organization boundary', async () => {
+    await withRollback(async (tx) => {
+      const mine = await seed(tx);
+      const theirs = await seed(tx);
+      expect(
+        await statusOf(() =>
+          assertAttachmentVisible(tx, principalFor(mine, 'admin'), {
+            organizationId: theirs.organizationId,
+            parentType: 'issue',
+            parentId: theirs.openIssueId,
+          }),
+        ),
+      ).toBe(404);
+    });
+  });
+});
+
+describe('team scoped attachment upload', () => {
+  it('refuses an upload onto an issue in a team the uploader is not on', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const member = principalFor(fixture, 'member', [fixture.openTeamId]);
+      await assertUploadParent(tx, member, 'issue', fixture.openIssueId);
+      expect(
+        await statusOf(() => assertUploadParent(tx, member, 'issue', fixture.closedIssueId)),
+      ).toBe(404);
     });
   });
 });

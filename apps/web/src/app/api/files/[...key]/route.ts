@@ -1,5 +1,9 @@
 import { db, eq, schema } from '@orbit/db';
-import { isPubliclyReadable, storageDriver } from '@orbit/services/storage';
+import {
+  assertAttachmentVisible,
+  isPubliclyReadable,
+  storageDriver,
+} from '@orbit/services/storage';
 import { notFound } from '@orbit/shared/errors';
 import { dispositionFor } from '@/lib/api/content-disposition.ts';
 import { apiContext, errorResponse } from '@/lib/api/handler.ts';
@@ -17,9 +21,7 @@ async function assertReadable(record: AttachmentRecord | undefined): Promise<Att
   if (record === undefined) throw notFound('That file does not exist.');
   if (await isPubliclyReadable(db, record)) return record;
   const { principal } = await apiContext();
-  if (record.organizationId !== principal.organizationId) {
-    throw notFound('That file does not exist.');
-  }
+  await assertAttachmentVisible(db, principal, record);
   return record;
 }
 

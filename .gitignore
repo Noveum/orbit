@@ -26,5 +26,7 @@ extras/
 
 .claude/worktrees/
 
+.vercel/
+
 next-env.d.ts
 .artifacts/

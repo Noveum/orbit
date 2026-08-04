@@ -235,6 +235,7 @@
       "includes": [
         "scripts/**",
         "**/seed/**",
+        "packages/db/src/ensure-*.ts",
         "**/*.config.ts",
         "**/*.config.mjs",
         "**/*.config.js"

@@ -68,6 +68,7 @@ bun install          install every workspace dependency
 bun run infra:up     start postgres, redis, minio
 bun run db:push      apply schema to the dev database
 bun run db:seed      load demo org, teams, members, issues, comments
+bun run db:test-setup create the per package test databases and push the schema
 bun run dev          run web, realtime, and mcp together
 bun run verify       lint + comment policy + typecheck + tests
 bun test             run one package's tests from inside that package
@@ -116,6 +117,7 @@ domain verified in Resend, otherwise every send fails.
 - Import test helpers from `bun:test`, never from `vitest`.
 - A package that needs environment or a DOM configures it in its own `bunfig.toml` with a `tests-preload.ts`. DOM tests register happy-dom in that preload.
 - Database tests run against the real Postgres from docker compose, in a transaction that rolls back. `scripts/test-env.ts` refuses to run against a database whose name does not contain `test`.
+- Each package owns an isolated database (`orbit_test_core`, `orbit_test_svc`, `orbit_test_rt`, `orbit_test_rts`, `orbit_test_mcp`, `orbit_test_web`). Run `bun run db:test-setup` once after `bun run infra:up`, otherwise `bun run verify` fails on a clean checkout with connection errors rather than test failures.
 - End to end: Playwright in `apps/web/e2e`.
 - A feature is not done until it has tests that would fail if the feature broke.
 
