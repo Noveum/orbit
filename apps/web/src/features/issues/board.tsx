@@ -19,11 +19,12 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { DisplayProperty } from '@orbit/shared/filters';
+import type { DisplayOptions, DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
@@ -37,6 +38,7 @@ import { useWorkspace } from './workspace-provider.tsx';
 export interface BoardColumnSource {
   readonly teamId: string;
   readonly query: IssueQuery;
+  readonly display: DisplayOptions;
 }
 
 export interface BoardProps {
@@ -325,6 +327,7 @@ function BoardColumn({
   onOpen,
   onRows,
 }: BoardColumnProps) {
+  const { stateById } = useWorkspace();
   const owned = useColumnIssues(
     columnSource?.teamId ?? null,
     columnSource?.query ?? EMPTY_QUERY,
@@ -332,7 +335,14 @@ function BoardColumn({
     columnSource !== undefined,
   );
   const ownsData = columnSource !== undefined;
-  const issues = ownsData ? (owned.data ?? group.issues) : group.issues;
+  const fetched = owned.data ?? group.issues;
+  const issues = useMemo(
+    () =>
+      ownsData && columnSource !== undefined
+        ? applyDisplayFilters(fetched, columnSource.display, stateById).issues
+        : group.issues,
+    [ownsData, columnSource, fetched, group.issues, stateById],
+  );
 
   useEffect(() => {
     onRows(group.id, issues);
@@ -344,6 +354,11 @@ function BoardColumn({
         owned.fetchNextPage().catch(() => undefined);
       }
     : onLoadMore;
+
+  const trimmed =
+    columnSource !== undefined &&
+    displayFiltersHideRows(columnSource.display) &&
+    !owned.hasNextPage;
 
   const { setNodeRef } = useDroppable({ id: group.id, data: { isColumn: true } });
   const scrollRef = useRef<HTMLUListElement | null>(null);
@@ -427,7 +442,7 @@ function BoardColumn({
         <GroupGlyph group={group} />
         <h2 className="font-medium text-dense text-text">{group.title}</h2>
         <span data-numeric className="text-2xs text-faint">
-          {group.total}
+          {trimmed ? issues.length : group.total}
         </span>
         <button
           type="button"

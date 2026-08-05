@@ -228,7 +228,11 @@ function TeamContent({
         onLoadMore={onLoadMore}
         columnSource={
           config.groupBy === 'state'
-            ? { teamId, query: { filter: config.filter, orderBy: config.orderBy } }
+            ? {
+                teamId,
+                query: { filter: config.filter, orderBy: config.orderBy },
+                display: config.display,
+              }
             : undefined
         }
       />
