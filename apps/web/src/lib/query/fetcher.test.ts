@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, type Mock, mock } from 'bun:test';
 import { z } from 'zod';
-import { ApiError, apiFetch, messageOf } from './fetcher.ts';
+import { ApiError, apiFetch, KEEPALIVE_BODY_LIMIT, messageOf, survivesUnload } from './fetcher.ts';
 
 const schema = z.object({ ok: z.boolean() });
 const realFetch = globalThis.fetch;
@@ -57,5 +57,22 @@ describe('messageOf', () => {
     expect(messageOf(new ApiError(409, 'conflict', 'Taken.'))).toBe('Taken.');
     expect(messageOf(new Error('Boom'))).toBe('Boom');
     expect(messageOf(null, 'Fallback')).toBe('Fallback');
+  });
+});
+
+describe('a write racing the page it was sent from', () => {
+  it('stays alive through a navigation when the body is small enough', () => {
+    expect(survivesUnload('POST', JSON.stringify({ stateId: 'state_1' }))).toBe(true);
+    expect(survivesUnload('PATCH', JSON.stringify({ title: 'Renamed' }))).toBe(true);
+  });
+
+  it('does not, for a body past the limit the browser imposes on keepalive', () => {
+    const huge = JSON.stringify({ content: 'x'.repeat(KEEPALIVE_BODY_LIMIT) });
+    expect(survivesUnload('PATCH', huge)).toBe(false);
+  });
+
+  it('leaves reads alone, since losing one costs nothing', () => {
+    expect(survivesUnload('GET', undefined)).toBe(false);
+    expect(survivesUnload('POST', undefined)).toBe(false);
   });
 });

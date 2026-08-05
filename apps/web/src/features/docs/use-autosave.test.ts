@@ -93,3 +93,43 @@ describe('a save landing after the draft outgrew the limit', () => {
     expect(result.current.status).toBe('blocked');
   });
 });
+
+describe('leaving the page with a draft still in the debounce', () => {
+  it('saves it on the way out rather than waiting for a timer that will never fire', async () => {
+    const save = mock(async (_value: string) => undefined);
+    const { rerender } = renderHook(
+      ({ value }: { value: string }) => useAutosave({ value, save, delayMs: 100_000 }),
+      { initialProps: { value: 'one' } },
+    );
+
+    rerender({ value: 'two' });
+    expect(save).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0]?.[0]).toBe('two');
+  });
+
+  it('saves when the tab is hidden, which is where a phone goes', async () => {
+    const save = mock(async (_value: string) => undefined);
+    const { rerender } = renderHook(
+      ({ value }: { value: string }) => useAutosave({ value, save, delayMs: 100_000 }),
+      { initialProps: { value: 'one' } },
+    );
+
+    rerender({ value: 'two' });
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'hidden',
+      configurable: true,
+    });
+
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+});

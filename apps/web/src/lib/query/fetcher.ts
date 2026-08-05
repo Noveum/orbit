@@ -35,20 +35,29 @@ export interface RequestOptions {
   readonly signal?: AbortSignal;
 }
 
+export const KEEPALIVE_BODY_LIMIT = 60_000;
+
+export function survivesUnload(method: string, body: string | undefined): boolean {
+  if (method === 'GET') return false;
+  return body !== undefined && body.length <= KEEPALIVE_BODY_LIMIT;
+}
+
 export async function apiFetch<T>(
   path: string,
   schema: z.ZodType<T>,
   options: RequestOptions = {},
 ): Promise<T> {
   const method = options.method ?? 'GET';
+  const body = options.body === undefined ? undefined : JSON.stringify(options.body);
   const response = await fetch(path, {
     method,
     headers: {
       [ORIGIN_CLIENT_ID_HEADER]: clientId(),
-      ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
-    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    ...(body === undefined ? {} : { body }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(survivesUnload(method, body) ? { keepalive: true } : {}),
   });
 
   const payload: unknown = await response.json().catch(() => null);

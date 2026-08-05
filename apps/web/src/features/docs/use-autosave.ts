@@ -67,6 +67,20 @@ export function useAutosave<T>({
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const leaving = () => run();
+    const hiding = () => {
+      if (document.visibilityState === 'hidden') run();
+    };
+    window.addEventListener('pagehide', leaving);
+    document.addEventListener('visibilitychange', hiding);
+    return () => {
+      window.removeEventListener('pagehide', leaving);
+      document.removeEventListener('visibilitychange', hiding);
+    };
+  }, [run]);
+
+  useEffect(() => {
     if (Object.is(value, savedRef.current)) return;
     const allowed = canSaveRef.current;
     setStatus(allowed !== undefined && !allowed(value) ? 'blocked' : 'unsaved');
