@@ -7,6 +7,7 @@ import {
   eq,
   gt,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lt,
@@ -428,18 +429,56 @@ export async function sprintOutcome(
   cycleId: string,
 ): Promise<RecordedOutcome | null> {
   const cycle = await getCycle(principal, cycleId);
-  if (cycle.completedAt === null) return null;
+  const [outcome] = await outcomesFor([cycle]);
+  return outcome ?? null;
+}
 
-  const stored = readStoredOutcome(cycle.progressSnapshot);
-  if (stored !== null) return { ...stored, reconstructed: false };
+export async function sprintOutcomes(
+  principal: Principal,
+  cycles: readonly CycleRow[],
+): Promise<(RecordedOutcome | null)[]> {
+  assertCan(principal, 'project:read');
+  return await outcomesFor(cycles);
+}
 
-  const rows = await db
-    .select({ category: CYCLE_CATEGORY, estimate: schema.issue.estimate })
-    .from(schema.issue)
-    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
+async function outcomesFor(cycles: readonly CycleRow[]): Promise<(RecordedOutcome | null)[]> {
+  const needsCounting = cycles.filter(
+    (cycle) => cycle.completedAt !== null && readStoredOutcome(cycle.progressSnapshot) === null,
+  );
 
-  return { ...outcomeOf(rows, 0, cycle.completedAt), reconstructed: true };
+  const counted = new Map<string, { category: string; estimate: number | null }[]>();
+  if (needsCounting.length > 0) {
+    const rows = await db
+      .select({
+        cycleId: schema.issue.cycleId,
+        category: CYCLE_CATEGORY,
+        estimate: schema.issue.estimate,
+      })
+      .from(schema.issue)
+      .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+      .where(
+        and(
+          inArray(
+            schema.issue.cycleId,
+            needsCounting.map((cycle) => cycle.id),
+          ),
+          isNull(schema.issue.archivedAt),
+        ),
+      );
+    for (const row of rows) {
+      if (row.cycleId === null) continue;
+      const list = counted.get(row.cycleId) ?? [];
+      list.push({ category: row.category, estimate: row.estimate });
+      counted.set(row.cycleId, list);
+    }
+  }
+
+  return cycles.map((cycle) => {
+    if (cycle.completedAt === null) return null;
+    const stored = readStoredOutcome(cycle.progressSnapshot);
+    if (stored !== null) return { ...stored, reconstructed: false };
+    return { ...outcomeOf(counted.get(cycle.id) ?? [], 0, cycle.completedAt), reconstructed: true };
+  });
 }
 
 export async function pastCycles(

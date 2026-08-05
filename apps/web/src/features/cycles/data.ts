@@ -6,6 +6,7 @@ import {
   pastCycles,
   type RecordedOutcome,
   sprintOutcome,
+  sprintOutcomes,
   upcomingCycles,
 } from '@orbit/core';
 import { and, asc, db, eq, isNull, schema } from '@orbit/db';
@@ -194,7 +195,7 @@ export async function listPastSprintViews(
   limit = 12,
 ): Promise<PastSprintView[]> {
   const rows = await pastCycles(principal, team.id, limit);
-  const outcomes = await Promise.all(rows.map((cycle) => sprintOutcome(principal, cycle.id)));
+  const outcomes = await sprintOutcomes(principal, rows);
   return rows.map((cycle, index) => ({
     id: cycle.id,
     name: sprintLabel(cycle),

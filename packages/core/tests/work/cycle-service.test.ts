@@ -22,6 +22,7 @@ import {
   listCycles,
   pastCycles,
   sprintOutcome,
+  sprintOutcomes,
   upcomingCycles,
   updateCycle,
 } from '../../src/work/cycle-service.ts';
@@ -547,5 +548,87 @@ describe('sprintOutcome', () => {
   it('has nothing to say about a sprint still running', async () => {
     const cycle = await firstCycle();
     expect(await sprintOutcome(workspace.admin, cycle.id)).toBeNull();
+  });
+});
+
+describe('sprintOutcomes', () => {
+  it('answers for a page of sprints in one pass, recorded or counted', async () => {
+    const first = await firstCycle();
+    const one = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'In the first',
+      cycleId: first.id,
+      estimate: 2,
+    });
+    await updateIssue(workspace.admin, one.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    const closedFirst = await completeCycle(workspace.admin, first.id);
+
+    const second = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: daysFromNow(200),
+      endsAt: daysFromNow(214),
+    });
+    const two = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'In the second',
+      cycleId: second.cycle.id,
+      estimate: 8,
+    });
+    await updateIssue(workspace.admin, two.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    const closedSecond = await completeCycle(workspace.admin, second.cycle.id);
+
+    await db
+      .update(schema.cycle)
+      .set({ progressSnapshot: null })
+      .where(eq(schema.cycle.id, closedSecond.cycle.id));
+
+    const outcomes = await sprintOutcomes(workspace.admin, [
+      await getCycle(workspace.admin, closedFirst.cycle.id),
+      await getCycle(workspace.admin, closedSecond.cycle.id),
+    ]);
+
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]?.reconstructed).toBe(false);
+    expect(outcomes[0]?.points.scope).toBe(2);
+    expect(outcomes[1]?.reconstructed).toBe(true);
+    expect(outcomes[1]?.points.scope).toBe(8);
+  });
+
+  it('counts only what is still in the sprint, since a rollover moved the rest away', async () => {
+    const cycle = await firstCycle();
+    const done = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Finished',
+      cycleId: cycle.id,
+      estimate: 3,
+    });
+    await updateIssue(workspace.admin, done.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Rolled over',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    const closed = await completeCycle(workspace.admin, cycle.id);
+    expect(closed.rolledOverIssueIds).toHaveLength(1);
+
+    await db
+      .update(schema.cycle)
+      .set({ progressSnapshot: null })
+      .where(eq(schema.cycle.id, closed.cycle.id));
+
+    const [outcome] = await sprintOutcomes(workspace.admin, [
+      await getCycle(workspace.admin, closed.cycle.id),
+    ]);
+
+    expect(outcome?.reconstructed).toBe(true);
+    expect(outcome?.scope).toBe(1);
+    expect(outcome?.points.scope).toBe(3);
   });
 });
