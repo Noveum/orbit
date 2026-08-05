@@ -232,6 +232,77 @@ describe('updateIssue', () => {
   });
 });
 
+describe('label deltas', () => {
+  async function starterLabel() {
+    const [label] = await db
+      .select()
+      .from(schema.label)
+      .where(eq(schema.label.organizationId, workspace.organizationId))
+      .limit(1);
+    if (label === undefined) throw new Error('missing starter label');
+    return label;
+  }
+
+  function labelIdsOf(action: { data: Record<string, unknown> }): unknown {
+    return action.data['labelIds'];
+  }
+
+  it('carries the new labels on the update action so other clients can apply them', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Labelled later');
+
+    const updated = await updateIssue(workspace.admin, issue.id, { labelIds: [label.id] });
+
+    const action = updated.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries the remaining labels when one is taken off', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Labelled', { labelIds: [label.id] });
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { labelIds: [] });
+
+    const action = cleared.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([]);
+  });
+
+  it('carries labels on an update that does not touch them, so a new subscriber renders them', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Renamed', { labelIds: [label.id] });
+
+    const renamed = await updateIssue(workspace.admin, issue.id, { title: 'Renamed again' });
+
+    const action = renamed.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries labels when the issue is moved', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Dragged', { labelIds: [label.id] });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {});
+
+    const action = moved.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries labels when the issue is archived', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Filed away', { labelIds: [label.id] });
+
+    const archived = await archiveIssue(workspace.admin, issue.id);
+
+    const action = archived.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+});
+
 describe('moveIssue', () => {
   it('places an issue between two neighbours', async () => {
     const top = await newIssue('Top');

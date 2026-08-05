@@ -91,6 +91,14 @@ describe('discovery', () => {
     expect(names).toContain('edit_comment');
     expect(names).toContain('delete_comment');
 
+    expect(names).toContain('create_team');
+    expect(names).toContain('add_team_member');
+    expect(names).toContain('remove_team_member');
+    expect(names).toContain('remove_member');
+    expect(names).toContain('list_views');
+    expect(names).toContain('create_view');
+    expect(names).toContain('delete_view');
+
     expect(new Set(names).size).toBe(names.length);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();

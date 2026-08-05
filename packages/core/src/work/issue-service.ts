@@ -355,6 +355,25 @@ async function loadIssue(
   return issue;
 }
 
+async function labelsByIssue(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const grouped = new Map<string, string[]>();
+  const ids = [...new Set(issueIds)];
+  if (ids.length === 0) return grouped;
+  const rows = await executor
+    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
+    .from(schema.issueLabel)
+    .where(inArray(schema.issueLabel.issueId, ids));
+  for (const row of rows) {
+    const existing = grouped.get(row.issueId);
+    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
+    else existing.push(row.labelId);
+  }
+  return grouped;
+}
+
 async function replaceLabelsFor(
   executor: Executor,
   issueIds: readonly string[],
@@ -716,13 +735,18 @@ async function applyIssueUpdates(
     ),
   );
 
+  const labels = await labelsByIssue(
+    tx,
+    pending.map((entry) => entry.current.id),
+  );
+
   return pending.map((entry) => {
     const issue = updated.get(entry.current.id);
     if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
     return {
       issue,
       changes: entry.changes,
-      actions: [issueAction(issue, syncId, actor, 'update')],
+      actions: [issueAction(issue, syncId, actor, 'update', labels.get(issue.id) ?? [])],
     };
   });
 }
@@ -931,14 +955,16 @@ export async function moveIssue(
       issue,
     });
 
+    const movedLabels = await labelsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+
     return {
       issue,
       rebalanced,
       actions: [
-        issueAction(issue, syncId, actor, 'update'),
+        issueAction(issue, syncId, actor, 'update', movedLabels.get(issue.id) ?? []),
         ...rebalanced
           .filter((row) => row.id !== issueId)
-          .map((row) => issueAction(row, syncId, actor, 'update')),
+          .map((row) => issueAction(row, syncId, actor, 'update', movedLabels.get(row.id) ?? [])),
       ],
     };
   });
@@ -998,7 +1024,15 @@ async function setArchived(
 
     return {
       issue,
-      actions: [issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive')],
+      actions: [
+        issueAction(
+          issue,
+          syncId,
+          actor,
+          archivedAt === null ? 'unarchive' : 'archive',
+          (await labelsByIssue(tx, [issue.id])).get(issue.id) ?? [],
+        ),
+      ],
     };
   });
 }

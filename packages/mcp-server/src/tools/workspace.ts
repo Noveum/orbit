@@ -21,7 +21,7 @@ import {
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
-import { resolveCycle, resolveProject } from '../resolve.ts';
+import { resolveCycle, resolveProject, resolveTeam } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
 const issueRef = z.string().min(1).describe('An issue identifier like "ENG-42", or an issue id.');
@@ -213,8 +213,8 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
         description: z.string().max(100_000).optional(),
         status: z.string().min(1).optional().describe('Project status such as "in_progress".'),
         health: z.string().min(1).optional().describe('Project health such as "on_track".'),
-        startsAt: z.iso.date().nullable().optional().describe('Start date as YYYY-MM-DD.'),
-        targetAt: z.iso.date().nullable().optional().describe('Target date as YYYY-MM-DD.'),
+        startDate: z.iso.date().nullable().optional().describe('Start date as YYYY-MM-DD.'),
+        targetDate: z.iso.date().nullable().optional().describe('Target date as YYYY-MM-DD.'),
       },
     },
     async (args) => {
@@ -225,8 +225,8 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
         ...(args.description === undefined ? {} : { description: args.description }),
         ...(args.status === undefined ? {} : { status: args.status }),
         ...(args.health === undefined ? {} : { health: args.health }),
-        ...(args.startsAt === undefined ? {} : { startsAt: args.startsAt }),
-        ...(args.targetAt === undefined ? {} : { targetAt: args.targetAt }),
+        ...(args.startDate === undefined ? {} : { startDate: args.startDate }),
+        ...(args.targetDate === undefined ? {} : { targetDate: args.targetDate }),
       });
       await publish(saved.actions);
       return { project: { id: saved.project.id, name: saved.project.name } };
@@ -323,7 +323,8 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       },
     },
     async (args) => {
-      const cycle = await resolveCycle(principal, args.team, args.sprint);
+      const team = await resolveTeam(principal, args.team);
+      const cycle = await resolveCycle(principal, team.id, args.sprint);
       const actions = await deleteCycle(principal, cycle.id);
       await publish(actions);
       return { deleted: cycle.name };

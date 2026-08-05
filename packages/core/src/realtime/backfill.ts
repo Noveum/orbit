@@ -56,6 +56,22 @@ async function issueTeamsById(issueIds: readonly string[]): Promise<Map<string, 
   return new Map(rows.map((row) => [row.id, row.teamId]));
 }
 
+async function labelsForIssues(issueIds: readonly string[]): Promise<Map<string, string[]>> {
+  const grouped = new Map<string, string[]>();
+  const ids = [...new Set(issueIds)];
+  if (ids.length === 0) return grouped;
+  const rows = await db
+    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
+    .from(schema.issueLabel)
+    .where(inArray(schema.issueLabel.issueId, ids));
+  for (const row of rows) {
+    const existing = grouped.get(row.issueId);
+    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
+    else existing.push(row.labelId);
+  }
+  return grouped;
+}
+
 async function commentTeamsById(commentIds: readonly string[]): Promise<Map<string, string>> {
   const ids = [...new Set(commentIds)];
   if (ids.length === 0) return new Map();
@@ -332,20 +348,20 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  issue: async (principal, since, limit) =>
-    (
-      await db
-        .select()
-        .from(schema.issue)
-        .where(
-          and(
-            eq(schema.issue.organizationId, principal.organizationId),
-            gt(schema.issue.syncId, since),
-          ),
-        )
-        .orderBy(asc(schema.issue.syncId))
-        .limit(limit)
-    ).map((row) => ({
+  issue: async (principal, since, limit) => {
+    const rows = await db
+      .select()
+      .from(schema.issue)
+      .where(
+        and(
+          eq(schema.issue.organizationId, principal.organizationId),
+          gt(schema.issue.syncId, since),
+        ),
+      )
+      .orderBy(asc(schema.issue.syncId))
+      .limit(limit);
+    const labels = await labelsForIssues(rows.map((row) => row.id));
+    return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
       scopes:
@@ -357,8 +373,9 @@ const LOADERS: Record<SyncModel, Loader> = {
               scopes.issue(row.id),
               scopes.project(row.projectId),
             ],
-      data: row,
-    })),
+      data: { ...row, labelIds: labels.get(row.id) ?? [] },
+    }));
+  },
 
   issue_relation: async (principal, since, limit) =>
     (
