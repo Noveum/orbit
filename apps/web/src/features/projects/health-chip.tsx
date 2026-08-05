@@ -1,7 +1,7 @@
 import type { ProjectHealth, ProjectStatus } from '@orbit/shared/constants';
 import { Badge } from '@/components/ui/badge.tsx';
 
-const HEALTH_LABELS: Record<ProjectHealth, string> = {
+export const HEALTH_LABELS: Record<ProjectHealth, string> = {
   on_track: 'On track',
   at_risk: 'At risk',
   off_track: 'Off track',
