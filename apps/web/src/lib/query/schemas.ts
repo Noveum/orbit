@@ -88,6 +88,7 @@ export const projectSchema = z.object({
   status: z.string(),
   color: z.string(),
   icon: z.string(),
+  teamIds: z.array(z.string()).catch([]).default([]),
 });
 
 export type Project = z.infer<typeof projectSchema>;

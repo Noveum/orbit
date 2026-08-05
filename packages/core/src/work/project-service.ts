@@ -609,3 +609,15 @@ export async function listProjectsForTeams(
     )
     .orderBy(asc(schema.project.name));
 }
+
+export async function projectTeamLinks(
+  principal: Principal,
+  teamIds: readonly string[],
+): Promise<{ projectId: string; teamId: string }[]> {
+  assertCan(principal, 'project:read');
+  if (teamIds.length === 0) return [];
+  return await db
+    .select({ projectId: schema.projectTeam.projectId, teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(inArray(schema.projectTeam.teamId, [...teamIds]));
+}

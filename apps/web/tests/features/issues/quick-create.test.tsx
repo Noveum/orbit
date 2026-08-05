@@ -44,7 +44,16 @@ function buildWorkspace(): WorkspaceData {
       { id: 'me', name: 'Shashank', email: 's@x.co', image: null, handle: 's', role: 'admin' },
     ],
     labels: [{ id: 'label_bug', teamId: 'team_eng', name: 'Bug', color: '#f00' }],
-    projects: [{ id: 'proj_1', name: 'API market', status: 'started', color: '#00f', icon: 'box' }],
+    projects: [
+      {
+        id: 'proj_1',
+        name: 'API market',
+        status: 'started',
+        color: '#00f',
+        icon: 'box',
+        teamIds: [],
+      },
+    ],
     cycles: [
       {
         id: 'cycle_1',
@@ -73,6 +82,14 @@ function open() {
 }
 
 describe('the new issue dialog', () => {
+  it('offers only the projects the chosen team can actually use', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(screen.getByTestId('quick-create-project')).toBeTruthy();
+    expect(screen.queryByText('Brand refresh')).toBeNull();
+  });
+
   it('says which team the issue is going into', () => {
     workspace = buildWorkspace();
     open();

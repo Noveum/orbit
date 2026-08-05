@@ -60,6 +60,10 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
+  const teamProjects = projects.filter(
+    (project) =>
+      project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
+  );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
   const submit = (event?: FormEvent<HTMLFormElement>) => {
@@ -229,13 +233,13 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               title="Project"
               options={[
                 { id: 'none', label: 'No project' },
-                ...projects.map((project) => ({ id: project.id, label: project.name })),
+                ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
               ]}
               selected={projectId === null ? ['none'] : [projectId]}
               onSelect={(value) => setProjectId(value === 'none' ? null : value)}
             >
               <button type="button" className={chipClassName} data-testid="quick-create-project">
-                {projects.find((project) => project.id === projectId)?.name ?? 'Project'}
+                {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
               </button>
             </PropertyMenu>
 

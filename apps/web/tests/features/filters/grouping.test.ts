@@ -48,7 +48,16 @@ const context: GroupContext = {
     },
   ],
   members: [],
-  projects: [{ id: 'project_1', name: 'Atlas', status: 'planned', color: '#5a63c8', icon: 'box' }],
+  projects: [
+    {
+      id: 'project_1',
+      name: 'Atlas',
+      status: 'planned',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: [],
+    },
+  ],
   cycles: [],
   labels: [
     { id: 'label_bug', teamId: null, name: 'Bug', color: '#cc4b4b' },
