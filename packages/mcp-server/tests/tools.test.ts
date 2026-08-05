@@ -205,6 +205,44 @@ describe('issues', () => {
     expect(deltasOf(payload)[0]).toMatchObject({ model: 'comment', action: 'insert' });
   });
 
+  it('refuses a reply that belongs to a different issue', async () => {
+    const host = await newIssue('Has the thread');
+    const other = await newIssue('Somewhere else');
+    const parent = (
+      await admin.result('add_comment', { issue: other.identifier, body: 'Over here.' })
+    )['comment'] as { id: string };
+
+    await expect(
+      admin.result('add_comment', {
+        issue: host.identifier,
+        body: 'Replying across issues.',
+        replyTo: parent.id,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to nest a reply more than one level deep', async () => {
+    const created = await newIssue('Deep thread');
+    const parent = (
+      await admin.result('add_comment', { issue: created.identifier, body: 'Top level.' })
+    )['comment'] as { id: string };
+    const reply = (
+      await admin.result('add_comment', {
+        issue: created.identifier,
+        body: 'First reply.',
+        replyTo: parent.id,
+      })
+    )['comment'] as { id: string };
+
+    await expect(
+      admin.result('add_comment', {
+        issue: created.identifier,
+        body: 'Reply to a reply.',
+        replyTo: reply.id,
+      }),
+    ).rejects.toThrow();
+  });
+
   it('links two issues in both directions', async () => {
     const first = await newIssue('Blocks the other');
     const second = await newIssue('Blocked by the first');
