@@ -2,7 +2,7 @@
 
 import { Bell, BellOff, Check } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
 import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
+import { uploadAttachment } from '@/features/docs/upload.ts';
 import { useAutosave } from '@/features/docs/use-autosave.ts';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
@@ -105,7 +106,24 @@ function IssueBody({
   readonly members: readonly Member[];
   readonly onCommit: (description: string) => Promise<unknown>;
 }) {
+  const { toast } = useToast();
   const [draft, setDraft] = useState(issue.description);
+
+  const upload = useCallback(
+    async (file: File) => {
+      try {
+        return await uploadAttachment('issue', issue.id, file);
+      } catch (error: unknown) {
+        toast({
+          title: 'Could not attach that file',
+          description: messageOf(error),
+          tone: 'danger',
+        });
+        throw error;
+      }
+    },
+    [issue.id, toast],
+  );
   const autosave = useAutosave({ value: draft, save: onCommit });
   const flush = autosave.saveNow;
   const settled = autosave.status === 'saved';
@@ -129,6 +147,7 @@ function IssueBody({
       testId="issue-description"
       onForceSave={flush}
       onBlur={flush}
+      onUpload={upload}
     />
   );
 }

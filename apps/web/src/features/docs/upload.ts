@@ -131,8 +131,11 @@ export interface UploadOptions {
   readonly onProgress?: (progress: UploadProgress) => void;
 }
 
-export async function uploadDocFile(
-  docId: string,
+export type UploadParent = 'issue' | 'comment' | 'doc' | 'project';
+
+export async function uploadAttachment(
+  parentType: UploadParent,
+  parentId: string,
   file: File,
   options: UploadOptions = {},
 ): Promise<UploadedFile> {
@@ -143,8 +146,8 @@ export async function uploadDocFile(
       fileName: file.name,
       contentType,
       size: file.size,
-      parentType: 'doc',
-      parentId: docId,
+      parentType,
+      parentId,
     },
   });
 
@@ -164,4 +167,12 @@ export async function uploadDocFile(
     contentType,
     url: `/api/files/${presigned.upload.key.split('/').map(encodeURIComponent).join('/')}`,
   };
+}
+
+export async function uploadDocFile(
+  docId: string,
+  file: File,
+  options: UploadOptions = {},
+): Promise<UploadedFile> {
+  return await uploadAttachment('doc', docId, file, options);
 }

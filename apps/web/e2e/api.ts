@@ -102,3 +102,8 @@ export async function stateIdByName(page: Page, teamId: string, name: string): P
   if (state === undefined) throw new Error(`no state named ${name} on that team`);
   return state.id;
 }
+
+export async function descriptionOf(page: Page, identifier: string): Promise<string> {
+  const body = await json(page, `/api/issues/${identifier}`);
+  return z.object({ issue: z.object({ description: z.string() }) }).parse(body).issue.description;
+}
