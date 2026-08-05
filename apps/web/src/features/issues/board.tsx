@@ -383,8 +383,9 @@ function BoardColumn({
           return;
         }
         if (!canFetchMore) return;
-        const settled = root.scrollHeight <= root.clientHeight;
-        if (scrolledRef.current || settled) loadMore?.();
+        const laidOut = root.scrollHeight > 0;
+        const fits = laidOut && root.scrollHeight <= root.clientHeight;
+        if (scrolledRef.current || fits) loadMore?.();
       },
       { root, rootMargin: '240px' },
     );
