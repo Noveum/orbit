@@ -3,6 +3,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  --print-bg: oklch(100% 0 0);
+  --print-fg: oklch(0% 0 0);
   --orbit-fluid: clamp(0rem, calc((100vw - 80rem) / 80), 1rem);
 
   --orbit-bg: #f4f5f7;
@@ -827,8 +829,8 @@
 
 @media print {
   body {
-    background: #fff;
-    color: #000;
+    background: var(--print-bg);
+    color: var(--print-fg);
   }
 
   [data-print-hide],

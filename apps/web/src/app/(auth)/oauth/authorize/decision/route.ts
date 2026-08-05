@@ -2,7 +2,6 @@ import {
   finalizeMcpConsent,
   listOrganizationsForUser,
   passkeyVerifiedWithin,
-  recordMcpGrant,
   userHasPasskey,
 } from '@orbit/core';
 import { toDomainError } from '@orbit/shared/errors';
@@ -59,12 +58,11 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'invalid_workspace' }, { status: 400 });
     }
 
-    const approved = await finalizeMcpConsent({ userId, consentCode, accept: true });
-    await recordMcpGrant({
-      clientId: approved.clientId,
+    const approved = await finalizeMcpConsent({
       userId,
+      consentCode,
+      accept: true,
       organizationId,
-      scopes: approved.scope,
     });
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {

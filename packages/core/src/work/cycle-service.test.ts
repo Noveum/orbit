@@ -447,3 +447,51 @@ describe('the sprint that follows a completed one', () => {
     expect(closed.nextCycle.number).toBe(Math.max(...numbers));
   });
 });
+
+describe('two people closing the same sprint at once', () => {
+  it('lets one through, refuses the other, and leaves a single successor', async () => {
+    const cycle = await firstCycle();
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Carried',
+      cycleId: cycle.id,
+    });
+
+    const outcomes = await Promise.allSettled([
+      completeCycle(workspace.admin, cycle.id),
+      completeCycle(workspace.admin, cycle.id),
+    ]);
+    const won = outcomes.filter((entry) => entry.status === 'fulfilled');
+    const lost = outcomes.filter((entry) => entry.status === 'rejected');
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+
+    const all = await listCycles(workspace.admin, workspace.teamId);
+    const closed = all.filter((row) => row.completedAt !== null);
+    expect(closed).toHaveLength(1);
+    expect(closed[0]?.id).toBe(cycle.id);
+
+    const recorded = sprintOutcomeSchema.parse(closed[0]?.progressSnapshot);
+    expect(recorded.rolledOver).toBe(1);
+  });
+
+  it('mints a successor when the only later sprint has already been closed', async () => {
+    const later = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2036-02-02T00:00:00.000Z'),
+      endsAt: new Date('2036-02-16T00:00:00.000Z'),
+    });
+    await completeCycle(workspace.admin, later.cycle.id);
+
+    const earlier = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2036-01-05T00:00:00.000Z'),
+      endsAt: new Date('2036-01-19T00:00:00.000Z'),
+    });
+    const closed = await completeCycle(workspace.admin, earlier.cycle.id);
+
+    expect(closed.nextCycle.id).not.toBe(later.cycle.id);
+    expect(closed.nextCycle.completedAt).toBeNull();
+    expect(closed.nextCycle.number).toBeGreaterThan(later.cycle.number);
+  });
+});

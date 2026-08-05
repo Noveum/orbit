@@ -4,11 +4,19 @@ import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { Upload } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
+import { z } from 'zod';
 import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { messageOf } from '@/lib/query/fetcher.ts';
 import { useCreateDoc } from '@/lib/query/use-docs.ts';
 import { parseMarkdownImport } from './doc-transfer.ts';
+
+const MAX_IMPORT_BYTES = DOC_CONTENT_LIMIT * 4;
+
+const importedDocSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  content: z.string().max(DOC_CONTENT_LIMIT),
+});
 
 export interface DocImportProps {
   readonly collectionId: string | null;
@@ -23,11 +31,14 @@ export function DocImport({ collectionId, projectId }: DocImportProps) {
   const [busy, setBusy] = useState(false);
 
   async function take(file: File): Promise<void> {
+    if (file.size > MAX_IMPORT_BYTES) {
+      throw new Error('That file is too long to import. Split it into linked pages.');
+    }
     const text = await file.text();
     if (text.length > DOC_CONTENT_LIMIT) {
       throw new Error('That file is too long to import. Split it into linked pages.');
     }
-    const parsed = parseMarkdownImport(file.name, text);
+    const parsed = importedDocSchema.parse(parseMarkdownImport(file.name, text));
     const doc = await create.mutateAsync({
       title: parsed.title,
       content: parsed.content,
