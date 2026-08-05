@@ -141,6 +141,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               onSelect={(id) => {
                 setTeamId(id);
                 setStateId(null);
+                setProjectId(null);
                 setCycleId(null);
                 setLabelIds([]);
               }}

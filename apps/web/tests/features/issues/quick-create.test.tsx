@@ -133,7 +133,7 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create')).toBeTruthy();
   });
 
-  it('drops a sprint from the team that was left behind', async () => {
+  it('drops the sprint and the project from the team that was left behind', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = {
       ...buildWorkspace(),
@@ -145,6 +145,8 @@ describe('the new issue dialog', () => {
     open();
 
     await user.type(screen.getByTestId('quick-create-title'), 'Moved teams');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
     await user.click(screen.getByTestId('quick-create-cycle'));
     await user.click(await screen.findByText('Sprint 3'));
     await user.click(screen.getByTestId('quick-create-team'));
@@ -152,5 +154,6 @@ describe('the new issue dialog', () => {
     await user.click(screen.getByTestId('quick-create-submit'));
 
     expect(created.mock.calls[0]?.[0]?.['cycleId']).toBeNull();
+    expect(created.mock.calls[0]?.[0]?.['projectId']).toBeNull();
   });
 });
