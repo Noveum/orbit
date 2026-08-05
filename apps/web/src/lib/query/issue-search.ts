@@ -64,3 +64,12 @@ export const ALL_ISSUES_QUERY: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: '
 export function allIssuesSearch(query: IssueQuery = ALL_ISSUES_QUERY): string {
   return searchParams(query).toString();
 }
+
+export function projectIssuesSearch(
+  projectId: string,
+  query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' },
+): string {
+  const params = searchParams(query);
+  params.set('projectId', projectId);
+  return params.toString();
+}

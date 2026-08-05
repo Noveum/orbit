@@ -21,6 +21,7 @@ import {
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
+  projectIssuesSearch,
 } from './issue-search.ts';
 import { ISSUE_SUMMARY_ROOT, ISSUES_ROOT, queryKeys } from './keys.ts';
 import type {
@@ -164,6 +165,19 @@ export function useTeamMemberIssues(teamId: string | null, userId: string | null
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
     enabled: teamId !== null && userId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useProjectIssues(
+  projectId: string | null,
+  query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' },
+) {
+  const search = projectId === null ? '' : projectIssuesSearch(projectId, query);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.issues(projectId ?? 'none', search), search),
+    enabled: projectId !== null,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
   });
