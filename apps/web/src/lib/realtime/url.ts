@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 const REALTIME_PATH = '/api/ws';
 
-const LOCAL_HOSTNAMES: readonly string[] = ['localhost', '127.0.0.1', '[::1]', '::1'];
+const LOCAL_HOSTNAMES: readonly string[] = ['localhost', '[::1]', '::1'];
+
+const IPV4_LOOPBACK = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 const socketUrlSchema = z
   .url()
@@ -16,9 +18,16 @@ export function configuredRealtimeUrl(): string {
   return socketUrlSchema.parse(configured);
 }
 
+function loopbackAddress(hostname: string): boolean {
+  const octets = IPV4_LOOPBACK.exec(hostname);
+  if (octets === null) return false;
+  return octets.slice(1).every((octet) => Number(octet) <= 255);
+}
+
 function servedLocally(origin: string): boolean {
   try {
-    return LOCAL_HOSTNAMES.includes(new URL(origin).hostname);
+    const { hostname } = new URL(origin);
+    return LOCAL_HOSTNAMES.includes(hostname) || loopbackAddress(hostname);
   } catch {
     return false;
   }

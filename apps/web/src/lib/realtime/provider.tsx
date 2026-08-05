@@ -4,6 +4,7 @@ import { RealtimeProvider } from '@orbit/realtime-client/react';
 import { SESSION_REVOKED_CLOSE_CODE } from '@orbit/shared/events';
 import type { ReactNode } from 'react';
 import { useCallback } from 'react';
+import { z } from 'zod';
 import { authClient } from '@/lib/auth/client.ts';
 import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
@@ -18,10 +19,13 @@ export interface SessionGate {
   readonly signOut: () => Promise<unknown>;
 }
 
+const noSessionSchema = z.object({
+  data: z.null(),
+  error: z.null().optional(),
+});
+
 function serverHasNoSession(result: unknown): boolean {
-  if (result === null || typeof result !== 'object') return false;
-  const answer = result as { data?: unknown; error?: unknown };
-  return answer.error == null && answer.data == null;
+  return noSessionSchema.safeParse(result).success;
 }
 
 export async function endSessionIfRevoked(gate: SessionGate = authClient): Promise<boolean> {
