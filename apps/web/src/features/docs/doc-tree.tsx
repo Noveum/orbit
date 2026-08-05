@@ -1,8 +1,8 @@
 'use client';
 
-import { FolderPlus, MoreHorizontal, Plus, Search } from 'lucide-react';
+import { ChevronRight, FolderPlus, MoreHorizontal, Plus, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -28,11 +28,15 @@ export interface DocGroup {
 export interface DocNode {
   readonly doc: DocSummary;
   readonly depth: number;
+  readonly childCount: number;
 }
 
 export const MAX_TREE_DEPTH = 32;
 
-export function docTreeOf(docs: readonly DocSummary[]): DocNode[] {
+export function docTreeOf(
+  docs: readonly DocSummary[],
+  collapsed: ReadonlySet<string> = new Set(),
+): DocNode[] {
   const present = new Set(docs.map((doc) => doc.id));
   const byParent = new Map<string, DocSummary[]>();
   const rootKey = '';
@@ -52,13 +56,27 @@ export function docTreeOf(docs: readonly DocSummary[]): DocNode[] {
     for (const doc of byParent.get(parent) ?? []) {
       if (seen.has(doc.id)) continue;
       seen.add(doc.id);
-      nodes.push({ doc, depth });
-      walk(doc.id, depth + 1);
+      const childCount = (byParent.get(doc.id) ?? []).length;
+      nodes.push({ doc, depth, childCount });
+      if (childCount > 0 && !collapsed.has(doc.id)) walk(doc.id, depth + 1);
     }
   };
 
   walk(rootKey, 0);
   return nodes;
+}
+
+export function ancestorsOf(docs: readonly DocSummary[], docId: string): string[] {
+  const byId = new Map(docs.map((doc) => [doc.id, doc]));
+  const chain: string[] = [];
+  let cursor = byId.get(docId)?.parentId ?? null;
+  let depth = 0;
+  while (cursor !== null && depth < MAX_TREE_DEPTH) {
+    chain.push(cursor);
+    cursor = byId.get(cursor)?.parentId ?? null;
+    depth += 1;
+  }
+  return chain;
 }
 
 export function groupDocs(
@@ -138,6 +156,9 @@ function DocRow({
   active,
   unsaved,
   recent,
+  childCount,
+  collapsed,
+  onToggle,
   onNavigate,
 }: {
   readonly doc: DocSummary;
@@ -145,32 +166,56 @@ function DocRow({
   readonly active: boolean;
   readonly unsaved: boolean;
   readonly recent: boolean;
+  readonly childCount: number;
+  readonly collapsed: boolean;
+  readonly onToggle: () => void;
   readonly onNavigate: () => void;
 }) {
   return (
-    <Link
-      href={`/docs/${doc.id}`}
-      data-testid={`doc-row-${doc.id}`}
-      data-depth={depth}
-      aria-current={active ? 'page' : undefined}
-      onClick={onNavigate}
-      style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
-      className={cn(
-        'flex h-7 items-center gap-2 rounded-md pr-2 text-dense transition-colors duration-[var(--duration-fast)]',
-        active
-          ? 'bg-accent-soft font-medium text-accent'
-          : 'text-muted hover:bg-surface-2 hover:text-text',
-      )}
-    >
-      <span className="min-w-0 flex-1 truncate">{doc.title}</span>
-      {unsaved || recent ? (
-        <span
-          aria-hidden="true"
-          title={unsaved ? 'Unsaved changes' : 'Updated recently'}
-          className={cn('size-1.5 shrink-0 rounded-full', unsaved ? 'bg-warning' : 'bg-accent')}
-        />
+    <div className="relative flex items-center">
+      {childCount > 0 ? (
+        <button
+          type="button"
+          aria-label={collapsed ? `Expand ${doc.title}` : `Collapse ${doc.title}`}
+          aria-expanded={!collapsed}
+          data-testid={`doc-toggle-${doc.id}`}
+          onClick={onToggle}
+          style={{ left: `${depth * 0.75}rem` }}
+          className="absolute z-10 flex size-4 items-center justify-center rounded-sm text-faint transition-colors duration-[var(--duration-instant)] hover:bg-surface-2 hover:text-text motion-reduce:transition-none"
+        >
+          <ChevronRight
+            className={cn(
+              'size-3 transition-transform duration-[var(--duration-fast)] motion-reduce:transition-none',
+              collapsed ? '' : 'rotate-90',
+            )}
+            aria-hidden="true"
+          />
+        </button>
       ) : null}
-    </Link>
+      <Link
+        href={`/docs/${doc.id}`}
+        data-testid={`doc-row-${doc.id}`}
+        data-depth={depth}
+        aria-current={active ? 'page' : undefined}
+        onClick={onNavigate}
+        style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
+        className={cn(
+          'flex h-7 items-center gap-2 rounded-md pr-2 text-dense transition-colors duration-[var(--duration-fast)]',
+          active
+            ? 'bg-accent-soft font-medium text-accent'
+            : 'text-muted hover:bg-surface-2 hover:text-text',
+        )}
+      >
+        <span className="min-w-0 flex-1 truncate">{doc.title}</span>
+        {unsaved || recent ? (
+          <span
+            aria-hidden="true"
+            title={unsaved ? 'Unsaved changes' : 'Updated recently'}
+            className={cn('size-1.5 shrink-0 rounded-full', unsaved ? 'bg-warning' : 'bg-accent')}
+          />
+        ) : null}
+      </Link>
+    </div>
   );
 }
 
@@ -202,6 +247,15 @@ export function DocTree({
   onNavigate = () => undefined,
 }: DocTreeProps) {
   const groups = useMemo(() => groupDocs(docs, collections), [docs, collections]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleFolder = useCallback((docId: string) => {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  }, []);
   const [draftName, setDraftName] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const now = Date.now();
@@ -309,11 +363,14 @@ export function DocTree({
               {group.docs.length === 0 ? (
                 <p className="px-2 py-1 text-2xs text-faint">Nothing here yet</p>
               ) : (
-                docTreeOf(group.docs).map((node) => (
+                docTreeOf(group.docs, collapsed).map((node) => (
                   <DocRow
                     key={node.doc.id}
                     doc={node.doc}
                     depth={node.depth}
+                    childCount={node.childCount}
+                    collapsed={collapsed.has(node.doc.id)}
+                    onToggle={() => toggleFolder(node.doc.id)}
                     active={activeDocId === node.doc.id}
                     unsaved={unsavedDocId === node.doc.id}
                     recent={now - new Date(node.doc.updatedAt).getTime() < RECENT_MS}

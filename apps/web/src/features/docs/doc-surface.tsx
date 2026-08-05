@@ -2,6 +2,7 @@
 
 import { useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
+import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
@@ -25,6 +26,7 @@ import { Kbd } from '@/components/ui/kbd.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import { cn } from '@/lib/cn.ts';
 import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
 import { useArchiveDoc, useDoc, useDocs, useUpdateDoc } from '@/lib/query/use-docs.ts';
@@ -43,7 +45,10 @@ const STATUS_LABEL = {
   unsaved: 'Unsaved changes',
   saving: 'Saving…',
   error: 'Save failed',
+  blocked: 'Too long to save',
 } as const;
+
+const NEAR_LIMIT = Math.round(DOC_CONTENT_LIMIT * 0.9);
 
 const NEST_PICKER_LIMIT = 50;
 
@@ -426,8 +431,14 @@ function EditSession({
   const [title, setTitle] = useState(doc.title);
   const [content, setContent] = useState(doc.content);
   const draft = useMemo(() => ({ title, content }), [title, content]);
-  const autosave = useAutosave({ value: draft, save });
+  const autosave = useAutosave({
+    value: draft,
+    save,
+    canSave: (next) => next.content.length <= DOC_CONTENT_LIMIT,
+  });
   const flush = autosave.saveNow;
+  const over = content.length > DOC_CONTENT_LIMIT;
+  const near = content.length > NEAR_LIMIT;
 
   useEffect(() => onStatusChange(autosave.status), [autosave.status, onStatusChange]);
   useEffect(() => flush, [flush]);
@@ -444,6 +455,19 @@ function EditSession({
         />
       </div>
       <DocEditor docId={doc.id} content={content} onChange={setContent} onForceSave={flush} />
+      {near ? (
+        <p
+          data-testid="doc-length-warning"
+          className={cn(
+            'shrink-0 border-border border-t px-6 py-2 text-2xs tabular-nums',
+            over ? 'text-danger' : 'text-muted',
+          )}
+        >
+          {over
+            ? `This document is ${content.length.toLocaleString()} characters, past the ${DOC_CONTENT_LIMIT.toLocaleString()} limit. Nothing is being saved until it is shorter. Split it into linked pages.`
+            : `${content.length.toLocaleString()} of ${DOC_CONTENT_LIMIT.toLocaleString()} characters.`}
+        </p>
+      ) : null}
     </div>
   );
 }

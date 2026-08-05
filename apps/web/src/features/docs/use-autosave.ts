@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error';
+export type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error' | 'blocked';
 
 export const AUTOSAVE_DELAY_MS = 1200;
 
@@ -10,6 +10,7 @@ export interface AutosaveOptions<T> {
   readonly value: T;
   readonly save: (value: T) => Promise<unknown>;
   readonly delayMs?: number;
+  readonly canSave?: (value: T) => boolean;
 }
 
 export interface Autosave {
@@ -17,15 +18,22 @@ export interface Autosave {
   readonly saveNow: () => void;
 }
 
-export function useAutosave<T>({ value, save, delayMs = AUTOSAVE_DELAY_MS }: AutosaveOptions<T>) {
+export function useAutosave<T>({
+  value,
+  save,
+  delayMs = AUTOSAVE_DELAY_MS,
+  canSave,
+}: AutosaveOptions<T>) {
   const [status, setStatus] = useState<SaveStatus>('saved');
   const savedRef = useRef<T>(value);
   const valueRef = useRef<T>(value);
   const saveRef = useRef(save);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const canSaveRef = useRef(canSave);
   saveRef.current = save;
   valueRef.current = value;
+  canSaveRef.current = canSave;
 
   const run = useCallback(() => {
     if (timerRef.current !== null) {
@@ -34,6 +42,11 @@ export function useAutosave<T>({ value, save, delayMs = AUTOSAVE_DELAY_MS }: Aut
     }
     const pending = valueRef.current;
     if (Object.is(pending, savedRef.current)) return;
+    const allowed = canSaveRef.current;
+    if (allowed !== undefined && !allowed(pending)) {
+      setStatus('blocked');
+      return;
+    }
     setStatus('saving');
     saveRef
       .current(pending)
@@ -46,7 +59,8 @@ export function useAutosave<T>({ value, save, delayMs = AUTOSAVE_DELAY_MS }: Aut
 
   useEffect(() => {
     if (Object.is(value, savedRef.current)) return;
-    setStatus('unsaved');
+    const allowed = canSaveRef.current;
+    setStatus(allowed !== undefined && !allowed(value) ? 'blocked' : 'unsaved');
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(run, delayMs);
     return () => {

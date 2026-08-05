@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { act, render } from '@testing-library/react';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
-import { DocTree } from './doc-tree.tsx';
+import { ancestorsOf, DocTree, docTreeOf } from './doc-tree.tsx';
 
 function summary(id: string, title: string): DocSummary {
   return {
@@ -73,5 +73,44 @@ describe('doc tree scroller', () => {
     });
 
     expect(scrollerOf().scrollTop).toBe(250);
+  });
+});
+
+describe('a folder that can be closed', () => {
+  const nested: DocSummary[] = [
+    summary('root', 'Handbook'),
+    { ...summary('child', 'Onboarding'), parentId: 'root' },
+    { ...summary('grandchild', 'Day one'), parentId: 'child' },
+    summary('other', 'Runbook'),
+  ];
+
+  it('lays the whole tree out when nothing is collapsed', () => {
+    const nodes = docTreeOf(nested);
+    expect(nodes.map((node) => node.doc.id)).toEqual(['root', 'child', 'grandchild', 'other']);
+    expect(nodes.map((node) => node.depth)).toEqual([0, 1, 2, 0]);
+  });
+
+  it('hides everything beneath a collapsed folder, and leaves siblings alone', () => {
+    const nodes = docTreeOf(nested, new Set(['root']));
+    expect(nodes.map((node) => node.doc.id)).toEqual(['root', 'other']);
+  });
+
+  it('collapses only the branch that was closed', () => {
+    const nodes = docTreeOf(nested, new Set(['child']));
+    expect(nodes.map((node) => node.doc.id)).toEqual(['root', 'child', 'other']);
+  });
+
+  it('reports how many children a row has, so only folders get a control', () => {
+    const nodes = docTreeOf(nested);
+    const counts = Object.fromEntries(nodes.map((node) => [node.doc.id, node.childCount]));
+    expect(counts['root']).toBe(1);
+    expect(counts['child']).toBe(1);
+    expect(counts['grandchild']).toBe(0);
+    expect(counts['other']).toBe(0);
+  });
+
+  it('names the chain above a doc, so opening one can reveal it', () => {
+    expect(ancestorsOf(nested, 'grandchild')).toEqual(['child', 'root']);
+    expect(ancestorsOf(nested, 'other')).toEqual([]);
   });
 });
