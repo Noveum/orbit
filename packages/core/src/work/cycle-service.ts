@@ -26,6 +26,7 @@ import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { issueScopes } from './issue-service.ts';
 
 export type CycleRow = typeof schema.cycle.$inferSelect;
 
@@ -204,6 +205,13 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+
+    const detached = await tx
+      .update(schema.issue)
+      .set({ cycleId: null, updatedAt: new Date(), syncId })
+      .where(eq(schema.issue.cycleId, cycleId))
+      .returning();
+
     await tx.delete(schema.cycle).where(eq(schema.cycle.id, cycleId));
     return [
       buildSyncAction({
@@ -216,6 +224,18 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
         data: { id: cycleId, teamId: cycle.teamId },
         actor,
       }),
+      ...detached.map((row) =>
+        buildSyncAction({
+          syncId,
+          organizationId: principal.organizationId,
+          scopes: issueScopes(row),
+          action: 'update',
+          model: 'issue',
+          modelId: row.id,
+          data: row,
+          actor,
+        }),
+      ),
     ];
   });
 }

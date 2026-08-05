@@ -214,8 +214,12 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const observeSyncId = useObserveSyncId();
 
   const subscribed = useMemo(
-    () => [scopes.organization(organizationId), ...teamIds.map((id) => scopes.team(id))],
-    [organizationId, teamIds],
+    () => [
+      scopes.organization(organizationId),
+      ...teamIds.map((id) => scopes.team(id)),
+      ...(currentUserId === null ? [] : [scopes.user(currentUserId)]),
+    ],
+    [organizationId, teamIds, currentUserId],
   );
   useScopeSubscription(subscribed);
 

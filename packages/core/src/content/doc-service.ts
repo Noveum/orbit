@@ -87,8 +87,10 @@ export interface SavedDocCollection {
   readonly actions: SyncAction[];
 }
 
-function docScopes(row: DocRow): string[] {
-  if (isRestricted(row.visibility)) return [scopes.user(row.authorId), scopes.doc(row.id)];
+function docScopes(row: DocRow, grantedTo: readonly string[] = []): string[] {
+  if (isRestricted(row.visibility)) {
+    return [scopes.user(row.authorId), scopes.doc(row.id), ...grantedTo];
+  }
   const list = [scopes.organization(row.organizationId), scopes.doc(row.id)];
   if (row.projectId !== null) list.push(scopes.project(row.projectId));
   return list;

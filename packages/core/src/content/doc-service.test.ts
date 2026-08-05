@@ -747,3 +747,34 @@ describe('who may widen the audience of a doc', () => {
     expect(narrowed.doc.visibility).toBe('private');
   });
 });
+
+describe('a restricted doc reaches the people it is shared with', () => {
+  it('addresses the sharing change at the grantee, who subscribes to their own scope', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Board deck',
+      content: 'Numbers.',
+      visibility: 'private',
+    });
+    const { user } = await addMember(workspace, 'member');
+    const saved = await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: user.id, level: 'read' }],
+    });
+
+    const reach = saved.actions[0]?.scopes ?? [];
+    expect(reach).toContain(scopes.user(user.id));
+    expect(reach).toContain(scopes.doc(doc.id));
+    expect(reach).not.toContain(scopes.organization(workspace.organizationId));
+  });
+
+  it('addresses a team grant at the team', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Board deck',
+      content: 'Numbers.',
+      visibility: 'team',
+    });
+    const saved = await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'team', subjectId: workspace.teamId, level: 'read' }],
+    });
+    expect(saved.actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+  });
+});
