@@ -45,7 +45,6 @@ export function buildRows(
 }
 
 export interface IssueListProps {
-  readonly teamId: string;
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly properties?: readonly DisplayProperty[];
@@ -55,7 +54,6 @@ export interface IssueListProps {
 }
 
 export function IssueList({
-  teamId,
   states,
   groups,
   properties = DEFAULT_DISPLAY_PROPERTIES,
@@ -231,7 +229,6 @@ export function IssueList({
 
       {selected.length > 0 ? (
         <BulkEditBar
-          teamId={teamId}
           states={states}
           issues={issues.filter((issue) => selected.includes(issue.id))}
           onClear={() => setSelected([])}

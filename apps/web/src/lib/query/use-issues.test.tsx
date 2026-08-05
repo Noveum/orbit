@@ -133,7 +133,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     await waitFor(() => expect(list.result.current.data).toBeDefined());
     expect(log.urls).toHaveLength(1);
 
-    const move = renderHook(() => useMoveIssue(TEAM), { wrapper: wrapper(client) });
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
     move.result.current.mutate({
       issue: issue(),
       stateId: 'state_doing',

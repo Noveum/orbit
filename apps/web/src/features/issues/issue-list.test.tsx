@@ -104,7 +104,7 @@ function renderList() {
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
-          <IssueList teamId="team_1" states={[todo]} groups={groups} />
+          <IssueList states={[todo]} groups={groups} />
         </HotkeyProvider>
       </ToastProvider>
     </QueryClientProvider>,

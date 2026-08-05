@@ -106,7 +106,7 @@ function renderBoard() {
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
-          <Board teamId="team_1" groups={groups} draggable={false} />
+          <Board groups={groups} draggable={false} />
         </HotkeyProvider>
       </ToastProvider>
     </QueryClientProvider>,
@@ -235,7 +235,6 @@ function renderWindowedBoard(count: number, onLoadMore?: () => void) {
       <ToastProvider>
         <HotkeyProvider>
           <Board
-            teamId="team_1"
             groups={groups}
             draggable={false}
             hasMore={onLoadMore !== undefined}

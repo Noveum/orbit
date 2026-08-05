@@ -24,7 +24,7 @@ export interface IssuePropertiesProps {
 
 export function IssueProperties({ issue }: IssuePropertiesProps) {
   const workspace = useWorkspace();
-  const update = useUpdateIssue(issue.teamId);
+  const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
   const states = statesForTeam(workspace.states, issue.teamId);

@@ -158,7 +158,7 @@ export function IssueDetailView({ identifier, known }: IssueDetailViewProps) {
   const detail = useIssueDetail(identifier, known);
   const issue = detail.data?.issue;
   const comments = useComments(issue?.id ?? null);
-  const update = useUpdateIssue(issue?.teamId ?? 'none');
+  const update = useUpdateIssue();
 
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
 

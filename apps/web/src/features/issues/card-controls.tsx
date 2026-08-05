@@ -29,7 +29,7 @@ export function StatusControl({
   readonly disabled?: boolean;
 }) {
   const workspace = useWorkspace();
-  const update = useUpdateIssue(issue.teamId);
+  const update = useUpdateIssue();
 
   const options = useMemo<PropertyOption[]>(
     () =>
@@ -78,7 +78,7 @@ export function PriorityControl({
   readonly issue: Issue;
   readonly disabled?: boolean;
 }) {
-  const update = useUpdateIssue(issue.teamId);
+  const update = useUpdateIssue();
 
   const options = useMemo<PropertyOption[]>(
     () =>
@@ -126,7 +126,7 @@ export function AssigneeControl({
   readonly assignee: Member | undefined;
 }) {
   const workspace = useWorkspace();
-  const update = useUpdateIssue(issue.teamId);
+  const update = useUpdateIssue();
 
   const options = useMemo<PropertyOption[]>(
     () => [

@@ -387,7 +387,7 @@ function resortTeamIssueLists(client: QueryClient, teamId: string): void {
   );
 }
 
-export function useUpdateIssue(_teamId: string) {
+export function useUpdateIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -449,7 +449,7 @@ export interface MoveInput {
   readonly afterOrder: number | null;
 }
 
-export function useMoveIssue(teamId: string) {
+export function useMoveIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -478,8 +478,8 @@ export function useMoveIssue(teamId: string) {
     onSuccess: (moved) => {
       placeIssues(client, moved);
     },
-    onSettled: () => {
-      resortTeamIssueLists(client, teamId);
+    onSettled: (_moved, _error, input) => {
+      resortTeamIssueLists(client, input.issue.teamId);
       refreshCounts(client);
     },
   });

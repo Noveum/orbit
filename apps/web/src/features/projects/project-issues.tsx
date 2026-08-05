@@ -15,17 +15,8 @@ import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
-import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
 import { useProjectIssues } from '@/lib/query/use-issues.ts';
-
-export function soleTeamOf(issues: readonly Issue[]): string | null {
-  const teams = new Set(issues.map((issue) => issue.teamId));
-  if (teams.size !== 1) return null;
-  const [only] = [...teams];
-  return only ?? null;
-}
 
 export interface ProjectIssuesProps {
   readonly projectId: string;
@@ -33,7 +24,6 @@ export interface ProjectIssuesProps {
 }
 
 export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
-  const workspace = useWorkspace();
   const [layout, setLayout] = useState<ViewLayoutMode>('list');
   const { config, setConfig } = useViewConfig(null, layout, 'project');
   const controls = useProvideViewControls('project', layout, config);
@@ -52,11 +42,6 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
     scopeToTeam: false,
     scope,
   });
-
-  const teamId = useMemo(
-    () => soleTeamOf(rows) ?? workspace.teams[0]?.id ?? '',
-    [rows, workspace.teams],
-  );
 
   return (
     <section className="flex min-h-0 flex-col gap-3" data-testid="project-issues">
@@ -104,7 +89,6 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
       />
 
       <ProjectIssueBody
-        teamId={teamId}
         model={model}
         layout={layout}
         loading={issues.isPending}
@@ -122,7 +106,6 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
 }
 
 interface BodyProps {
-  readonly teamId: string;
   readonly model: IssueViewModel;
   readonly layout: ViewLayoutMode;
   readonly loading: boolean;
@@ -135,7 +118,6 @@ interface BodyProps {
 }
 
 function ProjectIssueBody({
-  teamId,
   model,
   layout,
   loading,
@@ -179,7 +161,6 @@ function ProjectIssueBody({
   if (layout === 'board') {
     return (
       <Board
-        teamId={teamId}
         groups={model.groups}
         draggable={false}
         properties={properties}
@@ -192,7 +173,6 @@ function ProjectIssueBody({
 
   return (
     <IssueList
-      teamId={teamId}
       states={model.states}
       groups={model.groups}
       properties={properties}

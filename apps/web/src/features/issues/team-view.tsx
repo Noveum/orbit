@@ -219,7 +219,6 @@ function TeamContent({
   if (layout === 'board') {
     return (
       <Board
-        teamId={teamId}
         groups={groups}
         draggable={config.groupBy === 'state' && config.orderBy === 'manual'}
         properties={config.display.properties}
@@ -240,7 +239,6 @@ function TeamContent({
   }
   return (
     <IssueList
-      teamId={teamId}
       states={states}
       groups={groups}
       properties={config.display.properties}

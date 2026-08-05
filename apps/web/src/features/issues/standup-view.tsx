@@ -131,9 +131,7 @@ export function StandupView() {
       />
     );
   } else if (layout === 'board') {
-    body = (
-      <Board teamId="" groups={groups} draggable={false} properties={config.display.properties} />
-    );
+    body = <Board groups={groups} draggable={false} properties={config.display.properties} />;
   } else {
     body = (
       <div className="min-h-0 flex-1 overflow-y-auto" data-testid="standup-list">

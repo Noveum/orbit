@@ -42,7 +42,6 @@ export interface BoardColumnSource {
 }
 
 export interface BoardProps {
-  readonly teamId: string;
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
   readonly properties?: readonly DisplayProperty[];
@@ -165,7 +164,6 @@ function SortableCard({
 }
 
 export function Board({
-  teamId,
   groups,
   draggable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
@@ -176,7 +174,7 @@ export function Board({
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const router = useRouter();
-  const move = useMoveIssue(teamId);
+  const move = useMoveIssue();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
