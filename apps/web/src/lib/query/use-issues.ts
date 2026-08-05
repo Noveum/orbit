@@ -229,7 +229,7 @@ function reconcile(search: string, issues: readonly Issue[], next: Issue): reado
   if (index !== -1) {
     const copy = [...issues];
     copy[index] = next;
-    return copy;
+    return sortForSearch(search, copy);
   }
   if (!admitsNewRows(search)) return issues;
   return sortForSearch(search, [...issues, next]);
@@ -282,12 +282,12 @@ function patchIssueLists(
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues) => update(issues));
 }
 
-function placeIssue(client: QueryClient, next: Issue): void {
+function placeIssue(client: QueryClient, next: Issue, settle = true): void {
   const before = filteredListsHolding(client, [next]);
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
     reconcile(search, issues, next),
   );
-  settleFilteredLists(client, [next], before);
+  if (settle) settleFilteredLists(client, [next], before);
 }
 
 function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
@@ -342,7 +342,7 @@ export function useUpdateIssue(_teamId: string) {
         labelIds:
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
-      placeIssue(client, optimistic);
+      placeIssue(client, optimistic, false);
       if (previousDetail !== undefined) {
         client.setQueryData(queryKeys.issue(input.issue.identifier), {
           ...previousDetail,
@@ -399,7 +399,7 @@ export function useMoveIssue(teamId: string) {
         stateId: input.stateId,
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      placeIssue(client, optimistic);
+      placeIssue(client, optimistic, false);
       return {};
     },
     onError: (error, input) => {

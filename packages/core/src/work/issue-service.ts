@@ -80,6 +80,7 @@ function issueAction(
   syncId: number,
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
+  labelIds?: readonly string[],
 ): SyncAction {
   return buildSyncAction({
     syncId,
@@ -88,7 +89,7 @@ function issueAction(
     action,
     model: 'issue',
     modelId: row.id,
-    data: row,
+    data: labelIds === undefined ? row : { ...row, labelIds: [...labelIds] },
     actor,
   });
 }
@@ -585,7 +586,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       },
     ]);
 
-    return { issue, actions: [issueAction(issue, syncId, actor, 'insert')] };
+    return { issue, actions: [issueAction(issue, syncId, actor, 'insert', parsed.labelIds)] };
   });
 }
 
