@@ -9,6 +9,8 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
     id: 'notification_1',
     type: 'issue_assigned',
+    entityType: 'issue',
+    entityId: 'issue_1',
     actorName: 'Ada',
     title: 'Ada assigned you ENG-3',
     body: '',
@@ -145,5 +147,54 @@ describe('applyNotificationDeltas', () => {
   it('lowers the mention badge when another tab reads a mention', () => {
     const patch = applyNotificationDeltas([item({ type: 'mention' })], [read(action())], TAB);
     expect(patch.mentionDelta).toBe(-1);
+  });
+});
+
+describe('what the reading pane is looking at', () => {
+  it('keeps pointing at the same notification when a newer one arrives above it', () => {
+    const first = item({ id: 'n_1', title: 'Older' });
+    const second = item({ id: 'n_2', title: 'Newer' });
+    const rows = [first];
+
+    const patched = applyNotificationDeltas(
+      rows,
+      [
+        {
+          syncId: 5,
+          organizationId: 'org_1',
+          scopes: [],
+          action: 'insert',
+          model: 'notification',
+          modelId: 'n_2',
+          data: {
+            id: 'n_2',
+            type: 'mention',
+            entityType: 'issue',
+            entityId: 'issue_2',
+            actorName: 'Bea',
+            title: 'Newer',
+            body: '',
+            url: '/issue/ENG-9',
+            readAt: null,
+            snoozedUntil: null,
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+          actor: { type: 'user', id: 'user_2' },
+          at: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+      'other-tab',
+    );
+
+    expect(patched.rows.map((row) => row.id)).toContain('n_1');
+    expect(patched.rows.map((row) => row.id)).toContain('n_2');
+    expect(patched.rows.find((row) => row.id === 'n_1')?.title).toBe('Older');
+    expect(second.id).toBe('n_2');
+  });
+
+  it('carries the entity a notification points at, so the pane can open it', () => {
+    const row = item({ entityType: 'issue', entityId: 'issue_42' });
+    expect(row.entityType).toBe('issue');
+    expect(row.entityId).toBe('issue_42');
   });
 });

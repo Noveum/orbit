@@ -78,6 +78,8 @@ const SNOOZE_HOURS = 24;
 const notificationDeltaSchema = z.object({
   id: z.string(),
   type: z.string(),
+  entityType: z.string().default(''),
+  entityId: z.string().default(''),
   actorName: z.string(),
   title: z.string(),
   body: z.string(),
@@ -96,6 +98,8 @@ function toInboxItem(data: Record<string, unknown>): InboxItem | null {
   return {
     id: row.id,
     type: NOTIFICATION_TYPES.find((entry) => entry === row.type) ?? 'subscription_activity',
+    entityType: row.entityType,
+    entityId: row.entityId,
     actorName: row.actorName,
     title: row.title,
     body: row.body,
@@ -171,7 +175,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
   const [tab, setTab] = useState<TabId>('all');
-  const [selected, setSelected] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     setRows(items);
@@ -197,18 +201,31 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   );
 
   const visible = useMemo(() => rows.filter((row) => matchesTab(row, tab)), [rows, tab]);
-  const current = visible[Math.min(selected, Math.max(0, visible.length - 1))];
+  const selectedIndex = Math.max(
+    0,
+    visible.findIndex((row) => row.id === selectedId),
+  );
+  const current = visible[selectedId === null ? 0 : selectedIndex];
 
   const move = useCallback(
     (delta: number) => {
-      setSelected((index) => Math.min(Math.max(0, index + delta), Math.max(0, visible.length - 1)));
+      if (visible.length === 0) return;
+      const from =
+        selectedId === null
+          ? 0
+          : Math.max(
+              0,
+              visible.findIndex((row) => row.id === selectedId),
+            );
+      const next = Math.min(Math.max(0, from + delta), visible.length - 1);
+      setSelectedId(visible[next]?.id ?? null);
     },
-    [visible.length],
+    [visible, selectedId],
   );
 
   const selectTab = useCallback((next: TabId) => {
     setTab(next);
-    setSelected(0);
+    setSelectedId(null);
   }, []);
 
   const applyServerCount = useCallback((payload: unknown) => {
@@ -285,7 +302,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   );
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-col gap-3 border-border border-b px-5 py-3">
         <div className="flex items-center justify-between gap-3">
           <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
@@ -335,15 +352,15 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
           className="flex-1"
         />
       ) : (
-        <div className="grid flex-1 grid-cols-1 md:grid-cols-[22rem_minmax(0,1fr)]">
-          <ul className="flex flex-col border-border border-r">
-            {visible.map((row, index) => {
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[22rem_minmax(0,1fr)]">
+          <ul className="flex min-h-0 flex-col overflow-y-auto border-border border-r">
+            {visible.map((row) => {
               const Icon = SOURCE_ICONS[row.type];
               return (
                 <li key={row.id}>
                   <button
                     type="button"
-                    onClick={() => setSelected(index)}
+                    onClick={() => setSelectedId(row.id)}
                     aria-current={current?.id === row.id ? 'true' : undefined}
                     className={cn(
                       'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',

@@ -7,6 +7,8 @@ import type { Principal } from '@orbit/shared/policy';
 export interface InboxItem {
   readonly id: string;
   readonly type: NotificationType;
+  readonly entityType: string;
+  readonly entityId: string;
   readonly actorName: string;
   readonly title: string;
   readonly body: string;
@@ -41,6 +43,8 @@ export async function loadInbox(principal: Principal): Promise<InboxData> {
     items: page.items.map((row) => ({
       id: row.id,
       type: toType(row.type),
+      entityType: row.entityType,
+      entityId: row.entityId,
       actorName: row.actorName,
       title: row.title,
       body: row.body,
