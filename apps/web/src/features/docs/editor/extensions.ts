@@ -141,6 +141,7 @@ function markTaskLists(root: ParentNode): void {
 }
 
 export function toEditorHtml(html: string): string {
+  if (typeof document === 'undefined') return html;
   const template = document.createElement('template');
   template.innerHTML = html;
   markCallout(template.content);
