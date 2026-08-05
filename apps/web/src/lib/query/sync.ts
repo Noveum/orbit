@@ -131,7 +131,7 @@ export function applyIssueDelta(
 
   const next = [...issues];
   next[index] = merged;
-  return next;
+  return sortForSearch(search, next);
 }
 
 export type IssuePages = InfiniteData<IssuePage, string | null>;

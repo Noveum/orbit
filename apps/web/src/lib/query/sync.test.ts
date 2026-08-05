@@ -500,3 +500,41 @@ describe('an ordering name from the URL cannot reach the prototype', () => {
     }
   });
 });
+
+describe('a remote edit that changes where a row belongs in the order', () => {
+  const byPriority = 'orderBy=priority';
+
+  it('moves the row rather than leaving it where it happened to be', () => {
+    const local = [
+      issue({ id: 'issue_1', identifier: 'ENG-1', priority: 1 }),
+      issue({ id: 'issue_2', identifier: 'ENG-2', priority: 2 }),
+      issue({ id: 'issue_3', identifier: 'ENG-3', priority: 3 }),
+    ];
+
+    const demoted = applyIssueDelta(
+      local,
+      action({ modelId: 'issue_1', data: { id: 'issue_1', syncId: 12, priority: 4 } }),
+      TEAM,
+      byPriority,
+    );
+
+    expect(demoted.map((entry) => entry.id)).toEqual(['issue_2', 'issue_3', 'issue_1']);
+  });
+
+  it('leaves an order the edit did not disturb exactly as it was', () => {
+    const local = [
+      issue({ id: 'issue_1', identifier: 'ENG-1', priority: 1 }),
+      issue({ id: 'issue_2', identifier: 'ENG-2', priority: 2 }),
+    ];
+
+    const renamed = applyIssueDelta(
+      local,
+      action({ modelId: 'issue_1', data: { id: 'issue_1', syncId: 12, title: 'Renamed' } }),
+      TEAM,
+      byPriority,
+    );
+
+    expect(renamed.map((entry) => entry.id)).toEqual(['issue_1', 'issue_2']);
+    expect(renamed[0]?.title).toBe('Renamed');
+  });
+});
