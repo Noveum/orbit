@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { GroupContext } from '@/features/filters/grouping.ts';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import { render, screen } from '@/test/render.tsx';
 import { buildRows } from './issue-list.tsx';
 import { IssueRow } from './issue-row.tsx';
 

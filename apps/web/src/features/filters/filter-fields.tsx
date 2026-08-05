@@ -36,7 +36,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { PriorityGlyph } from '@/features/issues/priority-glyph.tsx';
 import { StateGlyph } from '@/features/issues/state-glyph.tsx';
 import { statesForTeam, type WorkspaceData } from '@/features/issues/workspace-provider.tsx';
-import type { FacetProperty, IssueSummary } from '@/lib/query/schemas.ts';
+import type { FacetProperty, IssueFacets } from '@/lib/query/schemas.ts';
 import { PRIORITY_ORDER } from './grouping.ts';
 
 export interface FilterOption {
@@ -298,7 +298,7 @@ const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 
 export function countValues(
   definition: FilterFieldDefinition,
-  facets: IssueSummary['facets'] | undefined,
+  facets: IssueFacets['facets'] | undefined,
 ): ReadonlyMap<string, number> {
   const property = definition.facet;
   if (property === null || facets === undefined) return EMPTY_COUNTS;

@@ -53,6 +53,16 @@ export function summarySearch(
   return params.toString();
 }
 
+export function facetsSearch(
+  teamId: string | null,
+  scope: Readonly<Record<string, string>> = {},
+): string {
+  const params = new URLSearchParams();
+  if (teamId !== null) params.set('teamId', teamId);
+  for (const [key, value] of Object.entries(scope)) params.set(key, value);
+  return params.toString();
+}
+
 export function assignedSearch(userId: string): string {
   const params = searchParams({ ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' });
   params.set('assigneeId', userId);

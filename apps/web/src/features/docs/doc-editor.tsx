@@ -44,9 +44,10 @@ export interface DocEditorProps {
   readonly content: string;
   readonly onChange: (value: string) => void;
   readonly onForceSave: () => void;
+  readonly footer?: React.ReactNode;
 }
 
-export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorProps) {
+export function DocEditor({ docId, content, onChange, onForceSave, footer }: DocEditorProps) {
   const { toast } = useToast();
   const client = useQueryClient();
   const bootstrap = useBootstrap(null);
@@ -244,6 +245,7 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
             toolbar="full"
             ariaLabel="Doc body"
             testId="doc-rich-editor"
+            footer={footer}
           />
         </div>
       ) : (

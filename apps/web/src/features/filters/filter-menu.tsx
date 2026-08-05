@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { IssueSummary } from '@/lib/query/schemas.ts';
+import type { IssueFacets } from '@/lib/query/schemas.ts';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { countValues, RELATIVE_PRESETS } from './filter-fields.tsx';
 
@@ -24,7 +24,7 @@ export interface FilterMenuProps {
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
   readonly onChange: (next: FilterGroup) => void;
-  readonly facets: IssueSummary['facets'] | undefined;
+  readonly facets: IssueFacets['facets'] | undefined;
   readonly startProperty?: FilterProperty | null;
   readonly anchor: ReactNode;
 }
@@ -140,7 +140,7 @@ export function FilterMenu({
 interface FieldPickerProps {
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
-  readonly facets: IssueSummary['facets'] | undefined;
+  readonly facets: IssueFacets['facets'] | undefined;
   readonly searching: boolean;
   readonly onPickField: (property: FilterProperty) => void;
   readonly onPickValue: (property: FilterProperty, value: string) => void;
@@ -212,7 +212,7 @@ function selectedValues(filter: FilterGroup, property: FilterProperty): readonly
 interface ValuePickerProps {
   readonly definition: FilterFieldDefinition;
   readonly condition: FilterCondition | undefined;
-  readonly facets: IssueSummary['facets'] | undefined;
+  readonly facets: IssueFacets['facets'] | undefined;
   readonly search: string;
   readonly onToggleValue: (value: string) => void;
   readonly onToggleNegate: () => void;

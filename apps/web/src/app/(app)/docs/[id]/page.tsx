@@ -7,14 +7,8 @@ import { dehydratedDoc } from '@/lib/query/docs-prefetch.ts';
 
 export const metadata: Metadata = { title: 'Docs' };
 
-export default async function DocPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ edit?: string }>;
-}) {
-  const [{ principal }, { id }, query] = await Promise.all([pageContext(), params, searchParams]);
+export default async function DocPage({ params }: { params: Promise<{ id: string }> }) {
+  const [{ principal }, { id }] = await Promise.all([pageContext(), params]);
 
   return (
     <HydrationBoundary state={await dehydratedDoc(principal, id)}>
@@ -22,7 +16,6 @@ export default async function DocPage({
         docId={id}
         canWrite={can(principal, 'doc:write')}
         canPublish={can(principal, 'doc:publish')}
-        startEditing={query.edit === '1'}
       />
     </HydrationBoundary>
   );

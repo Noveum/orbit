@@ -1206,13 +1206,18 @@ export type FacetCounts = Record<FacetProperty, Record<string, number>>;
 
 export interface IssueSummary {
   readonly total: number;
-  readonly scopeTotal: number;
   readonly byState: Record<string, number>;
   readonly groupTotals: Record<string, number>;
+}
+
+export interface IssueFacets {
+  readonly scopeTotal: number;
   readonly facets: FacetCounts;
 }
 
 const UNSET_FACET_VALUE = UNSET_FILTER_VALUE;
+
+type FacetTally = Record<string, number>;
 
 function tally(rows: readonly { key: string | null; total: number }[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -1275,6 +1280,72 @@ const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () =>
   cycle: () => schema.issue.cycleId,
 };
 
+const COLUMN_FACETS = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'project',
+  'cycle',
+] as const;
+
+type ColumnFacet = (typeof COLUMN_FACETS)[number];
+
+type GroupingSetRow = {
+  property: string;
+  key: string | null;
+  total: number;
+};
+
+export function columnFacetsSql(where: SQL | undefined): SQL {
+  const columns = COLUMN_FACETS.map((property) => FACET_COLUMNS[property]());
+  const grouping = sql.join(
+    COLUMN_FACETS.map(
+      (property, index) => sql`when grouping(${columns[index]}) = 0 then ${property}::text`,
+    ),
+    sql` `,
+  );
+  const sets = sql.join(
+    columns.map((column) => sql`(${column})`),
+    sql`, `,
+  );
+  const value = sql.join(
+    columns.map((column) => sql`${column}::text`),
+    sql`, `,
+  );
+  return sql`
+    select
+      case ${grouping} else 'unknown' end as property,
+      coalesce(${value}) as key,
+      count(*)::int as total
+    from ${schema.issue}
+    ${where === undefined ? sql`` : sql`where ${where}`}
+    group by grouping sets (${sets})
+  `;
+}
+
+async function columnFacets(where: SQL | undefined): Promise<Record<ColumnFacet, FacetTally>> {
+  const rows = await db.execute<GroupingSetRow>(columnFacetsSql(where));
+  const counts = {} as Record<ColumnFacet, FacetTally>;
+  for (const property of COLUMN_FACETS) counts[property] = {};
+  for (const row of rows) {
+    const bucket = counts[row.property as ColumnFacet];
+    if (bucket === undefined) continue;
+    bucket[row.key ?? UNSET_FACET_VALUE] = Number(row.total);
+  }
+  return counts;
+}
+
+async function allFacets(where: SQL | undefined): Promise<FacetCounts> {
+  const [columns, label, milestone] = await Promise.all([
+    columnFacets(where),
+    labelFacet(where),
+    milestoneFacet(where),
+  ]);
+  return { ...columns, label, milestone };
+}
+
 function facetFor(
   property: FacetProperty,
   where: SQL | undefined,
@@ -1294,18 +1365,15 @@ export async function getIssueSummary(
 ): Promise<IssueSummary> {
   assertCan(principal, 'issue:read');
   const filter = summarySchema.parse(input);
-  const scope = and(...buildScopeFilters(principal, filter));
   const matching = and(...buildIssueFilters(principal, filter));
 
-  const [matchedStates, scopeTotal, groupTotals, facetRows] = await Promise.all([
+  const [matchedStates, groupTotals] = await Promise.all([
     db
       .select({ stateId: schema.issue.stateId, total: count() })
       .from(schema.issue)
       .where(matching)
       .groupBy(schema.issue.stateId),
-    db.select({ total: count() }).from(schema.issue).where(scope),
-    facetFor(filter.groupBy, matching),
-    Promise.all(FACET_PROPERTIES.map((property) => facetFor(property, scope))),
+    filter.groupBy === 'state' ? null : facetFor(filter.groupBy, matching),
   ]);
 
   const byState: Record<string, number> = {};
@@ -1315,18 +1383,23 @@ export async function getIssueSummary(
     total += Number(row.total);
   }
 
-  const facets = {} as Record<FacetProperty, Record<string, number>>;
-  FACET_PROPERTIES.forEach((property, index) => {
-    facets[property] = facetRows[index] ?? {};
-  });
+  return { total, byState, groupTotals: groupTotals ?? byState };
+}
 
-  return {
-    total,
-    scopeTotal: Number(scopeTotal[0]?.total ?? 0),
-    byState,
-    groupTotals,
-    facets,
-  };
+export async function getIssueFacets(
+  principal: Principal,
+  input: unknown = {},
+): Promise<IssueFacets> {
+  assertCan(principal, 'issue:read');
+  const filter = issueListSchema.parse(input);
+  const scope = and(...buildScopeFilters(principal, filter));
+
+  const [scopeTotal, facets] = await Promise.all([
+    db.select({ total: count() }).from(schema.issue).where(scope),
+    allFacets(scope),
+  ]);
+
+  return { scopeTotal: Number(scopeTotal[0]?.total ?? 0), facets };
 }
 
 export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {

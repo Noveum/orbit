@@ -7,6 +7,7 @@ import {
   BOOTSTRAP_ROOT,
   DOC_ROOT,
   DOCS_ROOT,
+  ISSUE_FACETS_ROOT,
   ISSUE_SUMMARY_ROOT,
   queryKeys,
   STANDUP_ROOT,
@@ -202,7 +203,7 @@ describe('DeltaBridge root invalidation', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
   });
 });
 
@@ -272,7 +273,7 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
   });
 });
 

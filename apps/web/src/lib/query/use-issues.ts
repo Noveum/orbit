@@ -9,6 +9,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
@@ -29,6 +30,7 @@ import type {
   Issue,
   IssueCounts,
   IssueDetail,
+  IssueFacets,
   IssuePage,
   IssueSummary,
 } from './schemas.ts';
@@ -37,6 +39,7 @@ import {
   issueCountsSchema,
   issueDetailSchema,
   issueEnvelopeSchema,
+  issueFacetsSchema,
   issueListSchema,
   issueMoveResultSchema,
   issueSummarySchema,
@@ -107,6 +110,9 @@ function pagedIssueOptions(queryKey: QueryKey, search: string) {
   };
 }
 
+const PREFETCH_STALE_MS = 30_000;
+const FACETS_STALE_MS = 60_000;
+
 export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_ISSUE_QUERY) {
   const search = issueSearch(teamId, query);
   return pagedIssueOptions(queryKeys.issues(teamId, search), search);
@@ -124,6 +130,21 @@ export function issueSummaryQueryOptions(search: string, enabled = true) {
 
 export function useIssueSummary(search: string, enabled = true) {
   return useQuery(issueSummaryQueryOptions(search, enabled));
+}
+
+export function issueFacetsQueryOptions(search: string, enabled = true) {
+  return {
+    queryKey: queryKeys.issueFacets(search),
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: FACETS_STALE_MS,
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueFacets> =>
+      await apiFetch(`/api/issues/facets?${search}`, issueFacetsSchema, { signal }),
+  };
+}
+
+export function useIssueFacets(search: string, enabled = true) {
+  return useQuery(issueFacetsQueryOptions(search, enabled));
 }
 
 function seedPages(seed: readonly Issue[] | undefined): IssuePages | undefined {
@@ -213,14 +234,48 @@ export function useIssueCounts(teamId: string | null) {
   });
 }
 
-export function useIssueDetail(identifier: string) {
-  return useQuery({
+export function issueDetailQueryOptions(identifier: string) {
+  return {
     queryKey: queryKeys.issue(identifier),
-    queryFn: async ({ signal }): Promise<IssueDetail> =>
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueDetail> =>
       await apiFetch(`/api/issues/${encodeURIComponent(identifier)}`, issueDetailSchema, {
         signal,
       }),
+  };
+}
+
+export function previewDetail(issue: Issue): IssueDetail {
+  return {
+    issue,
+    descriptionHtml: '',
+    activity: [],
+    activityCursor: null,
+    subIssues: [],
+    subscribed: false,
+  };
+}
+
+export function useIssueDetail(identifier: string, known?: Issue) {
+  const placeholder = useMemo(
+    () => (known === undefined ? undefined : previewDetail(known)),
+    [known],
+  );
+  return useQuery({
+    ...issueDetailQueryOptions(identifier),
+    ...(placeholder === undefined ? {} : { placeholderData: placeholder }),
   });
+}
+
+export function usePrefetchIssueDetail() {
+  const client = useQueryClient();
+  return useCallback(
+    (identifier: string) => {
+      client
+        .prefetchQuery({ ...issueDetailQueryOptions(identifier), staleTime: PREFETCH_STALE_MS })
+        .catch(() => undefined);
+    },
+    [client],
+  );
 }
 
 export interface IssuePatch {

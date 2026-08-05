@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { emptyFacets, type IssueSummary } from '@/lib/query/schemas.ts';
+import { emptyFacets, type IssueFacets } from '@/lib/query/schemas.ts';
 import { countValues, type FilterFieldDefinition } from './filter-fields.tsx';
 
 const labelDef = {
@@ -18,7 +18,7 @@ const uncountedDef = {
   facet: null,
 } as unknown as FilterFieldDefinition;
 
-function facetsWith(label: Record<string, number>): IssueSummary['facets'] {
+function facetsWith(label: Record<string, number>): IssueFacets['facets'] {
   return { ...emptyFacets(), label };
 }
 
@@ -38,7 +38,7 @@ describe('countValues', () => {
   });
 
   it('survives a facet the server omitted', () => {
-    const partial = { ...emptyFacets() } as unknown as IssueSummary['facets'];
+    const partial = { ...emptyFacets() } as unknown as IssueFacets['facets'];
     expect(countValues(labelDef, partial).size).toBe(0);
   });
 });

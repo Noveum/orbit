@@ -210,9 +210,14 @@ const facetCounts = z.record(z.string(), z.number()).catch({}).default({});
 
 export const issueSummarySchema = z.object({
   total: z.number(),
-  scopeTotal: z.number(),
   byState: z.record(z.string(), z.number()).catch({}).default({}),
   groupTotals: z.record(z.string(), z.number()).catch({}).default({}),
+});
+
+export type IssueSummary = z.infer<typeof issueSummarySchema>;
+
+export const issueFacetsSchema = z.object({
+  scopeTotal: z.number(),
   facets: z
     .object({
       state: facetCounts,
@@ -228,9 +233,9 @@ export const issueSummarySchema = z.object({
     .catch(() => emptyFacets()),
 });
 
-export type IssueSummary = z.infer<typeof issueSummarySchema>;
+export type IssueFacets = z.infer<typeof issueFacetsSchema>;
 
-export function emptyFacets(): IssueSummary['facets'] {
+export function emptyFacets(): IssueFacets['facets'] {
   return {
     state: {},
     assignee: {},

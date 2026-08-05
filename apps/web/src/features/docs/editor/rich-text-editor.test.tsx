@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { Editor } from '@tiptap/core';
 import { useState } from 'react';
 import type { Member } from '@/lib/query/schemas.ts';
-import { RichTextEditor } from './rich-text-editor.tsx';
+import { RichTextEditor, settledMarkdown } from './rich-text-editor.tsx';
 
 const members: readonly Member[] = [
   {
@@ -135,5 +135,23 @@ describe('selection bubble menu', () => {
     const bubble = await screen.findByTestId('rich-bubble');
     expect(bubble.querySelector('[aria-label=Bold]')).not.toBeNull();
     expect(bubble.querySelector('[aria-label=Link]')).not.toBeNull();
+  });
+});
+
+describe('opening a stored document without touching it', () => {
+  it('reports the same markdown it was handed, so an idle open is never a save', () => {
+    const stored = '# Realtime delta protocol\n\nEvery mutation writes to Postgres.';
+
+    expect(settledMarkdown(`${stored}\n`)).toBe(stored);
+    expect(settledMarkdown(stored)).toBe(stored);
+  });
+
+  it('settles however many trailing blank lines the serializer leaves behind', () => {
+    expect(settledMarkdown('Body\n\n\n')).toBe('Body');
+  });
+
+  it('leaves the body alone, trailing spaces and inner blank lines included', () => {
+    expect(settledMarkdown('One\n\nTwo')).toBe('One\n\nTwo');
+    expect(settledMarkdown('Trailing spaces   ')).toBe('Trailing spaces   ');
   });
 });

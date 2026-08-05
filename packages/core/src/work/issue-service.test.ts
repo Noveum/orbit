@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { createTeam } from '../org/team-service.ts';
 import {
   addMember,
@@ -14,10 +15,12 @@ import { createCycle } from './cycle-service.ts';
 import {
   archiveIssue,
   bulkUpdateIssues,
+  columnFacetsSql,
   createIssue,
   deleteIssue,
   getIssue,
   getIssueCounts,
+  getIssueFacets,
   getIssueSummary,
   listIssues,
   listRelations,
@@ -495,7 +498,9 @@ describe('getIssueSummary', () => {
     });
 
     expect(summary.total).toBe(1);
-    expect(summary.scopeTotal).toBe(3);
+    expect((await getIssueFacets(workspace.admin, { teamId: workspace.teamId })).scopeTotal).toBe(
+      3,
+    );
   });
 
   it('counts every facet value across the whole scope, not just a loaded page', async () => {
@@ -504,17 +509,23 @@ describe('getIssueSummary', () => {
     await updateIssue(workspace.admin, done.id, {
       stateId: stateNamed(workspace, 'Done').id,
       assigneeId: workspace.admin.userId,
+      estimate: 3,
     });
 
-    const summary = await getIssueSummary(workspace.admin, { teamId: workspace.teamId });
+    const { facets } = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
 
-    expect(summary.facets.state[stateNamed(workspace, 'Done').id]).toBe(1);
-    expect(summary.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
-    expect(summary.facets.assignee[workspace.admin.userId]).toBe(1);
-    expect(summary.facets.assignee['none']).toBe(1);
-    expect(summary.facets.project['none']).toBe(2);
-    expect(summary.facets.label['none']).toBe(2);
-    expect(summary.facets.milestone['none']).toBe(2);
+    expect(facets.state[stateNamed(workspace, 'Done').id]).toBe(1);
+    expect(facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(facets.assignee[workspace.admin.userId]).toBe(1);
+    expect(facets.assignee['none']).toBe(1);
+    expect(facets.creator[workspace.admin.userId]).toBe(2);
+    expect(facets.priority['0']).toBe(2);
+    expect(facets.estimate['3']).toBe(1);
+    expect(facets.estimate['none']).toBe(1);
+    expect(facets.project['none']).toBe(2);
+    expect(facets.cycle['none']).toBe(2);
+    expect(facets.label['none']).toBe(2);
+    expect(facets.milestone['none']).toBe(2);
   });
 
   it('leaves the facet counts untouched when a filter narrows the result', async () => {
@@ -540,8 +551,27 @@ describe('getIssueSummary', () => {
     });
 
     expect(summary.total).toBe(1);
-    expect(summary.scopeTotal).toBe(2);
-    expect(summary.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+
+    const scoped = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
+    expect(scoped.scopeTotal).toBe(2);
+    expect(scoped.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+  });
+
+  it('reads every column facet in one grouping sets pass instead of one query each', () => {
+    const { sql: text } = new PgDialect().sqlToQuery(columnFacetsSql(undefined));
+
+    expect(text.match(/grouping sets/g)).toHaveLength(1);
+    for (const column of [
+      'state_id',
+      'assignee_id',
+      'creator_id',
+      'priority',
+      'estimate',
+      'project_id',
+      'cycle_id',
+    ]) {
+      expect(text).toContain(`grouping("issue"."${column}")`);
+    }
   });
 });
 

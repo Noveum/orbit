@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
-import type { IssueSummary, View } from '@/lib/query/schemas.ts';
+import type { IssueFacets, View } from '@/lib/query/schemas.ts';
 import { useUpdateView } from '@/lib/query/use-views.ts';
 import { DisplayMenu } from './display-menu.tsx';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
@@ -27,7 +27,7 @@ export interface FilterBarProps {
   readonly config: ViewConfig;
   readonly onChange: (next: ViewConfig) => void;
   readonly controls: ViewControls;
-  readonly facets?: IssueSummary['facets'] | undefined;
+  readonly facets?: IssueFacets['facets'] | undefined;
   readonly savedView?: View | null;
   readonly dirty?: boolean;
   readonly showSaveView?: boolean;
@@ -229,7 +229,7 @@ interface FilterChipProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly fields: readonly FilterFieldDefinition[];
   readonly filter: FilterGroup;
-  readonly facets: IssueSummary['facets'] | undefined;
+  readonly facets: IssueFacets['facets'] | undefined;
   readonly onChange: (next: FilterGroup) => void;
   readonly onRemove: () => void;
 }

@@ -15,6 +15,10 @@ mock.module('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+mock.module('@/features/comments/viewer-presence.tsx', () => ({
+  ViewerPresence: () => null,
+}));
+
 const todo: WorkflowState = {
   id: 'state_todo',
   teamId: 'team_1',
@@ -129,6 +133,18 @@ describe('Board peek', () => {
 
     expect(screen.getByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-1');
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('paints the peeked issue straight away rather than a skeleton', () => {
+    renderBoard();
+
+    act(() => {
+      fireEvent.click(cardLink('ENG-1', 'Domain auto join'));
+    });
+
+    const peek = within(screen.getByTestId('issue-peek'));
+    expect(peek.getByTestId('issue-title')).toHaveValue('Domain auto join');
+    expect(peek.getByTestId('issue-properties')).toBeTruthy();
   });
 
   it('lets a modified click fall through to the link without opening the peek', () => {

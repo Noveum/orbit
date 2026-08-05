@@ -21,6 +21,10 @@ mock.module('@/lib/query/use-issues.ts', () => ({
   useUpdateIssue: () => ({ mutate: mock(), isPending: false }),
 }));
 
+mock.module('@/features/comments/viewer-presence.tsx', () => ({
+  ViewerPresence: () => null,
+}));
+
 const todo: WorkflowState = {
   id: 'state_todo',
   teamId: 'team_1',

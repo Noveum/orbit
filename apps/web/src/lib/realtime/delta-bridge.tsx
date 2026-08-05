@@ -20,6 +20,7 @@ import {
   DOC_COMMENTS_ROOT,
   DOC_ROOT,
   DOCS_ROOT,
+  ISSUE_FACETS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
@@ -193,7 +194,10 @@ function routeAction(
 }
 
 function flushRoots(client: QueryClient, roots: RootInvalidations): void {
-  if (roots.counts) client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
+  if (roots.counts) {
+    client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
+    client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
+  }
   if (roots.standup) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);

@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -46,9 +47,13 @@ export function IssueRow({
   onFocus,
 }: IssueRowProps) {
   const shows = (property: DisplayProperty) => properties.includes(property);
+  const prefetch = usePrefetchIssueDetail();
+  const warm = () => prefetch(issue.identifier);
 
   return (
     <div
+      onPointerEnter={warm}
+      onFocusCapture={warm}
       data-testid={`issue-row-${issue.identifier}`}
       data-active={active ? 'true' : undefined}
       className={cn(

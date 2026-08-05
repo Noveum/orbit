@@ -7,6 +7,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 
@@ -44,6 +45,8 @@ export function IssueCard({
   onOpen,
 }: IssueCardProps) {
   const shows = (property: DisplayProperty) => properties.includes(property);
+  const prefetch = usePrefetchIssueDetail();
+  const warm = () => prefetch(issue.identifier);
 
   const open = (event: ReactMouseEvent<HTMLElement>) => {
     if (onOpen === undefined || event.defaultPrevented || !isPlainClick(event)) return;
@@ -53,6 +56,8 @@ export function IssueCard({
 
   return (
     <article
+      onPointerEnter={warm}
+      onFocusCapture={warm}
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(
         'relative flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',

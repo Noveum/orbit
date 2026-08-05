@@ -52,6 +52,8 @@ export interface RichTextEditorProps {
   readonly onCancel?: () => void;
   readonly onReady?: (editor: Editor) => void;
   readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
+  readonly footer?: React.ReactNode;
+  readonly onBlur?: () => void;
 }
 
 interface MenuPosition {
@@ -81,6 +83,14 @@ function caretPosition(editor: Editor, at: number, container: HTMLElement | null
   return { left: coords.left - box.left, top: coords.bottom - box.top + 6 };
 }
 
+export function settledMarkdown(markdown: string): string {
+  return markdown.replace(/\n+$/, '');
+}
+
+function emittedMarkdown(instance: Editor): string {
+  return settledMarkdown(docToMarkdown(instance.getJSON()));
+}
+
 export function RichTextEditor({
   value,
   onChange,
@@ -97,6 +107,8 @@ export function RichTextEditor({
   onCancel,
   onReady,
   onUpload,
+  footer,
+  onBlur,
 }: RichTextEditorProps) {
   const containerRef = useRef<HTMLElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -134,6 +146,9 @@ export function RichTextEditor({
     setHighlight(0);
   }, []);
 
+  const blurred = useRef(onBlur);
+  blurred.current = onBlur;
+
   const editor = useEditor({
     extensions: editorExtensions(menuKeyRef, placeholder),
     content: toEditorHtml(renderMarkdown(value)),
@@ -148,17 +163,18 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: instance }) => {
-      const markdown = docToMarkdown(instance.getJSON());
+      const markdown = emittedMarkdown(instance);
       if (emitted.current.size > 64) emitted.current.clear();
       emitted.current.add(markdown);
       onChange(markdown);
     },
+    onBlur: () => blurred.current?.(),
   });
 
   useEffect(() => {
     if (editor === null) return;
     if (emitted.current.has(value)) return;
-    if (docToMarkdown(editor.getJSON()) === value) return;
+    if (emittedMarkdown(editor) === settledMarkdown(value)) return;
     emitted.current.add(value);
     editor.commands.setContent(toEditorHtml(renderMarkdown(value)), { emitUpdate: false });
   }, [editor, value]);
@@ -383,6 +399,7 @@ export function RichTextEditor({
       ) : null}
       <div className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
+        {footer}
       </div>
 
       {onUpload === undefined ? null : (

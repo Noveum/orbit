@@ -6,9 +6,9 @@ import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { groupIssues, mergeStatesByName, remapTotals } from '@/features/filters/grouping.ts';
 import type { ViewConfig } from '@/features/filters/view-config.ts';
-import { summarySearch } from '@/lib/query/issue-search.ts';
-import type { Issue, IssueSummary, WorkflowState } from '@/lib/query/schemas.ts';
-import { useIssueSummary } from '@/lib/query/use-issues.ts';
+import { facetsSearch, summarySearch } from '@/lib/query/issue-search.ts';
+import type { Issue, IssueFacets, WorkflowState } from '@/lib/query/schemas.ts';
+import { useIssueFacets, useIssueSummary } from '@/lib/query/use-issues.ts';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
 export interface IssueViewModel {
@@ -19,7 +19,7 @@ export interface IssueViewModel {
   readonly hiddenByFilters: number;
   readonly hiddenByDisplay: number;
   readonly filtered: boolean;
-  readonly facets: IssueSummary['facets'] | undefined;
+  readonly facets: IssueFacets['facets'] | undefined;
 }
 
 export interface IssueViewModelInput {
@@ -40,13 +40,15 @@ export function useIssueViewModel({
   const workspace = useWorkspace();
   const filtered = !isEmptyFilter(config.filter);
 
+  const enabled = !scopeToTeam || teamId !== null;
   const search = summarySearch(
     scopeToTeam ? teamId : null,
     { filter: config.filter, orderBy: config.orderBy },
     config.groupBy,
     scope,
   );
-  const summary = useIssueSummary(search, !scopeToTeam || teamId !== null);
+  const summary = useIssueSummary(search, enabled);
+  const facets = useIssueFacets(facetsSearch(scopeToTeam ? teamId : null, scope), enabled);
 
   const merged = useMemo(
     () =>
@@ -130,11 +132,11 @@ export function useIssueViewModel({
     shownCount: shown.issues.length,
     total,
     hiddenByFilters:
-      filtered && summary.data !== undefined
-        ? Math.max(0, summary.data.scopeTotal - summary.data.total)
+      filtered && summary.data !== undefined && facets.data !== undefined
+        ? Math.max(0, facets.data.scopeTotal - summary.data.total)
         : 0,
     hiddenByDisplay: shown.hidden,
     filtered,
-    facets: summary.data?.facets,
+    facets: facets.data?.facets,
   };
 }

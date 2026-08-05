@@ -15,6 +15,10 @@ mock.module('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+mock.module('@/features/comments/viewer-presence.tsx', () => ({
+  ViewerPresence: () => null,
+}));
+
 let workspace: WorkspaceData;
 mock.module('./workspace-provider.tsx', () => ({
   ...workspaceProvider,
