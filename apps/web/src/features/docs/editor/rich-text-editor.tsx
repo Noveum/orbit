@@ -54,6 +54,8 @@ export interface RichTextEditorProps {
   readonly onReady?: (editor: Editor) => void;
   readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
   readonly footer?: React.ReactNode;
+  readonly toolbarLeading?: React.ReactNode | undefined;
+  readonly toolbarTrailing?: React.ReactNode | undefined;
   readonly onBlur?: () => void;
   readonly scrollRef?: RefObject<HTMLDivElement | null>;
 }
@@ -110,6 +112,8 @@ export function RichTextEditor({
   onReady,
   onUpload,
   footer,
+  toolbarLeading,
+  toolbarTrailing,
   onBlur,
   scrollRef,
 }: RichTextEditorProps) {
@@ -398,11 +402,15 @@ export function RichTextEditor({
           className={toolbar === 'compact' ? 'mb-2 border-border border-b pb-2' : ''}
           onPickFile={() => fileRef.current?.click()}
           testId={`${testId}-toolbar`}
+          leading={toolbarLeading}
+          trailing={toolbarTrailing}
         />
       ) : null}
       <div
         ref={scrollRef}
-        className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}
+        className={
+          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 pt-3 pb-16' : 'contents'
+        }
       >
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
         {footer}
