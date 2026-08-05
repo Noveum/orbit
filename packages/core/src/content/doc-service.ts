@@ -230,6 +230,13 @@ export async function assertDocWritable(
   throw forbidden('You only have read access to that doc.');
 }
 
+function assertMayWiden(principal: Principal, current: DocRow, next: string | undefined): void {
+  if (next === undefined) return;
+  if (!isRestricted(current.visibility) || isRestricted(next)) return;
+  if (principal.role === 'admin' || current.authorId === principal.userId) return;
+  throw forbidden('Only the author or an admin can widen who a doc is shared with.');
+}
+
 export async function loadReadableDoc(
   executor: Executor,
   principal: Principal,
@@ -560,6 +567,7 @@ export async function updateDoc(
     const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
+    assertMayWiden(principal, current, parsed.visibility);
     await assertPlacement(tx, principal, parsed, docId);
 
     const syncId = await nextSyncId(tx);
@@ -677,6 +685,7 @@ export async function shareDoc(
     const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
+    assertMayWiden(principal, current, visibility);
 
     const publishToken = tokenFor(visibility, rotateToken ? null : current.publishToken);
     const syncId = await nextSyncId(tx);

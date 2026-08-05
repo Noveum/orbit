@@ -459,6 +459,9 @@ export async function advanceStandup(
 
     const index = nextTurnIndex(turns, locked.currentTurnId, parsed.direction);
     const target = index === -1 ? undefined : turns[index];
+    if (target === undefined && parsed.direction === 'previous') {
+      return await saveStandup(tx, principal, standupId, {});
+    }
 
     if (target !== undefined) await activateTurn(tx, target, now);
 

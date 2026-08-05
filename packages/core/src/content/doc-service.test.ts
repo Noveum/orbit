@@ -688,3 +688,62 @@ describe('sharing a doc with named people', () => {
     ).rejects.toMatchObject({ code: 'forbidden' });
   });
 });
+
+describe('who may widen the audience of a doc', () => {
+  it('stops a write grantee publishing somebody else’s private doc to the web', async () => {
+    const alice = await addMember(workspace, 'member', { name: 'Alice' });
+    const bob = await addMember(workspace, 'member', { name: 'Bob' });
+
+    const { doc } = await createDoc(alice.principal, {
+      title: 'Compensation review',
+      content: 'Numbers.',
+      visibility: 'private',
+    });
+    await setDocAccess(alice.principal, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: bob.user.id, level: 'write' }],
+    });
+
+    await expect(shareDoc(bob.principal, doc.id, { visibility: 'public' })).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    await expect(
+      updateDoc(bob.principal, doc.id, { visibility: 'workspace' }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+
+    expect((await listPublicDocs()).some((row) => row.id === doc.id)).toBe(false);
+  });
+
+  it('lets the author widen it, and lets a grantee still edit the body', async () => {
+    const alice = await addMember(workspace, 'member', { name: 'Alice' });
+    const bob = await addMember(workspace, 'member', { name: 'Bob' });
+    const { doc } = await createDoc(alice.principal, {
+      title: 'Runbook',
+      content: 'Steps.',
+      visibility: 'private',
+    });
+    await setDocAccess(alice.principal, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: bob.user.id, level: 'write' }],
+    });
+
+    const edited = await updateDoc(bob.principal, doc.id, { content: 'Bob edited.' });
+    expect(edited.doc.content).toBe('Bob edited.');
+
+    const widened = await updateDoc(alice.principal, doc.id, { visibility: 'workspace' });
+    expect(widened.doc.visibility).toBe('workspace');
+  });
+
+  it('lets a write grantee narrow it back down, which takes nothing away from anyone', async () => {
+    const alice = await addMember(workspace, 'member', { name: 'Alice' });
+    const bob = await addMember(workspace, 'member', { name: 'Bob' });
+    const { doc } = await createDoc(alice.principal, {
+      title: 'Runbook',
+      content: 'Steps.',
+      visibility: 'workspace',
+    });
+    await setDocAccess(alice.principal, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: bob.user.id, level: 'write' }],
+    });
+    const narrowed = await updateDoc(bob.principal, doc.id, { visibility: 'private' });
+    expect(narrowed.doc.visibility).toBe('private');
+  });
+});

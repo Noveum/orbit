@@ -17,8 +17,8 @@ export const dynamic = 'force-dynamic';
 const decisionSchema = z.object({
   decision: z.enum(['allow', 'deny']),
   consentCode: z.string().min(1),
-  clientId: z.string().min(1),
-  scope: z.string(),
+  clientId: z.string().min(1).optional(),
+  scope: z.string().optional(),
   organizationId: z.string().min(1),
 });
 
@@ -39,7 +39,7 @@ export async function POST(request: Request): Promise<Response> {
   }
   const parsed = decisionSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-  const { decision, consentCode, clientId, scope, organizationId } = parsed.data;
+  const { decision, consentCode, organizationId } = parsed.data;
   const userId = session.user.id;
 
   try {
@@ -59,8 +59,13 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'invalid_workspace' }, { status: 400 });
     }
 
-    await recordMcpGrant({ clientId, userId, organizationId, scopes: scope });
     const approved = await finalizeMcpConsent({ userId, consentCode, accept: true });
+    await recordMcpGrant({
+      clientId: approved.clientId,
+      userId,
+      organizationId,
+      scopes: approved.scope,
+    });
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {
     const domain = toDomainError(error);

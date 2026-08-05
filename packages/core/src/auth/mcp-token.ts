@@ -210,7 +210,7 @@ export interface FinalizeMcpConsentInput {
 export async function finalizeMcpConsent(
   input: FinalizeMcpConsentInput,
   now: Date = new Date(),
-): Promise<{ redirectUri: string }> {
+): Promise<{ redirectUri: string; clientId: string; scope: string }> {
   const invalid = unauthorized('This authorization request is invalid or has expired.');
 
   const [record] = await db
@@ -241,7 +241,11 @@ export async function finalizeMcpConsent(
     redirect.searchParams.set('error', 'access_denied');
     redirect.searchParams.set('error_description', 'User denied access');
     if (value.state != null) redirect.searchParams.set('state', value.state);
-    return { redirectUri: redirect.toString() };
+    return {
+      redirectUri: redirect.toString(),
+      clientId: value.clientId,
+      scope: value.scope.join(' '),
+    };
   }
 
   const code = authorizationCode();
@@ -263,5 +267,9 @@ export async function finalizeMcpConsent(
 
   redirect.searchParams.set('code', code);
   if (value.state != null) redirect.searchParams.set('state', value.state);
-  return { redirectUri: redirect.toString() };
+  return {
+    redirectUri: redirect.toString(),
+    clientId: value.clientId,
+    scope: value.scope.join(' '),
+  };
 }

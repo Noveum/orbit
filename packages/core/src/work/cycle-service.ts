@@ -445,7 +445,16 @@ export async function completeCycle(
       .limit(1);
     const cycle = requireRow(found, 'That cycle does not exist.');
     assertInTeam(principal, teamScope(cycle));
-    if (cycle.completedAt !== null) throw conflict('That cycle is already complete.');
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${cycle.teamId}`}))`);
+
+    const [locked] = await tx
+      .select({ completedAt: schema.cycle.completedAt })
+      .from(schema.cycle)
+      .where(eq(schema.cycle.id, cycleId))
+      .limit(1);
+    if (requireRow(locked, 'That cycle does not exist.').completedAt !== null) {
+      throw conflict('That cycle is already complete.');
+    }
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -457,6 +466,7 @@ export async function completeCycle(
         and(
           eq(schema.cycle.teamId, cycle.teamId),
           isNull(schema.cycle.archivedAt),
+          isNull(schema.cycle.completedAt),
           ne(schema.cycle.id, cycle.id),
           gte(schema.cycle.startsAt, cycle.endsAt),
         ),

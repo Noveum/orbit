@@ -1,6 +1,6 @@
 import { getRotation, setRotation } from '@orbit/core';
 import { validationFailed } from '@orbit/shared/errors';
-import { handle, readJson, searchParamsOf } from '@/lib/api/handler.ts';
+import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 
 export async function GET(request: Request): Promise<Response> {
   return await handle(async (principal) => {
@@ -11,6 +11,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const body = await readJson(request);
-  return await handle(async (principal) => ({ rotation: await setRotation(principal, body) }));
+  return await handle(async (principal) => {
+    const result = await setRotation(principal, await readJson(request));
+    await publish(result.actions);
+    return { rotation: result.rotation };
+  });
 }
