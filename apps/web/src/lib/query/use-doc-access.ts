@@ -33,6 +33,7 @@ export function useDocAccess(docId: string, enabled = true) {
 export function useSetDocAccess(docId: string) {
   const client = useQueryClient();
   return useMutation({
+    scope: { id: `doc-access:${docId}` },
     mutationFn: async (grants: readonly DocGrant[]) =>
       await apiFetch(`/api/docs/${docId}/access`, accessSchema, {
         method: 'PUT',
@@ -40,6 +41,9 @@ export function useSetDocAccess(docId: string) {
       }),
     onSuccess: (data) => {
       client.setQueryData(queryKeys.docAccess(docId), data);
+    },
+    onSettled: () => {
+      client.invalidateQueries({ queryKey: queryKeys.docAccess(docId) }).catch(() => undefined);
     },
   });
 }

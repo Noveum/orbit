@@ -223,7 +223,7 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
         </PropertyMenu>
       </PropertyRow>
 
-      <PropertyRow label="Cycle">
+      <PropertyRow label="Sprint">
         <PropertyMenu
           title="Sprint"
           open={openMenu === 'cycle'}

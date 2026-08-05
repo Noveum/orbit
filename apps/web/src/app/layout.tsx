@@ -5,7 +5,7 @@ import { Providers } from './providers.tsx';
 import './globals.css';
 
 const DESCRIPTION =
-  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, cycles, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
+  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
 
 const OG_IMAGE = {
   url: '/og.png',

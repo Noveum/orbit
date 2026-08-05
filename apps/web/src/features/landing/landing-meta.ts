@@ -3,7 +3,7 @@ import { absoluteUrl, publicAppUrl } from '@/lib/env.ts';
 
 const TITLE = 'Orbit: the free, realtime, keyboard-first work tracker';
 const DESCRIPTION =
-  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, cycles, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
+  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
 
 function ogImage() {
   return {

@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { completeSprint, createSprint, teamIdByKey } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -19,38 +20,12 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
   await page.goto(`${BASE}/sprints`);
   await expect(page.getByRole('heading', { name: 'Sprints', level: 1 })).toBeVisible();
 
-  const teamId = await page.evaluate(async () => {
-    const response = await fetch('/api/bootstrap');
-    const body = (await response.json()) as { teams?: { key: string; id: string }[] };
-    return body.teams?.find((team) => team.key === 'ENG')?.id ?? null;
-  });
-  expect(teamId).not.toBeNull();
+  const teamId = await teamIdByKey(page, 'ENG');
 
   const label = `Regression sprint ${Date.now()}`;
-  const created = await page.evaluate(
-    async ({ id, name }) => {
-      const response = await fetch('/api/cycles', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          teamId: id,
-          name,
-          startsAt: '2033-04-03T00:00:00.000Z',
-          endsAt: '2033-04-17T00:00:00.000Z',
-        }),
-      });
-      return (await response.json()) as { cycle?: { id: string; number: number } };
-    },
-    { id: teamId, name: label },
-  );
-  const sprint = created.cycle;
-  if (sprint === undefined) throw new Error('the sprint was not created');
+  const sprint = await createSprint(page, teamId, label);
 
-  const closed = await page.evaluate(async (id) => {
-    const response = await fetch(`/api/cycles/${id}/complete`, { method: 'POST' });
-    return { status: response.status, body: await response.json() };
-  }, sprint.id);
-  expect(closed.status).toBe(200);
+  await completeSprint(page, sprint.id);
 
   await page.goto(`${BASE}/sprints`);
   const engPanels = page.getByTestId(`sprint-history-eng-${sprint.number}`);

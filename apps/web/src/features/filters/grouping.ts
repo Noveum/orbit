@@ -110,7 +110,7 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
           color: null,
           category: null,
         })),
-        unassigned('No cycle'),
+        unassigned('No sprint'),
       ];
     case 'none':
       return [{ id: 'all', title: 'All issues', color: null, category: null }];

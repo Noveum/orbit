@@ -182,6 +182,7 @@ function LoadedDoc({
         {canWrite ? (
           <DocShareMenu
             doc={detail.doc}
+            canPublish={canPublish}
             canManageAccess={canPublish || detail.doc.authorId === workspace.userId}
           />
         ) : null}

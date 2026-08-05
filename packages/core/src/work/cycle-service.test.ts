@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { sprintOutcomeSchema } from '@orbit/shared/validators';
 import { cycleBurndown, teamVelocity } from '../analytics/burndown.ts';
 import { createTeam } from '../org/team-service.ts';
 import {
@@ -327,28 +328,41 @@ describe('a finished sprint keeps its own history', () => {
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
+      estimate: 5,
     });
     await updateIssue(workspace.admin, shipped.issue.id, {
       stateId: stateNamed(workspace, 'Done').id,
+    });
+    const dropped = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Dropped',
+      cycleId: cycle.id,
+      estimate: 4,
+    });
+    await updateIssue(workspace.admin, dropped.issue.id, {
+      stateId: stateNamed(workspace, 'Canceled').id,
     });
     await createIssue(workspace.admin, {
       teamId: workspace.teamId,
       title: 'Not finished',
       cycleId: cycle.id,
+      estimate: 3,
     });
 
     const closed = await completeCycle(workspace.admin, cycle.id);
     expect(closed.rolledOverIssueIds).toHaveLength(1);
 
-    const outcome = closed.cycle.progressSnapshot as Record<string, unknown> | null;
-    expect(outcome).not.toBeNull();
-    expect(outcome?.['scope']).toBe(2);
-    expect(outcome?.['completed']).toBe(1);
-    expect(outcome?.['rolledOver']).toBe(1);
+    const outcome = sprintOutcomeSchema.parse(closed.cycle.progressSnapshot);
+    expect(outcome.scope).toBe(3);
+    expect(outcome.completed).toBe(1);
+    expect(outcome.canceled).toBe(1);
+    expect(outcome.rolledOver).toBe(1);
+    expect(outcome.points).toEqual({ scope: 12, completed: 5 });
+    expect(Number.isNaN(Date.parse(outcome.closedAt))).toBe(false);
 
     const live = await cycleProgress(workspace.admin, cycle.id);
-    expect(live.scope).toBe(1);
-    expect(outcome?.['scope']).toBeGreaterThan(live.scope);
+    expect(live.scope).toBe(2);
+    expect(outcome.scope).toBeGreaterThan(live.scope);
   });
 
   it('lists finished sprints newest first, and leaves the running one out', async () => {

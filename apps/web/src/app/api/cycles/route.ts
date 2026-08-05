@@ -1,17 +1,16 @@
 import { createCycle, listCycles, pastCycles } from '@orbit/core';
+import { cycleListQuerySchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 
 export async function GET(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const { principal } = await apiContext();
-    const params = searchParamsOf(request);
-    const teamId = params['teamId'];
-    if (teamId === undefined) return { cycles: [] };
-    if (params['status'] === 'past') {
-      const limit = Number(params['limit'] ?? '12');
-      return { cycles: await pastCycles(principal, teamId, Number.isFinite(limit) ? limit : 12) };
+    const query = cycleListQuerySchema.parse(searchParamsOf(request));
+    if (query.teamId === undefined) return { cycles: [] };
+    if (query.status === 'past') {
+      return { cycles: await pastCycles(principal, query.teamId, query.limit) };
     }
-    return { cycles: await listCycles(principal, teamId) };
+    return { cycles: await listCycles(principal, query.teamId) };
   });
 }
 

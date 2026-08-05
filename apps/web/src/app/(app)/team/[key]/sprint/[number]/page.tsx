@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
-import { getSprintView } from '@/features/cycles/data.ts';
+import { getSprintView, listUpcomingCycleViews } from '@/features/cycles/data.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
@@ -9,9 +9,10 @@ interface PageProps {
   readonly params: Promise<{ key: string; number: string }>;
 }
 
+const SPRINT_NUMBER = /^[1-9][0-9]{0,8}$/;
+
 function sprintNumber(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return SPRINT_NUMBER.test(value) ? Number(value) : null;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
@@ -29,7 +30,10 @@ export default async function SprintPage({ params }: PageProps) {
   const team = teams.find((entry) => entry.key.toLowerCase() === key.toLowerCase());
   if (team === undefined) notFound();
 
-  const sprint = await getSprintView(principal, team, wanted);
+  const [sprint, upcoming] = await Promise.all([
+    getSprintView(principal, team, wanted),
+    listUpcomingCycleViews(principal, team),
+  ]);
   if (sprint === null) notFound();
 
   const outcome = sprint.outcome;
@@ -49,7 +53,7 @@ export default async function SprintPage({ params }: PageProps) {
           </p>
         )}
       </header>
-      <CyclePanel cycle={sprint} upcoming={[]} teamName={team.name} />
+      <CyclePanel cycle={sprint} upcoming={upcoming} teamName={team.name} />
     </div>
   );
 }

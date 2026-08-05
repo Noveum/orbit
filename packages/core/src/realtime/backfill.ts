@@ -652,25 +652,44 @@ const LOADERS: Record<SyncModel, Loader> = {
       scopes: [scopes.organization(row.organizationId), scopes.team(row.teamId)],
       data: row,
     })),
-  standup_rotation: async (principal, since, limit) =>
-    (
-      await db
-        .select()
-        .from(schema.standupRotation)
-        .where(
-          and(
-            eq(schema.standupRotation.organizationId, principal.organizationId),
-            gt(schema.standupRotation.syncId, since),
+  standup_rotation: async (principal, since, limit) => {
+    const touched = await db
+      .selectDistinct({ teamId: schema.standupRotation.teamId })
+      .from(schema.standupRotation)
+      .where(
+        and(
+          eq(schema.standupRotation.organizationId, principal.organizationId),
+          gt(schema.standupRotation.syncId, since),
+        ),
+      )
+      .limit(limit);
+    if (touched.length === 0) return [];
+
+    const rows = await db
+      .select()
+      .from(schema.standupRotation)
+      .where(
+        and(
+          eq(schema.standupRotation.organizationId, principal.organizationId),
+          inArray(
+            schema.standupRotation.teamId,
+            touched.map((entry) => entry.teamId),
           ),
-        )
-        .orderBy(asc(schema.standupRotation.syncId))
-        .limit(limit)
-    ).map((row) => ({
-      modelId: row.teamId,
-      syncId: row.syncId,
-      scopes: [scopes.team(row.teamId)],
-      data: row,
-    })),
+        ),
+      )
+      .orderBy(asc(schema.standupRotation.position));
+
+    return touched.map(({ teamId }) => {
+      const rotation = rows.filter((row) => row.teamId === teamId);
+      const syncId = rotation.reduce((highest, row) => Math.max(highest, row.syncId), 0);
+      return {
+        modelId: teamId,
+        syncId,
+        scopes: [scopes.team(teamId)],
+        data: { teamId, rotation },
+      };
+    });
+  },
 };
 
 export const SYNC_CATCHUP_MODELS = Object.keys(LOADERS) as SyncModel[];

@@ -145,5 +145,6 @@ export function randomUUIDv7(at?: Date): string {
 }
 
 export function sprintLabel(sprint: { readonly name: string; readonly number: number }): string {
-  return sprint.name.trim().length > 0 ? sprint.name : `Sprint ${sprint.number}`;
+  const named = sprint.name.trim();
+  return named.length > 0 ? named : `Sprint ${sprint.number}`;
 }

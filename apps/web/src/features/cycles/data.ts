@@ -12,6 +12,7 @@ import type { StateCategory } from '@orbit/shared/constants';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
+import { sprintOutcomeSchema } from '@orbit/shared/validators';
 
 export interface CycleIssueView {
   readonly id: string;
@@ -60,11 +61,8 @@ export interface UpcomingCycleView {
 }
 
 function readOutcome(value: Record<string, unknown> | null): SprintOutcome | null {
-  if (value === null || typeof value !== 'object') return null;
-  const scope = value['scope'];
-  const completed = value['completed'];
-  if (typeof scope !== 'number' || typeof completed !== 'number') return null;
-  return value as unknown as SprintOutcome;
+  const parsed = sprintOutcomeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function toCategory(value: string): StateCategory {

@@ -10,7 +10,7 @@ const { ConsentForm } = await import('./consent-form.tsx');
 const props = {
   consentCode: 'code_1',
   clientId: 'client_1',
-  clientName: 'Claude',
+  clientName: 'Northwind Desktop',
   scope: 'openid orbit.read',
   scopes: ['openid', 'orbit.read'],
   organizations: [{ id: 'org_1', name: 'Noveum' }],
@@ -52,7 +52,9 @@ describe('when approving cannot be completed', () => {
     fireEvent.click(screen.getByRole('button', { name: /approve/i }));
 
     await waitFor(() => expect(screen.getByTestId('consent-blocked')).toBeTruthy());
-    expect(screen.getByRole('button', { name: /cancel and return to Claude/i })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /cancel and return to Northwind Desktop/i }),
+    ).toBeTruthy();
     expect(screen.queryByText(/prompts you to verify with your passkey/i)).toBeNull();
   });
 
@@ -62,8 +64,10 @@ describe('when approving cannot be completed', () => {
     fireEvent.click(screen.getByRole('button', { name: /approve/i }));
     await waitFor(() => expect(screen.getByTestId('consent-blocked')).toBeTruthy());
 
-    const sent = answerWith([{ redirectUri: 'https://claude.ai/cb?error=access_denied' }]);
-    fireEvent.click(screen.getByRole('button', { name: /cancel and return to Claude/i }));
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?error=access_denied' }]);
+    fireEvent.click(
+      screen.getByRole('button', { name: /cancel and return to Northwind Desktop/i }),
+    );
 
     await waitFor(() => expect(assign).toHaveBeenCalled());
     expect(assign.mock.calls[0]?.[0]).toContain('error=access_denied');
@@ -77,13 +81,16 @@ describe('when approving cannot be completed', () => {
       )) as unknown as typeof fetch;
     render(<ConsentForm {...props} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /deny/i }));
-    await waitFor(() => expect(assign).not.toHaveBeenCalled());
+    const deny = screen.getByRole('button', { name: /deny/i });
+    fireEvent.click(deny);
+    await waitFor(() => expect(deny).toBeDisabled());
+    await waitFor(() => expect(deny).not.toBeDisabled());
+    expect(assign).not.toHaveBeenCalled();
     expect(screen.queryByTestId('consent-blocked')).toBeNull();
   });
 
   it('redirects to the client when approving succeeds', async () => {
-    answerWith([{ redirectUri: 'https://claude.ai/cb?code=abc&state=st' }]);
+    answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc&state=st' }]);
     render(<ConsentForm {...props} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve/i }));

@@ -1,6 +1,6 @@
 'use client';
 
-import { isRestricted } from '@orbit/shared/constants';
+import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { Check, Copy, Globe, Link2, Lock, RefreshCw, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -65,9 +65,14 @@ export function visibilityOption(visibility: string) {
 export interface DocShareMenuProps {
   readonly doc: Doc;
   readonly canManageAccess?: boolean;
+  readonly canPublish?: boolean;
 }
 
-export function DocShareMenu({ doc, canManageAccess = false }: DocShareMenuProps) {
+export function DocShareMenu({
+  doc,
+  canManageAccess = false,
+  canPublish = false,
+}: DocShareMenuProps) {
   const share = useShareDoc(doc.id);
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -110,7 +115,9 @@ export function DocShareMenu({ doc, canManageAccess = false }: DocShareMenuProps
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-80">
           <DropdownMenuLabel>Who can see this doc</DropdownMenuLabel>
-          {VISIBILITY_OPTIONS.map((option) => (
+          {VISIBILITY_OPTIONS.filter(
+            (option) => canPublish || !isExternallyShared(option.value),
+          ).map((option) => (
             <DropdownMenuItem
               key={option.value}
               data-testid={`doc-visibility-${option.value}`}

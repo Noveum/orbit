@@ -242,7 +242,7 @@ export function buildFilterFields(
           label: sprintLabel(cycle),
           icon: glyph(RefreshCcw),
         })),
-        unsetOption('No cycle'),
+        unsetOption('No sprint'),
       ],
       facet: 'cycle',
     },

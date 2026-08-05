@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { createIssue, stateIdOf, teamIdByKey } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -52,21 +53,9 @@ test('a card dragged to another column lands there and stays after a reload', as
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await page.waitForSelector('[data-testid^="issue-card-"]');
 
-  const teamId = await page.evaluate(async () => {
-    const response = await fetch('/api/bootstrap');
-    const body = (await response.json()) as { teams?: { key: string; id: string }[] };
-    return body.teams?.find((team) => team.key === 'ENG')?.id ?? null;
-  });
-  const made = await page.evaluate(async (id) => {
-    const response = await fetch('/api/issues', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ teamId: id, title: `Draggable ${Date.now()}` }),
-    });
-    return (await response.json()) as { issue?: { identifier: string } };
-  }, teamId);
-  const moving = made.issue?.identifier;
-  if (moving === undefined) throw new Error('the issue to drag was not created');
+  const teamId = await teamIdByKey(page, 'ENG');
+  const made = await createIssue(page, teamId, `Draggable ${Date.now()}`);
+  const moving = made.identifier;
 
   await page.reload();
   await page.waitForSelector(`[data-testid="issue-card-${moving}"]`);
@@ -80,12 +69,7 @@ test('a card dragged to another column lands there and stays after a reload', as
   expect(await cardsIn(page, 'Todo')).not.toContain(moving);
   expect((await cardsIn(page, 'In Progress')).length).toBe(progressBefore.length + 1);
 
-  const persisted = await page.evaluate(async (identifier) => {
-    const response = await fetch(`/api/issues/${identifier}`);
-    const body = (await response.json()) as { issue?: { stateId: string } };
-    return body.issue?.stateId ?? null;
-  }, moving);
-  expect(persisted).not.toBeNull();
+  expect(await stateIdOf(page, moving)).toBeTruthy();
 
   await page.reload();
   await page.waitForSelector('[data-testid^="issue-card-"]');

@@ -88,7 +88,7 @@ export function CyclePanel({ cycles, measure, canManage }: CyclePanelProps) {
   if (cycles.length === 0) {
     body = (
       <p className="rounded-md border border-border border-dashed py-8 text-center text-faint text-xs">
-        No cycles exist yet, so there is nothing to break down.
+        No sprints exist yet, so there is nothing to break down.
       </p>
     );
   } else if (query.isError) {

@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { createDoc, statusOf } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -16,28 +17,12 @@ test('a private doc can be shared with a named person, who can then open it', as
   const ownerContext = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const owner = await signIn(ownerContext, 'pulkit@noveum.ai');
 
-  const created = await owner.evaluate(async () => {
-    const response = await fetch('/api/docs', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Compensation review',
-        content: 'Numbers.',
-        visibility: 'private',
-      }),
-    });
-    return (await response.json()) as { doc?: { id: string } };
-  });
-  const docId = created.doc?.id;
-  if (docId === undefined) throw new Error('the doc was not created');
+  const doc = await createDoc(owner, 'Compensation review', 'private');
+  const docId = doc.id;
 
   const readerContext = await browser.newContext();
   const reader = await signIn(readerContext, 'aditi@noveum.ai');
-  const before = await reader.evaluate(
-    async (id) => (await fetch(`/api/docs/${id}`)).status,
-    docId,
-  );
-  expect(before).toBe(404);
+  expect(await statusOf(reader, `/api/docs/${docId}`)).toBe(404);
 
   await owner.goto(`${BASE}/docs/${docId}`);
   await owner.getByTestId('doc-publish').click();
@@ -51,8 +36,7 @@ test('a private doc can be shared with a named person, who can then open it', as
 
   await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(1);
 
-  const after = await reader.evaluate(async (id) => (await fetch(`/api/docs/${id}`)).status, docId);
-  expect(after).toBe(200);
+  expect(await statusOf(reader, `/api/docs/${docId}`)).toBe(200);
 
   const level = owner.locator('[data-testid^="doc-access-level-"]').first();
   await expect(level).toHaveText('Can view');

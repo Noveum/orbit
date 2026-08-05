@@ -91,6 +91,18 @@ export function DocPeopleAccess({ docId, canManage }: { docId: string; canManage
     );
   }
 
+  if (access.isPending) {
+    return <p className="text-2xs text-faint">Loading who this is shared with…</p>;
+  }
+
+  if (access.isError) {
+    return (
+      <p className="text-2xs text-danger" data-testid="doc-access-error">
+        Could not load who this is shared with. Close this and try again.
+      </p>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3" data-testid="doc-people-access">
       <div className="flex flex-col gap-1.5">
