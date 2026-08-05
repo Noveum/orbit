@@ -51,20 +51,27 @@ export function useLayoutPreference(
         method: 'PUT',
         body: { page, scope, layout, display: {} },
       }),
-  });
-
-  const setLayout = useCallback(
-    (next: ViewLayoutMode) => {
+    onMutate: (layout: ViewLayoutMode) => {
+      const previous = client.getQueryData<ViewPreferences>([VIEW_PREFERENCES_ROOT]);
       client.setQueryData<ViewPreferences>([VIEW_PREFERENCES_ROOT], (current) => {
         const rest = (current?.preferences ?? []).filter(
           (entry) => !(entry.page === page && entry.scope === scope),
         );
-        return { preferences: [...rest, { page, scope, layout: next, display: {} }] };
+        return { preferences: [...rest, { page, scope, layout, display: {} }] };
       });
-      save.mutate(next);
+      return { previous };
     },
-    [client, page, scope, save],
-  );
+    onError: (_error, _layout, context) => {
+      if (context?.previous === undefined) return;
+      client.setQueryData<ViewPreferences>([VIEW_PREFERENCES_ROOT], context.previous);
+    },
+    onSettled: () => {
+      client.invalidateQueries({ queryKey: [VIEW_PREFERENCES_ROOT] }).catch(() => undefined);
+    },
+  });
+
+  const mutate = save.mutate;
+  const setLayout = useCallback((next: ViewLayoutMode) => mutate(next), [mutate]);
 
   return { layout: storedLayout(preferences.data, page, scope) ?? fallback, setLayout };
 }

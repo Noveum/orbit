@@ -103,6 +103,10 @@ export function MyIssuesView() {
 
       <MyIssuesBody
         loading={loading}
+        loadingMore={isFetchingNextPage}
+        onLoadMore={() => {
+          fetchNextPage().catch(() => undefined);
+        }}
         layout={layout}
         model={model}
         groups={groups}
@@ -148,6 +152,8 @@ interface BodyProps {
   readonly peekId: string | null;
   readonly onPeek: (id: string) => void;
   readonly hasNextPage: boolean;
+  readonly loadingMore: boolean;
+  readonly onLoadMore: () => void;
   readonly sentinel: RefObject<HTMLDivElement | null>;
 }
 
@@ -161,6 +167,8 @@ function MyIssuesBody({
   peekId,
   onPeek,
   hasNextPage,
+  loadingMore,
+  onLoadMore,
   sentinel,
 }: BodyProps) {
   if (model.shownCount === 0) {
@@ -177,7 +185,14 @@ function MyIssuesBody({
   if (layout === 'board') {
     return (
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="my-issues-board">
-        <Board groups={groups} draggable={false} properties={properties} />
+        <Board
+          groups={groups}
+          draggable={false}
+          properties={properties}
+          hasMore={hasNextPage}
+          loadingMore={loadingMore}
+          onLoadMore={onLoadMore}
+        />
       </div>
     );
   }
