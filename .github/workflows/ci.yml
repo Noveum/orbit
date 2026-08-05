@@ -176,7 +176,7 @@ jobs:
           for attempt in $(seq 1 60); do
             if curl -fsS http://localhost:9010/minio/health/live >/dev/null; then
               echo "minio is up after ${attempt} attempts"
-              docker run --rm --network host minio/mc:latest sh -c \
+              docker run --rm --network host --entrypoint sh minio/mc:latest -c \
                 "mc alias set orbit http://localhost:9010 orbitminio orbitminio && mc mb --ignore-existing orbit/orbit-uploads"
               exit 0
             fi
