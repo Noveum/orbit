@@ -75,7 +75,23 @@ describe('discovery', () => {
     expect(names).toContain('run_standup');
     expect(names).toContain('complete_cycle');
     expect(names).toContain('create_milestone');
-    expect(names).toHaveLength(39);
+
+    expect(names).toContain('create_doc');
+    expect(names).toContain('update_doc');
+    expect(names).toContain('get_doc');
+    expect(names).toContain('list_docs');
+    expect(names).toContain('comment_on_doc');
+    expect(names).toContain('archive_issue');
+    expect(names).toContain('delete_issue');
+    expect(names).toContain('create_label');
+    expect(names).toContain('delete_label');
+    expect(names).toContain('update_project');
+    expect(names).toContain('delete_project');
+    expect(names).toContain('delete_sprint');
+    expect(names).toContain('edit_comment');
+    expect(names).toContain('delete_comment');
+
+    expect(new Set(names).size).toBe(names.length);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeTruthy();
