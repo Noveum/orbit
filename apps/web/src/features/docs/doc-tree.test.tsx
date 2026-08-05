@@ -159,3 +159,27 @@ describe('folding a folder in the rendered tree', () => {
     expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');
   });
 });
+
+describe('collapsing the folder the open doc lives in', () => {
+  const nested: DocSummary[] = [
+    summary('root', 'Handbook'),
+    { ...summary('child', 'Onboarding'), parentId: 'root' },
+    { ...summary('grandchild', 'Day one'), parentId: 'child' },
+    summary('other', 'Runbook'),
+  ];
+
+  afterEach(cleanup);
+
+  it('stays collapsed when the docs list refreshes underneath it', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const view = render(tree(nested, [], 'grandchild'));
+
+    await user.click(screen.getByTestId('doc-toggle-root'));
+    expect(screen.queryByText('Day one')).toBeNull();
+
+    view.rerender(tree([...nested], [], 'grandchild'));
+
+    expect(screen.queryByText('Day one')).toBeNull();
+    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
+  });
+});
