@@ -4,7 +4,8 @@ import {
   cycleProgress,
   getCycleByNumber,
   pastCycles,
-  type SprintOutcome,
+  type RecordedOutcome,
+  sprintOutcome,
   upcomingCycles,
 } from '@orbit/core';
 import { and, asc, db, eq, isNull, schema } from '@orbit/db';
@@ -12,7 +13,6 @@ import type { StateCategory } from '@orbit/shared/constants';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
-import { sprintOutcomeSchema } from '@orbit/shared/validators';
 
 export interface CycleIssueView {
   readonly id: string;
@@ -58,11 +58,6 @@ export interface UpcomingCycleView {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly teamKey: string;
-}
-
-function readOutcome(value: Record<string, unknown> | null): SprintOutcome | null {
-  const parsed = sprintOutcomeSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
 }
 
 function toCategory(value: string): StateCategory {
@@ -190,7 +185,7 @@ export interface PastSprintView {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly completedAt: string;
-  readonly outcome: SprintOutcome | null;
+  readonly outcome: RecordedOutcome | null;
 }
 
 export async function listPastSprintViews(
@@ -199,7 +194,8 @@ export async function listPastSprintViews(
   limit = 12,
 ): Promise<PastSprintView[]> {
   const rows = await pastCycles(principal, team.id, limit);
-  return rows.map((cycle) => ({
+  const outcomes = await Promise.all(rows.map((cycle) => sprintOutcome(principal, cycle.id)));
+  return rows.map((cycle, index) => ({
     id: cycle.id,
     name: sprintLabel(cycle),
     number: cycle.number,
@@ -207,7 +203,7 @@ export async function listPastSprintViews(
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     completedAt: (cycle.completedAt ?? cycle.endsAt).toISOString(),
-    outcome: readOutcome(cycle.progressSnapshot),
+    outcome: outcomes[index] ?? null,
   }));
 }
 
@@ -215,12 +211,13 @@ export async function getSprintView(
   principal: Principal,
   team: { id: string; key: string; name: string },
   number: number,
-): Promise<(CycleView & { readonly outcome: SprintOutcome | null }) | null> {
+): Promise<(CycleView & { readonly outcome: RecordedOutcome | null }) | null> {
   const cycle = await getCycleByNumber(principal, team.id, number);
   if (cycle === null) return null;
-  const [progress, issues] = await Promise.all([
+  const [progress, issues, outcome] = await Promise.all([
     cycleProgress(principal, cycle.id),
     loadCycleIssues(cycle.id),
+    sprintOutcome(principal, cycle.id),
   ]);
   return {
     id: cycle.id,
@@ -234,6 +231,6 @@ export async function getSprintView(
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
-    outcome: readOutcome(cycle.progressSnapshot),
+    outcome,
   };
 }

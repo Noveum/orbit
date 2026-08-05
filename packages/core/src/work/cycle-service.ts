@@ -21,6 +21,7 @@ import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
+import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
@@ -400,6 +401,45 @@ function outcomeOf(
     points: { scope: points(rows), completed: points(done) },
     closedAt: now.toISOString(),
   };
+}
+
+function readStoredOutcome(value: unknown): SprintOutcome | null {
+  const parsed = storedOutcomeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+const storedOutcomeSchema = z.object({
+  scope: z.number(),
+  completed: z.number(),
+  canceled: z.number().default(0),
+  rolledOver: z.number().default(0),
+  points: z
+    .object({ scope: z.number(), completed: z.number() })
+    .default({ scope: 0, completed: 0 }),
+  closedAt: z.string(),
+});
+
+export interface RecordedOutcome extends SprintOutcome {
+  readonly reconstructed: boolean;
+}
+
+export async function sprintOutcome(
+  principal: Principal,
+  cycleId: string,
+): Promise<RecordedOutcome | null> {
+  const cycle = await getCycle(principal, cycleId);
+  if (cycle.completedAt === null) return null;
+
+  const stored = readStoredOutcome(cycle.progressSnapshot);
+  if (stored !== null) return { ...stored, reconstructed: false };
+
+  const rows = await db
+    .select({ category: CYCLE_CATEGORY, estimate: schema.issue.estimate })
+    .from(schema.issue)
+    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+    .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
+
+  return { ...outcomeOf(rows, 0, cycle.completedAt), reconstructed: true };
 }
 
 export async function pastCycles(

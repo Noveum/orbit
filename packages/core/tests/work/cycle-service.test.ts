@@ -21,6 +21,7 @@ import {
   getCycleByNumber,
   listCycles,
   pastCycles,
+  sprintOutcome,
   upcomingCycles,
   updateCycle,
 } from '../../src/work/cycle-service.ts';
@@ -493,5 +494,58 @@ describe('two people closing the same sprint at once', () => {
     expect(closed.nextCycle.id).not.toBe(later.cycle.id);
     expect(closed.nextCycle.completedAt).toBeNull();
     expect(closed.nextCycle.number).toBeGreaterThan(later.cycle.number);
+  });
+});
+
+describe('sprintOutcome', () => {
+  it('hands back what was recorded when the sprint was closed', async () => {
+    const cycle = await firstCycle();
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Shipped',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    const closed = await completeCycle(workspace.admin, cycle.id);
+
+    const outcome = await sprintOutcome(workspace.admin, closed.cycle.id);
+    expect(outcome?.reconstructed).toBe(false);
+    expect(outcome?.scope).toBe(1);
+  });
+
+  it('counts a sprint closed before outcomes were recorded, rather than saying nothing', async () => {
+    const cycle = await firstCycle();
+    const done = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Finished',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    await updateIssue(workspace.admin, done.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Left over',
+      cycleId: cycle.id,
+      estimate: 3,
+    });
+    const closed = await completeCycle(workspace.admin, cycle.id);
+
+    await db
+      .update(schema.cycle)
+      .set({ progressSnapshot: null })
+      .where(eq(schema.cycle.id, closed.cycle.id));
+
+    const outcome = await sprintOutcome(workspace.admin, closed.cycle.id);
+    expect(outcome?.reconstructed).toBe(true);
+    expect(outcome?.scope).toBe(1);
+    expect(outcome?.completed).toBe(1);
+    expect(outcome?.points).toEqual({ scope: 5, completed: 5 });
+  });
+
+  it('has nothing to say about a sprint still running', async () => {
+    const cycle = await firstCycle();
+    expect(await sprintOutcome(workspace.admin, cycle.id)).toBeNull();
   });
 });

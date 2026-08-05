@@ -20,13 +20,9 @@ function Bar({ completed, scope }: { readonly completed: number; readonly scope:
 
 function Outcome({ sprint }: { readonly sprint: PastSprintView }) {
   if (sprint.outcome === null) {
-    return (
-      <p className="text-2xs text-faint">
-        Closed before Orbit recorded sprint outcomes, so its numbers are not available.
-      </p>
-    );
+    return <p className="text-2xs text-faint">Nothing was ever in this sprint.</p>;
   }
-  const { scope, completed, rolledOver, points } = sprint.outcome;
+  const { scope, completed, canceled, rolledOver, points, reconstructed } = sprint.outcome;
   return (
     <div className="flex flex-col gap-1.5">
       <Bar completed={completed} scope={scope} />
@@ -35,10 +31,20 @@ function Outcome({ sprint }: { readonly sprint: PastSprintView }) {
           <span className="text-text">{completed}</span> of {scope} done
         </span>
         <span>{percent(completed, scope)}%</span>
+        {canceled > 0 ? <span>{canceled} cancelled</span> : null}
         {rolledOver > 0 ? <span>{rolledOver} rolled over</span> : null}
         {points.scope > 0 ? (
           <span>
             {points.completed}/{points.scope} pts
+          </span>
+        ) : null}
+        {reconstructed ? (
+          <span
+            data-testid="sprint-outcome-reconstructed"
+            title="This sprint closed before Orbit recorded outcomes, so these are counted from the issues still in it."
+            className="text-faint"
+          >
+            counted from its issues
           </span>
         ) : null}
       </div>
