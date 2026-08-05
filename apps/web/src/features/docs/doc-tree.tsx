@@ -252,7 +252,11 @@ export function DocTree({
   const revealed = useRef<string | null>(null);
 
   useEffect(() => {
-    if (activeDocId === null || revealed.current === activeDocId) return;
+    if (activeDocId === null) {
+      revealed.current = null;
+      return;
+    }
+    if (revealed.current === activeDocId) return;
     if (!docs.some((doc) => doc.id === activeDocId)) return;
     revealed.current = activeDocId;
     const chain = ancestorsOf(docs, activeDocId);

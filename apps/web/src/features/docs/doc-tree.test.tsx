@@ -183,3 +183,27 @@ describe('collapsing the folder the open doc lives in', () => {
     expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
   });
 });
+
+describe('coming back to a doc after leaving the docs section', () => {
+  const nested: DocSummary[] = [
+    summary('root', 'Handbook'),
+    { ...summary('child', 'Onboarding'), parentId: 'root' },
+    { ...summary('grandchild', 'Day one'), parentId: 'child' },
+    summary('other', 'Runbook'),
+  ];
+
+  afterEach(cleanup);
+
+  it('reveals it again, even though it was the last doc open before leaving', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const view = render(tree(nested, [], 'grandchild'));
+
+    view.rerender(tree(nested, [], null));
+    await user.click(screen.getByTestId('doc-toggle-root'));
+    expect(screen.queryByText('Day one')).toBeNull();
+
+    view.rerender(tree(nested, [], 'grandchild'));
+
+    expect(screen.getByText('Day one')).toBeTruthy();
+  });
+});
