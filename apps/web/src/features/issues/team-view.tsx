@@ -25,7 +25,7 @@ import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
 
-import { Board } from './board.tsx';
+import { Board, canRegroup } from './board.tsx';
 import { IssueList } from './issue-list.tsx';
 import { ListSkeleton } from './list-skeleton.tsx';
 import { useIssueViewModel } from './use-issue-view-model.ts';
@@ -220,7 +220,8 @@ function TeamContent({
     return (
       <Board
         groups={groups}
-        draggable={config.groupBy === 'state' && config.orderBy === 'manual'}
+        draggable={canRegroup(config.groupBy) && config.orderBy === 'manual'}
+        groupBy={config.groupBy}
         properties={config.display.properties}
         hasMore={hasMore}
         loadingMore={loadingMore}

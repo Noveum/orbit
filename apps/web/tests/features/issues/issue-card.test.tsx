@@ -204,13 +204,13 @@ describe('board placement', () => {
   });
 
   it('places a card dropped on an empty column at the end', () => {
-    const plan = planDrop(columns, issues, 'a', 'state_doing');
+    const plan = planDrop(columns, issues, 'a', 'state_doing', 'state');
     expect(plan).toMatchObject({ stateId: 'state_doing', beforeId: 'c', afterId: null });
     expect(plan?.beforeOrder).toBe(1024);
   });
 
   it('places a card between the neighbours it was dropped onto', () => {
-    const plan = planDrop(columns, issues, 'c', 'b');
+    const plan = planDrop(columns, issues, 'c', 'b', 'state');
     expect(plan).toMatchObject({
       stateId: 'state_todo',
       beforeId: 'a',
@@ -221,8 +221,8 @@ describe('board placement', () => {
   });
 
   it('ignores a drop on itself or on an unknown target', () => {
-    expect(planDrop(columns, issues, 'a', 'a')).toBeNull();
-    expect(planDrop(columns, issues, 'a', 'nowhere')).toBeNull();
+    expect(planDrop(columns, issues, 'a', 'a', 'state')).toBeNull();
+    expect(planDrop(columns, issues, 'a', 'nowhere', 'state')).toBeNull();
   });
 });
 

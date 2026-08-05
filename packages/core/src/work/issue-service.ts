@@ -31,6 +31,8 @@ export type IssueRow = typeof schema.issue.$inferSelect;
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
+type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
+
 export const REBALANCE_THRESHOLD = 0.0001;
 
 export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
@@ -785,6 +787,63 @@ export interface MovedIssue {
   readonly actions: SyncAction[];
 }
 
+interface RegroupingInput {
+  readonly cycleId?: string | null | undefined;
+  readonly assigneeId?: string | null | undefined;
+  readonly priority?: number | undefined;
+  readonly projectId?: string | null | undefined;
+}
+
+function applyRegrouping(
+  parsed: RegroupingInput,
+  current: IssueRow,
+  values: IssueValues,
+): GroupedMoveField[] {
+  const regrouped: GroupedMoveField[] = [];
+  const regroup = <Field extends GroupedMoveField>(
+    field: Field,
+    next: IssueValues[Field] | undefined,
+  ): void => {
+    if (next === undefined || next === current[field]) return;
+    values[field] = next;
+    regrouped.push(field);
+  };
+  regroup('cycleId', parsed.cycleId);
+  regroup('assigneeId', parsed.assigneeId);
+  regroup('priority', parsed.priority);
+  if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
+    regroup('projectId', parsed.projectId);
+    values.milestoneId = null;
+  }
+  return regrouped;
+}
+
+interface RegroupActivityInput {
+  readonly organizationId: string;
+  readonly issueId: string;
+  readonly actor: Actor;
+  readonly syncId: number;
+  readonly regrouped: readonly GroupedMoveField[];
+  readonly current: IssueRow;
+  readonly issue: IssueRow;
+}
+
+async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Promise<void> {
+  for (const field of input.regrouped) {
+    await appendActivities(tx, [
+      {
+        organizationId: input.organizationId,
+        issueId: input.issueId,
+        actor: input.actor,
+        field,
+        from: await describeValue(tx, field, input.current[field]),
+        to: await describeValue(tx, field, input.issue[field]),
+        syncId: input.syncId,
+      },
+    ]);
+  }
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -834,6 +893,13 @@ export async function moveIssue(
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
 
+    await assertAssignableToTeam(tx, principal.organizationId, teamId, {
+      cycleId: parsed.cycleId,
+      projectId: parsed.projectId,
+    });
+
+    const regrouped = applyRegrouping(parsed, current, values);
+
     const [moved] = await tx
       .update(schema.issue)
       .set({ ...values, updatedAt: now, syncId })
@@ -854,6 +920,16 @@ export async function moveIssue(
         },
       ]);
     }
+
+    await recordRegroupings(tx, {
+      organizationId: principal.organizationId,
+      issueId,
+      actor,
+      syncId,
+      regrouped,
+      current,
+      issue,
+    });
 
     return {
       issue,

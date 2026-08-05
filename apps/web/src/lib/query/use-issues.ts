@@ -440,13 +440,30 @@ export function useUpdateIssue() {
   });
 }
 
-export interface MoveInput {
+export interface IssueRegrouping {
+  readonly stateId?: string;
+  readonly cycleId?: string | null;
+  readonly projectId?: string | null;
+  readonly assigneeId?: string | null;
+  readonly priority?: number;
+}
+
+export type MoveInput = IssueRegrouping & {
   readonly issue: Issue;
-  readonly stateId: string;
   readonly beforeId: string | null;
   readonly afterId: string | null;
   readonly beforeOrder: number | null;
   readonly afterOrder: number | null;
+};
+
+function regroupingOf(input: MoveInput): IssueRegrouping {
+  return {
+    ...(input.stateId === undefined ? {} : { stateId: input.stateId }),
+    ...(input.cycleId === undefined ? {} : { cycleId: input.cycleId }),
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    ...(input.assigneeId === undefined ? {} : { assigneeId: input.assigneeId }),
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+  };
 }
 
 export function useMoveIssue() {
@@ -457,7 +474,7 @@ export function useMoveIssue() {
     mutationFn: async (input: MoveInput): Promise<readonly Issue[]> => {
       const result = await apiFetch(`/api/issues/${input.issue.id}/move`, issueMoveResultSchema, {
         method: 'POST',
-        body: { stateId: input.stateId, beforeId: input.beforeId, afterId: input.afterId },
+        body: { ...regroupingOf(input), beforeId: input.beforeId, afterId: input.afterId },
       });
       return [result.issue, ...result.rebalanced];
     },
@@ -465,7 +482,7 @@ export function useMoveIssue() {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
-        stateId: input.stateId,
+        ...regroupingOf(input),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
       placeIssue(client, optimistic, false);
