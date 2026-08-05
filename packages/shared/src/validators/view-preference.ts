@@ -8,4 +8,5 @@ export const viewPreferenceSchema = z.object({
   display: z.record(z.string(), z.unknown()).default({}),
 });
 
-export type ViewPreferenceInput = z.infer<typeof viewPreferenceSchema>;
+export type ViewPreferenceInput = z.input<typeof viewPreferenceSchema>;
+export type ViewPreference = z.output<typeof viewPreferenceSchema>;

@@ -382,7 +382,7 @@ function BoardColumn({
           setVisibleCount((count) => Math.min(count + VISIBLE_STEP, loaded));
           return;
         }
-        if (!canFetchMore) return;
+        if (!canFetchMore || columnLoadingMore) return;
         const laidOut = root.scrollHeight > 0;
         const fits = laidOut && root.scrollHeight <= root.clientHeight;
         if (scrolledRef.current || fits) loadMore?.();
@@ -391,7 +391,7 @@ function BoardColumn({
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [wantsSentinel, hasHiddenLocal, canFetchMore, loaded, loadMore]);
+  }, [wantsSentinel, hasHiddenLocal, canFetchMore, columnLoadingMore, loaded, loadMore]);
 
   const markScrolled = useCallback(() => {
     scrolledRef.current = true;

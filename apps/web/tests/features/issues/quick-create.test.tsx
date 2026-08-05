@@ -51,7 +51,15 @@ function buildWorkspace(): WorkspaceData {
         status: 'started',
         color: '#00f',
         icon: 'box',
-        teamIds: [],
+        teamIds: ['team_eng'],
+      },
+      {
+        id: 'proj_2',
+        name: 'Brand refresh',
+        status: 'started',
+        color: '#0f0',
+        icon: 'box',
+        teamIds: ['team_des'],
       },
     ],
     cycles: [
@@ -82,11 +90,14 @@ function open() {
 }
 
 describe('the new issue dialog', () => {
-  it('offers only the projects the chosen team can actually use', () => {
+  it('offers only the projects the chosen team can actually use', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
     open();
 
-    expect(screen.getByTestId('quick-create-project')).toBeTruthy();
+    await user.click(screen.getByTestId('quick-create-project'));
+
+    expect(await screen.findByText('API market')).toBeTruthy();
     expect(screen.queryByText('Brand refresh')).toBeNull();
   });
 
