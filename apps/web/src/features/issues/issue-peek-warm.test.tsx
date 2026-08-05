@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { previewDetail, usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
+import { IssueCard } from './issue-card.tsx';
+import { IssueRow } from './issue-row.tsx';
 
 function issue(): Issue {
   return {
@@ -104,42 +107,59 @@ describe('opening an issue the list already holds', () => {
 });
 
 describe('warming a card the pointer is dragging', () => {
-  it('holds off while a button is down, so the drag sensor is left alone', async () => {
+  function warmed(): { asked: string[]; client: QueryClient } {
     const asked: string[] = [];
     globalThis.fetch = mock((input: string | URL | Request) => {
       asked.push(String(input));
       return Promise.resolve(new Response('{}', { status: 200 }));
     }) as unknown as typeof fetch;
+    return { asked, client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) };
+  }
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    function Card() {
-      const prefetch = usePrefetchIssueDetail();
-      return (
-        <div
-          data-testid="card"
-          onPointerEnter={(event) => {
-            if (event.buttons === 0) prefetch('ENG-420');
-          }}
-        >
-          ENG-420
-        </div>
-      );
-    }
-
-    render(
+  function wrap(node: ReactElement, client: QueryClient) {
+    return (
       <QueryClientProvider client={client}>
-        <ToastProvider>
-          <Card />
-        </ToastProvider>
-      </QueryClientProvider>,
+        <ToastProvider>{node}</ToastProvider>
+      </QueryClientProvider>
     );
+  }
 
-    const card = screen.getByTestId('card');
+  it('warms from a board card on hover, and holds off while it is being dragged', async () => {
+    const { asked, client } = warmed();
+    render(wrap(<IssueCard issue={issue()} labels={[]} assignee={undefined} />, client));
+
+    const card = screen.getByTestId('issue-card-ENG-420');
     fireEvent.pointerEnter(card, { buttons: 1 });
     await waitFor(() => expect(asked).toEqual([]));
 
     fireEvent.pointerEnter(card, { buttons: 0 });
+    await waitFor(() => expect(asked).toEqual(['/api/issues/ENG-420']));
+  });
+
+  it('warms from a list row the same way', async () => {
+    const { asked, client } = warmed();
+    render(
+      wrap(
+        <IssueRow
+          issue={issue()}
+          state={undefined}
+          labels={[]}
+          assignee={undefined}
+          active={false}
+          selected={false}
+          onOpen={() => undefined}
+          onToggleSelected={() => undefined}
+          onFocus={() => undefined}
+        />,
+        client,
+      ),
+    );
+
+    const row = screen.getByTestId('issue-row-ENG-420');
+    fireEvent.pointerEnter(row, { buttons: 1 });
+    await waitFor(() => expect(asked).toEqual([]));
+
+    fireEvent.pointerEnter(row, { buttons: 0 });
     await waitFor(() => expect(asked).toEqual(['/api/issues/ENG-420']));
   });
 });

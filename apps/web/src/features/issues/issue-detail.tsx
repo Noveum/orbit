@@ -27,7 +27,7 @@ export interface IssueDetailViewProps {
   readonly known?: Issue;
 }
 
-function IssueTitle({
+export function IssueTitle({
   issue,
   onCommit,
 }: {
@@ -50,7 +50,13 @@ function IssueTitle({
     node.style.height = `${node.scrollHeight}px`;
   };
 
+  const abandoned = useRef(false);
+
   const commit = () => {
+    if (abandoned.current) {
+      abandoned.current = false;
+      return;
+    }
     const next = draft.trim();
     if (next.length === 0) {
       setDraft(issue.title);
@@ -79,6 +85,7 @@ function IssueTitle({
           return;
         }
         if (event.key === 'Escape') {
+          abandoned.current = true;
           setDraft(issue.title);
           event.currentTarget.blur();
         }
