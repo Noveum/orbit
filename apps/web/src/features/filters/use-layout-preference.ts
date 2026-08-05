@@ -4,7 +4,8 @@ import type { ViewPage } from '@orbit/shared/filters';
 import { VIEW_LAYOUT_MODES } from '@orbit/shared/filters';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
-import { apiFetch } from '@/lib/query/fetcher.ts';
+import { useToast } from '@/components/ui/toast.tsx';
+import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
 import { VIEW_PREFERENCES_ROOT } from '@/lib/query/keys.ts';
 import type { ViewPreferences } from '@/lib/query/schemas.ts';
 import { viewPreferencesSchema } from '@/lib/query/schemas.ts';
@@ -37,6 +38,7 @@ export function useLayoutPreference(
   fallback: ViewLayoutMode,
 ): LayoutPreference {
   const client = useQueryClient();
+  const { toast } = useToast();
 
   const preferences = useQuery({
     queryKey: [VIEW_PREFERENCES_ROOT],
@@ -46,6 +48,7 @@ export function useLayoutPreference(
   });
 
   const save = useMutation({
+    scope: { id: `view-preference:${page}:${scope}` },
     mutationFn: async (layout: ViewLayoutMode) =>
       await apiFetch('/api/view-preferences', viewPreferencesSchema.partial(), {
         method: 'PUT',
@@ -61,9 +64,15 @@ export function useLayoutPreference(
       });
       return { previous };
     },
-    onError: (_error, _layout, context) => {
-      if (context?.previous === undefined) return;
-      client.setQueryData<ViewPreferences>([VIEW_PREFERENCES_ROOT], context.previous);
+    onError: (error, _layout, context) => {
+      if (context?.previous !== undefined) {
+        client.setQueryData<ViewPreferences>([VIEW_PREFERENCES_ROOT], context.previous);
+      }
+      toast({
+        title: 'Could not remember that layout',
+        description: messageOf(error),
+        tone: 'danger',
+      });
     },
     onSettled: () => {
       client.invalidateQueries({ queryKey: [VIEW_PREFERENCES_ROOT] }).catch(() => undefined);

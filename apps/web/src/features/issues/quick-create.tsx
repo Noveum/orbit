@@ -141,9 +141,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               onSelect={(id) => {
                 setTeamId(id);
                 setStateId(null);
+                setCycleId(null);
+                setLabelIds([]);
               }}
             >
-              <button type="button" className={chipClassName}>
+              <button type="button" className={chipClassName} data-testid="quick-create-team">
                 {teams.find((team) => team.id === teamId)?.key ?? 'Team'}
               </button>
             </PropertyMenu>

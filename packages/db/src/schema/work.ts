@@ -607,7 +607,6 @@ export const viewPreference = pgTable(
     scope: text('scope').notNull().default(''),
     layout: text('layout').notNull().default('list'),
     display: jsonb('display').$type<Record<string, unknown>>().notNull().default({}),
-    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

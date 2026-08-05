@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
-import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
-import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 
 const created = mock((_input: Record<string, unknown>) => undefined);
 
@@ -18,12 +18,12 @@ mock.module('@/lib/query/use-issues.ts', () => ({
 }));
 
 let workspace: WorkspaceData;
-mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspace,
 }));
 
-const { QuickCreateDialog } = await import('../../../src/features/issues/quick-create.tsx');
+const { QuickCreateDialog } = await import('@/features/issues/quick-create.tsx');
 
 function buildWorkspace(): WorkspaceData {
   return {
@@ -100,18 +100,57 @@ describe('the new issue dialog', () => {
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 
-  it('carries the chosen project and sprint onto the issue it creates', async () => {
+  it('carries the project and sprint that were actually chosen', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
     open();
 
     await user.type(screen.getByTestId('quick-create-title'), 'Ship the thing');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
     await user.click(screen.getByTestId('quick-create-submit'));
 
     expect(created).toHaveBeenCalledTimes(1);
     const input = created.mock.calls[0]?.[0];
     expect(input?.['title']).toBe('Ship the thing');
-    expect(input).toHaveProperty('projectId');
-    expect(input).toHaveProperty('cycleId');
+    expect(input?.['projectId']).toBe('proj_1');
+    expect(input?.['cycleId']).toBe('cycle_1');
+  });
+
+  it('stays open and clears the title when Create more is on', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.click(screen.getByTestId('quick-create-more'));
+    await user.type(screen.getByTestId('quick-create-title'), 'First one');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('');
+    expect(screen.getByTestId('quick-create')).toBeTruthy();
+  });
+
+  it('drops a sprint from the team that was left behind', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      teams: [
+        { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#fff' },
+        { id: 'team_des', name: 'Design', key: 'DES', icon: 'd', color: '#eee' },
+      ],
+    };
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Moved teams');
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
+    await user.click(screen.getByTestId('quick-create-team'));
+    await user.click(await screen.findByText('Design'));
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['cycleId']).toBeNull();
   });
 });

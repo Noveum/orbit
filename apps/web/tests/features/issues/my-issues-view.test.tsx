@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys, VIEW_PREFERENCES_ROOT } from '@/lib/query/keys.ts';
@@ -234,6 +235,40 @@ describe('MyIssuesView', () => {
 
     expect(screen.getByTestId('layout-list')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('layout-board')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('switches what is rendered when the control is used', async () => {
+    const realFetch = globalThis.fetch;
+    let stored = { page: 'my_issues', scope: '', layout: 'list', display: {} };
+    globalThis.fetch = mock((_input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT' && typeof init.body === 'string') {
+        stored = { ...stored, ...(JSON.parse(init.body) as { layout: string }) };
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ preferences: [stored] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    renderView('me', 'list');
+
+    expect(screen.getByTestId('my-issues-list')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('layout-board'));
+
+    expect(screen.getByTestId('my-issues-board')).toBeInTheDocument();
+    expect(screen.queryByTestId('my-issues-list')).toBeNull();
+    expect(screen.getByTestId('layout-board')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('layout-list')).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(screen.getByTestId('layout-list'));
+
+    expect(screen.getByTestId('my-issues-list')).toBeInTheDocument();
+    expect(screen.getByTestId('layout-list')).toHaveAttribute('aria-pressed', 'true');
+    globalThis.fetch = realFetch;
   });
 
   it('opens the peek panel when a row is clicked instead of navigating away', () => {

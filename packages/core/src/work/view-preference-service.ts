@@ -1,18 +1,8 @@
 import { and, db, eq, schema } from '@orbit/db';
-import { VIEW_LAYOUT_MODES, VIEW_PAGES } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { z } from 'zod';
+import { viewPreferenceSchema } from '@orbit/shared/validators';
 import { newId } from '../internal.ts';
-
-export const viewPreferenceSchema = z.object({
-  page: z.enum(VIEW_PAGES),
-  scope: z.string().max(64).default(''),
-  layout: z.enum(VIEW_LAYOUT_MODES),
-  display: z.record(z.string(), z.unknown()).default({}),
-});
-
-export type ViewPreferenceInput = z.infer<typeof viewPreferenceSchema>;
 
 export interface ViewPreference {
   readonly page: string;
