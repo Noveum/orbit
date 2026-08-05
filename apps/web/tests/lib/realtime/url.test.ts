@@ -2,9 +2,45 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { configuredRealtimeUrl, resolveRealtimeUrl } from '../../../src/lib/realtime/url.ts';
 
 describe('resolveRealtimeUrl', () => {
-  it('prefers an explicitly configured url', () => {
-    expect(resolveRealtimeUrl('ws://localhost:3100', 'https://orbit.example')).toBe(
+  it('honours a configured url while the page is served locally', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'http://localhost:3000')).toBe(
       'ws://localhost:3100',
+    );
+  });
+
+  it('ignores a configured url once the page is served from a deployed origin', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'https://orbit.example')).toBe(
+      'wss://orbit.example/api/ws',
+    );
+  });
+
+  it('treats a loopback address as local too', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.0.0.1:3000')).toBe(
+      'ws://localhost:3100',
+    );
+  });
+
+  it('treats the whole 127.0.0.0/8 range as loopback', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.0.0.2:3000')).toBe(
+      'ws://localhost:3100',
+    );
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.255.255.254:3000')).toBe(
+      'ws://localhost:3100',
+    );
+  });
+
+  it('treats the IPv6 loopback as local', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'http://[::1]:3000')).toBe(
+      'ws://localhost:3100',
+    );
+  });
+
+  it('does not mistake a hostname that merely looks like loopback for the real thing', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'https://127.0.0.1.orbit.example')).toBe(
+      'wss://127.0.0.1.orbit.example/api/ws',
+    );
+    expect(resolveRealtimeUrl('ws://localhost:3100', 'https://localhost.orbit.example')).toBe(
+      'wss://localhost.orbit.example/api/ws',
     );
   });
 
