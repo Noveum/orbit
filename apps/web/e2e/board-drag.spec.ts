@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
-import { createIssue, stateIdOf, teamIdByKey } from './api.ts';
+import { createIssue, stateIdByName, stateIdOf, teamIdByKey } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -69,7 +69,10 @@ test('a card dragged to another column lands there and stays after a reload', as
   expect(await cardsIn(page, 'Todo')).not.toContain(moving);
   expect((await cardsIn(page, 'In Progress')).length).toBe(progressBefore.length + 1);
 
-  expect(await stateIdOf(page, moving)).toBeTruthy();
+  const inProgress = await stateIdByName(page, teamId, 'In Progress');
+  await expect
+    .poll(async () => await stateIdOf(page, moving), { timeout: 30_000 })
+    .toBe(inProgress);
 
   await page.reload();
   await page.waitForSelector('[data-testid^="issue-card-"]');

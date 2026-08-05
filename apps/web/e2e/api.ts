@@ -5,6 +5,12 @@ const bootstrapTeamsSchema = z.object({
   teams: z.array(z.object({ id: z.string().min(1), key: z.string().min(1) })).default([]),
 });
 
+const bootstrapStatesSchema = z.object({
+  states: z
+    .array(z.object({ id: z.string().min(1), name: z.string().min(1), teamId: z.string().min(1) }))
+    .default([]),
+});
+
 const issueEnvelopeSchema = z.object({
   issue: z.object({ id: z.string().min(1), identifier: z.string().min(1) }),
 });
@@ -88,4 +94,11 @@ export async function statusOf(page: Page, path: string): Promise<number> {
 export async function stateIdOf(page: Page, identifier: string): Promise<string> {
   const body = await json(page, `/api/issues/${identifier}`);
   return z.object({ issue: z.object({ stateId: z.string().min(1) }) }).parse(body).issue.stateId;
+}
+
+export async function stateIdByName(page: Page, teamId: string, name: string): Promise<string> {
+  const body = bootstrapStatesSchema.parse(await json(page, '/api/bootstrap'));
+  const state = body.states.find((entry) => entry.teamId === teamId && entry.name === name);
+  if (state === undefined) throw new Error(`no state named ${name} on that team`);
+  return state.id;
 }
