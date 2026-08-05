@@ -824,3 +824,50 @@
     scroll-behavior: auto !important;
   }
 }
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  [data-print-hide],
+  nav,
+  aside,
+  header button,
+  [role="dialog"],
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  [data-print-document] {
+    display: block !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  main {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.75em;
+    word-break: break-all;
+  }
+
+  pre,
+  blockquote,
+  table {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
+}

@@ -14,6 +14,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { useDocs } from '@/lib/query/use-docs.ts';
+import { DocImport } from './doc-import.tsx';
 import { DOC_TEMPLATES } from './templates.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 
@@ -65,6 +66,7 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
+        {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
           <Button variant="primary" size="sm" data-testid="new-doc" onClick={newDoc}>
             New doc

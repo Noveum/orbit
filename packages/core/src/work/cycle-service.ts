@@ -6,6 +6,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   isNotNull,
   isNull,
   lt,
@@ -452,13 +453,37 @@ export async function completeCycle(
     const [existingNext] = await tx
       .select()
       .from(schema.cycle)
-      .where(and(eq(schema.cycle.teamId, cycle.teamId), gt(schema.cycle.number, cycle.number)))
-      .orderBy(asc(schema.cycle.number))
+      .where(
+        and(
+          eq(schema.cycle.teamId, cycle.teamId),
+          isNull(schema.cycle.archivedAt),
+          ne(schema.cycle.id, cycle.id),
+          gte(schema.cycle.startsAt, cycle.endsAt),
+        ),
+      )
+      .orderBy(asc(schema.cycle.startsAt))
       .limit(1);
 
     let nextCycle = existingNext;
     if (nextCycle === undefined) {
-      const number = cycle.number + 1;
+      const [latest] = await tx
+        .select({ endsAt: schema.cycle.endsAt, number: schema.cycle.number })
+        .from(schema.cycle)
+        .where(and(eq(schema.cycle.teamId, cycle.teamId), isNull(schema.cycle.archivedAt)))
+        .orderBy(desc(schema.cycle.endsAt))
+        .limit(1);
+      const [highest] = await tx
+        .select({ number: schema.cycle.number })
+        .from(schema.cycle)
+        .where(eq(schema.cycle.teamId, cycle.teamId))
+        .orderBy(desc(schema.cycle.number))
+        .limit(1);
+
+      const startsAt =
+        latest !== undefined && latest.endsAt.getTime() > cycle.endsAt.getTime()
+          ? latest.endsAt
+          : cycle.endsAt;
+      const number = (highest?.number ?? cycle.number) + 1;
       const [created] = await tx
         .insert(schema.cycle)
         .values({
@@ -467,8 +492,8 @@ export async function completeCycle(
           teamId: cycle.teamId,
           number,
           name: `Sprint ${number}`,
-          startsAt: cycle.endsAt,
-          endsAt: addUtcDays(cycle.endsAt, 14),
+          startsAt,
+          endsAt: addUtcDays(startsAt, 14),
           syncId,
         })
         .returning();

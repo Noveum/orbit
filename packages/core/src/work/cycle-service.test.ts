@@ -388,3 +388,62 @@ describe('a finished sprint keeps its own history', () => {
     });
   });
 });
+
+describe('the sprint that follows a completed one', () => {
+  it('does not overlap a sprint that already exists later in the calendar', async () => {
+    const later = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2033-04-03T00:00:00.000Z'),
+      endsAt: new Date('2033-04-17T00:00:00.000Z'),
+    });
+    const earlier = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2033-03-20T00:00:00.000Z'),
+      endsAt: new Date('2033-04-01T00:00:00.000Z'),
+    });
+
+    const closed = await completeCycle(workspace.admin, earlier.cycle.id);
+    const successor = closed.nextCycle;
+
+    const rows = await listCycles(workspace.admin, workspace.teamId);
+    const windows = rows
+      .map((row) => ({ from: row.startsAt.getTime(), to: row.endsAt.getTime() }))
+      .sort((left, right) => left.from - right.from);
+    const clashes = windows.some((window, index) => {
+      const next = windows[index + 1];
+      return next !== undefined && next.from < window.to;
+    });
+    expect(clashes).toBe(false);
+    expect(successor.id).toBe(later.cycle.id);
+  });
+
+  it('adopts the sprint already scheduled next rather than minting another', async () => {
+    const first = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2034-01-02T00:00:00.000Z'),
+      endsAt: new Date('2034-01-16T00:00:00.000Z'),
+    });
+    const planned = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2034-01-16T00:00:00.000Z'),
+      endsAt: new Date('2034-01-30T00:00:00.000Z'),
+    });
+
+    const closed = await completeCycle(workspace.admin, first.cycle.id);
+    expect(closed.nextCycle.id).toBe(planned.cycle.id);
+  });
+
+  it('numbers a minted successor above every sprint the team has', async () => {
+    const first = await firstCycle();
+    await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2035-06-05T00:00:00.000Z'),
+      endsAt: new Date('2035-06-19T00:00:00.000Z'),
+    });
+    const closed = await completeCycle(workspace.admin, first.id);
+    const all = await listCycles(workspace.admin, workspace.teamId);
+    const numbers = all.map((row) => row.number);
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect(closed.nextCycle.number).toBe(Math.max(...numbers));
+  });
+});
