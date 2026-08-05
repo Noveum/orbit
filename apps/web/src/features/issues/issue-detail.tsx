@@ -2,7 +2,7 @@
 
 import { Bell, BellOff, Check } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -35,6 +35,14 @@ function IssueTitle({
   readonly onCommit: (title: string) => void;
 }) {
   const [draft, setDraft] = useState(issue.title);
+  const server = useRef(issue.title);
+
+  useEffect(() => {
+    if (server.current === issue.title) return;
+    const untouched = draft === server.current;
+    server.current = issue.title;
+    if (untouched) setDraft(issue.title);
+  }, [issue.title, draft]);
 
   const size = (node: HTMLTextAreaElement | null): undefined => {
     if (node === null) return;
@@ -93,8 +101,16 @@ function IssueBody({
   const [draft, setDraft] = useState(issue.description);
   const autosave = useAutosave({ value: draft, save: onCommit });
   const flush = autosave.saveNow;
+  const settled = autosave.status === 'saved';
+  const server = useRef(issue.description);
 
   useEffect(() => flush, [flush]);
+
+  useEffect(() => {
+    if (server.current === issue.description || !settled) return;
+    server.current = issue.description;
+    setDraft(issue.description);
+  }, [issue.description, settled]);
 
   return (
     <RichTextEditor
