@@ -24,6 +24,7 @@ import {
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
+  PROJECT_SCOPE,
   STANDUP_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
@@ -78,6 +79,11 @@ function membershipOf(key: QueryKey): IssueBelongs | null {
     const userId = key[2];
     if (typeof userId !== 'string') return null;
     return (issue: Issue) => issue.assigneeId === userId && belongsInList(search, issue);
+  }
+  if (scope === PROJECT_SCOPE) {
+    const projectId = key[2];
+    if (typeof projectId !== 'string') return null;
+    return (issue: Issue) => issue.projectId === projectId && belongsInList(search, issue);
   }
   if (scope === ALL_SCOPE) return (issue: Issue) => belongsInList(search, issue);
   return (issue: Issue) => issue.teamId === scope && belongsInList(search, issue);

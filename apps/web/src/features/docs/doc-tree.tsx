@@ -2,7 +2,7 @@
 
 import { ChevronRight, FolderPlus, MoreHorizontal, Plus, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -248,6 +248,18 @@ export function DocTree({
 }: DocTreeProps) {
   const groups = useMemo(() => groupDocs(docs, collections), [docs, collections]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    if (activeDocId === null) return;
+    const chain = ancestorsOf(docs, activeDocId);
+    setCollapsed((current) => {
+      if (!chain.some((id) => current.has(id))) return current;
+      const next = new Set(current);
+      for (const id of chain) next.delete(id);
+      return next;
+    });
+  }, [activeDocId, docs]);
+
   const toggleFolder = useCallback((docId: string) => {
     setCollapsed((current) => {
       const next = new Set(current);

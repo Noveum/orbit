@@ -2,7 +2,7 @@ import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Avatar } from '@/components/ui/avatar.tsx';
-import { getProjectDetail } from '@/features/projects/data.ts';
+import { findProjectDetail } from '@/features/projects/data.ts';
 import { HealthChip } from '@/features/projects/health-chip.tsx';
 import { UpdateComposer } from '@/features/projects/update-composer.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -27,7 +27,7 @@ function formatDate(value: string | null): string {
 export default async function ProjectActivityPage({ params }: PageProps) {
   const { slug } = await params;
   const { principal } = await pageContext();
-  const detail = await getProjectDetail(principal, slug).catch(() => null);
+  const detail = await findProjectDetail(principal, slug);
   if (detail === null) notFound();
   const { summary } = detail;
 

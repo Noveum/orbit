@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { ProgressBar } from '@/features/charts/donut.tsx';
-import { getProjectDetail } from '@/features/projects/data.ts';
+import { findProjectDetail } from '@/features/projects/data.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
@@ -21,7 +21,7 @@ function formatDate(value: string | null): string {
 export default async function ProjectOverviewPage({ params }: PageProps) {
   const { slug } = await params;
   const { principal } = await pageContext();
-  const detail = await getProjectDetail(principal, slug).catch(() => null);
+  const detail = await findProjectDetail(principal, slug);
   if (detail === null) notFound();
 
   return (

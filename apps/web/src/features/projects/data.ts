@@ -10,7 +10,7 @@ import { and, count, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
 import { renderPlainText } from '@orbit/services/markdown';
 import type { ProjectHealth, ProjectStatus } from '@orbit/shared/constants';
 import { PROJECT_HEALTHS, PROJECT_STATUSES } from '@orbit/shared/constants';
-import { notFound } from '@orbit/shared/errors';
+import { DomainError, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import type { ProgressPoint } from './series.ts';
@@ -185,4 +185,18 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
       .reverse(),
     series,
   };
+}
+
+const MISSING_CODES: ReadonlySet<string> = new Set(['not_found', 'forbidden']);
+
+export async function findProjectDetail(
+  principal: Principal,
+  slug: string,
+): Promise<ProjectDetail | null> {
+  try {
+    return await getProjectDetail(principal, slug);
+  } catch (error: unknown) {
+    if (error instanceof DomainError && MISSING_CODES.has(error.code)) return null;
+    throw error;
+  }
 }

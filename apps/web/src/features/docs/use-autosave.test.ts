@@ -65,3 +65,31 @@ describe('autosaving a draft', () => {
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 });
+
+describe('a save landing after the draft outgrew the limit', () => {
+  it('keeps reporting blocked rather than claiming there is something saveable', async () => {
+    let release: (() => void) | null = null;
+    const save = mock(
+      async (_value: string) =>
+        await new Promise<undefined>((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    const canSave = (value: string) => value.length <= 3;
+    const { rerender, result } = renderHook(
+      ({ value }: { value: string }) => useAutosave({ value, save, delayMs: DELAY, canSave }),
+      { initialProps: { value: 'ok' } },
+    );
+
+    rerender({ value: 'fit' });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(result.current.status).toBe('saving');
+
+    rerender({ value: 'far too long' });
+    await waitFor(() => expect(result.current.status).toBe('blocked'));
+
+    act(() => release?.());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(result.current.status).toBe('blocked');
+  });
+});

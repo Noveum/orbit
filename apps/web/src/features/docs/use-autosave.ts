@@ -18,6 +18,15 @@ export interface Autosave {
   readonly saveNow: () => void;
 }
 
+function settledStatus<T>(
+  current: T,
+  saved: T,
+  canSave: ((value: T) => boolean) | undefined,
+): SaveStatus {
+  if (Object.is(current, saved)) return 'saved';
+  return canSave !== undefined && !canSave(current) ? 'blocked' : 'unsaved';
+}
+
 export function useAutosave<T>({
   value,
   save,
@@ -52,7 +61,7 @@ export function useAutosave<T>({
       .current(pending)
       .then(() => {
         savedRef.current = pending;
-        setStatus(Object.is(valueRef.current, pending) ? 'saved' : 'unsaved');
+        setStatus(settledStatus(valueRef.current, pending, canSaveRef.current));
       })
       .catch(() => setStatus('error'));
   }, []);

@@ -5,7 +5,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
-import { getProjectDetail } from '@/features/projects/data.ts';
+import { findProjectDetail } from '@/features/projects/data.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { ProjectTabs } from '@/features/projects/project-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -32,7 +32,7 @@ function formatDate(value: string | null): string {
 export default async function ProjectLayout({ params, children }: LayoutProps) {
   const { slug } = await params;
   const { principal } = await pageContext();
-  const detail = await getProjectDetail(principal, slug).catch(() => null);
+  const detail = await findProjectDetail(principal, slug);
   if (detail === null) notFound();
 
   const { summary, progress, series } = detail;

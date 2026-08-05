@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test';
-import { act, render } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
 import { ancestorsOf, DocTree, docTreeOf } from './doc-tree.tsx';
@@ -26,13 +27,17 @@ function summary(id: string, title: string): DocSummary {
   };
 }
 
-function tree(docs: readonly DocSummary[], collections: readonly DocCollection[]) {
+function tree(
+  docs: readonly DocSummary[],
+  collections: readonly DocCollection[],
+  activeDocId?: string | null,
+) {
   return (
     <TooltipProvider>
       <DocTree
         docs={docs}
         collections={collections}
-        activeDocId={docs[0]?.id ?? null}
+        activeDocId={activeDocId === undefined ? (docs[0]?.id ?? null) : activeDocId}
         unsavedDocId={null}
         search=""
         onSearchChange={() => undefined}
@@ -112,5 +117,45 @@ describe('a folder that can be closed', () => {
   it('names the chain above a doc, so opening one can reveal it', () => {
     expect(ancestorsOf(nested, 'grandchild')).toEqual(['child', 'root']);
     expect(ancestorsOf(nested, 'other')).toEqual([]);
+  });
+});
+
+describe('folding a folder in the rendered tree', () => {
+  const nested: DocSummary[] = [
+    summary('root', 'Handbook'),
+    { ...summary('child', 'Onboarding'), parentId: 'root' },
+    { ...summary('grandchild', 'Day one'), parentId: 'child' },
+    summary('other', 'Runbook'),
+  ];
+
+  afterEach(cleanup);
+
+  it('hides the descendants when the control is pressed, and says so', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    render(tree(nested, [], 'other'));
+
+    const toggle = screen.getByTestId('doc-toggle-root');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Day one')).toBeTruthy();
+
+    await user.click(toggle);
+
+    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Onboarding')).toBeNull();
+    expect(screen.queryByText('Day one')).toBeNull();
+    expect(screen.getByText('Runbook')).toBeTruthy();
+  });
+
+  it('reopens the chain when the doc inside it becomes the active one', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const view = render(tree(nested, [], 'other'));
+
+    await user.click(screen.getByTestId('doc-toggle-root'));
+    expect(screen.queryByText('Day one')).toBeNull();
+
+    view.rerender(tree(nested, [], 'grandchild'));
+
+    expect(screen.getByText('Day one')).toBeTruthy();
+    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');
   });
 });

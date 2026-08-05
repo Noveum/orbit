@@ -17,7 +17,15 @@ import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
+import type { Issue } from '@/lib/query/schemas.ts';
 import { useProjectIssues } from '@/lib/query/use-issues.ts';
+
+export function soleTeamOf(issues: readonly Issue[]): string | null {
+  const teams = new Set(issues.map((issue) => issue.teamId));
+  if (teams.size !== 1) return null;
+  const [only] = [...teams];
+  return only ?? null;
+}
 
 export interface ProjectIssuesProps {
   readonly projectId: string;
@@ -45,7 +53,10 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
     scope,
   });
 
-  const teamId = workspace.teams[0]?.id ?? '';
+  const teamId = useMemo(
+    () => soleTeamOf(rows) ?? workspace.teams[0]?.id ?? '',
+    [rows, workspace.teams],
+  );
 
   return (
     <section className="flex min-h-0 flex-col gap-3" data-testid="project-issues">
@@ -59,11 +70,14 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
             <button
               key={mode}
               type="button"
+              aria-pressed={layout === mode}
+              aria-label={mode === 'list' ? 'Show issues as a list' : 'Show issues as a board'}
               data-testid={`project-view-${mode}`}
               onClick={() => setLayout(mode)}
               className={cn(
                 'flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs',
                 'transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                 layout === mode ? 'bg-surface-2 text-text' : 'text-faint',
               )}
             >

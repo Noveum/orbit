@@ -197,7 +197,7 @@ export function useProjectIssues(
 ) {
   const search = projectId === null ? '' : projectIssuesSearch(projectId, query);
   return useInfiniteQuery({
-    ...pagedIssueOptions(queryKeys.issues(projectId ?? 'none', search), search),
+    ...pagedIssueOptions(queryKeys.projectIssues(projectId ?? 'none', search), search),
     enabled: projectId !== null,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
