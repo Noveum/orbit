@@ -121,15 +121,17 @@ describe('leaving the page with a draft still in the debounce', () => {
     );
 
     rerender({ value: 'two' });
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'hidden',
-      configurable: true,
-    });
+    const seen = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
 
-    act(() => {
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    try {
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+      if (seen !== undefined) Object.defineProperty(Document.prototype, 'visibilityState', seen);
+    }
   });
 });
