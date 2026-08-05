@@ -3,6 +3,7 @@
 import { renderMarkdown } from '@orbit/services/markdown';
 import { useQueryClient } from '@tanstack/react-query';
 import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Table2 } from 'lucide-react';
+import type { RefObject } from 'react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
@@ -45,9 +46,19 @@ export interface DocEditorProps {
   readonly onChange: (value: string) => void;
   readonly onForceSave: () => void;
   readonly footer?: React.ReactNode;
+  readonly outline?: React.ReactNode;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
-export function DocEditor({ docId, content, onChange, onForceSave, footer }: DocEditorProps) {
+export function DocEditor({
+  docId,
+  content,
+  onChange,
+  onForceSave,
+  footer,
+  outline,
+  scrollRef,
+}: DocEditorProps) {
   const { toast } = useToast();
   const client = useQueryClient();
   const bootstrap = useBootstrap(null);
@@ -235,18 +246,22 @@ export function DocEditor({ docId, content, onChange, onForceSave, footer }: Doc
       </div>
 
       {mode === 'rich' ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <RichTextEditor
-            value={content}
-            onChange={onChange}
-            members={bootstrap.data?.members ?? []}
-            onUpload={upload}
-            onForceSave={onForceSave}
-            toolbar="full"
-            ariaLabel="Doc body"
-            testId="doc-rich-editor"
-            footer={footer}
-          />
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <RichTextEditor
+              value={content}
+              onChange={onChange}
+              members={bootstrap.data?.members ?? []}
+              onUpload={upload}
+              onForceSave={onForceSave}
+              toolbar="full"
+              ariaLabel="Doc body"
+              testId="doc-rich-editor"
+              footer={footer}
+              {...(scrollRef === undefined ? {} : { scrollRef })}
+            />
+          </div>
+          {outline}
         </div>
       ) : (
         <div

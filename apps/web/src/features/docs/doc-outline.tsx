@@ -8,9 +8,10 @@ import type { DocHeading } from './outline.ts';
 export interface DocOutlineProps {
   readonly headings: readonly DocHeading[];
   readonly activeId: string | null;
+  readonly onSelect?: (index: number) => void;
 }
 
-export function DocOutline({ headings, activeId }: DocOutlineProps) {
+export function DocOutline({ headings, activeId, onSelect }: DocOutlineProps) {
   const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -41,11 +42,19 @@ export function DocOutline({ headings, activeId }: DocOutlineProps) {
         On this page
       </p>
       <ul className="flex flex-col">
-        {headings.map((heading) => (
+        {headings.map((heading, index) => (
           <li key={heading.id}>
             <a
               href={`#${heading.id}`}
               data-heading={heading.id}
+              onClick={
+                onSelect === undefined
+                  ? undefined
+                  : (event) => {
+                      event.preventDefault();
+                      onSelect(index);
+                    }
+              }
               aria-current={activeId === heading.id ? 'location' : undefined}
               className={cn(
                 'block border-l py-1 text-dense transition-colors duration-[var(--duration-fast)]',

@@ -35,11 +35,13 @@ import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
 import { DocExportMenu } from './doc-export-menu.tsx';
 import { DocHistory } from './doc-history.tsx';
+import { DocOutline } from './doc-outline.tsx';
 import { DocBacklinks, DocContextRow, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
 import { useDocsTree } from './use-docs-tree.ts';
+import { useEditorOutline } from './use-editor-outline.ts';
 
 const STATUS_LABEL = {
   saved: 'Saved',
@@ -459,6 +461,8 @@ function EditSession({
   const near = content.length > NEAR_LIMIT;
   const settled = autosave.status === 'saved';
   const server = useRef({ title: doc.title, content: doc.content });
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const outline = useEditorOutline(content, scroller);
 
   useEffect(() => onStatusChange(autosave.status), [autosave.status, onStatusChange]);
   useEffect(() => flush, [flush]);
@@ -489,6 +493,16 @@ function EditSession({
         onChange={setContent}
         onForceSave={flush}
         footer={footer}
+        scrollRef={scroller}
+        outline={
+          <div className="hidden shrink-0 pr-6 xl:block">
+            <DocOutline
+              headings={outline.headings}
+              activeId={outline.activeId}
+              onSelect={outline.goTo}
+            />
+          </div>
+        }
       />
       {near ? (
         <p

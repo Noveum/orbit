@@ -4,6 +4,7 @@ import { renderMarkdown } from '@orbit/services/markdown';
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, Strikethrough } from 'lucide-react';
+import type { RefObject } from 'react';
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -54,6 +55,7 @@ export interface RichTextEditorProps {
   readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
   readonly footer?: React.ReactNode;
   readonly onBlur?: () => void;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 interface MenuPosition {
@@ -109,6 +111,7 @@ export function RichTextEditor({
   onUpload,
   footer,
   onBlur,
+  scrollRef,
 }: RichTextEditorProps) {
   const containerRef = useRef<HTMLElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -397,7 +400,10 @@ export function RichTextEditor({
           testId={`${testId}-toolbar`}
         />
       ) : null}
-      <div className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
+      <div
+        ref={scrollRef}
+        className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}
+      >
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
         {footer}
       </div>
