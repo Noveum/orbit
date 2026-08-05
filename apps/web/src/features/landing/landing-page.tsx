@@ -597,13 +597,13 @@ function PaletteMock() {
         <div className="flex items-center justify-between rounded-md bg-surface-2 px-2.5 py-2">
           <span className="flex items-center gap-2.5">
             <IterationCw className="size-4 text-muted" strokeWidth={2} />
-            Move to Cycle 14
+            Move to Sprint 14
           </span>
           <Kbd keys={['enter']} />
         </div>
         <div className="flex items-center gap-2.5 px-2.5 py-2 text-muted">
           <IterationCw className="size-4 text-faint" strokeWidth={2} />
-          Move to Cycle 15
+          Move to Sprint 15
         </div>
         <div className="flex items-center gap-2.5 px-2.5 py-2 text-muted">
           <SignalHigh className="size-4 text-faint" strokeWidth={2} />

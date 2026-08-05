@@ -1,4 +1,4 @@
-import { and, asc, db, eq, gt, inArray, or, schema } from '@orbit/db';
+import { and, asc, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
@@ -654,7 +654,10 @@ const LOADERS: Record<SyncModel, Loader> = {
     })),
   standup_rotation: async (principal, since, limit) => {
     const touched = await db
-      .selectDistinct({ teamId: schema.standupRotation.teamId })
+      .select({
+        teamId: schema.standupRotation.teamId,
+        syncId: sql<number>`min(${schema.standupRotation.syncId})`.as('sync_id'),
+      })
       .from(schema.standupRotation)
       .where(
         and(
@@ -662,6 +665,8 @@ const LOADERS: Record<SyncModel, Loader> = {
           gt(schema.standupRotation.syncId, since),
         ),
       )
+      .groupBy(schema.standupRotation.teamId)
+      .orderBy(asc(sql`min(${schema.standupRotation.syncId})`))
       .limit(limit);
     if (touched.length === 0) return [];
 
@@ -679,9 +684,8 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.standupRotation.position));
 
-    return touched.map(({ teamId }) => {
+    return touched.map(({ teamId, syncId }) => {
       const rotation = rows.filter((row) => row.teamId === teamId);
-      const syncId = rotation.reduce((highest, row) => Math.max(highest, row.syncId), 0);
       return {
         modelId: teamId,
         syncId,

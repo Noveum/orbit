@@ -409,3 +409,54 @@ describe('sprints over mcp', () => {
     expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
   });
 });
+
+describe('what a token is allowed to do', () => {
+  it('hides every write tool from a read only token, and keeps the read ones', async () => {
+    const readOnly = await connect(
+      await mintToken(workspace.organizationId, workspace.adminUser.id, 'Reader', 'orbit.read'),
+    );
+    try {
+      const { tools } = await readOnly.client.listTools();
+      const names = tools.map((tool) => tool.name);
+
+      expect(names).toContain('get_me');
+      expect(names).toContain('search_issues');
+      expect(names).toContain('get_standup');
+
+      expect(names).not.toContain('create_issue');
+      expect(names).not.toContain('update_issue');
+      expect(names).not.toContain('open_standup');
+      expect(names).not.toContain('complete_cycle');
+      expect(names).not.toContain('invite_member');
+
+      for (const tool of tools) {
+        expect(tool.annotations?.readOnlyHint).toBe(true);
+      }
+    } finally {
+      await readOnly.close();
+    }
+  });
+
+  it('refuses a write call from a read only token rather than performing it', async () => {
+    const readOnly = await connect(
+      await mintToken(workspace.organizationId, workspace.adminUser.id, 'Reader', 'orbit.read'),
+    );
+    try {
+      const denied = await readOnly.call('create_issue', {
+        team: workspace.teamKey,
+        title: 'Should never exist',
+      });
+      expect(denied.isError).toBe(true);
+
+      const search = await admin.result('search_issues', { query: 'Should never exist' });
+      expect(issuesOf(search)).toHaveLength(0);
+    } finally {
+      await readOnly.close();
+    }
+  });
+
+  it('still gives a token carrying orbit.write the whole set', async () => {
+    const { tools } = await admin.client.listTools();
+    expect(tools.map((tool) => tool.name)).toContain('create_issue');
+  });
+});

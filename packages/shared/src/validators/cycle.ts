@@ -29,7 +29,7 @@ export const sprintOutcomeSchema = z.object({
     scope: z.number().nonnegative(),
     completed: z.number().nonnegative(),
   }),
-  closedAt: z.string().min(1),
+  closedAt: z.iso.datetime(),
 });
 
 export const cycleListQuerySchema = z.object({
