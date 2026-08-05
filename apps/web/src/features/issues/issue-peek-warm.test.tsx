@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
@@ -100,5 +100,46 @@ describe('opening an issue the list already holds', () => {
 
     await waitFor(() => expect(asked).toEqual(['/api/issues/ENG-420']));
     await waitFor(() => expect(client.getQueryState(['issue', 'ENG-420'])?.status).toBe('success'));
+  });
+});
+
+describe('warming a card the pointer is dragging', () => {
+  it('holds off while a button is down, so the drag sensor is left alone', async () => {
+    const asked: string[] = [];
+    globalThis.fetch = mock((input: string | URL | Request) => {
+      asked.push(String(input));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    function Card() {
+      const prefetch = usePrefetchIssueDetail();
+      return (
+        <div
+          data-testid="card"
+          onPointerEnter={(event) => {
+            if (event.buttons === 0) prefetch('ENG-420');
+          }}
+        >
+          ENG-420
+        </div>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <Card />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    const card = screen.getByTestId('card');
+    fireEvent.pointerEnter(card, { buttons: 1 });
+    await waitFor(() => expect(asked).toEqual([]));
+
+    fireEvent.pointerEnter(card, { buttons: 0 });
+    await waitFor(() => expect(asked).toEqual(['/api/issues/ENG-420']));
   });
 });
