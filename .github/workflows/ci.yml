@@ -126,14 +126,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: orbitminio
-          MINIO_ROOT_PASSWORD: orbitminio
-          MINIO_DEFAULT_BUCKETS: orbit-uploads
-        ports:
-          - 9010:9000
     env:
       DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
       REDIS_URL: redis://localhost:6380
@@ -175,16 +167,23 @@ jobs:
             echo "S3_ACCESS_KEY_ID=$S3_ACCESS_KEY_ID"
             echo "S3_SECRET_ACCESS_KEY=$S3_SECRET_ACCESS_KEY"
           } > .env
-      - name: Wait for object storage to answer
+      - name: Start object storage the same way the compose file does
         run: |
+          docker run -d --name orbit-minio -p 9010:9000 \
+            -e MINIO_ROOT_USER=orbitminio \
+            -e MINIO_ROOT_PASSWORD=orbitminio \
+            minio/minio:latest server /data
           for attempt in $(seq 1 60); do
-            if curl -fsS http://localhost:9010/minio/health/live; then
+            if curl -fsS http://localhost:9010/minio/health/live >/dev/null; then
               echo "minio is up after ${attempt} attempts"
+              docker run --rm --network host minio/mc:latest sh -c \
+                "mc alias set orbit http://localhost:9010 orbitminio orbitminio && mc mb --ignore-existing orbit/orbit-uploads"
               exit 0
             fi
             sleep 2
           done
           echo "minio never became healthy" >&2
+          docker logs orbit-minio >&2 || true
           exit 1
       - name: Apply the schema to the e2e database
         run: bun run --filter '@orbit/db' push
