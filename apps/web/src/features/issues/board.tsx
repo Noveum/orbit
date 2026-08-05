@@ -380,9 +380,11 @@ function BoardColumn({
         if (!entries.some((entry) => entry.isIntersecting)) return;
         if (hasHiddenLocal) {
           setVisibleCount((count) => Math.min(count + VISIBLE_STEP, loaded));
-        } else if (scrolledRef.current && canFetchMore) {
-          loadMore?.();
+          return;
         }
+        if (!canFetchMore) return;
+        const settled = root.scrollHeight <= root.clientHeight;
+        if (scrolledRef.current || settled) loadMore?.();
       },
       { root, rootMargin: '240px' },
     );
