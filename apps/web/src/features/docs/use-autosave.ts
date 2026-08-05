@@ -38,6 +38,8 @@ export function useAutosave<T>({
   const valueRef = useRef<T>(value);
   const saveRef = useRef(save);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runningRef = useRef(false);
+  const againRef = useRef(false);
 
   const canSaveRef = useRef(canSave);
   saveRef.current = save;
@@ -49,6 +51,10 @@ export function useAutosave<T>({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    if (runningRef.current) {
+      againRef.current = true;
+      return;
+    }
     const pending = valueRef.current;
     if (Object.is(pending, savedRef.current)) return;
     const allowed = canSaveRef.current;
@@ -56,6 +62,7 @@ export function useAutosave<T>({
       setStatus('blocked');
       return;
     }
+    runningRef.current = true;
     setStatus('saving');
     saveRef
       .current(pending)
@@ -63,7 +70,13 @@ export function useAutosave<T>({
         savedRef.current = pending;
         setStatus(settledStatus(valueRef.current, pending, canSaveRef.current));
       })
-      .catch(() => setStatus('error'));
+      .catch(() => setStatus('error'))
+      .finally(() => {
+        runningRef.current = false;
+        if (!againRef.current) return;
+        againRef.current = false;
+        run();
+      });
   }, []);
 
   useEffect(() => {

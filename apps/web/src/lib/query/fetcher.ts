@@ -38,8 +38,8 @@ export interface RequestOptions {
 export const KEEPALIVE_BODY_LIMIT = 60_000;
 
 export function survivesUnload(method: string, body: string | undefined): boolean {
-  if (method === 'GET') return false;
-  return body !== undefined && body.length <= KEEPALIVE_BODY_LIMIT;
+  if (method === 'GET' || body === undefined) return false;
+  return new TextEncoder().encode(body).byteLength <= KEEPALIVE_BODY_LIMIT;
 }
 
 export async function apiFetch<T>(

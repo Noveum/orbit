@@ -82,3 +82,22 @@ describe('a write racing the page it was sent from', () => {
     expect(survivesUnload('POST', undefined)).toBe(false);
   });
 });
+
+describe('measuring a body against the keepalive ceiling', () => {
+  it('counts encoded bytes, not JavaScript string length', () => {
+    const emoji = '🙂';
+    expect(emoji.length).toBe(2);
+    expect(new TextEncoder().encode(emoji).byteLength).toBe(4);
+
+    const justUnderInCodeUnits = JSON.stringify({ body: emoji.repeat(KEEPALIVE_BODY_LIMIT / 4) });
+    expect(justUnderInCodeUnits.length).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    expect(new TextEncoder().encode(justUnderInCodeUnits).byteLength).toBeGreaterThan(
+      KEEPALIVE_BODY_LIMIT,
+    );
+    expect(survivesUnload('PATCH', justUnderInCodeUnits)).toBe(false);
+  });
+
+  it('still carries an ordinary ascii write', () => {
+    expect(survivesUnload('PATCH', JSON.stringify({ title: 'Renamed' }))).toBe(true);
+  });
+});

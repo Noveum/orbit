@@ -135,3 +135,34 @@ describe('leaving the page with a draft still in the debounce', () => {
     }
   });
 });
+
+describe('two flushes arriving while a save is already running', () => {
+  it('sends one request, then one more for whatever changed meanwhile', async () => {
+    const seen: string[] = [];
+    let release: (() => void) | null = null;
+    const save = mock((value: string) => {
+      seen.push(value);
+      return new Promise<undefined>((resolve) => {
+        release = () => resolve(undefined);
+      });
+    });
+
+    const { rerender } = renderHook(
+      ({ value }: { value: string }) => useAutosave({ value, save, delayMs: 5 }),
+      { initialProps: { value: 'one' } },
+    );
+
+    rerender({ value: 'two' });
+    await waitFor(() => expect(seen).toEqual(['two']));
+
+    rerender({ value: 'three' });
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'));
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    expect(seen).toEqual(['two']);
+
+    act(() => release?.());
+    await waitFor(() => expect(seen).toEqual(['two', 'three']));
+  });
+});
