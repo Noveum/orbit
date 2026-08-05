@@ -1,17 +1,24 @@
 'use client';
 
+import type { DisplayProperty } from '@orbit/shared/filters';
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import type { RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { DisplayMenu } from '@/features/filters/display-menu.tsx';
+import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
+import { LayoutToggle } from '@/features/filters/layout-toggle.tsx';
+import { useLayoutPreference } from '@/features/filters/use-layout-preference.ts';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
+import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAssignedIssues } from '@/lib/query/use-issues.ts';
+import { Board } from './board.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
@@ -26,8 +33,9 @@ export function assignedTo(issues: readonly Issue[], userId: string | null): Iss
 export function MyIssuesView() {
   const router = useRouter();
   const workspace = useWorkspace();
-  const { config, setConfig } = useViewConfig(null, 'list', 'my_issues');
-  const controls = useProvideViewControls('my_issues', 'list', config);
+  const { layout, setLayout } = useLayoutPreference('my_issues', '', 'board');
+  const { config, setConfig } = useViewConfig(null, layout, 'my_issues');
+  const controls = useProvideViewControls('my_issues', layout, config);
 
   const assigned = useAssignedIssues(workspace.userId);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -82,7 +90,8 @@ export function MyIssuesView() {
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
           {model.total}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <LayoutToggle layout={layout} onChange={setLayout} />
           <DisplayMenu
             config={config}
             capability={controls.capability}
@@ -92,55 +101,18 @@ export function MyIssuesView() {
         </div>
       </div>
 
-      {model.shownCount === 0 ? (
-        <EmptyState
-          icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
-          title={loading ? 'Loading your issues' : 'Nothing assigned to you'}
-          description="Issues assigned to you across every team show up here. Press C to create one."
-          className="flex-1"
-        />
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="my-issues-list">
-          {groups.map((group) => (
-            <section key={group.id}>
-              <div
-                className="flex h-8 items-center gap-2 border-border border-b bg-surface-2/60 px-3"
-                data-testid={`issue-group-${group.title}`}
-              >
-                <GroupGlyph group={group} />
-                <h2 className="font-medium text-dense text-text">{group.title}</h2>
-                <span data-numeric className="text-2xs text-faint">
-                  {group.issues.length}
-                </span>
-              </div>
-              {group.issues.map((issue) => (
-                <IssueRow
-                  key={issue.id}
-                  issue={issue}
-                  state={workspace.stateById.get(issue.stateId)}
-                  properties={config.display.properties}
-                  labels={issue.labelIds.flatMap((id) => {
-                    const label = workspace.labelById.get(id);
-                    return label === undefined ? [] : [label];
-                  })}
-                  assignee={
-                    issue.assigneeId === null
-                      ? undefined
-                      : workspace.memberById.get(issue.assigneeId)
-                  }
-                  creator={workspace.memberById.get(issue.creatorId)}
-                  active={peekId === issue.id}
-                  selected={false}
-                  onOpen={() => setPeekId(issue.id)}
-                  onFocus={() => undefined}
-                  onToggleSelected={() => undefined}
-                />
-              ))}
-            </section>
-          ))}
-          {hasNextPage ? <div ref={sentinel} className="h-px" aria-hidden="true" /> : null}
-        </div>
-      )}
+      <MyIssuesBody
+        loading={loading}
+        layout={layout}
+        model={model}
+        groups={groups}
+        properties={config.display.properties}
+        workspace={workspace}
+        peekId={peekId}
+        onPeek={setPeekId}
+        hasNextPage={hasNextPage}
+        sentinel={sentinel}
+      />
 
       <HiddenFooter
         hiddenByFilters={model.hiddenByFilters}
@@ -162,6 +134,92 @@ export function MyIssuesView() {
           if (found !== undefined) router.push(`/issue/${found.identifier}`);
         }}
       />
+    </div>
+  );
+}
+
+interface BodyProps {
+  readonly loading: boolean;
+  readonly layout: ViewLayoutMode;
+  readonly model: ReturnType<typeof useIssueViewModel>;
+  readonly groups: readonly IssueGroup[];
+  readonly properties: readonly DisplayProperty[];
+  readonly workspace: ReturnType<typeof useWorkspace>;
+  readonly peekId: string | null;
+  readonly onPeek: (id: string) => void;
+  readonly hasNextPage: boolean;
+  readonly sentinel: RefObject<HTMLDivElement | null>;
+}
+
+function MyIssuesBody({
+  loading,
+  layout,
+  model,
+  groups,
+  properties,
+  workspace,
+  peekId,
+  onPeek,
+  hasNextPage,
+  sentinel,
+}: BodyProps) {
+  if (model.shownCount === 0) {
+    return (
+      <EmptyState
+        icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
+        title={loading ? 'Loading your issues' : 'Nothing assigned to you'}
+        description="Issues assigned to you across every team show up here. Press C to create one."
+        className="flex-1"
+      />
+    );
+  }
+
+  if (layout === 'board') {
+    return (
+      <div className="min-h-0 flex-1 overflow-hidden" data-testid="my-issues-board">
+        <Board groups={groups} draggable={false} properties={properties} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto" data-testid="my-issues-list">
+      {groups.map((group) => (
+        <section key={group.id}>
+          <div
+            className="flex h-8 items-center gap-2 border-border border-b bg-surface-2/60 px-3"
+            data-testid={`issue-group-${group.title}`}
+          >
+            <GroupGlyph group={group} />
+            <h2 className="font-medium text-dense text-text">{group.title}</h2>
+            <span data-numeric className="text-2xs text-faint">
+              {group.issues.length}
+            </span>
+          </div>
+          {group.issues.map((issue) => (
+            <IssueRow
+              key={issue.id}
+              issue={issue}
+              state={workspace.stateById.get(issue.stateId)}
+              properties={properties}
+              labels={issue.labelIds.flatMap((id) => {
+                const label = workspace.labelById.get(id);
+                return label === undefined ? [] : [label];
+              })}
+              assignee={
+                issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId)
+              }
+              creator={workspace.memberById.get(issue.creatorId)}
+              active={peekId === issue.id}
+              selected={false}
+              onOpen={() => onPeek(issue.id)}
+              onFocus={() => undefined}
+              onToggleSelected={() => undefined}
+            />
+          ))}
+        </section>
+      ))}
+      {hasNextPage ? <div ref={sentinel} className="h-px" aria-hidden="true" /> : null}
     </div>
   );
 }

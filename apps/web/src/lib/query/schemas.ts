@@ -451,3 +451,18 @@ export const standupTodaySchema = z.object({
 export type StandupToday = z.infer<typeof standupTodaySchema>;
 
 export const standupListSchema = z.object({ standups: z.array(standupSchema).default([]) });
+
+export const viewPreferencesSchema = z.object({
+  preferences: z
+    .array(
+      z.object({
+        page: z.string(),
+        scope: z.string(),
+        layout: z.string(),
+        display: z.record(z.string(), z.unknown()).default({}),
+      }),
+    )
+    .default([]),
+});
+
+export type ViewPreferences = z.infer<typeof viewPreferencesSchema>;

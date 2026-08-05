@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import { queryKeys } from '@/lib/query/keys.ts';
+import { queryKeys, VIEW_PREFERENCES_ROOT } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { assignedSearch } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
@@ -131,9 +131,12 @@ function renderEmptyCacheView(): void {
   );
 }
 
-function renderView(viewerId = 'me'): void {
+function renderView(viewerId = 'me', layout: 'list' | 'board' = 'list'): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  client.setQueryData([VIEW_PREFERENCES_ROOT], {
+    preferences: [{ page: 'my_issues', scope: '', layout, display: {} }],
   });
   client.setQueryData(queryKeys.assignedIssues(viewerId, assignedSearch(viewerId)), {
     pages: [
@@ -207,6 +210,30 @@ describe('MyIssuesView', () => {
     renderView();
 
     expect(screen.getByTestId('issue-group-Todo')).toBeInTheDocument();
+  });
+
+  it('opens on a board, which is what someone wants to see first', () => {
+    workspace = buildWorkspace();
+    renderView('me', 'board');
+
+    expect(screen.getByTestId('my-issues-board')).toBeInTheDocument();
+    expect(screen.queryByTestId('my-issues-list')).toBeNull();
+  });
+
+  it('shows the list when that is what was chosen last time', () => {
+    workspace = buildWorkspace();
+    renderView('me', 'list');
+
+    expect(screen.getByTestId('my-issues-list')).toBeInTheDocument();
+    expect(screen.queryByTestId('my-issues-board')).toBeNull();
+  });
+
+  it('offers both layouts and marks the one in use', () => {
+    workspace = buildWorkspace();
+    renderView('me', 'list');
+
+    expect(screen.getByTestId('layout-list')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('layout-board')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('opens the peek panel when a row is clicked instead of navigating away', () => {
