@@ -113,7 +113,10 @@ domain verified in Resend, otherwise every send fails.
 
 ## Testing
 
-- Unit and integration: `bun test`. Colocate as `*.test.ts` beside the unit under test.
+- Unit and integration: `bun test`. Tests live in each package's own `tests/` tree, mirroring the
+  layout of `src/`, never beside the code. `src/a/b/thing.ts` is tested by `tests/a/b/thing.test.ts`.
+  Bun's scanner skips directories whose name starts with a dot, so a test for something under
+  `src/app/.well-known/` goes in `tests/app/well-known/` or it silently never runs.
 - Import test helpers from `bun:test`, never from `vitest`.
 - A package that needs environment or a DOM configures it in its own `bunfig.toml` with a `tests-preload.ts`. DOM tests register happy-dom in that preload.
 - Database tests run against the real Postgres from docker compose, in a transaction that rolls back. `scripts/test-env.ts` refuses to run against a database whose name does not contain `test`.
