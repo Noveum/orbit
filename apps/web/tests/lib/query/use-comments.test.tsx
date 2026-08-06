@@ -14,15 +14,20 @@ mock.module('@/components/ui/toast.tsx', () => ({
   }),
 }));
 
-const { useComments, useCreateComment, useDeleteComment, useUpdateComment } = await import(
-  '../../../src/lib/query/use-comments.ts'
-);
+const { useComments, useCreateComment, useDeleteComment, useToggleReaction, useUpdateComment } =
+  await import('../../../src/lib/query/use-comments.ts');
 
 const ISSUE = 'issue_1';
 const ME = 'user_me';
+const SOMEONE_ELSE = 'user_them';
 const originalFetch = globalThis.fetch;
 
-function comment(id: string, body: string, authorId = ME): Comment {
+function comment(
+  id: string,
+  body: string,
+  authorId = ME,
+  reactions: Comment['reactions'] = [],
+): Comment {
   return {
     comment: {
       id,
@@ -37,8 +42,12 @@ function comment(id: string, body: string, authorId = ME): Comment {
       syncId: 7,
     },
     bodyHtml: `<p>${body}</p>`,
-    reactions: [],
+    reactions,
   };
+}
+
+function reaction(id: string, commentId: string, userId: string, emoji: string) {
+  return { id, commentId, userId, emoji };
 }
 
 interface Answer {
@@ -51,14 +60,16 @@ type Handler = (url: string, init: RequestInit | undefined) => Answer | Promise<
 interface FetchLog {
   readonly urls: string[];
   readonly methods: string[];
+  readonly payloads: string[];
 }
 
 function stubFetch(handler: Handler): FetchLog {
-  const log: FetchLog = { urls: [], methods: [] };
+  const log: FetchLog = { urls: [], methods: [], payloads: [] };
   globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     log.urls.push(url);
     log.methods.push(init?.method ?? 'GET');
+    log.payloads.push(String(init?.body ?? ''));
     const answer = await handler(url, init);
     return new Response(JSON.stringify(answer.payload), {
       status: answer.status ?? 200,
@@ -307,5 +318,126 @@ describe('useDeleteComment', () => {
     await waitFor(() => expect(bodies(list.result.current.data)).toEqual(['Hello', 'Second']));
 
     expect(toasts.map((entry) => entry.title)).toEqual(['Could not delete']);
+  });
+});
+
+function emojiOn(rows: readonly Comment[] | undefined, id: string): string[] {
+  const entry = (rows ?? []).find((row) => row.comment.id === id);
+  return (entry?.reactions ?? []).map((row) => `${row.userId}:${row.emoji}`).sort();
+}
+
+const PARTY = '\u{1F389}';
+const EYES = '\u{1F440}';
+
+describe('useToggleReaction', () => {
+  it('paints my reaction on the named comment and posts it to that comment endpoint', async () => {
+    const post = gate();
+    const log = stubFetch((_url, init) => {
+      if (init?.method === 'POST') return post.held;
+      return {
+        payload: {
+          comments: [
+            comment('c1', 'Hello', ME, [reaction('r1', 'c1', SOMEONE_ELSE, EYES)]),
+            comment('c2', 'Second'),
+          ],
+        },
+      };
+    });
+    const client = newClient();
+
+    const list = renderHook(() => useComments(ISSUE), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+
+    const react = renderHook(() => useToggleReaction(ISSUE), { wrapper: wrapper(client) });
+    react.result.current.mutate({ commentId: 'c1', emoji: PARTY });
+
+    await waitFor(() =>
+      expect(emojiOn(list.result.current.data, 'c1')).toEqual([
+        `${ME}:${PARTY}`,
+        `${SOMEONE_ELSE}:${EYES}`,
+      ]),
+    );
+    expect(emojiOn(list.result.current.data, 'c2')).toEqual([]);
+
+    post.release({ payload: { emoji: PARTY, active: true } });
+    await waitFor(() => expect(react.result.current.isSuccess).toBe(true));
+
+    const posted = log.urls.filter((_url, index) => log.methods[index] === 'POST');
+    expect(posted).toEqual(['/api/comments/c1/reactions']);
+    expect(
+      log.payloads
+        .filter((_payload, index) => log.methods[index] === 'POST')
+        .map((payload) => JSON.parse(payload) as unknown),
+    ).toEqual([{ emoji: PARTY }]);
+    expect(emojiOn(list.result.current.data, 'c1')).toEqual([
+      `${ME}:${PARTY}`,
+      `${SOMEONE_ELSE}:${EYES}`,
+    ]);
+  });
+
+  it('takes my own reaction back off and leaves the same emoji from someone else', async () => {
+    const post = gate();
+    stubFetch((_url, init) => {
+      if (init?.method === 'POST') return post.held;
+      return {
+        payload: {
+          comments: [
+            comment('c1', 'Hello', ME, [
+              reaction('mine', 'c1', ME, PARTY),
+              reaction('theirs', 'c1', SOMEONE_ELSE, PARTY),
+            ]),
+          ],
+        },
+      };
+    });
+    const client = newClient();
+
+    const list = renderHook(() => useComments(ISSUE), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+
+    const react = renderHook(() => useToggleReaction(ISSUE), { wrapper: wrapper(client) });
+    react.result.current.mutate({ commentId: 'c1', emoji: PARTY });
+
+    await waitFor(() =>
+      expect(emojiOn(list.result.current.data, 'c1')).toEqual([`${SOMEONE_ELSE}:${PARTY}`]),
+    );
+
+    post.release({ payload: { emoji: PARTY, active: false } });
+    await waitFor(() => expect(react.result.current.isSuccess).toBe(true));
+    expect(emojiOn(list.result.current.data, 'c1')).toEqual([`${SOMEONE_ELSE}:${PARTY}`]);
+  });
+
+  it('puts the reactions back and warns when the server refuses', async () => {
+    const post = gate();
+    stubFetch((_url, init) => {
+      if (init?.method === 'POST') return post.held;
+      return {
+        payload: {
+          comments: [comment('c1', 'Hello', ME, [reaction('theirs', 'c1', SOMEONE_ELSE, EYES)])],
+        },
+      };
+    });
+    const client = newClient();
+
+    const list = renderHook(() => useComments(ISSUE), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+
+    const react = renderHook(() => useToggleReaction(ISSUE), { wrapper: wrapper(client) });
+    react.result.current.mutate({ commentId: 'c1', emoji: PARTY });
+
+    await waitFor(() =>
+      expect(emojiOn(list.result.current.data, 'c1')).toEqual([
+        `${ME}:${PARTY}`,
+        `${SOMEONE_ELSE}:${EYES}`,
+      ]),
+    );
+
+    post.release({ status: 403, payload: { error: { code: 'forbidden', message: 'no' } } });
+    await waitFor(() => expect(react.result.current.isError).toBe(true));
+    await waitFor(() =>
+      expect(emojiOn(list.result.current.data, 'c1')).toEqual([`${SOMEONE_ELSE}:${EYES}`]),
+    );
+
+    expect(toasts.map((entry) => entry.title)).toEqual(['Could not react']);
   });
 });
