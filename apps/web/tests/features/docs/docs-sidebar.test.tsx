@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
@@ -7,6 +7,7 @@ import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
+import { render } from '@/test/render.tsx';
 import { DocsShell } from '../../../src/features/docs/docs-shell.tsx';
 
 const push = mock();

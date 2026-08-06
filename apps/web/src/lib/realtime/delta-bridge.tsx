@@ -19,6 +19,7 @@ import {
   COMMENTS_ROOT,
   DOC_COMMENTS_ROOT,
   DOC_ROOT,
+  DOCS_HOME_ROOT,
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_ROOT,
@@ -204,7 +205,10 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
   if (roots.standupBoard) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
-  if (roots.docs) client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
+  if (roots.docs) {
+    client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
+    client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
+  }
   for (const docId of roots.docIds) {
     client.invalidateQueries({ queryKey: [DOC_ROOT, docId] }).catch(noop);
   }

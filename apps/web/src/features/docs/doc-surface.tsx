@@ -14,6 +14,7 @@ import {
   PanelLeft,
   Pencil,
   Search,
+  Star,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
@@ -46,6 +47,8 @@ import {
   useDoc,
   useDocs,
   useDuplicateDoc,
+  useRecordDocVisit,
+  useToggleDocFavorite,
   useUpdateDoc,
 } from '@/lib/query/use-docs.ts';
 import { DocAttachments } from './doc-attachments.tsx';
@@ -191,8 +194,12 @@ function LoadedDoc({
   const update = useUpdateDoc(detail.doc.id);
   const archive = useArchiveDoc();
   const duplicate = useDuplicateDoc();
+  const favorite = useToggleDocFavorite(detail.doc.id);
+  const recordVisit = useRecordDocVisit().mutate;
   const [status, setStatus] = useState<SaveStatus>('saved');
   const canWrite = docWriteAccess(canWriteDocs, detail);
+
+  useEffect(() => recordVisit(detail.doc.id), [recordVisit, detail.doc.id]);
 
   const comments = useDocComments(detail.doc.id);
   const [anchorText, setAnchorText] = useState<string | null>(null);
@@ -258,6 +265,21 @@ function LoadedDoc({
             {detail.doc.archivedAt === null ? 'Read only' : 'Archived'}
           </span>
         )}
+
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={detail.favorite ? `Unstar ${detail.doc.title}` : `Star ${detail.doc.title}`}
+          aria-pressed={detail.favorite}
+          data-testid="doc-favorite"
+          className="size-7 px-0"
+          onClick={() => favorite.mutate(!detail.favorite)}
+        >
+          <Star
+            className={cn('size-4', detail.favorite ? 'fill-current text-accent' : '')}
+            aria-hidden="true"
+          />
+        </Button>
 
         <DocExportMenu title={detail.doc.title} content={detail.doc.content} />
 

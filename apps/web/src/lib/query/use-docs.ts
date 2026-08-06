@@ -3,18 +3,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
-import { DOCS_ROOT, queryKeys } from './keys.ts';
-import type { Doc, DocCollection, DocDetail, DocList, DocVersion } from './schemas.ts';
+import { DOCS_HOME_ROOT, DOCS_ROOT, queryKeys } from './keys.ts';
+import type { Doc, DocCollection, DocDetail, DocList, DocsHome, DocVersion } from './schemas.ts';
 import {
   deletedSchema,
   docArchiveResultSchema,
   docCollectionEnvelopeSchema,
   docDetailSchema,
   docEnvelopeSchema,
+  docFavoriteResultSchema,
   docListSchema,
   docSaveResultSchema,
   docShareResultSchema,
+  docsHomeSchema,
   docVersionListSchema,
+  docVisitResultSchema,
 } from './schemas.ts';
 
 export interface DocPatch {
@@ -50,8 +53,60 @@ export function useDoc(docId: string | null) {
   });
 }
 
+export function useDocsHome() {
+  return useQuery({
+    queryKey: queryKeys.docsHome(),
+    queryFn: async ({ signal }): Promise<DocsHome> =>
+      await apiFetch('/api/docs/home', docsHomeSchema, { signal }),
+  });
+}
+
 function invalidateDocs(client: ReturnType<typeof useQueryClient>): void {
   client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(() => undefined);
+  client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(() => undefined);
+}
+
+export function useRecordDocVisit() {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (docId: string): Promise<void> => {
+      await apiFetch(`/api/docs/${docId}/visit`, docVisitResultSchema, {
+        method: 'POST',
+        body: {},
+      });
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(() => undefined);
+    },
+  });
+}
+
+export function useToggleDocFavorite(docId: string) {
+  const client = useQueryClient();
+  const { toast } = useToast();
+  const key = queryKeys.doc(docId);
+
+  return useMutation({
+    mutationFn: async (favorite: boolean): Promise<{ docId: string; favorite: boolean }> =>
+      await apiFetch(`/api/docs/${docId}/favorite`, docFavoriteResultSchema, {
+        method: 'POST',
+        body: { favorite },
+      }),
+    onMutate: async (favorite) => {
+      await client.cancelQueries({ queryKey: key });
+      const previous = client.getQueryData<DocDetail>(key);
+      if (previous !== undefined) client.setQueryData<DocDetail>(key, { ...previous, favorite });
+      return { previous };
+    },
+    onError: (error, _favorite, context) => {
+      if (context?.previous !== undefined) client.setQueryData(key, context.previous);
+      toast({ title: 'Could not update', description: messageOf(error), tone: 'danger' });
+    },
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(() => undefined);
+    },
+  });
 }
 
 export function useCreateDoc() {

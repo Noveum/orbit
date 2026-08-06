@@ -6,6 +6,7 @@ import { clientId } from '@/lib/query/client-id.ts';
 import {
   BOOTSTRAP_ROOT,
   DOC_ROOT,
+  DOCS_HOME_ROOT,
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_SUMMARY_ROOT,
@@ -187,7 +188,7 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[VIEWS_ROOT]]);
   });
 
-  it('invalidates docs once and each touched doc for a doc burst', () => {
+  it('invalidates docs once, the docs home once, and each touched doc for a doc burst', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() =>
@@ -196,7 +197,7 @@ describe('DeltaBridge root invalidation', () => {
         action({ model: 'doc_collection', modelId: 'col_1', data: {} }),
       ]),
     );
-    expect(seen).toEqual([[DOCS_ROOT], [DOC_ROOT, 'doc_1']]);
+    expect(seen).toEqual([[DOCS_ROOT], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
   it('refreshes only the counts and the standup board for an issue delta it patches in place', () => {

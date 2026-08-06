@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { useDocs } from '@/lib/query/use-docs.ts';
 import { DocImport } from './doc-import.tsx';
+import { DocsHome } from './docs-home.tsx';
 import { DOC_TEMPLATES } from './templates.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 
@@ -74,23 +75,25 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
           </Button>
         ) : null}
       </div>
-      <EmptyState
-        icon={<FileText strokeWidth={1.75} aria-hidden="true" />}
-        title={docs.length === 0 ? 'No docs yet' : 'Pick a doc'}
-        description={
-          docs.length === 0
-            ? 'Docs are markdown, live for everyone in the workspace, and can be published to the web.'
-            : 'Choose a doc from the tree to read it, or start a new one.'
-        }
-        className="flex-1"
-        action={
-          canWrite ? (
-            <Button variant="secondary" size="sm" onClick={newDoc}>
-              New doc
-            </Button>
-          ) : undefined
-        }
-      />
+      {docs.length === 0 ? (
+        <EmptyState
+          icon={<FileText strokeWidth={1.75} aria-hidden="true" />}
+          title="No docs yet"
+          description="Docs are markdown, live for everyone in the workspace, and can be published to the web."
+          className="flex-1"
+          action={
+            canWrite ? (
+              <Button variant="secondary" size="sm" onClick={newDoc}>
+                New doc
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <DocsHome />
+        </div>
+      )}
     </div>
   );
 }

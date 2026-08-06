@@ -1,12 +1,12 @@
-import { getDoc } from '@orbit/core';
+import { docsHome, getDoc, isFavoriteDoc } from '@orbit/core';
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { isDomainError } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { docListPayload } from '@/lib/api/docs.ts';
 import { queryKeys } from './keys.ts';
-import type { DocDetail, DocList } from './schemas.ts';
-import { docDetailSchema, docListSchema } from './schemas.ts';
+import type { DocDetail, DocList, DocsHome } from './schemas.ts';
+import { docDetailSchema, docListSchema, docsHomeSchema } from './schemas.ts';
 
 function asWire<T>(schema: { parse: (value: unknown) => T }, payload: unknown): T {
   return schema.parse(JSON.parse(JSON.stringify(payload)));
@@ -22,6 +22,7 @@ async function docDetail(principal: Principal, docId: string): Promise<DocDetail
     return asWire(docDetailSchema, {
       ...detail,
       contentHtml: renderMarkdownWithHeadingIds(detail.doc.content),
+      favorite: await isFavoriteDoc(principal, detail.doc.id),
     });
   } catch (error) {
     if (isDomainError(error) && error.code === 'not_found') return null;
@@ -29,9 +30,19 @@ async function docDetail(principal: Principal, docId: string): Promise<DocDetail
   }
 }
 
+async function docHome(principal: Principal): Promise<DocsHome> {
+  return asWire(docsHomeSchema, await docsHome(principal));
+}
+
 export async function dehydratedDocList(principal: Principal) {
   const client = new QueryClient();
   client.setQueryData(queryKeys.docs(''), await docList(principal));
+  return dehydrate(client);
+}
+
+export async function dehydratedDocsHome(principal: Principal) {
+  const client = new QueryClient();
+  client.setQueryData(queryKeys.docsHome(), await docHome(principal));
   return dehydrate(client);
 }
 

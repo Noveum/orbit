@@ -1,4 +1,4 @@
-import { archiveDoc, getDoc, updateDoc } from '@orbit/core';
+import { archiveDoc, getDoc, isFavoriteDoc, updateDoc } from '@orbit/core';
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { handle, publish, readJson } from '@/lib/api/handler.ts';
 
@@ -10,7 +10,11 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
   const { id } = await context.params;
   return await handle(async (principal) => {
     const detail = await getDoc(principal, id);
-    return { ...detail, contentHtml: renderMarkdownWithHeadingIds(detail.doc.content) };
+    return {
+      ...detail,
+      contentHtml: renderMarkdownWithHeadingIds(detail.doc.content),
+      favorite: await isFavoriteDoc(principal, detail.doc.id),
+    };
   });
 }
 
