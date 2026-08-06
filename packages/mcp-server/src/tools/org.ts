@@ -22,12 +22,13 @@ const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or t
 const personRef = z.string().min(1).describe('Person name, handle, email, id, or "me".');
 
 async function resolveView(principal: Principal, ref: string): Promise<string> {
+  const needle = ref.trim();
   const saved = (await listViews(principal)).filter((view) => !view.virtual);
-  const byId = saved.find((view) => view.id === ref);
+  const byId = saved.find((view) => view.id === needle);
   if (byId !== undefined) return byId.id;
 
-  const lowered = ref.toLowerCase();
-  const matches = saved.filter((view) => view.name.toLowerCase() === lowered);
+  const lowered = needle.toLowerCase();
+  const matches = saved.filter((view) => view.name.trim().toLowerCase() === lowered);
   const first = matches[0];
   if (first === undefined) throw notFound(`No saved view matches "${ref}".`);
   if (matches.length > 1) {

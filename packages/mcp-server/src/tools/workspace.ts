@@ -27,10 +27,15 @@ import { defineTool, publish } from './support.ts';
 const issueRef = z.string().min(1).describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
 
+const DEFAULT_LABEL_COLOR = '#5a63c8';
+
 async function resolveLabel(principal: Principal, ref: string): Promise<string> {
+  const needle = ref.trim();
   const labels = await listLabels(principal, {});
-  const lowered = ref.toLowerCase();
-  const found = labels.find((label) => label.id === ref || label.name.toLowerCase() === lowered);
+  const lowered = needle.toLowerCase();
+  const found = labels.find(
+    (label) => label.id === needle || label.name.trim().toLowerCase() === lowered,
+  );
   if (found === undefined) throw notFound(`No label matches "${ref}".`);
   return found.id;
 }
@@ -137,15 +142,13 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/)
           .optional()
-          .describe('Hex colour such as "#7c3aed".'),
-        description: z.string().max(500).optional(),
+          .describe('Hex colour such as "#7c3aed". Defaults to the Orbit accent.'),
       },
     },
     async (args) => {
       const saved = await createLabel(principal, {
         name: args.name,
-        ...(args.color === undefined ? {} : { color: args.color }),
-        ...(args.description === undefined ? {} : { description: args.description }),
+        color: args.color ?? DEFAULT_LABEL_COLOR,
       });
       await publish(saved.actions);
       return { label: { id: saved.label.id, name: saved.label.name } };
@@ -166,7 +169,6 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/)
           .optional(),
-        description: z.string().max(500).optional(),
       },
     },
     async (args) => {
@@ -174,7 +176,6 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       const saved = await updateLabel(principal, id, {
         ...(args.name === undefined ? {} : { name: args.name }),
         ...(args.color === undefined ? {} : { color: args.color }),
-        ...(args.description === undefined ? {} : { description: args.description }),
       });
       await publish(saved.actions);
       return { label: { id: saved.label.id, name: saved.label.name } };

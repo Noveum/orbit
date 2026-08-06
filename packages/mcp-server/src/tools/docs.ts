@@ -13,7 +13,7 @@ import {
   updateDocComment,
 } from '@orbit/core';
 import { DOC_VISIBILITIES } from '@orbit/shared/constants';
-import { notFound } from '@orbit/shared/errors';
+import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveProject } from '../resolve.ts';
@@ -56,13 +56,17 @@ function describeDoc(row: {
 }
 
 async function resolveDoc(principal: Principal, ref: string): Promise<string> {
+  const needle = ref.trim();
   const rows = await listDocs(principal, {});
-  const byId = rows.find((row) => row.id === ref);
+  const byId = rows.find((row) => row.id === needle);
   if (byId !== undefined) return byId.id;
-  const lowered = ref.toLowerCase();
-  const byTitle = rows.filter((row) => row.title.toLowerCase() === lowered);
+  const lowered = needle.toLowerCase();
+  const byTitle = rows.filter((row) => row.title.trim().toLowerCase() === lowered);
   const first = byTitle[0];
   if (first === undefined) throw notFound(`No document matches "${ref}".`);
+  if (byTitle.length > 1) {
+    throw conflict(`More than one document is called "${ref}". Pass the document id instead.`);
+  }
   return first.id;
 }
 

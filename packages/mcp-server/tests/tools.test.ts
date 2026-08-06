@@ -205,6 +205,18 @@ describe('issues', () => {
     expect(deltasOf(payload)[0]).toMatchObject({ model: 'comment', action: 'insert' });
   });
 
+  it('resolves a label to update whose reference carries stray whitespace', async () => {
+    await admin.result('create_label', { name: 'Trimmed label' });
+
+    const renamed = await admin.result('update_label', {
+      label: '  trimmed label  ',
+      name: 'Renamed label',
+    });
+
+    const label = renamed['label'] as { name: string };
+    expect(label.name).toBe('Renamed label');
+  });
+
   it('refuses a reply that belongs to a different issue', async () => {
     const host = await newIssue('Has the thread');
     const other = await newIssue('Somewhere else');
