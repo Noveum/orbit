@@ -133,7 +133,11 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
   for (const upload of UPLOADS) {
     it(`round trips ${upload.contentType} with its content type intact`, async () => {
       const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-${upload.name}`;
-      const target = await storage().createUploadTarget(key, upload.contentType);
+      const target = await storage().createUploadTarget(
+        key,
+        upload.contentType,
+        bodyFor(upload.contentType).size,
+      );
       written.push(key);
 
       expect(Object.keys(target.headers)).toEqual(['content-type']);
@@ -170,15 +174,40 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
     });
   }
 
+  it('refuses an upload larger than the presigned length and stores nothing', async () => {
+    const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-oversized.txt`;
+    const declared = new Blob(['ten bytes!']);
+    const target = await storage().createUploadTarget(key, 'text/plain', declared.size);
+
+    const oversized = await fetch(target.url, {
+      method: target.method,
+      headers: { ...target.headers, origin: PRODUCTION_ORIGIN },
+      body: new Blob([`${'x'.repeat(declared.size * 100)}`]),
+    });
+
+    expect(oversized.status).toBeGreaterThanOrEqual(400);
+    expect(await storage().stat(key)).toBeNull();
+
+    const honest = await fetch(target.url, {
+      method: target.method,
+      headers: { ...target.headers, origin: PRODUCTION_ORIGIN },
+      body: declared,
+    });
+    written.push(key);
+    expect(honest.status).toBe(200);
+    expect((await storage().stat(key))?.size).toBe(declared.size);
+  });
+
   it('stores the content type the client sent, so the client must send the target headers', async () => {
     const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-mismatch.pdf`;
-    const target = await storage().createUploadTarget(key, 'application/pdf');
+    const body = bodyFor('application/pdf');
+    const target = await storage().createUploadTarget(key, 'application/pdf', body.size);
     written.push(key);
 
     await fetch(target.url, {
       method: target.method,
       headers: { 'content-type': 'text/html' },
-      body: bodyFor('application/pdf'),
+      body,
     });
 
     expect((await storage().stat(key))?.contentType).toBe('text/html');
