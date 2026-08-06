@@ -1,32 +1,37 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { db, inArray, schema } from '@orbit/db';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { auth } from '../../../src/lib/auth/server.ts';
-
-const dbModule = await import('@orbit/db');
-let lookupEmail: string | undefined;
-
-mock.module('@orbit/db', () => ({
-  ...dbModule,
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve(lookupEmail === undefined ? [] : [{ email: lookupEmail }]),
-        }),
-      }),
-    }),
-  },
-}));
 
 const previousDomains = process.env['ALLOWED_EMAIL_DOMAINS'];
 
-beforeEach(() => {
-  process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
-  lookupEmail = undefined;
+const allowedId = `usr_allowed_${randomUUIDv7()}`;
+const blockedId = `usr_blocked_${randomUUIDv7()}`;
+
+beforeAll(async () => {
+  await db.insert(schema.user).values([
+    {
+      id: allowedId,
+      name: 'Shashank',
+      email: 'shashank@magicapi.com',
+      handle: `allowed-${allowedId.slice(-8)}`,
+    },
+    {
+      id: blockedId,
+      name: 'Somebody Else',
+      email: 'kpulkit15234@gmail.com',
+      handle: `blocked-${blockedId.slice(-8)}`,
+    },
+  ]);
 });
 
-afterAll(() => {
+beforeEach(() => {
+  process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
+});
+
+afterAll(async () => {
   process.env['ALLOWED_EMAIL_DOMAINS'] = previousDomains ?? '';
-  mock.module('@orbit/db', () => dbModule);
+  await db.delete(schema.user).where(inArray(schema.user.id, [allowedId, blockedId]));
 });
 
 function sessionHook() {
@@ -47,11 +52,9 @@ function sessionHook() {
 
 describe('session domain allowlist', () => {
   it('rejects an existing user whose domain is not allowed on any sign in', async () => {
-    lookupEmail = 'kpulkit15234@gmail.com';
-
     let thrown: unknown;
     try {
-      await sessionHook()('user_1');
+      await sessionHook()(blockedId);
     } catch (error) {
       thrown = error;
     }
@@ -59,14 +62,12 @@ describe('session domain allowlist', () => {
   });
 
   it('lets an allowed domain start a session', async () => {
-    lookupEmail = 'shashank@magicapi.com';
-    const result = await sessionHook()('user_1');
-    expect(result).toMatchObject({ data: { userId: 'user_1' } });
+    const result = await sessionHook()(allowedId);
+    expect(result).toMatchObject({ data: { userId: allowedId } });
   });
 
   it('does nothing when the user cannot be found', async () => {
-    lookupEmail = undefined;
-    const result = await sessionHook()('ghost');
-    expect(result).toMatchObject({ data: { userId: 'ghost' } });
+    const result = await sessionHook()('usr_ghost_nobody');
+    expect(result).toMatchObject({ data: { userId: 'usr_ghost_nobody' } });
   });
 });

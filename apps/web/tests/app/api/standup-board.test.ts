@@ -1,9 +1,12 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { createIssue, createLabel } from '@orbit/core';
+import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import { db, schema } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
-const dbModule = await import('@orbit/db');
 
 interface BoardStub {
   since: Date;
@@ -14,7 +17,6 @@ interface BoardStub {
 const SINCE = new Date('2030-06-10T08:00:00.000Z');
 
 const board: BoardStub = { since: SINCE, issues: [], workload: [] };
-const labelLinks: { issueId: string; labelId: string }[] = [];
 const received: unknown[] = [];
 
 mock.module('@orbit/core', () => ({
@@ -25,40 +27,49 @@ mock.module('@orbit/core', () => ({
   },
 }));
 
-mock.module('@orbit/db', () => ({
-  ...dbModule,
-  db: { select: () => ({ from: () => ({ where: () => Promise.resolve(labelLinks) }) }) },
-}));
+interface StubSession {
+  readonly user: { id: string; name: string; email: string };
+  readonly session: { activeOrganizationId: string };
+}
 
-const session = {
-  user: { id: 'user_1', name: 'Ada Admin', email: 'ada@orbit.test' },
-  session: { activeOrganizationId: 'org_1' },
-};
-const sessionHolder: { value: typeof session | null } = { value: session };
+const sessionHolder: { value: StubSession | null } = { value: null };
 
 mock.module('@/lib/auth/session.ts', () => ({
   getSession: () => Promise.resolve(sessionHolder.value),
   requireSession: () => Promise.resolve(sessionHolder.value),
 }));
 
-const principal: Principal = {
-  userId: 'user_1',
-  organizationId: 'org_1',
-  role: 'admin',
-  teamIds: ['team_1'],
-};
-
-mock.module('@/lib/auth/principal.ts', () => ({
-  resolveMembership: () =>
-    Promise.resolve({
-      principal,
-      memberId: 'member_1',
-      organizationName: 'Nova',
-      organizationSlug: 'nova',
-    }),
-}));
-
 const { GET } = await import('../../../src/app/api/standup/board/route.ts');
+
+let workspace: Workspace;
+let firstIssueId: string;
+let secondIssueId: string;
+let bugLabelId: string;
+let uiLabelId: string;
+
+beforeAll(async () => {
+  await resetDatabase();
+  workspace = await createWorkspace('Nova');
+  const first = await createIssue(workspace.admin, {
+    teamId: workspace.teamId,
+    title: 'Ship the importer',
+  });
+  firstIssueId = first.issue.id;
+  const second = await createIssue(workspace.admin, {
+    teamId: workspace.teamId,
+    title: 'Fix the socket',
+  });
+  secondIssueId = second.issue.id;
+
+  const bug = await createLabel(workspace.admin, { name: 'Bugbear', color: '#ff0000' });
+  bugLabelId = bug.label.id;
+  const surface = await createLabel(workspace.admin, { name: 'Surface', color: '#00ff00' });
+  uiLabelId = surface.label.id;
+});
+
+afterAll(() => {
+  mock.module('@orbit/core', () => coreModule);
+});
 
 const payloadSchema = z.object({
   since: z.string(),
@@ -77,21 +88,23 @@ const errorSchema = z.object({ error: z.object({ code: z.string() }) });
 
 const BASE = 'http://localhost:3000/api/standup/board';
 
-beforeEach(() => {
-  sessionHolder.value = session;
+beforeEach(async () => {
+  sessionHolder.value = {
+    user: {
+      id: workspace.adminUser.id,
+      name: workspace.adminUser.name,
+      email: workspace.adminUser.email,
+    },
+    session: { activeOrganizationId: workspace.organizationId },
+  };
   board.since = SINCE;
   board.issues = [
-    { id: 'issue_1', title: 'Ship the importer', assigneeId: 'user_2' },
-    { id: 'issue_2', title: 'Fix the socket', assigneeId: 'user_2' },
+    { id: firstIssueId, title: 'Ship the importer', assigneeId: workspace.adminUser.id },
+    { id: secondIssueId, title: 'Fix the socket', assigneeId: workspace.adminUser.id },
   ];
-  board.workload = [{ userId: 'user_2', open: 2, inProgress: 1, completedSince: 3 }];
-  labelLinks.length = 0;
+  board.workload = [{ userId: workspace.adminUser.id, open: 2, inProgress: 1, completedSince: 3 }];
   received.length = 0;
-});
-
-afterAll(() => {
-  mock.module('@orbit/db', () => dbModule);
-  mock.module('@orbit/core', () => coreModule);
+  await db.delete(schema.issueLabel);
 });
 
 describe('GET /api/standup/board', () => {
@@ -104,23 +117,38 @@ describe('GET /api/standup/board', () => {
     expect(response.status).toBe(200);
     expect(received).toEqual([{ since: SINCE.toISOString(), limitPerPerson: 5 }]);
     expect(payload.since).toBe(SINCE.toISOString());
-    expect(payload.issues.map((issue) => issue.id)).toEqual(['issue_1', 'issue_2']);
+    expect(payload.issues.map((issue) => issue.id)).toEqual([firstIssueId, secondIssueId]);
     expect(payload.workload).toEqual([
-      { userId: 'user_2', open: 2, inProgress: 1, completedSince: 3 },
+      { userId: workspace.adminUser.id, open: 2, inProgress: 1, completedSince: 3 },
     ]);
   });
 
-  it('attaches the labels of every issue it returns', async () => {
-    labelLinks.push(
-      { issueId: 'issue_1', labelId: 'label_bug' },
-      { issueId: 'issue_1', labelId: 'label_ui' },
-    );
+  it('attaches the labels every issue actually carries', async () => {
+    await db.insert(schema.issueLabel).values([
+      { id: randomUUIDv7(), issueId: firstIssueId, labelId: bugLabelId },
+      { id: randomUUIDv7(), issueId: firstIssueId, labelId: uiLabelId },
+    ]);
 
     const response = await GET(new Request(BASE));
     const payload = payloadSchema.parse(await response.json());
 
-    expect(payload.issues[0]?.labelIds).toEqual(['label_bug', 'label_ui']);
+    expect(payload.issues[0]?.labelIds.slice().sort()).toEqual([bugLabelId, uiLabelId].sort());
     expect(payload.issues[1]?.labelIds).toEqual([]);
+  });
+
+  it('never borrows a label from an issue the board did not return', async () => {
+    await db
+      .insert(schema.issueLabel)
+      .values([{ id: randomUUIDv7(), issueId: secondIssueId, labelId: bugLabelId }]);
+    board.issues = [
+      { id: firstIssueId, title: 'Ship the importer', assigneeId: workspace.adminUser.id },
+    ];
+
+    const response = await GET(new Request(BASE));
+    const payload = payloadSchema.parse(await response.json());
+
+    expect(payload.issues).toHaveLength(1);
+    expect(payload.issues[0]?.labelIds).toEqual([]);
   });
 
   it('falls back to the service defaults when no query string is sent', async () => {
