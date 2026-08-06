@@ -59,51 +59,20 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
     {
       id: 'personal',
       links: [
-        {
-          href: '/inbox',
-          label: 'Inbox',
-          icon: Inbox,
-          binding: 'g i',
-          count: inboxCount,
-        },
-        {
-          href: '/my-issues',
-          label: 'My issues',
-          icon: CircleDot,
-          binding: 'g m',
-        },
-        {
-          href: '/pulls',
-          label: 'Pull requests',
-          icon: GitPullRequest,
-          binding: 'g r',
-        },
+        { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
+        { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
+        { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
       ],
     },
     {
       id: 'workspace',
       title: 'Workspace',
       links: [
-        {
-          href: '/projects',
-          label: 'Projects',
-          icon: FolderKanban,
-          binding: 'g p',
-        },
-        {
-          href: '/sprints',
-          label: 'Sprints',
-          icon: RefreshCcw,
-          binding: 'g t',
-        },
+        { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
+        { href: '/sprints', label: 'Sprints', icon: RefreshCcw, binding: 'g t' },
         { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
-        {
-          href: '/analytics',
-          label: 'Analytics',
-          icon: BarChart3,
-          binding: 'g a',
-        },
+        { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
         { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
       ],
     },
@@ -117,11 +86,7 @@ export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): Na
           icon: CircleDot,
           count: team.openIssues,
         },
-        {
-          href: `/team/${team.key.toLowerCase()}/board`,
-          label: 'Board',
-          icon: Target,
-        },
+        { href: `/team/${team.key.toLowerCase()}/board`, label: 'Board', icon: Target },
         {
           href: `/team/${team.key.toLowerCase()}/sprint/active`,
           label: 'Active sprint',
@@ -159,50 +124,19 @@ const DEFAULT_TEAM_COLOR = '#5A63C8';
 export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): SidebarNav {
   return {
     personal: [
-      {
-        href: '/inbox',
-        label: 'Inbox',
-        icon: Inbox,
-        binding: 'g i',
-        count: inboxCount,
-      },
-      {
-        href: '/my-issues',
-        label: 'My issues',
-        icon: CircleDot,
-        binding: 'g m',
-      },
-      {
-        href: '/pulls',
-        label: 'Pull requests',
-        icon: GitPullRequest,
-        binding: 'g r',
-      },
+      { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
+      { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
+      { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
     ],
     workspace: {
       id: 'workspace',
       title: 'Workspace',
       links: [
-        {
-          href: '/projects',
-          label: 'Projects',
-          icon: FolderKanban,
-          binding: 'g p',
-        },
-        {
-          href: '/sprints',
-          label: 'Sprints',
-          icon: RefreshCcw,
-          binding: 'g t',
-        },
+        { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
+        { href: '/sprints', label: 'Sprints', icon: RefreshCcw, binding: 'g t' },
         { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
         { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
-        {
-          href: '/analytics',
-          label: 'Analytics',
-          icon: BarChart3,
-          binding: 'g a',
-        },
+        { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
         { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
       ],
     },
@@ -223,11 +157,7 @@ export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): Si
             count: team.openIssues,
           },
           { href: `/team/${key}/board`, label: 'Board', icon: Target },
-          {
-            href: `/team/${key}/sprint/active`,
-            label: 'Active sprint',
-            icon: RefreshCcw,
-          },
+          { href: `/team/${key}/sprint/active`, label: 'Active sprint', icon: RefreshCcw },
         ],
       };
     }),
