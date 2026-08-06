@@ -7,6 +7,7 @@ import type { Member } from '@/lib/query/schemas.ts';
 import {
   RichTextEditor,
   settledMarkdown,
+  type UploadedAttachment,
 } from '../../../../src/features/docs/editor/rich-text-editor.tsx';
 
 const members: readonly Member[] = [
@@ -25,10 +26,12 @@ function Harness({
   onChange = mock(),
   onReady,
   onCancel,
+  onUpload,
 }: {
   onChange?: (value: string) => void;
   onReady: (editor: Editor) => void;
   onCancel?: () => void;
+  onUpload?: (file: File) => Promise<UploadedAttachment>;
 }) {
   const [value, setValue] = useState('');
   return (
@@ -43,6 +46,7 @@ function Harness({
       testId="rich"
       onReady={onReady}
       {...(onCancel === undefined ? {} : { onCancel })}
+      {...(onUpload === undefined ? {} : { onUpload })}
     />
   );
 }
@@ -95,6 +99,62 @@ describe('slash menu', () => {
     await user.keyboard('{Enter}');
     await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(0));
     expect(screen.queryByTestId('slash-menu')).toBeNull();
+  });
+});
+
+async function neverUploads(): Promise<UploadedAttachment> {
+  return await Promise.reject(new Error('This test never finishes an upload.'));
+}
+
+describe('attaching a file from the slash menu', () => {
+  it('finds the attachment command by the words people actually type', async () => {
+    const editor = await mountEditor({ onUpload: neverUploads });
+    editor.chain().focus().insertContent('/attach').run();
+
+    expect(await screen.findByTestId('slash-image')).toBeInTheDocument();
+  });
+
+  it('opens the file picker when the attachment command is chosen', async () => {
+    const editor = await mountEditor({ onUpload: neverUploads });
+    const opened = mock();
+    screen.getByTestId('rich-file').addEventListener('click', opened);
+
+    editor.chain().focus().insertContent('/file').run();
+    await screen.findByTestId('slash-image');
+    await userEvent.setup().click(screen.getByTestId('slash-image'));
+
+    await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+  });
+
+  it('has no file input at all when the surface cannot take uploads', async () => {
+    await mountEditor();
+    expect(screen.queryByTestId('rich-file')).toBeNull();
+  });
+
+  it('embeds an image and links anything else, using the url the upload reported', async () => {
+    const onChange = mock();
+    const onUpload = mock(
+      async (file: File): Promise<UploadedAttachment> =>
+        await Promise.resolve({
+          url: `/api/files/org/${file.name}`,
+          fileName: file.name,
+          contentType: file.type,
+        }),
+    );
+    await mountEditor({ onChange, onUpload });
+    const input = screen.getByTestId('rich-file');
+    const user = userEvent.setup({ applyAccept: false });
+
+    await user.upload(input, new File(['x'], 'shot.png', { type: 'image/png' }));
+    await waitFor(() =>
+      expect(onChange.mock.calls.at(-1)?.[0]).toContain('![shot.png](/api/files/org/shot.png)'),
+    );
+
+    await user.upload(input, new File(['x'], 'notes.txt', { type: 'text/plain' }));
+    await waitFor(() =>
+      expect(onChange.mock.calls.at(-1)?.[0]).toContain('[notes.txt](/api/files/org/notes.txt)'),
+    );
+    expect(onUpload).toHaveBeenCalledTimes(2);
   });
 });
 
