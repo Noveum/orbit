@@ -2,7 +2,6 @@
 
 import type { DisplayProperty, IssueOrdering } from '@orbit/shared/filters';
 import { CircleDot } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import type { RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -36,7 +35,6 @@ export function assignedTo(
 }
 
 export function MyIssuesView() {
-  const router = useRouter();
   const workspace = useWorkspace();
   const { layout, setLayout } = useLayoutPreference('my_issues', '', 'board');
   const { config, setConfig } = useViewConfig(null, layout, 'my_issues');
@@ -141,10 +139,6 @@ export function MyIssuesView() {
       <IssuePeek
         issue={mine.find((issue) => issue.id === peekId)}
         onClose={() => setPeekId(null)}
-        onOpen={() => {
-          const found = mine.find((issue) => issue.id === peekId);
-          if (found !== undefined) router.push(`/issue/${found.identifier}`);
-        }}
       />
     </div>
   );

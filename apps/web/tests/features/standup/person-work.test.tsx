@@ -195,6 +195,19 @@ describe('PersonWork', () => {
     expect(onPeek).toHaveBeenCalledWith('issue_up');
   });
 
+  it('gives every standup row a real link to its issue page', () => {
+    renderWork({
+      closed: [issue({ id: 'a', identifier: 'ENG-1', stateId: 'state_done' })],
+      inFlight: [issue({ id: 'b', identifier: 'ENG-2', stateId: 'state_doing' })],
+      upNext: [issue({ id: 'c', identifier: 'ENG-3', stateId: 'state_todo' })],
+    });
+
+    for (const identifier of ['ENG-1', 'ENG-2', 'ENG-3']) {
+      const link = within(screen.getByTestId(`issue-row-${identifier}`)).getByRole('link');
+      expect(link.getAttribute('href')).toBe(`/issue/${identifier}`);
+    }
+  });
+
   it('tells the presenter when a column is empty', () => {
     renderWork({});
 

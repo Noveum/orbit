@@ -10,11 +10,9 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 
-const pushed: string[] = [];
-
 mock.module('next/navigation', () => ({
   useRouter: () => ({
-    push: (href: string) => pushed.push(href),
+    push: () => undefined,
     replace: () => undefined,
     prefetch: () => undefined,
     back: () => undefined,
@@ -26,12 +24,8 @@ mock.module('next/navigation', () => ({
 const { IssuePeek: realIssuePeek } = await import('@/features/issues/issue-peek.tsx');
 
 mock.module('@/features/issues/issue-peek.tsx', () => ({
-  IssuePeek: ({ issue, onOpen }: { issue: Issue | undefined; onOpen: () => void }) =>
-    issue === undefined ? null : (
-      <button type="button" data-testid="issue-peek" onClick={onOpen}>
-        {issue.identifier}
-      </button>
-    ),
+  IssuePeek: ({ issue }: { issue: Issue | undefined }) =>
+    issue === undefined ? null : <div data-testid="issue-peek">{issue.identifier}</div>,
 }));
 
 function state(id: string, category: string): WorkflowState {
@@ -183,7 +177,6 @@ function activeName(): string {
 
 beforeEach(() => {
   boardRequests.length = 0;
-  pushed.length = 0;
   stubFetch();
 });
 
@@ -258,16 +251,30 @@ describe('StandupBoard', () => {
     expect(activeName()).toBe('Cy Diaz');
   });
 
-  it('opens the peek for a clicked issue and can push it to its own page', async () => {
+  it('links a standup row to its issue page and peeks it in place on a plain click', async () => {
     await mountBoard();
 
-    fireEvent.click(within(screen.getByTestId('issue-row-ENG-2')).getByText('Wire the socket'));
+    const row = within(screen.getByTestId('issue-row-ENG-2'));
+    const title = row.getByRole('link', { name: 'Wire the socket' });
+    expect(title.getAttribute('href')).toBe('/issue/ENG-2');
 
-    const peek = await screen.findByTestId('issue-peek');
-    expect(peek.textContent).toBe('ENG-2');
+    const leftTheBoard = fireEvent.click(title);
 
-    fireEvent.click(peek);
-    expect(pushed).toEqual(['/issue/ENG-2']);
+    expect(leftTheBoard).toBe(false);
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
+  });
+
+  it('peeks the focused row when the presenter presses space', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    const title = within(screen.getByTestId('issue-row-ENG-3')).getByRole('link', {
+      name: 'Draft the schema',
+    });
+    title.focus();
+    await user.keyboard(' ');
+
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-3');
   });
 
   it('leaves the arrow keys to the peek while it is open', async () => {

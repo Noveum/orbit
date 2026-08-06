@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
+import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -96,14 +97,15 @@ export function IssueRow({
       {shows('status') && state !== undefined ? (
         <StateGlyph category={state.category} color={state.color} title={state.name} />
       ) : null}
-      <button
-        type="button"
-        onClick={onOpen}
+      <IssueLink
+        identifier={issue.identifier}
+        onPlainClick={onOpen}
         onFocus={onFocus}
-        className="min-w-0 flex-1 truncate rounded-sm text-left text-text"
+        prefetch={false}
+        className="min-w-0 flex-1 truncate rounded-sm text-text"
       >
         {issue.title}
-      </button>
+      </IssueLink>
       {shows('labels') ? (
         <span className="hidden items-center gap-1 sm:flex">
           {labels.slice(0, 2).map((label) => (
