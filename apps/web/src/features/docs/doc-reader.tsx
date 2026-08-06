@@ -10,7 +10,7 @@ import { DocAttachments } from './doc-attachments.tsx';
 import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import type { DocHeading } from './outline.ts';
-import { readTimeMinutes } from './outline.ts';
+import { readTimeMinutes, wordCount } from './outline.ts';
 import { useHashScroll } from './use-hash-scroll.ts';
 import { useScrollSpy } from './use-scroll-spy.ts';
 
@@ -54,6 +54,9 @@ export function DocContextRow({
         </span>
       )}
       <span className="text-2xs text-faint">Updated {relativeTime(new Date(doc.updatedAt))}</span>
+      <span data-testid="doc-stats" className="text-2xs text-faint tabular-nums">
+        {wordCount(doc.content).toLocaleString()} words · {readTimeMinutes(doc.content)} min read
+      </span>
     </div>
   );
 }
@@ -121,8 +124,6 @@ export function DocReader({
             <Avatar name={author.name} src={author.image} size="sm" />
             <span className="text-muted">{author.name}</span>
           </span>
-          <span aria-hidden="true">·</span>
-          <span>{readTimeMinutes(doc.content)} min read</span>
           <span aria-hidden="true">·</span>
           <span className="flex items-center gap-1">
             <Users className="size-3" aria-hidden="true" />

@@ -173,3 +173,37 @@ describe('doc outline scroll spy', () => {
     expect(await screen.findByTestId('doc-backlinks')).toHaveTextContent('Sync engine launch plan');
   });
 });
+
+describe('doc stats', () => {
+  it('reports the size of the doc next to when it was last touched', async () => {
+    render(
+      <DocReader
+        doc={{ ...doc, content: 'word '.repeat(660) }}
+        contentHtml=""
+        attachments={[]}
+        author={{ name: 'Pulkit', image: null }}
+        followers={1}
+        collectionName={null}
+        projectName={null}
+      />,
+    );
+
+    expect((await screen.findByTestId('doc-stats')).textContent).toBe('660 words · 3 min read');
+  });
+
+  it('counts the words of the doc it was given, not the last one', async () => {
+    render(
+      <DocReader
+        doc={{ ...doc, content: 'one two three' }}
+        contentHtml=""
+        attachments={[]}
+        author={{ name: 'Pulkit', image: null }}
+        followers={1}
+        collectionName={null}
+        projectName={null}
+      />,
+    );
+
+    expect((await screen.findByTestId('doc-stats')).textContent).toBe('3 words · 1 min read');
+  });
+});

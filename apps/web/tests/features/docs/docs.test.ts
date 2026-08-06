@@ -16,6 +16,7 @@ import {
   extractHeadings,
   readTimeMinutes,
   sameHeadings,
+  wordCount,
 } from '../../../src/features/docs/outline.ts';
 import {
   canonicalDocUrl,
@@ -93,6 +94,14 @@ describe('extractHeadings', () => {
   it('never reports less than a minute of reading', () => {
     expect(readTimeMinutes('')).toBe(1);
     expect(readTimeMinutes('word '.repeat(660))).toBe(3);
+  });
+
+  it('counts words across every kind of whitespace and reports none for an empty doc', () => {
+    expect(wordCount('')).toBe(0);
+    expect(wordCount('   \n\n  ')).toBe(0);
+    expect(wordCount('one two three')).toBe(3);
+    expect(wordCount('one\ntwo\t three   four\r\nfive')).toBe(5);
+    expect(wordCount('word '.repeat(660))).toBe(660);
   });
 });
 

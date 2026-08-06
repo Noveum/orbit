@@ -24,10 +24,13 @@ export function sameHeadings(left: readonly DocHeading[], right: readonly DocHea
   return left.every((heading, index) => heading.id === right[index]?.id);
 }
 
-export function readTimeMinutes(markdown: string): number {
-  const words = markdown
+export function wordCount(markdown: string): number {
+  return markdown
     .trim()
     .split(/\s+/)
     .filter((word) => word.length > 0).length;
-  return Math.max(1, Math.round(words / 220));
+}
+
+export function readTimeMinutes(markdown: string): number {
+  return Math.max(1, Math.round(wordCount(markdown) / 220));
 }
