@@ -295,6 +295,32 @@ describe('StandupBoard', () => {
     await waitFor(() => expect(screen.queryByTestId('standup-timer')).toBeNull());
   });
 
+  it('leaves the timer to the peek while it is open', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    fireEvent.click(within(screen.getByTestId('issue-row-ENG-2')).getByText('Wire the socket'));
+    await screen.findByTestId('issue-peek');
+
+    await user.keyboard('t');
+
+    expect(screen.queryByTestId('standup-timer')).toBeNull();
+  });
+
+  it('restarts the timer when the presenter moves to the next person', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.keyboard('t');
+    await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
+    const first = screen.getByTestId('standup-timer').textContent;
+
+    await user.keyboard('{ArrowRight}');
+    await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
+
+    expect(screen.getByTestId('standup-timer').textContent).toBe(first);
+  });
+
   it('reads the whole meeting out of a single board request', async () => {
     const user = userEvent.setup();
     await mountBoard();

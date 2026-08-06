@@ -100,14 +100,15 @@ function IssueColumn({ testId, title, issues, total, empty, peekId, onPeek }: Is
     <section className="flex min-h-0 min-w-0 flex-col gap-1.5" data-testid={testId}>
       <div className="flex items-baseline gap-1.5 px-3">
         <h3 className="font-medium text-2xs text-faint uppercase tracking-[0.08em]">{title}</h3>
-        <span data-numeric className="text-2xs text-faint">
-          {counted}
-        </span>
         {issues.length < counted ? (
           <span data-numeric className="text-2xs text-faint" data-testid={`${testId}-capped`}>
             showing {issues.length} of {counted}
           </span>
-        ) : null}
+        ) : (
+          <span data-numeric className="text-2xs text-faint">
+            {counted}
+          </span>
+        )}
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {issues.map((issue) => (

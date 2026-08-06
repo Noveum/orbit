@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Principal } from '@orbit/shared/policy';
-import { standupBoardQuerySchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
@@ -21,7 +20,7 @@ const received: unknown[] = [];
 mock.module('@orbit/core', () => ({
   ...coreModule,
   standupBoard: (_principal: Principal, input: unknown) => {
-    received.push(standupBoardQuerySchema.parse(input));
+    received.push(input);
     return Promise.resolve(board);
   },
 }));

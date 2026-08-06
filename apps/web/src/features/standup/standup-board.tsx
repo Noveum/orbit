@@ -32,7 +32,7 @@ export function StandupBoard() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
   const [timerOn, setTimerOn] = useState(false);
-  const [startedAt] = useState(() => Date.now());
+  const [turnStartedAt, setTurnStartedAt] = useState(() => Date.now());
 
   const people = useMemo(() => byName(workspace.members), [workspace.members]);
   const issues = board.data?.issues ?? NO_ISSUES;
@@ -46,12 +46,19 @@ export function StandupBoard() {
     [board.data],
   );
 
-  const activeId = selectedId ?? people[0]?.id ?? null;
+  const stillPresent = selectedId !== null && people.some((person) => person.id === selectedId);
+  const activeId = (stillPresent ? selectedId : people[0]?.id) ?? null;
   const activeIndex = people.findIndex((person) => person.id === activeId);
+
+  const selectPerson = useCallback((id: string) => {
+    setSelectedId(id);
+    setTurnStartedAt(Date.now());
+  }, []);
 
   const move = useCallback(
     (step: number) => {
       if (people.length === 0) return;
+      setTurnStartedAt(Date.now());
       setSelectedId((current) => {
         const from = people.findIndex((person) => person.id === current);
         const base = from < 0 ? 0 : from;
@@ -78,6 +85,7 @@ export function StandupBoard() {
     label: 'Toggle standup timer',
     section: 'Standup',
     scope: 'standup',
+    enabled: peekId === null,
   });
 
   const buckets = useMemo(
@@ -104,7 +112,7 @@ export function StandupBoard() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {timerOn ? <StandupTimer key={activeId ?? 'nobody'} startedAt={startedAt} /> : null}
+          {timerOn ? <StandupTimer startedAt={turnStartedAt} /> : null}
           <Button
             size="sm"
             variant="ghost"
@@ -123,7 +131,7 @@ export function StandupBoard() {
         activeId={activeId}
         countById={countById}
         workloadById={workloadById}
-        onSelect={setSelectedId}
+        onSelect={selectPerson}
         buckets={buckets}
         sinceLabel={sinceLabel}
         peekId={peekId}
