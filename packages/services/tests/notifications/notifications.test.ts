@@ -117,6 +117,7 @@ describe('notifyMany', () => {
         eventFor(fixture, { type: 'mention', reason: 'mentioned', userIds: [fixture.adaId] }),
       ]);
       expect(outcome.notifications[0]?.reason).toBe('mentioned');
+      expect(outcome.actions[0]?.data['reason']).toBe('mentioned');
     });
   });
 
@@ -141,6 +142,10 @@ describe('notifyMany', () => {
       expect(page.items).toHaveLength(0);
       expect(page.unreadCount).toBe(0);
       expect(await unreadCount(tx, fixture.adaId, fixture.organizationId)).toBe(0);
+      expect(await unreadCounters(tx, fixture.adaId, fixture.organizationId)).toEqual({
+        total: 0,
+        mentions: 0,
+      });
     });
   });
 

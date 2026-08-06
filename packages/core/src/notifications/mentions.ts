@@ -22,7 +22,8 @@ export async function resolveHandles(
   handles: readonly string[],
   teamId: string | null,
 ): Promise<string[]> {
-  if (handles.length === 0) return [];
+  const lowered = [...new Set(handles.map((handle) => handle.toLowerCase()))];
+  if (lowered.length === 0) return [];
   const rows = await executor
     .select({ id: schema.user.id })
     .from(schema.user)
@@ -35,7 +36,7 @@ export async function resolveHandles(
     )
     .where(
       and(
-        inArray(sql`lower(${schema.user.handle})`, [...handles]),
+        inArray(sql`lower(${schema.user.handle})`, lowered),
         teamId === null
           ? sql`true`
           : sql`(${schema.member.role} = 'admin' or exists (select 1 from ${schema.teamMember} where ${schema.teamMember.userId} = ${schema.user.id} and ${schema.teamMember.teamId} = ${teamId}))`,

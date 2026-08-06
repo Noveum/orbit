@@ -82,12 +82,15 @@ describe('resolveMentions', () => {
       .set({ handle: teammate.user.handle.toUpperCase() })
       .where(eq(schema.user.id, teammate.user.id));
     expect(
-      await resolveHandles(
+      await resolveMentions(
         db,
         workspace.organizationId,
-        [teammate.user.handle.toLowerCase()],
+        `Ping @${teammate.user.handle.toUpperCase()}`,
         workspace.teamId,
       ),
     ).toEqual([teammate.user.id]);
+    expect(
+      await resolveHandles(db, workspace.organizationId, ['GrAcE-NoBoDy'], workspace.teamId),
+    ).toEqual([]);
   });
 });
