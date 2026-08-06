@@ -30,17 +30,29 @@ describe('laneSuffix', () => {
     expect(laneSuffix('')).toBe('');
   });
 
-  it('reduces a lane to the characters a database name allows', () => {
-    expect(laneSuffix('Agent-7')).toBe('agent7');
-    expect(laneSuffix('wf/62ba4dee aac')).toBe('wf62ba4deeaac');
+  it('reduces a lane to characters a database name allows', () => {
+    expect(laneSuffix('Agent-7')).toMatch(/^agent7[0-9a-f]{8}$/);
   });
 
-  it('is empty when nothing usable survives, so the base database is used', () => {
-    expect(laneSuffix('---')).toBe('');
+  it('is stable, so every package in one run lands in the same lane', () => {
+    expect(laneSuffix('agent-7')).toBe(laneSuffix('agent-7'));
   });
 
-  it('caps the length so the database name stays reasonable', () => {
-    expect(laneSuffix('a'.repeat(80))).toHaveLength(24);
+  it('keeps two lanes apart even when normalising makes them look alike', () => {
+    expect(laneSuffix('agent-7')).not.toBe(laneSuffix('agent_7'));
+    expect(laneSuffix('wf/1')).not.toBe(laneSuffix('wf-1'));
+    expect(laneSuffix('Alpha')).not.toBe(laneSuffix('alpha'));
+  });
+
+  it('still yields a usable lane when nothing readable survives', () => {
+    expect(laneSuffix('---')).toMatch(/^[0-9a-f]{8}$/);
+    expect(laneSuffix('---')).not.toBe(laneSuffix('___'));
+  });
+
+  it('caps the length so the database name stays well inside the Postgres limit', () => {
+    const longest = `orbit_test_core_${laneSuffix('a'.repeat(200))}`;
+    expect(laneSuffix('a'.repeat(200))).toHaveLength(20);
+    expect(longest.length).toBeLessThan(63);
   });
 });
 

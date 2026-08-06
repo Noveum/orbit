@@ -22,17 +22,20 @@ const admin = postgres(
   { max: 1, idle_timeout: 5 },
 );
 
-const rows = await admin<{ datname: string }[]>`
-  select datname from pg_database where datname like 'orbit_test%' order by datname`;
+try {
+  const rows = await admin<{ datname: string }[]>`
+    select datname from pg_database where datname like 'orbit_test%' order by datname`;
 
-let dropped = 0;
-for (const row of rows) {
-  const name = row.datname;
-  if (BASE_DATABASES.has(name) || !LANE_DATABASE.test(name)) continue;
-  await admin.unsafe(`drop database if exists "${name}" with (force)`);
-  console.log(`dropped ${name}`);
-  dropped += 1;
+  let dropped = 0;
+  for (const row of rows) {
+    const name = row.datname;
+    if (BASE_DATABASES.has(name) || !LANE_DATABASE.test(name)) continue;
+    await admin.unsafe(`drop database if exists "${name}" with (force)`);
+    console.log(`dropped ${name}`);
+    dropped += 1;
+  }
+
+  console.log(dropped === 0 ? 'No lane databases to drop.' : `Dropped ${dropped} lane databases.`);
+} finally {
+  await admin.end();
 }
-
-console.log(dropped === 0 ? 'No lane databases to drop.' : `Dropped ${dropped} lane databases.`);
-await admin.end();

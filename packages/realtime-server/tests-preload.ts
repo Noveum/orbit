@@ -1,5 +1,5 @@
+import { ensureLaneDatabase } from '@orbit/db/test-lane';
 import { resolveTestDatabaseUrl } from '../../scripts/test-env.ts';
-import { ensureLaneDatabase } from '../db/src/test-lane.ts';
 
 const databaseUrl = resolveTestDatabaseUrl('orbit_test_rts');
 await ensureLaneDatabase(databaseUrl, 'orbit_test_rts');

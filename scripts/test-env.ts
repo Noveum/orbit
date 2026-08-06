@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto';
+
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
 
 const LANE_CHARACTERS = /[^a-z0-9]+/g;
+const LANE_READABLE = 12;
+const LANE_DIGEST = 8;
 
 function databaseNameOf(candidate: string): string {
   return new URL(candidate).pathname.replace(/^\//, '');
@@ -16,9 +20,10 @@ function assertTestDatabase(name: string, source: string): string {
 }
 
 export function laneSuffix(raw: string | undefined): string {
-  if (raw === undefined) return '';
-  const cleaned = raw.toLowerCase().replace(LANE_CHARACTERS, '');
-  return cleaned.length === 0 ? '' : cleaned.slice(0, 24);
+  if (raw === undefined || raw.trim().length === 0) return '';
+  const readable = raw.toLowerCase().replace(LANE_CHARACTERS, '').slice(0, LANE_READABLE);
+  const digest = createHash('sha256').update(raw).digest('hex').slice(0, LANE_DIGEST);
+  return `${readable}${digest}`;
 }
 
 export function currentLane(): string {
