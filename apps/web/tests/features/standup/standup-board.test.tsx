@@ -10,11 +10,9 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 
-const pushed: string[] = [];
-
 mock.module('next/navigation', () => ({
   useRouter: () => ({
-    push: (href: string) => pushed.push(href),
+    push: () => undefined,
     replace: () => undefined,
     prefetch: () => undefined,
     back: () => undefined,
@@ -27,11 +25,7 @@ const { IssuePeek: realIssuePeek } = await import('@/features/issues/issue-peek.
 
 mock.module('@/features/issues/issue-peek.tsx', () => ({
   IssuePeek: ({ issue }: { issue: Issue | undefined }) =>
-    issue === undefined ? null : (
-      <a data-testid="issue-peek" href={`/issue/${issue.identifier}`}>
-        {issue.identifier}
-      </a>
-    ),
+    issue === undefined ? null : <div data-testid="issue-peek">{issue.identifier}</div>,
 }));
 
 function state(id: string, category: string): WorkflowState {
@@ -183,7 +177,6 @@ function activeName(): string {
 
 beforeEach(() => {
   boardRequests.length = 0;
-  pushed.length = 0;
   stubFetch();
 });
 
@@ -258,18 +251,17 @@ describe('StandupBoard', () => {
     expect(activeName()).toBe('Cy Diaz');
   });
 
-  it('opens the peek for a clicked issue and links it to its own page', async () => {
+  it('links a standup row to its issue page and peeks it in place on a plain click', async () => {
     await mountBoard();
 
     const row = within(screen.getByTestId('issue-row-ENG-2'));
-    expect(row.getByRole('link').getAttribute('href')).toBe('/issue/ENG-2');
+    const title = row.getByRole('link', { name: 'Wire the socket' });
+    expect(title.getAttribute('href')).toBe('/issue/ENG-2');
 
-    fireEvent.click(row.getByText('Wire the socket'));
+    const leftTheBoard = fireEvent.click(title);
 
-    const peek = await screen.findByTestId('issue-peek');
-    expect(peek.textContent).toBe('ENG-2');
-    expect(peek.getAttribute('href')).toBe('/issue/ENG-2');
-    expect(pushed).toEqual([]);
+    expect(leftTheBoard).toBe(false);
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
   });
 
   it('leaves the arrow keys to the peek while it is open', async () => {
