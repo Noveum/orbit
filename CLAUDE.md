@@ -121,6 +121,7 @@ domain verified in Resend, otherwise every send fails.
 - A package that needs environment or a DOM configures it in its own `bunfig.toml` with a `tests-preload.ts`. DOM tests register happy-dom in that preload.
 - Database tests run against the real Postgres from docker compose, in a transaction that rolls back. `scripts/test-env.ts` refuses to run against a database whose name does not contain `test`.
 - Each package owns an isolated database (`orbit_test_core`, `orbit_test_svc`, `orbit_test_rt`, `orbit_test_rts`, `orbit_test_mcp`, `orbit_test_web`). Run `bun run db:test-setup` once after `bun run infra:up`, otherwise `bun run verify` fails on a clean checkout with connection errors rather than test failures.
+- Two test runs at once need two lanes. Set `ORBIT_TEST_LANE` to anything unique and the suite uses `orbit_test_core_<lane>` instead, where the lane is a readable stub plus a digest of the raw value so two lanes that normalise alike stay apart, cloned from the base database on first use, so a `resetDatabase` in one run cannot truncate tables out from under another. Without the variable nothing changes. This matters whenever several agents or worktrees run tests against the same Postgres: sharing one database shows up as deadlocks and foreign key violations that look like real failures. `bun run db:test-lanes-drop` removes every lane database and leaves the six base ones alone.
 - End to end: Playwright in `apps/web/e2e`.
 - A feature is not done until it has tests that would fail if the feature broke.
 

@@ -39,7 +39,8 @@
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",
-    "prepare": "lefthook install || true"
+    "prepare": "lefthook install || true",
+    "db:test-lanes-drop": "bun run --filter '@orbit/db' test-lanes-drop"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
