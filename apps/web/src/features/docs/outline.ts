@@ -31,3 +31,52 @@ export function readTimeMinutes(markdown: string): number {
     .filter((word) => word.length > 0).length;
   return Math.max(1, Math.round(words / 220));
 }
+
+const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const FENCE = /^ {0,3}(?:`{3,}|~{3,})/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
+
+function addParagraphAbove(lines: readonly string[], underline: number, chosen: Set<number>): void {
+  for (let above = underline - 1; above >= 0; above -= 1) {
+    if (chosen.has(above)) return;
+    if ((lines[above] ?? '').trim().length === 0) return;
+    chosen.add(above);
+  }
+}
+
+export function headingSignature(markdown: string): string {
+  const lines = markdown.split('\n');
+  const chosen = new Set<number>();
+
+  for (const [index, line] of lines.entries()) {
+    if (ATX_HEADING.test(line) || FENCE.test(line)) {
+      chosen.add(index);
+      continue;
+    }
+    if (!SETEXT_UNDERLINE.test(line)) continue;
+    chosen.add(index);
+    addParagraphAbove(lines, index, chosen);
+  }
+
+  return [...chosen]
+    .sort((left, right) => left - right)
+    .map((index) => lines[index] ?? '')
+    .join('\n');
+}
+
+export interface OutlineMemo {
+  readonly signature: string | null;
+  readonly headings: readonly DocHeading[];
+}
+
+export const EMPTY_OUTLINE: OutlineMemo = { signature: null, headings: [] };
+
+export function outlineFor(
+  memo: OutlineMemo,
+  markdown: string,
+  build: (source: string) => readonly DocHeading[],
+): OutlineMemo {
+  const signature = headingSignature(markdown);
+  if (signature === memo.signature) return memo;
+  return { signature, headings: build(markdown) };
+}
