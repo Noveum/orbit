@@ -1,7 +1,7 @@
 'use client';
 
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useState } from 'react';
 import { prefersReducedMotion } from './doc-scroll.ts';
 import { activeHeadingId, headingAt, headingElementsIn } from './editor-outline.ts';
 import type { DocHeading, OutlineMemo } from './outline.ts';
@@ -21,10 +21,11 @@ export function useEditorOutline(
   content: string,
   scroller: RefObject<HTMLElement | null>,
 ): EditorOutline {
-  const memo = useRef<OutlineMemo>(EMPTY_OUTLINE);
-  memo.current = outlineFor(memo.current, content, buildOutline);
-  const headings = memo.current.headings;
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [memo, setMemo] = useState<OutlineMemo>(EMPTY_OUTLINE);
+  const current = outlineFor(memo, content, buildOutline);
+  if (current !== memo) setMemo(current);
+  const headings = current.headings;
 
   useEffect(() => {
     const container = scroller.current;
