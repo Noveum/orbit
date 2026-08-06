@@ -119,3 +119,20 @@ describe('opening a notification in the Unread tab', () => {
     });
   });
 });
+
+describe('when the server rejects the read', () => {
+  it('puts the row back and says so', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }),
+    ) as unknown as typeof fetch;
+    const user = userEvent.setup();
+    renderInbox([item()]);
+
+    await user.click(screen.getByTestId('inbox-open-link'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('inbox-unread-count')).toHaveTextContent('1 unread');
+  });
+});

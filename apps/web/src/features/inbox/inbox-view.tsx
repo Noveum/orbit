@@ -176,6 +176,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   const [mentions, setMentions] = useState(unreadMentions);
   const [tab, setTab] = useState<TabId>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setRows(items);
@@ -237,16 +238,25 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
     async (item: InboxItem, next: boolean) => {
       if (item.read === next) return;
       const isMention = item.type === 'mention';
-      setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read: next } : row)));
-      const step = next ? -1 : 1;
-      if (isMention) setMentions((count) => Math.max(0, count + step));
-      setUnread((count) => Math.max(0, count + step));
-      applyServerCount(
-        await apiRequest('/api/notifications/read', {
-          method: 'POST',
-          body: { notificationIds: [item.id], read: next },
-        }),
-      );
+      const applyLocally = (read: boolean, step: number) => {
+        setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read } : row)));
+        if (isMention) setMentions((count) => Math.max(0, count + step));
+        setUnread((count) => Math.max(0, count + step));
+      };
+
+      applyLocally(next, next ? -1 : 1);
+      try {
+        applyServerCount(
+          await apiRequest('/api/notifications/read', {
+            method: 'POST',
+            body: { notificationIds: [item.id], read: next },
+          }),
+        );
+      } catch (cause) {
+        applyLocally(item.read, next ? 1 : -1);
+        setError('That did not save. Check your connection and try again.');
+        throw cause;
+      }
     },
     [applyServerCount],
   );
@@ -319,6 +329,11 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-col gap-3 border-border border-b px-5 py-3">
+        {error === null ? null : (
+          <p role="alert" className="text-danger text-xs" data-testid="inbox-error">
+            {error}
+          </p>
+        )}
         <div className="flex items-center justify-between gap-3">
           <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
             Inbox
@@ -428,7 +443,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                   href={current.url}
                   data-testid="inbox-open-link"
                   onClick={() => {
-                    setReadState(current, true);
+                    setReadState(current, true).catch(() => undefined);
                   }}
                   className="w-fit rounded-sm text-accent text-dense hover:underline"
                 >
