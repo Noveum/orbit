@@ -65,7 +65,11 @@ function NewDoc({ run }: { readonly run: () => void }) {
 }
 
 function ArchiveIssue({ enabled }: { readonly enabled: boolean }) {
-  useHotkey('shift+a', noop, { label: 'Archive issue', section: 'Issues', enabled });
+  useHotkey('shift+a', noop, {
+    label: 'Archive issue',
+    section: 'Issues',
+    enabled,
+  });
   return null;
 }
 
@@ -112,6 +116,18 @@ describe('command palette', () => {
     push.mockClear();
     await user.keyboard('gi');
     expect(push).toHaveBeenCalledWith('/inbox');
+  });
+
+  it('routes to sprints when the binding gt is pressed', async () => {
+    const user = userEvent.setup();
+    render(<Palette startOpen />);
+
+    await select(/Go to Sprints/);
+    expect(push).toHaveBeenCalledWith('/sprints');
+
+    push.mockClear();
+    await user.keyboard('gt');
+    expect(push).toHaveBeenCalledWith('/sprints');
   });
 
   it('runs the toggles it advertises', async () => {
