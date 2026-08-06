@@ -37,6 +37,7 @@
     "db:import-plane": "bun run --filter '@orbit/db' import:plane",
     "db:verify-plane": "bun run --filter '@orbit/db' import:verify",
     "plane:fetch": "bun scripts/fetch-plane.ts",
+    "bench:outline": "bun apps/web/bench/outline-cost.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",

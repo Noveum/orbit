@@ -1,7 +1,9 @@
 'use client';
 
-import { docCommentAnchorId, relativeTime } from '@orbit/shared/utils';
-import { useMemo, useState } from 'react';
+import { docCommentAnchorId, isDocAnchorOrphaned, relativeTime } from '@orbit/shared/utils';
+import type { DocCommentAnchor } from '@orbit/shared/validators';
+import { Quote, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { CommentComposer } from '@/features/comments/comment-composer.tsx';
@@ -24,12 +26,34 @@ function sortByCreatedAt(comments: readonly DocComment[]): DocComment[] {
   );
 }
 
+export function anchorState(
+  anchor: DocCommentAnchor | null,
+  text: string | null,
+): 'none' | 'found' | 'orphaned' {
+  if (anchor === null) return 'none';
+  if (text === null) return 'found';
+  return isDocAnchorOrphaned(text, anchor) ? 'orphaned' : 'found';
+}
+
 export interface DocCommentsProps {
   readonly docId: string;
   readonly members: readonly Member[];
+  readonly anchorText?: string | null;
+  readonly pendingAnchor?: DocCommentAnchor | null;
+  readonly onPendingAnchorChange?: (anchor: DocCommentAnchor | null) => void;
+  readonly focusedCommentId?: string | null;
+  readonly onRevealPassage?: (commentId: string) => void;
 }
 
-export function DocComments({ docId, members }: DocCommentsProps) {
+export function DocComments({
+  docId,
+  members,
+  anchorText = null,
+  pendingAnchor = null,
+  onPendingAnchorChange,
+  focusedCommentId = null,
+  onRevealPassage,
+}: DocCommentsProps) {
   const query = useDocComments(docId);
   const create = useCreateDocComment(docId);
   const comments = useMemo(() => query.data ?? [], [query.data]);
@@ -60,6 +84,9 @@ export function DocComments({ docId, members }: DocCommentsProps) {
               entry={entry}
               author={memberById.get(entry.comment.authorId)}
               members={members}
+              anchorText={anchorText}
+              focused={focusedCommentId === entry.comment.id}
+              {...(onRevealPassage === undefined ? {} : { onRevealPassage })}
             />
             <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4 empty:hidden">
               {repliesOf(entry.comment.id).map((reply) => (
@@ -69,6 +96,8 @@ export function DocComments({ docId, members }: DocCommentsProps) {
                   entry={reply}
                   author={memberById.get(reply.comment.authorId)}
                   members={members}
+                  anchorText={anchorText}
+                  focused={focusedCommentId === reply.comment.id}
                   isReply
                 />
               ))}
@@ -77,11 +106,35 @@ export function DocComments({ docId, members }: DocCommentsProps) {
         ))}
       </ul>
 
+      {pendingAnchor === null ? null : (
+        <div
+          data-testid="doc-comment-pending-anchor"
+          className="flex items-start gap-2 rounded-lg border border-accent/40 bg-accent-soft px-3 py-2"
+        >
+          <Quote className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-2xs text-muted italic">{pendingAnchor.quote}</p>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Comment on the whole document instead"
+            data-testid="doc-comment-pending-anchor-clear"
+            className="size-6 shrink-0 px-0"
+            onClick={() => onPendingAnchorChange?.(null)}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      )}
+
       <CommentComposer
         members={members}
         testId="doc-comment-composer"
         pending={create.isPending}
-        onSubmit={(body) => create.mutate({ body, parentId: null })}
+        {...(pendingAnchor === null ? {} : { placeholder: 'Comment on the selected passage.' })}
+        onSubmit={(body) => {
+          create.mutate({ body, parentId: null, anchor: pendingAnchor });
+          onPendingAnchorChange?.(null);
+        }}
       />
     </section>
   );
@@ -92,24 +145,49 @@ interface DocCommentItemProps {
   readonly entry: DocComment;
   readonly author: Member | undefined;
   readonly members: readonly Member[];
+  readonly anchorText: string | null;
+  readonly focused: boolean;
+  readonly onRevealPassage?: (commentId: string) => void;
   readonly isReply?: boolean;
 }
 
-function DocCommentItem({ docId, entry, author, members, isReply = false }: DocCommentItemProps) {
+function DocCommentItem({
+  docId,
+  entry,
+  author,
+  members,
+  anchorText,
+  focused,
+  onRevealPassage,
+  isReply = false,
+}: DocCommentItemProps) {
   const currentUserId = useCurrentUserId();
   const update = useUpdateDocComment(docId);
   const remove = useDeleteDocComment(docId);
   const createReply = useCreateDocComment(docId);
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
+  const article = useRef<HTMLElement>(null);
 
   const mine = entry.comment.authorId === currentUserId;
+  const anchor = entry.comment.anchor;
+  const state = anchorState(anchor, anchorText);
+
+  useEffect(() => {
+    if (!focused) return;
+    article.current?.scrollIntoView({ block: 'nearest' });
+  }, [focused]);
 
   return (
     <article
+      ref={article}
       id={docCommentAnchorId(entry.comment.id)}
       data-testid={`doc-comment-${entry.comment.id}`}
-      className="group flex scroll-mt-24 gap-2.5"
+      data-focused={focused ? 'true' : 'false'}
+      className={cn(
+        'group flex scroll-mt-24 gap-2.5 rounded-lg transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
+        focused && 'bg-accent-soft/60',
+      )}
     >
       <Avatar name={author?.name ?? 'Unknown'} src={author?.image ?? null} size="md" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -120,6 +198,15 @@ function DocCommentItem({ docId, entry, author, members, isReply = false }: DocC
           </span>
           {entry.comment.editedAt === null ? null : <span className="text-faint">edited</span>}
         </div>
+
+        {anchor === null ? null : (
+          <DocCommentQuote
+            commentId={entry.comment.id}
+            anchor={anchor}
+            orphaned={state === 'orphaned'}
+            {...(onRevealPassage === undefined ? {} : { onReveal: onRevealPassage })}
+          />
+        )}
 
         {editing ? (
           <CommentComposer
@@ -172,5 +259,51 @@ function DocCommentItem({ docId, entry, author, members, isReply = false }: DocC
         ) : null}
       </div>
     </article>
+  );
+}
+
+function quoteLabel(orphaned: boolean, revealable: boolean): string {
+  if (orphaned) return 'The quoted passage is gone';
+  if (!revealable) return 'The quoted passage';
+  return 'Go to the quoted passage';
+}
+
+function DocCommentQuote({
+  commentId,
+  anchor,
+  orphaned,
+  onReveal,
+}: {
+  readonly commentId: string;
+  readonly anchor: DocCommentAnchor;
+  readonly orphaned: boolean;
+  readonly onReveal?: (commentId: string) => void;
+}) {
+  const reachable = onReveal !== undefined && !orphaned;
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        data-testid={`doc-comment-quote-${commentId}`}
+        disabled={!reachable}
+        aria-label={quoteLabel(orphaned, onReveal !== undefined)}
+        onClick={() => onReveal?.(commentId)}
+        className={cn(
+          'flex w-full items-start gap-2 rounded-md border-l-2 py-1 pr-2 pl-2 text-left text-2xs italic',
+          'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
+          orphaned
+            ? 'border-l-border-strong bg-surface-2 text-faint'
+            : 'border-l-accent bg-accent-soft/50 text-muted',
+          reachable && 'hover:bg-accent-soft',
+        )}
+      >
+        <span className="line-clamp-3 min-w-0 flex-1">{anchor.quote}</span>
+      </button>
+      {orphaned ? (
+        <span data-testid={`doc-comment-orphan-${commentId}`} className="text-2xs text-faint">
+          This text was edited out of the document.
+        </span>
+      ) : null}
+    </div>
   );
 }

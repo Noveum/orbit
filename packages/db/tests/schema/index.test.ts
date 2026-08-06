@@ -1,11 +1,32 @@
 import { describe, expect, it } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 import { SYNC_MODELS } from '@orbit/shared/events';
 import { getTableColumns, type Table } from 'drizzle-orm';
-import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
+import { getTableConfig, PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import * as schema from '../../src/schema/index.ts';
+
+type IndexConfig = ReturnType<typeof getTableConfig>['indexes'][number]['config'];
 
 function tableExportName(model: string): string {
   return model.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+}
+
+function partialIndexOf(table: PgTable, name: string): IndexConfig {
+  const config = getTableConfig(table)
+    .indexes.map((entry) => entry.config)
+    .find((entry) => entry.name === name && entry.where !== undefined);
+  if (config === undefined) throw new Error(`${name} is not a partial index on this table.`);
+  return config;
+}
+
+function predicateOf(config: IndexConfig): string {
+  const where = config.where;
+  if (where === undefined) throw new Error(`${String(config.name)} carries no predicate.`);
+  return new PgDialect().sqlToQuery(where).sql;
+}
+
+function columnNamesOf(config: IndexConfig): string[] {
+  return config.columns.map((column) => (column as { name?: string }).name ?? '');
 }
 
 function indexNamesOf(table: PgTable): string[] {
@@ -61,6 +82,30 @@ describe('list and search indexes', () => {
       'doc_title_trgm_idx',
       'doc_content_trgm_idx',
     ]);
+  });
+
+  it('replays sprint scope changes from a partial index over cycle moves', () => {
+    const index = partialIndexOf(schema.issueActivity, 'issue_activity_cycle_moves_idx');
+    expect(columnNamesOf(index)).toEqual(['organization_id', 'created_at']);
+    expect(predicateOf(index)).toBe(`"issue_activity"."field" = 'cycleId'`);
+  });
+
+  it('creates that index from the catchup sql on the columns and predicate the schema declares', async () => {
+    const index = partialIndexOf(schema.issueActivity, 'issue_activity_cycle_moves_idx');
+    const predicate = predicateOf(index).replaceAll('"issue_activity".', '').replaceAll('"', '');
+    const catchup = await readFile(
+      new URL('../../catchup/sprint-scope-index-catchup.sql', import.meta.url),
+      'utf8',
+    );
+    const statements = [...catchup.matchAll(/create index[\s\S]*?;/g)].map((match) =>
+      match[0].replace(/\s+/g, ' '),
+    );
+    expect(statements.length).toBeGreaterThan(0);
+    for (const statement of statements) {
+      expect(statement).toContain('issue_activity_cycle_moves_idx');
+      expect(statement).toContain(`(${columnNamesOf(index).join(', ')})`);
+      expect(statement).toContain(`where ${predicate};`);
+    }
   });
 
   it('resolves membership and project teams from their own indexes', () => {

@@ -289,13 +289,7 @@ export function IssueList({
         />
       ) : null}
 
-      <IssuePeek
-        issue={peekIssue}
-        onClose={() => setPeekId(null)}
-        onOpen={() => {
-          if (peekIssue !== undefined) router.push(`/issue/${peekIssue.identifier}`);
-        }}
-      />
+      <IssuePeek issue={peekIssue} onClose={() => setPeekId(null)} />
     </div>
   );
 }

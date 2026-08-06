@@ -1,5 +1,6 @@
 import type { SyncAction } from '@orbit/shared/events';
 import type { IssueOrdering } from '@orbit/shared/filters';
+import { docCommentAnchorSchema } from '@orbit/shared/validators';
 import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
 import type { Comment, DocComment, Issue, IssuePage, Reaction } from './schemas.ts';
@@ -30,6 +31,7 @@ const docCommentDeltaSchema = z.object({
   authorId: z.string(),
   parentId: z.string().nullable().default(null),
   body: z.string(),
+  anchor: docCommentAnchorSchema.nullable().default(null),
   editedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),

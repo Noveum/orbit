@@ -1,5 +1,6 @@
 'use client';
 
+import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/components/ui/toast.tsx';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
@@ -33,6 +34,12 @@ export function useDocComments(docId: string | null) {
   });
 }
 
+export interface DocCommentDraft {
+  readonly body: string;
+  readonly parentId: string | null;
+  readonly anchor?: DocCommentAnchor | null;
+}
+
 export function useCreateDocComment(docId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -40,7 +47,7 @@ export function useCreateDocComment(docId: string) {
   const key = queryKeys.docComments(docId);
 
   return useMutation({
-    mutationFn: async (input: { body: string; parentId: string | null }): Promise<DocComment> => {
+    mutationFn: async (input: DocCommentDraft): Promise<DocComment> => {
       const result = await apiFetch(
         `/api/docs/${encodeURIComponent(docId)}/comments`,
         docCommentEnvelopeSchema,
@@ -60,6 +67,7 @@ export function useCreateDocComment(docId: string) {
           authorId: userId ?? 'me',
           parentId: input.parentId,
           body: input.body,
+          anchor: input.anchor ?? null,
           editedAt: null,
           createdAt: now,
           updatedAt: now,

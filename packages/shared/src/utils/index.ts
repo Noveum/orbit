@@ -1,6 +1,8 @@
 import { v7 as uuidv7 } from 'uuid';
 import { SORT_ORDER_STEP } from '../constants/index.ts';
 
+export * from './doc-anchor.ts';
+
 export function slugify(input: string): string {
   return input
     .normalize('NFKD')

@@ -61,35 +61,30 @@ export interface UpcomingCycleView {
   readonly teamKey: string;
 }
 
+export interface CycleIssueRow {
+  readonly id: string;
+  readonly identifier: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly stateId: string;
+  readonly stateName: string;
+  readonly stateCategory: string;
+  readonly stateColor: string;
+  readonly assigneeId: string | null;
+  readonly assigneeName: string | null;
+  readonly assigneeImage: string | null;
+}
+
+export interface CycleIssueBreakdown {
+  readonly groups: StateGroup[];
+  readonly assignees: AssigneeTally[];
+}
+
 function toCategory(value: string): StateCategory {
   return STATE_CATEGORIES.find((entry) => entry === value) ?? 'backlog';
 }
 
-async function loadCycleIssues(cycleId: string): Promise<{
-  groups: StateGroup[];
-  assignees: AssigneeTally[];
-}> {
-  const rows = await db
-    .select({
-      id: schema.issue.id,
-      identifier: schema.issue.identifier,
-      title: schema.issue.title,
-      priority: schema.issue.priority,
-      stateId: schema.workflowState.id,
-      stateName: schema.workflowState.name,
-      stateCategory: schema.workflowState.category,
-      stateColor: schema.workflowState.color,
-      statePosition: schema.workflowState.position,
-      assigneeId: schema.user.id,
-      assigneeName: schema.user.name,
-      assigneeImage: schema.user.image,
-    })
-    .from(schema.issue)
-    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .leftJoin(schema.user, eq(schema.user.id, schema.issue.assigneeId))
-    .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)))
-    .orderBy(asc(schema.workflowState.position), asc(schema.issue.sortOrder));
-
+export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssueBreakdown {
   const groups = new Map<string, StateGroup>();
   const tallies = new Map<string, AssigneeTally>();
 
@@ -115,26 +110,50 @@ async function loadCycleIssues(cycleId: string): Promise<{
     });
     groups.set(row.stateId, group);
 
-    if (assignee !== null) {
-      const tally = tallies.get(assignee.id) ?? {
-        id: assignee.id,
-        name: assignee.name,
-        image: assignee.image,
-        scope: 0,
-        completed: 0,
-      };
-      tallies.set(assignee.id, {
-        ...tally,
-        scope: tally.scope + 1,
-        completed: tally.completed + (category === 'completed' ? 1 : 0),
-      });
-    }
+    if (assignee === null || category === 'canceled') continue;
+    const tally = tallies.get(assignee.id) ?? {
+      id: assignee.id,
+      name: assignee.name,
+      image: assignee.image,
+      scope: 0,
+      completed: 0,
+    };
+    tallies.set(assignee.id, {
+      ...tally,
+      scope: tally.scope + 1,
+      completed: tally.completed + (category === 'completed' ? 1 : 0),
+    });
   }
 
   return {
     groups: [...groups.values()],
     assignees: [...tallies.values()].sort((left, right) => right.scope - left.scope),
   };
+}
+
+async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
+  const rows = await db
+    .select({
+      id: schema.issue.id,
+      identifier: schema.issue.identifier,
+      title: schema.issue.title,
+      priority: schema.issue.priority,
+      stateId: schema.workflowState.id,
+      stateName: schema.workflowState.name,
+      stateCategory: schema.workflowState.category,
+      stateColor: schema.workflowState.color,
+      statePosition: schema.workflowState.position,
+      assigneeId: schema.user.id,
+      assigneeName: schema.user.name,
+      assigneeImage: schema.user.image,
+    })
+    .from(schema.issue)
+    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+    .leftJoin(schema.user, eq(schema.user.id, schema.issue.assigneeId))
+    .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)))
+    .orderBy(asc(schema.workflowState.position), asc(schema.issue.sortOrder));
+
+  return breakDownCycleIssues(rows);
 }
 
 export async function getActiveCycleView(

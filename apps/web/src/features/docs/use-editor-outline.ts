@@ -1,11 +1,11 @@
 'use client';
 
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
-import { type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useState } from 'react';
 import { prefersReducedMotion } from './doc-scroll.ts';
 import { activeHeadingId, headingAt, headingElementsIn } from './editor-outline.ts';
-import type { DocHeading } from './outline.ts';
-import { extractHeadings } from './outline.ts';
+import type { DocHeading, OutlineMemo } from './outline.ts';
+import { EMPTY_OUTLINE, extractHeadings, outlineFor } from './outline.ts';
 
 export interface EditorOutline {
   readonly headings: readonly DocHeading[];
@@ -13,12 +13,19 @@ export interface EditorOutline {
   readonly goTo: (index: number) => void;
 }
 
+function buildOutline(source: string): readonly DocHeading[] {
+  return extractHeadings(renderMarkdownWithHeadingIds(source));
+}
+
 export function useEditorOutline(
   content: string,
   scroller: RefObject<HTMLElement | null>,
 ): EditorOutline {
-  const headings = useMemo(() => extractHeadings(renderMarkdownWithHeadingIds(content)), [content]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [memo, setMemo] = useState<OutlineMemo>(EMPTY_OUTLINE);
+  const current = outlineFor(memo, content, buildOutline);
+  if (current !== memo) setMemo(current);
+  const headings = current.headings;
 
   useEffect(() => {
     const container = scroller.current;
@@ -27,14 +34,23 @@ export function useEditorOutline(
       return;
     }
 
+    let frame: number | null = null;
     const measure = () => {
+      frame = null;
       const tops = headingElementsIn(container).map((node) => node.offsetTop);
       setActiveId(activeHeadingId(headings, tops, container.scrollTop));
     };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(measure);
+    };
 
     measure();
-    container.addEventListener('scroll', measure, { passive: true });
-    return () => container.removeEventListener('scroll', measure);
+    container.addEventListener('scroll', schedule, { passive: true });
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      container.removeEventListener('scroll', schedule);
+    };
   }, [headings, scroller]);
 
   const goTo = useCallback(

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { forbidden } from '@orbit/shared/errors';
 import { ORIGIN_CLIENT_ID_HEADER, type SyncAction } from '@orbit/shared/events';
 
 const published: SyncAction[][] = [];
@@ -17,7 +18,7 @@ mock.module('@orbit/core', () => ({ ...core, publishDeltas }));
 const requestHeaders = new Headers();
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(requestHeaders) }));
 
-const { cachedJson, publish } = await import('../../../src/lib/api/handler.ts');
+const { cachedJson, errorResponse, publish } = await import('../../../src/lib/api/handler.ts');
 
 function action(overrides: Partial<SyncAction> = {}): SyncAction {
   return {
@@ -74,6 +75,33 @@ describe('cachedJson', () => {
 
     const response = await cachedJson(request, 'v2', () => Promise.resolve({ ok: true }));
     expect(response.status).toBe(200);
+  });
+});
+
+describe('errorResponse', () => {
+  it('answers a domain error with its own code, status and message', async () => {
+    const response = errorResponse(forbidden('You cannot comment on this doc.'));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: { code: 'forbidden', message: 'You cannot comment on this doc.' },
+    });
+  });
+
+  it('never echoes a failed query or its parameters back to the caller', async () => {
+    const response = errorResponse(
+      new Error(
+        'Failed query: insert into "doc_comment" ("body") values ($1)\nparams: Bob gets a raise.',
+      ),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(500);
+    expect(body).not.toContain('doc_comment');
+    expect(body).not.toContain('Bob gets a raise.');
+    expect(JSON.parse(body)).toEqual({
+      error: { code: 'internal', message: 'Something went wrong on our side.' },
+    });
   });
 });
 

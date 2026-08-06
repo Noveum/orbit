@@ -36,6 +36,16 @@ const highlighting = cn(
   '[&_.hljs-variable]:text-danger [&_.hljs-template-variable]:text-danger',
 );
 
+const commentAnchor = cn(
+  '[&_.orbit-doc-anchor]:cursor-pointer [&_.orbit-doc-anchor]:rounded-[0.2em]',
+  '[&_.orbit-doc-anchor]:bg-warning/20 [&_.orbit-doc-anchor]:px-0.5',
+  '[&_.orbit-doc-anchor]:border-warning/50 [&_.orbit-doc-anchor]:border-b',
+  '[&_.orbit-doc-anchor]:transition-colors [&_.orbit-doc-anchor]:duration-[var(--duration-fast)]',
+  '[&_.orbit-doc-anchor]:ease-[var(--ease-standard)]',
+  '[&_.orbit-doc-anchor:hover]:bg-warning/35',
+  '[&_.orbit-doc-anchor-active]:bg-warning/45',
+);
+
 export const editorSurfaceClassName = cn(
   '[&_.ProseMirror]:min-h-40 [&_.ProseMirror]:outline-none',
   '[&_.ProseMirror]:focus-visible:outline-none',
@@ -46,4 +56,5 @@ export const editorSurfaceClassName = cn(
   callout,
   toggle,
   highlighting,
+  commentAnchor,
 );

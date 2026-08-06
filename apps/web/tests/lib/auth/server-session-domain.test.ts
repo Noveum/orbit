@@ -1,38 +1,25 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { db, inArray, schema } from '@orbit/db';
-import { randomUUIDv7 } from '@orbit/shared/utils';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { db, schema } from '@orbit/db';
 import { auth } from '../../../src/lib/auth/server.ts';
 
 const previousDomains = process.env['ALLOWED_EMAIL_DOMAINS'];
-
-const allowedId = `usr_allowed_${randomUUIDv7()}`;
-const blockedId = `usr_blocked_${randomUUIDv7()}`;
-
-beforeAll(async () => {
-  await db.insert(schema.user).values([
-    {
-      id: allowedId,
-      name: 'Shashank',
-      email: 'shashank@magicapi.com',
-      handle: `allowed-${allowedId.slice(-8)}`,
-    },
-    {
-      id: blockedId,
-      name: 'Somebody Else',
-      email: 'kpulkit15234@gmail.com',
-      handle: `blocked-${blockedId.slice(-8)}`,
-    },
-  ]);
-});
 
 beforeEach(() => {
   process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
 });
 
-afterAll(async () => {
+afterAll(() => {
   process.env['ALLOWED_EMAIL_DOMAINS'] = previousDomains ?? '';
-  await db.delete(schema.user).where(inArray(schema.user.id, [allowedId, blockedId]));
 });
+
+async function userWith(email: string): Promise<string> {
+  const id = `user_${randomUUID()}`;
+  await db
+    .insert(schema.user)
+    .values({ id, name: 'Session Domain', email, handle: id, emailVerified: true });
+  return id;
+}
 
 function sessionHook() {
   const before = auth.options.databaseHooks?.session?.create?.before;
@@ -52,9 +39,11 @@ function sessionHook() {
 
 describe('session domain allowlist', () => {
   it('rejects an existing user whose domain is not allowed on any sign in', async () => {
+    const userId = await userWith(`kpulkit${randomUUID().slice(0, 8)}@gmail.com`);
+
     let thrown: unknown;
     try {
-      await sessionHook()(blockedId);
+      await sessionHook()(userId);
     } catch (error) {
       thrown = error;
     }
@@ -62,12 +51,13 @@ describe('session domain allowlist', () => {
   });
 
   it('lets an allowed domain start a session', async () => {
-    const result = await sessionHook()(allowedId);
-    expect(result).toMatchObject({ data: { userId: allowedId } });
+    const userId = await userWith(`shashank${randomUUID().slice(0, 8)}@magicapi.com`);
+    const result = await sessionHook()(userId);
+    expect(result).toMatchObject({ data: { userId } });
   });
 
   it('does nothing when the user cannot be found', async () => {
-    const result = await sessionHook()('usr_ghost_nobody');
-    expect(result).toMatchObject({ data: { userId: 'usr_ghost_nobody' } });
+    const result = await sessionHook()('ghost');
+    expect(result).toMatchObject({ data: { userId: 'ghost' } });
   });
 });

@@ -13,6 +13,7 @@ import {
   lt,
   lte,
   ne,
+  or,
   schema,
   sql,
 } from '@orbit/db';
@@ -318,7 +319,23 @@ export async function upcomingCycles(
 
 export interface BurnUpPoint {
   readonly date: string;
+  readonly scope: number;
+  readonly scopePoints: number;
   readonly completed: number;
+  readonly completedPoints: number;
+}
+
+export interface CyclePoints {
+  readonly scope: number;
+  readonly started: number;
+  readonly completed: number;
+}
+
+export interface CycleScopeChanges {
+  readonly added: number;
+  readonly addedPoints: number;
+  readonly removed: number;
+  readonly removedPoints: number;
 }
 
 export interface CycleProgress {
@@ -326,10 +343,224 @@ export interface CycleProgress {
   readonly scope: number;
   readonly started: number;
   readonly completed: number;
+  readonly canceled: number;
+  readonly estimated: number;
+  readonly points: CyclePoints;
+  readonly changes: CycleScopeChanges;
   readonly burnUp: BurnUpPoint[];
 }
 
 const CYCLE_CATEGORY = sql<string>`${schema.workflowState.category}`;
+
+const ACTIVITY_FROM_CYCLE = sql<
+  string | null
+>`coalesce(${schema.issueActivity.fromValue}->>'id', ${schema.issueActivity.fromValue} #>> '{}')`;
+
+const ACTIVITY_TO_CYCLE = sql<
+  string | null
+>`coalesce(${schema.issueActivity.toValue}->>'id', ${schema.issueActivity.toValue} #>> '{}')`;
+
+interface CycleIssueFacts {
+  readonly estimate: number;
+  readonly estimated: boolean;
+  readonly category: string;
+  readonly createdAt: Date;
+  readonly completedAt: Date | null;
+  readonly canceledAt: Date | null;
+  readonly member: boolean;
+}
+
+interface MembershipMove {
+  readonly at: Date;
+  readonly entered: boolean;
+}
+
+interface MembershipEntry {
+  readonly issue: CycleIssueFacts;
+  readonly initial: boolean;
+  readonly moves: readonly MembershipMove[];
+}
+
+async function cycleMembershipMoves(
+  cycle: CycleRow,
+  windowEnd: Date,
+): Promise<Map<string, MembershipMove[]>> {
+  const moves = new Map<string, MembershipMove[]>();
+  if (windowEnd.getTime() <= cycle.startsAt.getTime()) return moves;
+  const rows = await db
+    .select({
+      issueId: schema.issueActivity.issueId,
+      at: schema.issueActivity.createdAt,
+      entered: sql<boolean>`coalesce(${ACTIVITY_TO_CYCLE} = ${cycle.id}, false)`,
+    })
+    .from(schema.issueActivity)
+    .where(
+      and(
+        eq(schema.issueActivity.organizationId, cycle.organizationId),
+        eq(schema.issueActivity.field, 'cycleId'),
+        gte(schema.issueActivity.createdAt, cycle.startsAt),
+        sql`${cycle.id} in (${ACTIVITY_FROM_CYCLE}, ${ACTIVITY_TO_CYCLE})`,
+      ),
+    )
+    .orderBy(asc(schema.issueActivity.createdAt), asc(schema.issueActivity.id));
+  for (const row of rows) {
+    const list = moves.get(row.issueId) ?? [];
+    list.push({ at: row.at, entered: row.entered });
+    moves.set(row.issueId, list);
+  }
+  return moves;
+}
+
+async function cycleIssueFacts(
+  cycle: CycleRow,
+  alsoTouchedBy: readonly string[],
+): Promise<Map<string, CycleIssueFacts>> {
+  const inCycle = eq(schema.issue.cycleId, cycle.id);
+  const rows = await db
+    .select({
+      id: schema.issue.id,
+      cycleId: schema.issue.cycleId,
+      estimate: schema.issue.estimate,
+      category: CYCLE_CATEGORY,
+      createdAt: schema.issue.createdAt,
+      completedAt: schema.issue.completedAt,
+      canceledAt: schema.issue.canceledAt,
+    })
+    .from(schema.issue)
+    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+    .where(
+      and(
+        eq(schema.issue.organizationId, cycle.organizationId),
+        isNull(schema.issue.archivedAt),
+        alsoTouchedBy.length === 0
+          ? inCycle
+          : or(inCycle, inArray(schema.issue.id, [...alsoTouchedBy])),
+      ),
+    );
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        estimate: row.estimate ?? 0,
+        estimated: row.estimate !== null,
+        category: row.category,
+        createdAt: row.createdAt,
+        completedAt: row.completedAt,
+        canceledAt: row.canceledAt,
+        member: row.cycleId === cycle.id,
+      },
+    ]),
+  );
+}
+
+function membershipEntries(
+  issues: ReadonlyMap<string, CycleIssueFacts>,
+  moves: ReadonlyMap<string, MembershipMove[]>,
+): MembershipEntry[] {
+  const entries: MembershipEntry[] = [];
+  for (const [issueId, issue] of issues) {
+    const own = moves.get(issueId) ?? [];
+    const first = own[0];
+    entries.push({
+      issue,
+      initial: first === undefined ? issue.member : !first.entered,
+      moves: own,
+    });
+  }
+  return entries;
+}
+
+function inCycleAt(entry: MembershipEntry, cutoff: number): boolean {
+  if (entry.issue.createdAt.getTime() >= cutoff) return false;
+  let inside = entry.initial;
+  for (const move of entry.moves) {
+    if (move.at.getTime() >= cutoff) break;
+    inside = move.entered;
+  }
+  return inside;
+}
+
+function droppedBy(issue: CycleIssueFacts, cutoff: number): boolean {
+  if (issue.category !== 'canceled') return false;
+  return issue.canceledAt === null || issue.canceledAt.getTime() < cutoff;
+}
+
+function inScopeAt(entry: MembershipEntry, cutoff: number): boolean {
+  return inCycleAt(entry, cutoff) && !droppedBy(entry.issue, cutoff);
+}
+
+function joinedAt(entry: MembershipEntry, cycleStart: Date): number {
+  if (entry.initial) return Math.max(cycleStart.getTime(), entry.issue.createdAt.getTime());
+  const first = entry.moves[0];
+  return first === undefined ? Number.POSITIVE_INFINITY : first.at.getTime();
+}
+
+function pointOn(entries: readonly MembershipEntry[], day: Date): BurnUpPoint {
+  const cutoff = addUtcDays(day, 1).getTime();
+  let scope = 0;
+  let scopePoints = 0;
+  let completed = 0;
+  let completedPoints = 0;
+  for (const entry of entries) {
+    if (!inScopeAt(entry, cutoff)) continue;
+    scope += 1;
+    scopePoints += entry.issue.estimate;
+    const done = entry.issue.completedAt;
+    if (done === null || done.getTime() >= cutoff) continue;
+    completed += 1;
+    completedPoints += entry.issue.estimate;
+  }
+  return { date: day.toISOString().slice(0, 10), scope, scopePoints, completed, completedPoints };
+}
+
+function scopeChanges(
+  entries: readonly MembershipEntry[],
+  cycleStart: Date,
+  windowEnd: Date,
+): CycleScopeChanges {
+  const changes = { added: 0, addedPoints: 0, removed: 0, removedPoints: 0 };
+  const end = windowEnd.getTime();
+  const firstDayEnds = addUtcDays(startOfUtcDay(cycleStart), 1).getTime();
+  for (const entry of entries) {
+    const joined = joinedAt(entry, cycleStart);
+    if (joined >= end) continue;
+    if (joined >= firstDayEnds) {
+      changes.added += 1;
+      changes.addedPoints += entry.issue.estimate;
+    }
+    if (inCycleAt(entry, end)) continue;
+    changes.removed += 1;
+    changes.removedPoints += entry.issue.estimate;
+  }
+  return changes;
+}
+
+function sumEstimates(rows: readonly CycleIssueFacts[]): number {
+  return rows.reduce((total, row) => total + row.estimate, 0);
+}
+
+function currentTotals(
+  issues: ReadonlyMap<string, CycleIssueFacts>,
+): Pick<CycleProgress, 'scope' | 'started' | 'completed' | 'canceled' | 'estimated' | 'points'> {
+  const members = [...issues.values()].filter((issue) => issue.member);
+  const inScope = members.filter((issue) => issue.category !== 'canceled');
+  const started = inScope.filter(
+    (issue) => issue.category === 'started' || issue.category === 'review',
+  );
+  const completed = inScope.filter((issue) => issue.category === 'completed');
+  return {
+    scope: inScope.length,
+    started: started.length,
+    completed: completed.length,
+    canceled: members.length - inScope.length,
+    estimated: inScope.filter((issue) => issue.estimated).length,
+    points: {
+      scope: sumEstimates(inScope),
+      started: sumEstimates(started),
+      completed: sumEstimates(completed),
+    },
+  };
+}
 
 export async function cycleProgress(
   principal: Principal,
@@ -337,37 +568,25 @@ export async function cycleProgress(
   now: Date = new Date(),
 ): Promise<CycleProgress> {
   const cycle = await getCycle(principal, cycleId);
-
-  const rows = await db
-    .select({
-      id: schema.issue.id,
-      completedAt: schema.issue.completedAt,
-      category: CYCLE_CATEGORY,
-    })
-    .from(schema.issue)
-    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
-
-  const scope = rows.length;
-  const started = rows.filter(
-    (row) => row.category === 'started' || row.category === 'review',
-  ).length;
-  const completedRows = rows.filter((row) => row.category === 'completed');
-
-  const burnUp: BurnUpPoint[] = [];
   const start = startOfUtcDay(cycle.startsAt);
   const finish = startOfUtcDay(now < cycle.endsAt ? now : cycle.endsAt);
+  const windowEnd = finish < start ? start : addUtcDays(finish, 1);
+
+  const moves = await cycleMembershipMoves(cycle, windowEnd);
+  const issues = await cycleIssueFacts(cycle, [...moves.keys()]);
+  const entries = membershipEntries(issues, moves);
+
+  const burnUp: BurnUpPoint[] = [];
   for (let day = start; day <= finish; day = addUtcDays(day, 1)) {
-    const cutoff = addUtcDays(day, 1).getTime();
-    burnUp.push({
-      date: day.toISOString().slice(0, 10),
-      completed: completedRows.filter(
-        (row) => row.completedAt !== null && row.completedAt.getTime() < cutoff,
-      ).length,
-    });
+    burnUp.push(pointOn(entries, day));
   }
 
-  return { cycleId, scope, started, completed: completedRows.length, burnUp };
+  return {
+    cycleId,
+    ...currentTotals(issues),
+    changes: scopeChanges(entries, cycle.startsAt, windowEnd),
+    burnUp,
+  };
 }
 
 export interface CompletedCycle {

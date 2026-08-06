@@ -2,6 +2,7 @@
 
 import { useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
+import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -28,6 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
+import { useDocComments } from '@/lib/query/use-doc-comments.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
 import { useArchiveDoc, useDoc, useDocs, useUpdateDoc } from '@/lib/query/use-docs.ts';
 import { DocAttachments } from './doc-attachments.tsx';
@@ -40,6 +42,7 @@ import { DocBacklinks, DocContextRow, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
+import type { DocAnchorTarget, DocCommenting } from './use-doc-anchors.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 import { useEditorOutline } from './use-editor-outline.ts';
 
@@ -76,6 +79,18 @@ export interface DocDraft {
 export function adoptsRemoteEdit(settled: boolean, seen: DocDraft, incoming: DocDraft): boolean {
   if (seen.title === incoming.title && seen.content === incoming.content) return false;
   return settled;
+}
+
+export function anchorTargetsOf(
+  comments: readonly {
+    readonly comment: { readonly id: string; readonly anchor: DocCommentAnchor | null };
+  }[],
+): DocAnchorTarget[] {
+  return comments.flatMap((entry) =>
+    entry.comment.anchor === null
+      ? []
+      : [{ commentId: entry.comment.id, anchor: entry.comment.anchor }],
+  );
 }
 
 export function descendantIds(docs: readonly DocSummary[], rootId: string): Set<string> {
@@ -156,6 +171,25 @@ function LoadedDoc({
   const update = useUpdateDoc(detail.doc.id);
   const archive = useArchiveDoc();
   const [status, setStatus] = useState<SaveStatus>('saved');
+
+  const comments = useDocComments(detail.doc.id);
+  const [anchorText, setAnchorText] = useState<string | null>(null);
+  const [pendingAnchor, setPendingAnchor] = useState<DocCommentAnchor | null>(null);
+  const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
+  const revealRef = useRef<((commentId: string) => void) | null>(null);
+  const targets = useMemo(() => anchorTargetsOf(comments.data ?? []), [comments.data]);
+
+  const commenting = useMemo<DocCommenting>(
+    () => ({
+      targets,
+      focusedCommentId,
+      onSelectPassage: setFocusedCommentId,
+      onTextChange: setAnchorText,
+      onAnchorSelected: setPendingAnchor,
+      revealRef,
+    }),
+    [targets, focusedCommentId],
+  );
 
   useEffect(() => {
     setUnsavedDocId(canWrite && status !== 'saved' ? detail.doc.id : null);
@@ -277,11 +311,20 @@ function LoadedDoc({
           onStatusChange={setStatus}
           collectionName={collectionName}
           projectName={projectName}
+          commenting={commenting}
           footer={
             <div className="mt-10 border-border border-t pt-6">
               <DocAttachments attachments={detail.attachments} />
               <DocBacklinks backlinks={detail.backlinks} />
-              <DocComments docId={detail.doc.id} members={workspace.members} />
+              <DocComments
+                docId={detail.doc.id}
+                members={workspace.members}
+                anchorText={anchorText}
+                pendingAnchor={pendingAnchor}
+                onPendingAnchorChange={setPendingAnchor}
+                focusedCommentId={focusedCommentId}
+                onRevealPassage={(commentId) => revealRef.current?.(commentId)}
+              />
             </div>
           }
         />
@@ -439,6 +482,7 @@ function EditSession({
   onStatusChange,
   collectionName,
   projectName,
+  commenting,
   footer,
 }: {
   readonly doc: Doc;
@@ -446,6 +490,7 @@ function EditSession({
   readonly onStatusChange: (status: SaveStatus) => void;
   readonly collectionName: string | null;
   readonly projectName: string | null;
+  readonly commenting: DocCommenting;
   readonly footer?: React.ReactNode;
 }) {
   const [title, setTitle] = useState(doc.title);
@@ -492,6 +537,7 @@ function EditSession({
         content={content}
         onChange={setContent}
         onForceSave={flush}
+        commenting={commenting}
         footer={footer}
         scrollRef={scroller}
         outline={

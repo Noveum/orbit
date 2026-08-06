@@ -1,5 +1,7 @@
 import { asc, db, eq, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
+import type { SyncAction } from '@orbit/shared/events';
+import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { newId } from './internal.ts';
 import { resolvePrincipal } from './org/member-service.ts';
@@ -92,4 +94,18 @@ export function stateNamed(
   const found = workspace.states.find((state) => state.name === name);
   if (found === undefined) throw new Error(`No workflow state named ${name}.`);
   return found;
+}
+
+export function subscribedScopes(principal: Principal): string[] {
+  return [
+    scopes.organization(principal.organizationId),
+    ...principal.teamIds.map((teamId) => scopes.team(teamId)),
+    scopes.user(principal.userId),
+  ];
+}
+
+export function reaches(principal: Principal, action: SyncAction): boolean {
+  if (action.organizationId !== principal.organizationId) return false;
+  const listening = new Set(subscribedScopes(principal));
+  return action.scopes.some((scope) => listening.has(scope));
 }
