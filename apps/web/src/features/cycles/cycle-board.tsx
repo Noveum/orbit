@@ -1,4 +1,5 @@
 import { RefreshCcw } from 'lucide-react';
+import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -102,20 +103,26 @@ export function CycleIssueList({ cycle }: { readonly cycle: CycleView }) {
           </h3>
           <ul className="flex flex-col rounded-lg border border-border">
             {group.issues.map((issue) => (
-              <li
-                key={issue.id}
-                className={cn(
-                  'flex items-center gap-3 border-border border-b px-3 py-1.5 last:border-b-0',
-                  rowHover,
-                )}
-              >
-                <span className="w-16 shrink-0 text-2xs text-faint tabular">
-                  {issue.identifier}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-dense text-text">{issue.title}</span>
-                {issue.assignee === null ? null : (
-                  <Avatar name={issue.assignee.name} src={issue.assignee.image} size="xs" />
-                )}
+              <li key={issue.id} className="border-border border-b last:border-b-0">
+                <Link
+                  href={`/issue/${issue.identifier}`}
+                  data-testid={`sprint-issue-${issue.identifier}`}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-1.5 outline-none',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset',
+                    rowHover,
+                  )}
+                >
+                  <span className="w-16 shrink-0 text-2xs text-faint tabular">
+                    {issue.identifier}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-dense text-text">
+                    {issue.title}
+                  </span>
+                  {issue.assignee === null ? null : (
+                    <Avatar name={issue.assignee.name} src={issue.assignee.image} size="xs" />
+                  )}
+                </Link>
               </li>
             ))}
           </ul>

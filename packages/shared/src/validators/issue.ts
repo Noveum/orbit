@@ -56,6 +56,10 @@ export const issueUpdateSchema = z
 export const issueMoveSchema = z.object({
   stateId: idSchema.optional(),
   teamId: idSchema.optional(),
+  cycleId: idSchema.nullable().optional(),
+  projectId: idSchema.nullable().optional(),
+  assigneeId: idSchema.nullable().optional(),
+  priority: prioritySchema.optional(),
   beforeId: idSchema.nullable().default(null),
   afterId: idSchema.nullable().default(null),
 });

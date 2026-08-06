@@ -31,6 +31,8 @@ export type IssueRow = typeof schema.issue.$inferSelect;
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
+type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
+
 export const REBALANCE_THRESHOLD = 0.0001;
 
 export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
@@ -353,6 +355,25 @@ async function loadIssue(
   return issue;
 }
 
+async function labelsByIssue(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const grouped = new Map<string, string[]>();
+  const ids = [...new Set(issueIds)];
+  if (ids.length === 0) return grouped;
+  const rows = await executor
+    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
+    .from(schema.issueLabel)
+    .where(inArray(schema.issueLabel.issueId, ids));
+  for (const row of rows) {
+    const existing = grouped.get(row.issueId);
+    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
+    else existing.push(row.labelId);
+  }
+  return grouped;
+}
+
 async function replaceLabelsFor(
   executor: Executor,
   issueIds: readonly string[],
@@ -499,6 +520,20 @@ async function projectFitsTeam(
   return rows.some((row) => row.teamId === teamId);
 }
 
+async function assertMemberOfWorkspace(
+  executor: Executor,
+  organizationId: string,
+  userId: string | null | undefined,
+): Promise<void> {
+  if (userId === undefined || userId === null) return;
+  const [row] = await executor
+    .select({ id: schema.member.id })
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, userId)))
+    .limit(1);
+  if (row === undefined) throw validationFailed('That person is not in this workspace.');
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
@@ -532,6 +567,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
+    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -652,6 +688,7 @@ async function applyIssueUpdates(
       }
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
+    await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, current.teamId, values);
     pending.push({ current, values, changes });
   }
@@ -714,13 +751,18 @@ async function applyIssueUpdates(
     ),
   );
 
+  const labels = await labelsByIssue(
+    tx,
+    pending.map((entry) => entry.current.id),
+  );
+
   return pending.map((entry) => {
     const issue = updated.get(entry.current.id);
     if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
     return {
       issue,
       changes: entry.changes,
-      actions: [issueAction(issue, syncId, actor, 'update')],
+      actions: [issueAction(issue, syncId, actor, 'update', labels.get(issue.id) ?? [])],
     };
   });
 }
@@ -785,6 +827,63 @@ export interface MovedIssue {
   readonly actions: SyncAction[];
 }
 
+interface RegroupingInput {
+  readonly cycleId?: string | null | undefined;
+  readonly assigneeId?: string | null | undefined;
+  readonly priority?: number | undefined;
+  readonly projectId?: string | null | undefined;
+}
+
+function applyRegrouping(
+  parsed: RegroupingInput,
+  current: IssueRow,
+  values: IssueValues,
+): GroupedMoveField[] {
+  const regrouped: GroupedMoveField[] = [];
+  const regroup = <Field extends GroupedMoveField>(
+    field: Field,
+    next: IssueValues[Field] | undefined,
+  ): void => {
+    if (next === undefined || next === current[field]) return;
+    values[field] = next;
+    regrouped.push(field);
+  };
+  regroup('cycleId', parsed.cycleId);
+  regroup('assigneeId', parsed.assigneeId);
+  regroup('priority', parsed.priority);
+  if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
+    regroup('projectId', parsed.projectId);
+    values.milestoneId = null;
+  }
+  return regrouped;
+}
+
+interface RegroupActivityInput {
+  readonly organizationId: string;
+  readonly issueId: string;
+  readonly actor: Actor;
+  readonly syncId: number;
+  readonly regrouped: readonly GroupedMoveField[];
+  readonly current: IssueRow;
+  readonly issue: IssueRow;
+}
+
+async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Promise<void> {
+  for (const field of input.regrouped) {
+    await appendActivities(tx, [
+      {
+        organizationId: input.organizationId,
+        issueId: input.issueId,
+        actor: input.actor,
+        field,
+        from: await describeValue(tx, field, input.current[field]),
+        to: await describeValue(tx, field, input.issue[field]),
+        syncId: input.syncId,
+      },
+    ]);
+  }
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -834,6 +933,14 @@ export async function moveIssue(
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
 
+    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
+    await assertAssignableToTeam(tx, principal.organizationId, teamId, {
+      cycleId: parsed.cycleId,
+      projectId: parsed.projectId,
+    });
+
+    const regrouped = applyRegrouping(parsed, current, values);
+
     const [moved] = await tx
       .update(schema.issue)
       .set({ ...values, updatedAt: now, syncId })
@@ -855,14 +962,26 @@ export async function moveIssue(
       ]);
     }
 
+    await recordRegroupings(tx, {
+      organizationId: principal.organizationId,
+      issueId,
+      actor,
+      syncId,
+      regrouped,
+      current,
+      issue,
+    });
+
+    const movedLabels = await labelsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+
     return {
       issue,
       rebalanced,
       actions: [
-        issueAction(issue, syncId, actor, 'update'),
+        issueAction(issue, syncId, actor, 'update', movedLabels.get(issue.id) ?? []),
         ...rebalanced
           .filter((row) => row.id !== issueId)
-          .map((row) => issueAction(row, syncId, actor, 'update')),
+          .map((row) => issueAction(row, syncId, actor, 'update', movedLabels.get(row.id) ?? [])),
       ],
     };
   });
@@ -922,7 +1041,15 @@ async function setArchived(
 
     return {
       issue,
-      actions: [issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive')],
+      actions: [
+        issueAction(
+          issue,
+          syncId,
+          actor,
+          archivedAt === null ? 'unarchive' : 'archive',
+          (await labelsByIssue(tx, [issue.id])).get(issue.id) ?? [],
+        ),
+      ],
     };
   });
 }

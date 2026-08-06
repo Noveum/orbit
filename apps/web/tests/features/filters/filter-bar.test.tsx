@@ -55,7 +55,16 @@ const workspace: WorkspaceData = {
       role: 'member',
     },
   ],
-  projects: [{ id: 'project-1', name: 'Atlas', status: 'planned', color: '#5a63c8', icon: 'box' }],
+  projects: [
+    {
+      id: 'project-1',
+      name: 'Atlas',
+      status: 'planned',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: [],
+    },
+  ],
   cycles: [],
   seedIssues: [],
   stateById: new Map(),

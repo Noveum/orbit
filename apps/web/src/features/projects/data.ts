@@ -174,15 +174,13 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
       scope: milestoneProgress.get(milestone.id)?.scope ?? 0,
       completed: milestoneProgress.get(milestone.id)?.completed ?? 0,
     })),
-    updates: updates
-      .map((update) => ({
-        id: update.id,
-        health: toHealth(update.health),
-        body: renderPlainText(update.body),
-        createdAt: update.createdAt.toISOString(),
-        author: people.get(update.authorId) ?? null,
-      }))
-      .reverse(),
+    updates: updates.map((update) => ({
+      id: update.id,
+      health: toHealth(update.health),
+      body: renderPlainText(update.body),
+      createdAt: update.createdAt.toISOString(),
+      author: people.get(update.authorId) ?? null,
+    })),
     series,
   };
 }

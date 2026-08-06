@@ -14,6 +14,7 @@ export {
   lte,
   ne,
   not,
+  notExists,
   or,
   type SQL,
   sql,

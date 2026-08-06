@@ -290,4 +290,28 @@ describe('Board windowing', () => {
     fireIntersection();
     expect(onLoadMore).toHaveBeenCalled();
   });
+
+  it('fetches without a scroll when the column is short enough to fit', () => {
+    const onLoadMore = mock();
+    renderWindowedBoard(10, onLoadMore);
+
+    const column = screen.getByTestId('board-column-Todo').querySelector('ul') as HTMLElement;
+    Object.defineProperty(column, 'scrollHeight', { value: 300, configurable: true });
+    Object.defineProperty(column, 'clientHeight', { value: 800, configurable: true });
+
+    fireIntersection();
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+
+  it('waits for a scroll when the column is taller than the space it has', () => {
+    const onLoadMore = mock();
+    renderWindowedBoard(10, onLoadMore);
+
+    const column = screen.getByTestId('board-column-Todo').querySelector('ul') as HTMLElement;
+    Object.defineProperty(column, 'scrollHeight', { value: 2000, configurable: true });
+    Object.defineProperty(column, 'clientHeight', { value: 600, configurable: true });
+
+    fireIntersection();
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
 });

@@ -1,9 +1,10 @@
 'use client';
 
 import { RealtimeProvider } from '@orbit/realtime-client/react';
-import { SESSION_REVOKED_CLOSE_CODE, UNAUTHORIZED_CLOSE_CODE } from '@orbit/shared/events';
+import { SESSION_REVOKED_CLOSE_CODE } from '@orbit/shared/events';
 import type { ReactNode } from 'react';
 import { useCallback } from 'react';
+import { z } from 'zod';
 import { authClient } from '@/lib/auth/client.ts';
 import { ConnectionBanner } from './connection-banner.tsx';
 import { DeltaBridge } from './delta-bridge.tsx';
@@ -11,10 +12,36 @@ import { SessionProvider } from './session.tsx';
 import { fetchRealtimeTicket } from './ticket.ts';
 import { resolveRealtimeUrl } from './url.ts';
 
-const SIGNED_OUT_CLOSE_CODES: readonly number[] = [
-  SESSION_REVOKED_CLOSE_CODE,
-  UNAUTHORIZED_CLOSE_CODE,
-];
+export interface SessionGate {
+  readonly getSession: (options: {
+    readonly query: { readonly disableCookieCache: true };
+  }) => Promise<unknown>;
+  readonly signOut: () => Promise<unknown>;
+}
+
+const noSessionSchema = z.object({
+  data: z.null(),
+  error: z.null().optional(),
+});
+
+function serverHasNoSession(result: unknown): boolean {
+  return noSessionSchema.safeParse(result).success;
+}
+
+export async function endSessionIfRevoked(gate: SessionGate = authClient): Promise<boolean> {
+  const current = await gate
+    .getSession({ query: { disableCookieCache: true } })
+    .catch(() => undefined);
+  if (!serverHasNoSession(current)) return false;
+  await gate.signOut().catch(() => undefined);
+  window.location.href = '/login';
+  return true;
+}
+
+export function handleTerminalClose(code: number, gate: SessionGate = authClient): void {
+  if (code !== SESSION_REVOKED_CLOSE_CODE) return;
+  endSessionIfRevoked(gate).catch(() => undefined);
+}
 
 export interface WorkspaceRealtimeProps {
   readonly url: string;
@@ -31,12 +58,7 @@ export function WorkspaceRealtime({
   teamIds,
   children,
 }: WorkspaceRealtimeProps) {
-  const handleTerminal = useCallback((code: number) => {
-    if (!SIGNED_OUT_CLOSE_CODES.includes(code)) return;
-    authClient.signOut().finally(() => {
-      window.location.href = '/login';
-    });
-  }, []);
+  const handleTerminal = useCallback((code: number) => handleTerminalClose(code), []);
 
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
 
