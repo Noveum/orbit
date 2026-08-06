@@ -1,27 +1,24 @@
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 
-const TILES = [0, 1, 2, 3, 4];
-const COLUMNS = [0, 1, 2];
-const ROWS = [0, 1, 2, 3];
+const COLUMNS = [0, 1, 2, 3, 4];
+const CARDS = [0, 1, 2];
 
 export function BoardSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="standup-skeleton">
-      <div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-2">
-        {TILES.map((tile) => (
-          <Skeleton key={tile} className="h-8 w-36 rounded-md" />
-        ))}
-      </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-3">
-        {COLUMNS.map((column) => (
-          <div key={column} className="flex flex-col gap-2">
+    <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3" data-testid="standup-skeleton">
+      {COLUMNS.map((column) => (
+        <div key={column} className="flex w-72 shrink-0 flex-col gap-2 rounded-lg bg-surface-2/60">
+          <div className="flex items-center gap-2 px-2.5 py-2">
+            <Skeleton className="size-5.5 rounded-full" />
             <Skeleton className="h-3 w-28" />
-            {ROWS.map((row) => (
-              <Skeleton key={row} className="h-7 w-full" />
+          </div>
+          <div className="flex flex-col gap-2 px-2 pb-2">
+            {CARDS.map((card) => (
+              <Skeleton key={card} className="h-[4.75rem] w-full rounded-lg" />
             ))}
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

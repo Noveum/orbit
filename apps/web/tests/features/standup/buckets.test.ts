@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { bucketIssues, groupByAssignee, totalOf } from '../../../src/features/standup/buckets.ts';
-import type { Issue, WorkflowState } from '../../../src/lib/query/schemas.ts';
+import {
+  bucketIssues,
+  groupByAssignee,
+  personColumns,
+  readingOrder,
+} from '../../../src/features/standup/buckets.ts';
+import type { Issue, Member, WorkflowState } from '../../../src/lib/query/schemas.ts';
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -143,17 +148,110 @@ describe('bucketIssues', () => {
   });
 });
 
-describe('totalOf', () => {
-  it('adds the three columns together', () => {
+describe('readingOrder', () => {
+  it('reads in progress first, then what is queued, then what is already closed', () => {
     const buckets = bucketIssues(
       [
         issue({ id: 'done', stateId: 'state_done' }),
-        issue({ id: 'doing', stateId: 'state_doing' }),
         issue({ id: 'todo', stateId: 'state_todo' }),
+        issue({ id: 'doing', stateId: 'state_doing' }),
       ],
       stateById,
     );
 
-    expect(totalOf(buckets)).toBe(3);
+    expect(readingOrder(buckets).map((entry) => entry.id)).toEqual(['doing', 'todo', 'done']);
+  });
+});
+
+function member(id: string, name: string): Member {
+  return { id, name, email: `${id}@orbit.test`, image: null, handle: null, role: 'member' };
+}
+
+const roster: readonly Member[] = [
+  member('user_cy', 'Cy Diaz'),
+  member('user_ada', 'Ada Lovelace'),
+  member('user_bo', 'Bo Chen'),
+];
+
+describe('personColumns', () => {
+  it('gives every person with work a column, ordered by name', () => {
+    const columns = personColumns(
+      [
+        issue({ id: 'a', assigneeId: 'user_cy' }),
+        issue({ id: 'b', assigneeId: 'user_ada' }),
+        issue({ id: 'c', assigneeId: 'user_bo' }),
+      ],
+      roster,
+      [],
+      stateById,
+    );
+
+    expect(columns.map((column) => column.member.name)).toEqual([
+      'Ada Lovelace',
+      'Bo Chen',
+      'Cy Diaz',
+    ]);
+  });
+
+  it('leaves out a person the window found no work for', () => {
+    const columns = personColumns(
+      [issue({ id: 'a', assigneeId: 'user_bo' })],
+      roster,
+      [{ userId: 'user_bo', open: 1, inProgress: 0, completedSince: 0 }],
+      stateById,
+    );
+
+    expect(columns.map((column) => column.member.id)).toEqual(['user_bo']);
+  });
+
+  it('stacks a column in progress, up next, closed', () => {
+    const columns = personColumns(
+      [
+        issue({ id: 'done', assigneeId: 'user_ada', stateId: 'state_done' }),
+        issue({ id: 'todo', assigneeId: 'user_ada', stateId: 'state_todo' }),
+        issue({ id: 'doing', assigneeId: 'user_ada', stateId: 'state_doing' }),
+      ],
+      roster,
+      [],
+      stateById,
+    );
+
+    expect(columns[0]?.issues.map((entry) => entry.id)).toEqual(['doing', 'todo', 'done']);
+  });
+
+  it('carries the server count so a capped column can own up to it', () => {
+    const columns = personColumns(
+      [issue({ id: 'a', assigneeId: 'user_ada', stateId: 'state_doing' })],
+      roster,
+      [{ userId: 'user_ada', open: 12, inProgress: 4, completedSince: 3 }],
+      stateById,
+    );
+
+    expect(columns[0]?.total).toBe(15);
+  });
+
+  it('never claims fewer than the cards it hands over', () => {
+    const columns = personColumns(
+      [
+        issue({ id: 'a', assigneeId: 'user_ada', stateId: 'state_done' }),
+        issue({ id: 'b', assigneeId: 'user_ada', stateId: 'state_done' }),
+      ],
+      roster,
+      [{ userId: 'user_ada', open: 0, inProgress: 0, completedSince: 1 }],
+      stateById,
+    );
+
+    expect(columns[0]?.total).toBe(2);
+  });
+
+  it('skips work owned by somebody who is not in the workspace roster', () => {
+    const columns = personColumns(
+      [issue({ id: 'a', assigneeId: 'user_ghost' })],
+      roster,
+      [{ userId: 'user_ghost', open: 1, inProgress: 0, completedSince: 0 }],
+      stateById,
+    );
+
+    expect(columns).toHaveLength(0);
   });
 });
