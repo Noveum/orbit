@@ -4,7 +4,7 @@ import { type ReactNode, useState } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { HOTKEY_PRIORITY, HotkeyProvider, useHotkey } from '@/lib/keyboard/index.ts';
-import { buildNavigation } from '@/lib/navigation.ts';
+import { buildNavigation, buildSidebarNav } from '@/lib/navigation.ts';
 import { render, screen } from '@/test/render.tsx';
 
 const push = mock();
@@ -128,6 +128,14 @@ describe('command palette', () => {
     push.mockClear();
     await user.keyboard('gt');
     expect(push).toHaveBeenCalledWith('/sprints');
+  });
+
+  it('buildSidebarNav assigns the gt binding to Sprints', () => {
+    const sidebarNav = buildSidebarNav([]);
+    const sprintsLink = sidebarNav.workspace.links.find((link) => link.href === '/sprints');
+
+    expect(sprintsLink).toBeDefined();
+    expect(sprintsLink?.binding).toBe('g t');
   });
 
   it('runs the toggles it advertises', async () => {
