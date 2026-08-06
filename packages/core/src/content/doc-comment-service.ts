@@ -202,7 +202,7 @@ export async function createDocComment(
 
     if (parsed.parentId !== null) {
       if (parsed.anchor !== null) {
-        throw validationFailed('A reply takes the passage of the comment it answers.');
+        throw validationFailed('A reply cannot point at a passage of its own.');
       }
       const parent = await loadDocComment(tx, principal, parsed.parentId);
       if (parent.docId !== docId) {

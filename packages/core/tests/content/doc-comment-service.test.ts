@@ -102,7 +102,7 @@ describe('anchored doc comments', () => {
     expect(page.comments.map((entry) => entry.anchor === null)).toEqual([true, false]);
   });
 
-  it('keeps a reply on the anchor of the comment it answers', async () => {
+  it('refuses a passage on a reply and stores the reply with none of its own', async () => {
     const { comment: root } = await createDocComment(workspace.admin, docId, {
       body: 'Which migration?',
       anchor,
@@ -114,13 +114,18 @@ describe('anchored doc comments', () => {
         parentId: root.id,
         anchor: buildDocAnchor('Something else entirely', 0, 9),
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('A reply cannot point at a passage of its own.');
 
     const { comment: reply } = await createDocComment(workspace.admin, docId, {
       body: 'This one.',
       parentId: root.id,
     });
     expect(reply.anchor).toBeNull();
+
+    const page = await listDocComments(workspace.admin, docId, {});
+    const listed = page.comments.find((entry) => entry.id === reply.id);
+    expect(listed?.anchor).toBeNull();
+    expect(page.comments.find((entry) => entry.id === root.id)?.anchor).toEqual(anchor);
   });
 
   it('refuses an anchor with an empty quote or a negative position', async () => {
