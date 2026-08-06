@@ -45,13 +45,14 @@ afterAll(async () => {
   mock.module('../src/logger.ts', () => loggerModule);
 });
 
-async function newHub(): Promise<Hub> {
+async function newHub(overrides: Parameters<typeof createRealtimeHub>[0] = {}): Promise<Hub> {
   return await createRealtimeHub({
     redisUrl: REDIS_URL,
     ticketSecret: SECRET,
     batchWindowMs: 1,
     heartbeatIntervalMs: 60_000,
     heartbeatTimeoutMs: 60_000,
+    ...overrides,
   });
 }
 
@@ -415,6 +416,65 @@ describe('membership and session revocation', () => {
 
       expect(wired.socket.closures).toHaveLength(0);
       expect(hub.stats().connections).toBe(1);
+    } finally {
+      await hub.close();
+    }
+  });
+});
+
+describe('the periodic session sweep closes what no control message ever announced', () => {
+  it('closes a connection whose session quietly expired and spares the rest', async () => {
+    const hub = await newHub({ sessionSweepIntervalMs: 25 });
+    try {
+      const stale = await connect(hub, home.readerUserId, home.organizationId);
+      const fresh = await connect(hub, home.adminUserId, home.organizationId);
+      expect(hub.stats().connections).toBe(2);
+
+      await db
+        .update(schema.session)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(schema.session.id, stale.sessionId));
+
+      await waitFor(() => stale.socket.closures.length > 0, 'the expired session to be swept');
+
+      expect(stale.socket.closures[0]).toEqual({
+        code: SESSION_REVOKED_CLOSE_CODE,
+        reason: 'session_revoked',
+      });
+      expect(fresh.socket.closures).toHaveLength(0);
+      expect(hub.stats().connections).toBe(1);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it('closes a connection whose session row was deleted outright', async () => {
+    const hub = await newHub({ sessionSweepIntervalMs: 25 });
+    try {
+      const signedOut = await connect(hub, home.readerUserId, home.organizationId);
+
+      await db.delete(schema.session).where(eq(schema.session.id, signedOut.sessionId));
+
+      await waitFor(() => signedOut.socket.closures.length > 0, 'the deleted session to be swept');
+
+      expect(signedOut.socket.closures[0]?.code).toBe(SESSION_REVOKED_CLOSE_CODE);
+      expect(hub.stats().connections).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it('leaves a connection whose session is still live alone across many sweeps', async () => {
+    const hub = await newHub({ sessionSweepIntervalMs: 10 });
+    try {
+      const wired = await connect(hub, home.readerUserId, home.organizationId);
+      await subscribe(wired, [`team:${home.teamCore}`]);
+
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
+      expect(wired.socket.closures).toHaveLength(0);
+      expect(hub.stats().connections).toBe(1);
+      expect(hub.stats().subscriptions).toBe(1);
     } finally {
       await hub.close();
     }
