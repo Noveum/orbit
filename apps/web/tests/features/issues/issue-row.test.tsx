@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { GroupContext } from '@/features/filters/grouping.ts';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { render, screen } from '@/test/render.tsx';
+import { fireEvent, render, screen } from '@/test/render.tsx';
 import { buildRows } from '../../../src/features/issues/issue-list.tsx';
 import { IssueRow } from '../../../src/features/issues/issue-row.tsx';
 
@@ -124,6 +124,54 @@ describe('IssueRow', () => {
 
     await user.tab();
     expect(checkbox).toHaveFocus();
+  });
+
+  it('carries the issue title on a real link to the issue page', () => {
+    render(
+      <IssueRow
+        issue={issue()}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active={false}
+        selected={false}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    const link = screen.getByRole('link', {
+      name: 'Domain auto join for verified workspace domains',
+    });
+    expect(link.tagName).toBe('A');
+    expect(link).toHaveAttribute('href', '/issue/ENG-7');
+  });
+
+  it('leaves a modified click to the browser instead of peeking', () => {
+    const onOpen = mock();
+    render(
+      <IssueRow
+        issue={issue()}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active={false}
+        selected={false}
+        onOpen={onOpen}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    const link = screen.getByRole('link', {
+      name: 'Domain auto join for verified workspace domains',
+    });
+    fireEvent.click(link, { metaKey: true });
+    expect(onOpen).not.toHaveBeenCalled();
+
+    fireEvent.click(link);
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it('marks the active row', () => {

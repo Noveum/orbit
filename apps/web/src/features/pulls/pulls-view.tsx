@@ -4,11 +4,11 @@ import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/re
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
 import { GitPullRequest } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
+import { IssueLink } from '@/features/issues/issue-link.tsx';
 import type { PullRequestRow } from './data.ts';
 import { PR_GROUP_ORDER, prStateLabel, prStateTone } from './pr-state.ts';
 
@@ -94,13 +94,14 @@ export function PullsView({ pulls, userId }: PullsViewProps) {
                             {pull.repository}#{pull.number ?? '?'}
                           </span>
                           <span aria-hidden="true">·</span>
-                          <Link
-                            href={`/issue/${pull.issueIdentifier}`}
-                            className="hover:text-accent"
+                          <IssueLink
+                            identifier={pull.issueIdentifier}
+                            testId={`pull-issue-${pull.issueIdentifier}`}
+                            className="flex min-w-0 items-center gap-1.5 rounded-sm hover:text-accent"
                           >
-                            {pull.issueIdentifier}
-                          </Link>
-                          <span className="truncate">{pull.issueTitle}</span>
+                            <span className="shrink-0">{pull.issueIdentifier}</span>
+                            <span className="truncate">{pull.issueTitle}</span>
+                          </IssueLink>
                         </span>
                       </div>
                       <span className="hidden shrink-0 text-2xs text-faint sm:block">
