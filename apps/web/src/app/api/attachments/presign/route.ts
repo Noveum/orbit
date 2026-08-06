@@ -18,7 +18,7 @@ export async function POST(request: Request): Promise<Response> {
     await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
 
     const key = storageKeyFor(principal.organizationId, upload.safeName);
-    const target = await storageDriver().createUploadTarget(key, upload.contentType);
+    const target = await storageDriver().createUploadTarget(key, upload.contentType, upload.size);
 
     const syncId = await nextSyncId(db);
     const [created] = await db

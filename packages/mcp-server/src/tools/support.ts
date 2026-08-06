@@ -51,14 +51,22 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
   readonly inputSchema: Shape;
 }
 
-const WRITES_ALLOWED = new WeakMap<McpServer, boolean>();
+export interface ToolAccess {
+  readonly reads: boolean;
+  readonly writes: boolean;
+}
 
-export function allowWrites(server: McpServer, allowed: boolean): void {
-  WRITES_ALLOWED.set(server, allowed);
+const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
+
+const GRANTED = new WeakMap<McpServer, ToolAccess>();
+
+export function allowTools(server: McpServer, access: ToolAccess): void {
+  GRANTED.set(server, access);
 }
 
 function mayRegister(server: McpServer, readOnly: boolean): boolean {
-  return readOnly || WRITES_ALLOWED.get(server) !== false;
+  const access = GRANTED.get(server) ?? DENY_EVERYTHING;
+  return readOnly ? access.reads : access.writes;
 }
 
 export function defineTool<Shape extends z.ZodRawShape>(

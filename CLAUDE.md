@@ -94,6 +94,12 @@ domain verified in Resend, otherwise every send fails.
 - **Errors.** Throw typed domain errors from `@orbit/shared/errors`. Route handlers map them to responses. Never swallow an error silently.
 - **Server state.** TanStack Query for fetching, with optimistic mutations. The realtime stream invalidates and patches the cache; it never triggers a full refetch of a list the user is looking at.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
+  A scope decides who is delivered a row, so it has to match who may read it: a project and its milestones
+  carry the scopes of the teams that own them and fall back to the workspace scope only when the project
+  belongs to no team, and a private saved view carries its owner alone.
+- **Socket lifetime.** A socket never outlives its session. Signing out publishes a session revocation on
+  the control channel and the hub closes that connection, and the hub also sweeps the sessions behind every
+  open connection on an interval, so an expired or deleted session is dropped even when nothing announced it.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
   optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `@node-rs/argon2` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
@@ -102,7 +108,8 @@ domain verified in Resend, otherwise every send fails.
   consent screen at `/oauth/authorize` where the user picks a workspace and re-verifies a passkey. The
   standalone MCP server validates the access token against the shared database (`verifyMcpAccessToken`)
   and returns a `WWW-Authenticate` challenge on `401`. A `mcp_grant` row binds a client and user to the
-  chosen workspace.
+  chosen workspace. The granted scopes decide the tool set: a read tool needs `orbit.read`, a write tool
+  needs `orbit.write`, and a token carrying neither is refused with a `403` before any tool is registered.
 - **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
   creation and on user creation, so it covers every provider. Empty means no restriction. A
   workspace can narrow it further with its own `allowedEmailDomains`.

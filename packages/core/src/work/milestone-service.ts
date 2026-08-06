@@ -2,7 +2,6 @@ import { and, asc, db, desc, eq, schema } from '@orbit/db';
 import { SORT_ORDER_STEP } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
-import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { milestoneCreateSchema, milestoneUpdateSchema } from '@orbit/shared/validators';
@@ -10,12 +9,16 @@ import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { assertProjectVisible } from './project-service.ts';
+import { assertProjectVisible, projectReachScopes, projectTeamIds } from './project-service.ts';
 
 export type MilestoneRow = typeof schema.milestone.$inferSelect;
 
-function milestoneScopes(row: MilestoneRow): string[] {
-  return [scopes.organization(row.organizationId), scopes.project(row.projectId)];
+async function milestoneScopes(executor: Executor, row: MilestoneRow): Promise<string[]> {
+  return projectReachScopes(
+    row.organizationId,
+    row.projectId,
+    await projectTeamIds(executor, row.projectId),
+  );
 }
 
 async function assertMilestoneReachable(
@@ -75,7 +78,7 @@ export async function createMilestone(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: milestoneScopes(milestone),
+          scopes: await milestoneScopes(tx, milestone),
           action: 'insert',
           model: 'milestone',
           modelId: milestone.id,
@@ -122,7 +125,7 @@ export async function updateMilestone(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: milestoneScopes(milestone),
+          scopes: await milestoneScopes(tx, milestone),
           action: 'update',
           model: 'milestone',
           modelId: milestone.id,
@@ -145,12 +148,13 @@ export async function deleteMilestone(
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const reach = await milestoneScopes(tx, milestone);
     await tx.delete(schema.milestone).where(eq(schema.milestone.id, milestoneId));
     return [
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
-        scopes: milestoneScopes(milestone),
+        scopes: reach,
         action: 'delete',
         model: 'milestone',
         modelId: milestoneId,
@@ -218,13 +222,18 @@ export async function reorderMilestones(
       if (updated !== undefined) milestones.push(updated);
     }
 
+    const reach = projectReachScopes(
+      principal.organizationId,
+      projectId,
+      await projectTeamIds(tx, projectId),
+    );
     return {
       milestones,
       actions: milestones.map((row) =>
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: milestoneScopes(row),
+          scopes: reach,
           action: 'update',
           model: 'milestone',
           modelId: row.id,
