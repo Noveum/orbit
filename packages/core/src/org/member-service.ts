@@ -10,6 +10,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { issueScopes } from '../work/issue-service.ts';
 import type { MemberRow } from './organization-service.ts';
 
 export interface MemberWithUser {
@@ -247,11 +248,7 @@ export async function removeMember(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [
-            scopes.organization(principal.organizationId),
-            scopes.team(row.teamId),
-            scopes.issue(row.id),
-          ],
+          scopes: issueScopes(row),
           action: 'update',
           model: 'issue',
           modelId: row.id,
