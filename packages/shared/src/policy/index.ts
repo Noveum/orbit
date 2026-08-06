@@ -1,4 +1,4 @@
-import { ORG_ROLE_RANK, type OrgRole } from '../constants/index.ts';
+import { isRestricted, ORG_ROLE_RANK, type OrgRole } from '../constants/index.ts';
 import { forbidden, notFound } from '../errors/index.ts';
 
 export const PERMISSIONS = [
@@ -131,4 +131,29 @@ export function atLeast(role: OrgRole, minimum: OrgRole): boolean {
 
 export function canAssignRole(actorRole: OrgRole, targetRole: OrgRole): boolean {
   return actorRole === 'admin' && ORG_ROLE_RANK[targetRole] <= ORG_ROLE_RANK.admin;
+}
+
+export interface ReadableDocRow {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly authorId: string;
+  readonly visibility: string;
+}
+
+export interface DocReader {
+  readonly userId: string;
+  readonly organizationId: string;
+  readonly role: OrgRole;
+}
+
+export function canReadDoc(
+  principal: DocReader,
+  doc: ReadableDocRow,
+  grantedDocIds: readonly string[],
+): boolean {
+  if (doc.organizationId !== principal.organizationId) return false;
+  if (principal.role === 'admin') return true;
+  if (doc.authorId === principal.userId) return true;
+  if (!isRestricted(doc.visibility)) return true;
+  return grantedDocIds.includes(doc.id);
 }

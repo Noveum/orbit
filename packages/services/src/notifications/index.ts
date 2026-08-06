@@ -9,6 +9,7 @@ import {
 import {
   actorSchema,
   idSchema,
+  NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   type SyncAction,
   scopes,
@@ -17,7 +18,7 @@ import {
   validationFailed,
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   DEFAULT_SETTINGS,
@@ -34,10 +35,16 @@ export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
 
 export const DEDUPE_WINDOW_MS = 60_000;
+export const INBOX_CHANNEL = 'inbox';
+
+function deliveredToInbox() {
+  return sql`${notification.deliveredChannels} @> '["inbox"]'::jsonb`;
+}
 
 export const notificationEventSchema = z.object({
   organizationId: idSchema,
   type: z.enum(NOTIFICATION_TYPES),
+  reason: z.enum(NOTIFICATION_REASONS),
   actor: actorSchema,
   entityType: z.string().trim().min(1).max(32),
   entityId: idSchema,
@@ -46,7 +53,6 @@ export const notificationEventSchema = z.object({
   body: z.string().max(4000).default(''),
   url: z.string().trim().min(1).max(2048),
   priority: z.number().int().min(0).max(4).optional(),
-  scopes: z.array(z.string().min(1)).max(16).default([]),
 });
 
 export type NotificationEvent = z.input<typeof notificationEventSchema>;
@@ -127,9 +133,14 @@ export async function notifyMany(
         continue;
       }
       seen.add(key);
-      plans.push(
-        planFor(event, recipient, settings.get(userId) ?? DEFAULT_SETTINGS, disabled, now),
+      const plan = planFor(
+        event,
+        recipient,
+        settings.get(userId) ?? DEFAULT_SETTINGS,
+        disabled,
+        now,
       );
+      if (plan !== null) plans.push(plan);
     }
   }
   if (plans.length === 0) return { ...emptyOutcome(), deduped };
@@ -148,9 +159,11 @@ function planFor(
   settings: NotificationSettings,
   disabled: ReadonlySet<string>,
   now: Date,
-): Plan {
+): Plan | null {
+  const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
   const slackEnabled = isChannelEnabled(disabled, recipient.id, 'slack', event.type);
+  if (!(inboxEnabled || emailEnabled || slackEnabled)) return null;
   const quietHours: QuietHours = {
     enabled: settings.quietHoursEnabled,
     start: settings.quietHoursStart,
@@ -163,7 +176,11 @@ function planFor(
     id: randomUUIDv7(now),
     event,
     recipient,
-    channels: ['inbox', ...(emailEnabled ? ['email'] : []), ...(slackEnabled ? ['slack'] : [])],
+    channels: [
+      ...(inboxEnabled ? [INBOX_CHANNEL] : []),
+      ...(emailEnabled ? ['email'] : []),
+      ...(slackEnabled ? ['slack'] : []),
+    ],
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
   };
@@ -191,6 +208,7 @@ function toInsert(plan: Plan, now: Date) {
     organizationId: event.organizationId,
     userId: plan.recipient.id,
     type: event.type,
+    reason: event.reason,
     actorType: event.actor.type,
     actorId: event.actor.id,
     actorName: event.actor.name ?? 'Orbit',
@@ -217,7 +235,7 @@ function buildOutcome(
   for (const row of rows) {
     const plan = planById.get(row.id);
     if (plan === undefined) continue;
-    actions.push(toSyncAction(row, plan));
+    if (plan.channels.includes(INBOX_CHANNEL)) actions.push(toSyncAction(row, plan));
     if (plan.emailAt !== null) {
       email.push({
         userId: row.userId,
@@ -238,7 +256,7 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
   return syncActionSchema.parse({
     syncId: row.syncId,
     organizationId: row.organizationId,
-    scopes: unique([scopes.user(row.userId), ...plan.event.scopes]),
+    scopes: [scopes.user(row.userId)],
     action: 'insert',
     model: 'notification',
     modelId: row.id,
@@ -247,6 +265,7 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
       organizationId: row.organizationId,
       userId: row.userId,
       type: row.type,
+      reason: row.reason,
       actorType: row.actorType,
       actorId: row.actorId,
       actorName: row.actorName,
@@ -417,6 +436,7 @@ export async function listInbox(
   const filters = [
     eq(notification.userId, params.userId),
     eq(notification.organizationId, params.organizationId),
+    deliveredToInbox(),
   ];
   if (params.cursor !== undefined) filters.push(lt(notification.id, params.cursor));
   if (params.unreadOnly) filters.push(isNull(notification.readAt));
@@ -451,6 +471,7 @@ export async function unreadCount(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
+        deliveredToInbox(),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     );
@@ -476,6 +497,7 @@ export async function unreadCounters(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
+        deliveredToInbox(),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     )

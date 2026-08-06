@@ -1,6 +1,6 @@
 'use client';
 
-import { isDocAnchorOrphaned, relativeTime } from '@orbit/shared/utils';
+import { docCommentAnchorId, isDocAnchorOrphaned, relativeTime } from '@orbit/shared/utils';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { Quote, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +18,7 @@ import {
   useUpdateDocComment,
 } from '@/lib/query/use-doc-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
+import { useHashScroll } from './use-hash-scroll.ts';
 
 function sortByCreatedAt(comments: readonly DocComment[]): DocComment[] {
   return [...comments].sort((left, right) =>
@@ -60,6 +61,7 @@ export function DocComments({
     () => new Map(members.map((member) => [member.id, member])),
     [members],
   );
+  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
   const roots = sortByCreatedAt(comments.filter((entry) => entry.comment.parentId === null));
   const repliesOf = (parentId: string) =>
@@ -179,10 +181,11 @@ function DocCommentItem({
   return (
     <article
       ref={article}
+      id={docCommentAnchorId(entry.comment.id)}
       data-testid={`doc-comment-${entry.comment.id}`}
       data-focused={focused ? 'true' : 'false'}
       className={cn(
-        'group flex gap-2.5 rounded-lg transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
+        'group flex scroll-mt-24 gap-2.5 rounded-lg transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
         focused && 'bg-accent-soft/60',
       )}
     >
