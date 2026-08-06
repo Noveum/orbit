@@ -1,8 +1,10 @@
 import { slugify, truncate } from '@orbit/shared/utils';
 import { Marked } from 'marked';
+import { escapeHtml, highlightCode, languageAlias } from './highlight.ts';
 import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 export { extractIssueIdentifiers, extractMentions } from '@orbit/shared/utils';
+export { highlightCode, languageAlias } from './highlight.ts';
 export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 const UNSAFE_URL = /^\s*(javascript|vbscript|file|data):/i;
@@ -11,7 +13,15 @@ const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
 const HEADING_TAG = /<h([1-3])((?:[^>"]|"[^"]*")*)>([\s\S]*?)<\/h\1>/gi;
 const EXISTING_ID = /\sid="[^"]*"/gi;
 
-const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false });
+const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false }).use({
+  renderer: {
+    code({ text, lang }): string {
+      const alias = languageAlias(lang ?? '');
+      const classes = alias.length === 0 ? 'hljs' : `hljs language-${escapeHtml(alias)}`;
+      return `<pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre>\n`;
+    },
+  },
+});
 
 export function renderMarkdown(source: string): string {
   if (source.trim().length === 0) return '';

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { codeHighlightClassName } from './code-theme.ts';
 import type { DocHeading } from './outline.ts';
 import { extractHeadings, sameHeadings } from './outline.ts';
 
@@ -29,6 +30,7 @@ export const docProseClassName = cn(
   '[&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-medium [&_th]:text-text',
   '[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_td]:align-top',
   '[&_img]:my-5 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-border',
+  codeHighlightClassName,
 );
 
 export interface DocBodyProps {

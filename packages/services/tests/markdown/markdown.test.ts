@@ -38,11 +38,12 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<mark>highlighted</mark>');
   });
 
-  it('keeps fenced code blocks with a language class', () => {
-    const html = renderMarkdown('```ts\nconst a: number = 1;\n```');
+  it('keeps fenced code blocks with a language class and the code intact', () => {
+    const source = '```ts\nconst a: number = 1;\n```';
+    const html = renderMarkdown(source);
     expect(html).toContain('<pre>');
-    expect(html).toContain('class="language-ts"');
-    expect(html).toContain('const a: number = 1;');
+    expect(html).toContain('class="hljs language-ts"');
+    expect(renderPlainText(source)).toBe('const a: number = 1;');
   });
 
   it('keeps headings, lists, blockquotes, images and inline code', () => {

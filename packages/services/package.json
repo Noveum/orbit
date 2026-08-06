@@ -24,6 +24,7 @@
     "@react-email/render": "2.1.0",
     "drizzle-orm": "0.45.2",
     "linkedom": "^0.18.13",
+    "lowlight": "^3",
     "marked": "18.0.7",
     "resend": "6.18.0",
     "zod": "4.4.3"
