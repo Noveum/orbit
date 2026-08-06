@@ -63,6 +63,10 @@ describe('list and search indexes', () => {
     ]);
   });
 
+  it('replays sprint scope changes from a partial index over cycle moves', () => {
+    expect(partialIndexNamesOf(schema.issueActivity)).toContain('issue_activity_cycle_moves_idx');
+  });
+
   it('resolves membership and project teams from their own indexes', () => {
     expect(indexNamesOf(schema.member)).toContain('member_user_idx');
     expect(indexNamesOf(schema.projectTeam)).toContain('project_team_team_idx');
