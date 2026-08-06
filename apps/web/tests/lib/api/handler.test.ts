@@ -1,24 +1,44 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { ORIGIN_CLIENT_ID_HEADER, type SyncAction } from '@orbit/shared/events';
 
-const publishDeltas = mock(() => Promise.reject(new Error('Redis is down.')));
+const published: SyncAction[][] = [];
+const publishOutcome: { fail: boolean } = { fail: false };
+
+const publishDeltas = mock((actions: readonly SyncAction[]) => {
+  published.push([...actions]);
+  return publishOutcome.fail
+    ? Promise.reject(new Error('Redis is down.'))
+    : Promise.resolve(undefined);
+});
 
 const core = await import('@orbit/core');
 mock.module('@orbit/core', () => ({ ...core, publishDeltas }));
-mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
+
+const requestHeaders = new Headers();
+mock.module('next/headers', () => ({ headers: () => Promise.resolve(requestHeaders) }));
 
 const { cachedJson, publish } = await import('../../../src/lib/api/handler.ts');
 
-const ACTION = {
-  syncId: 1,
-  organizationId: 'org_1',
-  scopes: ['team:team_eng'],
-  action: 'update' as const,
-  model: 'issue' as const,
-  modelId: 'issue_1',
-  data: { id: 'issue_1' },
-  actor: { type: 'user' as const, id: 'user_1' },
-  at: '2026-01-01T00:00:00.000Z',
-};
+function action(overrides: Partial<SyncAction> = {}): SyncAction {
+  return {
+    syncId: 1,
+    organizationId: 'org_1',
+    scopes: ['team:team_eng'],
+    action: 'update',
+    model: 'issue',
+    modelId: 'issue_1',
+    data: { id: 'issue_1' },
+    actor: { type: 'user', id: 'user_1' },
+    at: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  published.length = 0;
+  publishOutcome.fail = false;
+  requestHeaders.delete(ORIGIN_CLIENT_ID_HEADER);
+});
 
 describe('cachedJson', () => {
   it('serves the payload with a weak etag the client can revalidate against', async () => {
@@ -57,9 +77,52 @@ describe('cachedJson', () => {
   });
 });
 
-describe('publish', () => {
+describe('publish stamps the writing tab so its own echo can be suppressed', () => {
+  it('carries the origin client id onto every action when the header is present', async () => {
+    requestHeaders.set(ORIGIN_CLIENT_ID_HEADER, 'tab-a1b2c3');
+
+    await publish([action(), action({ modelId: 'issue_2', model: 'comment' })]);
+
+    const sent = published[0] ?? [];
+    expect(sent).toHaveLength(2);
+    expect(sent.map((entry) => entry.originClientId)).toEqual(['tab-a1b2c3', 'tab-a1b2c3']);
+    expect(sent.map((entry) => entry.modelId)).toEqual(['issue_1', 'issue_2']);
+  });
+
+  it('leaves the actions unstamped when no tab identified itself', async () => {
+    await publish([action()]);
+
+    const sent = published[0] ?? [];
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.originClientId).toBeUndefined();
+  });
+
+  it('ignores a header value the contract rejects rather than stamping garbage', async () => {
+    requestHeaders.set(ORIGIN_CLIENT_ID_HEADER, '');
+
+    await publish([action()]);
+
+    expect(published[0]?.[0]?.originClientId).toBeUndefined();
+  });
+
+  it('never mutates the actions the caller handed it', async () => {
+    requestHeaders.set(ORIGIN_CLIENT_ID_HEADER, 'tab-zz');
+    const original = action();
+
+    await publish([original]);
+
+    expect(original.originClientId).toBeUndefined();
+  });
+
+  it('publishes nothing at all when there is nothing to publish', async () => {
+    await publish([]);
+    expect(published).toHaveLength(0);
+  });
+
   it('never fails the request when the delta bus is unreachable', async () => {
-    await expect(publish([ACTION])).resolves.toBeUndefined();
-    expect(publishDeltas).toHaveBeenCalled();
+    publishOutcome.fail = true;
+
+    await expect(publish([action()])).resolves.toBeUndefined();
+    expect(published).toHaveLength(1);
   });
 });
