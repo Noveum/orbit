@@ -218,6 +218,7 @@ export function CommandPalette({
                       <IssueLink
                         identifier={issue.identifier}
                         onClick={dismissOnPlainClick}
+                        prefetch={false}
                         className="flex min-w-0 flex-1 items-center gap-2.5"
                       >
                         <CircleDot

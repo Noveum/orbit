@@ -101,6 +101,7 @@ export function IssueRow({
         identifier={issue.identifier}
         onPlainClick={onOpen}
         onFocus={onFocus}
+        prefetch={false}
         className="min-w-0 flex-1 truncate rounded-sm text-text"
       >
         {issue.title}
