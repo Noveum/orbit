@@ -44,6 +44,17 @@ export function buildRows(
   return rows;
 }
 
+export function selectionThrough(
+  current: readonly string[],
+  from: string | undefined,
+  to: string | undefined,
+): readonly string[] {
+  if (to === undefined || from === to) return current;
+  if (from !== undefined && current.includes(to)) return current.filter((id) => id !== from);
+  const anchored = from === undefined || current.includes(from) ? [...current] : [...current, from];
+  return anchored.includes(to) ? anchored : [...anchored, to];
+}
+
 export interface IssueListProps {
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
@@ -117,16 +128,59 @@ export function IssueList({
       if (nextIndex === undefined) return;
       setActiveIndex(nextIndex);
       virtualizer.scrollToIndex(nextIndex, { align: 'auto' });
+      return nextIndex;
     },
     [activeIndex, issueIndexes, virtualizer],
+  );
+
+  const extend = useCallback(
+    (direction: 1 | -1) => {
+      const fromRow = rows[activeIndex];
+      const nextIndex = step(direction);
+      if (nextIndex === undefined) return;
+      const toRow = rows[nextIndex];
+      const reached = toRow?.kind === 'issue' ? toRow.issue.id : undefined;
+      const started = fromRow?.kind === 'issue' ? fromRow.issue.id : undefined;
+      setSelected((current) => selectionThrough(current, started, reached));
+    },
+    [activeIndex, rows, step],
   );
 
   useEffect(() => {
     if (activeIssue === undefined && issueIndexes[0] !== undefined) setActiveIndex(issueIndexes[0]);
   }, [activeIssue, issueIndexes]);
 
-  useHotkey('j', () => step(1), { label: 'Next issue', section: 'Issues', scope: 'issues' });
-  useHotkey('k', () => step(-1), { label: 'Previous issue', section: 'Issues', scope: 'issues' });
+  useHotkey('j', () => step(1), {
+    label: 'Next issue',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['down'],
+  });
+  useHotkey('k', () => step(-1), {
+    label: 'Previous issue',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['up'],
+  });
+  useHotkey('shift+j', () => extend(1), {
+    label: 'Extend the selection down',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['shift+down'],
+  });
+  useHotkey('shift+k', () => extend(-1), {
+    label: 'Extend the selection up',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['shift+up'],
+  });
+  useHotkey(
+    'mod+a',
+    () => {
+      setSelected(issues.map((issue) => issue.id));
+    },
+    { label: 'Select every issue', section: 'Issues', scope: 'issues' },
+  );
   useHotkey(
     'x',
     () => {

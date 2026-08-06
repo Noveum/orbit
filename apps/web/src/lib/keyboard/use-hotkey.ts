@@ -13,6 +13,7 @@ export interface HotkeyOptions {
   readonly advertised?: boolean;
   readonly preventDefault?: boolean;
   readonly allowInInput?: boolean;
+  readonly aliases?: readonly string[];
 }
 
 export function useHotkey(
@@ -31,6 +32,7 @@ export function useHotkey(
     advertised = true,
     preventDefault = true,
     allowInInput = false,
+    aliases = [],
   } = options;
 
   useEffect(() => {
@@ -38,34 +40,40 @@ export function useHotkey(
   }, [handler]);
 
   const id = useId();
+  const aliasKey = aliases.join(' ');
 
-  useEffect(
-    () =>
+  useEffect(() => {
+    const bindings = [binding, ...aliasKey.split(' ').filter((entry) => entry.length > 0)];
+    const disposers = bindings.map((entry, index) =>
       registry.register({
-        id,
-        binding,
+        id: index === 0 ? id : `${id}:${index}`,
+        binding: entry,
         label,
         section,
         scope,
         priority,
         enabled,
-        advertised,
+        advertised: advertised && index === 0,
         preventDefault,
         allowInInput,
         run: (event) => handlerRef.current(event),
       }),
-    [
-      registry,
-      id,
-      binding,
-      label,
-      section,
-      scope,
-      priority,
-      enabled,
-      advertised,
-      preventDefault,
-      allowInInput,
-    ],
-  );
+    );
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [
+    registry,
+    id,
+    binding,
+    aliasKey,
+    label,
+    section,
+    scope,
+    priority,
+    enabled,
+    advertised,
+    preventDefault,
+    allowInInput,
+  ]);
 }

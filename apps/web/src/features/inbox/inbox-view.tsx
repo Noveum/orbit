@@ -273,11 +273,13 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
     label: 'Next notification',
     section: 'Navigation',
     scope: 'inbox',
+    aliases: ['down'],
   });
   useHotkey('k', () => move(-1), {
     label: 'Previous notification',
     section: 'Navigation',
     scope: 'inbox',
+    aliases: ['up'],
   });
   useHotkey(
     'u',
