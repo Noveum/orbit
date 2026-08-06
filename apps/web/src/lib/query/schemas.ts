@@ -4,6 +4,7 @@ import {
   VIEW_LAYOUTS,
   viewStateSchema,
 } from '@orbit/shared/filters';
+import { docCommentAnchorSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 const timestamp = z.string();
@@ -152,6 +153,7 @@ export const docCommentSchema = z.object({
     authorId: z.string(),
     parentId: z.string().nullable(),
     body: z.string(),
+    anchor: docCommentAnchorSchema.nullable().default(null),
     editedAt: nullableTimestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
