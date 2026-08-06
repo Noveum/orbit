@@ -386,72 +386,22 @@ export const reactionResultSchema = z.object({ emoji: z.string(), active: z.bool
 export const deletedSchema = z.object({ deleted: z.boolean() });
 export const subscribedSchema = z.object({ subscribed: z.boolean() });
 
-export const standupTurnSchema = z.object({
-  id: z.string(),
-  standupId: z.string(),
-  userId: z.string(),
-  position: z.number(),
-  attendance: z.enum(['unknown', 'present', 'absent']).catch('unknown'),
-  status: z.enum(['waiting', 'speaking', 'done', 'skipped']).catch('waiting'),
-  notes: z.string().default(''),
-  blockers: z.string().default(''),
-  spokeAt: nullableTimestamp,
-  durationSeconds: z.number().nullable(),
-});
-
-export type StandupTurn = z.infer<typeof standupTurnSchema>;
-
-export const standupBlockerSchema = z.object({
-  id: z.string(),
-  turnId: z.string(),
-  issueId: z.string().nullable(),
-  summary: z.string(),
-  ownerId: z.string().nullable(),
-  resolvedAt: nullableTimestamp,
-  createdAt: timestamp,
-});
-
-export type StandupBlocker = z.infer<typeof standupBlockerSchema>;
-
-export const standupSchema = z.object({
-  id: z.string(),
-  teamId: z.string(),
-  cycleId: z.string().nullable(),
-  heldOn: z.string(),
-  facilitatorId: z.string().nullable(),
-  status: z.enum(['scheduled', 'running', 'finished']).catch('scheduled'),
-  currentTurnId: z.string().nullable(),
-  startedAt: nullableTimestamp,
-  endedAt: nullableTimestamp,
-});
-
-export type Standup = z.infer<typeof standupSchema>;
-
-export const standupDetailSchema = z.object({
-  standup: standupSchema,
-  turns: z.array(standupTurnSchema).default([]),
-  blockers: z.array(standupBlockerSchema).default([]),
-});
-
-export type StandupDetail = z.infer<typeof standupDetailSchema>;
-
 export const standupWorkloadSchema = z.object({
   userId: z.string(),
-  assigned: z.number(),
+  open: z.number(),
   inProgress: z.number(),
-  completedSinceLast: z.number(),
+  completedSince: z.number(),
 });
 
 export type StandupWorkload = z.infer<typeof standupWorkloadSchema>;
 
-export const standupTodaySchema = z.object({
-  standup: standupDetailSchema.nullable(),
+export const standupBoardPayloadSchema = z.object({
+  since: timestamp,
+  issues: z.array(issueSchema).default([]),
   workload: z.array(standupWorkloadSchema).default([]),
 });
 
-export type StandupToday = z.infer<typeof standupTodaySchema>;
-
-export const standupListSchema = z.object({ standups: z.array(standupSchema).default([]) });
+export type StandupBoardPayload = z.infer<typeof standupBoardPayloadSchema>;
 
 export const viewPreferencesSchema = z.object({
   preferences: z

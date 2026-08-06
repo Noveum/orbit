@@ -22,8 +22,7 @@ export const queryKeys = {
   doc: (docId: string) => ['doc', docId] as const,
   docVersions: (docId: string) => ['doc', docId, 'versions'] as const,
   views: () => ['views'] as const,
-  standupToday: (teamId: string) => ['standup', 'today', teamId] as const,
-  standupHistory: (teamId: string) => ['standup', 'history', teamId] as const,
+  standupBoard: (since: string) => ['standup', 'board', since] as const,
 } as const;
 
 export const ISSUES_ROOT = 'issues';

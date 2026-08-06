@@ -1,5 +1,5 @@
-import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
+import { BoardSkeleton } from '@/features/standup/standup-skeleton.tsx';
 
 export default function StandupLoading() {
-  return <ListSkeleton layout="list" />;
+  return <BoardSkeleton />;
 }

@@ -26,13 +26,6 @@ export function issueSearch(teamId: string, query: IssueQuery): string {
   return params.toString();
 }
 
-export function assigneeInTeamSearch(teamId: string, userId: string): string {
-  const params = searchParams({ ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' });
-  params.set('teamId', teamId);
-  params.set('assigneeId', userId);
-  return params.toString();
-}
-
 export function columnSearch(teamId: string, query: IssueQuery, stateId: string): string {
   const params = searchParams(query);
   params.set('teamId', teamId);

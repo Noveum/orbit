@@ -1106,10 +1106,12 @@ const {
   organizationId: _organizationId,
   stateEnteredAt: _stateEnteredAt,
   estimatePointId: _estimatePointId,
-  ...ISSUE_LIST_COLUMNS
+  ...listColumns
 } = ISSUE_COLUMNS;
 
-function visibleTeamFilters(principal: Principal): SQL[] {
+export const ISSUE_LIST_COLUMNS = listColumns;
+
+export function visibleTeamFilters(principal: Principal): SQL[] {
   if (principal.role === 'admin') return [];
   if (principal.teamIds.length === 0) return [sql`false`];
   return [inArray(schema.issue.teamId, [...principal.teamIds])];
