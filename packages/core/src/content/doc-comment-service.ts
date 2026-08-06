@@ -8,8 +8,8 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { docCommentUrl, truncate } from '@orbit/shared/utils';
 import {
-  commentCreateSchema,
   commentUpdateSchema,
+  docCommentCreateSchema,
   paginationSchema,
 } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
@@ -195,12 +195,15 @@ export async function createDocComment(
   input: unknown,
 ): Promise<SavedDocComment> {
   assertCan(principal, 'comment:create');
-  const parsed = commentCreateSchema.parse(input);
+  const parsed = docCommentCreateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
     const doc = await loadDocForComment(tx, principal, docId);
 
     if (parsed.parentId !== null) {
+      if (parsed.anchor !== null) {
+        throw validationFailed('A reply cannot point at a passage of its own.');
+      }
       const parent = await loadDocComment(tx, principal, parsed.parentId);
       if (parent.docId !== docId) {
         throw validationFailed('That reply belongs to another doc.');
@@ -221,6 +224,7 @@ export async function createDocComment(
         authorId: principal.userId,
         parentId: parsed.parentId,
         body: parsed.body,
+        anchor: parsed.anchor,
         syncId,
       })
       .returning();

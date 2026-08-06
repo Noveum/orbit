@@ -1,5 +1,5 @@
 import { publishDeltas } from '@orbit/core';
-import { notFound, toDomainError, unauthorized } from '@orbit/shared/errors';
+import { internal, isDomainError, notFound, unauthorized } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { ORIGIN_CLIENT_ID_HEADER, originClientIdSchema } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -52,8 +52,12 @@ function toResponse(error: unknown): Response {
       { status: 422 },
     );
   }
-  const domain = toDomainError(error);
-  return Response.json(domain.toJSON(), { status: domain.status });
+  if (!isDomainError(error)) {
+    console.error('A request failed on something the route did not expect.', error);
+    const opaque = internal();
+    return Response.json(opaque.toJSON(), { status: opaque.status });
+  }
+  return Response.json(error.toJSON(), { status: error.status });
 }
 
 export function errorResponse(error: unknown): Response {

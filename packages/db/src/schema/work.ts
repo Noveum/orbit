@@ -569,7 +569,12 @@ export const issueActivity = pgTable(
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('issue_activity_issue_idx').on(table.issueId, table.createdAt)],
+  (table) => [
+    index('issue_activity_issue_idx').on(table.issueId, table.createdAt),
+    index('issue_activity_cycle_moves_idx')
+      .on(table.organizationId, table.createdAt)
+      .where(sql`${table.field} = 'cycleId'`),
+  ],
 );
 
 export const view = pgTable(

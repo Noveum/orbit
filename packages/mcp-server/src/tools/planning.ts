@@ -160,7 +160,7 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
       name: 'cycle_progress',
       title: 'Get sprint progress',
       description:
-        'Return scope, started and completed counts for a sprint plus a day by day burn up series.',
+        'Return scope, started, completed and cancelled counts for a sprint, the same totals in points, what was added or removed while it ran, and a day by day burn up series carrying both the scope and the completed work.',
       readOnly: true,
       inputSchema: {
         team: teamRef,
