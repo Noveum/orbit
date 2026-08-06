@@ -11,7 +11,7 @@ import {
   updateTeam,
   updateView,
 } from '@orbit/core';
-import { notFound } from '@orbit/shared/errors';
+import { conflict, notFound } from '@orbit/shared/errors';
 import { GROUP_BY_FIELDS, VIEW_LAYOUTS } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
@@ -22,11 +22,18 @@ const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or t
 const personRef = z.string().min(1).describe('Person name, handle, email, id, or "me".');
 
 async function resolveView(principal: Principal, ref: string): Promise<string> {
-  const views = await listViews(principal);
+  const saved = (await listViews(principal)).filter((view) => !view.virtual);
+  const byId = saved.find((view) => view.id === ref);
+  if (byId !== undefined) return byId.id;
+
   const lowered = ref.toLowerCase();
-  const found = views.find((view) => view.id === ref || view.name.toLowerCase() === lowered);
-  if (found === undefined) throw notFound(`No view matches "${ref}".`);
-  return found.id;
+  const matches = saved.filter((view) => view.name.toLowerCase() === lowered);
+  const first = matches[0];
+  if (first === undefined) throw notFound(`No saved view matches "${ref}".`);
+  if (matches.length > 1) {
+    throw conflict(`More than one saved view is called "${ref}". Pass the view id instead.`);
+  }
+  return first.id;
 }
 
 export function registerOrgTools(server: McpServer, principal: Principal): void {

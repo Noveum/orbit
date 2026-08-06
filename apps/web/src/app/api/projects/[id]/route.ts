@@ -1,4 +1,5 @@
 import { archiveProject, deleteProject, getProject, updateProject } from '@orbit/core';
+import { z } from 'zod';
 import {
   apiContext,
   handleRoute,
@@ -11,6 +12,8 @@ import {
 interface RouteParams {
   readonly params: Promise<{ id: string }>;
 }
+
+const removalSchema = z.object({ mode: z.enum(['archive', 'delete']) });
 
 export async function GET(_request: Request, { params }: RouteParams): Promise<Response> {
   return await handleRoute(async () => {
@@ -34,8 +37,8 @@ export async function DELETE(request: Request, { params }: RouteParams): Promise
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const id = routeId((await params).id, 'project');
-    const query = searchParamsOf(request);
-    if (query['mode'] === 'archive') {
+    const { mode } = removalSchema.parse(searchParamsOf(request));
+    if (mode === 'archive') {
       const archived = await archiveProject(principal, id);
       await publish(archived.actions);
       return { archived: true };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { CycleIssueList } from '../../../src/features/cycles/cycle-board.tsx';
 import type { CycleView } from '../../../src/features/cycles/data.ts';
 
@@ -30,7 +30,7 @@ const cycle = {
           id: 'issue_2',
           identifier: 'ENG-43',
           title: 'Wire the tiles',
-          assignee: { id: 'member_1', name: 'Ada', image: null },
+          assignee: { id: 'member_1', name: 'Ada Lovelace', image: null },
         },
       ],
     },
@@ -57,6 +57,14 @@ describe('CycleIssueList', () => {
     const row = screen.getByTestId('sprint-issue-ENG-43');
     expect(row.textContent).toContain('ENG-43');
     expect(row.textContent).toContain('Wire the tiles');
+    expect(within(row).getByRole('img', { name: 'Ada Lovelace' })).toBeDefined();
+  });
+
+  it('shows no avatar on an unassigned issue', () => {
+    render(<CycleIssueList cycle={cycle} />);
+
+    const row = screen.getByTestId('sprint-issue-ENG-42');
+    expect(within(row).queryByRole('img')).toBeNull();
   });
 
   it('gives the row a visible focus ring so it is reachable by keyboard', () => {

@@ -190,6 +190,21 @@ describe('milestone visibility', () => {
     await expect(deleteMilestone(stranger, milestone.id)).rejects.toThrow();
   });
 
+  it('refuses to reorder milestones on a project the member cannot see', async () => {
+    const projectId = await newProject('Private launch');
+    const { milestone: first } = await createMilestone(workspace.admin, {
+      projectId,
+      name: 'Alpha',
+    });
+    const { milestone: second } = await createMilestone(workspace.admin, {
+      projectId,
+      name: 'Beta',
+    });
+    const stranger = await outsider();
+
+    await expect(reorderMilestones(stranger, projectId, [second.id, first.id])).rejects.toThrow();
+  });
+
   it('still lets a member of the owning team manage them', async () => {
     const projectId = await newProject('Shared launch');
     const { milestone } = await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
