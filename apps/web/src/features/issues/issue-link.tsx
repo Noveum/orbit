@@ -3,9 +3,12 @@
 import Link from 'next/link';
 import type {
   FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from 'react';
+
+const PEEK_KEY = ' ';
 
 export function issueHref(identifier: string): string {
   return `/issue/${identifier}`;
@@ -13,6 +16,17 @@ export function issueHref(identifier: string): string {
 
 export function isPlainClick(event: ReactMouseEvent<HTMLElement>): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+function isUnmodifiedPeekKey(event: ReactKeyboardEvent<HTMLElement>): boolean {
+  return (
+    event.key === PEEK_KEY &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.repeat
+  );
 }
 
 export interface IssueLinkProps {
@@ -47,6 +61,12 @@ export function IssueLink({
     onPlainClick();
   };
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLAnchorElement>) => {
+    if (onPlainClick === undefined || event.defaultPrevented || !isUnmodifiedPeekKey(event)) return;
+    event.preventDefault();
+    onPlainClick();
+  };
+
   return (
     <Link
       href={issueHref(identifier)}
@@ -56,6 +76,7 @@ export function IssueLink({
       data-testid={testId}
       onFocus={onFocus}
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
       className={className}
     >
       {children}

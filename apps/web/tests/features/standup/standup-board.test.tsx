@@ -264,6 +264,19 @@ describe('StandupBoard', () => {
     expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
   });
 
+  it('peeks the focused row when the presenter presses space', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    const title = within(screen.getByTestId('issue-row-ENG-3')).getByRole('link', {
+      name: 'Draft the schema',
+    });
+    title.focus();
+    await user.keyboard(' ');
+
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-3');
+  });
+
   it('leaves the arrow keys to the peek while it is open', async () => {
     const user = userEvent.setup();
     await mountBoard();

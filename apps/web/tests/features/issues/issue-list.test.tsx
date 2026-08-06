@@ -154,6 +154,17 @@ describe('every listed issue is a link', () => {
       expect(within(row).getByRole('link').getAttribute('href')).toBe(`/issue/${identifier}`);
     }
   });
+
+  it('peeks the row whose title has focus when space is pressed', async () => {
+    const user = userEvent.setup();
+    renderList();
+
+    const row = await screen.findByTestId('issue-row-ENG-2');
+    within(row).getByRole('link').focus();
+    await user.keyboard('[Space]');
+
+    expect(await screen.findByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-2');
+  });
 });
 
 describe('escape on the issue list', () => {
