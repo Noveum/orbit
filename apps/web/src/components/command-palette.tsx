@@ -2,7 +2,15 @@
 
 import { Command } from 'cmdk';
 import type { LucideIcon } from 'lucide-react';
-import { ArrowRight, CircleDot, Search, SlidersHorizontal, Terminal, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  CircleDot,
+  FileText,
+  Search,
+  SlidersHorizontal,
+  Terminal,
+  Users,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import type { MouseEvent as ReactMouseEvent } from 'react';
@@ -10,7 +18,9 @@ import { useMemo, useState } from 'react';
 import { resolvedHotkeys, SECTION_ORDER } from '@/components/shortcuts-overlay.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { MatchedText } from '@/features/docs/search-highlight.tsx';
 import { IssueLink, isPlainClick, issueHref } from '@/features/issues/issue-link.tsx';
+import { cn } from '@/lib/cn.ts';
 import {
   formatBinding,
   type HotkeyEntry,
@@ -19,6 +29,7 @@ import {
   useHotkeyList,
 } from '@/lib/keyboard/index.ts';
 import { type AppCommand, buildCommands, type NavSection } from '@/lib/navigation.ts';
+import { useDocSearch } from '@/lib/query/use-doc-search.ts';
 import { useIssueSearch } from '@/lib/query/use-issue-search.ts';
 
 const PALETTE_BINDING = 'mod+k';
@@ -115,6 +126,7 @@ export function CommandPalette({
   const registered = useHotkeyList();
   const [term, setTerm] = useState('');
   const { issues, searching } = useIssueSearch(open ? term : '');
+  const { docs, searching: searchingDocs } = useDocSearch(open ? term : '');
 
   const commands = useMemo<AppCommand[]>(
     () =>
@@ -152,6 +164,11 @@ export function CommandPalette({
   const openIssue = (identifier: string) => {
     onOpenChange(false);
     router.push(issueHref(identifier));
+  };
+
+  const openDoc = (docId: string) => {
+    onOpenChange(false);
+    router.push(`/docs/${docId}`);
   };
 
   const dismissOnPlainClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -203,7 +220,7 @@ export function CommandPalette({
             </div>
             <Command.List className="max-h-80 overflow-y-auto p-1.5">
               <Command.Empty className="px-2.5 py-6 text-center text-muted text-dense">
-                {searching ? 'Searching…' : 'Nothing matches that.'}
+                {searching || searchingDocs ? 'Searching…' : 'Nothing matches that.'}
               </Command.Empty>
               {issues.length === 0 ? null : (
                 <Command.Group heading="Issues" className={groupClassName}>
@@ -230,6 +247,41 @@ export function CommandPalette({
                         <span className="shrink-0 text-faint tabular-nums">{issue.identifier}</span>
                         <span className="min-w-0 flex-1 truncate">{issue.title}</span>
                       </IssueLink>
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+              )}
+              {docs.length === 0 ? null : (
+                <Command.Group heading="Docs" className={groupClassName}>
+                  {docs.map((doc) => (
+                    <Command.Item
+                      key={doc.id}
+                      value={`doc-${doc.id}`}
+                      className={cn(itemClassName, 'h-auto flex-col items-stretch gap-0.5 py-1.5')}
+                      data-testid={`palette-doc-${doc.id}`}
+                      onSelect={() => openDoc(doc.id)}
+                    >
+                      <a
+                        href={`/docs/${doc.id}`}
+                        tabIndex={-1}
+                        onClick={dismissOnPlainClick}
+                        className="flex min-w-0 items-center gap-2.5"
+                      >
+                        <FileText
+                          className="size-4 shrink-0"
+                          strokeWidth={1.75}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1 truncate">{doc.title}</span>
+                      </a>
+                      {doc.snippet.length === 0 ? null : (
+                        <span
+                          data-testid={`palette-doc-snippet-${doc.id}`}
+                          className="line-clamp-1 pl-6.5 text-2xs text-faint"
+                        >
+                          <MatchedText text={doc.snippet} term={term} />
+                        </span>
+                      )}
                     </Command.Item>
                   ))}
                 </Command.Group>

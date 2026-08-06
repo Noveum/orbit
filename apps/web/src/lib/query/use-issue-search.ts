@@ -1,24 +1,15 @@
 'use client';
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 import { apiFetch } from './fetcher.ts';
 import { SEARCH_ROOT } from './keys.ts';
 import type { Issue } from './schemas.ts';
 import { issueListSchema } from './schemas.ts';
+import { SEARCH_DEBOUNCE_MS, SEARCH_MIN_LENGTH, useDebounced } from './search-tuning.ts';
 
-export const SEARCH_DEBOUNCE_MS = 140;
-export const SEARCH_MIN_LENGTH = 2;
+export { SEARCH_DEBOUNCE_MS, SEARCH_MIN_LENGTH, useDebounced } from './search-tuning.ts';
+
 export const SEARCH_RESULT_LIMIT = 8;
-
-export function useDebounced<T>(value: T, delayMs: number): T {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [value, delayMs]);
-  return settled;
-}
 
 export function useIssueSearch(term: string): { issues: readonly Issue[]; searching: boolean } {
   const settled = useDebounced(term.trim(), SEARCH_DEBOUNCE_MS);
