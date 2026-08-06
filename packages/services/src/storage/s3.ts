@@ -6,7 +6,13 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { internal, MAX_UPLOAD_BYTES } from '@orbit/shared';
+import {
+  formatBytes,
+  internal,
+  MAX_UPLOAD_BYTES,
+  payloadTooLarge,
+  validationFailed,
+} from '@orbit/shared';
 import { z } from 'zod';
 import { createCredentialResolver, type ResolvedCredentials } from './credentials.ts';
 import { assertSafeKey } from './key.ts';
@@ -26,6 +32,17 @@ export type S3Config = z.input<typeof s3ConfigSchema>;
 
 const UPLOAD_URL_TTL_SECONDS = 900;
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
+
+function assertSignableLength(contentLength: number): void {
+  if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
+    throw validationFailed('An upload has to declare how many bytes it carries.');
+  }
+  if (contentLength > MAX_UPLOAD_BYTES) {
+    throw payloadTooLarge(`Files must be ${formatBytes(MAX_UPLOAD_BYTES)} or smaller.`, {
+      details: { size: contentLength, maxBytes: MAX_UPLOAD_BYTES },
+    });
+  }
+}
 
 export class S3StorageDriver implements StorageDriver {
   readonly name = 's3' as const;
@@ -80,20 +97,30 @@ export class S3StorageDriver implements StorageDriver {
     return client;
   }
 
-  async createUploadTarget(key: string, contentType: string): Promise<UploadTarget> {
+  async createUploadTarget(
+    key: string,
+    contentType: string,
+    contentLength: number,
+  ): Promise<UploadTarget> {
     assertSafeKey(key);
+    assertSignableLength(contentLength);
     const client = await this.client();
     const url = await getSignedUrl(
       client,
-      new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType }),
-      { expiresIn: UPLOAD_URL_TTL_SECONDS },
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ContentType: contentType,
+        ContentLength: contentLength,
+      }),
+      { expiresIn: UPLOAD_URL_TTL_SECONDS, signableHeaders: new Set(['content-length']) },
     );
     return {
       key,
       url,
       method: 'PUT',
       headers: { 'content-type': contentType },
-      maxBytes: MAX_UPLOAD_BYTES,
+      maxBytes: contentLength,
       expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
     };
   }

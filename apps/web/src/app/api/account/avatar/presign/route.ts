@@ -6,9 +6,9 @@ import { handle, readJson } from '@/lib/api/handler.ts';
 export async function POST(request: Request): Promise<Response> {
   const body = await readJson(request);
   return await handle(async (principal) => {
-    const { contentType } = avatarUploadSchema.parse(body);
+    const { contentType, size } = avatarUploadSchema.parse(body);
     const key = avatarStorageKey(principal.userId);
-    const target = await storageDriver().createUploadTarget(key, contentType);
+    const target = await storageDriver().createUploadTarget(key, contentType, size);
     return { upload: target };
   });
 }

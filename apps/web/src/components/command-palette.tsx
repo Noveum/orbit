@@ -5,10 +5,12 @@ import type { LucideIcon } from 'lucide-react';
 import { ArrowRight, CircleDot, Search, SlidersHorizontal, Terminal, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { resolvedHotkeys, SECTION_ORDER } from '@/components/shortcuts-overlay.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { IssueLink, isPlainClick, issueHref } from '@/features/issues/issue-link.tsx';
 import {
   formatBinding,
   type HotkeyEntry,
@@ -149,7 +151,12 @@ export function CommandPalette({
 
   const openIssue = (identifier: string) => {
     onOpenChange(false);
-    router.push(`/issue/${identifier}`);
+    router.push(issueHref(identifier));
+  };
+
+  const dismissOnPlainClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    event.stopPropagation();
+    if (isPlainClick(event)) onOpenChange(false);
   };
 
   const needle = term.trim().toLowerCase();
@@ -208,13 +215,21 @@ export function CommandPalette({
                       data-testid={`palette-issue-${issue.identifier}`}
                       onSelect={() => openIssue(issue.identifier)}
                     >
-                      <CircleDot
-                        className="size-4 shrink-0"
-                        strokeWidth={1.75}
-                        aria-hidden="true"
-                      />
-                      <span className="shrink-0 text-faint tabular-nums">{issue.identifier}</span>
-                      <span className="flex-1 truncate">{issue.title}</span>
+                      <IssueLink
+                        identifier={issue.identifier}
+                        onClick={dismissOnPlainClick}
+                        prefetch={false}
+                        tabIndex={-1}
+                        className="flex min-w-0 flex-1 items-center gap-2.5"
+                      >
+                        <CircleDot
+                          className="size-4 shrink-0"
+                          strokeWidth={1.75}
+                          aria-hidden="true"
+                        />
+                        <span className="shrink-0 text-faint tabular-nums">{issue.identifier}</span>
+                        <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                      </IssueLink>
                     </Command.Item>
                   ))}
                 </Command.Group>

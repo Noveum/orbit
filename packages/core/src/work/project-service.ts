@@ -32,8 +32,30 @@ import { nextSyncId } from '../sync/sync-id.ts';
 export type ProjectRow = typeof schema.project.$inferSelect;
 export type ProjectUpdateRow = typeof schema.projectUpdate.$inferSelect;
 
-function projectScopes(row: ProjectRow): string[] {
-  return [scopes.organization(row.organizationId), scopes.project(row.id)];
+export async function projectTeamIds(executor: Executor, projectId: string): Promise<string[]> {
+  const rows = await executor
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  return rows.map((row) => row.teamId);
+}
+
+export function projectReachScopes(
+  organizationId: string,
+  projectId: string,
+  teamIds: readonly string[],
+): string[] {
+  if (teamIds.length === 0) {
+    return [scopes.organization(organizationId), scopes.project(projectId)];
+  }
+  return [scopes.project(projectId), ...teamIds.map((teamId) => scopes.team(teamId))];
+}
+
+async function projectScopes(
+  executor: Executor,
+  row: Pick<ProjectRow, 'id' | 'organizationId'>,
+): Promise<string[]> {
+  return projectReachScopes(row.organizationId, row.id, await projectTeamIds(executor, row.id));
 }
 
 async function allocateProjectSlug(
@@ -178,7 +200,7 @@ export async function createProject(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [...projectScopes(project), ...parsed.teamIds.map((id) => scopes.team(id))],
+          scopes: await projectScopes(tx, project),
           action: 'insert',
           model: 'project',
           modelId: project.id,
@@ -242,7 +264,7 @@ export async function updateProject(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: projectScopes(project),
+          scopes: await projectScopes(tx, project),
           action: 'update',
           model: 'project',
           modelId: project.id,
@@ -281,7 +303,7 @@ export async function archiveProject(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: projectScopes(project),
+          scopes: await projectScopes(tx, project),
           action: 'archive',
           model: 'project',
           modelId: project.id,
@@ -315,12 +337,13 @@ export async function deleteProject(
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const reach = await projectScopes(tx, project);
     await tx.delete(schema.project).where(eq(schema.project.id, projectId));
     return [
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
-        scopes: projectScopes(project),
+        scopes: reach,
         action: 'delete',
         model: 'project',
         modelId: projectId,
@@ -483,7 +506,7 @@ export async function postProjectUpdate(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: projectScopes(project),
+          scopes: await projectScopes(tx, project),
           action: 'update',
           model: 'project',
           modelId: project.id,

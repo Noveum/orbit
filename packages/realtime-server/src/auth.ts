@@ -131,6 +131,16 @@ export async function authenticateTicket(
 
 export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
 
+export async function liveSessionIds(sessionIds: readonly string[]): Promise<Set<string>> {
+  const wanted = [...new Set(sessionIds)];
+  if (wanted.length === 0) return new Set();
+  const rows = await db
+    .select({ id: schema.session.id })
+    .from(schema.session)
+    .where(and(inArray(schema.session.id, wanted), gt(schema.session.expiresAt, new Date())));
+  return new Set(rows.map((row) => row.id));
+}
+
 export async function sessionStillValid(sessionId: string): Promise<boolean> {
   const rows = await db
     .select({ id: schema.session.id })

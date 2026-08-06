@@ -2,11 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { verifyMcpAccessToken } from '@orbit/core';
-import { toDomainError, unauthorized } from '@orbit/shared/errors';
+import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { errorFields, logger } from './logger.ts';
 import { registerTools } from './tools/index.ts';
-import { allowWrites } from './tools/support.ts';
+import { allowTools } from './tools/support.ts';
 
 export const MCP_PATH = '/mcp';
 
@@ -24,18 +24,28 @@ export function wwwAuthenticate(publicUrl: string): string {
   return `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`;
 }
 
+export const ORBIT_READ_SCOPE = 'orbit.read';
 export const ORBIT_WRITE_SCOPE = 'orbit.write';
+const EVERY_ORBIT_SCOPE = `${ORBIT_READ_SCOPE} ${ORBIT_WRITE_SCOPE}`;
 
-export function grantsWrites(scopes: string): boolean {
-  return scopes.split(/\s+/).filter(Boolean).includes(ORBIT_WRITE_SCOPE);
+function granted(scopes: string): Set<string> {
+  return new Set(scopes.split(/[\s,]+/).filter(Boolean));
 }
 
-export function createOrbitMcpServer(principal: Principal, scopes = ORBIT_WRITE_SCOPE): McpServer {
+export function grantsReads(scopes: string): boolean {
+  return granted(scopes).has(ORBIT_READ_SCOPE);
+}
+
+export function grantsWrites(scopes: string): boolean {
+  return granted(scopes).has(ORBIT_WRITE_SCOPE);
+}
+
+export function createOrbitMcpServer(principal: Principal, scopes = EVERY_ORBIT_SCOPE): McpServer {
   const server = new McpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
   );
-  allowWrites(server, grantsWrites(scopes));
+  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes) });
   registerTools(server, principal);
   return server;
 }
@@ -61,6 +71,9 @@ export interface McpRequestOptions {
 
 async function dispatch(request: Request): Promise<Response> {
   const identity = await verifyMcpAccessToken(bearerToken(request));
+  if (!(grantsReads(identity.scopes) || grantsWrites(identity.scopes))) {
+    throw forbidden('This client holds neither the orbit.read nor the orbit.write scope.');
+  }
   const server = createOrbitMcpServer(identity.principal, identity.scopes);
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);

@@ -1,13 +1,6 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import type { Principal } from '@orbit/shared/policy';
-
-const dbModule = await import('@orbit/db');
-mock.module('@orbit/db', () => ({
-  ...dbModule,
-  db: { execute: () => Promise.resolve([{ version: '5' }]) },
-}));
-
-const { bootstrapVersion } = await import('../../../src/lib/api/bootstrap.ts');
+import { bootstrapVersion } from '../../../src/lib/api/bootstrap.ts';
 
 function member(userId: string, organizationId = 'org_shared'): Principal {
   return { userId, organizationId, role: 'admin', teamIds: ['team_1'] };

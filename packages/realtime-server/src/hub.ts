@@ -23,6 +23,7 @@ import {
   authenticateTicket,
   authorizeScope,
   type ConnectionRejection,
+  liveSessionIds,
   memberDeleteSchema,
   membershipStillValid,
   readTicketFrame,
@@ -39,6 +40,7 @@ export const MAX_BUFFERED_BYTES = 1_048_576;
 export const MESSAGE_BURST = 60;
 export const MESSAGES_PER_SECOND = 20;
 export const AUTH_TIMEOUT_MS = 10_000;
+export const SESSION_SWEEP_INTERVAL_MS = 60_000;
 
 export interface RealtimeHubOptions {
   redisUrl?: string;
@@ -47,6 +49,7 @@ export interface RealtimeHubOptions {
   batchWindowMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
+  sessionSweepIntervalMs?: number;
   presenceTtlMs?: number;
   maxSubscriptions?: number;
   maxBufferedBytes?: number;
@@ -100,6 +103,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
   };
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
+  const sessionSweepIntervalMs = options.sessionSweepIntervalMs ?? SESSION_SWEEP_INTERVAL_MS;
   const presenceTtlMs = options.presenceTtlMs ?? PRESENCE_TTL_MS;
   const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const redisUrl = options.redisUrl ?? process.env['REDIS_URL'] ?? 'redis://localhost:6380';
@@ -154,12 +158,26 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
       });
     }
     if (valid) return;
+    closeRevokedSession(connection);
+  }
+
+  function closeRevokedSession(connection: Connection): void {
     logger.info('closing connection for a revoked session', {
       connectionId: connection.id,
       userId: connection.principal.userId,
     });
     connections.delete(connection.id);
     connection.close(SESSION_REVOKED_CLOSE_CODE, 'session_revoked');
+  }
+
+  async function sweepSessions(): Promise<void> {
+    const open = [...connections.values()];
+    if (open.length === 0) return;
+    const live = await liveSessionIds(open.map((connection) => connection.principal.sessionId));
+    for (const connection of open) {
+      if (live.has(connection.principal.sessionId)) continue;
+      closeRevokedSession(connection);
+    }
   }
 
   function revalidateSessionsFor(userId: string): void {
@@ -511,10 +529,18 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
   const sweeper = setInterval(() => presence.sweep(), Math.max(1_000, presenceTtlMs / 3));
   sweeper.unref();
 
+  const sessionSweeper = setInterval(() => {
+    sweepSessions().catch((error: unknown) => {
+      logger.error('session sweep failed', errorFields(error));
+    });
+  }, sessionSweepIntervalMs);
+  sessionSweeper.unref();
+
   async function close(): Promise<void> {
     closing = true;
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    clearInterval(sessionSweeper);
     for (const connection of connections.values()) connection.close(1001, 'server shutting down');
     connections.clear();
     subscriber.disconnect();

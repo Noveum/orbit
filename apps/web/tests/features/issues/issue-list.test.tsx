@@ -1,6 +1,6 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
@@ -119,6 +119,51 @@ describe('the first issue is active on arrival', () => {
     await user.keyboard('x');
 
     expect(await screen.findByTestId('bulk-edit-bar')).toBeInTheDocument();
+  });
+});
+
+describe('every listed issue is a link', () => {
+  const realWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+  const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => 900,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 600,
+    });
+  });
+
+  afterAll(() => {
+    if (realWidth !== undefined) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', realWidth);
+    }
+    if (realHeight !== undefined) {
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', realHeight);
+    }
+  });
+
+  it('points each row at its own issue page', async () => {
+    renderList();
+
+    for (const identifier of ['ENG-1', 'ENG-2']) {
+      const row = await screen.findByTestId(`issue-row-${identifier}`);
+      expect(within(row).getByRole('link').getAttribute('href')).toBe(`/issue/${identifier}`);
+    }
+  });
+
+  it('peeks the row whose title has focus when space is pressed', async () => {
+    const user = userEvent.setup();
+    renderList();
+
+    const row = await screen.findByTestId('issue-row-ENG-2');
+    within(row).getByRole('link').focus();
+    await user.keyboard('[Space]');
+
+    expect(await screen.findByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-2');
   });
 });
 

@@ -128,7 +128,7 @@ describe('S3StorageDriver', () => {
   });
 
   it('presigns a PUT upload target against a path style endpoint', async () => {
-    const target = await driver.createUploadTarget('org_1/2026/03/a.png', 'image/png');
+    const target = await driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', 2048);
     expect(target.url).toContain('http://localhost:9010/orbit-uploads/org_1/2026/03/a.png');
     expect(target.url).toContain('X-Amz-Signature=');
     expect(target.method).toBe('PUT');
@@ -136,9 +136,31 @@ describe('S3StorageDriver', () => {
   });
 
   it('offers one header the browser is allowed to set, and never content-length', async () => {
-    const target = await driver.createUploadTarget('org_1/2026/03/a.pdf', 'application/pdf');
+    const target = await driver.createUploadTarget('org_1/2026/03/a.pdf', 'application/pdf', 2048);
     expect(Object.keys(target.headers)).toEqual(['content-type']);
     expect(target.headers['content-type']).toBe('application/pdf');
+  });
+
+  it('signs the byte length into the url so the object store enforces the size', async () => {
+    const target = await driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', 2048);
+    const signed = new URL(target.url).searchParams.get('X-Amz-SignedHeaders') ?? '';
+
+    expect(signed.split(';')).toContain('content-length');
+    expect(target.maxBytes).toBe(2048);
+  });
+
+  it('refuses to sign an upload past the byte cap or with no length at all', async () => {
+    const tooBig = () =>
+      driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', MAX_UPLOAD_BYTES + 1);
+    await expect(tooBig()).rejects.toThrow(DomainError);
+    await expect(tooBig()).rejects.toMatchObject({ code: 'payload_too_large' });
+
+    await expect(driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', 0)).rejects.toThrow(
+      DomainError,
+    );
+    await expect(
+      driver.createUploadTarget('org_1/2026/03/a.png', 'image/png', 1.5),
+    ).rejects.toThrow(DomainError);
   });
 
   it('presigns a GET download url with the requested ttl', async () => {

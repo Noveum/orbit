@@ -54,7 +54,29 @@ export function toSavedAnalyticsViewPayload(row: SavedAnalyticsViewRow): SavedAn
 }
 
 function viewScopes(row: SavedAnalyticsViewRow): string[] {
+  if (!row.shared) return [scopes.user(row.ownerId)];
   return [scopes.organization(row.organizationId), scopes.user(row.ownerId)];
+}
+
+function unshareActions(
+  before: SavedAnalyticsViewRow,
+  after: SavedAnalyticsViewRow,
+  syncId: number,
+  actor: Awaited<ReturnType<typeof principalActor>>,
+): SyncAction[] {
+  if (!before.shared || after.shared) return [];
+  return [
+    buildSyncAction({
+      syncId,
+      organizationId: after.organizationId,
+      scopes: [scopes.organization(after.organizationId)],
+      action: 'delete',
+      model: 'view',
+      modelId: after.id,
+      data: { id: after.id },
+      actor,
+    }),
+  ];
 }
 
 export async function listSavedAnalyticsViews(
@@ -164,7 +186,7 @@ export async function updateSavedAnalyticsView(
 ): Promise<{ view: SavedAnalyticsViewRow; actions: SyncAction[] }> {
   assertCan(principal, 'view:manage');
   const parsed: SavedAnalyticsViewUpdate = savedAnalyticsViewUpdateSchema.parse(input);
-  await loadOwnedView(principal, id);
+  const existing = await loadOwnedView(principal, id);
 
   return await db.transaction(async (tx) => {
     const values: Partial<typeof schema.savedAnalyticsView.$inferInsert> = {
@@ -196,6 +218,7 @@ export async function updateSavedAnalyticsView(
           data: toSavedAnalyticsViewPayload(view),
           actor,
         }),
+        ...unshareActions(existing, view, syncId, actor),
       ],
     };
   });
