@@ -28,6 +28,7 @@ function renderMatrix(disabledKeys: string[] = []) {
       quietHoursStart="18:00"
       quietHoursEnd="09:00"
       urgentBypassEnabled
+      digestEnabled
     />,
   );
 }

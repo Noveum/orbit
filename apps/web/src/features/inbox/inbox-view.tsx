@@ -216,21 +216,36 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
     if (parsed.success) setUnread(parsed.data.unreadCount);
   }, []);
 
+  const setReadState = useCallback(
+    async (item: InboxItem, next: boolean) => {
+      if (item.read === next) return;
+      const isMention = item.type === 'mention';
+      setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read: next } : row)));
+      const step = next ? -1 : 1;
+      if (isMention) setMentions((count) => Math.max(0, count + step));
+      setUnread((count) => Math.max(0, count + step));
+      applyServerCount(
+        await apiRequest('/api/notifications/read', {
+          method: 'POST',
+          body: { notificationIds: [item.id], read: next },
+        }),
+      );
+    },
+    [applyServerCount],
+  );
+
   const toggleRead = useCallback(async () => {
     if (current === undefined) return;
-    const next = !current.read;
-    const isMention = current.type === 'mention';
-    setRows((list) => list.map((row) => (row.id === current.id ? { ...row, read: next } : row)));
-    const step = next ? -1 : 1;
-    if (isMention) setMentions((count) => Math.max(0, count + step));
-    setUnread((count) => Math.max(0, count + step));
-    applyServerCount(
-      await apiRequest('/api/notifications/read', {
-        method: 'POST',
-        body: { notificationIds: [current.id], read: next },
-      }),
-    );
-  }, [current, applyServerCount]);
+    await setReadState(current, !current.read);
+  }, [current, setReadState]);
+
+  const open = useCallback(
+    (item: InboxItem, index: number) => {
+      setSelected(index);
+      setReadState(item, true);
+    },
+    [setReadState],
+  );
 
   const snooze = useCallback(async () => {
     if (current === undefined) return;
@@ -343,7 +358,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                 <li key={row.id}>
                   <button
                     type="button"
-                    onClick={() => setSelected(index)}
+                    onClick={() => open(row, index)}
                     aria-current={current?.id === row.id ? 'true' : undefined}
                     className={cn(
                       'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',
@@ -394,6 +409,10 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                 )}
                 <Link
                   href={current.url}
+                  data-testid="inbox-open-link"
+                  onClick={() => {
+                    setReadState(current, true);
+                  }}
                   className="w-fit rounded-sm text-accent text-dense hover:underline"
                 >
                   Open in Orbit
