@@ -168,10 +168,13 @@ async function commentNotifications(
   comment: CommentRow,
   actor: Actor,
 ): Promise<SyncAction[]> {
-  const mentioned = await resolveMentions(tx, principal.organizationId, comment.body, issue.teamId);
-  const repliedTo =
-    comment.parentId === null ? [] : await commentThreadAuthors(tx, comment.parentId);
-  const subscribers = await issueSubscriberIds(tx, issue.id);
+  const [mentioned, repliedTo, subscribers] = await Promise.all([
+    resolveMentions(tx, principal.organizationId, comment.body, issue.teamId),
+    comment.parentId === null
+      ? Promise.resolve<string[]>([])
+      : commentThreadAuthors(tx, comment.parentId),
+    issueSubscriberIds(tx, issue.id),
+  ]);
 
   const audience = dedupeAudience(
     [

@@ -145,10 +145,13 @@ async function docCommentNotifications(
   comment: DocCommentRow,
   actor: Actor,
 ): Promise<SyncAction[]> {
-  const mentioned = await resolveMentions(tx, principal.organizationId, comment.body, null);
-  const repliedTo =
-    comment.parentId === null ? [] : await docCommentThreadAuthors(tx, comment.parentId);
-  const subscribers = await docSubscriberIds(tx, doc.id);
+  const [mentioned, repliedTo, subscribers] = await Promise.all([
+    resolveMentions(tx, principal.organizationId, comment.body, null),
+    comment.parentId === null
+      ? Promise.resolve<string[]>([])
+      : docCommentThreadAuthors(tx, comment.parentId),
+    docSubscriberIds(tx, doc.id),
+  ]);
 
   const audience = dedupeAudience(
     [
