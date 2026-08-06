@@ -1,8 +1,11 @@
 import type { BurnUpPoint } from '@orbit/core';
 
+export type BurnUpMetric = 'issues' | 'points';
+
 export interface BurnUpSeries {
   readonly labels: string[];
   readonly completed: number[];
+  readonly scope: number[];
   readonly ideal: number[];
   readonly max: number;
 }
@@ -12,13 +15,29 @@ export interface BurnUpInput {
   readonly scope: number;
   readonly startsAt: Date;
   readonly endsAt: Date;
+  readonly metric?: BurnUpMetric;
 }
 
 const DAY_MS = 86_400_000;
 
+function utcDay(value: Date): number {
+  return Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+}
+
+export function burnUpMetric(estimated: number): BurnUpMetric {
+  return estimated > 0 ? 'points' : 'issues';
+}
+
 export function cycleDayCount(startsAt: Date, endsAt: Date): number {
-  const days = Math.round((endsAt.getTime() - startsAt.getTime()) / DAY_MS);
-  return Math.max(1, days);
+  return Math.max(1, Math.round((utcDay(endsAt) - utcDay(startsAt)) / DAY_MS));
+}
+
+export function elapsedDayCount(startsAt: Date, endsAt: Date, lastDay: string | undefined): number {
+  if (lastDay === undefined) return 0;
+  const drawn = Date.parse(`${lastDay}T00:00:00.000Z`);
+  if (Number.isNaN(drawn)) return 0;
+  const elapsed = Math.round((drawn - utcDay(startsAt)) / DAY_MS);
+  return Math.min(cycleDayCount(startsAt, endsAt), Math.max(0, elapsed));
 }
 
 export function idealLine(scope: number, totalDays: number, elapsedDays: number): number[] {
@@ -30,13 +49,24 @@ export function idealLine(scope: number, totalDays: number, elapsedDays: number)
 }
 
 export function buildBurnUp(input: BurnUpInput): BurnUpSeries {
-  const completed = input.burnUp.map((point) => point.completed);
-  const totalDays = cycleDayCount(input.startsAt, input.endsAt);
-  const elapsedDays = Math.max(0, input.burnUp.length - 1);
+  const asPoints = input.metric === 'points';
+  const completed = input.burnUp.map((point) =>
+    asPoints ? point.completedPoints : point.completed,
+  );
+  const scope = input.burnUp.map((point) => (asPoints ? point.scopePoints : point.scope));
+  const lastDay = input.burnUp.at(-1)?.date;
   return {
     labels: input.burnUp.map((point) => point.date),
     completed,
-    ideal: idealLine(input.scope, totalDays, elapsedDays),
-    max: Math.max(1, input.scope, ...completed),
+    scope,
+    ideal:
+      lastDay === undefined
+        ? []
+        : idealLine(
+            input.scope,
+            cycleDayCount(input.startsAt, input.endsAt),
+            elapsedDayCount(input.startsAt, input.endsAt, lastDay),
+          ),
+    max: Math.max(1, input.scope, ...completed, ...scope),
   };
 }
