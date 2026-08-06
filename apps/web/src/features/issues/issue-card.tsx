@@ -2,13 +2,13 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
-import Link from 'next/link';
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
+import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 
 export interface IssueCardProps {
@@ -24,10 +24,6 @@ export interface IssueCardProps {
   readonly properties?: readonly DisplayProperty[];
   readonly className?: string;
   readonly onOpen?: (issueId: string) => void;
-}
-
-function isPlainClick(event: ReactMouseEvent<HTMLElement>): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 export function IssueCard({
@@ -49,12 +45,6 @@ export function IssueCard({
   const warm = () => prefetch(issue.identifier);
   const warmUnlessDragging = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.buttons === 0) warm();
-  };
-
-  const open = (event: ReactMouseEvent<HTMLElement>) => {
-    if (onOpen === undefined || event.defaultPrevented || !isPlainClick(event)) return;
-    event.preventDefault();
-    onOpen(issue.id);
   };
 
   return (
@@ -89,14 +79,14 @@ export function IssueCard({
         ) : null}
       </div>
 
-      <Link
-        href={`/issue/${issue.identifier}`}
-        onClick={open}
+      <IssueLink
+        identifier={issue.identifier}
+        onPlainClick={onOpen === undefined ? undefined : () => onOpen(issue.id)}
         draggable={false}
         className="line-clamp-3 text-dense text-text leading-snug after:absolute after:inset-0 hover:text-accent"
       >
         {issue.title}
-      </Link>
+      </IssueLink>
 
       <div className="flex flex-wrap items-center gap-1.5">
         {shows('labels') ? <CardLabels labels={labels} /> : null}

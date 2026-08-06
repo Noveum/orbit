@@ -22,7 +22,6 @@ import { CSS } from '@dnd-kit/utilities';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
@@ -212,7 +211,6 @@ export function Board({
   groupBy = 'state',
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
-  const router = useRouter();
   const move = useMoveIssue();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -298,15 +296,7 @@ export function Board({
     </div>
   );
 
-  const peek = (
-    <IssuePeek
-      issue={peekIssue}
-      onClose={() => setPeekId(null)}
-      onOpen={() => {
-        if (peekIssue !== undefined) router.push(`/issue/${peekIssue.identifier}`);
-      }}
-    />
-  );
+  const peek = <IssuePeek issue={peekIssue} onClose={() => setPeekId(null)} />;
 
   if (!draggable) {
     return (
