@@ -41,6 +41,7 @@ function SeriesPath({ series, max }: { readonly series: ChartSeries; readonly ma
   return (
     <path
       ref={ref}
+      data-testid={`chart-line-${series.id}`}
       d={linePath(series.values, max)}
       fill="none"
       stroke={STROKE[series.tone]}

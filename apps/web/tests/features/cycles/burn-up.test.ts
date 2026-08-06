@@ -184,6 +184,21 @@ describe('buildBurnUp', () => {
     expect(series.max).toBe(5);
   });
 
+  it('keeps the axis above a scope that peaked higher than the sprint ended on', () => {
+    const series = buildBurnUp({
+      metric: 'points',
+      scope: 13,
+      startsAt: STARTS,
+      endsAt: ENDS,
+      burnUp: [
+        point('2026-07-13', { scope: 3, completed: 0, scopePoints: 8, completedPoints: 0 }),
+        point('2026-07-14', { scope: 6, completed: 1, scopePoints: 21, completedPoints: 5 }),
+        point('2026-07-15', { scope: 4, completed: 2, scopePoints: 13, completedPoints: 8 }),
+      ],
+    });
+    expect(series.max).toBe(21);
+  });
+
   it('survives an empty burn up', () => {
     const series = buildBurnUp({ scope: 0, startsAt: STARTS, endsAt: ENDS, burnUp: [] });
     expect(series).toEqual({ labels: [], completed: [], scope: [], ideal: [], max: 1 });
