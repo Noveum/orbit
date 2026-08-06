@@ -7,45 +7,75 @@ import { ProgressBar } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover, rowHover } from '@/lib/interaction.ts';
-import { buildBurnUp } from './burn-up.ts';
+import { buildBurnUp, burnUpMetric } from './burn-up.ts';
 import type { CycleView, UpcomingCycleView } from './data.ts';
 
 function formatDay(value: string): string {
   return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
+function Tally({ label, value }: { readonly label: string; readonly value: number }) {
+  return (
+    <div className="flex flex-col">
+      <span className="font-medium text-lg text-text tabular">{value}</span>
+      <span className="text-2xs text-faint uppercase">{label}</span>
+    </div>
+  );
+}
+
+function ScopeChanges({ progress }: { readonly progress: CycleView['progress'] }) {
+  const { added, removed } = progress.changes;
+  const canceled = progress.canceled;
+  if (added === 0 && removed === 0 && canceled === 0) return null;
+  return (
+    <p
+      data-testid="sprint-scope-changes"
+      className="flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-muted tabular"
+    >
+      {added > 0 ? <span>{added} added</span> : null}
+      {removed > 0 ? <span>{removed} removed</span> : null}
+      {canceled > 0 ? <span>{canceled} cancelled</span> : null}
+    </p>
+  );
+}
+
 export function CycleAnalytics({ cycle }: { readonly cycle: CycleView }) {
+  const { progress } = cycle;
+  const metric = burnUpMetric(progress.estimated);
+  const counted = metric === 'points' ? progress.points : progress;
   const burnUp = buildBurnUp({
-    burnUp: cycle.progress.burnUp,
-    scope: cycle.progress.scope,
+    metric,
+    burnUp: progress.burnUp,
+    scope: counted.scope,
     startsAt: new Date(cycle.startsAt),
     endsAt: new Date(cycle.endsAt),
   });
+  const unit = metric === 'points' ? 'points' : 'issues';
 
   return (
     <aside className="flex flex-col gap-5 rounded-lg border border-border p-4">
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="flex flex-col">
-          <span className="font-medium text-lg text-text tabular">{cycle.progress.scope}</span>
-          <span className="text-2xs text-faint uppercase">Scope</span>
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <Tally label="Scope" value={progress.scope} />
+          <Tally label="Started" value={progress.started} />
+          <Tally label="Completed" value={progress.completed} />
         </div>
-        <div className="flex flex-col">
-          <span className="font-medium text-lg text-text tabular">{cycle.progress.started}</span>
-          <span className="text-2xs text-faint uppercase">Started</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="font-medium text-lg text-text tabular">{cycle.progress.completed}</span>
-          <span className="text-2xs text-faint uppercase">Completed</span>
-        </div>
+        {progress.estimated === 0 ? null : (
+          <p data-testid="sprint-points" className="text-center text-2xs text-muted tabular">
+            {progress.points.completed} of {progress.points.scope} points completed
+          </p>
+        )}
+        <ScopeChanges progress={progress} />
       </div>
 
       <LineChart
         title="Burn up"
-        description={`${cycle.progress.completed} of ${cycle.progress.scope} issues completed against the ideal pace.`}
+        description={`${counted.completed} of ${counted.scope} ${unit} completed against the scope of the sprint and the ideal pace.`}
         max={burnUp.max}
         labels={burnUp.labels}
         series={[
           { id: 'ideal', label: 'Ideal', tone: 'faint', dashed: true, values: burnUp.ideal },
+          { id: 'scope', label: 'Scope', tone: 'muted', values: burnUp.scope },
           {
             id: 'completed',
             label: 'Completed',
