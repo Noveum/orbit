@@ -1,7 +1,6 @@
 'use client';
 
 import { Users, WifiOff } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -23,7 +22,6 @@ function byName(people: readonly Member[]): Member[] {
 }
 
 export function StandupBoard() {
-  const router = useRouter();
   const workspace = useWorkspace();
   const [openedAt] = useState(() => new Date());
   const [since] = useState(() => standupSince(new Date()));
@@ -141,13 +139,7 @@ export function StandupBoard() {
         }}
       />
 
-      <IssuePeek
-        issue={peeked}
-        onClose={() => setPeekId(null)}
-        onOpen={() => {
-          if (peeked !== undefined) router.push(`/issue/${peeked.identifier}`);
-        }}
-      />
+      <IssuePeek issue={peeked} onClose={() => setPeekId(null)} />
     </div>
   );
 }

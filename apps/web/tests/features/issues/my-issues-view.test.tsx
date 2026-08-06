@@ -247,6 +247,16 @@ describe('MyIssuesView', () => {
     expect(screen.getByText('Nothing assigned to you')).toBeInTheDocument();
   });
 
+  it('points every row at its own issue page', () => {
+    workspace = buildWorkspace();
+    renderView();
+
+    for (const identifier of ['DES-9', 'ENG-1']) {
+      const link = within(screen.getByTestId(`issue-row-${identifier}`)).getByRole('link');
+      expect(link.getAttribute('href')).toBe(`/issue/${identifier}`);
+    }
+  });
+
   it('groups the rows so the display options have something to act on', () => {
     workspace = buildWorkspace();
     renderView();
@@ -319,7 +329,7 @@ describe('MyIssuesView', () => {
     expect(screen.queryByTestId('issue-peek')).toBeNull();
     const row = screen.getByTestId('issue-row-ENG-1');
     act(() => {
-      fireEvent.click(within(row).getByRole('button', { name: 'Ship it' }));
+      fireEvent.click(within(row).getByRole('link', { name: 'Ship it' }));
     });
     expect(screen.getByTestId('issue-peek')).toBeInTheDocument();
   });

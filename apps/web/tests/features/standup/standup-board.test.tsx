@@ -26,11 +26,11 @@ mock.module('next/navigation', () => ({
 const { IssuePeek: realIssuePeek } = await import('@/features/issues/issue-peek.tsx');
 
 mock.module('@/features/issues/issue-peek.tsx', () => ({
-  IssuePeek: ({ issue, onOpen }: { issue: Issue | undefined; onOpen: () => void }) =>
+  IssuePeek: ({ issue }: { issue: Issue | undefined }) =>
     issue === undefined ? null : (
-      <button type="button" data-testid="issue-peek" onClick={onOpen}>
+      <a data-testid="issue-peek" href={`/issue/${issue.identifier}`}>
         {issue.identifier}
-      </button>
+      </a>
     ),
 }));
 
@@ -258,16 +258,18 @@ describe('StandupBoard', () => {
     expect(activeName()).toBe('Cy Diaz');
   });
 
-  it('opens the peek for a clicked issue and can push it to its own page', async () => {
+  it('opens the peek for a clicked issue and links it to its own page', async () => {
     await mountBoard();
 
-    fireEvent.click(within(screen.getByTestId('issue-row-ENG-2')).getByText('Wire the socket'));
+    const row = within(screen.getByTestId('issue-row-ENG-2'));
+    expect(row.getByRole('link').getAttribute('href')).toBe('/issue/ENG-2');
+
+    fireEvent.click(row.getByText('Wire the socket'));
 
     const peek = await screen.findByTestId('issue-peek');
     expect(peek.textContent).toBe('ENG-2');
-
-    fireEvent.click(peek);
-    expect(pushed).toEqual(['/issue/ENG-2']);
+    expect(peek.getAttribute('href')).toBe('/issue/ENG-2');
+    expect(pushed).toEqual([]);
   });
 
   it('leaves the arrow keys to the peek while it is open', async () => {
