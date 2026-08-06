@@ -4,13 +4,14 @@ import { idSchema } from './common.ts';
 import { booleanFlag } from './issue.ts';
 
 export const DOC_CONTENT_LIMIT = 500_000;
+export const DOC_TITLE_LIMIT = 200;
 
 export const docContentSchema = z.string().max(DOC_CONTENT_LIMIT, {
   message: 'This document is too long to save. Split it into linked pages.',
 });
 
 export const docCreateSchema = z.object({
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
   content: docContentSchema.default(''),
   projectId: idSchema.nullable().default(null),
   collectionId: idSchema.nullable().default(null),
@@ -20,7 +21,7 @@ export const docCreateSchema = z.object({
 
 export const docUpdateSchema = z
   .object({
-    title: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
     content: docContentSchema,
     projectId: idSchema.nullable(),
     collectionId: idSchema.nullable(),
@@ -28,6 +29,10 @@ export const docUpdateSchema = z
     visibility: z.enum(DOC_VISIBILITIES),
   })
   .partial();
+
+export const docDuplicateSchema = z.object({
+  title: z.string().trim().min(1).max(DOC_TITLE_LIMIT).optional(),
+});
 
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),

@@ -78,6 +78,24 @@ export function useCreateDoc() {
   });
 }
 
+export function useDuplicateDoc() {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (docId: string): Promise<Doc> => {
+      const result = await apiFetch(`/api/docs/${docId}/duplicate`, docEnvelopeSchema, {
+        method: 'POST',
+        body: {},
+      });
+      return result.doc;
+    },
+    onSuccess: () => invalidateDocs(client),
+    onError: (error) =>
+      toast({ title: 'Could not duplicate', description: messageOf(error), tone: 'danger' }),
+  });
+}
+
 export function useUpdateDoc(docId: string) {
   const client = useQueryClient();
   const { toast } = useToast();

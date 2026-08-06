@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
-import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
+import type { Principal } from '@orbit/shared/policy';
+import { DOC_CONTENT_LIMIT, DOC_TITLE_LIMIT } from '@orbit/shared/validators';
 import {
   archiveDoc,
   createDoc,
   createDocCollection,
   deleteDocCollection,
   docSlug,
+  duplicateDoc,
   getDoc,
   getPublishedDoc,
   listDocCollections,
@@ -781,5 +783,193 @@ describe('a restricted doc reaches the people it is shared with', () => {
       grants: [{ subjectType: 'team', subjectId: workspace.teamId, level: 'read' }],
     });
     expect(saved.actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+  });
+});
+
+describe('the access level a doc reports is the level the write path enforces', () => {
+  async function attemptWrite(principal: Principal, docId: string): Promise<'write' | 'read'> {
+    try {
+      await updateDoc(principal, docId, { content: `Edited ${docId}.` });
+      return 'write';
+    } catch {
+      return 'read';
+    }
+  }
+
+  it('agrees with updateDoc for every reader of a restricted doc and an open one', async () => {
+    const author = await addMember(workspace, 'member', { name: 'Ada Author' });
+    const reader = await addMember(workspace, 'member', { name: 'Rey Reader' });
+    const writer = await addMember(workspace, 'member', { name: 'Wren Writer' });
+    const guest = await addMember(workspace, 'guest', { name: 'Gia Guest' });
+
+    const { doc: restricted } = await createDoc(author.principal, {
+      title: 'Board deck',
+      content: 'Numbers.',
+      visibility: 'private',
+    });
+    await setDocAccess(author.principal, restricted.id, {
+      grants: [
+        { subjectType: 'user', subjectId: reader.user.id, level: 'read' },
+        { subjectType: 'user', subjectId: writer.user.id, level: 'write' },
+      ],
+    });
+    const { doc: open } = await createDoc(author.principal, {
+      title: 'Handbook',
+      content: 'Everybody reads this.',
+      visibility: 'workspace',
+    });
+
+    const people = [
+      { name: 'author', principal: author.principal },
+      { name: 'reader', principal: reader.principal },
+      { name: 'writer', principal: writer.principal },
+      { name: 'guest', principal: guest.principal },
+      { name: 'admin', principal: workspace.admin },
+    ];
+
+    const reported: string[] = [];
+    for (const person of people) {
+      for (const doc of [restricted, open]) {
+        const detail = await getDoc(person.principal, doc.id).catch(() => null);
+        if (detail === null) continue;
+        const enforced = await attemptWrite(person.principal, doc.id);
+        reported.push(`${person.name}/${doc.title}/${detail.access}`);
+        expect(`${person.name}/${doc.title}/${detail.access}`).toBe(
+          `${person.name}/${doc.title}/${enforced}`,
+        );
+      }
+    }
+
+    expect(reported).toEqual([
+      'author/Board deck/write',
+      'author/Handbook/write',
+      'reader/Board deck/read',
+      'reader/Handbook/write',
+      'writer/Board deck/write',
+      'writer/Handbook/write',
+      'guest/Handbook/read',
+      'admin/Board deck/write',
+      'admin/Handbook/write',
+    ]);
+  });
+
+  it('tells a reader of a published page nothing more than read', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Launch brief',
+      content: 'Public.',
+      visibility: 'public',
+    });
+    const published = await getPublishedDoc(`launch-brief-${doc.publishToken ?? ''}`);
+    expect(published?.access).toBe('read');
+  });
+});
+
+describe('duplicateDoc', () => {
+  it('copies the body and placement under a copy title owned by the duplicator', async () => {
+    const { collection } = await createDocCollection(workspace.admin, { name: 'Playbooks' });
+    const { doc: parent } = await createDoc(workspace.admin, { title: 'Parent', content: 'Top.' });
+    const { doc: source } = await createDoc(workspace.admin, {
+      title: 'Incident runbook',
+      content: '# Incident runbook\n\nPage the on call.',
+      collectionId: collection.id,
+      parentId: parent.id,
+    });
+    const other = await addMember(workspace, 'member', { name: 'Mo Member' });
+
+    const { doc: copy, actions } = await duplicateDoc(other.principal, source.id);
+
+    expect(copy.id).not.toBe(source.id);
+    expect(copy.title).toBe('Incident runbook (copy)');
+    expect(copy.content).toBe(source.content);
+    expect(copy.collectionId).toBe(collection.id);
+    expect(copy.parentId).toBe(parent.id);
+    expect(copy.authorId).toBe(other.user.id);
+    expect(copy.archivedAt).toBeNull();
+    expect(actions[0]?.action).toBe('insert');
+    expect(actions[0]?.scopes).toContain(scopes.doc(copy.id));
+
+    const untouched = await getDoc(workspace.admin, source.id);
+    expect(untouched.doc.title).toBe('Incident runbook');
+    expect((await listDocs(workspace.admin)).map((row) => row.title)).toContain(
+      'Incident runbook (copy)',
+    );
+  });
+
+  it('never hands the copy the published link of the original', async () => {
+    const { doc: source } = await createDoc(workspace.admin, {
+      title: 'Launch brief',
+      content: 'Read me.',
+      visibility: 'public',
+    });
+    expect(source.publishToken).not.toBeNull();
+
+    const { doc: copy } = await duplicateDoc(workspace.admin, source.id);
+
+    expect(copy.publishToken).toBeNull();
+    expect(copy.visibility).toBe('workspace');
+    expect(await listPublicDocs()).toHaveLength(1);
+  });
+
+  it('lets someone with only read access take their own editable copy', async () => {
+    const author = await addMember(workspace, 'member', { name: 'Ada Author' });
+    const reader = await addMember(workspace, 'member', { name: 'Rey Reader' });
+    const { doc: source } = await createDoc(author.principal, {
+      title: 'Private notes',
+      content: 'Mine.',
+      visibility: 'private',
+    });
+    await setDocAccess(author.principal, source.id, {
+      grants: [{ subjectType: 'user', subjectId: reader.user.id, level: 'read' }],
+    });
+    await expect(updateDoc(reader.principal, source.id, { content: 'no' })).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+
+    const { doc: copy } = await duplicateDoc(reader.principal, source.id);
+
+    expect(copy.authorId).toBe(reader.user.id);
+    expect(copy.visibility).toBe('private');
+    expect((await getDoc(reader.principal, copy.id)).access).toBe('write');
+    await expect(getDoc(author.principal, copy.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('refuses a doc the caller cannot read, and refuses a contributor entirely', async () => {
+    const author = await addMember(workspace, 'member', { name: 'Ada Author' });
+    const stranger = await addMember(workspace, 'member', { name: 'Stan Stranger' });
+    const contributor = await addMember(workspace, 'contributor', { name: 'Cody' });
+    const { doc: secret } = await createDoc(author.principal, {
+      title: 'Secret',
+      content: 'Hidden.',
+      visibility: 'private',
+    });
+    const open = await newDoc('Open doc');
+
+    await expect(duplicateDoc(stranger.principal, secret.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(duplicateDoc(contributor.principal, open.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+  });
+
+  it('keeps a very long title inside the stored limit', async () => {
+    const long = 'N'.repeat(DOC_TITLE_LIMIT);
+    const { doc: source } = await createDoc(workspace.admin, { title: long, content: 'Body.' });
+
+    const { doc: copy } = await duplicateDoc(workspace.admin, source.id);
+
+    expect(copy.title.length).toBeLessThanOrEqual(DOC_TITLE_LIMIT);
+    expect(copy.title.endsWith(' (copy)')).toBe(true);
+  });
+
+  it('takes a caller supplied title when one is given', async () => {
+    const source = await newDoc('Weekly notes', 'Agenda.');
+
+    const { doc: copy } = await duplicateDoc(workspace.admin, source.id, {
+      title: 'Notes for the fourth',
+    });
+
+    expect(copy.title).toBe('Notes for the fourth');
+    expect(copy.slug).toBe('notes-for-the-fourth');
   });
 });

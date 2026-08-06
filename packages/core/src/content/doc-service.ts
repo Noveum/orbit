@@ -14,18 +14,21 @@ import {
   sql,
 } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
+import type { DocAccessLevel } from '@orbit/shared/constants';
 import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, canReadDoc } from '@orbit/shared/policy';
+import { assertCan, can, canReadDoc } from '@orbit/shared/policy';
 import { docUrl, slugify, truncate } from '@orbit/shared/utils';
 import {
+  DOC_TITLE_LIMIT,
   docAccessSetSchema,
   docCollectionCreateSchema,
   docCollectionUpdateSchema,
   docCreateSchema,
+  docDuplicateSchema,
   docFilterSchema,
   docShareSchema,
   docUpdateSchema,
@@ -79,6 +82,7 @@ export interface DocDetail {
   readonly author: DocAuthor;
   readonly followers: number;
   readonly backlinks: DocBacklink[];
+  readonly access: DocAccessLevel;
 }
 
 export interface SavedDoc {
@@ -217,15 +221,24 @@ async function writeGrantedDocIds(
   return rows.length > 0;
 }
 
+export async function docAccessLevel(
+  executor: Executor,
+  principal: Principal,
+  doc: DocRow,
+): Promise<DocAccessLevel> {
+  if (!can(principal, 'doc:write')) return 'read';
+  if (principal.role === 'admin') return 'write';
+  if (doc.authorId === principal.userId) return 'write';
+  if (!isRestricted(doc.visibility)) return 'write';
+  return (await writeGrantedDocIds(executor, principal, doc.id)) ? 'write' : 'read';
+}
+
 export async function assertDocWritable(
   executor: Executor,
   principal: Principal,
   doc: DocRow,
 ): Promise<void> {
-  if (principal.role === 'admin') return;
-  if (doc.authorId === principal.userId) return;
-  if (!isRestricted(doc.visibility)) return;
-  if (await writeGrantedDocIds(executor, principal, doc.id)) return;
+  if ((await docAccessLevel(executor, principal, doc)) === 'write') return;
   throw forbidden('You only have read access to that doc.');
 }
 
@@ -425,6 +438,7 @@ async function detailFor(doc: DocRow, principal: Principal | null): Promise<DocD
     author: author ?? { id: doc.authorId, name: 'Someone', image: null },
     followers: followers?.total ?? 0,
     backlinks: await listDocBacklinks(doc, principal),
+    access: principal === null ? 'read' : await docAccessLevel(db, principal, doc),
   };
 }
 
@@ -539,6 +553,59 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
     );
 
     return { doc, actions: [docAction(doc, syncId, actor, 'insert'), ...notifications] };
+  });
+}
+
+const COPY_SUFFIX = ' (copy)';
+
+function copyTitle(title: string): string {
+  const room = DOC_TITLE_LIMIT - COPY_SUFFIX.length;
+  return `${title.length > room ? title.slice(0, room).trimEnd() : title}${COPY_SUFFIX}`;
+}
+
+function copyVisibility(visibility: string): string {
+  return isExternallyShared(visibility) ? 'workspace' : visibility;
+}
+
+export async function duplicateDoc(
+  principal: Principal,
+  docId: string,
+  input: unknown = {},
+): Promise<SavedDoc> {
+  assertCan(principal, 'doc:write');
+  const parsed = docDuplicateSchema.parse(input);
+
+  return await db.transaction(async (tx) => {
+    const source = await loadReadableDoc(tx, principal, docId);
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const title = parsed.title ?? copyTitle(source.title);
+    const [created] = await tx
+      .insert(schema.doc)
+      .values({
+        id: newId(),
+        organizationId: principal.organizationId,
+        collectionId: source.collectionId,
+        projectId: source.projectId,
+        parentId: source.parentId,
+        title,
+        slug: docSlug(title),
+        content: source.content,
+        visibility: copyVisibility(source.visibility),
+        publishToken: null,
+        authorId: principal.userId,
+        syncId,
+      })
+      .returning();
+    const doc = requireRow(created, 'The doc could not be duplicated.');
+
+    await tx
+      .insert(schema.docSubscription)
+      .values({ id: newId(), docId: doc.id, userId: principal.userId })
+      .onConflictDoNothing();
+    await snapshotVersion(tx, principal, doc, null);
+
+    return { doc, actions: [docAction(doc, syncId, actor, 'insert')] };
   });
 }
 
