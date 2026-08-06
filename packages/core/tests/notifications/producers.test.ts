@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { and, db, eq, schema } from '@orbit/db';
+import { DEDUPE_WINDOW_MS } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { createComment } from '../../src/content/comment-service.ts';
@@ -38,6 +39,13 @@ async function inboxOf(userId: string) {
         eq(schema.notification.organizationId, workspace.organizationId),
       ),
     );
+}
+
+async function ageNotifications(userId: string) {
+  await db
+    .update(schema.notification)
+    .set({ createdAt: new Date(Date.now() - 2 * DEDUPE_WINDOW_MS) })
+    .where(eq(schema.notification.userId, userId));
 }
 
 async function rowsAbout(userId: string, entityId: string) {
@@ -265,10 +273,28 @@ describe('docs', () => {
       title: 'Runbook',
       content: `Owner @${grace.user.handle}`,
     });
+    await ageNotifications(grace.user.id);
+
     await updateDoc(workspace.admin, doc.id, {
       content: `Owner @${grace.user.handle}\n\nMore detail.`,
     });
+
     expect(await inboxOf(grace.user.id)).toHaveLength(1);
+  });
+
+  it('notifies a handle a later save introduces, long after the first one', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Runbook',
+      content: `Owner @${grace.user.handle}`,
+    });
+    await ageNotifications(grace.user.id);
+
+    await updateDoc(workspace.admin, doc.id, {
+      content: `Owner @${grace.user.handle} with @${linus.user.handle}`,
+    });
+
+    expect(await inboxOf(grace.user.id)).toHaveLength(1);
+    expect(await inboxOf(linus.user.id)).toHaveLength(1);
   });
 
   it('notifies a mentioned teammate on a doc comment and deep links to it', async () => {

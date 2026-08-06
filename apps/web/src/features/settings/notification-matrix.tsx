@@ -38,7 +38,6 @@ export interface NotificationMatrixProps {
   readonly quietHoursStart: string;
   readonly quietHoursEnd: string;
   readonly urgentBypassEnabled: boolean;
-  readonly digestEnabled: boolean;
 }
 
 export function NotificationMatrix(props: NotificationMatrixProps) {
@@ -47,7 +46,6 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
   const [quietHoursStart, setQuietHoursStart] = useState(props.quietHoursStart);
   const [quietHoursEnd, setQuietHoursEnd] = useState(props.quietHoursEnd);
   const [urgentBypassEnabled, setUrgentBypassEnabled] = useState(props.urgentBypassEnabled);
-  const [digestEnabled, setDigestEnabled] = useState(props.digestEnabled);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -82,7 +80,6 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
           quietHoursStart,
           quietHoursEnd,
           urgentBypassEnabled,
-          digestEnabled,
         },
       });
       setSaved(true);
@@ -189,24 +186,6 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
             checked={urgentBypassEnabled}
             onCheckedChange={setUrgentBypassEnabled}
             aria-label="Urgent bypass"
-          />
-        </label>
-
-        <label
-          htmlFor="digest-enabled"
-          className="flex items-center justify-between gap-3 border-border border-t pt-3"
-        >
-          <span className="flex flex-col">
-            <span className="font-medium text-dense text-text">Daily digest</span>
-            <span className="text-muted text-xs">
-              One summary of everything you missed, instead of a message per event.
-            </span>
-          </span>
-          <Switch
-            id="digest-enabled"
-            checked={digestEnabled}
-            onCheckedChange={setDigestEnabled}
-            aria-label="Daily digest"
           />
         </label>
       </div>

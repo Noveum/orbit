@@ -33,6 +33,7 @@ import {
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
+import { docReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
 import { NOTIFICATION_BODY_LIMIT, notifyRecipients } from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -484,6 +485,7 @@ async function docMentionNotifications(
   actor: Actor,
 ): Promise<SyncAction[]> {
   const mentioned = await resolveHandles(tx, principal.organizationId, handles, null);
+  const readers = await docReaderIds(tx, doc, mentioned);
   const events: NotificationEvent[] = [
     {
       organizationId: doc.organizationId,
@@ -492,7 +494,7 @@ async function docMentionNotifications(
       actor,
       entityType: 'doc',
       entityId: doc.id,
-      userIds: mentioned.filter((id) => id !== principal.userId),
+      userIds: mentioned.filter((id) => id !== principal.userId && readers.has(id)),
       title: `Mentioned you in ${doc.title}`,
       body: truncate(doc.content, NOTIFICATION_BODY_LIMIT),
       url: docUrl(doc.id),

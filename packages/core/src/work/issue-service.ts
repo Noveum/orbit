@@ -28,7 +28,7 @@ import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
-import { dedupeAudience } from '../notifications/audience.ts';
+import { dedupeAudience, restrictAudience, teamReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
 import {
   issueSubscribersByIssue,
@@ -476,16 +476,11 @@ async function issueNotifications(
     tx,
     relevant.filter((entry) => entry.statusName !== null).map((entry) => entry.issue.id),
   );
+  const mentionsByEntry = await resolveMentionsPerEntry(tx, principal.organizationId, relevant);
 
-  const events: NotificationEvent[] = [];
-  for (const entry of relevant) {
-    const mentioned = await resolveHandles(
-      tx,
-      principal.organizationId,
-      entry.mentionHandles,
-      entry.issue.teamId,
-    );
-    const audience = dedupeAudience(
+  const audiences = relevant.map((entry) => ({
+    entry,
+    groups: dedupeAudience(
       [
         {
           type: 'issue_assigned' as const,
@@ -497,14 +492,20 @@ async function issueNotifications(
           type: 'mention' as const,
           reason: 'mentioned' as const,
           title: `Mentioned you in ${entry.issue.identifier}`,
-          userIds: mentioned,
+          userIds: mentionsByEntry.get(entry.issue.id) ?? [],
         },
         ...statusChangeGroups(entry, subscribers.get(entry.issue.id) ?? []),
       ],
       [principal.userId],
-    );
+    ),
+  }));
 
-    for (const group of audience) {
+  const readersByTeam = await resolveReadersPerTeam(tx, audiences);
+
+  const events: NotificationEvent[] = [];
+  for (const { entry, groups } of audiences) {
+    const readers = readersByTeam.get(entry.issue.teamId) ?? new Set<string>();
+    for (const group of restrictAudience(groups, readers)) {
       events.push({
         organizationId: entry.issue.organizationId,
         type: group.type,
@@ -522,6 +523,58 @@ async function issueNotifications(
   }
 
   return await notifyRecipients(tx, events);
+}
+
+async function resolveMentionsPerEntry(
+  tx: Executor,
+  organizationId: string,
+  entries: readonly IssueNotificationInput[],
+): Promise<Map<string, string[]>> {
+  const byKey = new Map<string, { teamId: string; handles: string[]; issueIds: string[] }>();
+  for (const entry of entries) {
+    if (entry.mentionHandles.length === 0) continue;
+    const handles = [...new Set(entry.mentionHandles)].sort();
+    const key = `${entry.issue.teamId} ${handles.join(',')}`;
+    const bucket = byKey.get(key) ?? { teamId: entry.issue.teamId, handles, issueIds: [] };
+    bucket.issueIds.push(entry.issue.id);
+    byKey.set(key, bucket);
+  }
+
+  const resolved = new Map<string, string[]>();
+  for (const bucket of byKey.values()) {
+    const userIds = await resolveHandles(tx, organizationId, bucket.handles, bucket.teamId);
+    for (const issueId of bucket.issueIds) resolved.set(issueId, userIds);
+  }
+  return resolved;
+}
+
+async function resolveReadersPerTeam(
+  tx: Executor,
+  audiences: readonly {
+    entry: IssueNotificationInput;
+    groups: readonly { userIds: readonly string[] }[];
+  }[],
+): Promise<Map<string, Set<string>>> {
+  const candidates = new Map<string, { organizationId: string; userIds: Set<string> }>();
+  for (const { entry, groups } of audiences) {
+    const bucket = candidates.get(entry.issue.teamId) ?? {
+      organizationId: entry.issue.organizationId,
+      userIds: new Set<string>(),
+    };
+    for (const group of groups) {
+      for (const id of group.userIds) bucket.userIds.add(id);
+    }
+    candidates.set(entry.issue.teamId, bucket);
+  }
+
+  const readers = new Map<string, Set<string>>();
+  for (const [teamId, bucket] of candidates) {
+    readers.set(
+      teamId,
+      await teamReaderIds(tx, bucket.organizationId, teamId, [...bucket.userIds]),
+    );
+  }
+  return readers;
 }
 
 function notificationsByEntity(actions: readonly SyncAction[]): Map<string, SyncAction[]> {
@@ -1154,6 +1207,7 @@ export async function moveIssue(
     });
 
     const movedLabels = await labelsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+    const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
       issue,
@@ -1163,9 +1217,34 @@ export async function moveIssue(
         ...rebalanced
           .filter((row) => row.id !== issueId)
           .map((row) => issueAction(row, syncId, actor, 'update', movedLabels.get(row.id) ?? [])),
+        ...notifications,
       ],
     };
   });
+}
+
+async function moveNotifications(
+  tx: Executor,
+  principal: Principal,
+  actor: Actor,
+  move: {
+    readonly current: IssueRow;
+    readonly issue: IssueRow;
+    readonly state: { readonly id: string; readonly name: string };
+  },
+): Promise<SyncAction[]> {
+  const assigned =
+    move.issue.assigneeId !== null && move.issue.assigneeId !== move.current.assigneeId;
+  const changedState = move.state.id !== move.current.stateId;
+  if (!(assigned || changedState)) return [];
+  return await issueNotifications(tx, principal, actor, [
+    {
+      issue: move.issue,
+      mentionHandles: [],
+      assigneeId: assigned ? move.issue.assigneeId : null,
+      statusName: changedState ? move.state.name : null,
+    },
+  ]);
 }
 
 export async function bulkUpdateIssues(

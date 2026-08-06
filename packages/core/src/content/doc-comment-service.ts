@@ -14,7 +14,7 @@ import {
 } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
-import { dedupeAudience } from '../notifications/audience.ts';
+import { dedupeAudience, docReaderIds, restrictAudience } from '../notifications/audience.ts';
 import { resolveMentions } from '../notifications/mentions.ts';
 import {
   docCommentThreadAuthors,
@@ -167,7 +167,13 @@ async function docCommentNotifications(
     [principal.userId],
   );
 
-  const events: NotificationEvent[] = audience.map((group) => ({
+  const readers = await docReaderIds(
+    tx,
+    doc,
+    audience.flatMap((group) => group.userIds),
+  );
+
+  const events: NotificationEvent[] = restrictAudience(audience, readers).map((group) => ({
     organizationId: doc.organizationId,
     type: group.type,
     reason: group.reason,

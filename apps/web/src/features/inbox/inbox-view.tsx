@@ -200,12 +200,12 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
     ),
   );
 
-  const visible = useMemo(() => rows.filter((row) => matchesTab(row, tab)), [rows, tab]);
-  const selectedIndex = Math.max(
-    0,
-    visible.findIndex((row) => row.id === selectedId),
+  const visible = useMemo(
+    () => rows.filter((row) => matchesTab(row, tab) || row.id === selectedId),
+    [rows, tab, selectedId],
   );
-  const current = visible[selectedId === null ? 0 : selectedIndex];
+  const selectedIndex = visible.findIndex((row) => row.id === selectedId);
+  const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
 
   const move = useCallback(
     (delta: number) => {

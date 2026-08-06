@@ -102,3 +102,20 @@ describe('opening a notification', () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe('opening a notification in the Unread tab', () => {
+  it('keeps the row selected after it is marked read', async () => {
+    const user = userEvent.setup();
+    renderInbox([
+      item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
+      item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Unread' }));
+    await user.click(screen.getByRole('button', { name: /Second/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
+    });
+  });
+});
