@@ -103,6 +103,23 @@ describe('command palette issue results', () => {
     expect(second.querySelector('a')?.getAttribute('href')).toBe('/issue/ENG-31');
   });
 
+  it('keeps a hit out of the tab order inside the dialog', async () => {
+    const user = userEvent.setup();
+    renderPalette();
+    await search('pres');
+
+    const link = (await screen.findByTestId('palette-issue-ENG-12')).querySelector('a');
+    expect(link).not.toBeNull();
+    if (link === null) return;
+
+    const input = await screen.findByPlaceholderText(/Search issues/);
+    input.focus();
+    await user.tab();
+
+    expect(document.activeElement).not.toBe(link);
+    expect(link.closest('[role="option"]')).not.toBeNull();
+  });
+
   it('lets a modified click open the issue in a new tab without routing this one', async () => {
     renderPalette();
     await search('pres');

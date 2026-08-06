@@ -37,6 +37,7 @@ export interface IssueLinkProps {
   readonly label?: string | undefined;
   readonly draggable?: boolean | undefined;
   readonly prefetch?: boolean | undefined;
+  readonly tabIndex?: number | undefined;
   readonly testId?: string | undefined;
   readonly onFocus?: ((event: ReactFocusEvent<HTMLAnchorElement>) => void) | undefined;
   readonly onClick?: ((event: ReactMouseEvent<HTMLAnchorElement>) => void) | undefined;
@@ -51,6 +52,7 @@ export function IssueLink({
   label,
   draggable,
   prefetch,
+  tabIndex,
   testId,
   onFocus,
   onClick,
@@ -76,6 +78,7 @@ export function IssueLink({
       aria-label={label}
       draggable={draggable}
       prefetch={prefetch ?? null}
+      tabIndex={tabIndex}
       data-testid={testId}
       onFocus={onFocus}
       onClick={handleClick}

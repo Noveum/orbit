@@ -219,6 +219,7 @@ export function CommandPalette({
                         identifier={issue.identifier}
                         onClick={dismissOnPlainClick}
                         prefetch={false}
+                        tabIndex={-1}
                         className="flex min-w-0 flex-1 items-center gap-2.5"
                       >
                         <CircleDot
