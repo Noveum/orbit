@@ -10,14 +10,38 @@ export interface DocAnchorMatch {
   readonly end: number;
 }
 
+const HIGH_SURROGATE_FIRST = 0xd800;
+const HIGH_SURROGATE_LAST = 0xdbff;
+const LOW_SURROGATE_FIRST = 0xdc00;
+const LOW_SURROGATE_LAST = 0xdfff;
+
+function splitsACharacter(text: string, at: number): boolean {
+  const here = text.charCodeAt(at);
+  const before = text.charCodeAt(at - 1);
+  return (
+    here >= LOW_SURROGATE_FIRST &&
+    here <= LOW_SURROGATE_LAST &&
+    before >= HIGH_SURROGATE_FIRST &&
+    before <= HIGH_SURROGATE_LAST
+  );
+}
+
+function opensOn(text: string, at: number): number {
+  return splitsACharacter(text, at) ? at + 1 : at;
+}
+
+function closesOn(text: string, at: number): number {
+  return splitsACharacter(text, at) ? at - 1 : at;
+}
+
 export function buildDocAnchor(text: string, start: number, end: number): DocCommentAnchor {
-  const from = Math.max(0, Math.min(start, text.length));
+  const from = opensOn(text, Math.max(0, Math.min(start, text.length)));
   const selected = Math.max(from, Math.min(end, text.length));
-  const to = Math.min(selected, from + DOC_ANCHOR_QUOTE_LIMIT);
+  const to = closesOn(text, Math.min(selected, from + DOC_ANCHOR_QUOTE_LIMIT));
   return {
     quote: text.slice(from, to),
-    prefix: text.slice(Math.max(0, from - DOC_ANCHOR_CONTEXT_LIMIT), from),
-    suffix: text.slice(to, to + DOC_ANCHOR_CONTEXT_LIMIT),
+    prefix: text.slice(opensOn(text, Math.max(0, from - DOC_ANCHOR_CONTEXT_LIMIT)), from),
+    suffix: text.slice(to, closesOn(text, to + DOC_ANCHOR_CONTEXT_LIMIT)),
     start: from,
   };
 }

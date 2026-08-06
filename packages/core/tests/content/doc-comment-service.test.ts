@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
-import { buildDocAnchor } from '@orbit/shared/utils';
+import {
+  buildDocAnchor,
+  DOC_ANCHOR_CONTEXT_LIMIT,
+  DOC_ANCHOR_QUOTE_LIMIT,
+} from '@orbit/shared/utils';
+import { ZodError } from 'zod';
 import {
   createDocComment,
   deleteDocComment,
@@ -142,6 +147,49 @@ describe('anchored doc comments', () => {
         anchor: { quote: passage, prefix: '', suffix: '', start: -4 },
       }),
     ).rejects.toThrow();
+  });
+
+  it('keeps a selection Postgres can store when the quote is cut where an emoji sits', async () => {
+    const straddling = `${'w'.repeat(DOC_ANCHOR_QUOTE_LIMIT - 1)}😀 and everything after it`;
+    const cut = buildDocAnchor(straddling, 0, straddling.length);
+
+    const { comment } = await createDocComment(workspace.admin, docId, {
+      body: 'This whole section, please.',
+      anchor: cut,
+    });
+
+    expect(comment.anchor).toEqual(cut);
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments[0]?.anchor).toEqual(cut);
+  });
+
+  it('keeps a selection Postgres can store when an emoji straddles the context window', async () => {
+    const above = `${'x'.repeat(10)}😀${'y'.repeat(DOC_ANCHOR_CONTEXT_LIMIT - 1)}`;
+    const text = `${above}${passage}${'z'.repeat(DOC_ANCHOR_CONTEXT_LIMIT - 1)}😀 tail`;
+    const surrounded = buildDocAnchor(text, above.length, above.length + passage.length);
+
+    const { comment } = await createDocComment(workspace.admin, docId, {
+      body: 'Which migration?',
+      anchor: surrounded,
+    });
+
+    expect(comment.anchor).toEqual(surrounded);
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments[0]?.anchor?.prefix).toBe(surrounded.prefix);
+    expect(page.comments[0]?.anchor?.suffix).toBe(surrounded.suffix);
+  });
+
+  it('refuses an anchor cut through a character instead of failing in the database', async () => {
+    const halfACharacter = '😀'.charAt(0);
+
+    await expect(
+      createDocComment(workspace.admin, docId, {
+        body: 'Half a character',
+        anchor: { quote: `${passage}${halfACharacter}`, prefix: '', suffix: '', start: 0 },
+      }),
+    ).rejects.toBeInstanceOf(ZodError);
   });
 
   it('publishes the anchor on the sync action so a reader can highlight it', async () => {

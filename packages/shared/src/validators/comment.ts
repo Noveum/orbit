@@ -13,10 +13,27 @@ export const commentUpdateSchema = z.object({
 export const DOC_ANCHOR_QUOTE_LIMIT = 2_000;
 export const DOC_ANCHOR_CONTEXT_LIMIT = 96;
 
+const HALF_A_CHARACTER = /\p{Surrogate}/u;
+const CUT_THROUGH = 'A passage cannot start or end in the middle of a character.';
+
+function isWholeText(value: string): boolean {
+  return !HALF_A_CHARACTER.test(value);
+}
+
+const anchorContext = z
+  .string()
+  .max(DOC_ANCHOR_CONTEXT_LIMIT)
+  .refine(isWholeText, CUT_THROUGH)
+  .default('');
+
 export const docCommentAnchorSchema = z.object({
-  quote: z.string().min(1, 'Select the text you want to comment on.').max(DOC_ANCHOR_QUOTE_LIMIT),
-  prefix: z.string().max(DOC_ANCHOR_CONTEXT_LIMIT).default(''),
-  suffix: z.string().max(DOC_ANCHOR_CONTEXT_LIMIT).default(''),
+  quote: z
+    .string()
+    .min(1, 'Select the text you want to comment on.')
+    .max(DOC_ANCHOR_QUOTE_LIMIT)
+    .refine(isWholeText, CUT_THROUGH),
+  prefix: anchorContext,
+  suffix: anchorContext,
   start: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 

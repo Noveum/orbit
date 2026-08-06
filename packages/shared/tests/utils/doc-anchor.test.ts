@@ -12,6 +12,9 @@ const passage = 'The launch is blocked on the migration.';
 const document = `Status update\n\n${passage}\n\nWe meet on Thursday.`;
 const start = document.indexOf(passage);
 
+const emoji = '😀';
+const halfCharacter = /\p{Surrogate}/u;
+
 describe('buildDocAnchor', () => {
   it('captures the quote with the text on either side of it', () => {
     const anchor = buildDocAnchor(document, start, start + passage.length);
@@ -60,6 +63,49 @@ describe('buildDocAnchor', () => {
 
     expect(anchor.suffix).toBe('cut off here');
     expect(locateDocAnchor(overlong, anchor)).toEqual({ start: 0, end: DOC_ANCHOR_QUOTE_LIMIT });
+  });
+
+  it('cuts the quote before an emoji the limit lands inside instead of through it', () => {
+    const straddling = `${'w'.repeat(DOC_ANCHOR_QUOTE_LIMIT - 1)}${emoji}and the rest`;
+    const anchor = buildDocAnchor(straddling, 0, straddling.length);
+
+    expect(halfCharacter.test(anchor.quote)).toBe(false);
+    expect(halfCharacter.test(anchor.suffix)).toBe(false);
+    expect(anchor.quote).toHaveLength(DOC_ANCHOR_QUOTE_LIMIT - 1);
+    expect(anchor.suffix.startsWith(emoji)).toBe(true);
+    expect(locateDocAnchor(straddling, anchor)).toEqual({
+      start: 0,
+      end: DOC_ANCHOR_QUOTE_LIMIT - 1,
+    });
+    expect(() => docCommentAnchorSchema.parse(anchor)).not.toThrow();
+  });
+
+  it('opens the context window on a whole character when an emoji straddles its edge', () => {
+    const above = `${'x'.repeat(10)}${emoji}${'y'.repeat(DOC_ANCHOR_CONTEXT_LIMIT - 1)}`;
+    const text = `${above}${passage}\n\nbelow`;
+    const at = above.length;
+    const anchor = buildDocAnchor(text, at, at + passage.length);
+
+    expect(halfCharacter.test(anchor.prefix)).toBe(false);
+    expect(anchor.prefix).toHaveLength(DOC_ANCHOR_CONTEXT_LIMIT - 1);
+    expect(text.slice(at - anchor.prefix.length, at)).toBe(anchor.prefix);
+    expect(locateDocAnchor(text, anchor)).toEqual({ start: at, end: at + passage.length });
+    expect(() => docCommentAnchorSchema.parse(anchor)).not.toThrow();
+  });
+
+  it('closes the context window on a whole character when an emoji straddles its edge', () => {
+    const below = `${'y'.repeat(DOC_ANCHOR_CONTEXT_LIMIT - 1)}${emoji}${'z'.repeat(10)}`;
+    const text = `above\n\n${passage}${below}`;
+    const at = text.indexOf(passage);
+    const anchor = buildDocAnchor(text, at, at + passage.length);
+
+    expect(halfCharacter.test(anchor.suffix)).toBe(false);
+    expect(anchor.suffix).toHaveLength(DOC_ANCHOR_CONTEXT_LIMIT - 1);
+    expect(text.slice(at + passage.length, at + passage.length + anchor.suffix.length)).toBe(
+      anchor.suffix,
+    );
+    expect(locateDocAnchor(text, anchor)).toEqual({ start: at, end: at + passage.length });
+    expect(() => docCommentAnchorSchema.parse(anchor)).not.toThrow();
   });
 });
 
@@ -205,5 +251,16 @@ describe('docCommentAnchorSchema', () => {
 
   it('rejects a quote longer than a passage anyone would select', () => {
     expect(() => docCommentAnchorSchema.parse({ quote: 'x'.repeat(5000), start: 0 })).toThrow();
+  });
+
+  it('takes an anchor made of whole characters and refuses one cut through a character', () => {
+    const whole = { quote: `${emoji} ships today`, prefix: `after ${emoji}`, suffix: '', start: 4 };
+    const high = emoji.charAt(0);
+    const low = emoji.charAt(1);
+
+    expect(() => docCommentAnchorSchema.parse(whole)).not.toThrow();
+    expect(() => docCommentAnchorSchema.parse({ ...whole, quote: `ends in ${high}` })).toThrow();
+    expect(() => docCommentAnchorSchema.parse({ ...whole, prefix: `${low} starts` })).toThrow();
+    expect(() => docCommentAnchorSchema.parse({ ...whole, suffix: `ends in ${high}` })).toThrow();
   });
 });
