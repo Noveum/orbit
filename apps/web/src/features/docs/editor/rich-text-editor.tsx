@@ -3,7 +3,7 @@
 import { renderMarkdown } from '@orbit/services/markdown';
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { Bold, Code, Italic, Link2, Strikethrough } from 'lucide-react';
+import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough } from 'lucide-react';
 import type { RefObject } from 'react';
 import {
   type ChangeEvent,
@@ -37,6 +37,11 @@ export interface UploadedAttachment {
   readonly contentType: string;
 }
 
+export interface EditorSelectionRange {
+  readonly from: number;
+  readonly to: number;
+}
+
 export interface RichTextEditorProps {
   readonly value: string;
   readonly onChange: (markdown: string) => void;
@@ -53,6 +58,7 @@ export interface RichTextEditorProps {
   readonly onCancel?: () => void;
   readonly onReady?: (editor: Editor) => void;
   readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
+  readonly onComment?: (range: EditorSelectionRange) => void;
   readonly footer?: React.ReactNode;
   readonly toolbarLeading?: React.ReactNode | undefined;
   readonly toolbarTrailing?: React.ReactNode | undefined;
@@ -111,6 +117,7 @@ export function RichTextEditor({
   onCancel,
   onReady,
   onUpload,
+  onComment,
   footer,
   toolbarLeading,
   toolbarTrailing,
@@ -434,77 +441,14 @@ export function RichTextEditor({
       ) : null}
 
       {bubble === null || editor === null ? null : (
-        <div
-          data-testid={`${testId}-bubble`}
-          style={{ left: `${bubble.left}px`, top: `${bubble.top}px` }}
-          className="-translate-x-1/2 absolute z-30 flex items-center gap-0.5 rounded-lg border border-border bg-surface p-1 shadow-pop"
-        >
-          <BubbleButton
-            label="Bold"
-            active={editor.isActive('bold')}
-            icon={Bold}
-            onPress={() => editor.chain().focus().toggleBold().run()}
-          />
-          <BubbleButton
-            label="Italic"
-            active={editor.isActive('italic')}
-            icon={Italic}
-            onPress={() => editor.chain().focus().toggleItalic().run()}
-          />
-          <BubbleButton
-            label="Strikethrough"
-            active={editor.isActive('strike')}
-            icon={Strikethrough}
-            onPress={() => editor.chain().focus().toggleStrike().run()}
-          />
-          <BubbleButton
-            label="Inline code"
-            active={editor.isActive('code')}
-            icon={Code}
-            onPress={() => editor.chain().focus().toggleCode().run()}
-          />
-          <BubbleButton
-            label={editor.isActive('link') ? 'Remove link' : 'Link'}
-            active={editor.isActive('link') || link !== null}
-            icon={Link2}
-            onPress={() => {
-              if (editor.isActive('link')) {
-                editor.chain().focus().unsetLink().run();
-                return;
-              }
-              setLink('https://');
-            }}
-          />
-          {link === null ? null : (
-            <form
-              className="flex items-center gap-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const href = link.trim();
-                setLink(null);
-                if (href.length === 0) return;
-                editor.chain().focus().setLink({ href }).run();
-              }}
-            >
-              <input
-                value={link}
-                aria-label="Link URL"
-                data-testid={`${testId}-link-input`}
-                onChange={(event) => setLink(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') setLink(null);
-                }}
-                className="h-7 w-44 rounded-sm border border-border bg-surface-2 px-2 text-2xs text-text outline-none focus-visible:border-accent"
-              />
-              <button
-                type="submit"
-                className="rounded-sm px-2 py-1 text-2xs text-accent transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
-              >
-                Apply
-              </button>
-            </form>
-          )}
-        </div>
+        <SelectionBubble
+          editor={editor}
+          position={bubble}
+          testId={testId}
+          link={link}
+          onLinkChange={setLink}
+          {...(onComment === undefined ? {} : { onComment })}
+        />
       )}
 
       {menu === null || items.length === 0 ? null : (
@@ -613,6 +557,108 @@ function MenuOption({
         {slash === null ? `@${member?.handle ?? member?.name}` : slash.hint}
       </span>
     </button>
+  );
+}
+
+interface SelectionBubbleProps {
+  readonly editor: Editor;
+  readonly position: MenuPosition;
+  readonly testId: string;
+  readonly link: string | null;
+  readonly onLinkChange: (value: string | null) => void;
+  readonly onComment?: (range: EditorSelectionRange) => void;
+}
+
+function SelectionBubble({
+  editor,
+  position,
+  testId,
+  link,
+  onLinkChange,
+  onComment,
+}: SelectionBubbleProps) {
+  return (
+    <div
+      data-testid={`${testId}-bubble`}
+      style={{ left: `${position.left}px`, top: `${position.top}px` }}
+      className="-translate-x-1/2 absolute z-30 flex items-center gap-0.5 rounded-lg border border-border bg-surface p-1 shadow-pop"
+    >
+      <BubbleButton
+        label="Bold"
+        active={editor.isActive('bold')}
+        icon={Bold}
+        onPress={() => editor.chain().focus().toggleBold().run()}
+      />
+      <BubbleButton
+        label="Italic"
+        active={editor.isActive('italic')}
+        icon={Italic}
+        onPress={() => editor.chain().focus().toggleItalic().run()}
+      />
+      <BubbleButton
+        label="Strikethrough"
+        active={editor.isActive('strike')}
+        icon={Strikethrough}
+        onPress={() => editor.chain().focus().toggleStrike().run()}
+      />
+      <BubbleButton
+        label="Inline code"
+        active={editor.isActive('code')}
+        icon={Code}
+        onPress={() => editor.chain().focus().toggleCode().run()}
+      />
+      <BubbleButton
+        label={editor.isActive('link') ? 'Remove link' : 'Link'}
+        active={editor.isActive('link') || link !== null}
+        icon={Link2}
+        onPress={() => {
+          if (editor.isActive('link')) {
+            editor.chain().focus().unsetLink().run();
+            return;
+          }
+          onLinkChange('https://');
+        }}
+      />
+      {onComment === undefined ? null : (
+        <BubbleButton
+          label="Comment"
+          active={false}
+          icon={MessageSquarePlus}
+          onPress={() =>
+            onComment({ from: editor.state.selection.from, to: editor.state.selection.to })
+          }
+        />
+      )}
+      {link === null ? null : (
+        <form
+          className="flex items-center gap-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const href = link.trim();
+            onLinkChange(null);
+            if (href.length === 0) return;
+            editor.chain().focus().setLink({ href }).run();
+          }}
+        >
+          <input
+            value={link}
+            aria-label="Link URL"
+            data-testid={`${testId}-link-input`}
+            onChange={(event) => onLinkChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') onLinkChange(null);
+            }}
+            className="h-7 w-44 rounded-sm border border-border bg-surface-2 px-2 text-2xs text-text outline-none focus-visible:border-accent"
+          />
+          <button
+            type="submit"
+            className="rounded-sm px-2 py-1 text-2xs text-accent transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
+          >
+            Apply
+          </button>
+        </form>
+      )}
+    </div>
   );
 }
 

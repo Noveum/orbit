@@ -27,11 +27,13 @@ function Harness({
   onReady,
   onCancel,
   onUpload,
+  onComment,
 }: {
   onChange?: (value: string) => void;
   onReady: (editor: Editor) => void;
   onCancel?: () => void;
   onUpload?: (file: File) => Promise<UploadedAttachment>;
+  onComment?: (range: { from: number; to: number }) => void;
 }) {
   const [value, setValue] = useState('');
   return (
@@ -47,6 +49,7 @@ function Harness({
       onReady={onReady}
       {...(onCancel === undefined ? {} : { onCancel })}
       {...(onUpload === undefined ? {} : { onUpload })}
+      {...(onComment === undefined ? {} : { onComment })}
     />
   );
 }
@@ -198,6 +201,30 @@ describe('selection bubble menu', () => {
     const bubble = await screen.findByTestId('rich-bubble');
     expect(bubble.querySelector('[aria-label=Bold]')).not.toBeNull();
     expect(bubble.querySelector('[aria-label=Link]')).not.toBeNull();
+  });
+
+  it('leaves the comment control out when the surface takes no comments', async () => {
+    const editor = await mountEditor();
+    editor.chain().focus().insertContent('format me').run();
+    editor.commands.setTextSelection({ from: 1, to: 7 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    expect(bubble.querySelector('[aria-label=Comment]')).toBeNull();
+  });
+
+  it('offers Comment over a selection and reports the range that was picked', async () => {
+    const onComment = mock((_range: { from: number; to: number }) => undefined);
+    const editor = await mountEditor({ onComment });
+    editor.chain().focus().insertContent('The launch is blocked').run();
+    editor.commands.setTextSelection({ from: 5, to: 11 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    const control = bubble.querySelector('[aria-label=Comment]');
+    expect(control).not.toBeNull();
+
+    if (control !== null) await userEvent.setup().click(control as HTMLElement);
+
+    expect(onComment).toHaveBeenCalledWith({ from: 5, to: 11 });
   });
 });
 
