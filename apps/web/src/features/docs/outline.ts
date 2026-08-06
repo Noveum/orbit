@@ -32,15 +32,56 @@ export function readTimeMinutes(markdown: string): number {
   return Math.max(1, Math.round(words / 220));
 }
 
-const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
-const FENCE = /^ {0,3}(?:`{3,}|~{3,})/;
-const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
+const ATX_HEADING = /^#{1,6}(?:[ \t]|$)/;
+const FENCE = /^(?:`{3,}|~{3,})/;
+const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+const RAW_HTML = /<[a-zA-Z/!?]/;
+const LEADING_SPACE = /^[ \t]+/;
+const BLOCK_MARKER = /^(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))/;
+const QUOTE_MARKER = /^(?:>[ \t]?)+/;
+
+function blockContent(line: string): string {
+  let rest = line.replace(LEADING_SPACE, '');
+  let stripped = rest.replace(BLOCK_MARKER, '').replace(LEADING_SPACE, '');
+  while (stripped !== rest) {
+    rest = stripped;
+    stripped = rest.replace(BLOCK_MARKER, '').replace(LEADING_SPACE, '');
+  }
+  return rest;
+}
+
+function quoteContent(line: string): string {
+  return line.replace(LEADING_SPACE, '').replace(QUOTE_MARKER, '').replace(LEADING_SPACE, '');
+}
+
+function blank(lines: readonly string[], index: number): boolean {
+  return (lines[index] ?? '').trim().length === 0;
+}
+
+function plainParagraph(line: string): boolean {
+  const content = quoteContent(line);
+  if (content.length === 0) return false;
+  if (BLOCK_MARKER.test(content) || RAW_HTML.test(content)) return false;
+  return !(ATX_HEADING.test(content) || FENCE.test(content) || SETEXT_UNDERLINE.test(content));
+}
+
+function underlinesAParagraph(lines: readonly string[], index: number): boolean {
+  if (!SETEXT_UNDERLINE.test(quoteContent(lines[index] ?? ''))) return false;
+  return index > 0 && plainParagraph(lines[index - 1] ?? '');
+}
 
 function addParagraphAbove(lines: readonly string[], underline: number, chosen: Set<number>): void {
   for (let above = underline - 1; above >= 0; above -= 1) {
     if (chosen.has(above)) return;
-    if ((lines[above] ?? '').trim().length === 0) return;
+    if (blank(lines, above)) return;
     chosen.add(above);
+  }
+}
+
+function addRunAround(lines: readonly string[], index: number, chosen: Set<number>): void {
+  for (let above = index; above >= 0 && !blank(lines, above); above -= 1) chosen.add(above);
+  for (let below = index + 1; below < lines.length && !blank(lines, below); below += 1) {
+    chosen.add(below);
   }
 }
 
@@ -49,18 +90,22 @@ export function headingSignature(markdown: string): string {
   const chosen = new Set<number>();
 
   for (const [index, line] of lines.entries()) {
-    if (ATX_HEADING.test(line) || FENCE.test(line)) {
+    const content = blockContent(line);
+    if (ATX_HEADING.test(content) || FENCE.test(content)) {
       chosen.add(index);
       continue;
     }
-    if (!SETEXT_UNDERLINE.test(line)) continue;
-    chosen.add(index);
-    addParagraphAbove(lines, index, chosen);
+    if (underlinesAParagraph(lines, index)) {
+      chosen.add(index);
+      addParagraphAbove(lines, index, chosen);
+      continue;
+    }
+    if (RAW_HTML.test(line)) addRunAround(lines, index, chosen);
   }
 
   return [...chosen]
     .sort((left, right) => left - right)
-    .map((index) => lines[index] ?? '')
+    .map((index) => `${index}:${lines[index] ?? ''}`)
     .join('\n');
 }
 
