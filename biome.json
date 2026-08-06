@@ -236,6 +236,7 @@
         "scripts/**",
         "**/seed/**",
         "packages/db/src/ensure-*.ts",
+        "packages/db/src/drop-test-lanes.ts",
         "**/*.config.ts",
         "**/*.config.mjs",
         "**/*.config.js"

@@ -1,5 +1,7 @@
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
 
+const LANE_CHARACTERS = /[^a-z0-9]+/g;
+
 function databaseNameOf(candidate: string): string {
   return new URL(candidate).pathname.replace(/^\//, '');
 }
@@ -13,8 +15,26 @@ function assertTestDatabase(name: string, source: string): string {
   return name;
 }
 
+export function laneSuffix(raw: string | undefined): string {
+  if (raw === undefined) return '';
+  const cleaned = raw.toLowerCase().replace(LANE_CHARACTERS, '');
+  return cleaned.length === 0 ? '' : cleaned.slice(0, 24);
+}
+
+export function currentLane(): string {
+  return laneSuffix(process.env['ORBIT_TEST_LANE']);
+}
+
+export function laneDatabase(base: string, lane: string): string {
+  return lane.length === 0 ? base : `${base}_${lane}`;
+}
+
 export function resolveTestDatabaseUrl(fallbackDatabase: string): string {
   assertTestDatabase(fallbackDatabase, 'the requested fallback database');
+  const lane = currentLane();
+  const database = laneDatabase(fallbackDatabase, lane);
+  assertTestDatabase(database, 'the resolved lane database');
+
   const explicit = process.env['TEST_DATABASE_URL'];
   if (explicit !== undefined && explicit.length > 0) {
     assertTestDatabase(databaseNameOf(explicit), 'TEST_DATABASE_URL');
@@ -22,10 +42,10 @@ export function resolveTestDatabaseUrl(fallbackDatabase: string): string {
   }
   const ambient = process.env['DATABASE_URL'];
   if (ambient === undefined || ambient.length === 0) {
-    return `postgres://orbit:orbit@localhost:5434/${fallbackDatabase}`;
+    return `postgres://orbit:orbit@localhost:5434/${database}`;
   }
-  if (TEST_DATABASE_NAME.test(databaseNameOf(ambient))) return ambient;
+  if (lane.length === 0 && TEST_DATABASE_NAME.test(databaseNameOf(ambient))) return ambient;
   const url = new URL(ambient);
-  url.pathname = `/${fallbackDatabase}`;
+  url.pathname = `/${database}`;
   return url.toString();
 }

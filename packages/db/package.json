@@ -17,7 +17,8 @@
     "import:plane": "bun --env-file=../../.env src/import/index.ts",
     "import:verify": "bun --env-file=../../.env src/import/verify.ts",
     "test": "bun --env-file=../../.env test --timeout 20000",
-    "test-setup": "bun --env-file=../../.env src/ensure-test-databases.ts"
+    "test-setup": "bun --env-file=../../.env src/ensure-test-databases.ts",
+    "test-lanes-drop": "bun --env-file=../../.env src/drop-test-lanes.ts"
   },
   "dependencies": {
     "@orbit/shared": "workspace:*",
