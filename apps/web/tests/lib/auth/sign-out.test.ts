@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
-import { db, eq, schema } from '@orbit/db';
+import { db, eq, inArray, schema } from '@orbit/db';
 import { createRealtimeHub, type RealtimeHub } from '@orbit/realtime-server';
 import { SESSION_REVOKED_CLOSE_CODE } from '@orbit/shared/events';
 import { REALTIME_TICKET_TTL_MS, signRealtimeTicket } from '@orbit/shared/events/ticket';
@@ -40,6 +40,7 @@ class FakeSocket {
 
 let hub: RealtimeHub;
 let organizationId = '';
+const seededUserIds: string[] = [];
 
 beforeAll(async () => {
   organizationId = `org_${randomUUID()}`;
@@ -55,6 +56,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await hub.close();
   await db.delete(schema.organization).where(eq(schema.organization.id, organizationId));
+  if (seededUserIds.length > 0) {
+    await db.delete(schema.user).where(inArray(schema.user.id, seededUserIds));
+  }
 });
 
 interface SignedIn {
@@ -79,6 +83,7 @@ async function signIn(existingUserId?: string): Promise<SignedIn> {
     await db
       .insert(schema.member)
       .values({ id: `member_${randomUUID()}`, organizationId, userId, role: 'member' });
+    seededUserIds.push(userId);
   }
   await db.insert(schema.session).values({
     id: sessionId,
