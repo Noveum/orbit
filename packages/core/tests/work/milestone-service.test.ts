@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
+import { scopes } from '@orbit/shared/events';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
+  reaches,
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
@@ -215,5 +217,59 @@ describe('milestone visibility', () => {
 
     const renamed = await updateMilestone(principal, milestone.id, { name: 'Beta' });
     expect(renamed.milestone.name).toBe('Beta');
+  });
+});
+
+describe('a milestone delta follows the teams of its project', () => {
+  async function outsider() {
+    const { team } = await createTeam(workspace.admin, { name: 'Outside', key: 'OUT' });
+    const { principal } = await addMember(workspace, 'member', {
+      name: 'Outsider',
+      teamIds: [team.id],
+    });
+    return principal;
+  }
+
+  it('keeps every milestone delta of a restricted project off the workspace scope', async () => {
+    const stranger = await outsider();
+    const { principal: insider } = await addMember(workspace, 'member', {
+      name: 'Insider',
+      teamIds: [workspace.teamId],
+    });
+    const projectId = await newProject('Restricted launch');
+
+    const created = await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
+    const renamed = await updateMilestone(workspace.admin, created.milestone.id, { name: 'Beta' });
+    const reordered = await reorderMilestones(workspace.admin, projectId, [created.milestone.id]);
+    const removed = await deleteMilestone(workspace.admin, created.milestone.id);
+
+    const emitted = [...created.actions, ...renamed.actions, ...reordered.actions, ...removed];
+    expect(emitted).toHaveLength(4);
+    for (const action of emitted) {
+      expect(action.scopes).toContain(scopes.team(workspace.teamId));
+      expect(action.scopes).toContain(scopes.project(projectId));
+      expect(action.scopes).not.toContain(scopes.organization(workspace.organizationId));
+      expect(reaches(stranger, action)).toBe(false);
+      expect(reaches(insider, action)).toBe(true);
+    }
+  });
+
+  it('still reaches the whole workspace for a project that belongs to no team', async () => {
+    const stranger = await outsider();
+    const { project } = await createProject(workspace.admin, { name: 'Company wiki' });
+
+    const { actions } = await createMilestone(workspace.admin, {
+      projectId: project.id,
+      name: 'Alpha',
+    });
+
+    const action = actions[0];
+    expect(action?.scopes).toEqual(
+      expect.arrayContaining([
+        scopes.organization(workspace.organizationId),
+        scopes.project(project.id),
+      ]),
+    );
+    expect(action === undefined ? false : reaches(stranger, action)).toBe(true);
   });
 });

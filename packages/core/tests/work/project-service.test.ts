@@ -4,6 +4,7 @@ import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
+  reaches,
   resetDatabase,
   stateNamed,
   type Workspace,
@@ -18,6 +19,7 @@ import {
   addProjectTeam,
   archiveProject,
   createProject,
+  deleteProject,
   getProject,
   listProjects,
   listProjectsForTeams,
@@ -342,5 +344,96 @@ describe('the payload the client boots from', () => {
     const forTeams = await listProjectsForTeams(workspace.admin, [workspace.teamId]);
 
     expect(forTeams.map((row) => row.id)).toContain(project.id);
+  });
+});
+
+describe('a project delta reaches only the teams that own the project', () => {
+  async function outsider() {
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { principal } = await addMember(workspace, 'member', {
+      name: 'Outsider',
+      teamIds: [team.id],
+    });
+    return principal;
+  }
+
+  it('scopes a restricted project to its teams, never to the whole workspace', async () => {
+    const stranger = await outsider();
+    const { project, actions } = await createProject(workspace.admin, {
+      name: 'Restricted',
+      teamIds: [workspace.teamId],
+    });
+
+    const created = actions[0];
+    expect(created?.scopes).toEqual(
+      expect.arrayContaining([scopes.team(workspace.teamId), scopes.project(project.id)]),
+    );
+    expect(created?.scopes).not.toContain(scopes.organization(workspace.organizationId));
+    expect(created === undefined ? true : reaches(stranger, created)).toBe(false);
+  });
+
+  it('keeps every later restricted project delta away from another team', async () => {
+    const stranger = await outsider();
+    const { principal: insider } = await addMember(workspace, 'member', {
+      name: 'Insider',
+      teamIds: [workspace.teamId],
+    });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Restricted',
+      teamIds: [workspace.teamId],
+    });
+
+    const updated = await updateProject(workspace.admin, project.id, { summary: 'Moving' });
+    const posted = await postProjectUpdate(workspace.admin, project.id, {
+      health: 'at_risk',
+      body: 'Slipping.',
+    });
+    const archived = await archiveProject(workspace.admin, project.id);
+    const removed = await deleteProject(workspace.admin, project.id);
+
+    const emitted = [...updated.actions, ...posted.actions, ...archived.actions, ...removed];
+    expect(emitted).toHaveLength(4);
+    for (const action of emitted) {
+      expect(action.scopes).toContain(scopes.team(workspace.teamId));
+      expect(action.scopes).not.toContain(scopes.organization(workspace.organizationId));
+      expect(reaches(stranger, action)).toBe(false);
+      expect(reaches(insider, action)).toBe(true);
+    }
+  });
+
+  it('follows the project when its teams change', async () => {
+    const stranger = await outsider();
+    const { project } = await createProject(workspace.admin, {
+      name: 'Handover',
+      teamIds: [workspace.teamId],
+    });
+
+    const { actions } = await updateProject(workspace.admin, project.id, {
+      teamIds: [...stranger.teamIds],
+    });
+
+    const action = actions[0];
+    expect(action?.scopes).not.toContain(scopes.organization(workspace.organizationId));
+    expect(action === undefined ? false : reaches(stranger, action)).toBe(true);
+  });
+
+  it('still reaches a member of another team when the project has no teams', async () => {
+    const stranger = await outsider();
+    const { project, actions } = await createProject(workspace.admin, { name: 'Company wiki' });
+
+    const created = actions[0];
+    expect(created?.scopes).toEqual(
+      expect.arrayContaining([
+        scopes.organization(workspace.organizationId),
+        scopes.project(project.id),
+      ]),
+    );
+    expect(created === undefined ? false : reaches(stranger, created)).toBe(true);
+
+    const { actions: renamed } = await updateProject(workspace.admin, project.id, {
+      name: 'Company handbook',
+    });
+    const update = renamed[0];
+    expect(update === undefined ? false : reaches(stranger, update)).toBe(true);
   });
 });
