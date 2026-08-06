@@ -11,6 +11,7 @@ import {
   docAnchorPlugin,
   docAnchorPluginKey,
 } from './editor/anchor-plugin.ts';
+import type { DocText } from './editor/anchor-positions.ts';
 import { anchorFromSelection, anchorRangeIn, docTextOf } from './editor/anchor-positions.ts';
 import type { EditorSelectionRange } from './editor/rich-text-editor.tsx';
 
@@ -34,16 +35,17 @@ export interface DocAnchors {
 
 const NO_TARGETS: readonly DocAnchorTarget[] = [];
 
+export const DOC_ANCHOR_SETTLE_MS = 120;
+
 function usable(editor: Editor | null): editor is Editor {
   return editor !== null && !editor.isDestroyed;
 }
 
 function decorationsFor(
-  editor: Editor,
+  docText: DocText,
   targets: readonly DocAnchorTarget[],
   focusedCommentId: string | null,
 ): readonly DocAnchorDecoration[] {
-  const docText = docTextOf(editor.state.doc);
   return targets.flatMap((target) => {
     const range = anchorRangeIn(docText, target.anchor);
     if (range === null) return [];
@@ -73,10 +75,20 @@ export function useDocAnchors(
 
   const recompute = useCallback(() => {
     if (!usable(editor)) return;
-    onTextChange?.(docTextOf(editor.state.doc).text);
-    ranges.current = decorationsFor(editor, targets, focusedCommentId);
+    if (targets.length === 0) {
+      if (ranges.current.length === 0) return;
+      ranges.current = [];
+      editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false));
+      return;
+    }
+    const docText = docTextOf(editor.state.doc);
+    onTextChange?.(docText.text);
+    ranges.current = decorationsFor(docText, targets, focusedCommentId);
     editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false));
   }, [editor, targets, focusedCommentId, onTextChange]);
+
+  const latest = useRef(recompute);
+  latest.current = recompute;
 
   useEffect(() => {
     if (!usable(editor)) return;
@@ -88,11 +100,20 @@ export function useDocAnchors(
 
   useEffect(() => {
     if (!usable(editor)) return;
-    editor.on('update', recompute);
-    return () => {
-      editor.off('update', recompute);
+    let queued: ReturnType<typeof setTimeout> | null = null;
+    const onUpdate = () => {
+      if (queued !== null) clearTimeout(queued);
+      queued = setTimeout(() => {
+        queued = null;
+        latest.current();
+      }, DOC_ANCHOR_SETTLE_MS);
     };
-  }, [editor, recompute]);
+    editor.on('update', onUpdate);
+    return () => {
+      editor.off('update', onUpdate);
+      if (queued !== null) clearTimeout(queued);
+    };
+  }, [editor]);
 
   useEffect(() => recompute(), [recompute]);
 
