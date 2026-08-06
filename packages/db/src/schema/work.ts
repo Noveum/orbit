@@ -593,6 +593,33 @@ export const view = pgTable(
   (table) => [index('view_org_idx').on(table.organizationId)],
 );
 
+export const viewPreference = pgTable(
+  'view_preference',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    page: text('page').notNull(),
+    scope: text('scope').notNull().default(''),
+    layout: text('layout').notNull().default('list'),
+    display: jsonb('display').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('view_preference_unique').on(
+      table.userId,
+      table.organizationId,
+      table.page,
+      table.scope,
+    ),
+  ],
+);
+
 export const savedAnalyticsView = pgTable(
   'saved_analytics_view',
   {

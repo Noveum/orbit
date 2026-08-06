@@ -232,6 +232,127 @@ describe('updateIssue', () => {
   });
 });
 
+describe('assignee membership', () => {
+  it('refuses to create an issue assigned to somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Assigned to a stranger',
+        assigneeId: outside.admin.userId,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to reassign an issue to somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+    const issue = await newIssue('Ours');
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { assigneeId: outside.admin.userId }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to move an issue onto somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+    const issue = await newIssue('Ours');
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, { assigneeId: outside.admin.userId }),
+    ).rejects.toThrow();
+  });
+
+  it('still accepts a member of the same workspace', async () => {
+    const { user } = await addMember(workspace, 'member', { name: 'Colleague' });
+    const issue = await newIssue('Ours');
+
+    const updated = await updateIssue(workspace.admin, issue.id, { assigneeId: user.id });
+
+    expect(updated.issue.assigneeId).toBe(user.id);
+  });
+
+  it('still accepts clearing the assignee', async () => {
+    const { user } = await addMember(workspace, 'member', { name: 'Colleague' });
+    const issue = await newIssue('Ours', { assigneeId: user.id });
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { assigneeId: null });
+
+    expect(cleared.issue.assigneeId).toBeNull();
+  });
+});
+
+describe('label deltas', () => {
+  async function starterLabel() {
+    const [label] = await db
+      .select()
+      .from(schema.label)
+      .where(eq(schema.label.organizationId, workspace.organizationId))
+      .limit(1);
+    if (label === undefined) throw new Error('missing starter label');
+    return label;
+  }
+
+  function labelIdsOf(action: { data: Record<string, unknown> }): unknown {
+    return action.data['labelIds'];
+  }
+
+  it('carries the new labels on the update action so other clients can apply them', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Labelled later');
+
+    const updated = await updateIssue(workspace.admin, issue.id, { labelIds: [label.id] });
+
+    const action = updated.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries the remaining labels when one is taken off', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Labelled', { labelIds: [label.id] });
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { labelIds: [] });
+
+    const action = cleared.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([]);
+  });
+
+  it('carries labels on an update that does not touch them, so a new subscriber renders them', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Renamed', { labelIds: [label.id] });
+
+    const renamed = await updateIssue(workspace.admin, issue.id, { title: 'Renamed again' });
+
+    const action = renamed.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries labels when the issue is moved', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Dragged', { labelIds: [label.id] });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {});
+
+    const action = moved.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+
+  it('carries labels when the issue is archived', async () => {
+    const label = await starterLabel();
+    const issue = await newIssue('Filed away', { labelIds: [label.id] });
+
+    const archived = await archiveIssue(workspace.admin, issue.id);
+
+    const action = archived.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(labelIdsOf(action)).toEqual([label.id]);
+  });
+});
+
 describe('moveIssue', () => {
   it('places an issue between two neighbours', async () => {
     const top = await newIssue('Top');
@@ -300,6 +421,64 @@ describe('moveIssue', () => {
     expect(moved.issue.identifier).toBe('DSGN-1');
     expect(moved.issue.number).toBe(1);
     expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
+  });
+
+  it('moves an issue into a sprint without touching its status', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-02-01').toISOString(),
+      endsAt: new Date('2030-02-15').toISOString(),
+    });
+    const issue = await newIssue('Planned');
+    expect(issue.cycleId).toBeNull();
+
+    const moved = await moveIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    expect(moved.issue.cycleId).toBe(cycle.id);
+    expect(moved.issue.stateId).toBe(issue.stateId);
+  });
+
+  it('takes an issue back out of its sprint', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-03-01').toISOString(),
+      endsAt: new Date('2030-03-15').toISOString(),
+    });
+    const issue = await newIssue('Descoped', { cycleId: cycle.id });
+
+    const moved = await moveIssue(workspace.admin, issue.id, { cycleId: null });
+
+    expect(moved.issue.cycleId).toBeNull();
+    expect(moved.issue.stateId).toBe(issue.stateId);
+  });
+
+  it('records the sprint change in the issue history', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: new Date('2030-04-01').toISOString(),
+      endsAt: new Date('2030-04-15').toISOString(),
+    });
+    const issue = await newIssue('Tracked');
+
+    await moveIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    const entries = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.issueId, issue.id));
+    expect(entries.some((entry) => entry.field === 'cycleId')).toBe(true);
+  });
+
+  it('refuses a sprint that belongs to another team', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: team.id,
+      startsAt: new Date('2030-05-01').toISOString(),
+      endsAt: new Date('2030-05-15').toISOString(),
+    });
+    const issue = await newIssue('Wrong team sprint');
+
+    await expect(moveIssue(workspace.admin, issue.id, { cycleId: cycle.id })).rejects.toThrow();
   });
 
   it('drops the sprint and project links that belong to the team it left', async () => {

@@ -30,7 +30,11 @@ export interface AvatarProps extends VariantProps<typeof avatarVariants> {
 
 export function Avatar({ name, src, size, className }: AvatarProps) {
   return (
-    <AvatarPrimitive.Root className={cn(avatarVariants({ size }), className)}>
+    <AvatarPrimitive.Root
+      role="img"
+      aria-label={name}
+      className={cn(avatarVariants({ size }), className)}
+    >
       {src ? (
         <AvatarPrimitive.Image src={src} alt={name} className="size-full object-cover" />
       ) : null}

@@ -1,11 +1,15 @@
 'use client';
 
 import { PRIORITIES } from '@orbit/shared/constants';
+
+import { sprintLabel } from '@orbit/shared/utils';
+import { ChevronRight } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { Switch } from '@/components/ui/switch.tsx';
 import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { useCreateIssue } from '@/lib/query/use-issues.ts';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
@@ -23,7 +27,7 @@ const chipClassName =
   'flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-2xs text-muted transition-colors duration-[var(--duration-fast)] hover:border-border-strong hover:text-text';
 
 export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCreateDialogProps) {
-  const { teams, states, members, labels, ready } = useWorkspace();
+  const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const firstTeamId = defaultTeamId ?? teams[0]?.id ?? null;
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
@@ -32,6 +36,9 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [priority, setPriority] = useState(0);
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [labelIds, setLabelIds] = useState<readonly string[]>([]);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [cycleId, setCycleId] = useState<string | null>(null);
+  const [createMore, setCreateMore] = useState(false);
 
   const create = useCreateIssue(teamId ?? 'none');
 
@@ -47,10 +54,16 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setPriority(0);
     setAssigneeId(null);
     setLabelIds([]);
+    setProjectId(null);
+    setCycleId(null);
   }, [open]);
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
+  const teamProjects = projects.filter(
+    (project) =>
+      project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
+  );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
   const submit = (event?: FormEvent<HTMLFormElement>) => {
@@ -64,12 +77,22 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         ...(stateId === null ? {} : { stateId }),
         priority,
         assigneeId,
-        projectId: null,
-        cycleId: null,
+        projectId,
+        cycleId,
         estimate: null,
         labelIds,
       },
-      { onSuccess: () => onOpenChange(false) },
+      {
+        onSuccess: () => {
+          if (!createMore) {
+            onOpenChange(false);
+            return;
+          }
+          setTitle('');
+          setDescription('');
+          setLabelIds([]);
+        },
+      },
     );
   };
 
@@ -77,6 +100,16 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="quick-create" className="max-w-xl">
         <DialogTitle className="sr-only">Create issue</DialogTitle>
+        <p
+          className="flex items-center gap-1.5 text-2xs text-faint"
+          data-testid="quick-create-crumb"
+        >
+          <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-text">
+            {teams.find((team) => team.id === teamId)?.key ?? 'Team'}
+          </span>
+          <ChevronRight className="size-3" aria-hidden="true" />
+          New issue
+        </p>
         <form
           onSubmit={submit}
           onKeyDown={(event) => {
@@ -102,7 +135,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             placeholder="Add a description, markdown works."
             ariaLabel="Issue description"
             testId="quick-create-description"
-            toolbar="compact"
           />
 
           <div className="flex flex-wrap items-center gap-1.5">
@@ -113,9 +145,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               onSelect={(id) => {
                 setTeamId(id);
                 setStateId(null);
+                setProjectId(null);
+                setCycleId(null);
+                setLabelIds([]);
               }}
             >
-              <button type="button" className={chipClassName}>
+              <button type="button" className={chipClassName} data-testid="quick-create-team">
                 {teams.find((team) => team.id === teamId)?.key ?? 'Team'}
               </button>
             </PropertyMenu>
@@ -193,15 +228,54 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 {labelIds.length === 0 ? 'Labels' : `${labelIds.length} labels`}
               </button>
             </PropertyMenu>
+
+            <PropertyMenu
+              title="Project"
+              options={[
+                { id: 'none', label: 'No project' },
+                ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
+              ]}
+              selected={projectId === null ? ['none'] : [projectId]}
+              onSelect={(value) => setProjectId(value === 'none' ? null : value)}
+            >
+              <button type="button" className={chipClassName} data-testid="quick-create-project">
+                {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
+              </button>
+            </PropertyMenu>
+
+            <PropertyMenu
+              title="Sprint"
+              options={[
+                { id: 'none', label: 'No sprint' },
+                ...cycles
+                  .filter((cycle) => cycle.teamId === teamId)
+                  .map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
+              ]}
+              selected={cycleId === null ? ['none'] : [cycleId]}
+              onSelect={(value) => setCycleId(value === 'none' ? null : value)}
+            >
+              <button type="button" className={chipClassName} data-testid="quick-create-cycle">
+                {(() => {
+                  const found = cycles.find((cycle) => cycle.id === cycleId);
+                  return found === undefined ? 'Sprint' : sprintLabel(found);
+                })()}
+              </button>
+            </PropertyMenu>
           </div>
 
           <div className="flex items-center justify-end gap-2 border-border border-t pt-3">
             <span className="mr-auto flex items-center gap-1 text-2xs text-faint">
               <Kbd keys={['mod', 'enter']} /> to create
             </span>
-            <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+            <span className="flex items-center gap-2 text-2xs text-muted">
+              <Switch
+                checked={createMore}
+                onCheckedChange={setCreateMore}
+                aria-label="Create more"
+                data-testid="quick-create-more"
+              />
+              Create more
+            </span>
             <Button
               type="submit"
               size="sm"

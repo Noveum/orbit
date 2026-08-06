@@ -8,6 +8,7 @@ export const PROJECT_TABS = [
   { segment: null, label: 'Overview', href: '' },
   { segment: 'activity', label: 'Activity', href: '/activity' },
   { segment: 'issues', label: 'Issues', href: '/issues' },
+  { segment: 'settings', label: 'Settings', href: '/settings' },
 ] as const;
 
 export function ProjectTabs({ slug }: { readonly slug: string }) {

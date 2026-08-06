@@ -75,7 +75,31 @@ describe('discovery', () => {
     expect(names).toContain('run_standup');
     expect(names).toContain('complete_cycle');
     expect(names).toContain('create_milestone');
-    expect(names).toHaveLength(39);
+
+    expect(names).toContain('create_doc');
+    expect(names).toContain('update_doc');
+    expect(names).toContain('get_doc');
+    expect(names).toContain('list_docs');
+    expect(names).toContain('comment_on_doc');
+    expect(names).toContain('archive_issue');
+    expect(names).toContain('delete_issue');
+    expect(names).toContain('create_label');
+    expect(names).toContain('delete_label');
+    expect(names).toContain('update_project');
+    expect(names).toContain('delete_project');
+    expect(names).toContain('delete_sprint');
+    expect(names).toContain('edit_comment');
+    expect(names).toContain('delete_comment');
+
+    expect(names).toContain('create_team');
+    expect(names).toContain('add_team_member');
+    expect(names).toContain('remove_team_member');
+    expect(names).toContain('remove_member');
+    expect(names).toContain('list_views');
+    expect(names).toContain('create_view');
+    expect(names).toContain('delete_view');
+
+    expect(new Set(names).size).toBe(names.length);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeTruthy();
@@ -179,6 +203,56 @@ describe('issues', () => {
     expect(comment.body).toBe('Picking this up now.');
     expect(comment.issue).toBe(created.identifier);
     expect(deltasOf(payload)[0]).toMatchObject({ model: 'comment', action: 'insert' });
+  });
+
+  it('resolves a label to update whose reference carries stray whitespace', async () => {
+    await admin.result('create_label', { name: 'Trimmed label' });
+
+    const renamed = await admin.result('update_label', {
+      label: '  trimmed label  ',
+      name: 'Renamed label',
+    });
+
+    const label = renamed['label'] as { name: string };
+    expect(label.name).toBe('Renamed label');
+  });
+
+  it('refuses a reply that belongs to a different issue', async () => {
+    const host = await newIssue('Has the thread');
+    const other = await newIssue('Somewhere else');
+    const parent = (
+      await admin.result('add_comment', { issue: other.identifier, body: 'Over here.' })
+    )['comment'] as { id: string };
+
+    await expect(
+      admin.result('add_comment', {
+        issue: host.identifier,
+        body: 'Replying across issues.',
+        replyTo: parent.id,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to nest a reply more than one level deep', async () => {
+    const created = await newIssue('Deep thread');
+    const parent = (
+      await admin.result('add_comment', { issue: created.identifier, body: 'Top level.' })
+    )['comment'] as { id: string };
+    const reply = (
+      await admin.result('add_comment', {
+        issue: created.identifier,
+        body: 'First reply.',
+        replyTo: parent.id,
+      })
+    )['comment'] as { id: string };
+
+    await expect(
+      admin.result('add_comment', {
+        issue: created.identifier,
+        body: 'Reply to a reply.',
+        replyTo: reply.id,
+      }),
+    ).rejects.toThrow();
   });
 
   it('links two issues in both directions', async () => {

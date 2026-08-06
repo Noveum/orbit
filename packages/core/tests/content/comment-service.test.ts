@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { createComment, listComments } from '../../src/content/comment-service.ts';
 import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
 import { createIssue } from '../../src/work/issue-service.ts';
+import { createProject } from '../../src/work/project-service.ts';
 
 let workspace: Workspace;
 let issueId: string;
@@ -43,5 +44,27 @@ describe('listComments', () => {
     const page = await listComments(workspace.admin, issueId, { limit: 50 });
     expect(page.comments).toHaveLength(3);
     expect(page.nextCursor).toBeNull();
+  });
+});
+
+describe('comment delta scoping', () => {
+  it('publishes a comment to the issue and its team, never to the project', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Watched by everybody',
+      teamIds: [workspace.teamId],
+    });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'On a project',
+      projectId: project.id,
+    });
+
+    const created = await createComment(workspace.admin, issue.id, { body: 'Team only.' });
+
+    const action = created.actions[0];
+    if (action === undefined) throw new Error('no action published');
+    expect(action.scopes.some((scope) => scope.startsWith('team:'))).toBe(true);
+    expect(action.scopes.some((scope) => scope.startsWith('issue:'))).toBe(true);
+    expect(action.scopes.some((scope) => scope.startsWith('project:'))).toBe(false);
   });
 });

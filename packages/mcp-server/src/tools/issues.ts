@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  createComment,
   createIssue,
   getIssue,
   listIssueLabels,
@@ -16,7 +17,6 @@ import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { branchName } from '@orbit/shared/utils';
 import { z } from 'zod';
-import { createComment } from '../comments.ts';
 import {
   resolveCycle,
   resolveLabelIds,
@@ -438,7 +438,7 @@ function registerAddComment(server: McpServer, principal: Principal): void {
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const created = await createComment(principal, issue, {
+      const created = await createComment(principal, issue.id, {
         body: args.body,
         parentId: args.replyTo ?? null,
       });

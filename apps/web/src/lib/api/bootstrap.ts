@@ -1,4 +1,10 @@
-import { listLabels, listMembers, listProjectsForTeams, listTeams } from '@orbit/core';
+import {
+  listLabels,
+  listMembers,
+  listProjectsForTeams,
+  listTeams,
+  projectTeamLinks,
+} from '@orbit/core';
 import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -90,13 +96,21 @@ export async function bootstrapPayload(principal: Principal, query: BootstrapQue
   const activeTeam = teams.find((team) => team.key === query.team) ?? teams[0] ?? null;
   const teamIds = teams.map((team) => team.id);
 
-  const [states, cycles, labels, members, projects] = await Promise.all([
+  const [states, cycles, labels, members, projects, links] = await Promise.all([
     listWorkflowStatesForTeams(principal, teamIds),
     listRecentCyclesForTeams(principal, teamIds),
     listLabels(principal),
     listMembers(principal),
     listProjectsForTeams(principal, teamIds),
+    projectTeamLinks(principal, teamIds),
   ]);
+
+  const teamsByProject = new Map<string, string[]>();
+  for (const link of links) {
+    const found = teamsByProject.get(link.projectId) ?? [];
+    found.push(link.teamId);
+    teamsByProject.set(link.projectId, found);
+  }
 
   return {
     userId: principal.userId,
@@ -124,6 +138,7 @@ export async function bootstrapPayload(principal: Principal, query: BootstrapQue
       status: project.status,
       color: project.color,
       icon: project.icon,
+      teamIds: teamsByProject.get(project.id) ?? [],
     })),
     members: members.map((row) => ({
       id: row.user.id,

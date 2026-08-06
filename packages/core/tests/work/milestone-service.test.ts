@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
-import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
+import { createTeam } from '../../src/org/team-service.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../../src/test-support.ts';
 import {
   createMilestone,
+  deleteMilestone,
   listMilestones,
   reorderMilestones,
+  updateMilestone,
 } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
@@ -136,5 +144,76 @@ describe('milestone project relationship invariant', () => {
         name: 'Nowhere',
       }),
     ).rejects.toMatchObject({ code: 'not_found' });
+  });
+});
+
+describe('milestone visibility', () => {
+  async function outsider() {
+    const { team } = await createTeam(workspace.admin, { name: 'Outside', key: 'OUT' });
+    const { principal } = await addMember(workspace, 'member', {
+      name: 'Outsider',
+      teamIds: [team.id],
+    });
+    return principal;
+  }
+
+  it('hides milestones on a project the member teams do not own', async () => {
+    const projectId = await newProject('Private launch');
+    await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
+    const stranger = await outsider();
+
+    await expect(listMilestones(stranger, projectId)).rejects.toThrow();
+  });
+
+  it('refuses a milestone created on a project the member cannot see', async () => {
+    const projectId = await newProject('Private launch');
+    const stranger = await outsider();
+
+    await expect(createMilestone(stranger, { projectId, name: 'Sneaked in' })).rejects.toThrow();
+  });
+
+  it('refuses to rename a milestone on a project the member cannot see', async () => {
+    const projectId = await newProject('Private launch');
+    const { milestone } = await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
+    const stranger = await outsider();
+
+    await expect(
+      updateMilestone(stranger, milestone.id, { name: 'Renamed by a stranger' }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to delete a milestone on a project the member cannot see', async () => {
+    const projectId = await newProject('Private launch');
+    const { milestone } = await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
+    const stranger = await outsider();
+
+    await expect(deleteMilestone(stranger, milestone.id)).rejects.toThrow();
+  });
+
+  it('refuses to reorder milestones on a project the member cannot see', async () => {
+    const projectId = await newProject('Private launch');
+    const { milestone: first } = await createMilestone(workspace.admin, {
+      projectId,
+      name: 'Alpha',
+    });
+    const { milestone: second } = await createMilestone(workspace.admin, {
+      projectId,
+      name: 'Beta',
+    });
+    const stranger = await outsider();
+
+    await expect(reorderMilestones(stranger, projectId, [second.id, first.id])).rejects.toThrow();
+  });
+
+  it('still lets a member of the owning team manage them', async () => {
+    const projectId = await newProject('Shared launch');
+    const { milestone } = await createMilestone(workspace.admin, { projectId, name: 'Alpha' });
+    const { principal } = await addMember(workspace, 'member', {
+      name: 'Insider',
+      teamIds: [workspace.teamId],
+    });
+
+    const renamed = await updateMilestone(principal, milestone.id, { name: 'Beta' });
+    expect(renamed.milestone.name).toBe('Beta');
   });
 });

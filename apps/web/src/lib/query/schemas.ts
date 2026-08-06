@@ -88,6 +88,7 @@ export const projectSchema = z.object({
   status: z.string(),
   color: z.string(),
   icon: z.string(),
+  teamIds: z.array(z.string()).catch([]).default([]),
 });
 
 export type Project = z.infer<typeof projectSchema>;
@@ -451,3 +452,18 @@ export const standupTodaySchema = z.object({
 export type StandupToday = z.infer<typeof standupTodaySchema>;
 
 export const standupListSchema = z.object({ standups: z.array(standupSchema).default([]) });
+
+export const viewPreferencesSchema = z.object({
+  preferences: z
+    .array(
+      z.object({
+        page: z.string(),
+        scope: z.string(),
+        layout: z.string(),
+        display: z.record(z.string(), z.unknown()).default({}),
+      }),
+    )
+    .default([]),
+});
+
+export type ViewPreferences = z.infer<typeof viewPreferencesSchema>;

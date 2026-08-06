@@ -598,6 +598,30 @@ describe('sprintOutcomes', () => {
     expect(outcomes[1]?.points.scope).toBe(8);
   });
 
+  it('counts the sprint when the stored snapshot is malformed rather than trusting it', async () => {
+    const cycle = await firstCycle();
+    const done = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Finished',
+      cycleId: cycle.id,
+      estimate: 7,
+    });
+    await updateIssue(workspace.admin, done.issue.id, {
+      stateId: stateNamed(workspace, 'Done').id,
+    });
+    const closed = await completeCycle(workspace.admin, cycle.id);
+
+    await db
+      .update(schema.cycle)
+      .set({ progressSnapshot: { scope: 'not a number' } })
+      .where(eq(schema.cycle.id, closed.cycle.id));
+
+    const outcome = await sprintOutcome(workspace.admin, closed.cycle.id);
+    expect(outcome?.reconstructed).toBe(true);
+    expect(outcome?.scope).toBe(1);
+    expect(outcome?.points.scope).toBe(7);
+  });
+
   it('counts only what is still in the sprint, since a rollover moved the rest away', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {

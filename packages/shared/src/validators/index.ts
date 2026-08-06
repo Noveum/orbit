@@ -18,4 +18,5 @@ export * from './standup.ts';
 export * from './team.ts';
 export * from './upload.ts';
 export * from './view.ts';
+export * from './view-preference.ts';
 export * from './workflow-state.ts';

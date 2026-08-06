@@ -1,5 +1,6 @@
 -- Brings a database created before the standup and doc sharing work up to the current schema.
--- Adds five tables: standup, standup_turn, standup_blocker, standup_rotation, doc_access.
+-- Adds six tables: standup, standup_turn, standup_blocker, standup_rotation, doc_access
+-- and view_preference.
 -- Nothing else in the schema changed, so no existing table or column is touched.
 --
 -- Safe to run more than once: every statement checks first, and the whole thing is one
@@ -78,6 +79,22 @@ create table if not exists public.standup_turn (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+create table if not exists public.view_preference (
+  id text primary key,
+  organization_id text not null,
+  user_id text not null,
+  page text not null,
+  scope text not null default '',
+  layout text not null default 'list',
+  display jsonb not null default '{}'::jsonb,
+  sync_id bigint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists view_preference_unique
+  on public.view_preference (user_id, organization_id, page, scope);
 
 create index if not exists doc_access_subject_idx on public.doc_access USING btree (subject_type, subject_id);
 create unique index if not exists doc_access_unique on public.doc_access USING btree (doc_id, subject_type, subject_id);
@@ -224,6 +241,22 @@ begin
     where conname = 'standup_turn_user_id_user_id_fk' and conrelid = 'public.standup_turn'::regclass
   ) then
     alter table public.standup_turn add constraint standup_turn_user_id_user_id_fk FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'view_preference_organization_id_organization_id_fk'
+      and conrelid = 'public.view_preference'::regclass
+  ) then
+    alter table public.view_preference add constraint view_preference_organization_id_organization_id_fk
+      FOREIGN KEY (organization_id) REFERENCES public.organization(id) ON DELETE CASCADE;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'view_preference_user_id_user_id_fk'
+      and conrelid = 'public.view_preference'::regclass
+  ) then
+    alter table public.view_preference add constraint view_preference_user_id_user_id_fk
+      FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
   end if;
 end $$;
 

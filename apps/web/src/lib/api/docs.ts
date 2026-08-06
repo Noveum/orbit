@@ -1,4 +1,4 @@
-import { listDocCollections, listDocs } from '@orbit/core';
+import { listDocCollections, listDocs, visibleProjectFilter } from '@orbit/core';
 import { and, db, eq, isNull, schema } from '@orbit/db';
 import { summarize } from '@orbit/services/markdown';
 import type { Principal } from '@orbit/shared/policy';
@@ -17,6 +17,7 @@ export async function docListPayload(principal: Principal, filter?: DocFilterInp
         and(
           eq(schema.project.organizationId, principal.organizationId),
           isNull(schema.project.archivedAt),
+          visibleProjectFilter(principal),
         ),
       ),
   ]);

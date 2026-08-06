@@ -477,14 +477,14 @@ function EditSession({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-3 border-border border-b px-6 pt-5 pb-3">
+      <div className="flex flex-col gap-1 px-6 pt-3 pb-1">
         <DocContextRow doc={doc} collectionName={collectionName} projectName={projectName} />
         <Input
           value={title}
           aria-label="Doc title"
           data-testid="doc-title-input"
           onChange={(event) => setTitle(event.target.value)}
-          className="h-auto border-0 bg-transparent px-0 font-semibold text-text text-xl focus-visible:border-0"
+          className="h-auto border-0 bg-transparent px-0 py-0 font-semibold text-text text-xl focus-visible:border-0"
         />
       </div>
       <DocEditor

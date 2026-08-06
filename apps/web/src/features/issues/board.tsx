@@ -19,17 +19,18 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { DisplayOptions, DisplayProperty } from '@orbit/shared/filters';
+import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
+import { UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
-import type { IssueQuery } from '@/lib/query/use-issues.ts';
-import { type MoveInput, useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
+import type { IssueQuery, IssueRegrouping, MoveInput } from '@/lib/query/use-issues.ts';
+import { useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
@@ -49,6 +50,7 @@ export interface BoardProps {
   readonly loadingMore?: boolean;
   readonly onLoadMore?: (() => void) | undefined;
   readonly columnSource?: BoardColumnSource | undefined;
+  readonly groupBy?: GroupByField;
 }
 
 const EMPTY_QUERY: IssueQuery = { filter: emptyFilterGroup(), orderBy: 'manual' };
@@ -65,11 +67,44 @@ interface CardLookups {
   readonly childCounts: ReadonlyMap<string, number>;
 }
 
+export const REGROUPABLE_FIELDS: readonly GroupByField[] = [
+  'state',
+  'cycle',
+  'project',
+  'assignee',
+  'priority',
+];
+
+export function canRegroup(groupBy: GroupByField): boolean {
+  return REGROUPABLE_FIELDS.includes(groupBy);
+}
+
+export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegrouping | null {
+  const id = groupId === UNGROUPED_ID ? null : groupId;
+  switch (groupBy) {
+    case 'state':
+      return id === null ? null : { stateId: id };
+    case 'cycle':
+      return { cycleId: id };
+    case 'project':
+      return { projectId: id };
+    case 'assignee':
+      return { assigneeId: id };
+    case 'priority': {
+      const priority = Number(groupId);
+      return Number.isInteger(priority) && priority >= 0 && priority <= 4 ? { priority } : null;
+    }
+    default:
+      return null;
+  }
+}
+
 export function planDrop(
   groups: readonly IssueGroup[],
   issues: readonly Issue[],
   activeId: string,
   overId: string,
+  groupBy: GroupByField,
 ): MoveInput | null {
   const dragged = issues.find((issue) => issue.id === activeId);
   if (dragged === undefined || overId === activeId) return null;
@@ -79,6 +114,9 @@ export function planDrop(
     groups.find((group) => group.issues.some((issue) => issue.id === overId));
   if (targetGroup === undefined) return null;
 
+  const regrouping = regroupPatch(groupBy, targetGroup.id);
+  if (regrouping === null) return null;
+
   const siblings = targetGroup.issues.filter((issue) => issue.id !== dragged.id);
   const overIndex = siblings.findIndex((issue) => issue.id === overId);
   const insertAt = overIndex === -1 ? siblings.length : overIndex;
@@ -87,7 +125,7 @@ export function planDrop(
 
   return {
     issue: dragged,
-    stateId: targetGroup.id,
+    ...regrouping,
     beforeId: before?.id ?? null,
     afterId: after?.id ?? null,
     beforeOrder: before?.sortOrder ?? null,
@@ -171,6 +209,7 @@ export function Board({
   loadingMore = false,
   onLoadMore,
   columnSource,
+  groupBy = 'state',
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const router = useRouter();
@@ -233,6 +272,7 @@ export function Board({
       issues,
       String(event.active.id),
       String(event.over.id),
+      groupBy,
     );
     if (placement !== null) move.mutate(placement);
   };
@@ -380,15 +420,18 @@ function BoardColumn({
         if (!entries.some((entry) => entry.isIntersecting)) return;
         if (hasHiddenLocal) {
           setVisibleCount((count) => Math.min(count + VISIBLE_STEP, loaded));
-        } else if (scrolledRef.current && canFetchMore) {
-          loadMore?.();
+          return;
         }
+        if (!canFetchMore || columnLoadingMore) return;
+        const laidOut = root.scrollHeight > 0;
+        const fits = laidOut && root.scrollHeight <= root.clientHeight;
+        if (scrolledRef.current || fits) loadMore?.();
       },
       { root, rootMargin: '240px' },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [wantsSentinel, hasHiddenLocal, canFetchMore, loaded, loadMore]);
+  }, [wantsSentinel, hasHiddenLocal, canFetchMore, columnLoadingMore, loaded, loadMore]);
 
   const markScrolled = useCallback(() => {
     scrolledRef.current = true;
