@@ -262,6 +262,12 @@ function DocCommentItem({
   );
 }
 
+function quoteLabel(orphaned: boolean, revealable: boolean): string {
+  if (orphaned) return 'The quoted passage is gone';
+  if (!revealable) return 'The quoted passage';
+  return 'Go to the quoted passage';
+}
+
 function DocCommentQuote({
   commentId,
   anchor,
@@ -273,20 +279,22 @@ function DocCommentQuote({
   readonly orphaned: boolean;
   readonly onReveal?: (commentId: string) => void;
 }) {
+  const reachable = onReveal !== undefined && !orphaned;
   return (
     <div className="flex flex-col gap-1">
       <button
         type="button"
         data-testid={`doc-comment-quote-${commentId}`}
-        disabled={orphaned}
-        aria-label={orphaned ? 'The quoted passage is gone' : 'Go to the quoted passage'}
+        disabled={!reachable}
+        aria-label={quoteLabel(orphaned, onReveal !== undefined)}
         onClick={() => onReveal?.(commentId)}
         className={cn(
           'flex w-full items-start gap-2 rounded-md border-l-2 py-1 pr-2 pl-2 text-left text-2xs italic',
           'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
           orphaned
             ? 'border-l-border-strong bg-surface-2 text-faint'
-            : 'border-l-accent bg-accent-soft/50 text-muted hover:bg-accent-soft',
+            : 'border-l-accent bg-accent-soft/50 text-muted',
+          reachable && 'hover:bg-accent-soft',
         )}
       >
         <span className="line-clamp-3 min-w-0 flex-1">{anchor.quote}</span>
