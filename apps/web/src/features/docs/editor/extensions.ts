@@ -97,7 +97,10 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),
-    Image.configure({ allowBase64: false }),
+    Image.configure({
+      allowBase64: false,
+      HTMLAttributes: { loading: 'lazy', decoding: 'async' },
+    }),
     Callout,
     ToggleSummary,
     ToggleBlock,

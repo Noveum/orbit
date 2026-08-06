@@ -13,9 +13,15 @@ const EXISTING_ID = /\sid="[^"]*"/gi;
 
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false });
 
+const IMAGE_TAG = /<img\s/gi;
+
+function deferOffscreenImages(html: string): string {
+  return html.replace(IMAGE_TAG, '<img loading="lazy" decoding="async" ');
+}
+
 export function renderMarkdown(source: string): string {
   if (source.trim().length === 0) return '';
-  return sanitizeHtml(marked.parse(source, { async: false }));
+  return deferOffscreenImages(sanitizeHtml(marked.parse(source, { async: false })));
 }
 
 function headingSlug(text: string): string {

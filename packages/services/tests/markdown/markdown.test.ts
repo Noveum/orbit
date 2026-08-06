@@ -53,7 +53,15 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<blockquote>');
     expect(html).toContain('<ol>');
     expect(html).toContain('<code>inline</code>');
-    expect(html).toContain('<img src="https://x.dev/a.png" alt="alt">');
+    expect(html).toContain('src="https://x.dev/a.png" alt="alt">');
+  });
+
+  it('defers every image so a long document does not fetch all of them at once', () => {
+    const html = renderMarkdown('![a](https://x.dev/a.png)\n\n![b](https://x.dev/b.png)');
+
+    expect(html.match(/loading="lazy"/g)).toHaveLength(2);
+    expect(html.match(/decoding="async"/g)).toHaveLength(2);
+    expect(html).toContain('<img loading="lazy" decoding="async" src="https://x.dev/a.png"');
   });
 
   it('forces noopener on external links and leaves relative links alone', () => {
