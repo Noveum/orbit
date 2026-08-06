@@ -1,6 +1,5 @@
 'use client';
 
-import { renderMarkdown } from '@orbit/services/markdown';
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, Strikethrough } from 'lucide-react';
@@ -21,13 +20,9 @@ import { cn } from '@/lib/cn.ts';
 import type { Member } from '@/lib/query/schemas.ts';
 import { docProseClassName } from '../doc-body.tsx';
 import { findTrigger, matchSlashCommands, type SlashCommand } from './commands.ts';
+import { editorHtmlFrom } from './editor-content.ts';
 import { EditorToolbar } from './editor-toolbar.tsx';
-import {
-  editorExtensions,
-  type MenuKey,
-  type MenuKeyHandlerRef,
-  toEditorHtml,
-} from './extensions.ts';
+import { editorExtensions, type MenuKey, type MenuKeyHandlerRef } from './extensions.ts';
 import { docToMarkdown } from './markdown.ts';
 import { editorSurfaceClassName } from './styles.ts';
 
@@ -156,9 +151,12 @@ export function RichTextEditor({
   const blurred = useRef(onBlur);
   blurred.current = onBlur;
 
+  const [openedWith] = useState(() => editorHtmlFrom(value));
+  const extensions = useMemo(() => editorExtensions(menuKeyRef, placeholder), [placeholder]);
+
   const editor = useEditor({
-    extensions: editorExtensions(menuKeyRef, placeholder),
-    content: toEditorHtml(renderMarkdown(value)),
+    extensions,
+    content: openedWith,
     immediatelyRender: false,
     editable,
     autofocus: autoFocus,
@@ -183,7 +181,7 @@ export function RichTextEditor({
     if (emitted.current.has(value)) return;
     if (emittedMarkdown(editor) === settledMarkdown(value)) return;
     emitted.current.add(value);
-    editor.commands.setContent(toEditorHtml(renderMarkdown(value)), { emitUpdate: false });
+    editor.commands.setContent(editorHtmlFrom(value), { emitUpdate: false });
   }, [editor, value]);
 
   useEffect(() => {
