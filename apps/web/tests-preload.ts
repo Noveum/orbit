@@ -1,5 +1,12 @@
 import { afterEach, expect, mock } from 'bun:test';
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
+import { ensureLaneDatabase } from '@orbit/db/test-lane';
+import { resolveTestDatabaseUrl } from '../../scripts/test-env.ts';
+
+const databaseUrl = resolveTestDatabaseUrl('orbit_test_web');
+await ensureLaneDatabase(databaseUrl, 'orbit_test_web');
+process.env['DATABASE_URL'] = databaseUrl;
+process.env['DATABASE_POOL_MAX'] = '2';
 
 GlobalRegistrator.register({ url: 'http://localhost:3000' });
 

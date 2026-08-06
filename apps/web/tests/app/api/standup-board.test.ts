@@ -1,9 +1,10 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { db, eq, schema } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
-const dbModule = await import('@orbit/db');
 
 interface BoardStub {
   since: Date;
@@ -14,7 +15,6 @@ interface BoardStub {
 const SINCE = new Date('2030-06-10T08:00:00.000Z');
 
 const board: BoardStub = { since: SINCE, issues: [], workload: [] };
-const labelLinks: { issueId: string; labelId: string }[] = [];
 const received: unknown[] = [];
 
 mock.module('@orbit/core', () => ({
@@ -25,10 +25,80 @@ mock.module('@orbit/core', () => ({
   },
 }));
 
-mock.module('@orbit/db', () => ({
-  ...dbModule,
-  db: { select: () => ({ from: () => ({ where: () => Promise.resolve(labelLinks) }) }) },
-}));
+const seeded = {
+  organizationId: `org_${randomUUID()}`,
+  userId: `user_${randomUUID()}`,
+  teamId: `team_${randomUUID()}`,
+  stateId: `state_${randomUUID()}`,
+  labelledIssueId: `issue_${randomUUID()}`,
+  plainIssueId: `issue_${randomUUID()}`,
+  bugLabelId: `label_${randomUUID()}`,
+  uiLabelId: `label_${randomUUID()}`,
+};
+
+async function seedIssuesWithLabels(): Promise<void> {
+  await db.insert(schema.organization).values({
+    id: seeded.organizationId,
+    name: 'Standup board',
+    slug: seeded.organizationId,
+  });
+  await db.insert(schema.user).values({
+    id: seeded.userId,
+    name: 'Board Author',
+    email: `${seeded.userId}@orbit.test`,
+    handle: seeded.userId,
+  });
+  await db.insert(schema.team).values({
+    id: seeded.teamId,
+    organizationId: seeded.organizationId,
+    name: 'Board',
+    key: seeded.teamId.slice(5, 10).toUpperCase(),
+  });
+  await db.insert(schema.workflowState).values({
+    id: seeded.stateId,
+    organizationId: seeded.organizationId,
+    teamId: seeded.teamId,
+    name: 'Todo',
+    category: 'unstarted',
+    color: '#5A63C8',
+  });
+  await db.insert(schema.issue).values([
+    {
+      id: seeded.labelledIssueId,
+      organizationId: seeded.organizationId,
+      teamId: seeded.teamId,
+      number: 1,
+      identifier: `BRD-${seeded.labelledIssueId.slice(6, 12)}`,
+      title: 'Ship the importer',
+      stateId: seeded.stateId,
+      creatorId: seeded.userId,
+    },
+    {
+      id: seeded.plainIssueId,
+      organizationId: seeded.organizationId,
+      teamId: seeded.teamId,
+      number: 2,
+      identifier: `BRD-${seeded.plainIssueId.slice(6, 12)}`,
+      title: 'Fix the socket',
+      stateId: seeded.stateId,
+      creatorId: seeded.userId,
+    },
+  ]);
+  await db.insert(schema.label).values([
+    {
+      id: seeded.bugLabelId,
+      organizationId: seeded.organizationId,
+      name: `Bug ${seeded.bugLabelId.slice(6, 12)}`,
+      color: '#E5484D',
+    },
+    {
+      id: seeded.uiLabelId,
+      organizationId: seeded.organizationId,
+      name: `Ui ${seeded.uiLabelId.slice(6, 12)}`,
+      color: '#3E63DD',
+    },
+  ]);
+}
 
 const session = {
   user: { id: 'user_1', name: 'Ada Admin', email: 'ada@orbit.test' },
@@ -77,21 +147,26 @@ const errorSchema = z.object({ error: z.object({ code: z.string() }) });
 
 const BASE = 'http://localhost:3000/api/standup/board';
 
-beforeEach(() => {
+beforeAll(async () => {
+  await seedIssuesWithLabels();
+});
+
+beforeEach(async () => {
   sessionHolder.value = session;
   board.since = SINCE;
   board.issues = [
-    { id: 'issue_1', title: 'Ship the importer', assigneeId: 'user_2' },
-    { id: 'issue_2', title: 'Fix the socket', assigneeId: 'user_2' },
+    { id: seeded.labelledIssueId, title: 'Ship the importer', assigneeId: 'user_2' },
+    { id: seeded.plainIssueId, title: 'Fix the socket', assigneeId: 'user_2' },
   ];
   board.workload = [{ userId: 'user_2', open: 2, inProgress: 1, completedSince: 3 }];
-  labelLinks.length = 0;
+  await db.delete(schema.issueLabel).where(eq(schema.issueLabel.issueId, seeded.labelledIssueId));
   received.length = 0;
 });
 
-afterAll(() => {
-  mock.module('@orbit/db', () => dbModule);
+afterAll(async () => {
   mock.module('@orbit/core', () => coreModule);
+  await db.delete(schema.organization).where(eq(schema.organization.id, seeded.organizationId));
+  await db.delete(schema.user).where(eq(schema.user.id, seeded.userId));
 });
 
 describe('GET /api/standup/board', () => {
@@ -104,22 +179,35 @@ describe('GET /api/standup/board', () => {
     expect(response.status).toBe(200);
     expect(received).toEqual([{ since: SINCE.toISOString(), limitPerPerson: 5 }]);
     expect(payload.since).toBe(SINCE.toISOString());
-    expect(payload.issues.map((issue) => issue.id)).toEqual(['issue_1', 'issue_2']);
+    expect(payload.issues.map((issue) => issue.id)).toEqual([
+      seeded.labelledIssueId,
+      seeded.plainIssueId,
+    ]);
     expect(payload.workload).toEqual([
       { userId: 'user_2', open: 2, inProgress: 1, completedSince: 3 },
     ]);
   });
 
   it('attaches the labels of every issue it returns', async () => {
-    labelLinks.push(
-      { issueId: 'issue_1', labelId: 'label_bug' },
-      { issueId: 'issue_1', labelId: 'label_ui' },
-    );
+    await db.insert(schema.issueLabel).values([
+      {
+        id: `issue_label_${randomUUID()}`,
+        issueId: seeded.labelledIssueId,
+        labelId: seeded.bugLabelId,
+      },
+      {
+        id: `issue_label_${randomUUID()}`,
+        issueId: seeded.labelledIssueId,
+        labelId: seeded.uiLabelId,
+      },
+    ]);
 
     const response = await GET(new Request(BASE));
     const payload = payloadSchema.parse(await response.json());
 
-    expect(payload.issues[0]?.labelIds).toEqual(['label_bug', 'label_ui']);
+    expect([...(payload.issues[0]?.labelIds ?? [])].sort()).toEqual(
+      [seeded.bugLabelId, seeded.uiLabelId].sort(),
+    );
     expect(payload.issues[1]?.labelIds).toEqual([]);
   });
 
