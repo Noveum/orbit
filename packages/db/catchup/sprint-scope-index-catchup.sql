@@ -3,8 +3,8 @@
 -- existing index is dropped or rebuilt.
 --
 -- Correctness does not depend on it. cycleProgress replays the cycleId rows in
--- issue_activity for one organization across one sprint window, and without the index that
--- replay sequentially scans the busiest table in the app.
+-- issue_activity for one organization from the day a sprint opened onwards, and without the
+-- index that replay sequentially scans the busiest table in the app.
 --
 -- Safe to run more than once: the statement checks first, and the whole thing is one
 -- transaction, so a failure leaves the database exactly as it was.
