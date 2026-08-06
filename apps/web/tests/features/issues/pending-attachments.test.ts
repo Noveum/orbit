@@ -71,7 +71,7 @@ describe('attaching held files once the issue is saved', () => {
     );
   });
 
-  it('reports the file that failed and leaves its placeholder in the description', async () => {
+  it('reports the file that failed and never leaves a dead placeholder behind', async () => {
     const good = { placeholder: 'blob:good', file: textFile('kept.txt') };
     const bad = { placeholder: 'blob:bad', file: textFile('lost.txt') };
     const upload = mock(async (file: File): Promise<UploadedFile> => {
@@ -87,7 +87,20 @@ describe('attaching held files once the issue is saved', () => {
 
     expect(outcome.attached).toBe(1);
     expect(outcome.failures).toEqual([{ fileName: 'lost.txt', reason: 'Storage said no.' }]);
-    expect(outcome.description).toBe('[kept.txt](/api/files/org/kept.txt) [lost.txt](blob:bad)');
+    expect(outcome.description).toBe('[kept.txt](/api/files/org/kept.txt) lost.txt');
+    expect(outcome.description).not.toContain('blob:');
+  });
+
+  it('still asks to be saved when every upload failed, so no blob url is kept', async () => {
+    const bad = { placeholder: 'blob:bad', file: textFile('lost.txt') };
+    const upload = mock((): Promise<UploadedFile> => Promise.reject(new Error('Storage said no.')));
+
+    const outcome = await attachPending('![lost.txt](blob:bad)', [bad], upload);
+
+    expect(outcome.attached).toBe(0);
+    expect(outcome.rewritten).toBe(1);
+    expect(outcome.description).toBe('lost.txt');
+    expect(outcome.description).not.toContain('blob:');
   });
 
   it('does nothing and reports nothing when no file was held', async () => {
@@ -96,6 +109,11 @@ describe('attaching held files once the issue is saved', () => {
     const outcome = await attachPending('Just words.', [], upload);
 
     expect(upload).not.toHaveBeenCalled();
-    expect(outcome).toEqual({ description: 'Just words.', attached: 0, failures: [] });
+    expect(outcome).toEqual({
+      description: 'Just words.',
+      attached: 0,
+      rewritten: 0,
+      failures: [],
+    });
   });
 });

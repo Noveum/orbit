@@ -59,6 +59,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [cycleId, setCycleId] = useState<string | null>(null);
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
+  const [composerKey, setComposerKey] = useState(0);
 
   const create = useCreateIssue(teamId ?? 'none');
   const update = useUpdateIssue();
@@ -123,7 +124,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             tone: 'danger',
           });
         }
-        if (outcome.attached === 0) return;
+        if (outcome.rewritten === 0) return;
         await update.mutateAsync({ issue, patch: { description: outcome.description } });
       };
       run().catch(() => undefined);
@@ -141,6 +142,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const submit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
+    if (create.isPending) return;
     if (teamId === null || title.trim().length === 0) return;
     const body = description;
     const held = pending;
@@ -159,7 +161,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
       },
       {
         onSuccess: (issue) => {
-          setPending([]);
+          setPending((current) => current.filter((entry) => !held.includes(entry)));
           finalize(issue, body, held);
           if (!createMore) {
             onOpenChange(false);
@@ -168,6 +170,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
           setTitle('');
           setDescription('');
           setLabelIds([]);
+          setComposerKey((value) => value + 1);
         },
       },
     );
@@ -206,6 +209,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             className="h-9 border-0 px-0 font-medium text-base shadow-none"
           />
           <RichTextEditor
+            key={composerKey}
             value={description}
             onChange={setDescription}
             members={members}

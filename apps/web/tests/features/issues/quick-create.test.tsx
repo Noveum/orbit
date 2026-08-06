@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
@@ -10,6 +10,12 @@ const patched = mock((_input: Record<string, unknown>) => undefined);
 
 const newIssue = { id: 'iss_1', identifier: 'ENG-1', title: 'Ship the thing' };
 
+const inFlight: { defer: boolean; resume: (() => void) | null; pending: boolean } = {
+  defer: false,
+  resume: null,
+  pending: false,
+};
+
 mock.module('@/lib/query/use-issues.ts', () => ({
   useCreateIssue: () => ({
     mutate: (
@@ -17,9 +23,19 @@ mock.module('@/lib/query/use-issues.ts', () => ({
       options?: { onSuccess?: (issue: typeof newIssue) => void },
     ) => {
       created(input);
-      options?.onSuccess?.(newIssue);
+      if (!inFlight.defer) {
+        options?.onSuccess?.(newIssue);
+        return;
+      }
+      inFlight.pending = true;
+      inFlight.resume = () => {
+        inFlight.pending = false;
+        options?.onSuccess?.(newIssue);
+      };
     },
-    isPending: false,
+    get isPending() {
+      return inFlight.pending;
+    },
   }),
   useUpdateIssue: () => ({
     mutateAsync: async (input: Record<string, unknown>) => {
@@ -244,7 +260,7 @@ describe('attaching a file from the create dialog', () => {
     expect(patch?.description).not.toContain('blob:');
   });
 
-  it('saves no rewritten description when the upload fails', async () => {
+  it('saves the issue without a dead placeholder when the upload fails', async () => {
     workspace = buildWorkspace();
     open();
     const presigns = stubAttachmentApi();
@@ -258,7 +274,54 @@ describe('attaching a file from the create dialog', () => {
     await waitFor(() => expect(presigns).toHaveLength(1));
     await waitFor(() => expect(puts).toEqual(['https://s3.example.com/signed']));
     await settle();
-    expect(patched).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(patched).toHaveBeenCalled());
+    const call = patched.mock.calls[0]?.[0];
+    const patch = (call?.['patch'] ?? {}) as { description?: string };
+    const saved = patch.description ?? '';
+    expect(saved).not.toContain('blob:');
+  });
+
+  it('does not start a second create while the first is still in flight', async () => {
+    workspace = buildWorkspace();
+    open();
+    inFlight.defer = true;
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Twice');
+    const form = screen.getByTestId('quick-create-title').closest('form');
+    if (form === null) throw new Error('no form');
+
+    fireEvent.keyDown(form, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(form, { key: 'Enter', metaKey: true });
+    await settle();
+
+    expect(created.mock.calls).toHaveLength(1);
+
+    inFlight.resume?.();
+    inFlight.defer = false;
+    await settle();
+  });
+
+  it('clears the editor for the next issue when create more is on', async () => {
+    workspace = buildWorkspace();
+    open();
+    stubAttachmentApi();
+    stubPut();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.click(screen.getByTestId('quick-create-more'));
+    await holdOneFile();
+    await user.click(screen.getByTestId('quick-create-submit'));
+    await settle();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Second');
+    await user.click(screen.getByTestId('quick-create-submit'));
+    await settle();
+
+    const second = created.mock.calls[1]?.[0];
+    expect(second).toBeDefined();
+    expect(String(second?.['description'] ?? '')).not.toContain('blob:');
   });
 
   it('forgets held files once the issue is created', async () => {
