@@ -534,7 +534,7 @@ async function resolveMentionsPerEntry(
   for (const entry of entries) {
     if (entry.mentionHandles.length === 0) continue;
     const handles = [...new Set(entry.mentionHandles)].sort();
-    const key = `${entry.issue.teamId} ${handles.join(',')}`;
+    const key = `${entry.issue.teamId} ${handles.join(',')}`;
     const bucket = byKey.get(key) ?? { teamId: entry.issue.teamId, handles, issueIds: [] };
     bucket.issueIds.push(entry.issue.id);
     byKey.set(key, bucket);
