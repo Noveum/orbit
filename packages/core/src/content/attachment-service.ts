@@ -9,6 +9,14 @@ import { nextSyncId } from '../sync/sync-id.ts';
 
 export type AttachmentRecord = typeof schema.attachment.$inferSelect;
 
+export function attachmentScopes(
+  row: Pick<AttachmentRecord, 'parentType' | 'parentId' | 'uploadedById'>,
+): string[] {
+  if (row.parentType === 'doc') return [scopes.doc(row.parentId)];
+  if (row.parentType === 'issue') return [scopes.issue(row.parentId)];
+  return [scopes.user(row.uploadedById)];
+}
+
 export interface CompletedAttachment {
   readonly attachment: AttachmentRecord;
   readonly actions: SyncAction[];
@@ -47,9 +55,7 @@ export async function markAttachmentReady(
     if (updated === undefined) throw notFound('That upload was not registered.');
 
     const actor = await principalActor(tx, principal);
-    const scope = [scopes.organization(updated.organizationId)];
-    if (updated.parentType === 'doc') scope.push(scopes.doc(updated.parentId));
-    if (updated.parentType === 'issue') scope.push(scopes.issue(updated.parentId));
+    const scope = attachmentScopes(updated);
 
     return {
       attachment: updated,
