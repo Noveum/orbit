@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildDocAnchor,
   DOC_ANCHOR_CONTEXT_LIMIT,
+  DOC_ANCHOR_QUOTE_LIMIT,
   isDocAnchorOrphaned,
   locateDocAnchor,
 } from '../../src/utils/doc-anchor.ts';
@@ -33,6 +34,32 @@ describe('buildDocAnchor', () => {
     expect(() =>
       docCommentAnchorSchema.parse(buildDocAnchor(document, start, start + passage.length)),
     ).not.toThrow();
+  });
+
+  it('clamps a selection of the whole document to the quote the server accepts', () => {
+    const huge = 'w'.repeat(DOC_ANCHOR_QUOTE_LIMIT * 3);
+    const anchor = buildDocAnchor(huge, 0, huge.length);
+
+    expect(anchor.quote).toHaveLength(DOC_ANCHOR_QUOTE_LIMIT);
+    expect(() => docCommentAnchorSchema.parse(anchor)).not.toThrow();
+  });
+
+  it('keeps the last character of a selection that is exactly at the limit', () => {
+    const exact = `${'w'.repeat(DOC_ANCHOR_QUOTE_LIMIT)}tail`;
+    const anchor = buildDocAnchor(exact, 0, DOC_ANCHOR_QUOTE_LIMIT);
+
+    expect(anchor.quote).toHaveLength(DOC_ANCHOR_QUOTE_LIMIT);
+    expect(anchor.quote.endsWith('w')).toBe(true);
+    expect(anchor.suffix.startsWith('tail')).toBe(true);
+    expect(() => docCommentAnchorSchema.parse(anchor)).not.toThrow();
+  });
+
+  it('takes the context that follows the clamped quote, not the selection that was cut', () => {
+    const overlong = `${'w'.repeat(DOC_ANCHOR_QUOTE_LIMIT)}cut off here`;
+    const anchor = buildDocAnchor(overlong, 0, overlong.length);
+
+    expect(anchor.suffix).toBe('cut off here');
+    expect(locateDocAnchor(overlong, anchor)).toEqual({ start: 0, end: DOC_ANCHOR_QUOTE_LIMIT });
   });
 });
 
@@ -93,6 +120,52 @@ describe('locateDocAnchor', () => {
     const anchor = buildDocAnchor(document, start, start + passage.length);
 
     expect(locateDocAnchor('', anchor)).toBeNull();
+  });
+
+  it('refuses an anchor with no quote instead of matching at the recorded offset', () => {
+    const empty = { quote: '', prefix: '', suffix: '', start };
+
+    expect(locateDocAnchor(document, empty)).toBeNull();
+    expect(isDocAnchorOrphaned(document, empty)).toBe(true);
+  });
+
+  it('prefers the occurrence nearer the recorded offset when the context cannot decide', () => {
+    const repeated = `alpha ${passage} middle ${passage} omega`;
+    const first = repeated.indexOf(passage);
+    const second = repeated.lastIndexOf(passage);
+    const nearSecond = { quote: passage, prefix: '', suffix: '', start: second - 1 };
+    const nearFirst = { quote: passage, prefix: '', suffix: '', start: first + 1 };
+
+    expect(locateDocAnchor(repeated, nearSecond)).toEqual({
+      start: second,
+      end: second + passage.length,
+    });
+    expect(locateDocAnchor(repeated, nearFirst)).toEqual({
+      start: first,
+      end: first + passage.length,
+    });
+  });
+
+  it('finds a passage that sits past more repeats of the quote than it will ever score', () => {
+    const filler = 'lever '.repeat(600);
+    const long = `${filler}UNIQUE PREAMBLE lever UNIQUE TAIL`;
+    const real = long.indexOf('UNIQUE PREAMBLE ') + 'UNIQUE PREAMBLE '.length;
+    const anchor = buildDocAnchor(long, real, real + 'lever'.length);
+
+    expect(long.split('lever').length - 1).toBeGreaterThan(512);
+    expect(locateDocAnchor(long, anchor)).toEqual({ start: real, end: real + 'lever'.length });
+  });
+
+  it('reports orphaned rather than guessing when the quote repeats past the candidate cap', () => {
+    const filler = 'lever '.repeat(600);
+    const anchor = {
+      quote: 'lever',
+      prefix: 'CONTEXT THAT IS NOWHERE IN THIS DOCUMENT',
+      suffix: 'NOR IS THIS ONE EITHER',
+      start: filler.length * 4,
+    };
+
+    expect(locateDocAnchor(filler, anchor)).toBeNull();
   });
 });
 
