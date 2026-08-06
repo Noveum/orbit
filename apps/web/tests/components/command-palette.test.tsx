@@ -65,10 +65,16 @@ function NewDoc({ run }: { readonly run: () => void }) {
 }
 
 function ArchiveIssue({ enabled }: { readonly enabled: boolean }) {
-  useHotkey('shift+a', noop, {
-    label: 'Archive issue',
-    section: 'Issues',
-    enabled,
+  useHotkey('shift+a', noop, { label: 'Archive issue', section: 'Issues', enabled });
+  return null;
+}
+
+function StandupTimer({ run }: { readonly run: () => void }) {
+  useHotkey('t', run, {
+    label: 'Toggle timer',
+    section: 'Standup',
+    scope: 'standup',
+    priority: HOTKEY_PRIORITY.surface,
   });
   return null;
 }
@@ -118,16 +124,24 @@ describe('command palette', () => {
     expect(push).toHaveBeenCalledWith('/inbox');
   });
 
-  it('routes to sprints when the binding gt is pressed', async () => {
+  it('routes to sprints when the binding gt is pressed, even with a competing t binding', async () => {
     const user = userEvent.setup();
-    render(<Palette startOpen />);
+    const toggleTimer = mock();
+
+    render(
+      <Palette startOpen>
+        <StandupTimer run={toggleTimer} />
+      </Palette>,
+    );
 
     await select(/Go to Sprints/);
     expect(push).toHaveBeenCalledWith('/sprints');
 
     push.mockClear();
     await user.keyboard('gt');
+
     expect(push).toHaveBeenCalledWith('/sprints');
+    expect(toggleTimer).not.toHaveBeenCalled();
   });
 
   it('runs the toggles it advertises', async () => {
