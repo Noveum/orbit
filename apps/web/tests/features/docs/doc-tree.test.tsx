@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
+import { resetSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
 import {
   ancestorsOf,
   DocTree,
@@ -12,8 +13,14 @@ import {
   groupIdOf,
 } from '../../../src/features/docs/doc-tree.tsx';
 
+function reloadPage(): void {
+  cleanup();
+  resetSidebarDisclosure();
+}
+
 beforeEach(() => {
   window.localStorage.clear();
+  resetSidebarDisclosure();
 });
 
 function summary(id: string, title: string): DocSummary {
@@ -227,6 +234,12 @@ function groupRegion(groupId: string): HTMLElement {
   return region;
 }
 
+function groupContent(groupId: string): HTMLElement | null {
+  const toggle = screen.getByTestId(`doc-group-toggle-${groupId}`);
+  const section = toggle.closest('section');
+  return section?.querySelector<HTMLElement>('[data-state="open"]') ?? null;
+}
+
 function storedDisclosure(): Record<string, unknown> {
   const raw = window.localStorage.getItem('orbit:sidebar:disclosure');
   if (raw === null) return {};
@@ -276,14 +289,14 @@ describe('a folder in the docs sidebar', () => {
     await user.click(screen.getByTestId('doc-group-toggle-private'));
     expect(storedDisclosure()[groupDisclosureKey('private')]).toBe(false);
 
-    cleanup();
+    reloadPage();
     render(tree(nested, [], null));
 
     expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
       'aria-expanded',
       'false',
     );
-    expect(groupRegion('private')).toHaveAttribute('data-state', 'closed');
+    expect(groupContent('private')).toBeNull();
   });
 
   it('opens again when a doc filed under it becomes the active one', async () => {
@@ -327,7 +340,7 @@ describe('a nested page that was folded away', () => {
     expect(screen.queryByText('Onboarding')).toBeNull();
     expect(storedDisclosure()[docDisclosureKey('root')]).toBe(false);
 
-    cleanup();
+    reloadPage();
     render(tree(nested, [], 'other'));
 
     expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
@@ -343,7 +356,7 @@ describe('a nested page that was folded away', () => {
     await user.click(screen.getByTestId('doc-toggle-root'));
     await user.click(screen.getByTestId('doc-toggle-root'));
 
-    cleanup();
+    reloadPage();
     render(tree(nested, [], 'other'));
 
     expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');

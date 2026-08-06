@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { act, renderHook } from '@testing-library/react';
-import { useSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
+import { resetSidebarDisclosure, useSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
 
 const STORAGE_KEY = 'orbit:sidebar:disclosure';
 
 beforeEach(() => {
   window.localStorage.clear();
+  resetSidebarDisclosure();
 });
 
 describe('the remembered disclosure state', () => {
@@ -43,5 +44,49 @@ describe('the remembered disclosure state', () => {
     const view = renderHook(() => useSidebarDisclosure());
 
     expect(view.result.current.isOpen('a', true)).toBe(true);
+  });
+});
+
+describe('two mounted consumers share one store', () => {
+  it('does not let one consumer erase what the other folded', () => {
+    const tree = renderHook(() => useSidebarDisclosure());
+    const sidebar = renderHook(() => useSidebarDisclosure());
+
+    act(() => tree.result.current.toggle('docs:page:root', true));
+    act(() => sidebar.result.current.toggle('section:teams', true));
+
+    const stored = JSON.parse(window.localStorage.getItem('orbit:sidebar:disclosure') ?? '{}');
+    expect(stored['docs:page:root']).toBe(false);
+    expect(stored['section:teams']).toBe(false);
+
+    tree.unmount();
+    sidebar.unmount();
+  });
+
+  it('shows one consumer the fold the other just made', () => {
+    const tree = renderHook(() => useSidebarDisclosure());
+    const sidebar = renderHook(() => useSidebarDisclosure());
+
+    act(() => sidebar.result.current.toggle('section:teams', true));
+
+    expect(tree.result.current.isOpen('section:teams', true)).toBe(false);
+
+    tree.unmount();
+    sidebar.unmount();
+  });
+
+  it('does not lose sidebar folds when the tree reveals a doc', () => {
+    const sidebar = renderHook(() => useSidebarDisclosure());
+    const tree = renderHook(() => useSidebarDisclosure());
+
+    act(() => sidebar.result.current.toggle('team:alpha', true));
+    act(() => tree.result.current.openAll(['docs:group:c1', 'docs:group:c2']));
+
+    const stored = JSON.parse(window.localStorage.getItem('orbit:sidebar:disclosure') ?? '{}');
+    expect(stored['team:alpha']).toBe(false);
+    expect(stored['docs:group:c1']).toBe(true);
+
+    sidebar.unmount();
+    tree.unmount();
   });
 });

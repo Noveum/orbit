@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 const STORAGE_KEY = 'orbit:sidebar:disclosure';
 
@@ -23,6 +23,46 @@ function readStored(): OpenMap {
   }
 }
 
+const EMPTY: OpenMap = {};
+
+let snapshot: OpenMap | null = null;
+const listeners = new Set<() => void>();
+
+function current(): OpenMap {
+  if (typeof window === 'undefined') return EMPTY;
+  snapshot ??= readStored();
+  return snapshot;
+}
+
+function publish(next: OpenMap): void {
+  snapshot = next;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    snapshot = next;
+  }
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== null && event.key !== STORAGE_KEY) return;
+    snapshot = readStored();
+    for (const entry of listeners) entry();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+export function resetSidebarDisclosure(): void {
+  snapshot = null;
+  for (const listener of listeners) listener();
+}
+
 export interface SidebarDisclosure {
   readonly isOpen: (id: string, fallback: boolean) => boolean;
   readonly toggle: (id: string, fallback: boolean) => void;
@@ -30,37 +70,22 @@ export interface SidebarDisclosure {
 }
 
 export function useSidebarDisclosure(): SidebarDisclosure {
-  const [map, setMap] = useState<OpenMap>({});
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    setMap(readStored());
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-    } catch {
-      setReady(true);
-    }
-  }, [map, ready]);
+  const map = useSyncExternalStore(subscribe, current, () => EMPTY);
 
   const isOpen = useCallback((id: string, fallback: boolean) => map[id] ?? fallback, [map]);
 
   const toggle = useCallback((id: string, fallback: boolean) => {
-    setMap((prev) => ({ ...prev, [id]: !(prev[id] ?? fallback) }));
+    const now = current();
+    publish({ ...now, [id]: !(now[id] ?? fallback) });
   }, []);
 
   const openAll = useCallback((ids: readonly string[]) => {
-    setMap((prev) => {
-      if (ids.every((id) => prev[id] === true)) return prev;
-      const next = { ...prev };
-      for (const id of ids) next[id] = true;
-      return next;
-    });
+    const now = current();
+    if (ids.every((id) => now[id] === true)) return;
+    const next: OpenMap = { ...now };
+    for (const id of ids) next[id] = true;
+    publish(next);
   }, []);
 
-  return useMemo(() => ({ isOpen, toggle, openAll }), [isOpen, toggle, openAll]);
+  return { isOpen, toggle, openAll };
 }
