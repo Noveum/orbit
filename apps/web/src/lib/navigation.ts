@@ -54,45 +54,51 @@ export interface NavSection {
 
 const TEAM_SECTION_PREFIX = 'team-';
 
+const WORKSPACE_LINKS: readonly NavLink[] = [
+  { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
+  { href: '/sprints', label: 'Sprints', icon: RefreshCcw },
+  { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
+  { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
+  { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
+  { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
+];
+
+function personalLinks(inboxCount: number): NavLink[] {
+  return [
+    { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
+    { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
+    { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
+  ];
+}
+
+function teamLinks(key: string, openIssues?: number): NavLink[] {
+  return [
+    {
+      href: `/team/${key}/issues`,
+      label: 'Issues',
+      icon: CircleDot,
+      ...(openIssues === undefined ? {} : { count: openIssues }),
+    },
+    { href: `/team/${key}/board`, label: 'Board', icon: Target },
+    { href: `/team/${key}/sprint/active`, label: 'Active sprint', icon: RefreshCcw },
+  ];
+}
+
 export function buildNavigation(teams: readonly ShellTeam[], inboxCount = 0): NavSection[] {
   return [
     {
       id: 'personal',
-      links: [
-        { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
-        { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
-        { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
-      ],
+      links: personalLinks(inboxCount),
     },
     {
       id: 'workspace',
       title: 'Workspace',
-      links: [
-        { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
-        { href: '/sprints', label: 'Sprints', icon: RefreshCcw },
-        { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
-        { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
-        { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
-        { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
-      ],
+      links: WORKSPACE_LINKS,
     },
     ...teams.map((team) => ({
       id: `${TEAM_SECTION_PREFIX}${team.id}`,
       title: team.name,
-      links: [
-        {
-          href: `/team/${team.key.toLowerCase()}/issues`,
-          label: 'Issues',
-          icon: CircleDot,
-          count: team.openIssues,
-        },
-        { href: `/team/${team.key.toLowerCase()}/board`, label: 'Board', icon: Target },
-        {
-          href: `/team/${team.key.toLowerCase()}/sprint/active`,
-          label: 'Active sprint',
-          icon: RefreshCcw,
-        },
-      ],
+      links: teamLinks(team.key.toLowerCase(), team.openIssues),
     })),
   ];
 }
@@ -123,22 +129,11 @@ const DEFAULT_TEAM_COLOR = '#5A63C8';
 
 export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): SidebarNav {
   return {
-    personal: [
-      { href: '/inbox', label: 'Inbox', icon: Inbox, binding: 'g i', count: inboxCount },
-      { href: '/my-issues', label: 'My issues', icon: CircleDot, binding: 'g m' },
-      { href: '/pulls', label: 'Pull requests', icon: GitPullRequest, binding: 'g r' },
-    ],
+    personal: personalLinks(inboxCount),
     workspace: {
       id: 'workspace',
       title: 'Workspace',
-      links: [
-        { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
-        { href: '/sprints', label: 'Sprints', icon: RefreshCcw },
-        { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
-        { href: '/views', label: 'Views', icon: LayoutList, binding: 'g v' },
-        { href: '/analytics', label: 'Analytics', icon: BarChart3, binding: 'g a' },
-        { href: '/docs', label: 'Docs', icon: FileText, binding: 'g d' },
-      ],
+      links: WORKSPACE_LINKS,
     },
     teams: teams.map((team) => {
       const key = team.key.toLowerCase();
