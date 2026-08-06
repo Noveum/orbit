@@ -5,6 +5,7 @@ import type { Principal } from '@orbit/shared/policy';
 import type { DocFilterInput } from '@orbit/shared/validators';
 
 const DOC_EXCERPT_LENGTH = 140;
+const DOC_SNIPPET_LENGTH = 200;
 
 export async function docListPayload(principal: Principal, filter?: DocFilterInput) {
   const [docs, collections, projects] = await Promise.all([
@@ -27,6 +28,8 @@ export async function docListPayload(principal: Principal, filter?: DocFilterInp
       ...doc,
       publishToken: doc.publishToken === null ? null : 'set',
       excerpt: summarize(doc.excerpt, DOC_EXCERPT_LENGTH),
+      snippet: doc.snippet.length === 0 ? '' : summarize(doc.snippet, DOC_SNIPPET_LENGTH),
+      titleMatch: doc.titleMatch,
     })),
     collections,
     projects,

@@ -293,8 +293,38 @@ export const docSchema = z.object({
 
 export type Doc = z.infer<typeof docSchema>;
 
-export const docSummarySchema = docSchema.extend({ excerpt: z.string().default('') });
+export const docSummarySchema = docSchema.extend({
+  excerpt: z.string().default(''),
+  snippet: z.string().default(''),
+  titleMatch: z.boolean().default(false),
+});
 export type DocSummary = z.infer<typeof docSummarySchema>;
+
+export const docHomeEntrySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  collectionId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  authorId: z.string(),
+  updatedAt: timestamp,
+});
+
+export type DocHomeEntry = z.infer<typeof docHomeEntrySchema>;
+
+export const docsHomeSchema = z.object({
+  recent: z.array(docHomeEntrySchema),
+  favorites: z.array(docHomeEntrySchema),
+  updated: z.array(docHomeEntrySchema),
+});
+
+export type DocsHome = z.infer<typeof docsHomeSchema>;
+
+export const docFavoriteResultSchema = z.object({
+  docId: z.string(),
+  favorite: z.boolean(),
+});
+
+export const docVisitResultSchema = z.object({ docId: z.string() });
 
 export const docCollectionSchema = z.object({
   id: z.string(),
@@ -335,6 +365,7 @@ export const docDetailSchema = z.object({
   followers: z.number(),
   backlinks: z.array(z.object({ id: z.string(), title: z.string() })).default([]),
   access: docAccessLevelSchema,
+  favorite: z.boolean().default(false),
 });
 
 export const docVersionSchema = z.object({

@@ -24,6 +24,8 @@ function doc(id: string, title: string): DocSummary {
     updatedAt: at,
     archivedAt: null,
     excerpt: '',
+    snippet: '',
+    titleMatch: false,
   };
 }
 

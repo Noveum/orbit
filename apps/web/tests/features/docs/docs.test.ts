@@ -217,6 +217,8 @@ describe('doc nesting', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       archivedAt: null,
       excerpt: '',
+      snippet: '',
+      titleMatch: false,
     };
   }
 

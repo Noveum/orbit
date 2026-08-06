@@ -102,7 +102,11 @@ function stubFetch(anchor: DocCommentAnchor | null, access: 'read' | 'write'): v
         };
       }
       if (url.startsWith('/api/docs')) {
-        return { docs: [{ ...doc, excerpt: '' }], collections: [], projects: [] };
+        return {
+          docs: [{ ...doc, excerpt: '', snippet: '', titleMatch: false }],
+          collections: [],
+          projects: [],
+        };
       }
       return {};
     })();

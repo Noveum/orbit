@@ -42,6 +42,8 @@ function summary(id: string, title: string): DocSummary {
     updatedAt: '2020-01-01T00:00:00.000Z',
     archivedAt: null,
     excerpt: '',
+    snippet: '',
+    titleMatch: false,
   };
 }
 

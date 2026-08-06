@@ -49,11 +49,20 @@ export const docAccessSetSchema = z.object({
   grants: z.array(docAccessGrantSchema).max(200),
 });
 
+export const DOC_LIST_LIMIT = 500;
+
 export const docFilterSchema = z.object({
   query: z.string().trim().max(200).optional(),
   collectionId: idSchema.optional(),
   projectId: idSchema.optional(),
   includeArchived: booleanFlag(false),
+  limit: z.coerce.number().int().min(1).max(DOC_LIST_LIMIT).default(DOC_LIST_LIMIT),
+});
+
+export const docFavoriteSchema = z.object({ favorite: z.boolean() });
+
+export const docHomeSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(8),
 });
 
 export const docCollectionCreateSchema = z.object({
@@ -66,4 +75,5 @@ export const docCollectionUpdateSchema = docCollectionCreateSchema.partial();
 export type DocCreateInput = z.infer<typeof docCreateSchema>;
 export type DocUpdateInput = z.infer<typeof docUpdateSchema>;
 export type DocFilterInput = z.infer<typeof docFilterSchema>;
+export type DocHomeInput = z.infer<typeof docHomeSchema>;
 export type DocCollectionCreateInput = z.infer<typeof docCollectionCreateSchema>;

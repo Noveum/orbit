@@ -43,7 +43,8 @@ import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
 const DOC_EXCERPT_LENGTH = 400;
-const DOC_LIST_LIMIT = 500;
+const DOC_SNIPPET_LEAD = 48;
+const DOC_SNIPPET_LENGTH = 320;
 
 export type DocRow = typeof schema.doc.$inferSelect;
 export type DocCollectionRow = typeof schema.docCollection.$inferSelect;
@@ -348,17 +349,44 @@ async function assertPlacement(
 export interface DocListRow extends Omit<DocRow, 'content'> {
   readonly content: string;
   readonly excerpt: string;
+  readonly snippet: string;
+  readonly titleMatch: boolean;
 }
 
-const DOC_LIST_COLUMNS = {
-  ...getTableColumns(schema.doc),
-  content: sql<string>`''`,
-  excerpt: sql<string>`left(${schema.doc.content}, ${DOC_EXCERPT_LENGTH})`,
-};
+function docLikePattern(term: string): string {
+  return `%${term.replace(/[%_\\]/g, (match) => `\\${match}`)}%`;
+}
+
+function titleMatchExpression(term: string | null): SQL<boolean> {
+  if (term === null) return sql<boolean>`false`;
+  return sql<boolean>`(${schema.doc.title} ilike ${docLikePattern(term)})`;
+}
+
+function snippetExpression(term: string | null): SQL<string> {
+  if (term === null) return sql<string>`''`;
+  const at = sql`strpos(lower(${schema.doc.content}), lower(${term}))`;
+  return sql<string>`case
+    when ${at} = 0 then ''
+    when ${at} > ${DOC_SNIPPET_LEAD}
+      then '…' || substr(${schema.doc.content}, ${at} - ${DOC_SNIPPET_LEAD}, ${DOC_SNIPPET_LENGTH})
+    else substr(${schema.doc.content}, 1, ${DOC_SNIPPET_LENGTH})
+  end`;
+}
+
+function docListColumns(term: string | null) {
+  return {
+    ...getTableColumns(schema.doc),
+    content: sql<string>`''`,
+    excerpt: sql<string>`left(${schema.doc.content}, ${DOC_EXCERPT_LENGTH})`,
+    snippet: snippetExpression(term),
+    titleMatch: titleMatchExpression(term),
+  };
+}
 
 export async function listDocs(principal: Principal, input: unknown = {}): Promise<DocListRow[]> {
   assertCan(principal, 'doc:read');
   const filter = docFilterSchema.parse(input);
+  const term = filter.query !== undefined && filter.query.length > 0 ? filter.query : null;
 
   const conditions = [
     eq(schema.doc.organizationId, principal.organizationId),
@@ -369,18 +397,23 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
     conditions.push(eq(schema.doc.collectionId, filter.collectionId));
   }
   if (filter.projectId !== undefined) conditions.push(eq(schema.doc.projectId, filter.projectId));
-  if (filter.query !== undefined && filter.query.length > 0) {
-    const pattern = `%${filter.query.replace(/[%_\\]/g, (match) => `\\${match}`)}%`;
+  if (term !== null) {
+    const pattern = docLikePattern(term);
     const match = or(ilike(schema.doc.title, pattern), ilike(schema.doc.content, pattern));
     if (match !== undefined) conditions.push(match);
   }
 
+  const order =
+    term === null
+      ? [desc(schema.doc.updatedAt)]
+      : [desc(titleMatchExpression(term)), desc(schema.doc.updatedAt)];
+
   return await db
-    .select(DOC_LIST_COLUMNS)
+    .select(docListColumns(term))
     .from(schema.doc)
     .where(and(...conditions))
-    .orderBy(desc(schema.doc.updatedAt))
-    .limit(DOC_LIST_LIMIT);
+    .orderBy(...order)
+    .limit(filter.limit);
 }
 
 export async function listDocCollections(principal: Principal): Promise<DocCollectionRow[]> {
