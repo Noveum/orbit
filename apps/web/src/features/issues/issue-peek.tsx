@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/cn.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { IssueDetailView } from './issue-detail.tsx';
+import { IssueLink } from './issue-link.tsx';
 
 const MIN_WIDTH = 380;
 const DEFAULT_WIDTH = 640;
@@ -40,10 +41,9 @@ function storeWidth(value: number): void {
 export interface IssuePeekProps {
   readonly issue: Issue | undefined;
   readonly onClose: () => void;
-  readonly onOpen: () => void;
 }
 
-export function IssuePeek({ issue, onClose, onOpen }: IssuePeekProps) {
+export function IssuePeek({ issue, onClose }: IssuePeekProps) {
   const [width, setWidth] = useState(readStoredWidth);
 
   if (issue === undefined) return null;
@@ -106,15 +106,14 @@ export function IssuePeek({ issue, onClose, onOpen }: IssuePeekProps) {
               {issue.identifier}
             </span>
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={onOpen}
-                aria-label="Open full page"
+              <IssueLink
+                identifier={issue.identifier}
+                label="Open full page"
                 className="flex items-center gap-1 rounded-sm px-2 py-1 text-2xs text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
               >
                 <ArrowUpRight className="size-3.5" aria-hidden="true" />
                 Open
-              </button>
+              </IssueLink>
               <DialogPrimitive.Close
                 aria-label="Close"
                 className="rounded-sm p-1 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"

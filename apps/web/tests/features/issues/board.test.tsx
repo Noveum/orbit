@@ -183,6 +183,19 @@ describe('Board peek', () => {
     expect(screen.getByTestId('board-column-Todo')).toBeInTheDocument();
   });
 
+  it('offers the full page as a real link rather than a scripted push', () => {
+    renderBoard();
+
+    act(() => {
+      fireEvent.click(cardLink('ENG-1', 'Domain auto join'));
+    });
+
+    const open = within(screen.getByTestId('issue-peek')).getByRole('link', {
+      name: 'Open full page',
+    });
+    expect(open).toHaveAttribute('href', '/issue/ENG-1');
+  });
+
   it('renders a resize handle on the peek', () => {
     renderBoard();
 
