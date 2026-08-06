@@ -138,8 +138,13 @@ describe('command palette', () => {
     expect(push).toHaveBeenCalledWith('/sprints');
 
     push.mockClear();
-    await user.keyboard('gt');
 
+    await user.keyboard('t');
+    expect(toggleTimer).toHaveBeenCalledTimes(1);
+
+    toggleTimer.mockClear();
+
+    await user.keyboard('gt');
     expect(push).toHaveBeenCalledWith('/sprints');
     expect(toggleTimer).not.toHaveBeenCalled();
   });
