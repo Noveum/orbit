@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
+  dispatchSlackMessage,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
@@ -144,6 +145,280 @@ describe('connectSlackChannel', () => {
       expect(await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA])).toHaveLength(
         0,
       );
+    });
+  });
+});
+
+describe('resolveSlackTargets keeps a channel inside the team it is bound to', () => {
+  it('never offers a channel bound to another team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-design',
+        channelName: 'design-private',
+        teamId: fixture.teamB,
+      });
+
+      const forEngineering = await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA]);
+      const forDesign = await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamB]);
+
+      expect(forEngineering).toHaveLength(0);
+      expect(forDesign.map((target) => target.channelId)).toEqual(['C-design']);
+    });
+  });
+
+  it('offers a channel with no team to every team, and only once', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-all',
+        channelName: 'everything',
+        teamId: null,
+      });
+
+      expect(
+        (await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA])).map(
+          (target) => target.channelId,
+        ),
+      ).toEqual(['C-all']);
+      expect(
+        (await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamB])).map(
+          (target) => target.channelId,
+        ),
+      ).toEqual(['C-all']);
+      expect(
+        await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA, fixture.teamB]),
+      ).toHaveLength(1);
+      expect(
+        (await resolveSlackTargets(tx, fixture.organizationId, [])).map(
+          (target) => target.channelId,
+        ),
+      ).toEqual(['C-all']);
+    });
+  });
+
+  it('mixes a workspace wide channel with the asking team own channel', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-all',
+        channelName: 'everything',
+        teamId: null,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-eng',
+        channelName: 'engineering',
+        teamId: fixture.teamA,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-design',
+        channelName: 'design',
+        teamId: fixture.teamB,
+      });
+
+      const targets = await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA]);
+
+      expect(targets.map((target) => target.channelId).sort()).toEqual(['C-all', 'C-eng']);
+      expect(
+        (await resolveSlackTargets(tx, fixture.organizationId, [])).map((t) => t.channelId),
+      ).toEqual(['C-all']);
+    });
+  });
+
+  it('names a channel once even when two integrations bind it to two teams', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const secondIntegration = `${fixture.integrationId}_second`;
+      await tx.insert(integration).values({
+        id: secondIntegration,
+        organizationId: fixture.organizationId,
+        provider: 'slack',
+        externalId: 'T456',
+        connectedById: `usr_${fixture.organizationId.slice(4)}`,
+        credentials: { botToken: 'xoxb-second' },
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-shared',
+        channelName: 'shared',
+        teamId: fixture.teamA,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: secondIntegration,
+        channelId: 'C-shared',
+        channelName: 'shared',
+        teamId: fixture.teamB,
+      });
+
+      const targets = await resolveSlackTargets(tx, fixture.organizationId, [
+        fixture.teamA,
+        fixture.teamB,
+      ]);
+
+      expect(targets.map((target) => target.channelId)).toEqual(['C-shared']);
+    });
+  });
+
+  it('skips a channel that was turned off', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-off',
+        channelName: 'muted',
+        teamId: fixture.teamA,
+      });
+      await tx
+        .update(slackChannelSync)
+        .set({ enabled: false })
+        .where(eq(slackChannelSync.channelId, 'C-off'));
+
+      expect(await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA])).toHaveLength(
+        0,
+      );
+    });
+  });
+});
+
+interface PostLog {
+  readonly channels: string[];
+}
+
+function fetchStub(log: PostLog, failing: readonly string[] = []): typeof globalThis.fetch {
+  return ((_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { channel?: string };
+    const channel = body.channel ?? '';
+    log.channels.push(channel);
+    if (failing.includes(channel)) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ ok: true, channel, ts: '1.0' }), { status: 200 }),
+    );
+  }) as unknown as typeof globalThis.fetch;
+}
+
+describe('dispatchSlackMessage', () => {
+  it('posts to every resolved channel and counts what it delivered', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      for (const [channelId, teamId] of [
+        ['C-eng', fixture.teamA],
+        ['C-all', null],
+        ['C-design', fixture.teamB],
+      ] as const) {
+        await connectSlackChannel(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          channelId,
+          channelName: channelId,
+          teamId,
+        });
+      }
+      const log: PostLog = { channels: [] };
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: fixture.organizationId,
+        teamIds: [fixture.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(2);
+      expect(log.channels.sort()).toEqual(['C-all', 'C-eng']);
+    });
+  });
+
+  it('keeps going and still counts the rest when one channel post fails', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      for (const channelId of ['C-eng', 'C-more']) {
+        await connectSlackChannel(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          channelId,
+          channelName: channelId,
+          teamId: null,
+        });
+      }
+      const log: PostLog = { channels: [] };
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: fixture.organizationId,
+        teamIds: [fixture.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log, ['C-eng']),
+      });
+
+      expect(delivered).toBe(1);
+      expect(log.channels.sort()).toEqual(['C-eng', 'C-more']);
+    });
+  });
+
+  it('posts nothing when the workspace has no slack token', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-eng',
+        channelName: 'engineering',
+        teamId: fixture.teamA,
+      });
+      await tx
+        .update(integration)
+        .set({ credentials: {} })
+        .where(eq(integration.id, fixture.integrationId));
+      const log: PostLog = { channels: [] };
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: fixture.organizationId,
+        teamIds: [fixture.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(0);
+      expect(log.channels).toHaveLength(0);
+    });
+  });
+
+  it('posts nothing when no channel is connected to the asking team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-design',
+        channelName: 'design',
+        teamId: fixture.teamB,
+      });
+      const log: PostLog = { channels: [] };
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: fixture.organizationId,
+        teamIds: [fixture.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(0);
+      expect(log.channels).toHaveLength(0);
     });
   });
 });
