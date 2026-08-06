@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { newMentions, resolveHandles, resolveMentions } from '../../src/notifications/mentions.ts';
-import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../../src/test-support.ts';
 
 let workspace: Workspace;
 

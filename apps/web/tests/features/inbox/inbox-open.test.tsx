@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { InboxItem } from '@/features/inbox/data.ts';
+import { InboxView } from '@/features/inbox/inbox-view.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import type { InboxItem } from './data.ts';
-import { InboxView } from './inbox-view.tsx';
 
 mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,
@@ -38,6 +38,8 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
     id: 'notification_1',
     type: 'mention',
+    entityType: 'issue',
+    entityId: 'issue_1',
     actorName: 'Ada',
     title: 'Mentioned you in ENG-3',
     body: 'Take a look',

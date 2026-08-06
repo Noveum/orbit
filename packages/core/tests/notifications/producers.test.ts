@@ -5,8 +5,13 @@ import { scopes } from '@orbit/shared/events';
 import { createComment } from '../../src/content/comment-service.ts';
 import { createDocComment } from '../../src/content/doc-comment-service.ts';
 import { createDoc, updateDoc } from '../../src/content/doc-service.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../../src/test-support.ts';
 import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
-import { addMember, createWorkspace, resetDatabase, type Workspace } from '../test-support.ts';
 
 let workspace: Workspace;
 let grace: Awaited<ReturnType<typeof addMember>>;

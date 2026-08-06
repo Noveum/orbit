@@ -257,9 +257,9 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   }, [current, setReadState]);
 
   const open = useCallback(
-    (item: InboxItem, index: number) => {
-      setSelected(index);
-      setReadState(item, true);
+    (item: InboxItem) => {
+      setSelectedId(item.id);
+      setReadState(item, true).catch(() => undefined);
     },
     [setReadState],
   );
@@ -375,7 +375,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                 <li key={row.id}>
                   <button
                     type="button"
-                    onClick={() => open(row, index)}
+                    onClick={() => open(row)}
                     aria-current={current?.id === row.id ? 'true' : undefined}
                     className={cn(
                       'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',
