@@ -3,7 +3,17 @@
 import { useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
-import { Archive, Check, FolderInput, Indent, PanelLeft, Pencil, Search } from 'lucide-react';
+import {
+  Archive,
+  Check,
+  Copy,
+  FolderInput,
+  Indent,
+  Lock,
+  PanelLeft,
+  Pencil,
+  Search,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -29,7 +39,13 @@ import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
-import { useArchiveDoc, useDoc, useDocs, useUpdateDoc } from '@/lib/query/use-docs.ts';
+import {
+  useArchiveDoc,
+  useDoc,
+  useDocs,
+  useDuplicateDoc,
+  useUpdateDoc,
+} from '@/lib/query/use-docs.ts';
 import { DocAttachments } from './doc-attachments.tsx';
 import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
@@ -103,7 +119,7 @@ export function descendantIds(docs: readonly DocSummary[], rootId: string): Set<
 
 export interface DocSurfaceProps {
   readonly docId: string;
-  readonly canWrite: boolean;
+  readonly canWriteDocs: boolean;
   readonly canPublish: boolean;
 }
 
@@ -144,9 +160,13 @@ export function DocSurface(props: DocSurfaceProps) {
   return <LoadedDoc key={detail.data.doc.id} detail={detail.data} {...props} />;
 }
 
+function docWriteAccess(canWriteDocs: boolean, detail: DocDetail): boolean {
+  return canWriteDocs && detail.access === 'write' && detail.doc.archivedAt === null;
+}
+
 function LoadedDoc({
   detail,
-  canWrite,
+  canWriteDocs,
   canPublish,
 }: DocSurfaceProps & { readonly detail: DocDetail }) {
   const router = useRouter();
@@ -155,7 +175,9 @@ function LoadedDoc({
   const { toggle, setUnsavedDocId } = useDocsTree();
   const update = useUpdateDoc(detail.doc.id);
   const archive = useArchiveDoc();
+  const duplicate = useDuplicateDoc();
   const [status, setStatus] = useState<SaveStatus>('saved');
+  const canWrite = docWriteAccess(canWriteDocs, detail);
 
   useEffect(() => {
     setUnsavedDocId(canWrite && status !== 'saved' ? detail.doc.id : null);
@@ -193,7 +215,35 @@ function LoadedDoc({
           </span>
         ) : null}
 
+        {canWrite || !canWriteDocs ? null : (
+          <span
+            data-testid="doc-read-only"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5 text-2xs text-muted"
+          >
+            <Lock className="size-3" aria-hidden="true" />
+            {detail.doc.archivedAt === null ? 'Read only' : 'Archived'}
+          </span>
+        )}
+
         <DocExportMenu title={detail.doc.title} content={detail.doc.content} />
+
+        {canWriteDocs ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Duplicate doc"
+            data-testid="doc-duplicate"
+            className="size-7 px-0"
+            disabled={duplicate.isPending}
+            onClick={() => {
+              duplicate.mutate(detail.doc.id, {
+                onSuccess: (copy) => router.push(`/docs/${copy.id}`),
+              });
+            }}
+          >
+            <Copy className="size-4" aria-hidden="true" />
+          </Button>
+        ) : null}
 
         <DocHistory docId={detail.doc.id} canWrite={canWrite} />
 

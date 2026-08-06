@@ -19,7 +19,7 @@ export default async function DocPage({ params }: { params: Promise<{ id: string
     <HydrationBoundary state={await dehydratedDoc(principal, id)}>
       <DocSurface
         docId={id}
-        canWrite={can(principal, 'doc:write')}
+        canWriteDocs={can(principal, 'doc:write')}
         canPublish={can(principal, 'doc:publish')}
       />
     </HydrationBoundary>

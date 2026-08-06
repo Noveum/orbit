@@ -323,6 +323,8 @@ export const docListSchema = z.object({
 
 export type DocList = z.infer<typeof docListSchema>;
 
+export const docAccessLevelSchema = z.enum(['read', 'write']).catch('read');
+
 export const docDetailSchema = z.object({
   doc: docSchema,
   contentHtml: z.string(),
@@ -330,6 +332,7 @@ export const docDetailSchema = z.object({
   author: z.object({ id: z.string(), name: z.string(), image: z.string().nullable() }),
   followers: z.number(),
   backlinks: z.array(z.object({ id: z.string(), title: z.string() })).default([]),
+  access: docAccessLevelSchema,
 });
 
 export const docVersionSchema = z.object({
