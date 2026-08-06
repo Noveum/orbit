@@ -163,11 +163,7 @@ export async function seedStarterContent(
       buildSyncAction({
         syncId: params.syncId,
         organizationId: params.organizationId,
-        scopes: [
-          scopes.organization(params.organizationId),
-          scopes.team(params.team.id),
-          scopes.project(project.id),
-        ],
+        scopes: [scopes.team(params.team.id), scopes.project(project.id)],
         action: 'insert',
         model: 'project',
         modelId: project.id,
