@@ -1,7 +1,8 @@
 import { and, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
-import { isRestricted, ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { authMessageSchema } from '@orbit/shared/events';
 import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
+import { canReadDoc } from '@orbit/shared/policy';
 import { z } from 'zod';
 
 export interface ConnectionPrincipal {
@@ -184,6 +185,7 @@ async function projectScopeAllowed(projectId: string, principal: ConnectionPrinc
 async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
   const rows = await db
     .select({
+      id: schema.doc.id,
       organizationId: schema.doc.organizationId,
       visibility: schema.doc.visibility,
       authorId: schema.doc.authorId,
@@ -192,10 +194,8 @@ async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
     .where(eq(schema.doc.id, docId))
     .limit(1);
   const doc = rows[0];
-  if (doc === undefined || doc.organizationId !== principal.organizationId) return false;
-  if (principal.role === 'admin') return true;
-  if (doc.authorId === principal.userId) return true;
-  if (!isRestricted(doc.visibility)) return true;
+  if (doc === undefined) return false;
+  if (canReadDoc(principal, doc, [])) return true;
 
   const grants = await db
     .select({ docId: schema.docAccess.docId })
@@ -218,7 +218,11 @@ async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
       ),
     )
     .limit(1);
-  return grants.length > 0;
+  return canReadDoc(
+    principal,
+    doc,
+    grants.map((row) => row.docId),
+  );
 }
 
 export async function authorizeScope(

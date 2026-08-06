@@ -19,7 +19,7 @@ import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/e
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan } from '@orbit/shared/policy';
+import { assertCan, canReadDoc } from '@orbit/shared/policy';
 import { docUrl, slugify, truncate } from '@orbit/shared/utils';
 import {
   docAccessSetSchema,
@@ -156,13 +156,6 @@ export function docReadFilter(principal: Principal): SQL {
     inArray(schema.doc.id, grants),
   );
   return clause ?? sql`false`;
-}
-
-export function canReadDoc(principal: Principal, doc: DocRow, grants: readonly string[]): boolean {
-  if (principal.role === 'admin') return true;
-  if (doc.authorId === principal.userId) return true;
-  if (!isRestricted(doc.visibility)) return true;
-  return grants.includes(doc.id);
 }
 
 async function grantedDocIds(
