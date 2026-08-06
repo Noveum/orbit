@@ -36,7 +36,12 @@ export interface ViewRecord {
 
 const VIEW_FAVORITE_ENTITY = 'view';
 
+function isShared(row: ViewRow): boolean {
+  return row.shared === 'true';
+}
+
 function viewScopes(row: ViewRow): string[] {
+  if (!isShared(row)) return [scopes.user(row.ownerId)];
   return [scopes.organization(row.organizationId), scopes.user(row.ownerId)];
 }
 
@@ -202,9 +207,33 @@ export async function updateView(
           data: view,
           actor,
         }),
+        ...unshareActions({ syncId, actor, before: current, after: view }),
       ],
     };
   });
+}
+
+interface UnshareInput {
+  readonly syncId: number;
+  readonly actor: Awaited<ReturnType<typeof principalActor>>;
+  readonly before: ViewRow;
+  readonly after: ViewRow;
+}
+
+function unshareActions(input: UnshareInput): SyncAction[] {
+  if (!isShared(input.before) || isShared(input.after)) return [];
+  return [
+    buildSyncAction({
+      syncId: input.syncId,
+      organizationId: input.after.organizationId,
+      scopes: [scopes.organization(input.after.organizationId)],
+      action: 'delete',
+      model: 'view',
+      modelId: input.after.id,
+      data: { id: input.after.id },
+      actor: input.actor,
+    }),
+  ];
 }
 
 export async function deleteView(principal: Principal, viewId: string): Promise<SyncAction[]> {
