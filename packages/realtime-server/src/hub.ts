@@ -26,6 +26,7 @@ import {
   memberDeleteSchema,
   membershipStillValid,
   readTicketFrame,
+  refreshedPrincipal,
   sessionStillValid,
 } from './auth.ts';
 import { Connection, type SocketState } from './connection.ts';
@@ -209,8 +210,46 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     }
   }
 
+  async function revalidateReach(connection: Connection): Promise<void> {
+    const next = await refreshedPrincipal(connection.principal);
+    if (next === null) {
+      connections.delete(connection.id);
+      connection.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE, 'membership_revoked');
+      return;
+    }
+    connection.adoptPrincipal(next);
+    const dropped: string[] = [];
+    for (const scope of connection.heldScopes()) {
+      if (await authorizeScope(scope, next)) continue;
+      dropped.push(scope);
+    }
+    if (dropped.length === 0) return;
+    connection.removeScopes(dropped);
+    logger.info('dropped scopes the reader may no longer reach', {
+      connectionId: connection.id,
+      dropped,
+    });
+  }
+
+  function revalidateMembershipReach(action: SyncAction): void {
+    if (action.model !== 'team_member' && action.model !== 'member') return;
+    if (action.model === 'member' && action.action === 'delete') return;
+    for (const connection of connections.values()) {
+      if (connection.organizationId !== action.organizationId) continue;
+      revalidateReach(connection).catch((error: unknown) => {
+        connections.delete(connection.id);
+        connection.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE, 'membership_revoked');
+        logger.error('reach revalidation failed, closing to fail closed', {
+          connectionId: connection.id,
+          ...errorFields(error),
+        });
+      });
+    }
+  }
+
   function revalidateAffected(action: SyncAction): void {
     revalidateDocScopes(action);
+    revalidateMembershipReach(action);
     if (action.model !== 'member' || action.action !== 'delete') return;
     const removed = memberDeleteSchema.safeParse(action.data);
     if (!removed.success) return;

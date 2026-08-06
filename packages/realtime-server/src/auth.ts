@@ -154,6 +154,29 @@ export async function membershipStillValid(principal: ConnectionPrincipal): Prom
   return rows.length > 0;
 }
 
+export async function refreshedPrincipal(
+  principal: ConnectionPrincipal,
+): Promise<ConnectionPrincipal | null> {
+  const rows = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, principal.organizationId),
+        eq(schema.member.userId, principal.userId),
+      ),
+    )
+    .limit(1);
+  const membership = rows[0];
+  if (membership === undefined) return null;
+  const role = roleSchema.parse(membership.role);
+  return {
+    ...principal,
+    role,
+    teamIds: await loadTeamIds(principal.userId, principal.organizationId, role),
+  };
+}
+
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
   const rows = await db
     .select({ organizationId: schema.issue.organizationId, teamId: schema.issue.teamId })

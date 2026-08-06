@@ -671,11 +671,7 @@ export async function completeCycle(
           buildSyncAction({
             syncId,
             organizationId: principal.organizationId,
-            scopes: [
-              scopes.organization(principal.organizationId),
-              scopes.team(row.teamId),
-              scopes.issue(row.id),
-            ],
+            scopes: issueScopes(row),
             action: 'update',
             model: 'issue',
             modelId: row.id,

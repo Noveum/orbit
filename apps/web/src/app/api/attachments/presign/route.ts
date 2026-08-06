@@ -38,7 +38,7 @@ export async function POST(request: Request): Promise<Response> {
       .returning();
     const attachment = requireRow(created, 'That upload could not be registered.');
 
-    const scope = [scopes.organization(attachment.organizationId)];
+    const scope: string[] = [];
     if (attachment.parentType === 'doc') scope.push(scopes.doc(attachment.parentId));
     if (attachment.parentType === 'issue') scope.push(scopes.issue(attachment.parentId));
     if (attachment.parentType === 'project') scope.push(scopes.project(attachment.parentId));
@@ -50,6 +50,7 @@ export async function POST(request: Request): Promise<Response> {
         .limit(1);
       if (comment !== undefined) scope.push(scopes.issue(comment.issueId));
     }
+    if (scope.length === 0) scope.push(scopes.user(attachment.uploadedById));
 
     await publish([
       buildSyncAction({

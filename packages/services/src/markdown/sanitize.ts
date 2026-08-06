@@ -150,12 +150,22 @@ function isSafeUrl(raw: string): boolean {
   return SAFE_SCHEMES.has(value.slice(0, colon).toLowerCase());
 }
 
-function keptAttributes(present: readonly (readonly [string, string])[]): Map<string, string> {
+const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+function attributeAllowed(tag: string, key: string): boolean {
+  if (key === 'id') return HEADING_TAGS.has(tag);
+  return ALLOWED_ATTR.has(key);
+}
+
+function keptAttributes(
+  tag: string,
+  present: readonly (readonly [string, string])[],
+): Map<string, string> {
   const keep = new Map<string, string>();
   for (const [name, value] of present) {
     const key = name.toLowerCase();
     if (keep.has(key)) continue;
-    if (!ALLOWED_ATTR.has(key)) continue;
+    if (!attributeAllowed(tag, key)) continue;
     if (URL_ATTR.has(key) && !isSafeUrl(value)) continue;
     keep.set(key, value);
   }
@@ -186,7 +196,7 @@ function bunSanitizer(): HTMLRewriter {
         for (const attribute of element.attributes) present.push(attribute);
         for (const [name] of present) element.removeAttribute(name);
 
-        const keep = keptAttributes(present);
+        const keep = keptAttributes(tag, present);
         for (const [key, value] of keep) element.setAttribute(key, value);
 
         if (tag !== 'a') return;
@@ -257,7 +267,7 @@ function cleanDomNode(node: ChildNode): void {
     ]);
     for (const [name] of present) element.removeAttribute(name);
 
-    const keep = keptAttributes(present);
+    const keep = keptAttributes(tag, present);
     for (const [key, value] of keep) element.setAttribute(key, value);
 
     if (tag === 'a' && externalLinkTarget(keep)) {
