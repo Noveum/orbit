@@ -3,6 +3,7 @@ import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { docReadFilter } from '../content/doc-service.ts';
+import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
 import { buildSyncAction } from './publisher.ts';
 
 export interface SyncCatchupResult {
@@ -187,10 +188,10 @@ const LOADERS: Record<SyncModel, Loader> = {
             .orderBy(asc(schema.invitation.syncId))
             .limit(limit)
         ).map((row) => ({
-          modelId: row.id,
+          modelId: inviteReference(row.id),
           syncId: row.syncId,
           scopes: [scopes.organization(row.organizationId)],
-          data: row,
+          data: inviteAnnouncement(row),
         }))
       : [],
 

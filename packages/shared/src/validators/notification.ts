@@ -12,6 +12,7 @@ export const notificationPreferencesUpdateSchema = z.object({
   preferences: z.array(notificationPreferenceSchema).min(1).max(200),
   quietHoursEnabled: z.boolean().optional(),
   urgentBypassEnabled: z.boolean().optional(),
+  digestEnabled: z.boolean().optional(),
 });
 
 export const notificationReadSchema = z.object({

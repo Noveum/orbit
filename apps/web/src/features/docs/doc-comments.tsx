@@ -1,6 +1,6 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
+import { docCommentAnchorId, relativeTime } from '@orbit/shared/utils';
 import { useMemo, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -16,6 +16,7 @@ import {
   useUpdateDocComment,
 } from '@/lib/query/use-doc-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
+import { useHashScroll } from './use-hash-scroll.ts';
 
 function sortByCreatedAt(comments: readonly DocComment[]): DocComment[] {
   return [...comments].sort((left, right) =>
@@ -36,6 +37,7 @@ export function DocComments({ docId, members }: DocCommentsProps) {
     () => new Map(members.map((member) => [member.id, member])),
     [members],
   );
+  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
   const roots = sortByCreatedAt(comments.filter((entry) => entry.comment.parentId === null));
   const repliesOf = (parentId: string) =>
@@ -104,7 +106,11 @@ function DocCommentItem({ docId, entry, author, members, isReply = false }: DocC
   const mine = entry.comment.authorId === currentUserId;
 
   return (
-    <article data-testid={`doc-comment-${entry.comment.id}`} className="group flex gap-2.5">
+    <article
+      id={docCommentAnchorId(entry.comment.id)}
+      data-testid={`doc-comment-${entry.comment.id}`}
+      className="group flex scroll-mt-24 gap-2.5"
+    >
       <Avatar name={author?.name ?? 'Unknown'} src={author?.image ?? null} size="md" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center gap-2 text-2xs">

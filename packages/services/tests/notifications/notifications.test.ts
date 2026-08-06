@@ -60,6 +60,7 @@ function eventFor(fixture: Fixture, overrides: Partial<NotificationEvent> = {}):
   return {
     organizationId: fixture.organizationId,
     type: 'comment_created',
+    reason: 'commented',
     actor: { type: 'user', id: fixture.actorId, name: 'Actor' },
     entityType: 'issue',
     entityId: 'iss_1',
@@ -92,6 +93,77 @@ describe('notifyMany', () => {
         .where(eq(notification.organizationId, fixture.organizationId));
       expect(rows).toHaveLength(2);
       expect(rows[0]?.deliveredChannels).toEqual(['inbox', 'email', 'slack']);
+    });
+  });
+
+  it('addresses each delta to its recipient and to nobody else', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [eventFor(fixture, { type: 'mention' })]);
+
+      expect(outcome.actions).toHaveLength(2);
+      for (const action of outcome.actions) {
+        expect(action.scopes).toEqual([`user:${action.data['userId'] as string}`]);
+      }
+      const recipients = outcome.actions.map((action) => action.data['userId']);
+      expect(new Set(recipients)).toEqual(new Set([fixture.adaId, fixture.graceId]));
+    });
+  });
+
+  it('records the reason the notification was raised', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [
+        eventFor(fixture, { type: 'mention', reason: 'mentioned', userIds: [fixture.adaId] }),
+      ]);
+      expect(outcome.notifications[0]?.reason).toBe('mentioned');
+      expect(outcome.actions[0]?.data['reason']).toBe('mentioned');
+    });
+  });
+
+  it('keeps a type out of the inbox when the inbox channel is off', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(notificationPreference).values({
+        id: `np_${randomUUIDv7()}`,
+        userId: fixture.adaId,
+        channel: 'inbox',
+        type: 'comment_created',
+        enabled: false,
+      });
+      const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
+
+      expect(outcome.notifications[0]?.deliveredChannels).toEqual(['email', 'slack']);
+      expect(outcome.actions).toHaveLength(0);
+      const page = await listInbox(tx, {
+        userId: fixture.adaId,
+        organizationId: fixture.organizationId,
+      });
+      expect(page.items).toHaveLength(0);
+      expect(page.unreadCount).toBe(0);
+      expect(await unreadCount(tx, fixture.adaId, fixture.organizationId)).toBe(0);
+      expect(await unreadCounters(tx, fixture.adaId, fixture.organizationId)).toEqual({
+        total: 0,
+        mentions: 0,
+      });
+    });
+  });
+
+  it('writes nothing at all when every channel is off for that type', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(notificationPreference).values(
+        NOTIFICATION_CHANNELS.map((channel) => ({
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel,
+          type: 'comment_created',
+          enabled: false,
+        })),
+      );
+      const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
+      expect(outcome.notifications).toHaveLength(0);
+      expect(outcome.actions).toHaveLength(0);
     });
   });
 

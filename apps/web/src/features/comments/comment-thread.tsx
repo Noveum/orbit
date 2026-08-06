@@ -1,6 +1,6 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
+import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
 import { SmilePlus } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
@@ -11,6 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
+import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
@@ -54,6 +55,7 @@ export interface CommentThreadProps {
 export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
   const create = useCreateComment(issueId);
   const memberById = new Map(members.map((member) => [member.id, member]));
+  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
   const timeline = buildTimeline(activity, comments);
   const repliesOf = (parentId: string) =>
@@ -136,7 +138,11 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
   const summary = summarizeReactions(entry.reactions, currentUserId);
 
   return (
-    <article data-testid={`comment-${entry.comment.id}`} className="group flex gap-2.5">
+    <article
+      id={commentAnchorId(entry.comment.id)}
+      data-testid={`comment-${entry.comment.id}`}
+      className="group flex scroll-mt-24 gap-2.5"
+    >
       <Avatar name={author?.name ?? 'Unknown'} src={author?.image ?? null} size="md" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center gap-2 text-2xs">

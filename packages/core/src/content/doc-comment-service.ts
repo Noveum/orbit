@@ -1,10 +1,12 @@
 import { and, asc, db, eq, isNull, schema, sql } from '@orbit/db';
+import type { NotificationEvent } from '@orbit/services/notifications';
 import { isRestricted } from '@orbit/shared/constants';
 import { forbidden, validationFailed } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
+import { docCommentUrl, truncate } from '@orbit/shared/utils';
 import {
   commentCreateSchema,
   commentUpdateSchema,
@@ -12,6 +14,14 @@ import {
 } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
+import { dedupeAudience, docReaderIds, restrictAudience } from '../notifications/audience.ts';
+import { resolveMentions } from '../notifications/mentions.ts';
+import {
+  docCommentThreadAuthors,
+  docSubscriberIds,
+  NOTIFICATION_BODY_LIMIT,
+  notifyRecipients,
+} from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { type DocRow, loadReadableDoc } from './doc-service.ts';
@@ -118,6 +128,67 @@ export interface SavedDocComment {
   readonly actions: SyncAction[];
 }
 
+async function docCommentNotifications(
+  tx: Executor,
+  principal: Principal,
+  doc: DocRef,
+  comment: DocCommentRow,
+  actor: Actor,
+): Promise<SyncAction[]> {
+  const [mentioned, repliedTo, subscribers] = await Promise.all([
+    resolveMentions(tx, principal.organizationId, comment.body, null),
+    comment.parentId === null
+      ? Promise.resolve<string[]>([])
+      : docCommentThreadAuthors(tx, comment.parentId),
+    docSubscriberIds(tx, doc.id),
+  ]);
+
+  const audience = dedupeAudience(
+    [
+      {
+        type: 'mention' as const,
+        reason: 'mentioned' as const,
+        title: `Mentioned you in ${doc.title}`,
+        userIds: mentioned,
+      },
+      {
+        type: 'comment_replied' as const,
+        reason: 'commented' as const,
+        title: `New reply on ${doc.title}`,
+        userIds: repliedTo,
+      },
+      {
+        type: 'comment_created' as const,
+        reason: 'subscribed' as const,
+        title: `New comment on ${doc.title}`,
+        userIds: subscribers,
+      },
+    ],
+    [principal.userId],
+  );
+
+  const readers = await docReaderIds(
+    tx,
+    doc,
+    audience.flatMap((group) => group.userIds),
+  );
+
+  const events: NotificationEvent[] = restrictAudience(audience, readers).map((group) => ({
+    organizationId: doc.organizationId,
+    type: group.type,
+    reason: group.reason,
+    actor,
+    entityType: 'doc_comment',
+    entityId: comment.id,
+    userIds: [...group.userIds],
+    title: group.title,
+    body: truncate(comment.body, NOTIFICATION_BODY_LIMIT),
+    url: docCommentUrl(doc.id, comment.id),
+  }));
+
+  return await notifyRecipients(tx, events);
+}
+
 export async function createDocComment(
   principal: Principal,
   docId: string,
@@ -155,12 +226,17 @@ export async function createDocComment(
       .returning();
     const comment = requireRow(created, 'The comment could not be created.');
 
+    const notifications = await docCommentNotifications(tx, principal, doc, comment, actor);
+
     await tx
       .insert(schema.docSubscription)
       .values({ id: newId(), docId, userId: principal.userId })
       .onConflictDoNothing();
 
-    return { comment, actions: [docCommentAction(comment, doc, syncId, actor, 'insert')] };
+    return {
+      comment,
+      actions: [docCommentAction(comment, doc, syncId, actor, 'insert'), ...notifications],
+    };
   });
 }
 

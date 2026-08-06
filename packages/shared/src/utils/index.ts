@@ -63,6 +63,30 @@ export function extractMentions(markdown: string): string[] {
   return [...found];
 }
 
+export function commentAnchorId(commentId: string): string {
+  return `comment-${commentId}`;
+}
+
+export function docCommentAnchorId(commentId: string): string {
+  return `doc-comment-${commentId}`;
+}
+
+export function issueUrl(identifier: string): string {
+  return `/issue/${identifier}`;
+}
+
+export function issueCommentUrl(identifier: string, commentId: string): string {
+  return `${issueUrl(identifier)}#${commentAnchorId(commentId)}`;
+}
+
+export function docUrl(docId: string): string {
+  return `/docs/${docId}`;
+}
+
+export function docCommentUrl(docId: string, commentId: string): string {
+  return `${docUrl(docId)}#${docCommentAnchorId(commentId)}`;
+}
+
 export function extractIssueIdentifiers(text: string): string[] {
   const found = new Set<string>();
   const pattern = /\b([A-Z][A-Z0-9]{1,5}-\d+)\b/g;

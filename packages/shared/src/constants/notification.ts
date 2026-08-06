@@ -38,3 +38,17 @@ export function isPullRequestNotification(type: NotificationType): boolean {
 
 export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'push'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
+
+export const NOTIFICATION_REASONS = [
+  'assigned',
+  'mentioned',
+  'subscribed',
+  'commented',
+  'state_changed',
+  'review_requested',
+  'review_approved',
+  'pull_request_merged',
+  'due_soon',
+  'manual',
+] as const;
+export type NotificationReason = (typeof NOTIFICATION_REASONS)[number];

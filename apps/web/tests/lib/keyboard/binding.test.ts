@@ -224,6 +224,42 @@ describe('selectMatch priority', () => {
     expect(selectMatch([closeMenu, clearSelection], buffer, false)?.id).toBe('menu');
     expect(selectMatch([clearSelection], buffer, false)?.id).toBe('selection');
   });
+
+  it('lets a two step global sequence beat a single key surface binding', () => {
+    const goToInbox = entry('g i', { id: 'inbox' });
+    const setPriority = entry('i', {
+      id: 'priority',
+      scope: 'issues',
+      priority: HOTKEY_PRIORITY.surface,
+    });
+    const buffer = press(press([], 'g', 0), 'i', 10);
+
+    expect(selectMatch([goToInbox, setPriority], buffer, false)?.id).toBe('inbox');
+    expect(selectMatch([setPriority, goToInbox], buffer, false)?.id).toBe('inbox');
+  });
+
+  it('still gives the bare key to the surface when no sequence is in flight', () => {
+    const goToInbox = entry('g i', { id: 'inbox' });
+    const setPriority = entry('i', {
+      id: 'priority',
+      scope: 'issues',
+      priority: HOTKEY_PRIORITY.surface,
+    });
+
+    expect(selectMatch([goToInbox, setPriority], press([], 'i', 0), false)?.id).toBe('priority');
+  });
+
+  it('lets a two step sequence beat a single key layer binding', () => {
+    const goToProjects = entry('g p', { id: 'projects' });
+    const menuPreview = entry('p', {
+      id: 'preview',
+      scope: 'filters',
+      priority: HOTKEY_PRIORITY.layer,
+    });
+    const buffer = press(press([], 'g', 0), 'p', 10);
+
+    expect(selectMatch([goToProjects, menuPreview], buffer, false)?.id).toBe('projects');
+  });
 });
 
 describe('activatesFocusedControl', () => {

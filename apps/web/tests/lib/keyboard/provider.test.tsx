@@ -1,7 +1,12 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { HOTKEY_PRIORITY, HotkeyProvider, useHotkey } from '../../../src/lib/keyboard/index.ts';
+import {
+  HOTKEY_PRIORITY,
+  HotkeyProvider,
+  useHotkey,
+  useHotkeyList,
+} from '../../../src/lib/keyboard/index.ts';
 
 interface SurfaceProps {
   readonly onEnter: () => void;
@@ -161,5 +166,71 @@ describe('scoped bindings', () => {
     const { onGlobal, onDocs } = await pressC(false);
     expect(onDocs).toHaveBeenCalledTimes(1);
     expect(onGlobal).not.toHaveBeenCalled();
+  });
+});
+
+function AdvertisedBindings() {
+  const entries = useHotkeyList();
+  return (
+    <div data-testid="advertised">
+      {entries
+        .filter((entry) => entry.advertised)
+        .map((entry) => entry.binding)
+        .join(' ')}
+    </div>
+  );
+}
+
+function ListSurface({ onNext, onExtend }: { onNext: () => void; onExtend: () => void }) {
+  useHotkey('j', onNext, {
+    label: 'Next issue',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['down'],
+  });
+  useHotkey('shift+j', onExtend, {
+    label: 'Extend the selection down',
+    section: 'Issues',
+    scope: 'issues',
+    aliases: ['shift+down'],
+  });
+  return null;
+}
+
+describe('binding aliases', () => {
+  function renderList() {
+    const user = userEvent.setup();
+    const onNext = mock();
+    const onExtend = mock();
+    render(
+      <HotkeyProvider>
+        <ListSurface onNext={onNext} onExtend={onExtend} />
+      </HotkeyProvider>,
+    );
+    return { user, onNext, onExtend };
+  }
+
+  it('runs the same handler for the letter and the arrow', async () => {
+    const { user, onNext } = renderList();
+    await user.keyboard('j');
+    await user.keyboard('{ArrowDown}');
+    expect(onNext).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the shifted alias separate from the plain one', async () => {
+    const { user, onNext, onExtend } = renderList();
+    await user.keyboard('{Shift>}{ArrowDown}{/Shift}');
+    expect(onExtend).toHaveBeenCalledTimes(1);
+    expect(onNext).not.toHaveBeenCalled();
+  });
+
+  it('advertises the binding once, not once per alias', () => {
+    render(
+      <HotkeyProvider>
+        <ListSurface onNext={mock()} onExtend={mock()} />
+        <AdvertisedBindings />
+      </HotkeyProvider>,
+    );
+    expect(screen.getByTestId('advertised').textContent).toBe('j shift+j');
   });
 });

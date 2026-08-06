@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
@@ -92,6 +93,20 @@ async function insertInvite(
   return requireRow(row, 'The invite could not be created.');
 }
 
+export function inviteReference(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
+}
+
+export function inviteAnnouncement(invitation: InvitationRow): Record<string, unknown> {
+  return {
+    id: inviteReference(invitation.id),
+    organizationId: invitation.organizationId,
+    status: invitation.status,
+    syncId: invitation.syncId,
+    createdAt: invitation.createdAt,
+  };
+}
+
 function inviteAction(
   invitation: InvitationRow,
   syncId: number,
@@ -104,8 +119,8 @@ function inviteAction(
     scopes: [scopes.organization(invitation.organizationId)],
     action,
     model: 'invitation',
-    modelId: invitation.id,
-    data: invitation,
+    modelId: inviteReference(invitation.id),
+    data: inviteAnnouncement(invitation),
     actor,
   });
 }
