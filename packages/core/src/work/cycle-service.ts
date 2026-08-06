@@ -399,7 +399,6 @@ async function cycleMembershipMoves(
         eq(schema.issueActivity.organizationId, cycle.organizationId),
         eq(schema.issueActivity.field, 'cycleId'),
         gte(schema.issueActivity.createdAt, cycle.startsAt),
-        lt(schema.issueActivity.createdAt, windowEnd),
         sql`${cycle.id} in (${ACTIVITY_FROM_CYCLE}, ${ACTIVITY_TO_CYCLE})`,
       ),
     )

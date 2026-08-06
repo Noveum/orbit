@@ -403,6 +403,73 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
     expect(progress.points).toEqual({ scope: 8, started: 3, completed: 5 });
     expect(progress.burnUp.at(-1)).toMatchObject({ scopePoints: 8, completedPoints: 5 });
   });
+
+  it('keeps the days an issue sat in the sprint when it is pulled out after the sprint ends', async () => {
+    const cycle = await firstCycle();
+    const carried = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Carried the whole sprint',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    await updateIssue(workspace.admin, carried.issue.id, { cycleId: null });
+    await backdateCycleMoves(carried.issue.id, [intoSprint(cycle, 19, 9)]);
+
+    const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
+    expect(progress.burnUp).toHaveLength(15);
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(5));
+    expect(progress.changes.removed).toBe(0);
+    expect(progress.changes.removedPoints).toBe(0);
+  });
+
+  it('leaves work parked in the sprint after it ended out of every day it ran', async () => {
+    const cycle = await firstCycle();
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Planned',
+      cycleId: cycle.id,
+      estimate: 2,
+    });
+    const late = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked here once the sprint was over',
+      estimate: 5,
+    });
+    await updateIssue(workspace.admin, late.issue.id, { cycleId: cycle.id });
+    await backdateCycleMoves(late.issue.id, [intoSprint(cycle, 19, 9)]);
+
+    const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(2));
+    expect(progress.changes.added).toBe(0);
+    expect(progress.changes.addedPoints).toBe(0);
+  });
+
+  it('reports work pulled out before the sprint ended as removed, and stops counting it that day', async () => {
+    const cycle = await firstCycle();
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Stayed',
+      cycleId: cycle.id,
+      estimate: 2,
+    });
+    const pulled = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Pulled out before the end',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    await updateIssue(workspace.admin, pulled.issue.id, { cycleId: null });
+    await backdateCycleMoves(pulled.issue.id, [intoSprint(cycle, 12, 9)]);
+
+    const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual([
+      7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 2, 2, 2,
+    ]);
+    expect(progress.changes.removed).toBe(1);
+    expect(progress.changes.removedPoints).toBe(5);
+  });
 });
 
 describe('completeCycle', () => {
