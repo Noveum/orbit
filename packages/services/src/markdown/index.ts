@@ -8,7 +8,7 @@ export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 const UNSAFE_URL = /^\s*(javascript|vbscript|file|data):/i;
 const BLOCK_END = /<\/(p|h[1-6]|li|blockquote|pre|tr|table|ul|ol)>/gi;
 const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
-const HEADING_TAG = /<h([1-3])((?:\s[^>]*)?)>([\s\S]*?)<\/h\1>/gi;
+const HEADING_TAG = /<h([1-3])((?:[^>"]|"[^"]*")*)>([\s\S]*?)<\/h\1>/gi;
 const EXISTING_ID = /\sid="[^"]*"/gi;
 
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false });
@@ -38,7 +38,7 @@ function uniqueHeadingId(text: string, used: Map<string, number>): string {
 
 export function renderMarkdownWithHeadingIds(source: string): string {
   const used = new Map<string, number>();
-  return renderMarkdown(source).replace(
+  const withIds = renderMarkdown(source).replace(
     HEADING_TAG,
     (match: string, level: string, attrs: string, inner: string) => {
       const text = decodeEntities(htmlToText(inner)).replace(/\s+/g, ' ').trim();
@@ -47,6 +47,7 @@ export function renderMarkdownWithHeadingIds(source: string): string {
       return `<h${level}${attrs.replace(EXISTING_ID, '')} id="${id}">${inner}</h${level}>`;
     },
   );
+  return sanitizeHtml(withIds);
 }
 
 export function renderPlainText(source: string): string {

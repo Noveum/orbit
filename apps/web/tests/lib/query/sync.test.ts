@@ -265,6 +265,7 @@ function docComment(overrides: Partial<DocComment['comment']> = {}): DocComment 
       authorId: 'user_1',
       parentId: null,
       body: 'First',
+      anchor: null,
       editedAt: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -302,6 +303,33 @@ describe('applyDocCommentDelta', () => {
     const list = [docComment({ syncId: 9 })];
     const stale = { ...docComment({ body: 'Old', syncId: 8 }).comment };
     expect(applyDocCommentDelta(list, action({ model: 'doc_comment', data: stale }))).toBe(list);
+  });
+
+  it('carries the anchor of a comment somebody else attached to a passage', () => {
+    const anchor = { quote: 'the migration', prefix: 'blocked on ', suffix: '.', start: 24 };
+    const next = applyDocCommentDelta(
+      [docComment()],
+      action({
+        model: 'doc_comment',
+        action: 'insert',
+        data: { ...docComment({ id: 'doc_comment_2', body: 'Which one?' }).comment, anchor },
+      }),
+    );
+
+    expect(next[1]?.comment.anchor).toEqual(anchor);
+    expect(next[0]?.comment.anchor).toBeNull();
+  });
+
+  it('reads an older doc comment that arrives with no anchor field at all', () => {
+    const { anchor: _dropped, ...legacy } = docComment({ id: 'doc_comment_3' }).comment;
+
+    const next = applyDocCommentDelta(
+      [],
+      action({ model: 'doc_comment', action: 'insert', data: legacy }),
+    );
+
+    expect(next).toHaveLength(1);
+    expect(next[0]?.comment.anchor).toBeNull();
   });
 });
 

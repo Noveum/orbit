@@ -326,17 +326,58 @@ describe('planning', () => {
     });
     expect(issueOf(moved).cycleId).toBe(cycle.id);
 
-    const progress = await admin.result('cycle_progress', {
-      team: workspace.teamKey,
-      cycle: 'active',
-    });
-    expect(progress['scope']).toBeGreaterThanOrEqual(1);
-
     const removed = await admin.result('move_to_cycle', {
       issue: created.identifier,
       cycle: null,
     });
     expect(issueOf(removed).cycleId).toBeNull();
+  });
+
+  it('reports the scope, the points and the burn up of a sprint that is three days old', async () => {
+    const created = await admin.result('create_team', { name: 'Burn Up', key: 'BURN' });
+    const teamKey = (created['team'] as { key: string }).key;
+    const opened = await admin.result('active_cycle', { team: teamKey });
+    const sprint = opened['cycle'] as { id: string; startsAt: string };
+    await admin.result('update_cycle', {
+      cycleId: sprint.id,
+      startsAt: new Date(Date.parse(sprint.startsAt) - 3 * 86_400_000).toISOString(),
+    });
+
+    const heavy = await newIssue('Rebuild the fan out', { team: teamKey, estimate: 5 });
+    const light = await newIssue('Rename the banner', { team: teamKey, estimate: 3 });
+    for (const issue of [heavy, light]) {
+      await admin.result('move_to_cycle', { issue: issue.identifier, cycle: 'active' });
+    }
+    await admin.result('update_issue', { issue: heavy.identifier, state: 'Done' });
+
+    const progress = await admin.result('cycle_progress', { team: teamKey, cycle: 'active' });
+    expect(progress['scope']).toBe(2);
+    expect(progress['completed']).toBe(1);
+    expect(progress['points']).toEqual({ scope: 8, started: 0, completed: 5 });
+    expect(progress['changes']).toEqual({
+      added: 2,
+      addedPoints: 8,
+      removed: 0,
+      removedPoints: 0,
+    });
+    const burnUp = progress['burnUp'] as { scope: number; scopePoints: number }[];
+    expect(burnUp.map((point) => point.scope)).toEqual([0, 0, 0, 2]);
+    expect(burnUp.map((point) => point.scopePoints)).toEqual([0, 0, 0, 8]);
+    expect(burnUp.at(-1)).toMatchObject({ completed: 1, completedPoints: 5 });
+
+    await admin.result('move_to_cycle', { issue: light.identifier, cycle: null });
+    const afterPull = await admin.result('cycle_progress', { team: teamKey, cycle: 'active' });
+    expect(afterPull['scope']).toBe(1);
+    expect(afterPull['points']).toMatchObject({ scope: 5 });
+    expect(afterPull['changes']).toEqual({
+      added: 2,
+      addedPoints: 8,
+      removed: 1,
+      removedPoints: 3,
+    });
+    expect((afterPull['burnUp'] as { scope: number }[]).map((point) => point.scope)).toEqual([
+      0, 0, 0, 1,
+    ]);
   });
 
   it('lists cycles for a team', async () => {

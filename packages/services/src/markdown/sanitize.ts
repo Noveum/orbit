@@ -91,6 +91,11 @@ const ALLOWED_ATTR = new Set([
   'open',
 ]);
 
+const IMAGE_DEFAULTS: readonly (readonly [string, string])[] = [
+  ['loading', 'lazy'],
+  ['decoding', 'async'],
+];
+
 const URL_ATTR = new Set(['href', 'src']);
 const ABSOLUTE_URL = /^(?:https?:)?\/\//i;
 const SAFE_SCHEMES = new Set(['http', 'https', 'mailto']);
@@ -150,12 +155,22 @@ function isSafeUrl(raw: string): boolean {
   return SAFE_SCHEMES.has(value.slice(0, colon).toLowerCase());
 }
 
-function keptAttributes(present: readonly (readonly [string, string])[]): Map<string, string> {
+const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+function attributeAllowed(tag: string, key: string): boolean {
+  if (key === 'id') return HEADING_TAGS.has(tag);
+  return ALLOWED_ATTR.has(key);
+}
+
+function keptAttributes(
+  tag: string,
+  present: readonly (readonly [string, string])[],
+): Map<string, string> {
   const keep = new Map<string, string>();
   for (const [name, value] of present) {
     const key = name.toLowerCase();
     if (keep.has(key)) continue;
-    if (!ALLOWED_ATTR.has(key)) continue;
+    if (!attributeAllowed(tag, key)) continue;
     if (URL_ATTR.has(key) && !isSafeUrl(value)) continue;
     keep.set(key, value);
   }
@@ -165,6 +180,28 @@ function keptAttributes(present: readonly (readonly [string, string])[]): Map<st
 function externalLinkTarget(keep: ReadonlyMap<string, string>): boolean {
   const href = stripIgnorable(decodeEntities(keep.get('href') ?? ''));
   return href.length > 0 && ABSOLUTE_URL.test(href);
+}
+
+interface AttributeTarget {
+  setAttribute(name: string, value: string): unknown;
+  removeAttribute(name: string): unknown;
+}
+
+function applyTagRules(
+  tag: string,
+  keep: ReadonlyMap<string, string>,
+  element: AttributeTarget,
+): void {
+  if (tag === 'img') {
+    for (const [key, value] of IMAGE_DEFAULTS) element.setAttribute(key, value);
+    return;
+  }
+  if (tag !== 'a') return;
+  element.removeAttribute('target');
+  element.removeAttribute('rel');
+  if (!externalLinkTarget(keep)) return;
+  element.setAttribute('target', '_blank');
+  element.setAttribute('rel', 'noopener noreferrer');
 }
 
 let rewriter: HTMLRewriter | null = null;
@@ -186,15 +223,9 @@ function bunSanitizer(): HTMLRewriter {
         for (const attribute of element.attributes) present.push(attribute);
         for (const [name] of present) element.removeAttribute(name);
 
-        const keep = keptAttributes(present);
+        const keep = keptAttributes(tag, present);
         for (const [key, value] of keep) element.setAttribute(key, value);
-
-        if (tag !== 'a') return;
-        element.removeAttribute('target');
-        element.removeAttribute('rel');
-        if (!externalLinkTarget(keep)) return;
-        element.setAttribute('target', '_blank');
-        element.setAttribute('rel', 'noopener noreferrer');
+        applyTagRules(tag, keep, element);
       },
     })
     .onDocument({
@@ -257,13 +288,9 @@ function cleanDomNode(node: ChildNode): void {
     ]);
     for (const [name] of present) element.removeAttribute(name);
 
-    const keep = keptAttributes(present);
+    const keep = keptAttributes(tag, present);
     for (const [key, value] of keep) element.setAttribute(key, value);
-
-    if (tag === 'a' && externalLinkTarget(keep)) {
-      element.setAttribute('target', '_blank');
-      element.setAttribute('rel', 'noopener noreferrer');
-    }
+    applyTagRules(tag, keep, element);
   } else {
     element.replaceWith(...children);
   }

@@ -11,7 +11,7 @@ import {
 } from './geometry.ts';
 import { useDrawOnMount } from './use-draw-on-mount.ts';
 
-export type SeriesTone = 'accent' | 'success' | 'faint';
+export type SeriesTone = 'accent' | 'success' | 'muted' | 'faint';
 
 export interface ChartSeries {
   readonly id: string;
@@ -25,12 +25,14 @@ export interface ChartSeries {
 const STROKE: Record<SeriesTone, string> = {
   accent: 'var(--color-accent)',
   success: 'var(--color-success)',
+  muted: 'var(--color-muted)',
   faint: 'var(--color-faint)',
 };
 
 const LEGEND_DOT: Record<SeriesTone, string> = {
   accent: 'bg-accent',
   success: 'bg-success',
+  muted: 'bg-muted',
   faint: 'bg-faint',
 };
 
@@ -39,6 +41,7 @@ function SeriesPath({ series, max }: { readonly series: ChartSeries; readonly ma
   return (
     <path
       ref={ref}
+      data-testid={`chart-line-${series.id}`}
       d={linePath(series.values, max)}
       fill="none"
       stroke={STROKE[series.tone]}
@@ -71,7 +74,11 @@ export function LineChart({ title, description, series, labels, max, className }
         <span className="font-medium text-dense text-text">{title}</span>
         <span className="flex flex-wrap items-center gap-3">
           {series.map((entry) => (
-            <span key={entry.id} className="flex items-center gap-1.5 text-2xs text-muted">
+            <span
+              key={entry.id}
+              data-testid={`chart-series-${entry.id}`}
+              className="flex items-center gap-1.5 text-2xs text-muted"
+            >
               <span
                 className={cn('inline-block h-0.5 w-3 rounded-full', LEGEND_DOT[entry.tone])}
                 aria-hidden="true"

@@ -72,6 +72,7 @@ export async function saveNotificationPreferences(
       ...(parsed.urgentBypassEnabled === undefined
         ? {}
         : { urgentBypassEnabled: parsed.urgentBypassEnabled }),
+      ...(parsed.digestEnabled === undefined ? {} : { digestEnabled: parsed.digestEnabled }),
     };
 
     await tx

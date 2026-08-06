@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import { renderMarkdown } from '@orbit/services/markdown';
 import { Editor } from '@tiptap/core';
 import {
@@ -141,6 +141,25 @@ describe('editor commands', () => {
     expect(matchSlashCommands('').length).toBe(SLASH_COMMANDS.length);
     expect(matchSlashCommands('task').map((command) => command.id)).toEqual(['task-list']);
     expect(matchSlashCommands('zzz')).toEqual([]);
+  });
+
+  it('finds the attachment command by the words people type for it', () => {
+    for (const query of ['file', 'attach', 'attachment', 'upload', 'pdf', 'screenshot']) {
+      expect(matchSlashCommands(query).map((command) => command.id)).toEqual(['image']);
+    }
+  });
+
+  it('hands the attachment command the file picker to open', () => {
+    const editor = mount('');
+    const pick = mock();
+    const command = SLASH_COMMANDS.find((entry) => entry.id === 'image');
+
+    command?.run(editor, pick);
+
+    expect(command).toBeDefined();
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(docToMarkdown(editor.getJSON()).trim()).toBe('');
+    editor.destroy();
   });
 });
 

@@ -30,10 +30,22 @@ export class Connection {
   constructor(
     readonly id: string,
     private readonly socket: RealtimeSocket,
-    readonly principal: ConnectionPrincipal,
+    private current: ConnectionPrincipal,
     private readonly limits: ConnectionLimits,
   ) {
     this.tokens = limits.messageBurst;
+  }
+
+  get principal(): ConnectionPrincipal {
+    return this.current;
+  }
+
+  adoptPrincipal(next: ConnectionPrincipal): void {
+    this.current = next;
+  }
+
+  heldScopes(): string[] {
+    return [...this.scopes];
   }
 
   takeToken(now = Date.now()): boolean {

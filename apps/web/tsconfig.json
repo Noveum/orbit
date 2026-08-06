@@ -19,6 +19,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "bench/**/*.ts",
     "e2e/**/*.ts",
     "tests-preload.ts",
     "playwright.config.ts",

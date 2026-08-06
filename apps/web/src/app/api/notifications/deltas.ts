@@ -10,6 +10,7 @@ function toData(row: NotificationRecord): Record<string, unknown> {
     organizationId: row.organizationId,
     userId: row.userId,
     type: row.type,
+    reason: row.reason,
     actorType: row.actorType,
     actorId: row.actorId,
     actorName: row.actorName,

@@ -7,6 +7,7 @@ import type { Member } from '@/lib/query/schemas.ts';
 import {
   RichTextEditor,
   settledMarkdown,
+  type UploadedAttachment,
 } from '../../../../src/features/docs/editor/rich-text-editor.tsx';
 
 const members: readonly Member[] = [
@@ -25,10 +26,14 @@ function Harness({
   onChange = mock(),
   onReady,
   onCancel,
+  onUpload,
+  onComment,
 }: {
   onChange?: (value: string) => void;
   onReady: (editor: Editor) => void;
   onCancel?: () => void;
+  onUpload?: (file: File) => Promise<UploadedAttachment>;
+  onComment?: (range: { from: number; to: number }) => void;
 }) {
   const [value, setValue] = useState('');
   return (
@@ -43,6 +48,8 @@ function Harness({
       testId="rich"
       onReady={onReady}
       {...(onCancel === undefined ? {} : { onCancel })}
+      {...(onUpload === undefined ? {} : { onUpload })}
+      {...(onComment === undefined ? {} : { onComment })}
     />
   );
 }
@@ -98,6 +105,62 @@ describe('slash menu', () => {
   });
 });
 
+async function neverUploads(): Promise<UploadedAttachment> {
+  return await Promise.reject(new Error('This test never finishes an upload.'));
+}
+
+describe('attaching a file from the slash menu', () => {
+  it('finds the attachment command by the words people actually type', async () => {
+    const editor = await mountEditor({ onUpload: neverUploads });
+    editor.chain().focus().insertContent('/attach').run();
+
+    expect(await screen.findByTestId('slash-image')).toBeInTheDocument();
+  });
+
+  it('opens the file picker when the attachment command is chosen', async () => {
+    const editor = await mountEditor({ onUpload: neverUploads });
+    const opened = mock();
+    screen.getByTestId('rich-file').addEventListener('click', opened);
+
+    editor.chain().focus().insertContent('/file').run();
+    await screen.findByTestId('slash-image');
+    await userEvent.setup().click(screen.getByTestId('slash-image'));
+
+    await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+  });
+
+  it('has no file input at all when the surface cannot take uploads', async () => {
+    await mountEditor();
+    expect(screen.queryByTestId('rich-file')).toBeNull();
+  });
+
+  it('embeds an image and links anything else, using the url the upload reported', async () => {
+    const onChange = mock();
+    const onUpload = mock(
+      async (file: File): Promise<UploadedAttachment> =>
+        await Promise.resolve({
+          url: `/api/files/org/${file.name}`,
+          fileName: file.name,
+          contentType: file.type,
+        }),
+    );
+    await mountEditor({ onChange, onUpload });
+    const input = screen.getByTestId('rich-file');
+    const user = userEvent.setup({ applyAccept: false });
+
+    await user.upload(input, new File(['x'], 'shot.png', { type: 'image/png' }));
+    await waitFor(() =>
+      expect(onChange.mock.calls.at(-1)?.[0]).toContain('![shot.png](/api/files/org/shot.png)'),
+    );
+
+    await user.upload(input, new File(['x'], 'notes.txt', { type: 'text/plain' }));
+    await waitFor(() =>
+      expect(onChange.mock.calls.at(-1)?.[0]).toContain('[notes.txt](/api/files/org/notes.txt)'),
+    );
+    expect(onUpload).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('mention menu', () => {
   it('offers members and inserts a handle without leaving a trigger character', async () => {
     const onChange = mock();
@@ -138,6 +201,30 @@ describe('selection bubble menu', () => {
     const bubble = await screen.findByTestId('rich-bubble');
     expect(bubble.querySelector('[aria-label=Bold]')).not.toBeNull();
     expect(bubble.querySelector('[aria-label=Link]')).not.toBeNull();
+  });
+
+  it('leaves the comment control out when the surface takes no comments', async () => {
+    const editor = await mountEditor();
+    editor.chain().focus().insertContent('format me').run();
+    editor.commands.setTextSelection({ from: 1, to: 7 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    expect(bubble.querySelector('[aria-label=Comment]')).toBeNull();
+  });
+
+  it('offers Comment over a selection and reports the range that was picked', async () => {
+    const onComment = mock((_range: { from: number; to: number }) => undefined);
+    const editor = await mountEditor({ onComment });
+    editor.chain().focus().insertContent('The launch is blocked').run();
+    editor.commands.setTextSelection({ from: 5, to: 11 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    const control = bubble.querySelector('[aria-label=Comment]');
+    expect(control).not.toBeNull();
+
+    if (control !== null) await userEvent.setup().click(control as HTMLElement);
+
+    expect(onComment).toHaveBeenCalledWith({ from: 5, to: 11 });
   });
 });
 

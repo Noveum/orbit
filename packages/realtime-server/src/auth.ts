@@ -1,7 +1,8 @@
 import { and, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
-import { isRestricted, ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { authMessageSchema } from '@orbit/shared/events';
 import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
+import { canReadDoc } from '@orbit/shared/policy';
 import { z } from 'zod';
 
 export interface ConnectionPrincipal {
@@ -130,6 +131,16 @@ export async function authenticateTicket(
 
 export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
 
+export async function liveSessionIds(sessionIds: readonly string[]): Promise<Set<string>> {
+  const wanted = [...new Set(sessionIds)];
+  if (wanted.length === 0) return new Set();
+  const rows = await db
+    .select({ id: schema.session.id })
+    .from(schema.session)
+    .where(and(inArray(schema.session.id, wanted), gt(schema.session.expiresAt, new Date())));
+  return new Set(rows.map((row) => row.id));
+}
+
 export async function sessionStillValid(sessionId: string): Promise<boolean> {
   const rows = await db
     .select({ id: schema.session.id })
@@ -151,6 +162,29 @@ export async function membershipStillValid(principal: ConnectionPrincipal): Prom
     )
     .limit(1);
   return rows.length > 0;
+}
+
+export async function refreshedPrincipal(
+  principal: ConnectionPrincipal,
+): Promise<ConnectionPrincipal | null> {
+  const rows = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, principal.organizationId),
+        eq(schema.member.userId, principal.userId),
+      ),
+    )
+    .limit(1);
+  const membership = rows[0];
+  if (membership === undefined) return null;
+  const role = roleSchema.parse(membership.role);
+  return {
+    ...principal,
+    role,
+    teamIds: await loadTeamIds(principal.userId, principal.organizationId, role),
+  };
 }
 
 async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
@@ -184,6 +218,7 @@ async function projectScopeAllowed(projectId: string, principal: ConnectionPrinc
 async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
   const rows = await db
     .select({
+      id: schema.doc.id,
       organizationId: schema.doc.organizationId,
       visibility: schema.doc.visibility,
       authorId: schema.doc.authorId,
@@ -192,10 +227,8 @@ async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
     .where(eq(schema.doc.id, docId))
     .limit(1);
   const doc = rows[0];
-  if (doc === undefined || doc.organizationId !== principal.organizationId) return false;
-  if (principal.role === 'admin') return true;
-  if (doc.authorId === principal.userId) return true;
-  if (!isRestricted(doc.visibility)) return true;
+  if (doc === undefined) return false;
+  if (canReadDoc(principal, doc, [])) return true;
 
   const grants = await db
     .select({ docId: schema.docAccess.docId })
@@ -218,7 +251,11 @@ async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
       ),
     )
     .limit(1);
-  return grants.length > 0;
+  return canReadDoc(
+    principal,
+    doc,
+    grants.map((row) => row.docId),
+  );
 }
 
 export async function authorizeScope(

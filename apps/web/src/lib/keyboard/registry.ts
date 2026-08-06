@@ -33,10 +33,10 @@ function shiftSpecificity(entry: HotkeyEntry): number {
 }
 
 function beats(candidate: HotkeyEntry, current: HotkeyEntry): boolean {
-  if (candidate.priority !== current.priority) return candidate.priority > current.priority;
   if (candidate.steps.length !== current.steps.length) {
     return candidate.steps.length > current.steps.length;
   }
+  if (candidate.priority !== current.priority) return candidate.priority > current.priority;
   return shiftSpecificity(candidate) > shiftSpecificity(current);
 }
 

@@ -53,7 +53,8 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<blockquote>');
     expect(html).toContain('<ol>');
     expect(html).toContain('<code>inline</code>');
-    expect(html).toContain('<img src="https://x.dev/a.png" alt="alt">');
+    expect(html).toContain('src="https://x.dev/a.png"');
+    expect(html).toContain('alt="alt"');
   });
 
   it('forces noopener on external links and leaves relative links alone', () => {

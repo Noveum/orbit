@@ -56,6 +56,65 @@ async function announceRevocation(userId: string): Promise<void> {
   );
 }
 
+describe('a socket never outlives the session that opened it', () => {
+  async function sweepingServer(): Promise<RealtimeServer> {
+    return await createRealtimeServer({ redisUrl: redisUrl(), sessionSweepIntervalMs: 100 });
+  }
+
+  it('closes a socket whose session row was deleted with nothing to announce it', async () => {
+    const server = await sweepingServer();
+    try {
+      const member = await createMember({ organizationId, teamIds: [teamId] });
+      const client = await connectClient(server.port, member, organizationId);
+      await client.waitFor('ready');
+
+      await db.delete(schema.session).where(eq(schema.session.token, member.token));
+
+      expect(await client.waitForClose()).toBe(SESSION_REVOKED_CLOSE_CODE);
+      expect(server.stats().connections).toBe(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('closes a socket once its session has expired', async () => {
+    const server = await sweepingServer();
+    try {
+      const member = await createMember({ organizationId, teamIds: [teamId] });
+      const client = await connectClient(server.port, member, organizationId);
+      await client.waitFor('ready');
+
+      await db
+        .update(schema.session)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(schema.session.token, member.token));
+
+      expect(await client.waitForClose()).toBe(SESSION_REVOKED_CLOSE_CODE);
+      expect(server.stats().connections).toBe(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('leaves a live session connected while it sweeps', async () => {
+    const server = await sweepingServer();
+    try {
+      const member = await createMember({ organizationId, teamIds: [teamId] });
+      const client = await connectClient(server.port, member, organizationId);
+      await client.waitFor('ready');
+
+      await delay(400);
+
+      client.send({ type: 'ping' });
+      expect(await client.waitFor('pong')).toBeDefined();
+      expect(server.stats().connections).toBe(1);
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('session revocation', () => {
   it('closes the socket whose session row was deleted', async () => {
     const member = await createMember({ organizationId, teamIds: [teamId] });

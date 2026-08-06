@@ -5,10 +5,12 @@ import { DomainError } from '@orbit/shared/errors';
 import { MCP_PATH } from '../src/server.ts';
 import {
   callMcp,
+  connect,
   createWorkspace,
   MCP_TEST_ORIGIN,
   mintToken,
   resetDatabase,
+  type TestClient,
   type TestWorkspace,
 } from '../src/test-helpers.ts';
 
@@ -116,5 +118,88 @@ describe('http transport', () => {
     expect(response.status).toBe(405);
     expect(response.headers.get('allow')).toBe('POST');
     await response.body?.cancel();
+  });
+});
+
+describe('the granted oauth scopes decide which tools exist', () => {
+  async function clientWith(scopes: string): Promise<TestClient> {
+    return await connect(
+      await mintToken(
+        workspace.organizationId,
+        workspace.adminUser.id,
+        `Client for ${scopes}`,
+        scopes,
+      ),
+    );
+  }
+
+  async function toolNames(client: TestClient): Promise<string[]> {
+    const { tools } = await client.client.listTools();
+    return tools.map((tool) => tool.name);
+  }
+
+  async function readOnlyNames(client: TestClient): Promise<string[]> {
+    const { tools } = await client.client.listTools();
+    return tools.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name);
+  }
+
+  it('turns an openid only token away instead of letting it read the workspace', async () => {
+    const token = await mintToken(
+      workspace.organizationId,
+      workspace.adminUser.id,
+      'Openid only client',
+      'openid profile email',
+    );
+
+    const response = await post({ authorization: `Bearer ${token}` });
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain('orbit.read');
+  });
+
+  it('offers a read scoped token exactly the read tools and refuses a write call', async () => {
+    const full = await clientWith('openid orbit.read orbit.write');
+    const reader = await clientWith('openid orbit.read');
+    try {
+      const everything = await toolNames(full);
+      const reads = await readOnlyNames(full);
+      const writes = everything.filter((name) => !reads.includes(name));
+      expect(reads.length).toBeGreaterThan(0);
+      expect(writes.length).toBeGreaterThan(0);
+
+      const offered = await toolNames(reader);
+      expect([...offered].sort()).toEqual([...reads].sort());
+      for (const name of writes) {
+        expect(offered).not.toContain(name);
+      }
+
+      expect((await reader.result('get_me'))['role']).toBe('admin');
+      const denied = await reader.call('create_team', { name: 'Smuggled', key: 'SMUG' });
+      expect(denied.isError).toBe(true);
+      const teams = (await full.result('list_teams'))['teams'] as { name: string }[];
+      expect(teams.map((team) => team.name)).not.toContain('Smuggled');
+    } finally {
+      await full.close();
+      await reader.close();
+    }
+  });
+
+  it('offers a write scoped token no read tool and refuses a read call', async () => {
+    const full = await clientWith('openid orbit.read orbit.write');
+    const writer = await clientWith('openid orbit.write');
+    try {
+      const reads = await readOnlyNames(full);
+      const offered = await toolNames(writer);
+
+      expect(offered.length).toBeGreaterThan(0);
+      expect(reads.length).toBeGreaterThan(0);
+      for (const name of reads) {
+        expect(offered).not.toContain(name);
+      }
+      expect((await writer.call('get_me')).isError).toBe(true);
+      expect((await writer.call('search_issues', { query: 'anything' })).isError).toBe(true);
+    } finally {
+      await full.close();
+      await writer.close();
+    }
   });
 });

@@ -1,6 +1,8 @@
 import { v7 as uuidv7 } from 'uuid';
 import { SORT_ORDER_STEP } from '../constants/index.ts';
 
+export * from './doc-anchor.ts';
+
 export function slugify(input: string): string {
   return input
     .normalize('NFKD')
@@ -61,6 +63,30 @@ export function extractMentions(markdown: string): string[] {
     match = pattern.exec(markdown);
   }
   return [...found];
+}
+
+export function commentAnchorId(commentId: string): string {
+  return `comment-${commentId}`;
+}
+
+export function docCommentAnchorId(commentId: string): string {
+  return `doc-comment-${commentId}`;
+}
+
+export function issueUrl(identifier: string): string {
+  return `/issue/${identifier}`;
+}
+
+export function issueCommentUrl(identifier: string, commentId: string): string {
+  return `${issueUrl(identifier)}#${commentAnchorId(commentId)}`;
+}
+
+export function docUrl(docId: string): string {
+  return `/docs/${docId}`;
+}
+
+export function docCommentUrl(docId: string, commentId: string): string {
+  return `${docUrl(docId)}#${docCommentAnchorId(commentId)}`;
 }
 
 export function extractIssueIdentifiers(text: string): string[] {

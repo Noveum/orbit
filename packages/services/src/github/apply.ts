@@ -329,7 +329,6 @@ function pullRequestNotification(context: {
     entityType: 'issue',
     entityId: linked.id,
     url: `/issue/${linked.identifier}`,
-    scopes: [scopes.issue(linked.id)],
     body: `${event.repository.fullName}#${pr.number}`,
   };
 
@@ -337,6 +336,7 @@ function pullRequestNotification(context: {
     return {
       ...base,
       type: 'pr_review_requested',
+      reason: 'review_requested',
       userIds: audienceIds(linked, reviewerUserId),
       title: `Review requested on ${pr.title}`,
     };
@@ -351,6 +351,7 @@ function pullRequestNotification(context: {
     return {
       ...base,
       type,
+      reason: type === 'pr_approved' ? 'review_approved' : 'subscribed',
       userIds: audienceIds(linked, null),
       title: type === 'pr_approved' ? `${pr.title} was approved` : `New review on ${pr.title}`,
     };
@@ -361,6 +362,7 @@ function pullRequestNotification(context: {
     return {
       ...base,
       type: lifecycle,
+      reason: lifecycle === 'pr_merged' ? 'pull_request_merged' : 'subscribed',
       userIds: audienceIds(linked, null),
       title: lifecycle === 'pr_merged' ? `${pr.title} was merged` : `${pr.title} was closed`,
     };
@@ -380,6 +382,7 @@ function checksNotification(context: {
   return {
     organizationId: repo.organizationId,
     type: 'pr_checks_failed',
+    reason: 'subscribed',
     actor,
     entityType: 'issue',
     entityId: linked.id,
@@ -387,7 +390,6 @@ function checksNotification(context: {
     title: `Checks failed on ${branch}`,
     body: event.repository.fullName,
     url: `/issue/${linked.identifier}`,
-    scopes: [scopes.issue(linked.id)],
   };
 }
 

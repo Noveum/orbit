@@ -1,3 +1,4 @@
+import type { DocCommentAnchor } from '@orbit/shared/validators';
 import {
   type AnyPgColumn,
   bigint,
@@ -183,6 +184,7 @@ export const docComment = pgTable(
       onDelete: 'set null',
     }),
     body: text('body').notNull(),
+    anchor: jsonb('anchor').$type<DocCommentAnchor | null>(),
     editedAt: timestamp('edited_at', { withTimezone: true }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

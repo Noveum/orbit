@@ -1,33 +1,25 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { db, schema } from '@orbit/db';
 import { auth } from '../../../src/lib/auth/server.ts';
-
-const dbModule = await import('@orbit/db');
-let lookupEmail: string | undefined;
-
-mock.module('@orbit/db', () => ({
-  ...dbModule,
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve(lookupEmail === undefined ? [] : [{ email: lookupEmail }]),
-        }),
-      }),
-    }),
-  },
-}));
 
 const previousDomains = process.env['ALLOWED_EMAIL_DOMAINS'];
 
 beforeEach(() => {
   process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
-  lookupEmail = undefined;
 });
 
 afterAll(() => {
   process.env['ALLOWED_EMAIL_DOMAINS'] = previousDomains ?? '';
-  mock.module('@orbit/db', () => dbModule);
 });
+
+async function userWith(email: string): Promise<string> {
+  const id = `user_${randomUUID()}`;
+  await db
+    .insert(schema.user)
+    .values({ id, name: 'Session Domain', email, handle: id, emailVerified: true });
+  return id;
+}
 
 function sessionHook() {
   const before = auth.options.databaseHooks?.session?.create?.before;
@@ -47,11 +39,11 @@ function sessionHook() {
 
 describe('session domain allowlist', () => {
   it('rejects an existing user whose domain is not allowed on any sign in', async () => {
-    lookupEmail = 'kpulkit15234@gmail.com';
+    const userId = await userWith(`kpulkit${randomUUID().slice(0, 8)}@gmail.com`);
 
     let thrown: unknown;
     try {
-      await sessionHook()('user_1');
+      await sessionHook()(userId);
     } catch (error) {
       thrown = error;
     }
@@ -59,13 +51,12 @@ describe('session domain allowlist', () => {
   });
 
   it('lets an allowed domain start a session', async () => {
-    lookupEmail = 'shashank@magicapi.com';
-    const result = await sessionHook()('user_1');
-    expect(result).toMatchObject({ data: { userId: 'user_1' } });
+    const userId = await userWith(`shashank${randomUUID().slice(0, 8)}@magicapi.com`);
+    const result = await sessionHook()(userId);
+    expect(result).toMatchObject({ data: { userId } });
   });
 
   it('does nothing when the user cannot be found', async () => {
-    lookupEmail = undefined;
     const result = await sessionHook()('ghost');
     expect(result).toMatchObject({ data: { userId: 'ghost' } });
   });

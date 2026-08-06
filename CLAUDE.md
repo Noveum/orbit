@@ -94,6 +94,12 @@ domain verified in Resend, otherwise every send fails.
 - **Errors.** Throw typed domain errors from `@orbit/shared/errors`. Route handlers map them to responses. Never swallow an error silently.
 - **Server state.** TanStack Query for fetching, with optimistic mutations. The realtime stream invalidates and patches the cache; it never triggers a full refetch of a list the user is looking at.
 - **Realtime.** Every mutation writes to Postgres, bumps `sync_id`, and publishes a `SyncAction` to Redis. The realtime server fans it out to subscribed clients. Contract lives in `packages/shared/src/events`.
+  A scope decides who is delivered a row, so it has to match who may read it: a project and its milestones
+  carry the scopes of the teams that own them and fall back to the workspace scope only when the project
+  belongs to no team, and a private saved view carries its owner alone.
+- **Socket lifetime.** A socket never outlives its session. Signing out publishes a session revocation on
+  the control channel and the hub closes that connection, and the hub also sweeps the sessions behind every
+  open connection on an interval, so an expired or deleted session is dropped even when nothing announced it.
 - **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
   optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `@node-rs/argon2` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
@@ -102,7 +108,8 @@ domain verified in Resend, otherwise every send fails.
   consent screen at `/oauth/authorize` where the user picks a workspace and re-verifies a passkey. The
   standalone MCP server validates the access token against the shared database (`verifyMcpAccessToken`)
   and returns a `WWW-Authenticate` challenge on `401`. A `mcp_grant` row binds a client and user to the
-  chosen workspace.
+  chosen workspace. The granted scopes decide the tool set: a read tool needs `orbit.read`, a write tool
+  needs `orbit.write`, and a token carrying neither is refused with a `403` before any tool is registered.
 - **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
   creation and on user creation, so it covers every provider. Empty means no restriction. A
   workspace can narrow it further with its own `allowedEmailDomains`.
@@ -121,6 +128,7 @@ domain verified in Resend, otherwise every send fails.
 - A package that needs environment or a DOM configures it in its own `bunfig.toml` with a `tests-preload.ts`. DOM tests register happy-dom in that preload.
 - Database tests run against the real Postgres from docker compose, in a transaction that rolls back. `scripts/test-env.ts` refuses to run against a database whose name does not contain `test`.
 - Each package owns an isolated database (`orbit_test_core`, `orbit_test_svc`, `orbit_test_rt`, `orbit_test_rts`, `orbit_test_mcp`, `orbit_test_web`). Run `bun run db:test-setup` once after `bun run infra:up`, otherwise `bun run verify` fails on a clean checkout with connection errors rather than test failures.
+- Two test runs at once need two lanes. Set `ORBIT_TEST_LANE` to anything unique and the suite uses `orbit_test_core_<lane>` instead, where the lane is a readable stub plus a digest of the raw value so two lanes that normalise alike stay apart, cloned from the base database on first use, so a `resetDatabase` in one run cannot truncate tables out from under another. Without the variable nothing changes. This matters whenever several agents or worktrees run tests against the same Postgres: sharing one database shows up as deadlocks and foreign key violations that look like real failures. `bun run db:test-lanes-drop` removes every lane database and leaves the six base ones alone.
 - End to end: Playwright in `apps/web/e2e`.
 - A feature is not done until it has tests that would fail if the feature broke.
 

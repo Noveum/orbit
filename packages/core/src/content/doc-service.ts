@@ -13,13 +13,14 @@ import {
   schema,
   sql,
 } from '@orbit/db';
+import type { NotificationEvent } from '@orbit/services/notifications';
 import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan } from '@orbit/shared/policy';
-import { slugify } from '@orbit/shared/utils';
+import { assertCan, canReadDoc } from '@orbit/shared/policy';
+import { docUrl, slugify, truncate } from '@orbit/shared/utils';
 import {
   docAccessSetSchema,
   docCollectionCreateSchema,
@@ -32,6 +33,9 @@ import {
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
+import { docReaderIds } from '../notifications/audience.ts';
+import { newMentions, resolveHandles } from '../notifications/mentions.ts';
+import { NOTIFICATION_BODY_LIMIT, notifyRecipients } from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -152,13 +156,6 @@ export function docReadFilter(principal: Principal): SQL {
     inArray(schema.doc.id, grants),
   );
   return clause ?? sql`false`;
-}
-
-export function canReadDoc(principal: Principal, doc: DocRow, grants: readonly string[]): boolean {
-  if (principal.role === 'admin') return true;
-  if (doc.authorId === principal.userId) return true;
-  if (!isRestricted(doc.visibility)) return true;
-  return grants.includes(doc.id);
 }
 
 async function grantedDocIds(
@@ -473,6 +470,32 @@ export async function isPublishedDoc(docId: string): Promise<boolean> {
   return row !== undefined && row.archivedAt === null && isExternallyShared(row.visibility);
 }
 
+async function docMentionNotifications(
+  tx: Executor,
+  principal: Principal,
+  doc: DocRow,
+  handles: readonly string[],
+  actor: Actor,
+): Promise<SyncAction[]> {
+  const mentioned = await resolveHandles(tx, principal.organizationId, handles, null);
+  const readers = await docReaderIds(tx, doc, mentioned);
+  const events: NotificationEvent[] = [
+    {
+      organizationId: doc.organizationId,
+      type: 'mention',
+      reason: 'mentioned',
+      actor,
+      entityType: 'doc',
+      entityId: doc.id,
+      userIds: mentioned.filter((id) => id !== principal.userId && readers.has(id)),
+      title: `Mentioned you in ${doc.title}`,
+      body: truncate(doc.content, NOTIFICATION_BODY_LIMIT),
+      url: docUrl(doc.id),
+    },
+  ];
+  return await notifyRecipients(tx, events);
+}
+
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docCreateSchema.parse(input);
@@ -507,7 +530,15 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
       .onConflictDoNothing();
     await snapshotVersion(tx, principal, doc, null);
 
-    return { doc, actions: [docAction(doc, syncId, actor, 'insert')] };
+    const notifications = await docMentionNotifications(
+      tx,
+      principal,
+      doc,
+      newMentions('', doc.content),
+      actor,
+    );
+
+    return { doc, actions: [docAction(doc, syncId, actor, 'insert'), ...notifications] };
   });
 }
 
@@ -592,7 +623,15 @@ export async function updateDoc(
       await snapshotVersion(tx, principal, doc, null);
     }
 
-    return { doc, actions: [docAction(doc, syncId, actor, 'update')] };
+    const notifications = await docMentionNotifications(
+      tx,
+      principal,
+      doc,
+      newMentions(current.content, doc.content),
+      actor,
+    );
+
+    return { doc, actions: [docAction(doc, syncId, actor, 'update'), ...notifications] };
   });
 }
 

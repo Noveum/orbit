@@ -2,6 +2,7 @@
 
 import { renderMarkdown } from '@orbit/services/markdown';
 import { useQueryClient } from '@tanstack/react-query';
+import type { Editor } from '@tiptap/core';
 import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Table2 } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -30,6 +31,7 @@ import {
   wrapSelection,
 } from './markdown-input.ts';
 import { type UploadOptions, uploadDocFile } from './upload.ts';
+import { type DocCommenting, useDocAnchors } from './use-doc-anchors.ts';
 
 const SNIPPET_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bold }[] = [
   { name: 'heading', label: 'Heading', icon: Heading2 },
@@ -48,6 +50,7 @@ export interface DocEditorProps {
   readonly footer?: React.ReactNode;
   readonly outline?: React.ReactNode;
   readonly scrollRef?: RefObject<HTMLDivElement | null>;
+  readonly commenting?: DocCommenting;
 }
 
 export function DocEditor({
@@ -58,11 +61,13 @@ export function DocEditor({
   footer,
   outline,
   scrollRef,
+  commenting,
 }: DocEditorProps) {
   const { toast } = useToast();
   const client = useQueryClient();
   const bootstrap = useBootstrap(null);
   const cmRef = useRef<MarkdownCodeEditorHandle>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
   const [mode, setMode] = useState<EditorMode>('rich');
   const [preview, setPreview] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -72,6 +77,8 @@ export function DocEditor({
     () => (mode === 'markdown' && preview ? renderMarkdown(content) : ''),
     [mode, preview, content],
   );
+
+  const anchors = useDocAnchors(editor, commenting);
 
   const applyEdit = useCallback((result: EditResult) => {
     cmRef.current?.applyEdit(result);
@@ -255,6 +262,7 @@ export function DocEditor({
               members={bootstrap.data?.members ?? []}
               onUpload={upload}
               onForceSave={onForceSave}
+              onReady={setEditor}
               toolbar="full"
               ariaLabel="Doc body"
               testId="doc-rich-editor"
@@ -262,6 +270,7 @@ export function DocEditor({
               toolbarLeading={modeSwitch}
               toolbarTrailing={uploadStatus}
               {...(scrollRef === undefined ? {} : { scrollRef })}
+              {...(commenting === undefined ? {} : { onComment: anchors.startComment })}
             />
           </div>
           {outline}
