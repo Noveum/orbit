@@ -245,6 +245,23 @@ describe('DocComments anchored to a passage', () => {
     expect(change).toHaveBeenCalledWith(null);
   });
 
+  it('quotes the passage on the comment it shows before the server answers', async () => {
+    posted.held = true;
+    await show([], {
+      anchorText: docText,
+      pendingAnchor: passageAnchor,
+      onPendingAnchorChange: () => undefined,
+      onRevealPassage: () => undefined,
+    });
+
+    await writeAndSubmit('Which migration?');
+
+    await waitFor(() => expect(screen.getByText('Which migration?')).toBeInTheDocument());
+    const optimistic = document.querySelector('[data-testid^="doc-comment-quote-pending-"]');
+    expect(optimistic).not.toBeNull();
+    expect(optimistic).toHaveTextContent(passage);
+  });
+
   it('drops the pending passage when the reader dismisses it', async () => {
     const change = mock((_anchor: DocCommentAnchor | null) => undefined);
     await show([], {

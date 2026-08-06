@@ -248,6 +248,21 @@ describe('a doc editor carrying anchored comments', () => {
     await waitFor(() => expect(marks('c_1')).toHaveLength(0));
   });
 
+  it('never walks a document that carries no anchored comment', async () => {
+    const recorded = await mount([]);
+    await settle(2);
+    recorded.texts.length = 0;
+    recorded.edits.length = 0;
+
+    const user = userEvent.setup();
+    await user.click(surface());
+    await user.paste('One more sentence.');
+    await settle(3);
+
+    expect(recorded.edits.length).toBeGreaterThan(0);
+    expect(recorded.texts).toHaveLength(0);
+  });
+
   it('walks the document once a burst of edits settles, not once per edit', async () => {
     const recorded = await mount([{ commentId: 'c_1', anchor: anchorFor(PASSAGE) }]);
     await waitFor(() => expect(marks('c_1').length).toBeGreaterThan(0));
