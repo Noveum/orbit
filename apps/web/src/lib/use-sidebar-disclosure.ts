@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'orbit:sidebar:disclosure';
 
@@ -26,6 +26,7 @@ function readStored(): OpenMap {
 export interface SidebarDisclosure {
   readonly isOpen: (id: string, fallback: boolean) => boolean;
   readonly toggle: (id: string, fallback: boolean) => void;
+  readonly openAll: (ids: readonly string[]) => void;
 }
 
 export function useSidebarDisclosure(): SidebarDisclosure {
@@ -52,5 +53,14 @@ export function useSidebarDisclosure(): SidebarDisclosure {
     setMap((prev) => ({ ...prev, [id]: !(prev[id] ?? fallback) }));
   }, []);
 
-  return { isOpen, toggle };
+  const openAll = useCallback((ids: readonly string[]) => {
+    setMap((prev) => {
+      if (ids.every((id) => prev[id] === true)) return prev;
+      const next = { ...prev };
+      for (const id of ids) next[id] = true;
+      return next;
+    });
+  }, []);
+
+  return useMemo(() => ({ isOpen, toggle, openAll }), [isOpen, toggle, openAll]);
 }
