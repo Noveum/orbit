@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
 import { useSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
+import { MatchedText } from './search-highlight.tsx';
 
 const RECENT_MS = 24 * 60 * 60 * 1000;
 
@@ -246,6 +247,26 @@ function GroupHeader({
   );
 }
 
+export function DocSnippet({
+  snippet,
+  term,
+  docId,
+}: {
+  readonly snippet: string;
+  readonly term: string;
+  readonly docId: string;
+}) {
+  if (snippet.length === 0) return null;
+  return (
+    <p
+      data-testid={`doc-snippet-${docId}`}
+      className="line-clamp-2 pr-2 pb-1 text-2xs text-faint leading-snug"
+    >
+      <MatchedText text={snippet} term={term} />
+    </p>
+  );
+}
+
 function DocRow({
   doc,
   depth,
@@ -254,6 +275,7 @@ function DocRow({
   recent,
   childCount,
   collapsed,
+  term,
   onToggle,
   onNavigate,
 }: {
@@ -264,54 +286,97 @@ function DocRow({
   readonly recent: boolean;
   readonly childCount: number;
   readonly collapsed: boolean;
+  readonly term: string;
   readonly onToggle: () => void;
   readonly onNavigate: () => void;
 }) {
   return (
-    <div className="relative flex items-center">
-      {childCount > 0 ? (
-        <button
-          type="button"
-          aria-label={collapsed ? `Expand ${doc.title}` : `Collapse ${doc.title}`}
-          aria-expanded={!collapsed}
-          data-testid={`doc-toggle-${doc.id}`}
-          onClick={onToggle}
-          style={{ left: `${depth * 0.75}rem` }}
-          className="absolute z-10 flex size-4 items-center justify-center rounded-sm text-faint transition-colors duration-[var(--duration-instant)] hover:bg-surface-2 hover:text-text motion-reduce:transition-none"
-        >
-          <ChevronRight
-            className={cn(
-              'size-3 transition-transform duration-[var(--duration-fast)] motion-reduce:transition-none',
-              collapsed ? '' : 'rotate-90',
-            )}
-            aria-hidden="true"
-          />
-        </button>
-      ) : null}
-      <Link
-        href={`/docs/${doc.id}`}
-        data-testid={`doc-row-${doc.id}`}
-        data-depth={depth}
-        aria-current={active ? 'page' : undefined}
-        onClick={onNavigate}
-        style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
-        className={cn(
-          'flex h-7 items-center gap-2 rounded-md pr-2 text-dense transition-colors duration-[var(--duration-fast)]',
-          active
-            ? 'bg-accent-soft font-medium text-accent'
-            : 'text-muted hover:bg-surface-2 hover:text-text',
-        )}
-      >
-        <span className="min-w-0 flex-1 truncate">{doc.title}</span>
-        {unsaved || recent ? (
-          <span
-            aria-hidden="true"
-            title={unsaved ? 'Unsaved changes' : 'Updated recently'}
-            className={cn('size-1.5 shrink-0 rounded-full', unsaved ? 'bg-warning' : 'bg-accent')}
-          />
+    <div className="relative flex flex-col">
+      <div className="relative flex items-center">
+        {childCount > 0 ? (
+          <button
+            type="button"
+            aria-label={collapsed ? `Expand ${doc.title}` : `Collapse ${doc.title}`}
+            aria-expanded={!collapsed}
+            data-testid={`doc-toggle-${doc.id}`}
+            onClick={onToggle}
+            style={{ left: `${depth * 0.75}rem` }}
+            className="absolute z-10 flex size-4 items-center justify-center rounded-sm text-faint transition-colors duration-[var(--duration-instant)] hover:bg-surface-2 hover:text-text motion-reduce:transition-none"
+          >
+            <ChevronRight
+              className={cn(
+                'size-3 transition-transform duration-[var(--duration-fast)] motion-reduce:transition-none',
+                collapsed ? '' : 'rotate-90',
+              )}
+              aria-hidden="true"
+            />
+          </button>
         ) : null}
-      </Link>
+        <Link
+          href={`/docs/${doc.id}`}
+          data-testid={`doc-row-${doc.id}`}
+          data-depth={depth}
+          aria-current={active ? 'page' : undefined}
+          onClick={onNavigate}
+          style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
+          className={cn(
+            'flex h-7 items-center gap-2 rounded-md pr-2 text-dense transition-colors duration-[var(--duration-fast)]',
+            active
+              ? 'bg-accent-soft font-medium text-accent'
+              : 'text-muted hover:bg-surface-2 hover:text-text',
+          )}
+        >
+          <span className="min-w-0 flex-1 truncate">{doc.title}</span>
+          {unsaved || recent ? (
+            <span
+              aria-hidden="true"
+              title={unsaved ? 'Unsaved changes' : 'Updated recently'}
+              className={cn('size-1.5 shrink-0 rounded-full', unsaved ? 'bg-warning' : 'bg-accent')}
+            />
+          ) : null}
+        </Link>
+      </div>
+      <div style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}>
+        <DocSnippet snippet={doc.snippet} term={term} docId={doc.id} />
+      </div>
     </div>
+  );
+}
+
+function SearchResults({
+  docs,
+  term,
+  activeDocId,
+  unsavedDocId,
+  onNavigate,
+}: {
+  readonly docs: readonly DocSummary[];
+  readonly term: string;
+  readonly activeDocId: string | null;
+  readonly unsavedDocId: string | null;
+  readonly onNavigate: () => void;
+}) {
+  return (
+    <section data-testid="doc-search-results" className="flex flex-col gap-0.5">
+      <p className="px-2 font-medium text-2xs text-faint uppercase tracking-wide">
+        {docs.length === 0 ? 'No matches' : 'Matches'}
+      </p>
+      {docs.map((doc) => (
+        <DocRow
+          key={doc.id}
+          doc={doc}
+          depth={0}
+          childCount={0}
+          collapsed={false}
+          onToggle={() => undefined}
+          active={activeDocId === doc.id}
+          unsaved={unsavedDocId === doc.id}
+          recent={false}
+          term={term}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </section>
   );
 }
 
@@ -342,7 +407,11 @@ export function DocTree({
   canWrite,
   onNavigate = () => undefined,
 }: DocTreeProps) {
-  const groups = useMemo(() => groupDocs(docs, collections), [docs, collections]);
+  const searching = search.trim().length > 0;
+  const groups = useMemo(
+    () => (searching ? [] : groupDocs(docs, collections)),
+    [docs, collections, searching],
+  );
   const { isOpen, toggle, openAll } = useSidebarDisclosure();
 
   const collapsed = useMemo(
@@ -441,6 +510,16 @@ export function DocTree({
             />
           )}
 
+          {searching ? (
+            <SearchResults
+              docs={docs}
+              term={search}
+              activeDocId={activeDocId}
+              unsavedDocId={unsavedDocId}
+              onNavigate={onNavigate}
+            />
+          ) : null}
+
           {groups.map((group) => {
             const groupKey = groupDisclosureKey(group.id);
             const open = isOpen(groupKey, true);
@@ -474,6 +553,7 @@ export function DocTree({
                         active={activeDocId === node.doc.id}
                         unsaved={unsavedDocId === node.doc.id}
                         recent={now - new Date(node.doc.updatedAt).getTime() < RECENT_MS}
+                        term={search}
                         onNavigate={onNavigate}
                       />
                     ))
