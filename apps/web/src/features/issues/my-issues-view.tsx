@@ -1,6 +1,6 @@
 'use client';
 
-import type { DisplayProperty } from '@orbit/shared/filters';
+import type { DisplayProperty, IssueOrdering } from '@orbit/shared/filters';
 import { CircleDot } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { RefObject } from 'react';
@@ -25,9 +25,14 @@ import { IssueRow } from './issue-row.tsx';
 import { useIssueViewModel } from './use-issue-view-model.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
-export function assignedTo(issues: readonly Issue[], userId: string | null): Issue[] {
+export function assignedTo(
+  issues: readonly Issue[],
+  userId: string | null,
+  ordering: IssueOrdering = 'manual',
+): Issue[] {
   if (userId === null) return [];
-  return sortIssues(issues.filter((issue) => issue.assigneeId === userId));
+  const mine = issues.filter((issue) => issue.assigneeId === userId);
+  return ordering === 'manual' ? sortIssues(mine) : mine;
 }
 
 export function MyIssuesView() {
@@ -37,7 +42,10 @@ export function MyIssuesView() {
   const { config, setConfig } = useViewConfig(null, layout, 'my_issues');
   const controls = useProvideViewControls('my_issues', layout, config);
 
-  const assigned = useAssignedIssues(workspace.userId);
+  const assigned = useAssignedIssues(workspace.userId, {
+    filter: config.filter,
+    orderBy: config.orderBy,
+  });
   const sentinel = useRef<HTMLDivElement>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
@@ -56,8 +64,8 @@ export function MyIssuesView() {
 
   const loading = assigned.isPending;
   const mine = useMemo(
-    () => assignedTo(assigned.data ?? [], workspace.userId),
-    [assigned.data, workspace.userId],
+    () => assignedTo(assigned.data ?? [], workspace.userId, config.orderBy),
+    [assigned.data, workspace.userId, config.orderBy],
   );
 
   const scope = useMemo(

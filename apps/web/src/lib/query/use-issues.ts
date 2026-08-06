@@ -204,8 +204,8 @@ export function useProjectIssues(
   });
 }
 
-export function useAssignedIssues(userId: string | null) {
-  const search = userId === null ? '' : assignedSearch(userId);
+export function useAssignedIssues(userId: string | null, query?: IssueQuery) {
+  const search = userId === null ? '' : assignedSearch(userId, query);
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.assignedIssues(userId ?? 'none', search), search),
     enabled: userId !== null,

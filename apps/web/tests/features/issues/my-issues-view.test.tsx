@@ -6,7 +6,7 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys, VIEW_PREFERENCES_ROOT } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { assignedSearch } from '@/lib/query/use-issues.ts';
+import { assignedSearch, DEFAULT_ISSUE_QUERY } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
@@ -85,6 +85,44 @@ describe('assignedTo', () => {
   it('returns nothing before the viewer is known', () => {
     expect(assignedTo([issue({ assigneeId: 'me' })], null)).toEqual([]);
   });
+
+  it('keeps the order the server sent when the viewer picked one', () => {
+    const rows = assignedTo(
+      [
+        issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
+        issue({
+          id: 'c',
+          identifier: 'DES-2',
+          teamId: 'team_des',
+          assigneeId: 'me',
+          sortOrder: 10,
+        }),
+      ],
+      'me',
+      'updated',
+    );
+
+    expect(rows.map((row) => row.identifier)).toEqual(['ENG-1', 'DES-2']);
+  });
+
+  it('falls back to the manual order only when the ordering is manual', () => {
+    const rows = assignedTo(
+      [
+        issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
+        issue({
+          id: 'c',
+          identifier: 'DES-2',
+          teamId: 'team_des',
+          assigneeId: 'me',
+          sortOrder: 10,
+        }),
+      ],
+      'me',
+      'manual',
+    );
+
+    expect(rows.map((row) => row.identifier)).toEqual(['DES-2', 'ENG-1']);
+  });
 });
 
 const todo: WorkflowState = {
@@ -139,30 +177,33 @@ function renderView(viewerId = 'me', layout: 'list' | 'board' = 'list'): void {
   client.setQueryData([VIEW_PREFERENCES_ROOT], {
     preferences: [{ page: 'my_issues', scope: '', layout, display: {} }],
   });
-  client.setQueryData(queryKeys.assignedIssues(viewerId, assignedSearch(viewerId)), {
-    pages: [
-      {
-        issues: [
-          issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
-          issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
-        ],
-        nextCursor: null,
-      },
-      {
-        issues: [
-          issue({
-            id: 'c',
-            identifier: 'DES-9',
-            teamId: 'team_des',
-            assigneeId: 'me',
-            sortOrder: 10,
-          }),
-        ],
-        nextCursor: null,
-      },
-    ],
-    pageParams: [null, 'cursor-1'],
-  });
+  client.setQueryData(
+    queryKeys.assignedIssues(viewerId, assignedSearch(viewerId, DEFAULT_ISSUE_QUERY)),
+    {
+      pages: [
+        {
+          issues: [
+            issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
+            issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
+          ],
+          nextCursor: null,
+        },
+        {
+          issues: [
+            issue({
+              id: 'c',
+              identifier: 'DES-9',
+              teamId: 'team_des',
+              assigneeId: 'me',
+              sortOrder: 10,
+            }),
+          ],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null, 'cursor-1'],
+    },
+  );
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
