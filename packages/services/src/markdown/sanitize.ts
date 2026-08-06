@@ -91,6 +91,11 @@ const ALLOWED_ATTR = new Set([
   'open',
 ]);
 
+const IMAGE_DEFAULTS: readonly (readonly [string, string])[] = [
+  ['loading', 'lazy'],
+  ['decoding', 'async'],
+];
+
 const URL_ATTR = new Set(['href', 'src']);
 const ABSOLUTE_URL = /^(?:https?:)?\/\//i;
 const SAFE_SCHEMES = new Set(['http', 'https', 'mailto']);
@@ -177,6 +182,28 @@ function externalLinkTarget(keep: ReadonlyMap<string, string>): boolean {
   return href.length > 0 && ABSOLUTE_URL.test(href);
 }
 
+interface AttributeTarget {
+  setAttribute(name: string, value: string): unknown;
+  removeAttribute(name: string): unknown;
+}
+
+function applyTagRules(
+  tag: string,
+  keep: ReadonlyMap<string, string>,
+  element: AttributeTarget,
+): void {
+  if (tag === 'img') {
+    for (const [key, value] of IMAGE_DEFAULTS) element.setAttribute(key, value);
+    return;
+  }
+  if (tag !== 'a') return;
+  element.removeAttribute('target');
+  element.removeAttribute('rel');
+  if (!externalLinkTarget(keep)) return;
+  element.setAttribute('target', '_blank');
+  element.setAttribute('rel', 'noopener noreferrer');
+}
+
 let rewriter: HTMLRewriter | null = null;
 
 function bunSanitizer(): HTMLRewriter {
@@ -198,13 +225,7 @@ function bunSanitizer(): HTMLRewriter {
 
         const keep = keptAttributes(tag, present);
         for (const [key, value] of keep) element.setAttribute(key, value);
-
-        if (tag !== 'a') return;
-        element.removeAttribute('target');
-        element.removeAttribute('rel');
-        if (!externalLinkTarget(keep)) return;
-        element.setAttribute('target', '_blank');
-        element.setAttribute('rel', 'noopener noreferrer');
+        applyTagRules(tag, keep, element);
       },
     })
     .onDocument({
@@ -269,11 +290,7 @@ function cleanDomNode(node: ChildNode): void {
 
     const keep = keptAttributes(tag, present);
     for (const [key, value] of keep) element.setAttribute(key, value);
-
-    if (tag === 'a' && externalLinkTarget(keep)) {
-      element.setAttribute('target', '_blank');
-      element.setAttribute('rel', 'noopener noreferrer');
-    }
+    applyTagRules(tag, keep, element);
   } else {
     element.replaceWith(...children);
   }
