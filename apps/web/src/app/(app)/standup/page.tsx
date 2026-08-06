@@ -1,13 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import { StandupPage } from '@/features/standup/standup-page.tsx';
+import { StandupBoard } from '@/features/standup/standup-board.tsx';
 
 export const metadata: Metadata = { title: 'Standup' };
 
 export default function Standup() {
-  return (
-    <Suspense fallback={null}>
-      <StandupPage />
-    </Suspense>
-  );
+  return <StandupBoard />;
 }

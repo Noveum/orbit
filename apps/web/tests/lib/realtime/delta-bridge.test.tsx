@@ -199,11 +199,11 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[DOCS_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
-  it('refreshes only the counts for an issue delta it patches in place', () => {
+  it('refreshes only the counts and the standup board for an issue delta it patches in place', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [STANDUP_ROOT]]);
   });
 });
 
@@ -273,12 +273,19 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [STANDUP_ROOT]]);
   });
 });
 
-describe('DeltaBridge standup', () => {
-  it('refreshes the room when somebody else advances the standup', () => {
+describe('DeltaBridge standup board', () => {
+  it('refreshes the board when somebody else moves an issue', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() => capturedHandler?.([action()]));
+    expect(seen).toContainEqual([STANDUP_ROOT]);
+  });
+
+  it('leaves the board alone for a ceremony write it reads nothing from', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() =>
@@ -286,6 +293,6 @@ describe('DeltaBridge standup', () => {
         action({ model: 'standup', modelId: 'standup_1', data: { id: 'standup_1' } }),
       ]),
     );
-    expect(seen).toEqual([[STANDUP_ROOT]]);
+    expect(seen).toEqual([]);
   });
 });

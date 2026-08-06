@@ -64,7 +64,7 @@ function noop(): undefined {
 
 interface RootInvalidations {
   counts: boolean;
-  standup: boolean;
+  standupBoard: boolean;
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
@@ -165,6 +165,7 @@ function routeAction(
   if (action.model === 'issue') {
     patchIssueCaches(client, action);
     roots.counts = true;
+    roots.standupBoard = true;
     return;
   }
   if (action.model === 'comment') {
@@ -181,10 +182,6 @@ function routeAction(
   }
   if (action.model === 'issue_subscription') {
     patchSubscription(client, action, currentUserId);
-    return;
-  }
-  if (action.model === 'standup') {
-    roots.standup = true;
     return;
   }
   if (DOC_MODELS.has(action.model)) {
@@ -204,7 +201,7 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
   }
-  if (roots.standup) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
+  if (roots.standupBoard) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
   if (roots.docs) client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
@@ -238,7 +235,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const tabClientId = clientId();
       const roots: RootInvalidations = {
         counts: false,
-        standup: false,
+        standupBoard: false,
         bootstrap: false,
         views: false,
         docs: false,
