@@ -232,6 +232,56 @@ describe('updateIssue', () => {
   });
 });
 
+describe('assignee membership', () => {
+  it('refuses to create an issue assigned to somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Assigned to a stranger',
+        assigneeId: outside.admin.userId,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to reassign an issue to somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+    const issue = await newIssue('Ours');
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { assigneeId: outside.admin.userId }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to move an issue onto somebody outside the workspace', async () => {
+    const outside = await createWorkspace('Elsewhere');
+    const issue = await newIssue('Ours');
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, { assigneeId: outside.admin.userId }),
+    ).rejects.toThrow();
+  });
+
+  it('still accepts a member of the same workspace', async () => {
+    const { user } = await addMember(workspace, 'member', { name: 'Colleague' });
+    const issue = await newIssue('Ours');
+
+    const updated = await updateIssue(workspace.admin, issue.id, { assigneeId: user.id });
+
+    expect(updated.issue.assigneeId).toBe(user.id);
+  });
+
+  it('still accepts clearing the assignee', async () => {
+    const { user } = await addMember(workspace, 'member', { name: 'Colleague' });
+    const issue = await newIssue('Ours', { assigneeId: user.id });
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { assigneeId: null });
+
+    expect(cleared.issue.assigneeId).toBeNull();
+  });
+});
+
 describe('label deltas', () => {
   async function starterLabel() {
     const [label] = await db

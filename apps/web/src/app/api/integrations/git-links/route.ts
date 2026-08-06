@@ -1,3 +1,4 @@
+import { getIssue } from '@orbit/core';
 import { and, db, desc, eq, schema } from '@orbit/db';
 import { assertCan } from '@orbit/shared/policy';
 import { gitLinksQuerySchema } from '@orbit/shared/validators';
@@ -8,6 +9,7 @@ export async function GET(request: Request): Promise<Response> {
     const { principal } = await apiContext();
     assertCan(principal, 'issue:read');
     const { issueId } = gitLinksQuerySchema.parse(searchParamsOf(request));
+    const issue = await getIssue(principal, issueId);
     const pulls = await db
       .select({
         id: schema.gitLink.id,
@@ -24,7 +26,7 @@ export async function GET(request: Request): Promise<Response> {
       .where(
         and(
           eq(schema.gitLink.organizationId, principal.organizationId),
-          eq(schema.gitLink.issueId, issueId),
+          eq(schema.gitLink.issueId, issue.id),
           eq(schema.gitLink.kind, 'pull_request'),
         ),
       )

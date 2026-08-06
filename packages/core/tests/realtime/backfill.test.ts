@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, schema } from '@orbit/db';
 import { SYNC_MODELS } from '@orbit/shared/events';
+import { createComment, toggleReaction } from '../../src/content/comment-service.ts';
 import { createDoc, createDocCollection, setDocAccess } from '../../src/content/doc-service.ts';
 import { newId } from '../../src/internal.ts';
 import { createInvite } from '../../src/org/invite-service.ts';
@@ -282,5 +283,52 @@ describe('catch up respects document access', () => {
     });
     const result = await catchUp(guest, 0);
     expect(result.actions.some((action) => action.modelId === doc.id)).toBe(true);
+  });
+});
+
+describe('catch up scopes reactions to the team that owns the issue', () => {
+  it('hides a reaction on another team issue from a member', async () => {
+    const outsider = await createTeam(workspace.admin, { name: 'Design', key: teamKey() });
+    const { principal: member } = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId],
+    });
+
+    const theirs = await createIssue(workspace.admin, {
+      teamId: outsider.team.id,
+      title: 'Confidential to Design',
+    });
+    const comment = await createComment(workspace.admin, theirs.issue.id, {
+      body: 'Only Design should see this thread.',
+    });
+    const reaction = await toggleReaction(workspace.admin, comment.comment.id, { emoji: '🚀' });
+
+    const result = await catchUp(member, 0);
+    const ids = new Set(result.actions.map((action) => action.modelId));
+
+    for (const action of reaction.actions) {
+      expect(ids.has(action.modelId)).toBe(false);
+    }
+  });
+
+  it('still gives a reaction on the member own team issue', async () => {
+    const { principal: member } = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId],
+    });
+
+    const mine = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Ours',
+    });
+    const comment = await createComment(workspace.admin, mine.issue.id, { body: 'Nice work.' });
+    const reaction = await toggleReaction(workspace.admin, comment.comment.id, { emoji: '🚀' });
+
+    const result = await catchUp(member, 0);
+    const ids = new Set(result.actions.map((action) => action.modelId));
+
+    const reacted = reaction.actions.filter((action) => action.model === 'reaction');
+    expect(reacted.length).toBeGreaterThan(0);
+    for (const action of reacted) {
+      expect(ids.has(action.modelId)).toBe(true);
+    }
   });
 });

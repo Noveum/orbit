@@ -520,6 +520,20 @@ async function projectFitsTeam(
   return rows.some((row) => row.teamId === teamId);
 }
 
+async function assertMemberOfWorkspace(
+  executor: Executor,
+  organizationId: string,
+  userId: string | null | undefined,
+): Promise<void> {
+  if (userId === undefined || userId === null) return;
+  const [row] = await executor
+    .select({ id: schema.member.id })
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, userId)))
+    .limit(1);
+  if (row === undefined) throw validationFailed('That person is not in this workspace.');
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
@@ -553,6 +567,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
+    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -673,6 +688,7 @@ async function applyIssueUpdates(
       }
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
+    await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, current.teamId, values);
     pending.push({ current, values, changes });
   }
@@ -917,6 +933,7 @@ export async function moveIssue(
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
 
+    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, teamId, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,

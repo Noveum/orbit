@@ -475,8 +475,17 @@ const LOADERS: Record<SyncModel, Loader> = {
   reaction: async (principal, since, limit) =>
     (
       await db
-        .select()
+        .select({
+          row: schema.reaction,
+          teamId: schema.issue.teamId,
+          issueId: schema.issue.id,
+        })
         .from(schema.reaction)
+        .leftJoin(schema.comment, eq(schema.comment.id, schema.reaction.commentId))
+        .innerJoin(
+          schema.issue,
+          eq(schema.issue.id, sql`coalesce(${schema.comment.issueId}, ${schema.reaction.issueId})`),
+        )
         .where(
           and(
             eq(schema.reaction.organizationId, principal.organizationId),
@@ -485,13 +494,10 @@ const LOADERS: Record<SyncModel, Loader> = {
         )
         .orderBy(asc(schema.reaction.syncId))
         .limit(limit)
-    ).map((row) => ({
+    ).map(({ row, teamId, issueId }) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes:
-        row.issueId === null
-          ? [scopes.organization(row.organizationId)]
-          : [scopes.organization(row.organizationId), scopes.issue(row.issueId)],
+      scopes: [scopes.organization(row.organizationId), scopes.team(teamId), scopes.issue(issueId)],
       data: row,
     })),
 
