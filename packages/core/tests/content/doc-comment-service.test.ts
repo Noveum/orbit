@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { scopes } from '@orbit/shared/events';
+import { buildDocAnchor } from '@orbit/shared/utils';
 import {
   createDocComment,
   deleteDocComment,
@@ -58,6 +59,93 @@ describe('createDocComment', () => {
     await expect(
       createDocComment(workspace.admin, docId, { body: 'Nested', parentId: reply.id }),
     ).rejects.toThrow();
+  });
+});
+
+describe('anchored doc comments', () => {
+  const passage = 'the migration has to land first';
+  const anchor = buildDocAnchor(
+    `Ship notes\n\n${passage}\n\nEverything else is ready.`,
+    12,
+    12 + passage.length,
+  );
+
+  it('stores the anchor and hands it back when the thread is listed', async () => {
+    const { comment } = await createDocComment(workspace.admin, docId, {
+      body: 'Which migration?',
+      anchor,
+    });
+
+    expect(comment.anchor).toEqual(anchor);
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments[0]?.anchor).toEqual(anchor);
+    expect(page.comments[0]?.anchor?.quote).toBe(passage);
+  });
+
+  it('still accepts a comment with no anchor and stores it as null', async () => {
+    const { comment } = await createDocComment(workspace.admin, docId, {
+      body: 'A note about the whole page.',
+    });
+
+    expect(comment.anchor).toBeNull();
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments[0]?.anchor).toBeNull();
+  });
+
+  it('lists anchored and unanchored comments side by side', async () => {
+    await createDocComment(workspace.admin, docId, { body: 'Whole page', anchor: null });
+    await createDocComment(workspace.admin, docId, { body: 'This passage', anchor });
+
+    const page = await listDocComments(workspace.admin, docId);
+    expect(page.comments.map((entry) => entry.anchor === null)).toEqual([true, false]);
+  });
+
+  it('keeps a reply on the anchor of the comment it answers', async () => {
+    const { comment: root } = await createDocComment(workspace.admin, docId, {
+      body: 'Which migration?',
+      anchor,
+    });
+
+    await expect(
+      createDocComment(workspace.admin, docId, {
+        body: 'This one.',
+        parentId: root.id,
+        anchor: buildDocAnchor('Something else entirely', 0, 9),
+      }),
+    ).rejects.toThrow();
+
+    const { comment: reply } = await createDocComment(workspace.admin, docId, {
+      body: 'This one.',
+      parentId: root.id,
+    });
+    expect(reply.anchor).toBeNull();
+  });
+
+  it('refuses an anchor with an empty quote or a negative position', async () => {
+    await expect(
+      createDocComment(workspace.admin, docId, {
+        body: 'Nothing selected',
+        anchor: { quote: '', prefix: '', suffix: '', start: 0 },
+      }),
+    ).rejects.toThrow();
+
+    await expect(
+      createDocComment(workspace.admin, docId, {
+        body: 'Impossible position',
+        anchor: { quote: passage, prefix: '', suffix: '', start: -4 },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('publishes the anchor on the sync action so a reader can highlight it', async () => {
+    const { actions } = await createDocComment(workspace.admin, docId, {
+      body: 'Which migration?',
+      anchor,
+    });
+
+    expect(actions[0]?.data).toMatchObject({ anchor: { quote: passage } });
   });
 });
 
