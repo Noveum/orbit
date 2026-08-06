@@ -1,4 +1,17 @@
-import { and, asc, count, db, eq, inArray, isNull, schema, sql } from '@orbit/db';
+import {
+  and,
+  asc,
+  count,
+  db,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  notExists,
+  or,
+  schema,
+  sql,
+} from '@orbit/db';
 import { conflict, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -498,7 +511,7 @@ export async function listProjectUpdates(
         eq(schema.projectUpdate.organizationId, principal.organizationId),
       ),
     )
-    .orderBy(asc(schema.projectUpdate.createdAt))
+    .orderBy(desc(schema.projectUpdate.createdAt))
     .limit(limit);
 }
 
@@ -591,20 +604,31 @@ export async function listProjectsForTeams(
   teamIds: readonly string[],
 ): Promise<ProjectRow[]> {
   assertCan(principal, 'project:read');
-  if (teamIds.length === 0) return [];
+  const linkedToATeam =
+    teamIds.length === 0
+      ? undefined
+      : inArray(
+          schema.project.id,
+          db
+            .select({ id: schema.projectTeam.projectId })
+            .from(schema.projectTeam)
+            .where(inArray(schema.projectTeam.teamId, [...teamIds])),
+        );
+  const ownedByNobody = notExists(
+    db
+      .select({ id: schema.projectTeam.projectId })
+      .from(schema.projectTeam)
+      .where(eq(schema.projectTeam.projectId, schema.project.id)),
+  );
+  const reachable = linkedToATeam === undefined ? ownedByNobody : or(linkedToATeam, ownedByNobody);
   return await db
     .select()
     .from(schema.project)
     .where(
       and(
         eq(schema.project.organizationId, principal.organizationId),
-        inArray(
-          schema.project.id,
-          db
-            .select({ id: schema.projectTeam.projectId })
-            .from(schema.projectTeam)
-            .where(inArray(schema.projectTeam.teamId, [...teamIds])),
-        ),
+        isNull(schema.project.archivedAt),
+        reachable,
       ),
     )
     .orderBy(asc(schema.project.name));

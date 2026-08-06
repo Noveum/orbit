@@ -16,9 +16,11 @@ import {
 } from '../../src/work/milestone-service.ts';
 import {
   addProjectTeam,
+  archiveProject,
   createProject,
   getProject,
   listProjects,
+  listProjectsForTeams,
   listProjectTeams,
   listProjectUpdates,
   postProjectUpdate,
@@ -285,5 +287,60 @@ describe('a project stays inside the teams it belongs to', () => {
       (await postProjectUpdate(lead, project.id, { health: 'on_track', body: 'All good.' })).update
         .body,
     ).toBe('All good.');
+  });
+});
+
+describe('the payload the client boots from', () => {
+  it('shows the newest project updates, not the first ever written', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Long running',
+      teamIds: [workspace.teamId],
+    });
+    for (const week of ['One', 'Two', 'Three', 'Four', 'Five']) {
+      await postProjectUpdate(workspace.admin, project.id, {
+        health: 'on_track',
+        body: `Week ${week}`,
+      });
+    }
+
+    const latest = await listProjectUpdates(workspace.admin, project.id, 2);
+
+    expect(latest).toHaveLength(2);
+    expect(latest[0]?.body).toBe('Week Five');
+    expect(latest[1]?.body).toBe('Week Four');
+  });
+
+  it('keeps a project that belongs to no team in particular', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Company wiki',
+      teamIds: [],
+    });
+
+    const forTeams = await listProjectsForTeams(workspace.admin, [workspace.teamId]);
+
+    expect(forTeams.map((row) => row.id)).toContain(project.id);
+  });
+
+  it('drops an archived project so it leaves the picker', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Finished work',
+      teamIds: [workspace.teamId],
+    });
+    await archiveProject(workspace.admin, project.id);
+
+    const forTeams = await listProjectsForTeams(workspace.admin, [workspace.teamId]);
+
+    expect(forTeams.map((row) => row.id)).not.toContain(project.id);
+  });
+
+  it('still returns the team projects a member can reach', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Team work',
+      teamIds: [workspace.teamId],
+    });
+
+    const forTeams = await listProjectsForTeams(workspace.admin, [workspace.teamId]);
+
+    expect(forTeams.map((row) => row.id)).toContain(project.id);
   });
 });
