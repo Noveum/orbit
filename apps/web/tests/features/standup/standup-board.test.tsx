@@ -315,6 +315,12 @@ describe('StandupBoard', () => {
     expect(screen.queryByTestId('standup-columns')).toBeNull();
   });
 
+  it('says which window the closed cards came out of', async () => {
+    await mountBoard();
+
+    expect(screen.getByTestId('standup-window').textContent).toMatch(/^closed work since \w/);
+  });
+
   it('shows the timer only after the room asks for it', async () => {
     const user = userEvent.setup();
     await mountBoard();
@@ -323,6 +329,7 @@ describe('StandupBoard', () => {
 
     await user.keyboard('t');
     await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
+    expect(screen.getByTestId('standup-timer').textContent).toMatch(/^\d+:[0-5]\d$/);
 
     await user.keyboard('t');
     await waitFor(() => expect(screen.queryByTestId('standup-timer')).toBeNull());
