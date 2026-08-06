@@ -1,8 +1,9 @@
 import { publishDeltas } from '@orbit/core';
-import { toDomainError, unauthorized } from '@orbit/shared/errors';
+import { notFound, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { ORIGIN_CLIENT_ID_HEADER, originClientIdSchema } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { idSchema } from '@orbit/shared/validators';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ZodError } from 'zod';
@@ -115,6 +116,12 @@ export async function readJson(request: Request): Promise<unknown> {
   } catch {
     return {};
   }
+}
+
+export function routeId(value: string, what = 'record'): string {
+  const parsed = idSchema.safeParse(value);
+  if (!parsed.success) throw notFound(`That ${what} does not exist.`);
+  return parsed.data;
 }
 
 export function searchParamsOf(request: Request): Record<string, string> {

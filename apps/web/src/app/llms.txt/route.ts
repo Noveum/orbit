@@ -4,7 +4,7 @@ export function GET(): Response {
   const base = publicAppUrl();
   const body = `# Orbit
 
-> Orbit is a free, realtime, keyboard-first work tracker for teams. It covers issues, boards, cycles and sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever.
+> Orbit is a free, realtime, keyboard-first work tracker for teams. It covers issues, boards, sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever.
 
 ## Capabilities
 

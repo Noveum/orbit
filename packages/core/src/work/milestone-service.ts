@@ -10,6 +10,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { assertProjectVisible } from './project-service.ts';
 
 export type MilestoneRow = typeof schema.milestone.$inferSelect;
 
@@ -17,17 +18,24 @@ function milestoneScopes(row: MilestoneRow): string[] {
   return [scopes.organization(row.organizationId), scopes.project(row.projectId)];
 }
 
-async function assertProjectInOrganization(
+async function assertMilestoneReachable(
   executor: Executor,
-  organizationId: string,
-  projectId: string,
-): Promise<void> {
+  principal: Principal,
+  milestoneId: string,
+): Promise<MilestoneRow> {
   const [row] = await executor
-    .select({ id: schema.project.id })
-    .from(schema.project)
-    .where(and(eq(schema.project.id, projectId), eq(schema.project.organizationId, organizationId)))
+    .select()
+    .from(schema.milestone)
+    .where(
+      and(
+        eq(schema.milestone.id, milestoneId),
+        eq(schema.milestone.organizationId, principal.organizationId),
+      ),
+    )
     .limit(1);
-  requireRow(row, 'That project does not exist.');
+  const milestone = requireRow(row, 'That milestone does not exist.');
+  await assertProjectVisible(executor, principal, milestone.projectId);
+  return milestone;
 }
 
 export async function createMilestone(
@@ -38,7 +46,7 @@ export async function createMilestone(
   const parsed = milestoneCreateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    await assertProjectInOrganization(tx, principal.organizationId, parsed.projectId);
+    await assertProjectVisible(tx, principal, parsed.projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [last] = await tx
@@ -88,6 +96,8 @@ export async function updateMilestone(
   const parsed = milestoneUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await assertMilestoneReachable(tx, principal, milestoneId);
+
     const values: Partial<typeof schema.milestone.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
     if (parsed.description !== undefined) values.description = parsed.description;
@@ -131,17 +141,7 @@ export async function deleteMilestone(
   assertCan(principal, 'milestone:manage');
 
   return await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
-      .from(schema.milestone)
-      .where(
-        and(
-          eq(schema.milestone.id, milestoneId),
-          eq(schema.milestone.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const milestone = requireRow(existing, 'That milestone does not exist.');
+    const milestone = await assertMilestoneReachable(tx, principal, milestoneId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -166,7 +166,7 @@ export async function listMilestones(
   projectId: string,
 ): Promise<MilestoneRow[]> {
   assertCan(principal, 'project:read');
-  await assertProjectInOrganization(db, principal.organizationId, projectId);
+  await assertProjectVisible(db, principal, projectId);
   return await db
     .select()
     .from(schema.milestone)
@@ -188,7 +188,7 @@ export async function reorderMilestones(
   if (orderedMilestoneIds.length === 0) throw conflict('Provide the milestones to reorder.');
 
   return await db.transaction(async (tx) => {
-    await assertProjectInOrganization(tx, principal.organizationId, projectId);
+    await assertProjectVisible(tx, principal, projectId);
     const requested = new Set(orderedMilestoneIds);
     if (requested.size !== orderedMilestoneIds.length) {
       throw conflict('That order lists the same milestone twice.');

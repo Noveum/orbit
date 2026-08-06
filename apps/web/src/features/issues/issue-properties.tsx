@@ -1,6 +1,7 @@
 'use client';
 
 import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
+import { sprintLabel } from '@orbit/shared/utils';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
@@ -23,7 +24,7 @@ export interface IssuePropertiesProps {
 
 export function IssueProperties({ issue }: IssuePropertiesProps) {
   const workspace = useWorkspace();
-  const update = useUpdateIssue(issue.teamId);
+  const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
   const states = statesForTeam(workspace.states, issue.teamId);
@@ -222,23 +223,23 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
         </PropertyMenu>
       </PropertyRow>
 
-      <PropertyRow label="Cycle">
+      <PropertyRow label="Sprint">
         <PropertyMenu
-          title="Cycle"
+          title="Sprint"
           open={openMenu === 'cycle'}
           onOpenChange={toggle('cycle')}
           options={[
-            { id: 'none', label: 'No cycle' },
+            { id: 'none', label: 'No sprint' },
             ...cycles.map((entry) => ({
               id: entry.id,
-              label: entry.name.length > 0 ? entry.name : `Cycle ${entry.number}`,
+              label: sprintLabel(entry),
             })),
           ]}
           selected={issue.cycleId === null ? ['none'] : [issue.cycleId]}
           onSelect={(value) => patch({ cycleId: value === 'none' ? null : value })}
         >
           <button type="button" className={rowClassName} data-testid="property-cycle">
-            {cycle === undefined ? 'No cycle' : `Cycle ${cycle.number}`}
+            {cycle === undefined ? 'No sprint' : sprintLabel(cycle)}
           </button>
         </PropertyMenu>
       </PropertyRow>

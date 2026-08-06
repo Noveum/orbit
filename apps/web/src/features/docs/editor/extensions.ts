@@ -90,7 +90,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
     StarterKit.configure({
       codeBlock: false,
       link: { openOnClick: false, autolink: true },
-      heading: { levels: [1, 2, 3, 4] },
+      heading: { levels: [1, 2, 3, 4, 5, 6] },
     }),
     Highlight,
     CodeBlockLowlight.configure({ lowlight, defaultLanguage: 'ts' }),
@@ -141,6 +141,7 @@ function markTaskLists(root: ParentNode): void {
 }
 
 export function toEditorHtml(html: string): string {
+  if (typeof document === 'undefined') return html;
   const template = document.createElement('template');
   template.innerHTML = html;
   markCallout(template.content);

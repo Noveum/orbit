@@ -3,6 +3,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  --print-bg: oklch(100% 0 0);
+  --print-fg: oklch(0% 0 0);
   --orbit-fluid: clamp(0rem, calc((100vw - 80rem) / 80), 1rem);
 
   --orbit-bg: #f4f5f7;
@@ -822,5 +824,52 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  body {
+    background: var(--print-bg);
+    color: var(--print-fg);
+  }
+
+  [data-print-hide],
+  nav,
+  aside,
+  header button,
+  [role="dialog"],
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  [data-print-document] {
+    display: block !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  main {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.75em;
+    word-break: break-all;
+  }
+
+  pre,
+  blockquote,
+  table {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
   }
 }

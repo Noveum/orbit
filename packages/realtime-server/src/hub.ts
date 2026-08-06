@@ -182,7 +182,35 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     revalidateSessionsFor(parsed.data.userId);
   }
 
+  function revalidateDocScopes(action: SyncAction): void {
+    if (action.model !== 'doc' && action.model !== 'doc_comment') return;
+    const scope = action.scopes.find((entry) => entry.startsWith('doc:'));
+    if (scope === undefined) return;
+    for (const connection of connections.values()) {
+      if (connection.organizationId !== action.organizationId) continue;
+      if (!connection.scopes.has(scope)) continue;
+      authorizeScope(scope, connection.principal)
+        .then((allowed) => {
+          if (allowed) return;
+          connection.removeScopes([scope]);
+          logger.info('dropped a doc scope the reader may no longer read', {
+            connectionId: connection.id,
+            scope,
+          });
+        })
+        .catch((error: unknown) => {
+          connection.removeScopes([scope]);
+          logger.error('doc scope revalidation failed, dropping to fail closed', {
+            connectionId: connection.id,
+            scope,
+            ...errorFields(error),
+          });
+        });
+    }
+  }
+
   function revalidateAffected(action: SyncAction): void {
+    revalidateDocScopes(action);
     if (action.model !== 'member' || action.action !== 'delete') return;
     const removed = memberDeleteSchema.safeParse(action.data);
     if (!removed.success) return;

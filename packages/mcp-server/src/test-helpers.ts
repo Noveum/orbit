@@ -91,6 +91,7 @@ export async function mintToken(
   organizationId: string,
   userId: string,
   name = 'Test client',
+  scopes: string = MCP_TEST_SCOPES,
 ): Promise<string> {
   const clientId = `orbit_test_${randomUUID().replace(/-/g, '')}`;
   await db.insert(schema.oauthApplication).values({
@@ -110,9 +111,9 @@ export async function mintToken(
     refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
     clientId,
     userId,
-    scopes: MCP_TEST_SCOPES,
+    scopes,
   });
-  await recordMcpGrant({ clientId, userId, organizationId, scopes: MCP_TEST_SCOPES });
+  await recordMcpGrant({ clientId, userId, organizationId, scopes });
   return accessToken;
 }
 

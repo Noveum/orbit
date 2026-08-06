@@ -86,6 +86,8 @@ export interface EditorToolbarProps {
   readonly compact?: boolean;
   readonly className?: string;
   readonly testId?: string;
+  readonly leading?: ReactNode | undefined;
+  readonly trailing?: ReactNode | undefined;
 }
 
 export function EditorToolbar({
@@ -94,6 +96,8 @@ export function EditorToolbar({
   compact = false,
   className,
   testId = 'editor-toolbar',
+  leading,
+  trailing,
 }: EditorToolbarProps) {
   const state = useEditorState({
     editor,
@@ -137,6 +141,12 @@ export function EditorToolbar({
           className,
         )}
       >
+        {leading === undefined ? null : (
+          <>
+            {leading}
+            <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+          </>
+        )}
         {compact ? null : (
           <>
             <ToolbarButton
@@ -331,6 +341,7 @@ export function EditorToolbar({
           enabled={state.hasSelection || state.link}
           testId={testId}
         />
+        {trailing === undefined ? null : <span className="ml-auto">{trailing}</span>}
       </div>
     </TooltipProvider>
   );

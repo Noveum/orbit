@@ -1,5 +1,6 @@
 import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
 import type { GroupByField, IssueOrdering } from '@orbit/shared/filters';
+import { sprintLabel } from '@orbit/shared/utils';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 
@@ -27,6 +28,7 @@ export interface IssueSubGroup extends GroupDefinition {
 export interface IssueGroup extends GroupDefinition {
   readonly issues: readonly Issue[];
   readonly subGroups: readonly IssueSubGroup[];
+  readonly total: number;
 }
 
 export const PRIORITY_ORDER: readonly Priority[] = [1, 2, 3, 4, 0];
@@ -104,11 +106,11 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
       return [
         ...context.cycles.map((cycle) => ({
           id: cycle.id,
-          title: cycle.name.length === 0 ? `Cycle ${cycle.number}` : cycle.name,
+          title: sprintLabel(cycle),
           color: null,
           category: null,
         })),
-        unassigned('No cycle'),
+        unassigned('No sprint'),
       ];
     case 'none':
       return [{ id: 'all', title: 'All issues', color: null, category: null }];
@@ -144,21 +146,56 @@ export interface GroupOptions {
   readonly showEmptyGroups: boolean;
   readonly ordering: IssueOrdering;
   readonly subGroupBy?: GroupByField;
+  readonly totals?: Readonly<Record<string, number>> | undefined;
+  readonly remap?: ReadonlyMap<string, string> | undefined;
 }
 
 function bucket(
   issues: readonly Issue[],
   groupBy: GroupByField,
+  remap: ReadonlyMap<string, string> | undefined,
 ): ReadonlyMap<string, readonly Issue[]> {
   const buckets = new Map<string, Issue[]>();
   for (const issue of issues) {
-    for (const key of groupKeysOf(issue, groupBy)) {
+    for (const raw of groupKeysOf(issue, groupBy)) {
+      const key = remap?.get(raw) ?? raw;
       const current = buckets.get(key);
       if (current === undefined) buckets.set(key, [issue]);
       else current.push(issue);
     }
   }
   return buckets;
+}
+
+export interface MergedStates {
+  readonly states: readonly WorkflowState[];
+  readonly idMap: ReadonlyMap<string, string>;
+}
+
+export function mergeStatesByName(states: readonly WorkflowState[]): MergedStates {
+  const canonical = new Map<string, WorkflowState>();
+  const idMap = new Map<string, string>();
+  for (const state of states) {
+    const key = `${state.category}:${state.name.trim().toLowerCase()}`;
+    const existing = canonical.get(key);
+    if (existing === undefined) canonical.set(key, { ...state, id: key });
+    idMap.set(state.id, key);
+  }
+  const merged = [...canonical.values()].sort((left, right) => left.position - right.position);
+  return { states: merged, idMap };
+}
+
+export function remapTotals(
+  totals: Readonly<Record<string, number>> | undefined,
+  idMap: ReadonlyMap<string, string>,
+): Record<string, number> | undefined {
+  if (totals === undefined) return undefined;
+  const merged: Record<string, number> = {};
+  for (const [id, value] of Object.entries(totals)) {
+    const key = idMap.get(id) ?? id;
+    merged[key] = (merged[key] ?? 0) + value;
+  }
+  return merged;
 }
 
 function definitionsWithExtras(
@@ -184,18 +221,19 @@ export function groupIssues(
   context: GroupContext,
   options: GroupOptions,
 ): IssueGroup[] {
-  const buckets = bucket(issues, groupBy);
+  const buckets = bucket(issues, groupBy, options.remap);
   const subGroupBy = options.subGroupBy ?? 'none';
 
   return definitionsWithExtras(groupBy, context, buckets.keys()).flatMap((definition) => {
     const rows = buckets.get(definition.id) ?? [];
-    if (rows.length === 0 && !options.showEmptyGroups) return [];
+    const total = options.totals?.[definition.id] ?? rows.length;
+    if (total === 0 && rows.length === 0 && !options.showEmptyGroups) return [];
     const sorted = ordered(rows, options.ordering);
     const subGroups =
       subGroupBy === 'none' || subGroupBy === groupBy
         ? []
         : subGroupsOf(sorted, subGroupBy, context, options);
-    return [{ ...definition, issues: sorted, subGroups }];
+    return [{ ...definition, issues: sorted, subGroups, total }];
   });
 }
 
@@ -205,7 +243,7 @@ function subGroupsOf(
   context: GroupContext,
   options: GroupOptions,
 ): IssueSubGroup[] {
-  const buckets = bucket(issues, subGroupBy);
+  const buckets = bucket(issues, subGroupBy, options.remap);
   return definitionsWithExtras(subGroupBy, context, buckets.keys()).flatMap((definition) => {
     const rows = buckets.get(definition.id) ?? [];
     if (rows.length === 0) return [];

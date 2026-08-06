@@ -14,7 +14,9 @@ export {
   lte,
   ne,
   not,
+  notExists,
   or,
+  type SQL,
   sql,
 } from 'drizzle-orm';
 export * from './client.ts';

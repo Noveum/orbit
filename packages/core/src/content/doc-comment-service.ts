@@ -1,5 +1,6 @@
 import { and, asc, db, eq, isNull, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
+import { isRestricted } from '@orbit/shared/constants';
 import { forbidden, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -23,33 +24,22 @@ import {
 } from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { type DocRow, loadReadableDoc } from './doc-service.ts';
 
 export type DocCommentRow = typeof schema.docComment.$inferSelect;
 
-interface DocRef {
-  readonly id: string;
-  readonly organizationId: string;
-  readonly title: string;
-}
+type DocRef = DocRow;
 
 async function loadDocForComment(
   executor: Executor,
   principal: Principal,
   docId: string,
 ): Promise<DocRef> {
-  const [row] = await executor
-    .select({
-      id: schema.doc.id,
-      organizationId: schema.doc.organizationId,
-      title: schema.doc.title,
-    })
-    .from(schema.doc)
-    .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
-    .limit(1);
-  return requireRow(row, 'That doc does not exist.');
+  return await loadReadableDoc(executor, principal, docId);
 }
 
 function docCommentScopes(doc: DocRef): string[] {
+  if (isRestricted(doc.visibility)) return [scopes.user(doc.authorId), scopes.doc(doc.id)];
   return [scopes.organization(doc.organizationId), scopes.doc(doc.id)];
 }
 

@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { StandupView } from '@/features/issues/standup-view.tsx';
+import { StandupBoard } from '@/features/standup/standup-board.tsx';
 
 export const metadata: Metadata = { title: 'Standup' };
 
-export default function StandupPage() {
-  return <StandupView />;
+export default function Standup() {
+  return <StandupBoard />;
 }

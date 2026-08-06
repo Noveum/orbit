@@ -155,7 +155,8 @@ function blockOf(node: JSONContent): string {
         .map((child) => child.text ?? '')
         .join('')
         .replace(/\n+$/, '');
-      return `\`\`\`${language}\n${text}\n\`\`\``;
+      const fence = '`'.repeat(longestBacktickRun(text) + 1);
+      return `${fence}${language}\n${text}\n${fence}`;
     }
     case 'horizontalRule':
       return '---';
@@ -198,6 +199,19 @@ function blocksOf(nodes: readonly JSONContent[] | undefined, separator: string):
     .join(separator);
 }
 
+function longestBacktickRun(text: string): number {
+  let longest = 2;
+  for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return longest;
+}
+
+function tidy(node: JSONContent, markdown: string): string {
+  return node.type === 'codeBlock' ? markdown : markdown.replace(/\n{3,}/g, '\n\n');
+}
+
 export function docToMarkdown(doc: JSONContent): string {
-  return `${blocksOf(doc.content, '\n\n')}\n`.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+  const blocks = (doc.content ?? [])
+    .map((node) => tidy(node, blockOf(node)))
+    .filter((block) => block.length > 0);
+  return `${blocks.join('\n\n')}\n`.replace(/^\n+/, '');
 }

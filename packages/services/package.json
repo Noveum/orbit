@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun --env-file=../../.env test"
+    "test": "bun --env-file=../../.env test --timeout 20000"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",

@@ -1,19 +1,20 @@
 'use client';
 
-import { Bell, BellOff, Check, Pencil } from 'lucide-react';
+import { Bell, BellOff, Check } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
 import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
+import { uploadAttachment } from '@/features/docs/upload.ts';
+import { useAutosave } from '@/features/docs/use-autosave.ts';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
-import { cn } from '@/lib/cn.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
+import type { Issue, Member } from '@/lib/query/schemas.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
@@ -24,36 +25,141 @@ import { useWorkspace } from './workspace-provider.tsx';
 
 export interface IssueDetailViewProps {
   readonly identifier: string;
+  readonly known?: Issue;
 }
 
-const descriptionClassName =
-  'prose-orbit w-full break-words text-dense text-muted leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_h2]:mt-4 [&_h2]:font-medium [&_h2]:text-text [&_li]:my-0.5 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5';
+export function IssueTitle({
+  issue,
+  onCommit,
+}: {
+  readonly issue: Issue;
+  readonly onCommit: (title: string) => void;
+}) {
+  const [draft, setDraft] = useState(issue.title);
+  const server = useRef(issue.title);
 
-function Description({ body, html }: { body: string; html: string }) {
-  if (html.length === 0) {
-    return <p className={cn(descriptionClassName, 'whitespace-pre-wrap')}>{body}</p>;
-  }
+  useEffect(() => {
+    if (server.current === issue.title) return;
+    const untouched = draft === server.current;
+    server.current = issue.title;
+    if (untouched) setDraft(issue.title);
+  }, [issue.title, draft]);
+
+  const size = (node: HTMLTextAreaElement | null): undefined => {
+    if (node === null) return;
+    node.style.height = 'auto';
+    node.style.height = `${node.scrollHeight}px`;
+  };
+
+  const abandoned = useRef(false);
+
+  const commit = () => {
+    if (abandoned.current) {
+      abandoned.current = false;
+      return;
+    }
+    const next = draft.trim();
+    if (next.length === 0) {
+      setDraft(issue.title);
+      return;
+    }
+    if (next !== issue.title) onCommit(next);
+  };
+
   return (
-    <div
-      className={descriptionClassName}
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized server side by @orbit/services/markdown
-      dangerouslySetInnerHTML={{ __html: html }}
+    <textarea
+      ref={size}
+      rows={1}
+      value={draft}
+      spellCheck={false}
+      aria-label="Issue title"
+      data-testid="issue-title"
+      onChange={(event) => {
+        setDraft(event.target.value);
+        size(event.currentTarget);
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+          return;
+        }
+        if (event.key === 'Escape') {
+          abandoned.current = true;
+          setDraft(issue.title);
+          event.currentTarget.blur();
+        }
+      }}
+      className="-mx-1 w-[calc(100%+0.5rem)] resize-none overflow-hidden rounded-md border-0 bg-transparent px-1 font-medium text-text text-xl leading-tight outline-none transition-colors duration-[var(--duration-fast)] placeholder:text-faint hover:bg-surface-2 focus:bg-transparent"
+      placeholder="Issue title"
     />
   );
 }
 
-export function IssueDetailView({ identifier }: IssueDetailViewProps) {
+function IssueBody({
+  issue,
+  members,
+  onCommit,
+}: {
+  readonly issue: Issue;
+  readonly members: readonly Member[];
+  readonly onCommit: (description: string) => Promise<unknown>;
+}) {
+  const { toast } = useToast();
+  const [draft, setDraft] = useState(issue.description);
+
+  const upload = useCallback(
+    async (file: File) => {
+      try {
+        return await uploadAttachment('issue', issue.id, file);
+      } catch (error: unknown) {
+        toast({
+          title: 'Could not attach that file',
+          description: messageOf(error),
+          tone: 'danger',
+        });
+        throw error;
+      }
+    },
+    [issue.id, toast],
+  );
+  const autosave = useAutosave({ value: draft, save: onCommit });
+  const flush = autosave.saveNow;
+  const settled = autosave.status === 'saved';
+  const server = useRef(issue.description);
+
+  useEffect(() => flush, [flush]);
+
+  useEffect(() => {
+    if (server.current === issue.description || !settled) return;
+    server.current = issue.description;
+    setDraft(issue.description);
+  }, [issue.description, settled]);
+
+  return (
+    <RichTextEditor
+      value={draft}
+      onChange={setDraft}
+      members={members}
+      placeholder="Add a description, markdown works."
+      ariaLabel="Issue description"
+      testId="issue-description"
+      onForceSave={flush}
+      onBlur={flush}
+      onUpload={upload}
+    />
+  );
+}
+
+export function IssueDetailView({ identifier, known }: IssueDetailViewProps) {
   const { toast } = useToast();
   const workspace = useWorkspace();
-  const detail = useIssueDetail(identifier);
+  const detail = useIssueDetail(identifier, known);
   const issue = detail.data?.issue;
   const comments = useComments(issue?.id ?? null);
-  const update = useUpdateIssue(issue?.teamId ?? 'none');
+  const update = useUpdateIssue();
 
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [editingBody, setEditingBody] = useState(false);
-  const [titleDraft, setTitleDraft] = useState('');
-  const [bodyDraft, setBodyDraft] = useState('');
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
 
   if (detail.isPending) {
@@ -78,13 +184,6 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
 
   const state = workspace.stateById.get(issue.stateId);
   const isSubscribed = subscribed ?? detail.data.subscribed;
-
-  const commitTitle = () => {
-    setEditingTitle(false);
-    const next = titleDraft.trim();
-    if (next.length === 0 || next === issue.title) return;
-    update.mutate({ issue, patch: { title: next } });
-  };
 
   const toggleSubscribe = async () => {
     const previous = isSubscribed;
@@ -141,88 +240,21 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
         </header>
 
         <div className="mx-auto flex max-w-3xl flex-col gap-6 px-5 py-6">
-          {editingTitle ? (
-            <Input
-              autoFocus
-              data-testid="title-input"
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.target.value)}
-              onBlur={() => commitTitle()}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.currentTarget.blur();
-                  return;
-                }
-                if (event.key === 'Escape') {
-                  setTitleDraft(issue.title);
-                  setEditingTitle(false);
-                }
-              }}
-              className="h-10 border-0 px-0 font-medium text-xl shadow-none"
-            />
-          ) : (
-            <button
-              type="button"
-              data-testid="issue-title"
-              className="-mx-1 cursor-text select-text rounded-md px-1 text-left font-medium text-text text-xl leading-tight transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
-              onClick={() => {
-                setTitleDraft(issue.title);
-                setEditingTitle(true);
-              }}
-            >
-              {issue.title}
-            </button>
-          )}
+          <IssueTitle
+            key={`${issue.id}:title`}
+            issue={issue}
+            onCommit={(title) => update.mutate({ issue, patch: { title } })}
+          />
 
           <section className="flex flex-col gap-2">
-            {editingBody ? (
-              <div className="flex flex-col gap-2">
-                <RichTextEditor
-                  autoFocus
-                  value={bodyDraft}
-                  onChange={setBodyDraft}
-                  members={workspace.members}
-                  placeholder="Add a description, markdown works."
-                  ariaLabel="Issue description"
-                  testId="description-input"
-                  toolbar="compact"
-                />
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => setEditingBody(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => {
-                      update.mutate({ issue, patch: { description: bodyDraft } });
-                      setEditingBody(false);
-                    }}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                data-testid="issue-description"
-                onClick={() => {
-                  setBodyDraft(issue.description);
-                  setEditingBody(true);
-                }}
-                className="-mx-2 group flex cursor-text select-text flex-col items-start gap-1 rounded-md px-2 py-1 text-left transition-colors duration-[var(--duration-fast)] hover:bg-surface-2"
-              >
-                {issue.description.length === 0 ? (
-                  <span className="flex items-center gap-1.5 text-dense text-faint">
-                    <Pencil className="size-3.5" aria-hidden="true" />
-                    Add a description
-                  </span>
-                ) : (
-                  <Description body={issue.description} html={detail.data.descriptionHtml} />
-                )}
-              </button>
-            )}
+            <IssueBody
+              key={`${issue.id}:body`}
+              issue={issue}
+              members={workspace.members}
+              onCommit={async (description) =>
+                await update.mutateAsync({ issue, patch: { description } })
+              }
+            />
           </section>
 
           {detail.data.subIssues.length > 0 ? (
@@ -246,14 +278,23 @@ export function IssueDetailView({ identifier }: IssueDetailViewProps) {
             </section>
           ) : null}
 
-          <IssuePullRequests issueId={issue.id} />
+          {detail.isPlaceholderData ? (
+            <div className="flex flex-col gap-2" data-testid="issue-activity-pending">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          ) : (
+            <>
+              <IssuePullRequests issueId={issue.id} />
 
-          <CommentThread
-            issueId={issue.id}
-            comments={comments.data ?? []}
-            activity={detail.data.activity}
-            members={workspace.members}
-          />
+              <CommentThread
+                issueId={issue.id}
+                comments={comments.data ?? []}
+                activity={detail.data.activity}
+                members={workspace.members}
+              />
+            </>
+          )}
         </div>
       </div>
 

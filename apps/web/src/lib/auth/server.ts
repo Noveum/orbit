@@ -35,6 +35,16 @@ export const MCP_AUTHORIZE_START_PATH = '/api/oauth/start';
 
 const passkeyAssertionSchema = z.object({ response: z.object({ id: z.string().min(1) }) });
 
+function verificationSucceeded(ctx: { context?: { returned?: unknown } }): boolean {
+  const returned = ctx.context?.returned;
+  if (returned === null || returned === undefined) return false;
+  if (returned instanceof Error) return false;
+  if (typeof returned === 'object' && 'error' in returned) {
+    return (returned as { error: unknown }).error == null;
+  }
+  return true;
+}
+
 async function touchPasskeyLastUsed(body: unknown): Promise<void> {
   const parsed = passkeyAssertionSchema.safeParse(body);
   if (!parsed.success) return;
@@ -156,7 +166,9 @@ export const auth = betterAuth({
   },
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
-      if (ctx.path === '/passkey/verify-authentication') await touchPasskeyLastUsed(ctx.body);
+      if (ctx.path === '/passkey/verify-authentication' && verificationSucceeded(ctx)) {
+        await touchPasskeyLastUsed(ctx.body);
+      }
       if (ctx.path !== undefined && SESSION_REVOKING_PATHS.has(ctx.path)) {
         const authed = await getSessionFromCtx(ctx);
         if (authed !== null) await publishSessionRevoked(authed.user.id);

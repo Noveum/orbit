@@ -6,6 +6,7 @@ import { toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { errorFields, logger } from './logger.ts';
 import { registerTools } from './tools/index.ts';
+import { allowWrites } from './tools/support.ts';
 
 export const MCP_PATH = '/mcp';
 
@@ -23,11 +24,18 @@ export function wwwAuthenticate(publicUrl: string): string {
   return `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`;
 }
 
-export function createOrbitMcpServer(principal: Principal): McpServer {
+export const ORBIT_WRITE_SCOPE = 'orbit.write';
+
+export function grantsWrites(scopes: string): boolean {
+  return scopes.split(/\s+/).filter(Boolean).includes(ORBIT_WRITE_SCOPE);
+}
+
+export function createOrbitMcpServer(principal: Principal, scopes = ORBIT_WRITE_SCOPE): McpServer {
   const server = new McpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
   );
+  allowWrites(server, grantsWrites(scopes));
   registerTools(server, principal);
   return server;
 }
@@ -53,7 +61,7 @@ export interface McpRequestOptions {
 
 async function dispatch(request: Request): Promise<Response> {
   const identity = await verifyMcpAccessToken(bearerToken(request));
-  const server = createOrbitMcpServer(identity.principal);
+  const server = createOrbitMcpServer(identity.principal, identity.scopes);
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);
 

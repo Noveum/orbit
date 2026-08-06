@@ -4,6 +4,7 @@ import { renderMarkdown } from '@orbit/services/markdown';
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, Strikethrough } from 'lucide-react';
+import type { RefObject } from 'react';
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -52,6 +53,11 @@ export interface RichTextEditorProps {
   readonly onCancel?: () => void;
   readonly onReady?: (editor: Editor) => void;
   readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
+  readonly footer?: React.ReactNode;
+  readonly toolbarLeading?: React.ReactNode | undefined;
+  readonly toolbarTrailing?: React.ReactNode | undefined;
+  readonly onBlur?: () => void;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 interface MenuPosition {
@@ -81,6 +87,14 @@ function caretPosition(editor: Editor, at: number, container: HTMLElement | null
   return { left: coords.left - box.left, top: coords.bottom - box.top + 6 };
 }
 
+export function settledMarkdown(markdown: string): string {
+  return markdown.replace(/\n+$/, '');
+}
+
+function emittedMarkdown(instance: Editor): string {
+  return settledMarkdown(docToMarkdown(instance.getJSON()));
+}
+
 export function RichTextEditor({
   value,
   onChange,
@@ -97,6 +111,11 @@ export function RichTextEditor({
   onCancel,
   onReady,
   onUpload,
+  footer,
+  toolbarLeading,
+  toolbarTrailing,
+  onBlur,
+  scrollRef,
 }: RichTextEditorProps) {
   const containerRef = useRef<HTMLElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -134,6 +153,9 @@ export function RichTextEditor({
     setHighlight(0);
   }, []);
 
+  const blurred = useRef(onBlur);
+  blurred.current = onBlur;
+
   const editor = useEditor({
     extensions: editorExtensions(menuKeyRef, placeholder),
     content: toEditorHtml(renderMarkdown(value)),
@@ -148,17 +170,18 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: instance }) => {
-      const markdown = docToMarkdown(instance.getJSON());
+      const markdown = emittedMarkdown(instance);
       if (emitted.current.size > 64) emitted.current.clear();
       emitted.current.add(markdown);
       onChange(markdown);
     },
+    onBlur: () => blurred.current?.(),
   });
 
   useEffect(() => {
     if (editor === null) return;
     if (emitted.current.has(value)) return;
-    if (docToMarkdown(editor.getJSON()) === value) return;
+    if (emittedMarkdown(editor) === settledMarkdown(value)) return;
     emitted.current.add(value);
     editor.commands.setContent(toEditorHtml(renderMarkdown(value)), { emitUpdate: false });
   }, [editor, value]);
@@ -379,10 +402,18 @@ export function RichTextEditor({
           className={toolbar === 'compact' ? 'mb-2 border-border border-b pb-2' : ''}
           onPickFile={() => fileRef.current?.click()}
           testId={`${testId}-toolbar`}
+          leading={toolbarLeading}
+          trailing={toolbarTrailing}
         />
       ) : null}
-      <div className={toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 py-5' : 'contents'}>
+      <div
+        ref={scrollRef}
+        className={
+          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 pt-3 pb-16' : 'contents'
+        }
+      >
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
+        {footer}
       </div>
 
       {onUpload === undefined ? null : (

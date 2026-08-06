@@ -9,35 +9,56 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
+  projectIssuesSearch,
 } from './issue-search.ts';
-import { ISSUES_ROOT, queryKeys } from './keys.ts';
-import type { Bootstrap, Issue, IssueCounts, IssueDetail, IssuePage } from './schemas.ts';
+import { ISSUE_SUMMARY_ROOT, ISSUES_ROOT, queryKeys } from './keys.ts';
+import type {
+  Bootstrap,
+  Issue,
+  IssueCounts,
+  IssueDetail,
+  IssueFacets,
+  IssuePage,
+  IssueSummary,
+} from './schemas.ts';
 import {
   bootstrapSchema,
   issueCountsSchema,
   issueDetailSchema,
   issueEnvelopeSchema,
+  issueFacetsSchema,
   issueListSchema,
   issueMoveResultSchema,
+  issueSummarySchema,
 } from './schemas.ts';
 import type { IssuePages } from './sync.ts';
-import { flattenIssuePages, mapIssuePages, sortIssues } from './sync.ts';
+import {
+  admitsNewRows,
+  belongsInList,
+  flattenIssuePages,
+  mapIssuePages,
+  searchOf,
+  sortForSearch,
+} from './sync.ts';
 
 export type { IssueQuery };
 export {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  columnSearch,
   DEFAULT_ISSUE_QUERY,
   ISSUE_PAGE_SIZE,
   issueSearch,
@@ -87,32 +108,41 @@ function pagedIssueOptions(queryKey: QueryKey, search: string) {
   };
 }
 
+const PREFETCH_STALE_MS = 30_000;
+const FACETS_STALE_MS = 60_000;
+
 export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_ISSUE_QUERY) {
   const search = issueSearch(teamId, query);
   return pagedIssueOptions(queryKeys.issues(teamId, search), search);
 }
 
-const MAX_PAGES = 40;
-
-async function fetchAllIssues(search: string, signal: AbortSignal): Promise<readonly Issue[]> {
-  const issues: Issue[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await fetchIssuePage(search, cursor, signal);
-    issues.push(...result.issues);
-    if (result.nextCursor === null) break;
-    cursor = result.nextCursor;
-  }
-  return issues;
+export function issueSummaryQueryOptions(search: string, enabled = true) {
+  return {
+    queryKey: queryKeys.issueSummary(search),
+    enabled,
+    placeholderData: keepPreviousData,
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueSummary> =>
+      await apiFetch(`/api/issues/summary?${search}`, issueSummarySchema, { signal }),
+  };
 }
 
-export function teamIssuesQuery(teamId: string) {
-  const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
+export function useIssueSummary(search: string, enabled = true) {
+  return useQuery(issueSummaryQueryOptions(search, enabled));
+}
+
+export function issueFacetsQueryOptions(search: string, enabled = true) {
   return {
-    queryKey: queryKeys.issues(teamId, search),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<readonly Issue[]> =>
-      await fetchAllIssues(search, signal),
+    queryKey: queryKeys.issueFacets(search),
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: FACETS_STALE_MS,
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueFacets> =>
+      await apiFetch(`/api/issues/facets?${search}`, issueFacetsSchema, { signal }),
   };
+}
+
+export function useIssueFacets(search: string, enabled = true) {
+  return useQuery(issueFacetsQueryOptions(search, enabled));
 }
 
 function seedPages(seed: readonly Issue[] | undefined): IssuePages | undefined {
@@ -134,8 +164,36 @@ export function useIssues(
   });
 }
 
-export function useAssignedIssues(userId: string | null) {
-  const search = userId === null ? '' : assignedSearch(userId);
+export function useColumnIssues(
+  teamId: string | null,
+  query: IssueQuery,
+  stateId: string,
+  enabled: boolean,
+) {
+  const search = teamId === null ? '' : columnSearch(teamId, query, stateId);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
+    enabled: enabled && teamId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useProjectIssues(
+  projectId: string | null,
+  query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' },
+) {
+  const search = projectId === null ? '' : projectIssuesSearch(projectId, query);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.projectIssues(projectId ?? 'none', search), search),
+    enabled: projectId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useAssignedIssues(userId: string | null, query?: IssueQuery) {
+  const search = userId === null ? '' : assignedSearch(userId, query);
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.assignedIssues(userId ?? 'none', search), search),
     enabled: userId !== null,
@@ -164,14 +222,48 @@ export function useIssueCounts(teamId: string | null) {
   });
 }
 
-export function useIssueDetail(identifier: string) {
-  return useQuery({
+export function issueDetailQueryOptions(identifier: string) {
+  return {
     queryKey: queryKeys.issue(identifier),
-    queryFn: async ({ signal }): Promise<IssueDetail> =>
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueDetail> =>
       await apiFetch(`/api/issues/${encodeURIComponent(identifier)}`, issueDetailSchema, {
         signal,
       }),
+  };
+}
+
+export function previewDetail(issue: Issue): IssueDetail {
+  return {
+    issue,
+    descriptionHtml: '',
+    activity: [],
+    activityCursor: null,
+    subIssues: [],
+    subscribed: false,
+  };
+}
+
+export function useIssueDetail(identifier: string, known?: Issue) {
+  const placeholder = useMemo(
+    () => (known === undefined ? undefined : previewDetail(known)),
+    [known],
+  );
+  return useQuery({
+    ...issueDetailQueryOptions(identifier),
+    ...(placeholder === undefined ? {} : { placeholderData: placeholder }),
   });
+}
+
+export function usePrefetchIssueDetail() {
+  const client = useQueryClient();
+  return useCallback(
+    (identifier: string) => {
+      client
+        .prefetchQuery({ ...issueDetailQueryOptions(identifier), staleTime: PREFETCH_STALE_MS })
+        .catch(() => undefined);
+    },
+    [client],
+  );
 }
 
 export interface IssuePatch {
@@ -186,52 +278,104 @@ export interface IssuePatch {
   readonly labelIds?: readonly string[];
 }
 
-function replaceIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
+function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
-  if (index === -1) return issues;
-  const copy = [...issues];
-  copy[index] = next;
-  return copy;
+  if (!belongsInList(search, next)) {
+    return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
+  }
+  if (index !== -1) {
+    const copy = [...issues];
+    copy[index] = next;
+    return sortForSearch(search, copy);
+  }
+  if (!admitsNewRows(search)) return issues;
+  return sortForSearch(search, [...issues, next]);
 }
 
-function addIssue(issues: readonly Issue[], next: Issue): readonly Issue[] {
-  const index = issues.findIndex((issue) => issue.id === next.id);
-  if (index === -1) return [...issues, next];
-  const copy = [...issues];
-  copy[index] = next;
-  return copy;
+function filteredListsHolding(
+  client: QueryClient,
+  moved: readonly Issue[],
+): { key: QueryKey; held: boolean }[] {
+  const ids = new Set(moved.map((issue) => issue.id));
+  return client
+    .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
+    .filter(([key]) => !admitsNewRows(searchOf(key)))
+    .map(([key, pages]) => ({
+      key,
+      held: pages !== undefined && flattenIssuePages(pages).some((issue) => ids.has(issue.id)),
+    }));
 }
 
-type IssueListSnapshot = readonly [QueryKey, IssuePages | undefined][];
-
-function snapshotIssueLists(client: QueryClient): IssueListSnapshot {
-  return client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
+function settleFilteredLists(
+  client: QueryClient,
+  moved: readonly Issue[],
+  before: readonly { key: QueryKey; held: boolean }[],
+): void {
+  for (const { key, held } of before) {
+    const search = searchOf(key);
+    const belongsNow = moved.some((issue) => belongsInList(search, issue));
+    if (!(held || belongsNow)) continue;
+    client.invalidateQueries({ queryKey: key }).catch(() => undefined);
+  }
 }
 
-function restoreIssueLists(client: QueryClient, snapshot: IssueListSnapshot): void {
-  for (const [key, pages] of snapshot) client.setQueryData(key, pages);
+function eachIssueList(
+  client: QueryClient,
+  filters: { queryKey: QueryKey },
+  update: (issues: readonly Issue[], search: string) => readonly Issue[],
+): void {
+  for (const [key] of client.getQueriesData<IssuePages>(filters)) {
+    const search = searchOf(key);
+    client.setQueryData<IssuePages>(key, (current) =>
+      current === undefined ? current : mapIssuePages(current, (issues) => update(issues, search)),
+    );
+  }
 }
 
 function patchIssueLists(
   client: QueryClient,
   update: (issues: readonly Issue[]) => readonly Issue[],
 ): void {
-  client.setQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] }, (current) =>
-    current === undefined ? current : mapIssuePages(current, update),
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues) => update(issues));
+}
+
+function placeIssue(client: QueryClient, next: Issue, settle = true): void {
+  const before = filteredListsHolding(client, [next]);
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
+    reconcile(search, issues, next),
+  );
+  if (settle) settleFilteredLists(client, [next], before);
+}
+
+function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
+  const before = filteredListsHolding(client, moved);
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
+    let next = issues;
+    for (const issue of moved) next = reconcile(search, next, issue);
+    return sortForSearch(search, next);
+  });
+  settleFilteredLists(client, moved, before);
+}
+
+function addToLists(client: QueryClient, next: Issue): void {
+  const before = filteredListsHolding(client, [next]);
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
+    reconcile(search, issues, next),
+  );
+  settleFilteredLists(client, [next], before);
+}
+
+function refreshCounts(client: QueryClient): void {
+  client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
+}
+
+function resortTeamIssueLists(client: QueryClient, teamId: string): void {
+  eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
+    sortForSearch(search, issues),
   );
 }
 
-function patchTeamIssueLists(
-  client: QueryClient,
-  teamId: string,
-  update: (issues: readonly Issue[]) => readonly Issue[],
-): void {
-  client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(teamId) }, (current) =>
-    current === undefined ? current : mapIssuePages(current, update),
-  );
-}
-
-export function useUpdateIssue(_teamId: string) {
+export function useUpdateIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -245,7 +389,6 @@ export function useUpdateIssue(_teamId: string) {
     },
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
-      const previous = snapshotIssueLists(client);
       const previousDetail = client.getQueryData<IssueDetail>(
         queryKeys.issue(input.issue.identifier),
       );
@@ -256,7 +399,7 @@ export function useUpdateIssue(_teamId: string) {
         labelIds:
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
-      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
+      placeIssue(client, optimistic, false);
       if (previousDetail !== undefined) {
         client.setQueryData(queryKeys.issue(input.issue.identifier), {
           ...previousDetail,
@@ -266,17 +409,18 @@ export function useUpdateIssue(_teamId: string) {
           },
         });
       }
-      return { previous, previousDetail, identifier: input.issue.identifier };
+      return { previousDetail, identifier: input.issue.identifier };
     },
-    onError: (error, _input, context) => {
-      if (context?.previous !== undefined) restoreIssueLists(client, context.previous);
+    onError: (error, input, context) => {
+      placeIssue(client, input.issue);
       if (context?.previousDetail !== undefined && context.identifier !== undefined) {
         client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (issue) => {
-      patchIssueLists(client, (issues) => replaceIssue(issues, issue));
+      placeIssue(client, issue);
+      refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
         current === undefined ? current : { ...current, issue },
       );
@@ -284,16 +428,33 @@ export function useUpdateIssue(_teamId: string) {
   });
 }
 
-export interface MoveInput {
+export interface IssueRegrouping {
+  readonly stateId?: string;
+  readonly cycleId?: string | null;
+  readonly projectId?: string | null;
+  readonly assigneeId?: string | null;
+  readonly priority?: number;
+}
+
+export type MoveInput = IssueRegrouping & {
   readonly issue: Issue;
-  readonly stateId: string;
   readonly beforeId: string | null;
   readonly afterId: string | null;
   readonly beforeOrder: number | null;
   readonly afterOrder: number | null;
+};
+
+function regroupingOf(input: MoveInput): IssueRegrouping {
+  return {
+    ...(input.stateId === undefined ? {} : { stateId: input.stateId }),
+    ...(input.cycleId === undefined ? {} : { cycleId: input.cycleId }),
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    ...(input.assigneeId === undefined ? {} : { assigneeId: input.assigneeId }),
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+  };
 }
 
-export function useMoveIssue(teamId: string) {
+export function useMoveIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -301,34 +462,30 @@ export function useMoveIssue(teamId: string) {
     mutationFn: async (input: MoveInput): Promise<readonly Issue[]> => {
       const result = await apiFetch(`/api/issues/${input.issue.id}/move`, issueMoveResultSchema, {
         method: 'POST',
-        body: { stateId: input.stateId, beforeId: input.beforeId, afterId: input.afterId },
+        body: { ...regroupingOf(input), beforeId: input.beforeId, afterId: input.afterId },
       });
       return [result.issue, ...result.rebalanced];
     },
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
-      const previous = snapshotIssueLists(client);
       const optimistic: Issue = {
         ...input.issue,
-        stateId: input.stateId,
+        ...regroupingOf(input),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      patchIssueLists(client, (issues) => replaceIssue(issues, optimistic));
-      return { previous };
+      placeIssue(client, optimistic, false);
+      return {};
     },
-    onError: (error, _input, context) => {
-      if (context?.previous !== undefined) restoreIssueLists(client, context.previous);
+    onError: (error, input) => {
+      placeIssue(client, input.issue);
       toast({ title: 'Could not move that issue', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (moved) => {
-      patchIssueLists(client, (current) => {
-        let next = current;
-        for (const issue of moved) next = replaceIssue(next, issue);
-        return sortIssues(next);
-      });
+      placeIssues(client, moved);
     },
-    onSettled: () => {
-      patchTeamIssueLists(client, teamId, sortIssues);
+    onSettled: (_moved, _error, input) => {
+      resortTeamIssueLists(client, input.issue.teamId);
+      refreshCounts(client);
     },
   });
 }
@@ -346,7 +503,7 @@ export interface CreateIssueInput {
   readonly labelIds: readonly string[];
 }
 
-export function useCreateIssue(teamId: string) {
+export function useCreateIssue(_teamId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
 
@@ -366,7 +523,8 @@ export function useCreateIssue(teamId: string) {
       });
     },
     onSuccess: (issue) => {
-      patchTeamIssueLists(client, teamId, (issues) => sortIssues(addIssue(issues, issue)));
+      addToLists(client, issue);
+      refreshCounts(client);
     },
   });
 }
@@ -383,16 +541,16 @@ export function useDeleteIssue(_teamId: string) {
     },
     onMutate: async (issue) => {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
-      const previous = snapshotIssueLists(client);
       patchIssueLists(client, (issues) => issues.filter((entry) => entry.id !== issue.id));
-      return { previous };
+      return {};
     },
-    onError: (error, _issue, context) => {
-      if (context?.previous !== undefined) restoreIssueLists(client, context.previous);
+    onError: (error, issue) => {
+      addToLists(client, issue);
       toast({ title: 'Could not delete', description: messageOf(error), tone: 'danger' });
     },
     onSettled: (_data, _error, issue) => {
       client.removeQueries({ queryKey: queryKeys.issue(issue.identifier) });
+      refreshCounts(client);
     },
   });
 }

@@ -2,24 +2,22 @@ import {
   finalizeMcpConsent,
   listOrganizationsForUser,
   passkeyVerifiedWithin,
-  recordMcpGrant,
   userHasPasskey,
 } from '@orbit/core';
 import { toDomainError } from '@orbit/shared/errors';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth/session.ts';
 import { publicAppUrl } from '@/lib/env.ts';
+import { FRESH_SESSION_WINDOW_MS, PASSKEY_STEP_UP_WINDOW_MS, signedInWithin } from '../step-up.ts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const PASSKEY_STEP_UP_WINDOW_MS = 120_000;
-
 const decisionSchema = z.object({
   decision: z.enum(['allow', 'deny']),
   consentCode: z.string().min(1),
-  clientId: z.string().min(1),
-  scope: z.string(),
+  clientId: z.string().min(1).optional(),
+  scope: z.string().optional(),
   organizationId: z.string().min(1),
 });
 
@@ -40,7 +38,7 @@ export async function POST(request: Request): Promise<Response> {
   }
   const parsed = decisionSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-  const { decision, consentCode, clientId, scope, organizationId } = parsed.data;
+  const { decision, consentCode, organizationId } = parsed.data;
   const userId = session.user.id;
 
   try {
@@ -49,7 +47,8 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ redirectUri: denied.redirectUri });
     }
 
-    if (await userHasPasskey(userId)) {
+    const justSignedIn = signedInWithin(session.session.createdAt, FRESH_SESSION_WINDOW_MS);
+    if (!justSignedIn && (await userHasPasskey(userId))) {
       const fresh = await passkeyVerifiedWithin(userId, PASSKEY_STEP_UP_WINDOW_MS);
       if (!fresh) return Response.json({ status: 'passkey_required' });
     }
@@ -59,8 +58,12 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'invalid_workspace' }, { status: 400 });
     }
 
-    await recordMcpGrant({ clientId, userId, organizationId, scopes: scope });
-    const approved = await finalizeMcpConsent({ userId, consentCode, accept: true });
+    const approved = await finalizeMcpConsent({
+      userId,
+      consentCode,
+      accept: true,
+      organizationId,
+    });
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {
     const domain = toDomainError(error);

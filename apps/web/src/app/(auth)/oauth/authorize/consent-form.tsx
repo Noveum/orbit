@@ -7,8 +7,8 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { authClient } from '@/lib/auth/client.ts';
 
 const SCOPE_LABELS: Record<string, string> = {
-  'orbit.read': 'Read your issues, projects, cycles, docs, and workspace members',
-  'orbit.write': 'Create and update issues, comments, projects, and cycles',
+  'orbit.read': 'Read your issues, projects, sprints, docs, and workspace members',
+  'orbit.write': 'Create and update issues, comments, projects, and sprints',
   offline_access: 'Stay connected without signing in again',
 };
 
@@ -54,6 +54,7 @@ export function ConsentForm({
   const { toast } = useToast();
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
   const [pending, setPending] = useState<Pending>(null);
+  const [blocked, setBlocked] = useState<string | null>(null);
 
   const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
 
@@ -83,12 +84,31 @@ export function ConsentForm({
     window.location.assign(data.redirectUri);
   }
 
+  async function returnToClient(): Promise<void> {
+    const denied = await post('deny');
+    if (typeof denied.redirectUri !== 'string') {
+      throw new Error('Close this window and start the connection again.');
+    }
+    window.location.assign(denied.redirectUri);
+  }
+
   function run(decision: 'allow' | 'deny'): void {
     if (pending !== null) return;
     setPending(decision);
+    setBlocked(null);
     decide(decision, false).catch((error: unknown) => {
-      toast({ title: 'Could not connect', description: messageOf(error), tone: 'danger' });
       setPending(null);
+      if (decision === 'allow') setBlocked(messageOf(error));
+      toast({ title: 'Could not connect', description: messageOf(error), tone: 'danger' });
+    });
+  }
+
+  function abandon(): void {
+    if (pending !== null) return;
+    setPending('deny');
+    returnToClient().catch((error: unknown) => {
+      setPending(null);
+      toast({ title: 'Could not connect', description: messageOf(error), tone: 'danger' });
     });
   }
 
@@ -153,11 +173,28 @@ export function ConsentForm({
         </Button>
       </div>
 
-      {requirePasskey ? (
+      {blocked === null && requirePasskey ? (
         <p className="text-center text-2xs text-faint">
           Approving prompts you to verify with your passkey.
         </p>
       ) : null}
+
+      {blocked === null ? null : (
+        <div className="flex flex-col gap-2 rounded-md border border-border bg-surface-2 p-3">
+          <p className="text-2xs text-muted" data-testid="consent-blocked">
+            {blocked}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={abandon}
+            disabled={pending !== null}
+          >
+            Cancel and return to {clientName}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

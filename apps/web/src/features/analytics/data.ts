@@ -21,7 +21,7 @@ import {
   type VelocityPoint,
   workDistribution,
 } from '@orbit/core';
-import { and, db, desc, eq, isNull, schema } from '@orbit/db';
+import { and, db, desc, eq, inArray, isNull, type SQL, schema, sql } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -38,6 +38,12 @@ export interface CycleOption {
 function estimateName(key: string): string {
   if (key === 'none' || key === '0') return 'No estimate';
   return `${key} pt${key === '1' ? '' : 's'}`;
+}
+
+function visibleCycleTeams(principal: Principal): SQL | undefined {
+  if (principal.role === 'admin') return undefined;
+  if (principal.teamIds.length === 0) return sql`false`;
+  return inArray(schema.cycle.teamId, [...principal.teamIds]);
 }
 
 export async function loadCycleOptions(
@@ -60,6 +66,7 @@ export async function loadCycleOptions(
       and(
         eq(schema.cycle.organizationId, principal.organizationId),
         isNull(schema.cycle.archivedAt),
+        visibleCycleTeams(principal),
       ),
     )
     .orderBy(desc(schema.cycle.startsAt))

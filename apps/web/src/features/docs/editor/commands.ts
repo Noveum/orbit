@@ -21,8 +21,9 @@ export interface SlashCommand {
   readonly id: string;
   readonly label: string;
   readonly hint: string;
+  readonly keywords?: readonly string[];
   readonly icon: typeof List;
-  readonly run: (editor: Editor, pickImage: () => void) => void;
+  readonly run: (editor: Editor, pickFile: () => void) => void;
 }
 
 function callout(tone: 'note' | 'tip' | 'warning' | 'danger', icon: typeof Info): SlashCommand {
@@ -142,18 +143,21 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     id: 'image',
     label: 'Image or file',
     hint: 'Upload an attachment',
+    keywords: ['attach', 'attachment', 'upload', 'file', 'photo', 'picture', 'screenshot', 'pdf'],
     icon: ImageIcon,
-    run: (_editor, pickImage) => pickImage(),
+    run: (_editor, pickFile) => pickFile(),
   },
 ];
 
 export function matchSlashCommands(query: string): SlashCommand[] {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return [...SLASH_COMMANDS];
+  const compact = needle.replace(/\s/g, '');
   return SLASH_COMMANDS.filter(
     (command) =>
       command.label.toLowerCase().includes(needle) ||
-      command.id.includes(needle.replace(/\s/g, '')),
+      command.id.includes(compact) ||
+      (command.keywords ?? []).some((keyword) => keyword.startsWith(compact)),
   );
 }
 

@@ -88,7 +88,7 @@ export function CyclePanel({ cycles, measure, canManage }: CyclePanelProps) {
   if (cycles.length === 0) {
     body = (
       <p className="rounded-md border border-border border-dashed py-8 text-center text-faint text-xs">
-        No cycles exist yet, so there is nothing to break down.
+        No sprints exist yet, so there is nothing to break down.
       </p>
     );
   } else if (query.isError) {
@@ -189,11 +189,11 @@ export function CyclePanel({ cycles, measure, canManage }: CyclePanelProps) {
   );
 
   return (
-    <section ref={ref} aria-label="Cycle analytics" className="flex flex-col gap-4">
+    <section ref={ref} aria-label="Sprint analytics" className="flex flex-col gap-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <h2 className="font-semibold text-base text-text">Cycle analytics</h2>
-          <p className="text-muted text-xs">Burndown, churn, cycle time and velocity per cycle.</p>
+          <h2 className="font-semibold text-base text-text">Sprint analytics</h2>
+          <p className="text-muted text-xs">Burndown, churn, cycle time and velocity per sprint.</p>
         </div>
         <div className="flex items-center gap-2">
           <label htmlFor="analytics-cycle" className="sr-only">
@@ -206,7 +206,7 @@ export function CyclePanel({ cycles, measure, canManage }: CyclePanelProps) {
             disabled={cycles.length === 0}
             className="h-8 rounded-md border border-border bg-surface px-2 text-muted text-xs"
           >
-            {cycles.length === 0 ? <option value="">No cycles</option> : null}
+            {cycles.length === 0 ? <option value="">No sprints</option> : null}
             {cycles.map((cycle) => (
               <option key={cycle.id} value={cycle.id}>
                 {cycle.label}

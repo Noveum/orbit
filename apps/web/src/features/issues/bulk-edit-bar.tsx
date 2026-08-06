@@ -11,14 +11,13 @@ import { StateGlyph } from './state-glyph.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BulkEditBarProps {
-  readonly teamId: string;
   readonly states: readonly WorkflowState[];
   readonly issues: readonly Issue[];
   readonly onClear: () => void;
 }
 
-export function BulkEditBar({ teamId, states, issues, onClear }: BulkEditBarProps) {
-  const update = useUpdateIssue(teamId);
+export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
+  const update = useUpdateIssue();
   const { members } = useWorkspace();
 
   const applyToAll = (patch: Parameters<typeof update.mutate>[0]['patch']) => {

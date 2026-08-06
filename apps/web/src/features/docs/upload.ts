@@ -1,4 +1,5 @@
-import { ALLOWED_UPLOAD_MIME_PREFIXES } from '@orbit/shared/constants';
+import { ALLOWED_UPLOAD_MIME_PREFIXES, MAX_UPLOAD_BYTES } from '@orbit/shared/constants';
+import { formatBytes } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import { attachmentSchema } from '@/lib/query/schemas.ts';
@@ -71,6 +72,19 @@ export function uploadContentType(file: { readonly name: string; readonly type: 
   return resolved;
 }
 
+export interface UploadCandidateFile {
+  readonly name: string;
+  readonly type: string;
+  readonly size: number;
+}
+
+export function assertUploadable(file: UploadCandidateFile): string {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(`Files must be ${formatBytes(MAX_UPLOAD_BYTES)} or smaller. (${file.name})`);
+  }
+  return uploadContentType(file);
+}
+
 export interface UploadProgress {
   readonly loaded: number;
   readonly total: number;
@@ -131,20 +145,23 @@ export interface UploadOptions {
   readonly onProgress?: (progress: UploadProgress) => void;
 }
 
-export async function uploadDocFile(
-  docId: string,
+export type UploadParent = 'issue' | 'comment' | 'doc' | 'project';
+
+export async function uploadAttachment(
+  parentType: UploadParent,
+  parentId: string,
   file: File,
   options: UploadOptions = {},
 ): Promise<UploadedFile> {
-  const contentType = uploadContentType(file);
+  const contentType = assertUploadable(file);
   const presigned = await apiFetch('/api/attachments/presign', presignSchema, {
     method: 'POST',
     body: {
       fileName: file.name,
       contentType,
       size: file.size,
-      parentType: 'doc',
-      parentId: docId,
+      parentType,
+      parentId,
     },
   });
 
@@ -164,4 +181,12 @@ export async function uploadDocFile(
     contentType,
     url: `/api/files/${presigned.upload.key.split('/').map(encodeURIComponent).join('/')}`,
   };
+}
+
+export async function uploadDocFile(
+  docId: string,
+  file: File,
+  options: UploadOptions = {},
+): Promise<UploadedFile> {
+  return await uploadAttachment('doc', docId, file, options);
 }

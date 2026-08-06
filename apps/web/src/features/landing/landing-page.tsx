@@ -272,7 +272,7 @@ function ProductWindow() {
             <span className="size-2.5 rounded-full border border-border bg-surface-3" />
           </span>
           <span className="flex-1 text-center font-mono text-2xs text-faint">
-            <span className="hidden sm:inline">meridian / web / cycle 14</span>
+            <span className="hidden sm:inline">meridian / web / sprint 14</span>
           </span>
           <span className="flex items-center gap-1.5">
             <MockAvatar initials="MK" />
@@ -348,7 +348,7 @@ function ProductWindow() {
             />
             <MockRow
               id="ORB-164"
-              title="Cycles: carry unfinished scope forward"
+              title="Sprints: carry unfinished scope forward"
               priority="low"
               avatar="JT"
               done
@@ -387,7 +387,7 @@ function Hero() {
           className="landing-lede landing-rise mx-auto mt-5 max-w-2xl text-muted"
           style={{ animationDelay: '150ms' }}
         >
-          Orbit is a free, realtime work tracker for teams: issues, cycles, projects, and docs,
+          Orbit is a free, realtime work tracker for teams: issues, sprints, projects, and docs,
           synced to every open screen the instant anything changes, driven entirely from the
           keyboard.
         </p>
@@ -424,8 +424,8 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
   },
   {
     icon: IterationCw,
-    title: 'Cycles and sprints',
-    body: 'Timebox the work into cycles and watch the current sprint fill, start, and ship.',
+    title: 'Sprints',
+    body: 'Timebox the work into sprints and watch the current one fill, start, and ship.',
   },
   {
     icon: Target,
@@ -590,20 +590,20 @@ function PaletteMock() {
     >
       <div className="hairline-b flex items-center gap-2.5 px-4 py-3">
         <Search className="size-4 text-faint" strokeWidth={2} />
-        <span className="text-sm">Move to cycle</span>
+        <span className="text-sm">Move to sprint</span>
         <span className="landing-caret -ml-1 h-4 w-px bg-accent" />
       </div>
       <div className="p-1.5 text-sm">
         <div className="flex items-center justify-between rounded-md bg-surface-2 px-2.5 py-2">
           <span className="flex items-center gap-2.5">
             <IterationCw className="size-4 text-muted" strokeWidth={2} />
-            Move to Cycle 14
+            Move to Sprint 14
           </span>
           <Kbd keys={['enter']} />
         </div>
         <div className="flex items-center gap-2.5 px-2.5 py-2 text-muted">
           <IterationCw className="size-4 text-faint" strokeWidth={2} />
-          Move to Cycle 15
+          Move to Sprint 15
         </div>
         <div className="flex items-center gap-2.5 px-2.5 py-2 text-muted">
           <SignalHigh className="size-4 text-faint" strokeWidth={2} />
@@ -650,7 +650,7 @@ function KeyboardSection() {
 }
 
 const INCLUDED: string[] = [
-  'Issues, boards, cycles, projects, docs',
+  'Issues, boards, sprints, projects, docs',
   'Realtime sync for every teammate',
   'GitHub, Slack, and MCP included',
   'Notifications, filters, saved views',

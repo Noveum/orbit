@@ -48,7 +48,7 @@ export function BurndownChart({ points, checkpoints, measureLabel }: BurndownCha
   const count = points.length;
   if (count === 0) {
     return (
-      <p className="py-6 text-center text-faint text-xs">This cycle has no days to plot yet.</p>
+      <p className="py-6 text-center text-faint text-xs">This sprint has no days to plot yet.</p>
     );
   }
 

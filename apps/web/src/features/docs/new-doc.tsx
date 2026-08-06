@@ -26,7 +26,7 @@ export function NewDoc({ collectionId, projectId, templateId = null }: NewDocPro
     started.current = true;
     const template = templateById(templateId);
     run({ title: template.title, content: template.content, collectionId, projectId })
-      .then((doc) => router.replace(`/docs/${doc.id}?edit=1`))
+      .then((doc) => router.replace(`/docs/${doc.id}`))
       .catch(() => router.replace('/docs'));
   }, [run, router, collectionId, projectId, templateId]);
 

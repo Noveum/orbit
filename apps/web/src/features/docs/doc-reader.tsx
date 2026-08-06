@@ -25,6 +25,65 @@ export interface DocReaderProps {
   readonly backlinks?: readonly { readonly id: string; readonly title: string }[];
 }
 
+export function DocContextRow({
+  doc,
+  collectionName,
+  projectName,
+}: {
+  readonly doc: Doc;
+  readonly collectionName: string | null;
+  readonly projectName: string | null;
+}) {
+  const binding = doc.repoBinding;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {collectionName === null ? null : (
+        <Pill>
+          <Book className="size-3" aria-hidden="true" />
+          {collectionName}
+        </Pill>
+      )}
+      {projectName === null ? null : <Pill>{projectName}</Pill>}
+      {binding === null ? null : (
+        <span
+          data-testid="doc-repo-pill"
+          className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-transparent px-2.5 py-1 text-2xs text-success"
+        >
+          <GitBranch className="size-3" aria-hidden="true" />
+          Synced from <code className="font-mono">{binding.path}</code>
+        </span>
+      )}
+      <span className="text-2xs text-faint">Updated {relativeTime(new Date(doc.updatedAt))}</span>
+    </div>
+  );
+}
+
+export function DocBacklinks({
+  backlinks = [],
+}: {
+  readonly backlinks?: readonly { readonly id: string; readonly title: string }[];
+}) {
+  if (backlinks.length === 0) return null;
+  return (
+    <section data-testid="doc-backlinks" className="mt-10 border-border border-t pt-5">
+      <h2 className="mb-2 font-medium text-2xs text-faint uppercase tracking-wide">Linked from</h2>
+      <ul className="flex flex-col gap-1">
+        {backlinks.map((entry) => (
+          <li key={entry.id}>
+            <Link
+              href={`/docs/${entry.id}`}
+              className="flex items-center gap-2 text-dense text-muted transition-colors duration-[var(--duration-fast)] hover:text-text"
+            >
+              <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="truncate">{entry.title}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-2xs text-muted">
@@ -45,7 +104,6 @@ export function DocReader({
 }: DocReaderProps) {
   const [headings, setHeadings] = useState<DocHeading[]>([]);
   const activeId = useScrollSpy(headings);
-  const binding = doc.repoBinding;
   useHashScroll(`${doc.id}:${headings.map((heading) => heading.id).join('|')}`);
 
   return (
@@ -54,27 +112,7 @@ export function DocReader({
       data-testid="doc-reader"
     >
       <div className="min-w-0 flex-1 xl:max-w-[45rem]">
-        <div className="flex flex-wrap items-center gap-2">
-          {collectionName === null ? null : (
-            <Pill>
-              <Book className="size-3" aria-hidden="true" />
-              {collectionName}
-            </Pill>
-          )}
-          {projectName === null ? null : <Pill>{projectName}</Pill>}
-          {binding === null ? null : (
-            <span
-              data-testid="doc-repo-pill"
-              className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-transparent px-2.5 py-1 text-2xs text-success"
-            >
-              <GitBranch className="size-3" aria-hidden="true" />
-              Synced from <code className="font-mono">{binding.path}</code>
-            </span>
-          )}
-          <span className="text-2xs text-faint">
-            Updated {relativeTime(new Date(doc.updatedAt))}
-          </span>
-        </div>
+        <DocContextRow doc={doc} collectionName={collectionName} projectName={projectName} />
 
         <h1 className="mt-4 font-semibold text-2xl text-text tracking-tight">{doc.title}</h1>
 
@@ -95,26 +133,7 @@ export function DocReader({
         <DocBody html={contentHtml} onHeadings={setHeadings} className="mt-2" />
         <DocAttachments attachments={attachments} />
 
-        {backlinks.length === 0 ? null : (
-          <section data-testid="doc-backlinks" className="mt-10 border-border border-t pt-5">
-            <h2 className="mb-2 font-medium text-2xs text-faint uppercase tracking-wide">
-              Linked from
-            </h2>
-            <ul className="flex flex-col gap-1">
-              {backlinks.map((entry) => (
-                <li key={entry.id}>
-                  <Link
-                    href={`/docs/${entry.id}`}
-                    className="flex items-center gap-2 text-dense text-muted transition-colors duration-[var(--duration-fast)] hover:text-text"
-                  >
-                    <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{entry.title}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <DocBacklinks backlinks={backlinks} />
       </div>
 
       <DocOutline headings={headings} activeId={activeId} />

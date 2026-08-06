@@ -100,9 +100,12 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await expect(author.getByTestId('docs-workspace').getByText('Private')).toBeVisible();
 
   await author.getByText('Realtime delta protocol').click();
-  await expect(author.getByTestId('doc-reader')).toBeVisible();
+  await expect(author.getByTestId('doc-rich-editor')).toBeVisible();
+  await expect(author.getByTestId('doc-edit-toggle')).toHaveCount(0);
   await expect(author.getByTestId('doc-repo-pill')).toContainText('docs/realtime.md');
-  await expect(author.getByTestId('doc-reader').locator('th', { hasText: 'Rule' })).toBeVisible();
+  await expect(
+    author.getByTestId('doc-rich-editor').locator('th', { hasText: 'Rule' }),
+  ).toBeVisible({ timeout: 30_000 });
   await shoot(author, 'docs-browser');
 
   await author.getByTestId('doc-search').fill('checklist');
@@ -166,11 +169,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
   });
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
-  await author.getByTestId('doc-edit-toggle').click();
-  await expect(author.getByTestId('doc-reader')).toBeVisible();
-  await expect(author.getByTestId('doc-reader').locator('th', { hasText: 'Rule' })).toBeVisible();
-  await expect(author.getByTestId('doc-outline')).toBeVisible();
-  await expect(author.getByTestId('doc-attachments')).toBeVisible();
+  await expect(author.getByTestId('doc-attachments')).toBeVisible({ timeout: 30_000 });
   await shoot(author, 'docs-reader');
 
   await author.getByTestId('doc-attachments').scrollIntoViewIfNeeded();
@@ -186,20 +185,13 @@ test.fixme('a doc is written, attached to, published, and read without a session
   const watching = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const watcher = await signIn(watching, 'shashank@noveum.ai');
   await watcher.goto(`${BASE}${new URL(author.url()).pathname}`);
-  await expect(watcher.getByTestId('doc-reader')).toBeVisible();
-  await expect(watcher.getByRole('heading', { level: 1, name: title })).toBeVisible();
+  await expect(watcher.getByTestId('doc-title-input')).toHaveValue(title, { timeout: 30_000 });
 
   const renamed = `${title} renamed`;
-  await author.getByTestId('doc-edit-toggle').click();
   await author.getByTestId('doc-title-input').fill(renamed);
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
-  await expect(watcher.getByRole('heading', { level: 1, name: renamed })).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(watcher.getByTestId('doc-title-input')).toHaveValue(renamed, { timeout: 30_000 });
   await watching.close();
-
-  await author.getByTestId('doc-edit-toggle').click();
-  await expect(author.getByTestId('doc-reader')).toBeVisible();
 
   await author.getByTestId('doc-publish').click();
   await author.getByTestId('doc-visibility-public').click();

@@ -6,6 +6,7 @@ export { assertSafeKey, FILE_ROUTE } from './key.ts';
 export {
   type AttachmentOwner,
   type AttachmentParentType,
+  assertAttachmentVisible,
   assertUploadParent,
   isPubliclyReadable,
   type StorageExecutor,

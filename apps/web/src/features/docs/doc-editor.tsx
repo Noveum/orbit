@@ -3,6 +3,7 @@
 import { renderMarkdown } from '@orbit/services/markdown';
 import { useQueryClient } from '@tanstack/react-query';
 import { Bold, Code2, Heading2, Italic, Link2, ListChecks, Table2 } from 'lucide-react';
+import type { RefObject } from 'react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
@@ -44,9 +45,20 @@ export interface DocEditorProps {
   readonly content: string;
   readonly onChange: (value: string) => void;
   readonly onForceSave: () => void;
+  readonly footer?: React.ReactNode;
+  readonly outline?: React.ReactNode;
+  readonly scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
-export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorProps) {
+export function DocEditor({
+  docId,
+  content,
+  onChange,
+  onForceSave,
+  footer,
+  outline,
+  scrollRef,
+}: DocEditorProps) {
   const { toast } = useToast();
   const client = useQueryClient();
   const bootstrap = useBootstrap(null);
@@ -138,88 +150,89 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
     [uploadFiles],
   );
 
+  const modeSwitch = (
+    <div className="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
+      {(['rich', 'markdown'] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          data-testid={`editor-mode-${option}`}
+          aria-pressed={mode === option}
+          onClick={() => setMode(option)}
+          className={cn(
+            'rounded-sm px-2 py-1 text-2xs transition-colors duration-[var(--duration-fast)]',
+            mode === option ? 'bg-surface text-text shadow-sm' : 'text-faint hover:text-muted',
+          )}
+        >
+          {option === 'rich' ? 'Rich text' : 'Markdown'}
+        </button>
+      ))}
+    </div>
+  );
+
+  const uploadStatus = uploading ? (
+    <span className="text-2xs text-faint" data-testid="upload-progress" aria-live="polite">
+      Uploading {percent}%
+    </span>
+  ) : undefined;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
-      <div className="flex flex-wrap items-center gap-1 border-border border-b px-3 py-1.5">
-        <div className="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
-          {(['rich', 'markdown'] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              data-testid={`editor-mode-${option}`}
-              aria-pressed={mode === option}
-              onClick={() => setMode(option)}
-              className={cn(
-                'rounded-sm px-2 py-1 text-2xs transition-colors duration-[var(--duration-fast)]',
-                mode === option ? 'bg-surface text-text shadow-sm' : 'text-faint hover:text-muted',
-              )}
+      {mode === 'markdown' ? (
+        <div className="flex flex-wrap items-center gap-1 border-border border-b px-3 py-1.5">
+          {modeSwitch}
+          <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+          <Tooltip label="Bold" shortcut={['mod', 'b']} side="bottom">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Bold"
+              className="size-7 px-0"
+              onClick={() => applyEdit(wrapSelection(selection(), '**'))}
             >
-              {option === 'rich' ? 'Rich text' : 'Markdown'}
-            </button>
+              <Bold className="size-3.5" aria-hidden="true" />
+            </Button>
+          </Tooltip>
+          <Tooltip label="Italic" shortcut={['mod', 'i']} side="bottom">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Italic"
+              className="size-7 px-0"
+              onClick={() => applyEdit(wrapSelection(selection(), '_'))}
+            >
+              <Italic className="size-3.5" aria-hidden="true" />
+            </Button>
+          </Tooltip>
+          <Tooltip label="Link" shortcut={['mod', 'k']} side="bottom">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Link"
+              className="size-7 px-0"
+              onClick={() => applyEdit(linkSelection(selection()))}
+            >
+              <Link2 className="size-3.5" aria-hidden="true" />
+            </Button>
+          </Tooltip>
+
+          {SNIPPET_ITEMS.map((item) => (
+            <Tooltip key={item.name} label={item.label} side="bottom">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={item.label}
+                data-testid={`insert-${item.name}`}
+                className="size-7 px-0"
+                onClick={() => insertSnippet(item.name)}
+              >
+                <item.icon className="size-3.5" aria-hidden="true" />
+              </Button>
+            </Tooltip>
           ))}
-        </div>
 
-        {mode === 'markdown' ? (
-          <>
-            <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
-            <Tooltip label="Bold" shortcut={['mod', 'b']} side="bottom">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Bold"
-                className="size-7 px-0"
-                onClick={() => applyEdit(wrapSelection(selection(), '**'))}
-              >
-                <Bold className="size-3.5" aria-hidden="true" />
-              </Button>
-            </Tooltip>
-            <Tooltip label="Italic" shortcut={['mod', 'i']} side="bottom">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Italic"
-                className="size-7 px-0"
-                onClick={() => applyEdit(wrapSelection(selection(), '_'))}
-              >
-                <Italic className="size-3.5" aria-hidden="true" />
-              </Button>
-            </Tooltip>
-            <Tooltip label="Link" shortcut={['mod', 'k']} side="bottom">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Link"
-                className="size-7 px-0"
-                onClick={() => applyEdit(linkSelection(selection()))}
-              >
-                <Link2 className="size-3.5" aria-hidden="true" />
-              </Button>
-            </Tooltip>
-
-            {SNIPPET_ITEMS.map((item) => (
-              <Tooltip key={item.name} label={item.label} side="bottom">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={item.label}
-                  data-testid={`insert-${item.name}`}
-                  className="size-7 px-0"
-                  onClick={() => insertSnippet(item.name)}
-                >
-                  <item.icon className="size-3.5" aria-hidden="true" />
-                </Button>
-              </Tooltip>
-            ))}
-          </>
-        ) : null}
-
-        <span className="ml-auto flex items-center gap-2">
-          {uploading ? (
-            <span className="text-2xs text-faint" data-testid="upload-progress" aria-live="polite">
-              Uploading {percent}%
-            </span>
-          ) : null}
-          {mode === 'markdown' ? (
+          <span className="ml-auto flex items-center gap-2">
+            {uploadStatus}
             <Button
               variant={preview ? 'primary' : 'secondary'}
               size="sm"
@@ -229,22 +242,29 @@ export function DocEditor({ docId, content, onChange, onForceSave }: DocEditorPr
             >
               {preview ? 'Editing preview' : 'Preview'}
             </Button>
-          ) : null}
-        </span>
-      </div>
+          </span>
+        </div>
+      ) : null}
 
       {mode === 'rich' ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <RichTextEditor
-            value={content}
-            onChange={onChange}
-            members={bootstrap.data?.members ?? []}
-            onUpload={upload}
-            onForceSave={onForceSave}
-            toolbar="full"
-            ariaLabel="Doc body"
-            testId="doc-rich-editor"
-          />
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <RichTextEditor
+              value={content}
+              onChange={onChange}
+              members={bootstrap.data?.members ?? []}
+              onUpload={upload}
+              onForceSave={onForceSave}
+              toolbar="full"
+              ariaLabel="Doc body"
+              testId="doc-rich-editor"
+              footer={footer}
+              toolbarLeading={modeSwitch}
+              toolbarTrailing={uploadStatus}
+              {...(scrollRef === undefined ? {} : { scrollRef })}
+            />
+          </div>
+          {outline}
         </div>
       ) : (
         <div

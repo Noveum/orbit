@@ -1,4 +1,5 @@
 import { RefreshCcw } from 'lucide-react';
+import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -58,7 +59,7 @@ export function CycleAnalytics({ cycle }: { readonly cycle: CycleView }) {
       <div className="flex flex-col gap-2.5">
         <h3 className="font-medium text-dense text-text">Per assignee</h3>
         {cycle.assignees.length === 0 ? (
-          <p className="text-faint text-xs">Nothing assigned in this cycle.</p>
+          <p className="text-faint text-xs">Nothing assigned in this sprint.</p>
         ) : (
           <ul className="flex flex-col gap-2.5">
             {cycle.assignees.map((assignee) => (
@@ -102,20 +103,26 @@ export function CycleIssueList({ cycle }: { readonly cycle: CycleView }) {
           </h3>
           <ul className="flex flex-col rounded-lg border border-border">
             {group.issues.map((issue) => (
-              <li
-                key={issue.id}
-                className={cn(
-                  'flex items-center gap-3 border-border border-b px-3 py-1.5 last:border-b-0',
-                  rowHover,
-                )}
-              >
-                <span className="w-16 shrink-0 text-2xs text-faint tabular">
-                  {issue.identifier}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-dense text-text">{issue.title}</span>
-                {issue.assignee === null ? null : (
-                  <Avatar name={issue.assignee.name} src={issue.assignee.image} size="xs" />
-                )}
+              <li key={issue.id} className="border-border border-b last:border-b-0">
+                <Link
+                  href={`/issue/${issue.identifier}`}
+                  data-testid={`sprint-issue-${issue.identifier}`}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-1.5 outline-none',
+                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset',
+                    rowHover,
+                  )}
+                >
+                  <span className="w-16 shrink-0 text-2xs text-faint tabular">
+                    {issue.identifier}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-dense text-text">
+                    {issue.title}
+                  </span>
+                  {issue.assignee === null ? null : (
+                    <Avatar name={issue.assignee.name} src={issue.assignee.image} size="xs" />
+                  )}
+                </Link>
               </li>
             ))}
           </ul>
@@ -137,8 +144,8 @@ export function CyclePanel({ cycle, upcoming, teamName }: CyclePanelProps) {
       {cycle === null ? (
         <EmptyState
           icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
-          title="No active cycle"
-          description={`${teamName} has no cycle running right now.`}
+          title="No active sprint"
+          description={`${teamName} has no sprint running right now.`}
         />
       ) : (
         <>
@@ -157,7 +164,7 @@ export function CyclePanel({ cycle, upcoming, teamName }: CyclePanelProps) {
       )}
 
       <section className="flex flex-col gap-2">
-        <h3 className="font-medium text-dense text-text">Upcoming cycles</h3>
+        <h3 className="font-medium text-dense text-text">Upcoming sprints</h3>
         {upcoming.length === 0 ? (
           <p className="text-faint text-xs">Nothing scheduled after this one.</p>
         ) : (

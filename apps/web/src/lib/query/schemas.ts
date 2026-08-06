@@ -11,12 +11,12 @@ const nullableTimestamp = z.string().nullable();
 
 export const issueSchema = z.object({
   id: z.string(),
-  organizationId: z.string(),
+  organizationId: z.string().default(''),
   teamId: z.string(),
   number: z.number(),
   identifier: z.string(),
   title: z.string(),
-  description: z.string(),
+  description: z.string().default(''),
   stateId: z.string(),
   priority: z.number(),
   creatorId: z.string(),
@@ -31,7 +31,7 @@ export const issueSchema = z.object({
   startedAt: nullableTimestamp,
   completedAt: nullableTimestamp,
   canceledAt: nullableTimestamp,
-  stateEnteredAt: timestamp,
+  stateEnteredAt: timestamp.default(''),
   syncId: z.number(),
   createdAt: timestamp,
   updatedAt: timestamp,
@@ -88,6 +88,7 @@ export const projectSchema = z.object({
   status: z.string(),
   color: z.string(),
   icon: z.string(),
+  teamIds: z.array(z.string()).catch([]).default([]),
 });
 
 export type Project = z.infer<typeof projectSchema>;
@@ -191,6 +192,63 @@ export const issueCountsSchema = z.object({
 });
 
 export type IssueCounts = z.infer<typeof issueCountsSchema>;
+
+export const FACET_PROPERTIES = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'label',
+  'project',
+  'cycle',
+  'milestone',
+] as const;
+
+export type FacetProperty = (typeof FACET_PROPERTIES)[number];
+
+const facetCounts = z.record(z.string(), z.number()).catch({}).default({});
+
+export const issueSummarySchema = z.object({
+  total: z.number(),
+  byState: z.record(z.string(), z.number()).catch({}).default({}),
+  groupTotals: z.record(z.string(), z.number()).catch({}).default({}),
+});
+
+export type IssueSummary = z.infer<typeof issueSummarySchema>;
+
+export const issueFacetsSchema = z.object({
+  scopeTotal: z.number(),
+  facets: z
+    .object({
+      state: facetCounts,
+      assignee: facetCounts,
+      creator: facetCounts,
+      priority: facetCounts,
+      estimate: facetCounts,
+      label: facetCounts,
+      project: facetCounts,
+      cycle: facetCounts,
+      milestone: facetCounts,
+    })
+    .catch(() => emptyFacets()),
+});
+
+export type IssueFacets = z.infer<typeof issueFacetsSchema>;
+
+export function emptyFacets(): IssueFacets['facets'] {
+  return {
+    state: {},
+    assignee: {},
+    creator: {},
+    priority: {},
+    estimate: {},
+    label: {},
+    project: {},
+    cycle: {},
+    milestone: {},
+  };
+}
 
 export const issueEnvelopeSchema = z.object({ issue: issueSchema });
 
@@ -327,3 +385,35 @@ export const docCommentEnvelopeSchema = z.object({ comment: docCommentSchema });
 export const reactionResultSchema = z.object({ emoji: z.string(), active: z.boolean() });
 export const deletedSchema = z.object({ deleted: z.boolean() });
 export const subscribedSchema = z.object({ subscribed: z.boolean() });
+
+export const standupWorkloadSchema = z.object({
+  userId: z.string(),
+  open: z.number(),
+  inProgress: z.number(),
+  completedSince: z.number(),
+});
+
+export type StandupWorkload = z.infer<typeof standupWorkloadSchema>;
+
+export const standupBoardPayloadSchema = z.object({
+  since: timestamp,
+  issues: z.array(issueSchema).default([]),
+  workload: z.array(standupWorkloadSchema).default([]),
+});
+
+export type StandupBoardPayload = z.infer<typeof standupBoardPayloadSchema>;
+
+export const viewPreferencesSchema = z.object({
+  preferences: z
+    .array(
+      z.object({
+        page: z.string(),
+        scope: z.string(),
+        layout: z.string(),
+        display: z.record(z.string(), z.unknown()).default({}),
+      }),
+    )
+    .default([]),
+});
+
+export type ViewPreferences = z.infer<typeof viewPreferencesSchema>;

@@ -3,7 +3,7 @@ import { and, db, desc, eq, gt, isNull, schema } from '@orbit/db';
 import { forbidden, notFound, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
-import { newId } from '../internal.ts';
+import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
 
 export interface McpAccessContext {
@@ -108,11 +108,12 @@ export interface RecordMcpGrantInput {
   readonly scopes: string;
 }
 
-export async function recordMcpGrant(
+async function writeMcpGrant(
+  executor: Executor,
   input: RecordMcpGrantInput,
   now: Date = new Date(),
 ): Promise<void> {
-  await db
+  await executor
     .insert(schema.mcpGrant)
     .values({
       id: newId(),
@@ -128,6 +129,13 @@ export async function recordMcpGrant(
       target: [schema.mcpGrant.clientId, schema.mcpGrant.userId],
       set: { organizationId: input.organizationId, scopes: input.scopes, revokedAt: null },
     });
+}
+
+export async function recordMcpGrant(
+  input: RecordMcpGrantInput,
+  now: Date = new Date(),
+): Promise<void> {
+  await writeMcpGrant(db, input, now);
 }
 
 export interface McpGrantView {
@@ -207,10 +215,14 @@ export interface FinalizeMcpConsentInput {
   readonly accept: boolean;
 }
 
+export interface FinalizeMcpConsentInput2 {
+  readonly organizationId?: string;
+}
+
 export async function finalizeMcpConsent(
-  input: FinalizeMcpConsentInput,
+  input: FinalizeMcpConsentInput & FinalizeMcpConsentInput2,
   now: Date = new Date(),
-): Promise<{ redirectUri: string }> {
+): Promise<{ redirectUri: string; clientId: string; scope: string }> {
   const invalid = unauthorized('This authorization request is invalid or has expired.');
 
   const [record] = await db
@@ -241,27 +253,45 @@ export async function finalizeMcpConsent(
     redirect.searchParams.set('error', 'access_denied');
     redirect.searchParams.set('error_description', 'User denied access');
     if (value.state != null) redirect.searchParams.set('state', value.state);
-    return { redirectUri: redirect.toString() };
+    return {
+      redirectUri: redirect.toString(),
+      clientId: value.clientId,
+      scope: value.scope.join(' '),
+    };
   }
 
   const code = authorizationCode();
-  await db
-    .update(schema.verification)
-    .set({
-      identifier: code,
-      value: JSON.stringify({ ...raw, requireConsent: false }),
-      expiresAt: new Date(now.getTime() + CONSENT_CODE_TTL_MS),
-    })
-    .where(eq(schema.verification.identifier, input.consentCode));
-  await db.insert(schema.oauthConsent).values({
-    id: newId(),
-    clientId: value.clientId,
-    userId: input.userId,
-    scopes: value.scope.join(' '),
-    consentGiven: true,
+  await db.transaction(async (tx) => {
+    await tx
+      .update(schema.verification)
+      .set({
+        identifier: code,
+        value: JSON.stringify({ ...raw, requireConsent: false }),
+        expiresAt: new Date(now.getTime() + CONSENT_CODE_TTL_MS),
+      })
+      .where(eq(schema.verification.identifier, input.consentCode));
+    await tx.insert(schema.oauthConsent).values({
+      id: newId(),
+      clientId: value.clientId,
+      userId: input.userId,
+      scopes: value.scope.join(' '),
+      consentGiven: true,
+    });
+    if (input.organizationId !== undefined) {
+      await writeMcpGrant(tx, {
+        clientId: value.clientId,
+        userId: input.userId,
+        organizationId: input.organizationId,
+        scopes: value.scope.join(' '),
+      });
+    }
   });
 
   redirect.searchParams.set('code', code);
   if (value.state != null) redirect.searchParams.set('state', value.state);
-  return { redirectUri: redirect.toString() };
+  return {
+    redirectUri: redirect.toString(),
+    clientId: value.clientId,
+    scope: value.scope.join(' '),
+  };
 }

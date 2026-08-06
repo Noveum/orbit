@@ -125,7 +125,7 @@ export function IssuePeek({ issue, onClose, onOpen }: IssuePeekProps) {
           </div>
           <DialogPrimitive.Title className="sr-only">{issue.title}</DialogPrimitive.Title>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <IssueDetailView identifier={issue.identifier} />
+            <IssueDetailView identifier={issue.identifier} known={issue} />
           </div>
           <button
             type="button"

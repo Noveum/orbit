@@ -13,14 +13,19 @@ import { useCallback, useMemo } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  ALL_SCOPE,
   ASSIGNED_SCOPE,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
   DOC_COMMENTS_ROOT,
   DOC_ROOT,
   DOCS_ROOT,
+  ISSUE_FACETS_ROOT,
   ISSUE_ROOT,
+  ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
+  PROJECT_SCOPE,
+  STANDUP_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Comment, DocComment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
@@ -31,6 +36,10 @@ import {
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
   applyReactionDelta,
+  awaitsServerRefresh,
+  belongsInList,
+  flattenIssuePages,
+  searchOf,
 } from '@/lib/query/sync.ts';
 import { useCurrentUserId } from './session.tsx';
 
@@ -54,6 +63,8 @@ function noop(): undefined {
 }
 
 interface RootInvalidations {
+  counts: boolean;
+  standupBoard: boolean;
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
@@ -63,12 +74,19 @@ interface RootInvalidations {
 function membershipOf(key: QueryKey): IssueBelongs | null {
   const scope = key[1];
   if (typeof scope !== 'string') return null;
+  const search = searchOf(key);
   if (scope === ASSIGNED_SCOPE) {
     const userId = key[2];
     if (typeof userId !== 'string') return null;
-    return (issue: Issue) => issue.assigneeId === userId;
+    return (issue: Issue) => issue.assigneeId === userId && belongsInList(search, issue);
   }
-  return (issue: Issue) => issue.teamId === scope;
+  if (scope === PROJECT_SCOPE) {
+    const projectId = key[2];
+    if (typeof projectId !== 'string') return null;
+    return (issue: Issue) => issue.projectId === projectId && belongsInList(search, issue);
+  }
+  if (scope === ALL_SCOPE) return (issue: Issue) => belongsInList(search, issue);
+  return (issue: Issue) => issue.teamId === scope && belongsInList(search, issue);
 }
 
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {
@@ -77,8 +95,12 @@ function patchIssueCaches(client: QueryClient, action: SyncAction): void {
     if (belongs === null) continue;
     const current = query.state.data as IssuePages | undefined;
     if (current === undefined) continue;
-    const next = applyIssueDeltaToPages(current, action, belongs);
+    const search = searchOf(query.queryKey);
+    const next = applyIssueDeltaToPages(current, action, belongs, search);
     if (next !== current) client.setQueryData(query.queryKey, next);
+    if (awaitsServerRefresh(flattenIssuePages(current), action, belongs, search)) {
+      client.invalidateQueries({ queryKey: query.queryKey }).catch(() => undefined);
+    }
   }
 
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
@@ -142,6 +164,8 @@ function routeAction(
 ): void {
   if (action.model === 'issue') {
     patchIssueCaches(client, action);
+    roots.counts = true;
+    roots.standupBoard = true;
     return;
   }
   if (action.model === 'comment') {
@@ -173,6 +197,11 @@ function routeAction(
 }
 
 function flushRoots(client: QueryClient, roots: RootInvalidations): void {
+  if (roots.counts) {
+    client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
+    client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
+  }
+  if (roots.standupBoard) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
   if (roots.docs) client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
@@ -192,8 +221,12 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const observeSyncId = useObserveSyncId();
 
   const subscribed = useMemo(
-    () => [scopes.organization(organizationId), ...teamIds.map((id) => scopes.team(id))],
-    [organizationId, teamIds],
+    () => [
+      scopes.organization(organizationId),
+      ...teamIds.map((id) => scopes.team(id)),
+      ...(currentUserId === null ? [] : [scopes.user(currentUserId)]),
+    ],
+    [organizationId, teamIds, currentUserId],
   );
   useScopeSubscription(subscribed);
 
@@ -201,6 +234,8 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
     (actions: readonly SyncAction[]) => {
       const tabClientId = clientId();
       const roots: RootInvalidations = {
+        counts: false,
+        standupBoard: false,
         bootstrap: false,
         views: false,
         docs: false,

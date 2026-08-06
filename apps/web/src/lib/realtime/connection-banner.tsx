@@ -1,13 +1,32 @@
 'use client';
 
+import type { RealtimeStatus } from '@orbit/realtime-client';
 import { useRealtimeStatus } from '@orbit/realtime-client/react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 
-export function ConnectionBanner() {
-  const status = useRealtimeStatus();
-  if (status !== 'closed' && status !== 'reconnecting') return null;
+export const RECONNECT_GRACE_MS = 4_000;
 
+export function ConnectionBanner() {
+  return <ConnectionBannerView status={useRealtimeStatus()} />;
+}
+
+export function ConnectionBannerView({ status }: { readonly status: RealtimeStatus }) {
   const closed = status === 'closed';
+  const reconnecting = status === 'reconnecting';
+  const [graceElapsed, setGraceElapsed] = useState(false);
+
+  useEffect(() => {
+    if (!reconnecting) {
+      setGraceElapsed(false);
+      return;
+    }
+    const timer = setTimeout(() => setGraceElapsed(true), RECONNECT_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [reconnecting]);
+
+  if (!(closed || (reconnecting && graceElapsed))) return null;
+
   return (
     <div
       role="status"
