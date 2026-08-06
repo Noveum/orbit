@@ -6,6 +6,7 @@ export * from './content/comment-service.ts';
 export * from './content/doc-comment-service.ts';
 export * from './content/doc-service.ts';
 export * from './internal.ts';
+export * from './notifications/index.ts';
 export * from './org/active-organization.ts';
 export * from './org/avatar-service.ts';
 export * from './org/invite-service.ts';

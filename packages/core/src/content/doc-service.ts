@@ -1,10 +1,11 @@
 import { and, asc, count, db, desc, eq, ilike, isNull, ne, or, schema, sql } from '@orbit/db';
+import type { NotificationEvent } from '@orbit/services/notifications';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { slugify } from '@orbit/shared/utils';
+import { docUrl, slugify, truncate } from '@orbit/shared/utils';
 import {
   docCollectionCreateSchema,
   docCollectionUpdateSchema,
@@ -16,6 +17,8 @@ import {
 import { getTableColumns } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
+import { newMentions, resolveHandles } from '../notifications/mentions.ts';
+import { NOTIFICATION_BODY_LIMIT, notifyRecipients } from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -319,6 +322,31 @@ export async function isPublishedDoc(docId: string): Promise<boolean> {
   return row !== undefined && row.archivedAt === null && row.visibility !== 'workspace';
 }
 
+async function docMentionNotifications(
+  tx: Executor,
+  principal: Principal,
+  doc: DocRow,
+  handles: readonly string[],
+  actor: Actor,
+): Promise<SyncAction[]> {
+  const mentioned = await resolveHandles(tx, principal.organizationId, handles, null);
+  const events: NotificationEvent[] = [
+    {
+      organizationId: doc.organizationId,
+      type: 'mention',
+      reason: 'mentioned',
+      actor,
+      entityType: 'doc',
+      entityId: doc.id,
+      userIds: mentioned.filter((id) => id !== principal.userId),
+      title: `Mentioned you in ${doc.title}`,
+      body: truncate(doc.content, NOTIFICATION_BODY_LIMIT),
+      url: docUrl(doc.id),
+    },
+  ];
+  return await notifyRecipients(tx, events);
+}
+
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docCreateSchema.parse(input);
@@ -353,7 +381,15 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
       .onConflictDoNothing();
     await snapshotVersion(tx, principal, doc, null);
 
-    return { doc, actions: [docAction(doc, syncId, actor, 'insert')] };
+    const notifications = await docMentionNotifications(
+      tx,
+      principal,
+      doc,
+      newMentions('', doc.content),
+      actor,
+    );
+
+    return { doc, actions: [docAction(doc, syncId, actor, 'insert'), ...notifications] };
   });
 }
 
@@ -436,7 +472,15 @@ export async function updateDoc(
       await snapshotVersion(tx, principal, doc, null);
     }
 
-    return { doc, actions: [docAction(doc, syncId, actor, 'update')] };
+    const notifications = await docMentionNotifications(
+      tx,
+      principal,
+      doc,
+      newMentions(current.content, doc.content),
+      actor,
+    );
+
+    return { doc, actions: [docAction(doc, syncId, actor, 'update'), ...notifications] };
   });
 }
 
