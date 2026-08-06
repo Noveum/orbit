@@ -331,6 +331,9 @@ describe('planning', () => {
       cycle: 'active',
     });
     expect(progress['scope']).toBeGreaterThanOrEqual(1);
+    expect(progress['points']).toMatchObject({ scope: expect.any(Number) });
+    expect(progress['changes']).toMatchObject({ added: expect.any(Number) });
+    expect(progress['burnUp']).toMatchObject([{ scope: expect.any(Number) }]);
 
     const removed = await admin.result('move_to_cycle', {
       issue: created.identifier,
