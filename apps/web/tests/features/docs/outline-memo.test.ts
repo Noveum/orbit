@@ -52,6 +52,19 @@ describe('headingSignature', () => {
       headingSignature(separatedByBreak('beta')),
     );
   });
+
+  it('tells a thematic break from a setext underline by how far the dashes are indented', () => {
+    const broken = '# Title\n\n- item\n---\n\n## Two\n';
+    const underlined = '# Title\n\n- item\n  ---\n\n## Two\n';
+
+    expect(headingsOf(broken).map((heading) => heading.id)).toEqual(['title', 'two']);
+    expect(headingsOf(underlined).map((heading) => heading.id)).toEqual(['title', 'item', 'two']);
+
+    expect(headingSignature(broken)).toBe(headingSignature(broken.replace('- item', '- other')));
+    expect(headingSignature(underlined)).not.toBe(
+      headingSignature(underlined.replace('- item', '- other')),
+    );
+  });
 });
 
 function separatedByBreak(body: string): string {
@@ -143,6 +156,31 @@ const HEADINGS_THE_RENDERER_FINDS = [
     what: 'a heading freed by a blank line closing the html block above it',
     before: '# One\n\n<div>\n</div>\n## Head\n',
     after: '# One\n\n<div>\n</div>\n\n## Head\n',
+  },
+  {
+    what: 'a setext heading retitled inside a bullet item',
+    before: '# One\n\n- Listed\n  ---\n\n## Two\n',
+    after: '# One\n\n- Renamed\n  ---\n\n## Two\n',
+  },
+  {
+    what: 'a setext heading retitled inside an ordered item',
+    before: '# One\n\n1. Listed\n   ===\n\n## Two\n',
+    after: '# One\n\n1. Renamed\n   ===\n\n## Two\n',
+  },
+  {
+    what: 'a setext heading retitled inside a blockquote nested in a list item',
+    before: '# One\n\n- > Listed\n  > ---\n\n## Two\n',
+    after: '# One\n\n- > Renamed\n  > ---\n\n## Two\n',
+  },
+  {
+    what: 'a setext underline typed under the last list item in the document',
+    before: '# One\n\n- Listed\n',
+    after: '# One\n\n- Listed\n  ---\n',
+  },
+  {
+    what: 'a setext underline that lazily continues the list item above it',
+    before: '# One\n\n- Listed\n',
+    after: '# One\n\n- Listed\n===\n',
   },
 ] as const;
 

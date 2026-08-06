@@ -35,10 +35,10 @@ export function readTimeMinutes(markdown: string): number {
 const ATX_HEADING = /^#{1,6}(?:[ \t]|$)/;
 const FENCE = /^(?:`{3,}|~{3,})/;
 const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+const DASH_UNDERLINE = /^-+[ \t]*$/;
 const RAW_HTML = /<[a-zA-Z/!?]/;
 const LEADING_SPACE = /^[ \t]+/;
 const BLOCK_MARKER = /^(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))/;
-const QUOTE_MARKER = /^(?:>[ \t]?)+/;
 
 function blockContent(line: string): string {
   let rest = line.replace(LEADING_SPACE, '');
@@ -50,8 +50,8 @@ function blockContent(line: string): string {
   return rest;
 }
 
-function quoteContent(line: string): string {
-  return line.replace(LEADING_SPACE, '').replace(QUOTE_MARKER, '').replace(LEADING_SPACE, '');
+function blockPrefixWidth(line: string): number {
+  return line.length - blockContent(line).length;
 }
 
 function blank(lines: readonly string[], index: number): boolean {
@@ -59,15 +59,20 @@ function blank(lines: readonly string[], index: number): boolean {
 }
 
 function plainParagraph(line: string): boolean {
-  const content = quoteContent(line);
-  if (content.length === 0) return false;
-  if (BLOCK_MARKER.test(content) || RAW_HTML.test(content)) return false;
+  const content = blockContent(line);
+  if (content.length === 0 || RAW_HTML.test(content)) return false;
   return !(ATX_HEADING.test(content) || FENCE.test(content) || SETEXT_UNDERLINE.test(content));
 }
 
 function underlinesAParagraph(lines: readonly string[], index: number): boolean {
-  if (!SETEXT_UNDERLINE.test(quoteContent(lines[index] ?? ''))) return false;
-  return index > 0 && plainParagraph(lines[index - 1] ?? '');
+  if (index === 0) return false;
+  const line = lines[index] ?? '';
+  const content = blockContent(line);
+  if (!SETEXT_UNDERLINE.test(content)) return false;
+  const above = lines[index - 1] ?? '';
+  if (!plainParagraph(above)) return false;
+  if (!DASH_UNDERLINE.test(content)) return true;
+  return blockPrefixWidth(line) >= blockPrefixWidth(above);
 }
 
 function addParagraphAbove(lines: readonly string[], underline: number, chosen: Set<number>): void {
