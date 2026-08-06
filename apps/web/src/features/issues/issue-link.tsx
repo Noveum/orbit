@@ -33,7 +33,6 @@ export interface IssueLinkProps {
   readonly identifier: string;
   readonly children: ReactNode;
   readonly className?: string | undefined;
-  readonly title?: string | undefined;
   readonly label?: string | undefined;
   readonly draggable?: boolean | undefined;
   readonly prefetch?: boolean | undefined;
@@ -48,7 +47,6 @@ export function IssueLink({
   identifier,
   children,
   className,
-  title,
   label,
   draggable,
   prefetch,
@@ -74,7 +72,6 @@ export function IssueLink({
   return (
     <Link
       href={issueHref(identifier)}
-      title={title}
       aria-label={label}
       draggable={draggable}
       prefetch={prefetch ?? null}
