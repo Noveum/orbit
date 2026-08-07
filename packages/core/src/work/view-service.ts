@@ -1,17 +1,18 @@
-import { and, asc, db, eq, or, schema } from '@orbit/db';
+import { and, asc, db, eq, inArray, or, type SQL, schema, sql } from '@orbit/db';
 import { forbidden, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
-import type { ViewState, VirtualViewId } from '@orbit/shared/filters';
+import type { ViewState, ViewVisibility, VirtualViewId } from '@orbit/shared/filters';
 import {
   isVirtualViewId,
+  VIEW_VISIBILITIES,
   VIRTUAL_VIEW_IDS,
   VIRTUAL_VIEW_NAMES,
   viewStateFrom,
   virtualViewState,
 } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, canReadView, teamScope } from '@orbit/shared/policy';
 import { viewCreateSchema, viewFavoriteSchema, viewUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { newId, requireRow } from '../internal.ts';
@@ -36,17 +37,69 @@ export interface ViewRecord {
 
 const VIEW_FAVORITE_ENTITY = 'view';
 
-function isShared(row: ViewRow): boolean {
-  return row.shared === 'true';
+function visibilityOf(row: ViewRow): ViewVisibility {
+  return VIEW_VISIBILITIES.find((entry) => entry === row.visibility) ?? 'private';
 }
 
-function viewScopes(row: ViewRow): string[] {
-  if (!isShared(row)) return [scopes.user(row.ownerId)];
-  return [scopes.organization(row.organizationId), scopes.user(row.ownerId)];
+interface AudienceColumns {
+  readonly visibility: ViewVisibility;
+  readonly teamId: string | null;
+  readonly shared: string;
+}
+
+function audienceColumns(state: ViewState): AudienceColumns {
+  const visibility = state.visibility;
+  return {
+    visibility,
+    teamId: visibility === 'team' ? state.teamId : null,
+    shared: String(visibility !== 'private'),
+  };
+}
+
+async function assertAudienceReachable(principal: Principal, state: ViewState): Promise<void> {
+  if (state.visibility !== 'team') return;
+  const teamId = state.teamId;
+  if (teamId === null) {
+    throw validationFailed('Pick the team that can see this view.');
+  }
+  const [row] = await db
+    .select({ id: schema.team.id, organizationId: schema.team.organizationId })
+    .from(schema.team)
+    .where(eq(schema.team.id, teamId))
+    .limit(1);
+  const team = requireRow(row, 'That team does not exist.');
+  assertInTeam(principal, teamScope({ teamId: team.id, organizationId: team.organizationId }));
+}
+
+export function viewScopes(row: ViewRow): string[] {
+  const visibility = visibilityOf(row);
+  if (visibility === 'workspace') {
+    return [scopes.organization(row.organizationId), scopes.user(row.ownerId)];
+  }
+  if (visibility === 'team' && row.teamId !== null) {
+    return [scopes.team(row.teamId), scopes.user(row.ownerId)];
+  }
+  return [scopes.user(row.ownerId)];
+}
+
+export function viewReadFilter(principal: Principal): SQL {
+  const mine = eq(schema.view.ownerId, principal.userId);
+  const everyone = eq(schema.view.visibility, 'workspace');
+  const clause = or(mine, everyone, teamVisibleFilter(principal));
+  return clause ?? sql`false`;
+}
+
+function teamVisibleFilter(principal: Principal): SQL {
+  const isTeamView = eq(schema.view.visibility, 'team');
+  if (principal.role === 'admin') return isTeamView;
+  if (principal.teamIds.length === 0) return sql`false`;
+  const clause = and(isTeamView, inArray(schema.view.teamId, [...principal.teamIds]));
+  return clause ?? sql`false`;
 }
 
 function toRecord(row: ViewRow, favorite: boolean): ViewRecord {
-  const state = viewStateFrom(row.filter, row.layout === 'board' ? 'board' : 'list');
+  const stored = viewStateFrom(row.filter, row.layout === 'board' ? 'board' : 'list');
+  const state: ViewState = { ...stored, visibility: visibilityOf(row) };
   return {
     id: row.id,
     ownerId: row.ownerId,
@@ -54,7 +107,7 @@ function toRecord(row: ViewRow, favorite: boolean): ViewRecord {
     state,
     layout: row.layout,
     groupBy: row.groupBy,
-    shared: row.shared === 'true',
+    shared: state.visibility !== 'private',
     virtual: false,
     locked: state.locked,
     favorite,
@@ -103,6 +156,7 @@ export async function createView(
 ): Promise<{ view: ViewRecord; actions: SyncAction[] }> {
   assertCan(principal, 'view:manage');
   const parsed = viewCreateSchema.parse(input);
+  await assertAudienceReachable(principal, parsed.filter);
 
   return await db.transaction(async (tx) => {
     const syncId = await nextSyncId(tx);
@@ -117,7 +171,7 @@ export async function createView(
         filter: parsed.filter,
         layout: parsed.filter.layout,
         groupBy: parsed.filter.groupBy,
-        shared: String(parsed.filter.visibility !== 'private'),
+        ...audienceColumns(parsed.filter),
         syncId,
       })
       .returning();
@@ -175,15 +229,19 @@ export async function updateView(
   if (currentState.locked && parsed.filter !== undefined && parsed.filter.locked !== false) {
     throw validationFailed('That view is locked. Unlock it before changing what it shows.');
   }
+  if (parsed.filter !== undefined) await assertAudienceReachable(principal, parsed.filter);
 
   return await db.transaction(async (tx) => {
     const values: Partial<typeof schema.view.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
     if (parsed.filter !== undefined) {
+      const audience = audienceColumns(parsed.filter);
       values.filter = parsed.filter;
       values.layout = parsed.filter.layout;
       values.groupBy = parsed.filter.groupBy;
-      values.shared = String(parsed.filter.visibility !== 'private');
+      values.visibility = audience.visibility;
+      values.teamId = audience.teamId;
+      values.shared = audience.shared;
     }
 
     const syncId = await nextSyncId(tx);
@@ -207,26 +265,33 @@ export async function updateView(
           data: view,
           actor,
         }),
-        ...unshareActions({ syncId, actor, before: current, after: view }),
+        ...narrowedAudienceActions({ syncId, actor, before: current, after: view }),
       ],
     };
   });
 }
 
-interface UnshareInput {
+interface NarrowedAudienceInput {
   readonly syncId: number;
   readonly actor: Awaited<ReturnType<typeof principalActor>>;
   readonly before: ViewRow;
   readonly after: ViewRow;
 }
 
-function unshareActions(input: UnshareInput): SyncAction[] {
-  if (!isShared(input.before) || isShared(input.after)) return [];
+function droppedScopes(before: ViewRow, after: ViewRow): string[] {
+  if (visibilityOf(after) === 'workspace') return [];
+  const reached = new Set(viewScopes(after));
+  return viewScopes(before).filter((scope) => !reached.has(scope));
+}
+
+function narrowedAudienceActions(input: NarrowedAudienceInput): SyncAction[] {
+  const dropped = droppedScopes(input.before, input.after);
+  if (dropped.length === 0) return [];
   return [
     buildSyncAction({
       syncId: input.syncId,
       organizationId: input.after.organizationId,
-      scopes: [scopes.organization(input.after.organizationId)],
+      scopes: dropped,
       action: 'delete',
       model: 'view',
       modelId: input.after.id,
@@ -334,8 +399,8 @@ async function loadReadableView(principal: Principal, viewId: string): Promise<V
     )
     .limit(1);
   const view = requireRow(row, 'That view does not exist.');
-  if (view.ownerId !== principal.userId && view.shared !== 'true') {
-    throw forbidden('That view is private.');
+  if (!canReadView(principal, view)) {
+    throw forbidden('That view is not shared with you.');
   }
   return view;
 }
@@ -347,10 +412,7 @@ export async function listViews(principal: Principal): Promise<ViewRecord[]> {
       .select()
       .from(schema.view)
       .where(
-        and(
-          eq(schema.view.organizationId, principal.organizationId),
-          or(eq(schema.view.ownerId, principal.userId), eq(schema.view.shared, 'true')),
-        ),
+        and(eq(schema.view.organizationId, principal.organizationId), viewReadFilter(principal)),
       )
       .orderBy(asc(schema.view.name)),
     favoriteIds(principal),

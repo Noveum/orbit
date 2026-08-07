@@ -1,7 +1,7 @@
 'use client';
 
 import type { ViewVisibility } from '@orbit/shared/filters';
-import { conditionsOf, VIEW_VISIBILITIES, VIEW_VISIBILITY_LABELS } from '@orbit/shared/filters';
+import { conditionsOf } from '@orbit/shared/filters';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch.tsx';
 import { useCreateView } from '@/lib/query/use-views.ts';
 import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
 import { viewConfigToState } from './view-config.ts';
+import { allowedVisibility, visibilityChoices } from './view-visibility.ts';
 
 export interface SaveViewDialogProps {
   readonly open: boolean;
@@ -24,6 +25,7 @@ export interface SaveViewDialogProps {
   readonly config: ViewConfig;
   readonly layout: ViewLayoutMode;
   readonly teamId: string | null;
+  readonly teamName: string;
   readonly suggestedName: string;
 }
 
@@ -33,6 +35,7 @@ export function SaveViewDialog({
   config,
   layout,
   teamId,
+  teamName,
   suggestedName,
 }: SaveViewDialogProps) {
   const create = useCreateView();
@@ -45,6 +48,9 @@ export function SaveViewDialog({
   }, [open, suggestedName]);
 
   const count = conditionsOf(config.filter).length;
+  const team = teamId === null ? null : { id: teamId, name: teamName };
+  const choices = visibilityChoices(team);
+  const chosen = allowedVisibility(visibility, team);
 
   const submit = () => {
     const trimmed = name.trim();
@@ -56,11 +62,11 @@ export function SaveViewDialog({
           config,
           layout,
           { teamId, projectId: null },
-          { visibility, locked },
+          { visibility: chosen, locked },
         ),
         layout,
         groupBy: config.groupBy,
-        shared: visibility !== 'private',
+        shared: chosen !== 'private',
       },
       { onSuccess: () => onOpenChange(false) },
     );
@@ -100,23 +106,23 @@ export function SaveViewDialog({
 
           <fieldset className="flex flex-col gap-1.5 rounded-md border border-border px-2.5 py-2">
             <legend className="px-1 text-2xs text-faint">Visibility</legend>
-            {VIEW_VISIBILITIES.map((option) => (
+            {choices.map((choice) => (
               <label
-                key={option}
+                key={choice.value}
                 className="flex items-center gap-2 text-dense text-muted"
-                htmlFor={`save-view-visibility-${option}`}
+                htmlFor={`save-view-visibility-${choice.value}`}
               >
                 <input
                   type="radio"
-                  id={`save-view-visibility-${option}`}
+                  id={`save-view-visibility-${choice.value}`}
                   name="save-view-visibility"
-                  value={option}
-                  checked={visibility === option}
-                  data-testid={`save-view-visibility-${option}`}
-                  onChange={() => setVisibility(option)}
+                  value={choice.value}
+                  checked={chosen === choice.value}
+                  data-testid={`save-view-visibility-${choice.value}`}
+                  onChange={() => setVisibility(choice.value)}
                   className="accent-[var(--color-accent)]"
                 />
-                {VIEW_VISIBILITY_LABELS[option]}
+                {choice.label}
               </label>
             ))}
           </fieldset>
