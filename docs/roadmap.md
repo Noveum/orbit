@@ -60,8 +60,16 @@ requested integration feature, and the MCP server only partly covers it.
 
 ### Importers
 
-Getting off a paid tracker should take minutes. There is already a Plane
-importer. Linear, Jira and GitHub Issues are the ones worth having.
+Getting off a paid tracker should take minutes. The Plane importer is finished
+and wired to `bun run db:import-plane`.
+
+The Linear importer is half done: `packages/db/src/import/linear-source.ts`
+parses a Linear export and validates it, but nothing imports that module and
+there is no command to run it. Finishing it means mapping its output into
+`ImportRows` and adding the script, which is a well scoped piece of work with an
+obvious model to copy in `plane-source.ts`.
+
+Jira and GitHub Issues are the other two worth having.
 
 **help wanted.** Each importer is independent, so they can be picked up
 separately.
