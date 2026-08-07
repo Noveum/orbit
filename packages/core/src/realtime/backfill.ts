@@ -2,7 +2,7 @@ import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
-import { docReadFilter } from '../content/doc-service.ts';
+import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
 import { buildSyncAction } from './publisher.ts';
@@ -540,7 +540,7 @@ const LOADERS: Record<SyncModel, Loader> = {
   doc: async (principal, since, limit) =>
     (
       await db
-        .select()
+        .select(DOC_COLUMNS)
         .from(schema.doc)
         .where(
           and(

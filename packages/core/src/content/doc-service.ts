@@ -26,7 +26,14 @@ import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, can, canReadDoc } from '@orbit/shared/policy';
-import { docUrl, slugify, sortOrderBetween, truncate } from '@orbit/shared/utils';
+import {
+  docUrl,
+  HIGHLIGHT_END,
+  HIGHLIGHT_START,
+  slugify,
+  sortOrderBetween,
+  truncate,
+} from '@orbit/shared/utils';
 import {
   DOC_TITLE_LIMIT,
   docAccessSetSchema,
@@ -52,7 +59,11 @@ const DOC_EXCERPT_LENGTH = 400;
 const DOC_SNIPPET_LEAD = 48;
 const DOC_SNIPPET_LENGTH = 320;
 
-export type DocRow = typeof schema.doc.$inferSelect;
+const { searchVector: _searchVector, ...DOC_COLUMNS } = getTableColumns(schema.doc);
+
+export { DOC_COLUMNS };
+
+export type DocRow = Omit<typeof schema.doc.$inferSelect, 'searchVector'>;
 export type DocCollectionRow = typeof schema.docCollection.$inferSelect;
 export type DocVersionRow = typeof schema.docVersion.$inferSelect;
 export type AttachmentRow = typeof schema.attachment.$inferSelect;
@@ -262,7 +273,7 @@ export async function loadReadableDoc(
   docId: string,
 ): Promise<DocRow> {
   const [row] = await executor
-    .select()
+    .select(DOC_COLUMNS)
     .from(schema.doc)
     .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
     .limit(1);
@@ -460,7 +471,7 @@ async function adoptDescendants(
         )`,
       ),
     )
-    .returning();
+    .returning(DOC_COLUMNS);
 }
 
 async function nextSiblingOrder(
@@ -517,7 +528,7 @@ async function rebalanceSiblings(
       .update(schema.doc)
       .set({ sortOrder: (index + 1) * SORT_ORDER_STEP, syncId })
       .where(eq(schema.doc.id, row.id))
-      .returning();
+      .returning(DOC_COLUMNS);
     if (next !== undefined) updated.push(next);
   }
   return updated;
@@ -563,7 +574,7 @@ export async function moveDoc(
         syncId,
       })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
 
     const descendants = samePlacement(placement, placementOf(current))
@@ -587,10 +598,36 @@ export interface DocListRow extends Omit<DocRow, 'content'> {
   readonly excerpt: string;
   readonly snippet: string;
   readonly titleMatch: boolean;
+  readonly rank: number;
 }
 
 function docLikePattern(term: string): string {
   return `%${term.replace(/[%_\\]/g, (match) => `\\${match}`)}%`;
+}
+
+const LEXEME_MIN_LENGTH = 3;
+
+export function usesLexemes(term: string): boolean {
+  return term.trim().length >= LEXEME_MIN_LENGTH;
+}
+
+function tsQuery(term: string): SQL {
+  return sql`websearch_to_tsquery('english', ${term})`;
+}
+
+function matchExpression(term: string): SQL<boolean> {
+  const title = sql<boolean>`(${schema.doc.title} ilike ${docLikePattern(term)})`;
+  if (!usesLexemes(term)) return title;
+  return sql<boolean>`(${schema.doc.searchVector} @@ ${tsQuery(term)} or ${title})`;
+}
+
+function rankExpression(term: string | null): SQL<number> {
+  if (term === null || !usesLexemes(term)) return sql<number>`cast(0 as real)`;
+  return sql<number>`ts_rank_cd(${schema.doc.searchVector}, ${tsQuery(term)})`;
+}
+
+function bodyMatchExpression(term: string): SQL<boolean> {
+  return sql<boolean>`(to_tsvector('english', ${schema.doc.content}) @@ ${tsQuery(term)})`;
 }
 
 function titleMatchExpression(term: string | null): SQL<boolean> {
@@ -598,24 +635,34 @@ function titleMatchExpression(term: string | null): SQL<boolean> {
   return sql<boolean>`(${schema.doc.title} ilike ${docLikePattern(term)})`;
 }
 
+const HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START},StopSel=${HIGHLIGHT_END},MaxWords=34,MinWords=16,ShortWord=0,MaxFragments=2,FragmentDelimiter= … `;
+
 function snippetExpression(term: string | null): SQL<string> {
   if (term === null) return sql<string>`''`;
-  const at = sql`strpos(lower(${schema.doc.content}), lower(${term}))`;
+  if (!usesLexemes(term)) {
+    const at = sql`strpos(lower(${schema.doc.content}), lower(${term}))`;
+    return sql<string>`case
+      when ${at} = 0 then ''
+      when ${at} > ${DOC_SNIPPET_LEAD}
+        then '…' || substr(${schema.doc.content}, ${at} - ${DOC_SNIPPET_LEAD}, ${DOC_SNIPPET_LENGTH})
+      else substr(${schema.doc.content}, 1, ${DOC_SNIPPET_LENGTH})
+    end`;
+  }
   return sql<string>`case
-    when ${at} = 0 then ''
-    when ${at} > ${DOC_SNIPPET_LEAD}
-      then '…' || substr(${schema.doc.content}, ${at} - ${DOC_SNIPPET_LEAD}, ${DOC_SNIPPET_LENGTH})
-    else substr(${schema.doc.content}, 1, ${DOC_SNIPPET_LENGTH})
+    when ${bodyMatchExpression(term)}
+      then ts_headline('english', ${schema.doc.content}, ${tsQuery(term)}, ${HEADLINE_OPTIONS})
+    else ''
   end`;
 }
 
 function docListColumns(term: string | null) {
   return {
-    ...getTableColumns(schema.doc),
+    ...DOC_COLUMNS,
     content: sql<string>`''`,
     excerpt: sql<string>`left(${schema.doc.content}, ${DOC_EXCERPT_LENGTH})`,
     snippet: snippetExpression(term),
     titleMatch: titleMatchExpression(term),
+    rank: rankExpression(term),
   };
 }
 
@@ -633,16 +680,12 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
     conditions.push(eq(schema.doc.collectionId, filter.collectionId));
   }
   if (filter.projectId !== undefined) conditions.push(eq(schema.doc.projectId, filter.projectId));
-  if (term !== null) {
-    const pattern = docLikePattern(term);
-    const match = or(ilike(schema.doc.title, pattern), ilike(schema.doc.content, pattern));
-    if (match !== undefined) conditions.push(match);
-  }
+  if (term !== null) conditions.push(matchExpression(term));
 
   const order =
     term === null
       ? [asc(schema.doc.sortOrder), desc(schema.doc.updatedAt)]
-      : [desc(titleMatchExpression(term)), desc(schema.doc.updatedAt)];
+      : [desc(titleMatchExpression(term)), desc(rankExpression(term)), desc(schema.doc.updatedAt)];
 
   return await db
     .select(docListColumns(term))
@@ -720,7 +763,7 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
   const token = publishedDocToken(pathSegment);
   if (token.length === 0) return null;
   const [doc] = await db
-    .select()
+    .select(DOC_COLUMNS)
     .from(schema.doc)
     .where(and(eq(schema.doc.publishToken, token), isNull(schema.doc.archivedAt)))
     .limit(1);
@@ -731,7 +774,7 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
 
 export async function listPublicDocs(): Promise<DocRow[]> {
   return await db
-    .select()
+    .select(DOC_COLUMNS)
     .from(schema.doc)
     .where(
       and(
@@ -809,7 +852,7 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
         authorId: principal.userId,
         syncId,
       })
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(created, 'The doc could not be created.');
 
     await tx
@@ -871,7 +914,7 @@ export async function duplicateDoc(
         authorId: principal.userId,
         syncId,
       })
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(created, 'The doc could not be duplicated.');
 
     await tx
@@ -966,7 +1009,7 @@ export async function updateDoc(
         syncId,
       })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
     if (doc.title !== current.title || doc.content !== current.content) {
       await snapshotVersion(tx, principal, doc, null);
@@ -1039,7 +1082,7 @@ export async function restoreDocVersion(
         syncId,
       })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
     await snapshotVersion(tx, principal, doc, version.id);
 
@@ -1062,7 +1105,7 @@ export async function archiveDoc(
       .update(schema.doc)
       .set({ archivedAt: archived ? new Date() : null, updatedAt: new Date(), syncId })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
 
     return { doc, actions: [docAction(doc, syncId, actor, archived ? 'archive' : 'update')] };
@@ -1089,7 +1132,7 @@ export async function deleteDoc(principal: Principal, docId: string): Promise<De
       .update(schema.doc)
       .set({ parentId: current.parentId, updatedAt: new Date(), syncId })
       .where(eq(schema.doc.parentId, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
 
     await tx
       .delete(schema.attachment)
@@ -1153,7 +1196,7 @@ export async function shareDoc(
         syncId,
       })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
 
     return { doc, publishToken, actions: [docAction(doc, syncId, actor, 'update')] };
@@ -1368,7 +1411,7 @@ export async function setDocAccess(
       .update(schema.doc)
       .set({ syncId, updatedAt: new Date() })
       .where(eq(schema.doc.id, docId))
-      .returning();
+      .returning(DOC_COLUMNS);
     const row = requireRow(touched, 'That doc does not exist.');
     const actor = await principalActor(tx, principal);
     const reach = [

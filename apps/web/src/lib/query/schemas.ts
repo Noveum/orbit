@@ -283,6 +283,7 @@ export const docSchema = z.object({
   title: z.string(),
   slug: z.string(),
   content: z.string(),
+  sortOrder: z.number().default(0),
   visibility: z.string(),
   publishToken: z.string().nullable(),
   authorId: z.string(),
@@ -301,6 +302,7 @@ export const docSummarySchema = docSchema.extend({
   excerpt: z.string().default(''),
   snippet: z.string().default(''),
   titleMatch: z.boolean().default(false),
+  rank: z.number().default(0),
 });
 export type DocSummary = z.infer<typeof docSummarySchema>;
 

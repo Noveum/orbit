@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { stripHighlights } from '@orbit/shared/utils';
 import { createDoc, listDocs, setDocAccess } from '../../src/content/doc-service.ts';
 import {
   addMember,
@@ -47,9 +48,10 @@ describe('listDocs search ranking', () => {
     });
 
     const [found] = await listDocs(workspace.admin, { query: 'quorum handshake' });
+    const passage = stripHighlights(found?.snippet ?? '');
 
-    expect(found?.snippet).toContain('quorum handshake');
-    expect(found?.snippet.startsWith('…')).toBe(true);
+    expect(passage).toContain('quorum handshake');
+    expect(passage.startsWith(FILLER.slice(0, 40))).toBe(false);
     expect(found?.excerpt.includes('quorum handshake')).toBe(false);
   });
 
@@ -61,7 +63,7 @@ describe('listDocs search ranking', () => {
 
     const [found] = await listDocs(workspace.admin, { query: 'quorum' });
 
-    expect(found?.snippet.startsWith('A quorum handshake')).toBe(true);
+    expect(stripHighlights(found?.snippet ?? '').startsWith('A quorum handshake')).toBe(true);
   });
 
   it('leaves the passage empty when only the title matched', async () => {
@@ -80,7 +82,7 @@ describe('listDocs search ranking', () => {
     const found = await listDocs(workspace.admin, { query: '40%' });
 
     expect(found.map((doc) => doc.title)).toEqual(['Budget']);
-    expect(found[0]?.snippet).toContain('40%');
+    expect(stripHighlights(found[0]?.snippet ?? '')).toContain('40%');
   });
 
   it('never carries a restricted doc, title or passage, to someone without a grant', async () => {
