@@ -1,6 +1,6 @@
 # Orbit
 
-Free, realtime, keyboard-first work tracker. Linear-grade UX, Plane-grade breadth, plus docs, files, notifications, Slack, and an MCP server. No pricing, no billing, no paid tiers anywhere.
+Free, realtime, keyboard-first work tracker. The UX polish of the best paid trackers with the breadth of the open source ones, plus docs, files, notifications, Slack, and an MCP server. No pricing, no billing, no paid tiers anywhere.
 
 ## Hard rules
 
@@ -114,7 +114,7 @@ domain verified in Resend, otherwise every send fails.
   creation and on user creation, so it covers every provider. Empty means no restriction. A
   workspace can narrow it further with its own `allowedEmailDomains`.
 - **Permissions.** All authorization goes through `packages/shared/src/policy`. Server routes enforce it. The UI reads the same policy to hide affordances, never as the only gate.
-- **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the measured Linear behaviour does, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
+- **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the trackers we measured against do, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.
 - **Accessibility.** Keyboard operable everywhere, visible focus rings, real semantics from Radix primitives.
 
