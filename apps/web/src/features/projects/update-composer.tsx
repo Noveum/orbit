@@ -25,11 +25,13 @@ export function UpdateComposer({ projectId, currentHealth, canPost }: UpdateComp
   const router = useRouter();
   const [health, setHealth] = useState<ProjectHealth>(currentHealth);
   const [body, setBody] = useState('');
+  const [composerKey, setComposerKey] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (pending || body.trim().length === 0) return;
     setPending(true);
     setError(null);
     try {
@@ -38,6 +40,7 @@ export function UpdateComposer({ projectId, currentHealth, canPost }: UpdateComp
         body: { health, body },
       });
       setBody('');
+      setComposerKey((value) => value + 1);
       router.refresh();
     } catch (caught) {
       setError(messageOf(caught));
@@ -50,6 +53,7 @@ export function UpdateComposer({ projectId, currentHealth, canPost }: UpdateComp
     <form onSubmit={onSubmit} className="flex flex-col gap-2.5">
       <div className="rounded-lg border border-border bg-surface px-3 py-2 focus-within:border-border-strong">
         <RichTextEditor
+          key={composerKey}
           value={body}
           onChange={setBody}
           placeholder="What moved this week?"

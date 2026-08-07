@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { findProjectDetail } from '@/features/projects/data.ts';
+import { formatDay } from '@/features/projects/dates.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { ProjectTabs } from '@/features/projects/project-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -21,12 +22,7 @@ export async function generateMetadata({ params }: LayoutProps): Promise<Metadat
 }
 
 function formatDate(value: string | null): string {
-  if (value === null) return 'Not set';
-  return new Date(value).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDay(value, { withYear: true, missing: 'Not set' });
 }
 
 export default async function ProjectLayout({ params, children }: LayoutProps) {

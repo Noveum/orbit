@@ -288,6 +288,7 @@ export interface IssuePatch {
   readonly priority?: number;
   readonly assigneeId?: string | null;
   readonly projectId?: string | null;
+  readonly milestoneId?: string | null;
   readonly cycleId?: string | null;
   readonly estimate?: number | null;
   readonly labelIds?: readonly string[];

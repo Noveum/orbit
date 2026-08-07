@@ -10,6 +10,7 @@ import {
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_SUMMARY_ROOT,
+  MILESTONES_ROOT,
   queryKeys,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
@@ -180,6 +181,18 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
   });
 
+  it('invalidates the milestones root, and nothing else, for a milestone delta', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'milestone', modelId: 'milestone_1', data: { id: 'milestone_1' } }),
+        action({ model: 'milestone', modelId: 'milestone_2', data: { id: 'milestone_2' } }),
+      ]),
+    );
+    expect(seen).toEqual([[MILESTONES_ROOT]]);
+  });
+
   it('invalidates the views root for a view delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
@@ -199,11 +212,11 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[DOCS_ROOT], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
-  it('refreshes only the counts for an issue delta it patches in place', () => {
+  it('refreshes the counts and the milestone counts for an issue delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 
@@ -273,7 +286,7 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 
