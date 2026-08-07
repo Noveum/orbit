@@ -1,6 +1,6 @@
 # Orbit documentation
 
-Orbit is a free, realtime, keyboard-first work tracker. Issues, boards, sprints,
+Orbit is a free, realtime, keyboard-first task manager. Issues, boards, sprints,
 projects and docs, all of which update the moment anyone changes anything.
 
 There is no pricing, no billing and no paid tier, so nothing in these docs is

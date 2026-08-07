@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Orbit',
     short_name: 'Orbit',
-    description: 'Free, realtime, keyboard-first work tracker.',
+    description: 'Free, realtime, keyboard-first task manager.',
     start_url: '/',
     display: 'standalone',
     background_color: '#07070b',

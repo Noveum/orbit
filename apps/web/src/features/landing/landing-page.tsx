@@ -411,7 +411,7 @@ function Hero() {
           className="landing-lede landing-rise mx-auto mt-5 max-w-2xl text-muted"
           style={{ animationDelay: '150ms' }}
         >
-          Orbit is a free, realtime work tracker for teams: issues, sprints, projects, and docs,
+          Orbit is a free, realtime task manager for teams: issues, sprints, projects, and docs,
           synced to every open screen the instant anything changes, driven entirely from the
           keyboard.
         </p>
@@ -500,7 +500,7 @@ function FeaturesSection() {
       <SectionEyebrow id="ORB-101" label="Features" />
       <h2 className="landing-h2 mt-4 max-w-xl">Everything a team ships with.</h2>
       <p className="landing-lede mt-4 max-w-xl text-muted">
-        Not a starter tier with the good parts held back. This is the whole tracker.
+        Not a starter tier with the good parts held back. This is the whole thing.
       </p>
       <ul className="mt-10 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
         {FEATURES.map(({ icon: Icon, title, body }) => (
@@ -789,7 +789,7 @@ function OpenSourceSection() {
       <SectionEyebrow id="ORB-105" label="Open source" />
       <h2 className="landing-h2 mt-4 max-w-2xl">Yours to keep.</h2>
       <p className="landing-lede mt-4 max-w-2xl text-muted">
-        Orbit is free because a work tracker is infrastructure, and infrastructure should not cost
+        Orbit is free because a task manager is infrastructure, and infrastructure should not cost
         eighteen dollars per person per month. The whole thing is on GitHub, so you are never one
         pricing change away from losing it.
       </p>
@@ -876,7 +876,7 @@ function LandingFooter() {
       <div className="mx-auto flex w-full max-w-6xl 2xl:max-w-7xl flex-col justify-between gap-8 px-5 py-12 sm:px-8 md:flex-row md:items-center">
         <div className="flex flex-col gap-2">
           <OrbitWordmark />
-          <p className="text-sm text-muted">The free, realtime, keyboard-first work tracker.</p>
+          <p className="text-sm text-muted">The free, realtime, keyboard-first task manager.</p>
           <p className="text-xs text-faint">
             Apache-2.0. Sponsored by{' '}
             <a
