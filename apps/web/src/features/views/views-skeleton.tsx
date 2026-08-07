@@ -8,9 +8,12 @@ const SECTIONS = [
 export function ViewsSkeleton() {
   return (
     <div className="flex flex-col gap-6 px-6 py-6" data-testid="views-skeleton">
-      <div className="flex flex-col gap-1.5">
-        <Skeleton className="h-6 w-24" />
-        <Skeleton className="h-3 w-80 max-w-full" />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Skeleton className="h-6 w-24" />
+          <Skeleton className="h-3 w-80 max-w-full" />
+        </div>
+        <Skeleton className="h-8 w-28 rounded-md" />
       </div>
 
       {SECTIONS.map((section) => (
