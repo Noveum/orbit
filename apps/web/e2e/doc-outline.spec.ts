@@ -15,7 +15,7 @@ test('an editable doc still has a table of contents that navigates it', async ({
   const page = await signIn(context, 'pulkit@noveum.ai');
 
   await page.goto(`${BASE}/docs`);
-  await page.getByText('Realtime delta protocol').click();
+  await page.getByTestId('doc-tree').getByText('Realtime delta protocol').click();
   await expect(page.getByTestId('doc-rich-editor')).toBeVisible();
 
   const outline = page.getByTestId('doc-outline');

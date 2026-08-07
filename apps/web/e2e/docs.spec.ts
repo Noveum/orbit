@@ -94,12 +94,12 @@ test.fixme('a doc is written, attached to, published, and read without a session
 
   await author.goto(`${BASE}/docs`);
   await expect(author.getByTestId('docs-workspace')).toBeVisible();
-  await expect(author.getByText('Realtime delta protocol')).toBeVisible();
+  await expect(author.getByTestId('doc-tree').getByText('Realtime delta protocol')).toBeVisible();
   await expect(author.getByTestId('docs-workspace').getByText('Engineering')).toBeVisible();
   await expect(author.getByTestId('docs-workspace').getByText('Project docs')).toBeVisible();
   await expect(author.getByTestId('docs-workspace').getByText('Private')).toBeVisible();
 
-  await author.getByText('Realtime delta protocol').click();
+  await author.getByTestId('doc-tree').getByText('Realtime delta protocol').click();
   await expect(author.getByTestId('doc-rich-editor')).toBeVisible();
   await expect(author.getByTestId('doc-edit-toggle')).toHaveCount(0);
   await expect(author.getByTestId('doc-repo-pill')).toContainText('docs/realtime.md');
