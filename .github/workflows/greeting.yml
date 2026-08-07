@@ -25,7 +25,7 @@ jobs:
             since that is what we run locally.
 
             If you fancy fixing it yourself, [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md)
-            has the setup, and it is five commands.
+            walks through the setup. You need Bun and Docker, and nothing else.
           pr_message: |
             Thanks for your first pull request to Orbit.
 
