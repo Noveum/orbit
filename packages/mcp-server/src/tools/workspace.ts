@@ -2,23 +2,18 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   archiveIssue,
   archiveProject,
-  createLabel,
   deleteComment,
   deleteCycle,
   deleteIssue,
-  deleteLabel,
   deleteMilestone,
   deleteProject,
   getIssue,
-  listLabels,
   listMilestones,
   unarchiveIssue,
   updateComment,
-  updateLabel,
   updateMilestone,
   updateProject,
 } from '@orbit/core';
-import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { issueRefSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
@@ -27,19 +22,6 @@ import { defineTool, publish } from './support.ts';
 
 const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
-
-const DEFAULT_LABEL_COLOR = '#5a63c8';
-
-async function resolveLabel(principal: Principal, ref: string): Promise<string> {
-  const needle = ref.trim();
-  const labels = await listLabels(principal, {});
-  const lowered = needle.toLowerCase();
-  const found = labels.find(
-    (label) => label.id === needle || label.name.trim().toLowerCase() === lowered,
-  );
-  if (found === undefined) throw notFound(`No label matches "${ref}".`);
-  return found.id;
-}
 
 export function registerWorkspaceTools(server: McpServer, principal: Principal): void {
   defineTool(
@@ -127,76 +109,6 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       const actions = await deleteComment(principal, args.commentId);
       await publish(actions);
       return { deleted: args.commentId };
-    },
-  );
-
-  defineTool(
-    server,
-    {
-      name: 'create_label',
-      title: 'Create a label',
-      description: 'Create a workspace label that can be applied to issues.',
-      readOnly: false,
-      inputSchema: {
-        name: z.string().trim().min(1).max(60).describe('Label name.'),
-        color: z
-          .string()
-          .regex(/^#[0-9a-fA-F]{6}$/)
-          .optional()
-          .describe('Hex colour such as "#7c3aed". Defaults to the Orbit accent.'),
-      },
-    },
-    async (args) => {
-      const saved = await createLabel(principal, {
-        name: args.name,
-        color: args.color ?? DEFAULT_LABEL_COLOR,
-      });
-      await publish(saved.actions);
-      return { label: { id: saved.label.id, name: saved.label.name } };
-    },
-  );
-
-  defineTool(
-    server,
-    {
-      name: 'update_label',
-      title: 'Update a label',
-      description: 'Rename a label or change its colour.',
-      readOnly: false,
-      inputSchema: {
-        label: z.string().min(1).describe('Label name or id.'),
-        name: z.string().trim().min(1).max(60).optional(),
-        color: z
-          .string()
-          .regex(/^#[0-9a-fA-F]{6}$/)
-          .optional(),
-      },
-    },
-    async (args) => {
-      const id = await resolveLabel(principal, args.label);
-      const saved = await updateLabel(principal, id, {
-        ...(args.name === undefined ? {} : { name: args.name }),
-        ...(args.color === undefined ? {} : { color: args.color }),
-      });
-      await publish(saved.actions);
-      return { label: { id: saved.label.id, name: saved.label.name } };
-    },
-  );
-
-  defineTool(
-    server,
-    {
-      name: 'delete_label',
-      title: 'Delete a label',
-      description: 'Remove a label from the workspace and from every issue carrying it.',
-      readOnly: false,
-      inputSchema: { label: z.string().min(1).describe('Label name or id.') },
-    },
-    async (args) => {
-      const id = await resolveLabel(principal, args.label);
-      const actions = await deleteLabel(principal, id);
-      await publish(actions);
-      return { deleted: args.label };
     },
   );
 

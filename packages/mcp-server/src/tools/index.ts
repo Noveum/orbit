@@ -7,6 +7,7 @@ import { registerIssueTools } from './issues.ts';
 import { registerOrgTools } from './org.ts';
 import { registerPlanningTools } from './planning.ts';
 import { registerScrumTools } from './scrum.ts';
+import { registerTaxonomyTools } from './taxonomy.ts';
 import { registerWorkspaceTools } from './workspace.ts';
 
 export function registerTools(server: McpServer, principal: Principal): void {
@@ -17,5 +18,6 @@ export function registerTools(server: McpServer, principal: Principal): void {
   registerAdminTools(server, principal);
   registerDocTools(server, principal);
   registerWorkspaceTools(server, principal);
+  registerTaxonomyTools(server, principal);
   registerOrgTools(server, principal);
 }

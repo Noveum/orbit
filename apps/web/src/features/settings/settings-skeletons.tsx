@@ -112,6 +112,72 @@ export function TeamsSettingsSkeleton() {
   );
 }
 
+const TAXONOMY_ROWS = ['a', 'b', 'c', 'd', 'e', 'f'];
+const SWATCHES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+
+function TaxonomyComposerSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-9 w-full rounded-md" />
+        </div>
+        <div className="flex w-48 flex-col gap-1.5">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-9 w-full rounded-md" />
+        </div>
+        <Skeleton className="h-9 w-28 rounded-md" />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {SWATCHES.map((swatch) => (
+          <Skeleton key={swatch} className="size-6 rounded-full" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TaxonomyRowsSkeleton() {
+  return (
+    <ul className="flex flex-col gap-1">
+      {TAXONOMY_ROWS.map((row) => (
+        <li key={row} className="flex items-center gap-3 px-2 py-1.5">
+          <Skeleton className="size-3 rounded-full" />
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="ml-auto h-4 w-16 rounded-sm" />
+          <Skeleton className="h-7 w-14 rounded-md" />
+          <Skeleton className="h-7 w-14 rounded-md" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function LabelsSettingsSkeleton() {
+  return (
+    <section className="flex flex-col gap-5" data-testid="settings-labels-skeleton">
+      <SettingsHeading />
+      <TaxonomyComposerSkeleton />
+      <TaxonomyRowsSkeleton />
+    </section>
+  );
+}
+
+export function WorkflowSettingsSkeleton() {
+  return (
+    <section className="flex flex-col gap-5" data-testid="settings-workflow-skeleton">
+      <SettingsHeading />
+      <div className="flex w-64 max-w-full flex-col gap-1.5">
+        <Skeleton className="h-3 w-12" />
+        <Skeleton className="h-9 w-full rounded-md" />
+      </div>
+      <TaxonomyComposerSkeleton />
+      <TaxonomyRowsSkeleton />
+    </section>
+  );
+}
+
 const MEMBER_ROWS = ['a', 'b', 'c', 'd', 'e'];
 const MEMBER_COLUMNS = ['member', 'email', 'role', 'teams', 'joined', 'actions'];
 

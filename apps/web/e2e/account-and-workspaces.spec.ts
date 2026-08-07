@@ -124,7 +124,7 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
     animations: 'disabled',
   });
 
-  for (const section of ['general', 'members', 'teams', 'notifications']) {
+  for (const section of ['general', 'members', 'teams', 'labels', 'workflow', 'notifications']) {
     await page.goto(`${BASE}/settings/${section}`);
     await expect(page.getByRole('link', { name: 'Profile' })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2 })).toBeVisible();

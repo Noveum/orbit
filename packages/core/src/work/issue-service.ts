@@ -38,12 +38,25 @@ import {
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import {
+  applyStateTimestamps,
+  type IssueRow,
+  type IssueValues,
+  issueScopes,
+  stateTimestamps,
+} from './issue-fields.ts';
 import { buildFilterFilters, today } from './issue-predicates.ts';
+import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
-export type IssueRow = typeof schema.issue.$inferSelect;
+export {
+  type IssueRow,
+  type IssueValues,
+  issueScopes,
+  stateTimestamps,
+} from './issue-fields.ts';
+
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
-export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
@@ -81,14 +94,6 @@ async function assertParentAllowed(
     const parent = requireRow(rows[0], 'That parent issue does not exist.');
     cursor = parent.parentId;
   }
-}
-
-export function issueScopes(
-  row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
-): string[] {
-  const list = [scopes.team(row.teamId), scopes.issue(row.id)];
-  if (row.projectId !== null) list.push(scopes.project(row.projectId));
-  return list;
 }
 
 function issueAction(
@@ -137,30 +142,6 @@ async function stateOf(executor: Executor, stateId: string) {
     .where(eq(schema.workflowState.id, stateId))
     .limit(1);
   return requireRow(row, 'That status does not exist.');
-}
-
-export function stateTimestamps(category: string, now: Date): IssueValues {
-  if (category === 'completed') {
-    return { completedAt: now, canceledAt: null, stateEnteredAt: now };
-  }
-  if (category === 'canceled') {
-    return { canceledAt: now, completedAt: null, stateEnteredAt: now };
-  }
-  if (category === 'started' || category === 'review') {
-    return { startedAt: now, completedAt: null, canceledAt: null, stateEnteredAt: now };
-  }
-  return { startedAt: null, completedAt: null, canceledAt: null, stateEnteredAt: now };
-}
-
-function applyStateTimestamps(current: IssueRow, category: string, now: Date): IssueValues {
-  const next = stateTimestamps(category, now);
-  if ((category === 'started' || category === 'review') && current.startedAt !== null) {
-    return { ...next, startedAt: current.startedAt };
-  }
-  if (category === 'completed') {
-    return { ...next, startedAt: current.startedAt ?? now };
-  }
-  return next;
 }
 
 const NAME_LOADERS: Record<string, (executor: Executor, id: string) => Promise<string | null>> = {
@@ -367,25 +348,6 @@ async function loadIssue(
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
   return issue;
-}
-
-async function labelsByIssue(
-  executor: Executor,
-  issueIds: readonly string[],
-): Promise<Map<string, string[]>> {
-  const grouped = new Map<string, string[]>();
-  const ids = [...new Set(issueIds)];
-  if (ids.length === 0) return grouped;
-  const rows = await executor
-    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
-    .from(schema.issueLabel)
-    .where(inArray(schema.issueLabel.issueId, ids));
-  for (const row of rows) {
-    const existing = grouped.get(row.issueId);
-    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
-    else existing.push(row.labelId);
-  }
-  return grouped;
 }
 
 async function replaceLabelsFor(
@@ -759,6 +721,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       projectId: parsed.projectId,
       milestoneId: parsed.milestoneId,
     });
+    await assertLabelsUsable(tx, principal.organizationId, team.id, parsed.labelIds);
 
     const number = await allocateIssueNumber(tx, team);
     const now = new Date();
@@ -861,6 +824,42 @@ function updateGroups(pending: readonly PendingUpdate[]): Map<string, PendingUpd
   return groups;
 }
 
+interface UpdateContext {
+  readonly tx: Executor;
+  readonly principal: Principal;
+  readonly parsed: ReturnType<typeof issueUpdateSchema.parse>;
+  readonly state: Awaited<ReturnType<typeof stateOf>> | null;
+  readonly now: Date;
+}
+
+async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Promise<PendingUpdate> {
+  const { tx, principal, parsed, state, now } = context;
+  assertInTeam(principal, teamScope(current));
+
+  const { values, changes } = collectIssueChanges(current, parsed);
+  if (values.parentId !== undefined && values.parentId !== null) {
+    await assertParentAllowed(tx, principal.organizationId, current.id, values.parentId);
+  }
+  if (values.stateId !== undefined) {
+    if (state === null || state.teamId !== current.teamId) {
+      throw validationFailed('That status belongs to another team.');
+    }
+    Object.assign(values, applyStateTimestamps(current, state.category, now));
+  }
+  await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
+  await assertAssignableToTeam(
+    tx,
+    principal.organizationId,
+    current.teamId,
+    values,
+    current.projectId,
+  );
+  if (parsed.labelIds !== undefined) {
+    await assertLabelsUsable(tx, principal.organizationId, current.teamId, parsed.labelIds);
+  }
+  return { current, values, changes };
+}
+
 async function applyIssueUpdates(
   tx: Executor,
   principal: Principal,
@@ -870,31 +869,12 @@ async function applyIssueUpdates(
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
+  const context: UpdateContext = { tx, principal, parsed, state, now };
 
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
     const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
-    assertInTeam(principal, teamScope(current));
-
-    const { values, changes } = collectIssueChanges(current, parsed);
-    if (values.parentId !== undefined && values.parentId !== null) {
-      await assertParentAllowed(tx, principal.organizationId, current.id, values.parentId);
-    }
-    if (values.stateId !== undefined) {
-      if (state === null || state.teamId !== current.teamId) {
-        throw validationFailed('That status belongs to another team.');
-      }
-      Object.assign(values, applyStateTimestamps(current, state.category, now));
-    }
-    await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
-    await assertAssignableToTeam(
-      tx,
-      principal.organizationId,
-      current.teamId,
-      values,
-      current.projectId,
-    );
-    pending.push({ current, values, changes });
+    pending.push(await pendingUpdateFor(context, current));
   }
 
   const labelsChanged = parsed.labelIds !== undefined;
@@ -960,7 +940,7 @@ async function applyIssueUpdates(
     updated,
     state,
   });
-  const labels = await labelsByIssue(
+  const labels = await labelIdsByIssue(
     tx,
     pending.map((entry) => entry.current.id),
   );
@@ -1126,6 +1106,22 @@ async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Pro
   }
 }
 
+async function carryToTeam(
+  executor: Executor,
+  current: IssueRow,
+  team: TeamRow,
+  values: IssueValues,
+): Promise<void> {
+  const number = await allocateIssueNumber(executor, team);
+  values.teamId = team.id;
+  values.number = number;
+  values.identifier = issueIdentifier(team.key, number);
+  values.cycleId = null;
+  if (await projectFitsTeam(executor, team.id, current.projectId)) return;
+  values.projectId = null;
+  values.milestoneId = null;
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -1158,18 +1154,9 @@ export async function moveIssue(
     }
 
     const now = new Date();
+    const changingTeam = teamId !== current.teamId;
     const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
-    if (teamId !== current.teamId) {
-      const number = await allocateIssueNumber(tx, team);
-      values.teamId = teamId;
-      values.number = number;
-      values.identifier = issueIdentifier(team.key, number);
-      values.cycleId = null;
-      if (!(await projectFitsTeam(tx, teamId, current.projectId))) {
-        values.projectId = null;
-        values.milestoneId = null;
-      }
-    }
+    if (changingTeam) await carryToTeam(tx, current, team, values);
     if (state.id !== current.stateId) {
       values.stateId = state.id;
       Object.assign(values, applyStateTimestamps(current, state.category, now));
@@ -1189,6 +1176,8 @@ export async function moveIssue(
       .where(eq(schema.issue.id, issueId))
       .returning();
     const issue = requireRow(moved, 'That issue does not exist.');
+
+    if (changingTeam) await dropLabelsForeignToTeam(tx, principal.organizationId, issue.id, teamId);
 
     if (state.id !== current.stateId) {
       await appendActivities(tx, [
@@ -1214,7 +1203,7 @@ export async function moveIssue(
       issue,
     });
 
-    const movedLabels = await labelsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+    const movedLabels = await labelIdsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
     const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
@@ -1315,7 +1304,7 @@ async function setArchived(
           syncId,
           actor,
           archivedAt === null ? 'unarchive' : 'archive',
-          (await labelsByIssue(tx, [issue.id])).get(issue.id) ?? [],
+          (await labelIdsByIssue(tx, [issue.id])).get(issue.id) ?? [],
         ),
       ],
     };
@@ -1351,7 +1340,7 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
       .returning();
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
-    const labels = await labelsByIssue(
+    const labels = await labelIdsByIssue(
       tx,
       orphaned.map((child) => child.id),
     );

@@ -97,9 +97,41 @@ by points, and analytics shows both.
 
 ## Labels
 
-Workspace-wide tags with a colour. Labels cross teams, which is what makes them
+Tags with a colour. A label is workspace wide by default, which is what makes it
 useful for things like `Bug`, `Performance` or `Docs`, and they are the main
 thing filters and saved views are built from.
+
+A label can instead be pinned to one team. A team label is only visible to that
+team, only pushed over realtime to that team, and only attachable to that team's
+issues. Pinning a workspace label to a team also takes it off the issues of every
+other team, so the rule holds for issues that already carried it rather than only
+for the next edit. Widening a team label back to the workspace touches no issue.
+Carrying an issue to another team works the same way round: the labels the new
+team cannot use come off it as it lands, and the workspace-wide ones stay.
+Manage both under **Settings**, **Labels**.
+
+Two labels may share a name when they live in different places, a workspace
+`Regression` alongside a team `Regression`. The API and the settings screen take
+ids, so that is unambiguous, but a name given to an MCP tool is not: when more
+than one label answers to it, the tool refuses and lists the ids rather than
+picking one.
+
+## Workflow states
+
+The columns of a team board. Each one belongs to a single team, carries a
+position that fixes its place in the order, and carries a **category**, one of
+`triage`, `backlog`, `unstarted`, `started`, `review`, `completed` or `canceled`.
+
+The category is the part the rest of Orbit reads. It is what decides whether an
+issue counts as open on a sprint burndown, when `startedAt` and `completedAt`
+are stamped, and which bucket the standup board puts it in. Renaming a status or
+moving it in the order leaves the category alone; changing the category re-dates
+every issue sitting in that status, on the server, in the same transaction. Those
+issues did not move, so how long they have sat where they are is left alone.
+
+Deleting a status that still holds issues is refused until you name the status
+those issues move to, and a team always keeps at least one status. Manage them
+under **Settings**, **Workflow**.
 
 ## Sprints and cycles
 

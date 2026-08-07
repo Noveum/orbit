@@ -6,6 +6,7 @@ export * from './notification.ts';
 export * from './onboarding.ts';
 export * from './ordering.ts';
 export * from './organization.ts';
+export * from './palette.ts';
 export * from './pattern.ts';
 export * from './project.ts';
 export * from './upload.ts';

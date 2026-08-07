@@ -141,6 +141,38 @@ const SMOKE: readonly SmokeCase[] = [
     args: () => ({ milestoneId: state['milestone'] }),
     expect: hasKey('deleted'),
   },
+  {
+    tool: 'create_state',
+    args: () => ({ team: state['team'], name: 'Blocked', category: 'started' }),
+    expect: hasKey('state'),
+  },
+  {
+    tool: 'update_state',
+    args: () => ({ team: state['team'], state: 'Blocked', color: '#123456' }),
+    expect: hasKey('state'),
+  },
+  {
+    tool: 'reorder_states',
+    args: () => ({
+      team: state['team'],
+      order: [
+        'Blocked',
+        'Triage',
+        'Backlog',
+        'Todo',
+        'In Progress',
+        'In Review',
+        'Done',
+        'Canceled',
+      ],
+    }),
+    expect: hasRows('states'),
+  },
+  {
+    tool: 'delete_state',
+    args: () => ({ team: state['team'], state: 'Blocked' }),
+    expect: hasKey('deleted'),
+  },
   { tool: 'archive_doc', args: () => ({ doc: state['doc'] }), expect: hasKey('archived') },
   {
     tool: 'archive_project',

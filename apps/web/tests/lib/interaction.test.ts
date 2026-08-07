@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 import * as interaction from '@/lib/interaction.ts';
 
-const ALLOWED_TRANSITIONS = ['transition-opacity', 'transition-colors'];
+const ALLOWED_TRANSITIONS = ['transition-opacity', 'transition-colors', 'transition-transform'];
+
+const REFLOWING_TRANSITIONS = [
+  'transition-all',
+  'transition-[width]',
+  'transition-[height]',
+  'transition-[margin]',
+  'transition-[padding]',
+  'transition-[top]',
+  'transition-[left]',
+];
 
 function tokens(): [string, string][] {
   return Object.entries(interaction).flatMap(([name, value]) =>
@@ -25,13 +35,23 @@ describe('the shared interaction tokens', () => {
     }
   });
 
-  it('transitions opacity and colour only, never a property that reflows', () => {
+  it('transitions opacity, colour and transform only, never a property that reflows', () => {
     for (const [name, value] of transitioning()) {
       const declared = value
         .split(' ')
         .filter((part) => part.startsWith('transition-') && part !== 'transition-none');
       const stray = declared.filter((part) => !ALLOWED_TRANSITIONS.includes(part));
       expect([name, stray]).toEqual([name, []]);
+    }
+  });
+
+  it('names no reflowing property, whatever the allow list grows to hold', () => {
+    for (const banned of REFLOWING_TRANSITIONS) {
+      expect([banned, ALLOWED_TRANSITIONS.includes(banned)]).toEqual([banned, false]);
+    }
+    for (const [name, value] of tokens()) {
+      const reflowing = REFLOWING_TRANSITIONS.filter((banned) => value.includes(banned));
+      expect([name, reflowing]).toEqual([name, []]);
     }
   });
 

@@ -1,7 +1,13 @@
-import { listMembers, listPendingInvites, listTeams } from '@orbit/core';
+import {
+  listLabels,
+  listMembers,
+  listPendingInvites,
+  listTeams,
+  listWorkflowStatesForTeams,
+} from '@orbit/core';
 import { and, db, eq, inArray, schema } from '@orbit/db';
-import type { OrgRole } from '@orbit/shared/constants';
-import { ORG_ROLES } from '@orbit/shared/constants';
+import type { OrgRole, StateCategory } from '@orbit/shared/constants';
+import { ORG_ROLES, STATE_CATEGORIES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 
 export interface TeamBadge {
@@ -125,5 +131,50 @@ export async function listTeamDetails(principal: Principal): Promise<TeamDetail[
     description: team.description,
     archivedAt: team.archivedAt?.toISOString() ?? null,
     memberIds: byTeam.get(team.id) ?? [],
+  }));
+}
+
+export interface LabelView {
+  readonly id: string;
+  readonly name: string;
+  readonly color: string;
+  readonly teamId: string | null;
+}
+
+export async function listLabelViews(principal: Principal): Promise<LabelView[]> {
+  const labels = await listLabels(principal);
+  return labels.map((label) => ({
+    id: label.id,
+    name: label.name,
+    color: label.color,
+    teamId: label.teamId,
+  }));
+}
+
+export interface WorkflowStateView {
+  readonly id: string;
+  readonly teamId: string;
+  readonly name: string;
+  readonly category: StateCategory;
+  readonly color: string;
+  readonly position: number;
+}
+
+function toStateCategory(value: string): StateCategory {
+  return STATE_CATEGORIES.find((category) => category === value) ?? 'unstarted';
+}
+
+export async function listWorkflowStateViews(
+  principal: Principal,
+  teamIds: readonly string[],
+): Promise<WorkflowStateView[]> {
+  const states = await listWorkflowStatesForTeams(principal, teamIds);
+  return states.map((state) => ({
+    id: state.id,
+    teamId: state.teamId,
+    name: state.name,
+    category: toStateCategory(state.category),
+    color: state.color,
+    position: state.position,
   }));
 }
