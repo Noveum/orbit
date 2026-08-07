@@ -2,7 +2,7 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { SearchX, WifiOff } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -12,7 +12,6 @@ import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { Board } from '@/features/issues/board.tsx';
-import { IssuePeek } from '@/features/issues/issue-peek.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { facetsSearch } from '@/lib/query/issue-search.ts';
@@ -21,7 +20,6 @@ import { useAllIssues, useIssueFacets } from '@/lib/query/use-issues.ts';
 import { PersonTiles } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
-const NO_COUNTS: Readonly<Record<string, number>> = {};
 const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
 
 export function StandupBoard() {
@@ -30,8 +28,6 @@ export function StandupBoard() {
   const controls = useProvideViewControls('standup', 'board', config);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [peekId, setPeekId] = useState<string | null>(null);
-  const sentinel = useRef<HTMLDivElement>(null);
 
   const query = useMemo(
     () => ({ filter: config.filter, orderBy: config.orderBy }),
@@ -47,20 +43,8 @@ export function StandupBoard() {
   const roster = useIssueFacets(facetsSearch(null, WHOLE_WORKSPACE));
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
-  useEffect(() => {
-    const node = sentinel.current;
-    if (node === null || !hasNextPage) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting) && !isFetchingNextPage) {
-        fetchNextPage().catch(() => undefined);
-      }
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
-  const counts = roster.data?.facets.assignee ?? NO_COUNTS;
+  const counts = roster.data?.facets.assignee ?? null;
 
   const model = useIssueViewModel({
     teamId: null,
@@ -136,11 +120,6 @@ export function StandupBoard() {
             display: { ...config.display, showSubIssues: true, showCompleted: 'all' },
           })
         }
-      />
-
-      <IssuePeek
-        issue={rows.find((issue) => issue.id === peekId)}
-        onClose={() => setPeekId(null)}
       />
     </div>
   );
