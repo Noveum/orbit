@@ -231,6 +231,44 @@ describe('GET, PATCH and DELETE /api/labels/[id]', () => {
     );
   });
 
+  it('strips the narrowed label off the issues of every other team, over the wire', async () => {
+    const created = await coreModule.createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    const outside = await coreModule.createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Platform work',
+      labelIds: [created.label.id],
+    });
+    published.length = 0;
+
+    const response = await PATCH(
+      request(`/api/labels/${created.label.id}`, 'PATCH', { teamId: designTeamId }),
+      params(created.label.id),
+    );
+
+    expect(response.status).toBe(200);
+    const links = await db
+      .select()
+      .from(schema.issueLabel)
+      .where(eq(schema.issueLabel.issueId, outside.issue.id));
+    expect(links).toHaveLength(0);
+    const issueAction = published.find((action) => action.model === 'issue');
+    expect(issueAction?.modelId).toBe(outside.issue.id);
+    expect(issueAction?.scopes).toContain(scopes.team(nova.teamId));
+  });
+
+  it('publishes nothing when the patch asks for the values already stored', async () => {
+    const created = await coreModule.createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    published.length = 0;
+
+    const response = await PATCH(
+      request(`/api/labels/${created.label.id}`, 'PATCH', { name: 'Flaky', color: '#EF4444' }),
+      params(created.label.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(published).toHaveLength(0);
+  });
+
   it('turns away an id no label could carry before the service is asked', async () => {
     const response = await DELETE(request('/api/labels/x', 'DELETE'), params('l'.repeat(65)));
 

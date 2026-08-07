@@ -3,7 +3,7 @@ import {
   listMembers,
   listPendingInvites,
   listTeams,
-  listWorkflowStates,
+  listWorkflowStatesForTeams,
 } from '@orbit/core';
 import { and, db, eq, inArray, schema } from '@orbit/db';
 import type { OrgRole, StateCategory } from '@orbit/shared/constants';
@@ -168,8 +168,8 @@ export async function listWorkflowStateViews(
   principal: Principal,
   teamIds: readonly string[],
 ): Promise<WorkflowStateView[]> {
-  const perTeam = await Promise.all(teamIds.map((teamId) => listWorkflowStates(principal, teamId)));
-  return perTeam.flat().map((state) => ({
+  const states = await listWorkflowStatesForTeams(principal, teamIds);
+  return states.map((state) => ({
     id: state.id,
     teamId: state.teamId,
     name: state.name,

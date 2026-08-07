@@ -212,6 +212,23 @@ describe('PATCH /api/workflow-states/[id]', () => {
     expect((await statesOf(designTeamId))[0]?.name).toBe(theirs.name);
   });
 
+  it('publishes nothing when the patch asks for the values already stored', async () => {
+    const todo = stateNamed(nova, 'Todo');
+    published.length = 0;
+
+    const response = await PATCH(
+      request(`/api/workflow-states/${todo.id}`, 'PATCH', {
+        name: todo.name,
+        category: 'unstarted',
+        color: todo.color,
+      }),
+      params(todo.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(published).toHaveLength(0);
+  });
+
   it('refuses a category the enum does not know', async () => {
     const todo = stateNamed(nova, 'Todo');
 
