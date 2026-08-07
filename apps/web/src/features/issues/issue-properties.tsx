@@ -31,8 +31,10 @@ type MenuKey =
   | 'dueDate'
   | 'parent';
 
-const rowClassName =
-  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-dense text-text transition-colors duration-[var(--duration-fast)] hover:bg-surface-2';
+const rowClassName = cn(
+  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-dense text-text',
+  rowHover,
+);
 
 export interface IssuePropertiesProps {
   readonly issue: Issue;

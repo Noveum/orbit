@@ -12,6 +12,7 @@ interface Sent {
 }
 
 const originalFetch = globalThis.fetch;
+const originalUpload = globalThis.XMLHttpRequest;
 const sent: Sent[] = [];
 
 function attachmentBody(): Record<string, unknown> {
@@ -74,6 +75,7 @@ class FakeUpload {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  globalThis.XMLHttpRequest = originalUpload;
 });
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -201,5 +203,45 @@ describe('usePendingCommentFiles', () => {
     const presign = sent.find((entry) => entry.url.includes('/api/attachments/presign'));
     expect(presign?.body).toMatchObject({ parentType: 'comment', parentId: 'comment_9' });
     expect(uploaded.url).toBe('/api/files/org_1/2031/03/file.txt');
+  });
+});
+
+describe('letting go of files the comment never used', () => {
+  it('revokes the object URL of every held file when the composer is discarded', async () => {
+    const revoked: string[] = [];
+    const originalRevoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (url: string) => revoked.push(url) && undefined;
+
+    try {
+      const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
+      const first = await result.current.hold(textFile('one.log'));
+      const second = await result.current.hold(textFile('two.log'));
+
+      result.current.discard();
+
+      expect(revoked).toContain(first.url);
+      expect(revoked).toContain(second.url);
+    } finally {
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
+
+  it('does not revoke the same file twice when a draft already settled it', async () => {
+    const revoked: string[] = [];
+    const originalRevoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (url: string) => revoked.push(url) && undefined;
+
+    try {
+      const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
+      const held = await result.current.hold(textFile('once.log'));
+
+      const draft = result.current.draft(`before ${held.url} after`);
+      draft.release();
+      result.current.discard();
+
+      expect(revoked.filter((url) => url === held.url)).toHaveLength(1);
+    } finally {
+      URL.revokeObjectURL = originalRevoke;
+    }
   });
 });

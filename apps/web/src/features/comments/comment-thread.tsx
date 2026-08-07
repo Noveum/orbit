@@ -2,7 +2,7 @@
 
 import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
 import { SmilePlus } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -77,6 +77,9 @@ function NewComment({
   const create = useCreateComment(issueId);
   const update = useUpdateComment(issueId);
   const files = usePendingCommentFiles();
+  const { discard } = files;
+
+  useEffect(() => () => discard(), [discard]);
 
   const submit = (body: string) => {
     const draft = files.draft(body);

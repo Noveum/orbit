@@ -23,6 +23,7 @@ export interface CommentUploads {
   readonly hold: (file: File) => Promise<UploadedAttachment>;
   readonly upload: (commentId: string, file: File) => Promise<UploadedAttachment>;
   readonly draft: (body: string) => CommentDraft;
+  readonly discard: () => void;
 }
 
 export function usePendingCommentFiles(): CommentUploads {
@@ -96,5 +97,11 @@ export function usePendingCommentFiles(): CommentUploads {
     [toast],
   );
 
-  return { hold, upload, draft };
+  const discard = useCallback(() => {
+    const pending = held.current;
+    held.current = [];
+    releasePending(pending);
+  }, []);
+
+  return { hold, upload, draft, discard };
 }
