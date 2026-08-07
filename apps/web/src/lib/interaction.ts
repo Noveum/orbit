@@ -9,3 +9,6 @@ export const cardHover =
 
 export const tabHover =
   'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)] hover:text-text';
+
+export const swatchLift =
+  'transition-transform duration-[var(--duration-instant)] ease-[var(--ease-standard)] not-disabled:hover:scale-110 motion-reduce:transition-none motion-reduce:hover:scale-100';
