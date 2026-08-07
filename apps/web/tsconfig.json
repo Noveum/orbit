@@ -22,6 +22,7 @@
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "tests-preload.ts",
+    "tests-support.ts",
     "playwright.config.ts",
     "next.config.ts",
     ".next/types/**/*.ts",

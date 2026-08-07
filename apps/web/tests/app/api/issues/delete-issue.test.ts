@@ -9,6 +9,7 @@ import { db, eq, schema } from '@orbit/db';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
+import { mockMembership, mockSession } from '../../../../tests-support.ts';
 
 const published: SyncAction[][] = [];
 const core = await import('@orbit/core');
@@ -29,26 +30,16 @@ let actor: Principal = {
   teamIds: [],
 };
 
-function activeSession() {
-  return Promise.resolve({
-    user: { id: actor.userId, name: 'Ada Admin', email: 'ada@orbit.test' },
-    session: { activeOrganizationId: actor.organizationId },
-  });
-}
-
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: activeSession,
-  requireSession: activeSession,
+mockSession(() => ({
+  user: { id: actor.userId, name: 'Ada Admin', email: 'ada@orbit.test' },
+  session: { activeOrganizationId: actor.organizationId },
 }));
 
-mock.module('@/lib/auth/principal.ts', () => ({
-  resolveMembership: () =>
-    Promise.resolve({
-      principal: actor,
-      memberId: 'member_1',
-      organizationName: 'Nova',
-      organizationSlug: 'nova',
-    }),
+mockMembership(() => ({
+  principal: actor,
+  memberId: 'member_1',
+  organizationName: 'Nova',
+  organizationSlug: 'nova',
 }));
 
 const { DELETE } = await import('@/app/api/issues/[id]/route.ts');
