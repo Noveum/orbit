@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import * as navigation from 'next/navigation';
+import { mockSession } from '../../tests-support.ts';
 
 const sessionHolder: { value: { user: { id: string } } | null } = { value: null };
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(sessionHolder.value),
-  requireSession: () => Promise.resolve(sessionHolder.value),
-}));
+mockSession(() => sessionHolder.value);
 
 mock.module('next/navigation', () => ({
   ...navigation,
