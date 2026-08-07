@@ -1,6 +1,6 @@
 import { and, asc, db, eq, isNull, schema } from '@orbit/db';
 import { listGithubCatalogue, listGithubInstallations } from '@orbit/services';
-import type { Principal } from '@orbit/shared/policy';
+import { assertCan, type Principal } from '@orbit/shared/policy';
 import { githubAppConfig, githubConnectReady, githubDiscoveryReady } from '@/lib/env.ts';
 import { refreshWorkspaceRepositories } from './github-connect.ts';
 import type { GithubSettingsView } from './github-view.ts';
@@ -16,6 +16,7 @@ export async function loadGithubSettings(
   principal: Principal,
   options: { readonly refresh?: boolean } = {},
 ): Promise<GithubSettingsView> {
+  assertCan(principal, 'integration:manage');
   const connected = await listGithubInstallations(db, principal.organizationId);
   const refreshed =
     connected.length === 0

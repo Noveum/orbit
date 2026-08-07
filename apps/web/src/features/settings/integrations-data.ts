@@ -1,5 +1,5 @@
 import { db, desc, eq, schema } from '@orbit/db';
-import type { Principal } from '@orbit/shared/policy';
+import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 import { loadGithubSettings } from './github-data.ts';
@@ -33,7 +33,25 @@ function slackBotTokenFrom(credentials: unknown): string | null {
   return typeof token === 'string' && token.length > 0 ? token : null;
 }
 
+const WITHHELD: IntegrationSettings = {
+  github: {
+    connected: false,
+    connectEnabled: false,
+    discoveryEnabled: false,
+    installations: [],
+    repositories: [],
+    projects: [],
+  },
+  slackConnected: false,
+  slackHasToken: false,
+  slackConnectEnabled: false,
+  channels: [],
+  teams: [],
+};
+
 export async function loadIntegrationSettings(principal: Principal): Promise<IntegrationSettings> {
+  if (!can(principal, 'integration:manage')) return WITHHELD;
+
   const [github, integrations, channels, teams] = await Promise.all([
     loadGithubSettings(principal),
     db

@@ -61,16 +61,34 @@ export function IntegrationsPanel({
         </p>
       )}
 
-      <IntegrationCard
-        title="GitHub"
-        description="Install the Orbit GitHub App on every organisation you work in, then associate each repository with a project, or with the workspace when no project owns it yet."
-        status={<ConnectionBadge connected={settings.github.connected} />}
-      >
-        <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
-      </IntegrationCard>
-      <SlackSection settings={settings} canManage={canManage} onCall={call} />
+      {canManage ? (
+        <>
+          <IntegrationCard
+            title="GitHub"
+            description="Install the Orbit GitHub App on every organisation you work in, then associate each repository with a project, or with the workspace when no project owns it yet."
+            status={<ConnectionBadge connected={settings.github.connected} />}
+          >
+            <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
+          </IntegrationCard>
+          <SlackSection settings={settings} canManage={canManage} onCall={call} />
+        </>
+      ) : (
+        <WorkspaceIntegrationsWithheld />
+      )}
       <McpSection mcpUrl={mcpUrl} connections={mcpConnections} onError={setError} onCall={call} />
     </div>
+  );
+}
+
+function WorkspaceIntegrationsWithheld() {
+  return (
+    <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
+      <h3 className="font-medium text-dense text-text">GitHub and Slack</h3>
+      <p className="text-muted text-xs" data-testid="integrations-withheld">
+        Only workspace admins can see which repositories and channels this workspace is connected
+        to. Your own AI client connections are below.
+      </p>
+    </section>
   );
 }
 
