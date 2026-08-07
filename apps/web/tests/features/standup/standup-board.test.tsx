@@ -177,17 +177,29 @@ async function mountBoard() {
       <StandupBoard />
     </Providers>,
   );
-  await screen.findByTestId('standup-columns');
+  await screen.findByTestId('standup-tiles');
 }
 
-function columnNames(): string[] {
-  return within(screen.getByTestId('standup-columns'))
+function tileNames(): string[] {
+  return within(screen.getByTestId('standup-tiles'))
+    .getAllByRole('button')
+    .map((tile) => tile.getAttribute('data-testid') ?? '');
+}
+
+function stageNames(): string[] {
+  return within(screen.getByTestId('standup-stages'))
     .getAllByRole('heading', { level: 2 })
     .map((heading) => heading.textContent ?? '');
 }
 
-function cardsIn(userId: string): string[] {
-  return within(screen.getByTestId(`standup-column-${userId}`))
+function cardsInStage(category: string): string[] {
+  return within(screen.getByTestId(`standup-stage-${category}`))
+    .getAllByRole('article')
+    .map((card) => card.getAttribute('data-testid') ?? '');
+}
+
+function shownCards(): string[] {
+  return within(screen.getByTestId('standup-stages'))
     .getAllByRole('article')
     .map((card) => card.getAttribute('data-testid') ?? '');
 }
@@ -208,42 +220,126 @@ afterAll(() => {
 });
 
 describe('StandupBoard', () => {
-  it('gives every person with work a column headed by their name and avatar', async () => {
+  it('puts a tile at the top for everyone carrying work', async () => {
     await mountBoard();
 
-    expect(columnNames()).toEqual(['Ada Lovelace', 'Bo Chen']);
+    expect(tileNames()).toEqual(['standup-tile-user_ada', 'standup-tile-user_bo']);
 
-    const ada = within(screen.getByTestId('standup-column-user_ada'));
+    const ada = within(screen.getByTestId('standup-tile-user_ada'));
     expect(ada.getByRole('img', { name: 'Ada Lovelace' })).toBeDefined();
   });
 
-  it('shows everyone at once instead of behind a selection step', async () => {
+  it('leaves out a tile for a person the window found no work for', async () => {
     await mountBoard();
 
-    expect(cardsIn('user_ada')).toContain('issue-card-ENG-2');
-    expect(cardsIn('user_bo')).toEqual(['issue-card-ENG-9']);
+    expect(screen.queryByTestId('standup-tile-user_cy')).toBeNull();
   });
 
-  it('drops a column for a person the window found no work for', async () => {
+  it('shows one person at a time, split into a column per stage', async () => {
     await mountBoard();
 
-    expect(screen.queryByTestId('standup-column-user_cy')).toBeNull();
+    expect(stageNames()).toEqual(['Todo', 'In Progress', 'Done']);
+    expect(cardsInStage('started')).toEqual(['issue-card-ENG-2']);
+    expect(cardsInStage('unstarted')).toEqual(['issue-card-ENG-3']);
+    expect(cardsInStage('completed')).toEqual(['issue-card-ENG-1']);
   });
 
-  it('stacks a column with what is in progress above what is queued and closed', async () => {
+  it('opens on the first person rather than an empty screen', async () => {
     await mountBoard();
 
-    expect(cardsIn('user_ada')).toEqual([
-      'issue-card-ENG-2',
-      'issue-card-ENG-3',
-      'issue-card-ENG-1',
-    ]);
+    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('aria-pressed')).toBe('true');
+    expect(shownCards()).not.toContain('issue-card-ENG-9');
+  });
+
+  it('swaps the stages over to whoever the facilitator clicks', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+
+    expect(cardsInStage('started')).toEqual(['issue-card-ENG-9']);
+    expect(shownCards()).not.toContain('issue-card-ENG-2');
+    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('marks the person who just spoke as done when the facilitator moves on', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBeNull();
+
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+
+    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBe('true');
+    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('data-spoken')).toBeNull();
+  });
+
+  it('counts off how far through the room the standup is', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    expect(screen.getByTestId('standup-progress').textContent).toBe('0 of 2 spoken');
+
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+
+    expect(screen.getByTestId('standup-progress').textContent).toBe('1 of 2 spoken');
+  });
+
+  it('walks to the next person who has not spoken', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.click(screen.getByTestId('next-speaker'));
+
+    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBe('true');
+  });
+
+  it('closes the last turn instead of wrapping back to somebody who spoke', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.click(screen.getByTestId('next-speaker'));
+    await user.click(screen.getByTestId('next-speaker'));
+
+    expect(screen.getByTestId('standup-progress').textContent).toBe('2 of 2 spoken');
+  });
+
+  it('advances on the n key as well as the button', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.keyboard('n');
+
+    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('shuffles the speaking order without losing anybody', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.click(screen.getByTestId('shuffle-standup'));
+
+    expect([...tileNames()].sort()).toEqual(['standup-tile-user_ada', 'standup-tile-user_bo']);
+  });
+
+  it('clears who has spoken when the facilitator resets the room', async () => {
+    const user = userEvent.setup();
+    await mountBoard();
+
+    await user.click(screen.getByTestId('next-speaker'));
+    expect(screen.getByTestId('standup-progress').textContent).toBe('1 of 2 spoken');
+
+    await user.click(screen.getByTestId('reset-standup'));
+
+    expect(screen.getByTestId('standup-progress').textContent).toBe('0 of 2 spoken');
+    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBeNull();
   });
 
   it('makes every card a real link to its issue page', async () => {
     await mountBoard();
 
-    for (const identifier of ['ENG-1', 'ENG-2', 'ENG-3', 'ENG-9']) {
+    for (const identifier of ['ENG-1', 'ENG-2', 'ENG-3']) {
       const card = within(screen.getByTestId(`issue-card-${identifier}`));
       const link = card.getByRole('link');
       expect(link.tagName).toBe('A');
@@ -254,14 +350,14 @@ describe('StandupBoard', () => {
   it('peeks the issue in place on a plain click and stays on the board', async () => {
     await mountBoard();
 
-    const title = within(screen.getByTestId('issue-card-ENG-9')).getByRole('link', {
-      name: 'Trim the payload',
+    const title = within(screen.getByTestId('issue-card-ENG-2')).getByRole('link', {
+      name: 'Wire the socket',
     });
 
     const leftTheBoard = fireEvent.click(title);
 
     expect(leftTheBoard).toBe(false);
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
   });
 
   it('peeks the focused card when a keyboard user presses space', async () => {
@@ -299,8 +395,8 @@ describe('StandupBoard', () => {
     };
     await mountBoard();
 
-    expect(screen.getByTestId('standup-count-user_ada').textContent).toBe('3 of 15');
-    expect(screen.getByTestId('standup-count-user_bo').textContent).toBe('1');
+    expect(screen.getByTestId('standup-tile-count-user_ada').textContent).toBe('3 of 15');
+    expect(screen.getByTestId('standup-tile-count-user_bo').textContent).toBe('1');
   });
 
   it('says nobody is on the board when the window came back empty', async () => {
@@ -312,7 +408,7 @@ describe('StandupBoard', () => {
     );
 
     expect(await screen.findByText('Nobody has work on the board')).toBeDefined();
-    expect(screen.queryByTestId('standup-columns')).toBeNull();
+    expect(screen.queryByTestId('standup-tiles')).toBeNull();
   });
 
   it('says which window the closed cards came out of', async () => {
@@ -352,11 +448,12 @@ describe('StandupBoard', () => {
 
     expect(boardRequests).toHaveLength(1);
 
-    fireEvent.click(within(screen.getByTestId('issue-card-ENG-9')).getByText('Trim the payload'));
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
-
     fireEvent.click(within(screen.getByTestId('issue-card-ENG-2')).getByText('Wire the socket'));
     expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
+
+    fireEvent.click(screen.getByTestId('standup-tile-user_bo'));
+    fireEvent.click(within(screen.getByTestId('issue-card-ENG-9')).getByText('Trim the payload'));
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
 
     expect(boardRequests).toHaveLength(1);
   });
