@@ -5,7 +5,7 @@ import { Providers } from './providers.tsx';
 import './globals.css';
 
 const DESCRIPTION =
-  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
+  'Orbit is a free, realtime, keyboard-first task manager for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
 
 const OG_IMAGE = {
   url: '/og.png',
@@ -17,13 +17,13 @@ const OG_IMAGE = {
 export const metadata: Metadata = {
   metadataBase: new URL(serverEnv().NEXT_PUBLIC_APP_URL),
   title: {
-    default: 'Orbit: the free, realtime, keyboard-first work tracker',
+    default: 'Orbit: the free, realtime, keyboard-first task manager',
     template: '%s · Orbit',
   },
   description: DESCRIPTION,
   applicationName: 'Orbit',
   keywords: [
-    'work tracker',
+    'task manager',
     'issue tracking',
     'project management',
     'realtime',
@@ -46,14 +46,14 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: 'Orbit',
-    title: 'Orbit: the free, realtime, keyboard-first work tracker',
+    title: 'Orbit: the free, realtime, keyboard-first task manager',
     description: DESCRIPTION,
     locale: 'en_US',
     images: [OG_IMAGE],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Orbit: the free, realtime, keyboard-first work tracker',
+    title: 'Orbit: the free, realtime, keyboard-first task manager',
     description: DESCRIPTION,
     images: [OG_IMAGE],
   },

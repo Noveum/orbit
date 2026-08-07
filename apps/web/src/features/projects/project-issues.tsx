@@ -80,6 +80,7 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
       <FilterBar
         teamId={null}
         teamName={projectName}
+        scope={{ teamId: null, projectId }}
         layout={layout}
         config={config}
         onChange={setConfig}

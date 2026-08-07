@@ -22,6 +22,7 @@ interface IssueShape {
   readonly priority: string;
   readonly assignee: string | null;
   readonly cycleId: string | null;
+  readonly milestoneId: string | null;
 }
 
 interface DeltaShape {
@@ -71,10 +72,10 @@ describe('discovery', () => {
     expect(names).toContain('create_issue');
     expect(names).toContain('search_issues');
     expect(names).toContain('cycle_progress');
-    expect(names).toContain('open_standup');
-    expect(names).toContain('run_standup');
     expect(names).toContain('complete_cycle');
+    expect(names).toContain('start_cycle');
     expect(names).toContain('create_milestone');
+    expect(names).toContain('reorder_milestones');
 
     expect(names).toContain('create_doc');
     expect(names).toContain('update_doc');
@@ -386,6 +387,141 @@ describe('planning', () => {
   });
 });
 
+interface MilestoneShape {
+  readonly id: string;
+  readonly name: string;
+  readonly projectId: string;
+}
+
+function milestonesOf(payload: Record<string, unknown>): MilestoneShape[] {
+  return payload['milestones'] as MilestoneShape[];
+}
+
+describe('milestones over mcp', () => {
+  async function projectWithMilestones(
+    name: string,
+    milestoneNames: readonly string[],
+  ): Promise<string> {
+    await admin.result('create_project', { name, teams: [workspace.teamKey] });
+    for (const milestoneName of milestoneNames) {
+      await admin.result('create_milestone', { project: name, name: milestoneName });
+    }
+    return name;
+  }
+
+  it('reorders the milestones of a project by name', async () => {
+    const project = await projectWithMilestones('Reordered launch', ['One', 'Two', 'Three']);
+
+    const reordered = await admin.result('reorder_milestones', {
+      project,
+      milestones: ['Three', 'One', 'Two'],
+    });
+
+    expect(milestonesOf(reordered).map((row) => row.name)).toEqual(['Three', 'One', 'Two']);
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['Three', 'One', 'Two']);
+  });
+
+  it('refuses an order that leaves one of the milestones out', async () => {
+    const project = await projectWithMilestones('Partial order', ['Alpha', 'Beta']);
+
+    const failed = await admin.call('reorder_milestones', { project, milestones: ['Alpha'] });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('conflict');
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('refuses a guest, whose role cannot manage milestones', async () => {
+    const project = await projectWithMilestones('Guarded order', ['First', 'Second']);
+
+    const created = await guest.call('create_milestone', { project, name: 'Guest milestone' });
+    const reordered = await guest.call('reorder_milestones', {
+      project,
+      milestones: ['Second', 'First'],
+    });
+
+    expect(created.isError).toBe(true);
+    expect(errorPayload(created).code).toBe('forbidden');
+    expect(reordered.isError).toBe(true);
+    expect(errorPayload(reordered).code).toBe('forbidden');
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['First', 'Second']);
+  });
+
+  it('puts an issue on a milestone of its own project and takes it back off', async () => {
+    const project = await projectWithMilestones('Milestone bearing', ['Cut over']);
+    const issue = await newIssue('Do the cut over', { project });
+    const listed = milestonesOf(await admin.result('list_milestones', { project }));
+    const target = listed[0];
+    if (target === undefined) throw new Error('missing seeded milestone');
+
+    const attached = await admin.result('update_issue', {
+      issue: issue.identifier,
+      project,
+      milestone: 'Cut over',
+    });
+    expect(attached['changed']).toContain('milestoneId');
+    expect(issueOf(attached).milestoneId).toBe(target.id);
+
+    const detached = await admin.result('update_issue', {
+      issue: issue.identifier,
+      milestone: null,
+    });
+    expect(issueOf(detached).milestoneId).toBeNull();
+  });
+
+  it('refuses a milestone that belongs to another project', async () => {
+    const here = await projectWithMilestones('Milestone here', ['Ours']);
+    await projectWithMilestones('Milestone elsewhere', ['Theirs']);
+    const issue = await newIssue('Cross project attempt', { project: here });
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Theirs',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('not_found');
+  });
+
+  it('refuses a name that two milestones on the project share, rather than guessing', async () => {
+    const project = await projectWithMilestones('Twice named', ['Cut over', 'Cut over']);
+    const listed = milestonesOf(await admin.result('list_milestones', { project }));
+    const [first, second] = listed;
+    if (first === undefined || second === undefined) throw new Error('missing seeded milestones');
+    const issue = await newIssue('Ambiguous target', { project });
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Cut over',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('conflict');
+
+    const resolved = await admin.result('update_issue', {
+      issue: issue.identifier,
+      milestone: second.id,
+    });
+    expect(issueOf(resolved).milestoneId).toBe(second.id);
+  });
+
+  it('refuses a milestone on an issue that is on no project', async () => {
+    await projectWithMilestones('Unreachable milestone', ['Orphaned']);
+    const issue = await newIssue('No project at all');
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Orphaned',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('validation_failed');
+  });
+});
+
 describe('admin', () => {
   it('lists members and invites a new one', async () => {
     const members = await admin.result('list_members');
@@ -398,86 +534,6 @@ describe('admin', () => {
     });
     const invitation = invited['invitation'] as { email: string; role: string };
     expect(invitation).toMatchObject({ email: 'newcomer@orbit.test', role: 'member' });
-  });
-});
-
-describe('the scrum ceremony over mcp', () => {
-  it('opens a room, walks it, records a turn, and raises a blocker', async () => {
-    const opened = await admin.result('open_standup', {
-      team: workspace.teamKey,
-      heldOn: '2031-03-04',
-    });
-    const room = opened['standup'] as {
-      id: string;
-      status: string;
-      turns: { id: string; status: string }[];
-    };
-    expect(room.status).toBe('scheduled');
-    expect(room.turns.length).toBeGreaterThan(0);
-
-    const started = await admin.result('run_standup', { standupId: room.id, action: 'start' });
-    const running = started['standup'] as { status: string; currentTurnId: string | null };
-    expect(running.status).toBe('running');
-    expect(running.currentTurnId).not.toBeNull();
-
-    const firstTurn = room.turns[0];
-    if (firstTurn === undefined) throw new Error('expected a seated participant');
-
-    const recorded = await admin.result('record_standup_turn', {
-      standupId: room.id,
-      turnId: firstTurn.id,
-      notes: 'Shipped the board fix.',
-      attendance: 'present',
-    });
-    const withNotes = recorded['standup'] as { turns: { id: string; notes: string }[] };
-    expect(withNotes.turns.find((turn) => turn.id === firstTurn.id)?.notes).toBe(
-      'Shipped the board fix.',
-    );
-
-    const raised = await admin.result('raise_blocker', {
-      standupId: room.id,
-      turnId: firstTurn.id,
-      summary: 'Waiting on staging credentials.',
-    });
-    const blocked = raised['standup'] as { blockers: { id: string; summary: string }[] };
-    expect(blocked.blockers).toHaveLength(1);
-
-    const open = await admin.result('list_blockers', { team: workspace.teamKey });
-    expect((open['blockers'] as unknown[]).length).toBe(1);
-
-    const blocker = blocked.blockers[0];
-    if (blocker === undefined) throw new Error('expected a blocker');
-    await admin.result('resolve_blocker', {
-      standupId: room.id,
-      blockerId: blocker.id,
-      resolved: true,
-    });
-    const cleared = await admin.result('list_blockers', { team: workspace.teamKey });
-    expect((cleared['blockers'] as unknown[]).length).toBe(0);
-  });
-
-  it('reads back the room it opened, and reports nothing for a day with no standup', async () => {
-    await admin.result('open_standup', { team: workspace.teamKey, heldOn: '2031-05-06' });
-    const found = await admin.result('get_standup', {
-      team: workspace.teamKey,
-      heldOn: '2031-05-06',
-    });
-    expect((found['standup'] as { heldOn: string }).heldOn).toBe('2031-05-06');
-
-    const missing = await admin.result('get_standup', {
-      team: workspace.teamKey,
-      heldOn: '2031-05-07',
-    });
-    expect(missing['standup']).toBeNull();
-  });
-
-  it('refuses to seat a facilitator who is not on the team', async () => {
-    const denied = await admin.call('open_standup', {
-      team: workspace.teamKey,
-      heldOn: '2031-07-08',
-      facilitator: 'nobody@orbit.test',
-    });
-    expect(denied.isError).toBe(true);
   });
 });
 
@@ -523,6 +579,72 @@ describe('sprints over mcp', () => {
     });
     expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
   });
+
+  it('closes a sprint two weeks out when no end date is given', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 101',
+      startsAt: '2033-01-05',
+    });
+    const sprint = created['cycle'] as { startsAt: string; endsAt: string };
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+  });
+
+  it('appends a sprint after the last one when it is given no dates', async () => {
+    const team = await admin.result('create_team', { name: 'Appender', key: 'APND' });
+    const teamKey = (team['team'] as { key: string }).key;
+    const before = await admin.result('list_cycles', { team: teamKey });
+    const last = (before['cycles'] as { endsAt: string }[]).at(-1);
+    if (last === undefined) throw new Error('the new team has no sprint');
+
+    const created = await admin.result('create_cycle', { team: teamKey });
+    const sprint = created['cycle'] as { startsAt: string; endsAt: string };
+
+    expect(sprint.startsAt).toBe(last.endsAt);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+  });
+
+  it('starts the sprint that follows the one it just closed, and refuses to start it twice', async () => {
+    const team = await admin.result('create_team', { name: 'Runway', key: 'RUNW' });
+    const teamKey = (team['team'] as { key: string }).key;
+
+    const opened = await admin.result('active_cycle', { team: teamKey });
+    const running = opened['cycle'] as { id: string };
+
+    const closed = await admin.result('complete_cycle', { cycleId: running.id });
+    const successor = closed['nextCycle'] as { id: string };
+
+    const between = await admin.result('active_cycle', { team: teamKey });
+    expect(between['cycle']).toBeNull();
+
+    const started = await admin.result('start_cycle', { cycleId: successor.id });
+    const startsAt = Date.parse((started['cycle'] as { startsAt: string }).startsAt);
+    expect(Math.abs(startsAt - Date.now())).toBeLessThan(60_000);
+
+    const after = await admin.result('active_cycle', { team: teamKey });
+    expect((after['cycle'] as { id: string }).id).toBe(successor.id);
+
+    const again = await admin.call('start_cycle', { cycleId: successor.id });
+    expect(again.isError).toBe(true);
+    expect(errorPayload(again).code).toBe('conflict');
+  });
+
+  it('refuses to start a sprint for somebody whose role cannot manage sprints', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 102',
+      startsAt: '2034-01-05',
+    });
+    const sprint = created['cycle'] as { id: string; startsAt: string };
+
+    const denied = await guest.call('start_cycle', { cycleId: sprint.id });
+    expect(denied.isError).toBe(true);
+    expect(errorPayload(denied).code).toBe('forbidden');
+
+    const untouched = await admin.result('list_cycles', { team: workspace.teamKey });
+    const rows = untouched['cycles'] as { id: string; startsAt: string }[];
+    expect(rows.find((row) => row.id === sprint.id)?.startsAt).toBe(sprint.startsAt);
+  });
 });
 
 describe('what a token is allowed to do', () => {
@@ -536,12 +658,13 @@ describe('what a token is allowed to do', () => {
 
       expect(names).toContain('get_me');
       expect(names).toContain('search_issues');
-      expect(names).toContain('get_standup');
+      expect(names).toContain('list_cycles');
 
       expect(names).not.toContain('create_issue');
       expect(names).not.toContain('update_issue');
-      expect(names).not.toContain('open_standup');
+      expect(names).not.toContain('create_cycle');
       expect(names).not.toContain('complete_cycle');
+      expect(names).not.toContain('start_cycle');
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {

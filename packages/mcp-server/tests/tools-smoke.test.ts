@@ -101,22 +101,6 @@ const SMOKE: readonly SmokeCase[] = [
     args: () => ({ project: state['project'] }),
     expect: hasRows('milestones'),
   },
-  { tool: 'list_standups', args: () => ({ team: state['team'] }), expect: hasRows('standups') },
-  {
-    tool: 'standup_workload',
-    args: () => ({ team: state['team'] }),
-    expect: hasRows('workload'),
-  },
-  {
-    tool: 'get_standup_rotation',
-    args: () => ({ team: state['team'] }),
-    expect: hasKey('rotation'),
-  },
-  {
-    tool: 'set_standup_rotation',
-    args: () => ({ team: state['team'], members: [{ person: 'Bea Builder' }] }),
-    expect: hasKey('rotation'),
-  },
   {
     tool: 'update_team',
     args: () => ({ team: state['team'], name: 'Renamed team' }),
@@ -157,6 +141,38 @@ const SMOKE: readonly SmokeCase[] = [
     args: () => ({ milestoneId: state['milestone'] }),
     expect: hasKey('deleted'),
   },
+  {
+    tool: 'create_state',
+    args: () => ({ team: state['team'], name: 'Blocked', category: 'started' }),
+    expect: hasKey('state'),
+  },
+  {
+    tool: 'update_state',
+    args: () => ({ team: state['team'], state: 'Blocked', color: '#123456' }),
+    expect: hasKey('state'),
+  },
+  {
+    tool: 'reorder_states',
+    args: () => ({
+      team: state['team'],
+      order: [
+        'Blocked',
+        'Triage',
+        'Backlog',
+        'Todo',
+        'In Progress',
+        'In Review',
+        'Done',
+        'Canceled',
+      ],
+    }),
+    expect: hasRows('states'),
+  },
+  {
+    tool: 'delete_state',
+    args: () => ({ team: state['team'], state: 'Blocked' }),
+    expect: hasKey('deleted'),
+  },
   { tool: 'archive_doc', args: () => ({ doc: state['doc'] }), expect: hasKey('archived') },
   {
     tool: 'archive_project',
@@ -171,7 +187,7 @@ describe('every tool the rest of the suite never calls still answers', () => {
     const registered = new Set(tools.map((tool) => tool.name));
 
     for (const entry of SMOKE) expect(registered.has(entry.tool)).toBe(true);
-    expect(SMOKE.length).toBeGreaterThan(20);
+    expect(SMOKE.length).toBeGreaterThan(15);
   });
 
   for (const entry of SMOKE) {

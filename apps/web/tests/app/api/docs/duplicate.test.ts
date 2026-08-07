@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
+import { mockMembership, mockSession } from '../../../../tests-support.ts';
 
 const coreModule = await import('@orbit/core');
 
@@ -61,10 +62,7 @@ const session = {
 
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(session),
-  requireSession: () => Promise.resolve(session),
-}));
+mockSession(() => session);
 
 const principal: Principal = {
   userId: 'user_1',
@@ -73,14 +71,11 @@ const principal: Principal = {
   teamIds: ['team_1'],
 };
 
-mock.module('@/lib/auth/principal.ts', () => ({
-  resolveMembership: () =>
-    Promise.resolve({
-      principal,
-      memberId: 'member_1',
-      organizationName: 'Nova',
-      organizationSlug: 'nova',
-    }),
+mockMembership(() => ({
+  principal,
+  memberId: 'member_1',
+  organizationName: 'Nova',
+  organizationSlug: 'nova',
 }));
 
 const { POST } = await import('../../../../src/app/api/docs/[id]/duplicate/route.ts');

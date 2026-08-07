@@ -10,7 +10,7 @@ how to test, and how a pull request is reviewed.
 
 ## The short version
 
-Orbit is a free, realtime, keyboard-first work tracker. One Next.js app on
+Orbit is a free, realtime, keyboard-first task manager. One Next.js app on
 Vercel's node runtime, with the realtime hub and the MCP tools in workspace
 packages.
 

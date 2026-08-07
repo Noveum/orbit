@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import { Glob } from 'bun';
-import { cardHover, revealOnHover, rowHover } from '@/lib/interaction.ts';
+import { cardHover, revealOnCardHover, revealOnHover, rowHover } from '@/lib/interaction.ts';
 import { Button } from '../../../src/components/ui/button.tsx';
 import { Checkbox } from '../../../src/components/ui/checkbox.tsx';
 import { Input } from '../../../src/components/ui/input.tsx';
@@ -162,6 +162,24 @@ describe('hover reveal', () => {
   it('pairs every reveal with a group ancestor in the same file', () => {
     const offenders = [...sources]
       .filter(([, source]) => source.includes('revealOnHover') && !/['" ]group[ '"]/.test(source))
+      .map(([file]) => file);
+    expect(offenders).toEqual([]);
+  });
+
+  it('scopes the card reveal to the card, not to the column it sits in', () => {
+    expect(revealOnCardHover).toContain('opacity-0');
+    expect(revealOnCardHover).toContain('group-hover/card:opacity-100');
+    expect(revealOnCardHover).toContain('group-focus-within/card:opacity-100');
+    expect(revealOnCardHover).toContain('transition-opacity');
+    expect(revealOnCardHover).not.toContain('transition-all');
+    expect(revealOnCardHover).not.toMatch(/group-hover:opacity/);
+  });
+
+  it('pairs every card reveal with a named card group in the same file', () => {
+    const offenders = [...sources]
+      .filter(
+        ([, source]) => source.includes('revealOnCardHover') && !source.includes('group/card'),
+      )
       .map(([file]) => file);
     expect(offenders).toEqual([]);
   });

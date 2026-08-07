@@ -41,9 +41,12 @@ export interface BoardColumnSource {
   readonly display: DisplayOptions;
 }
 
+export type StateResolver = (groupId: string, issue: Issue) => string | null;
+
 export interface BoardProps {
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
+  readonly resolveState?: StateResolver | undefined;
   readonly properties?: readonly DisplayProperty[];
   readonly hasMore?: boolean;
   readonly loadingMore?: boolean;
@@ -104,6 +107,7 @@ export function planDrop(
   activeId: string,
   overId: string,
   groupBy: GroupByField,
+  resolveState?: StateResolver | undefined,
 ): MoveInput | null {
   const dragged = issues.find((issue) => issue.id === activeId);
   if (dragged === undefined || overId === activeId) return null;
@@ -113,7 +117,13 @@ export function planDrop(
     groups.find((group) => group.issues.some((issue) => issue.id === overId));
   if (targetGroup === undefined) return null;
 
-  const regrouping = regroupPatch(groupBy, targetGroup.id);
+  const groupId =
+    groupBy === 'state' && resolveState !== undefined
+      ? resolveState(targetGroup.id, dragged)
+      : targetGroup.id;
+  if (groupId === null) return null;
+
+  const regrouping = regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
 
   const siblings = targetGroup.issues.filter((issue) => issue.id !== dragged.id);
@@ -209,6 +219,7 @@ export function Board({
   onLoadMore,
   columnSource,
   groupBy = 'state',
+  resolveState,
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const move = useMoveIssue();
@@ -271,6 +282,7 @@ export function Board({
       String(event.active.id),
       String(event.over.id),
       groupBy,
+      resolveState,
     );
     if (placement !== null) move.mutate(placement);
   };

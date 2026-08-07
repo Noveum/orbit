@@ -25,27 +25,36 @@ export interface OAuthState {
   readonly org: string;
   readonly user: string;
   readonly provider: OAuthStateProvider;
+  readonly nonce: string;
+}
+
+export interface MintedOAuthState {
+  readonly token: string;
+  readonly nonce: string;
+  readonly expiresAt: Date;
 }
 
 function sign(body: string, secret: string): string {
   return createHmac('sha256', secret).update(body).digest('base64url');
 }
 
-export function signOAuthState(
+export function mintOAuthState(
   input: OAuthStateInput,
   secret: string,
   now: Date = new Date(),
-): string {
+): MintedOAuthState {
+  const nonce = randomUUIDv7();
+  const expiresAt = new Date(now.getTime() + OAUTH_STATE_TTL_MS);
   const body = Buffer.from(
     JSON.stringify({
       org: input.org,
       user: input.user,
       provider: input.provider,
-      exp: now.getTime() + OAUTH_STATE_TTL_MS,
-      nonce: randomUUIDv7(),
+      exp: expiresAt.getTime(),
+      nonce,
     }),
   ).toString('base64url');
-  return `${body}.${sign(body, secret)}`;
+  return { token: `${body}.${sign(body, secret)}`, nonce, expiresAt };
 }
 
 export function verifyOAuthState(
@@ -73,7 +82,12 @@ export function verifyOAuthState(
   if (!parsed.success) return null;
   if (parsed.data.provider !== provider) return null;
   if (parsed.data.exp <= now.getTime()) return null;
-  return { org: parsed.data.org, user: parsed.data.user, provider: parsed.data.provider };
+  return {
+    org: parsed.data.org,
+    user: parsed.data.user,
+    provider: parsed.data.provider,
+    nonce: parsed.data.nonce,
+  };
 }
 
 export function integrationStateSecret(): string {

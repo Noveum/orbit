@@ -7,7 +7,25 @@ export const workflowStateCreateSchema = z.object({
   name: z.string().trim().min(1).max(48),
   category: z.enum(STATE_CATEGORIES),
   color: colorSchema,
-  position: z.number().int().min(0).max(10_000).optional(),
 });
 
-export const workflowStateUpdateSchema = workflowStateCreateSchema.partial().omit({ teamId: true });
+export const workflowStateUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(48),
+    category: z.enum(STATE_CATEGORIES),
+    color: colorSchema,
+  })
+  .partial();
+
+export const workflowStateListQuerySchema = z.object({
+  teamId: idSchema,
+});
+
+export const workflowStateReorderSchema = z.object({
+  teamId: idSchema,
+  stateIds: z.array(idSchema).min(1).max(200),
+});
+
+export const workflowStateDeleteQuerySchema = z.object({
+  moveToStateId: idSchema.optional(),
+});

@@ -1,5 +1,11 @@
 import { publishDeltas } from '@orbit/core';
-import { internal, isDomainError, notFound, unauthorized } from '@orbit/shared/errors';
+import {
+  internal,
+  isDomainError,
+  notFound,
+  unauthorized,
+  validationFailed,
+} from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { ORIGIN_CLIENT_ID_HEADER, originClientIdSchema } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -115,10 +121,14 @@ export async function cachedJson(
 }
 
 export async function readJson(request: Request): Promise<unknown> {
+  const raw = await request.text().catch(() => {
+    throw validationFailed('That request body could not be read.');
+  });
+  if (raw.trim() === '') return {};
   try {
-    return await request.json();
+    return JSON.parse(raw) as unknown;
   } catch {
-    return {};
+    throw validationFailed('That request body is not valid JSON.');
   }
 }
 

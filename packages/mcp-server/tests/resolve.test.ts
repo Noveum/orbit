@@ -5,6 +5,7 @@ import {
   createLabel,
   createProject,
   createTeam,
+  deleteLabel,
   listCycles,
   listProjects,
   listTeams,
@@ -185,6 +186,18 @@ describe('resolveLabelIds', () => {
   it('returns nothing for an empty request and refuses an unknown label', async () => {
     expect(await resolveLabelIds(admin, [])).toEqual([]);
     expect(await errorOf(() => resolveLabelIds(admin, ['Sturdy', 'Nonesuch']))).toBe('not_found');
+  });
+
+  it('refuses to guess when a workspace label and a team label share a name', async () => {
+    const twin = await createLabel(admin, { name: 'Flaky', color: '#0000ff', teamId: designId });
+
+    expect(await errorOf(() => resolveLabelIds(admin, ['Flaky']))).toBe('conflict');
+    expect(await errorOf(() => resolveLabelIds(admin, ['Flaky'], designId))).toBe('conflict');
+    expect(await resolveLabelIds(admin, [twin.label.id])).toEqual([twin.label.id]);
+    expect(await resolveLabelIds(admin, ['Flaky'], engineeringId)).toEqual([flakyLabelId]);
+    expect(await resolveLabelIds(admin, ['Sturdy'])).toEqual([sturdyLabelId]);
+
+    await deleteLabel(admin, twin.label.id);
   });
 });
 

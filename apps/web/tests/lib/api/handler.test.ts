@@ -18,7 +18,9 @@ mock.module('@orbit/core', () => ({ ...core, publishDeltas }));
 const requestHeaders = new Headers();
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(requestHeaders) }));
 
-const { cachedJson, errorResponse, publish } = await import('../../../src/lib/api/handler.ts');
+const { cachedJson, errorResponse, publish, readJson } = await import(
+  '../../../src/lib/api/handler.ts'
+);
 
 function action(overrides: Partial<SyncAction> = {}): SyncAction {
   return {
@@ -152,5 +154,45 @@ describe('publish stamps the writing tab so its own echo can be suppressed', () 
 
     await expect(publish([action()])).resolves.toBeUndefined();
     expect(published).toHaveLength(1);
+  });
+});
+
+describe('reading a request body', () => {
+  function requestThatFailsToRead(): Request {
+    const request = new Request('http://localhost/api/labels/lbl_1', { method: 'PATCH' });
+    Object.defineProperty(request, 'text', {
+      value: () => Promise.reject(new Error('connection reset while reading the body')),
+    });
+    return request;
+  }
+
+  it('reads a body the client actually sent', async () => {
+    const request = new Request('http://localhost/api/labels/lbl_1', {
+      method: 'PATCH',
+      body: JSON.stringify({ name: 'Urgent' }),
+    });
+
+    expect(await readJson(request)).toEqual({ name: 'Urgent' });
+  });
+
+  it('still treats a deliberately empty body as no fields, which archive and subscribe send', async () => {
+    const request = new Request('http://localhost/api/issues/iss_1/subscribe', { method: 'POST' });
+
+    expect(await readJson(request)).toEqual({});
+  });
+
+  it('refuses a body it could not read rather than reporting an unchanged record', async () => {
+    await expect(readJson(requestThatFailsToRead())).rejects.toThrow(
+      'That request body could not be read.',
+    );
+  });
+
+  it('rejects a body that is not JSON', async () => {
+    const request = new Request('http://localhost/api/labels/lbl_1', {
+      method: 'PATCH',
+      body: 'not json at all',
+    });
+
+    await expect(readJson(request)).rejects.toThrow('not valid JSON');
   });
 });

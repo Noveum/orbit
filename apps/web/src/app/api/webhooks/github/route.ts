@@ -1,5 +1,11 @@
 import { and, db, eq, schema } from '@orbit/db';
-import { applyGithubEvent, dispatchSlackMessage, verifyGithubSignature } from '@orbit/services';
+import {
+  applyGithubEvent,
+  applyGithubInstallationEvent,
+  dispatchSlackMessage,
+  isGithubInstallationEvent,
+  verifyGithubSignature,
+} from '@orbit/services';
 import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
@@ -61,6 +67,10 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'invalid json' }, { status: 400 });
   }
 
+  if (isGithubInstallationEvent(eventName)) {
+    return await handleInstallationEvent({ eventName, body, deliveryId });
+  }
+
   try {
     const outcome = await db.transaction(async (tx) => {
       const applied = await applyGithubEvent(tx, { eventName, body });
@@ -95,6 +105,30 @@ export async function POST(request: Request): Promise<Response> {
       .set({ status: 'failed' })
       .where(deliveryMatch(deliveryId));
     console.error('[orbit] github webhook failed', error);
+    return Response.json({ error: 'processing failed' }, { status: 500 });
+  }
+}
+
+async function handleInstallationEvent(input: {
+  readonly eventName: string;
+  readonly body: unknown;
+  readonly deliveryId: string;
+}): Promise<Response> {
+  try {
+    const outcome = await db.transaction(async (tx) =>
+      applyGithubInstallationEvent(tx, { eventName: input.eventName, body: input.body }),
+    );
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'processed' })
+      .where(deliveryMatch(input.deliveryId));
+    return Response.json({ ok: true, handled: outcome.handled });
+  } catch (error) {
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'failed' })
+      .where(deliveryMatch(input.deliveryId));
+    console.error('[orbit] github installation webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
 }

@@ -259,6 +259,10 @@ export const issueMoveResultSchema = z.object({
   rebalanced: z.array(issueSchema),
 });
 
+export const issueDeletedSchema = z.object({
+  deleted: z.object({ id: z.string(), identifier: z.string() }),
+});
+
 export const issueDetailSchema = z.object({
   issue: issueSchema,
   descriptionHtml: z.string(),
@@ -400,6 +404,7 @@ export const viewSchema = z.object({
   virtual: z.boolean().catch(false),
   locked: z.boolean().catch(false),
   favorite: z.boolean().catch(false),
+  readable: z.boolean().default(true).catch(true),
   createdAt: timestamp,
 });
 
@@ -407,6 +412,22 @@ export type View = z.infer<typeof viewSchema>;
 
 export const viewListSchema = z.object({ views: z.array(viewSchema) });
 export const viewEnvelopeSchema = z.object({ view: viewSchema });
+
+export const milestoneSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  description: z.string().default(''),
+  targetDate: z.string().nullable(),
+  sortOrder: z.number(),
+  scope: z.number().default(0),
+  completed: z.number().default(0),
+});
+
+export type Milestone = z.infer<typeof milestoneSchema>;
+
+export const milestoneListSchema = z.object({ milestones: z.array(milestoneSchema) });
+export const milestoneEnvelopeSchema = z.object({ milestone: milestoneSchema });
 
 export const commentListSchema = z.object({
   comments: z.array(commentSchema),
@@ -421,23 +442,6 @@ export const docCommentEnvelopeSchema = z.object({ comment: docCommentSchema });
 export const reactionResultSchema = z.object({ emoji: z.string(), active: z.boolean() });
 export const deletedSchema = z.object({ deleted: z.boolean() });
 export const subscribedSchema = z.object({ subscribed: z.boolean() });
-
-export const standupWorkloadSchema = z.object({
-  userId: z.string(),
-  open: z.number(),
-  inProgress: z.number(),
-  completedSince: z.number(),
-});
-
-export type StandupWorkload = z.infer<typeof standupWorkloadSchema>;
-
-export const standupBoardPayloadSchema = z.object({
-  since: timestamp,
-  issues: z.array(issueSchema).default([]),
-  workload: z.array(standupWorkloadSchema).default([]),
-});
-
-export type StandupBoardPayload = z.infer<typeof standupBoardPayloadSchema>;
 
 export const viewPreferencesSchema = z.object({
   preferences: z

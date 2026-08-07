@@ -2,15 +2,7 @@
 
 import { Command } from 'cmdk';
 import type { LucideIcon } from 'lucide-react';
-import {
-  ArrowRight,
-  CircleDot,
-  FileText,
-  Search,
-  SlidersHorizontal,
-  Terminal,
-  Users,
-} from 'lucide-react';
+import { ArrowRight, CircleDot, FileText, Search, SlidersHorizontal, Terminal } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import type { MouseEvent as ReactMouseEvent } from 'react';
@@ -39,7 +31,6 @@ const SECTION_ICONS: Record<HotkeySection, LucideIcon> = {
   Navigation: ArrowRight,
   Issues: CircleDot,
   View: SlidersHorizontal,
-  Standup: Users,
   General: Terminal,
 };
 

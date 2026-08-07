@@ -10,8 +10,8 @@ import {
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_SUMMARY_ROOT,
+  MILESTONES_ROOT,
   queryKeys,
-  STANDUP_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
@@ -181,6 +181,18 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
   });
 
+  it('invalidates the milestones root, and nothing else, for a milestone delta', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'milestone', modelId: 'milestone_1', data: { id: 'milestone_1' } }),
+        action({ model: 'milestone', modelId: 'milestone_2', data: { id: 'milestone_2' } }),
+      ]),
+    );
+    expect(seen).toEqual([[MILESTONES_ROOT]]);
+  });
+
   it('invalidates the views root for a view delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
@@ -200,11 +212,11 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[DOCS_ROOT], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
-  it('refreshes only the counts and the standup board for an issue delta it patches in place', () => {
+  it('refreshes the counts and the milestone counts for an issue delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [STANDUP_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 
@@ -274,26 +286,96 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [STANDUP_ROOT]]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 
-describe('DeltaBridge standup board', () => {
-  it('refreshes the board when somebody else moves an issue', () => {
+function deleteAction(id: string, identifier: string): SyncAction {
+  return {
+    ...action({
+      action: 'delete',
+      modelId: id,
+      data: { id, teamId: TEAM, identifier },
+    }),
+    originClientId: 'another-persons-tab',
+  };
+}
+
+function detailFor(row: Issue, subIssues: readonly Issue[]) {
+  return {
+    issue: row,
+    descriptionHtml: '',
+    activity: [],
+    activityCursor: null,
+    subIssues,
+    subscribed: false,
+  };
+}
+
+function idsIn(client: QueryClient): string[] {
+  const pages = client.getQueryData<IssuePages>(queryKeys.issues(TEAM));
+  return (pages?.pages ?? []).flatMap((page) => page.issues).map((row) => row.id);
+}
+
+describe('DeltaBridge deletions', () => {
+  it('drops the row from a list somebody else is looking at', () => {
     const client = mount();
-    const seen = trackInvalidations(client);
-    act(() => capturedHandler?.([action()]));
-    expect(seen).toContainEqual([STANDUP_ROOT]);
+    expect(idsIn(client)).toEqual(['issue_1']);
+
+    act(() => capturedHandler?.([deleteAction('issue_1', 'ENG-3')]));
+
+    expect(idsIn(client)).toEqual([]);
   });
 
-  it('leaves the board alone for a ceremony write it reads nothing from', () => {
+  it('forgets the open detail for the issue that was deleted', () => {
     const client = mount();
-    const seen = trackInvalidations(client);
+    client.setQueryData(queryKeys.issue('ENG-3'), detailFor(issue(), []));
+
+    act(() => capturedHandler?.([deleteAction('issue_1', 'ENG-3')]));
+
+    expect(client.getQueryData(queryKeys.issue('ENG-3'))).toBeUndefined();
+  });
+
+  it('takes a deleted child out of the sub issue list its parent still shows', () => {
+    const client = mount();
+    const child = issue({ id: 'issue_child', identifier: 'ENG-4', parentId: 'issue_1' });
+    client.setQueryData(queryKeys.issue('ENG-3'), detailFor(issue(), [child]));
+
+    act(() => capturedHandler?.([deleteAction('issue_child', 'ENG-4')]));
+
+    const parent = client.getQueryData<{ subIssues: readonly Issue[]; issue: Issue }>(
+      queryKeys.issue('ENG-3'),
+    );
+    expect(parent?.subIssues).toEqual([]);
+    expect(parent?.issue.id).toBe('issue_1');
+  });
+
+  it('frees a cached child when the parent delete is followed by its own update', () => {
+    const client = mount();
+    const child = issue({ id: 'issue_child', identifier: 'ENG-4', parentId: 'issue_1' });
+    client.setQueryData(queryKeys.issues(TEAM), {
+      pages: [{ issues: [issue(), child], nextCursor: null }],
+      pageParams: [null],
+    });
+
     act(() =>
       capturedHandler?.([
-        action({ model: 'standup', modelId: 'standup_1', data: { id: 'standup_1' } }),
+        deleteAction('issue_1', 'ENG-3'),
+        {
+          ...action({
+            modelId: 'issue_child',
+            data: { ...child, parentId: null, syncId: 40 },
+            syncId: 40,
+          }),
+          originClientId: 'another-persons-tab',
+        },
       ]),
     );
-    expect(seen).toEqual([]);
+
+    const rows = (client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages ?? []).flatMap(
+      (page) => page.issues,
+    );
+    expect(rows.map((row) => row.id)).toEqual(['issue_child']);
+    expect(rows[0]?.parentId).toBeNull();
   });
 });

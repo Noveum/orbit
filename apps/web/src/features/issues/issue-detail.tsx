@@ -2,6 +2,7 @@
 
 import { Bell, BellOff, Check } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -13,11 +14,14 @@ import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { uploadAttachment } from '@/features/docs/upload.ts';
 import { useAutosave } from '@/features/docs/use-autosave.ts';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
+import { HOTKEY_PRIORITY, ownsKeyboardLayer, useHotkey } from '@/lib/keyboard/index.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
-import type { Issue, Member } from '@/lib/query/schemas.ts';
+import type { Issue, Member, Team } from '@/lib/query/schemas.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { IssueActionsMenu } from './issue-actions.tsx';
+import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
 import { IssueProperties } from './issue-properties.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -26,6 +30,12 @@ import { useWorkspace } from './workspace-provider.tsx';
 export interface IssueDetailViewProps {
   readonly identifier: string;
   readonly known?: Issue;
+  readonly onDeleted?: (() => void) | undefined;
+}
+
+export function teamIssuesPath(teams: readonly Team[], teamId: string): string {
+  const key = teams.find((team) => team.id === teamId)?.key;
+  return key === undefined ? '/my-issues' : `/team/${key.toLowerCase()}/issues`;
 }
 
 export function IssueTitle({
@@ -152,15 +162,43 @@ function IssueBody({
   );
 }
 
-export function IssueDetailView({ identifier, known }: IssueDetailViewProps) {
+export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailViewProps) {
   const { toast } = useToast();
+  const router = useRouter();
   const workspace = useWorkspace();
   const detail = useIssueDetail(identifier, known);
   const issue = detail.data?.issue;
   const comments = useComments(issue?.id ?? null);
   const update = useUpdateIssue();
+  const deletion = useIssueDeletion();
 
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
+
+  const teams = workspace.teams;
+  const leave = useCallback(() => {
+    if (onDeleted !== undefined) {
+      onDeleted();
+      return;
+    }
+    if (issue !== undefined) router.push(teamIssuesPath(teams, issue.teamId));
+  }, [onDeleted, router, teams, issue]);
+
+  const askToDelete = useCallback(
+    (event: KeyboardEvent) => {
+      if (ownsKeyboardLayer(event.target)) return;
+      if (issue === undefined) return;
+      deletion?.request({ issues: [issue], onDeleted: leave });
+    },
+    [deletion, issue, leave],
+  );
+
+  useHotkey(DELETE_ISSUE_BINDING, askToDelete, {
+    label: 'Delete issue',
+    section: 'Issues',
+    scope: 'issues',
+    priority: HOTKEY_PRIORITY.layer,
+    enabled: issue !== undefined && deletion?.allowed === true,
+  });
 
   if (detail.isPending) {
     return (
@@ -236,6 +274,7 @@ export function IssueDetailView({ identifier, known }: IssueDetailViewProps) {
               )}
               {isSubscribed ? 'Subscribed' : 'Subscribe'}
             </Button>
+            <IssueActionsMenu issue={issue} onDeleted={leave} />
           </div>
         </header>
 

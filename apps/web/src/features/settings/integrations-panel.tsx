@@ -5,20 +5,15 @@ import { type ReactNode, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { GithubPanel } from './github-panel.tsx';
 import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
 import type {
   ConnectedChannel,
   IntegrationSettings,
   IntegrationTeam,
-  LinkedRepository,
 } from './integrations-data.ts';
 import { claudeCodeCommand, cursorInstallHref, vscodeInstallHref } from './mcp-install-links.ts';
-import {
-  type PickerChannel,
-  type PickerRepository,
-  useChannelSearch,
-  useRepositorySearch,
-} from './use-integration-lists.ts';
+import { type PickerChannel, useChannelSearch } from './use-integration-lists.ts';
 
 function teamName(teams: readonly IntegrationTeam[], teamId: string | null): string {
   if (teamId === null) return 'Workspace-wide';
@@ -66,10 +61,34 @@ export function IntegrationsPanel({
         </p>
       )}
 
-      <GithubSection settings={settings} canManage={canManage} onCall={call} />
-      <SlackSection settings={settings} canManage={canManage} onCall={call} />
+      {canManage ? (
+        <>
+          <IntegrationCard
+            title="GitHub"
+            description="Install the Orbit GitHub App on every organisation you work in, then associate each repository with a project, or with the workspace when no project owns it yet."
+            status={<ConnectionBadge connected={settings.github.connected} />}
+          >
+            <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
+          </IntegrationCard>
+          <SlackSection settings={settings} canManage={canManage} onCall={call} />
+        </>
+      ) : (
+        <WorkspaceIntegrationsWithheld />
+      )}
       <McpSection mcpUrl={mcpUrl} connections={mcpConnections} onError={setError} onCall={call} />
     </div>
+  );
+}
+
+function WorkspaceIntegrationsWithheld() {
+  return (
+    <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
+      <h3 className="font-medium text-dense text-text">GitHub and Slack</h3>
+      <p className="text-muted text-xs" data-testid="integrations-withheld">
+        Only workspace admins can see which repositories and channels this workspace is connected
+        to. Your own AI client connections are below.
+      </p>
+    </section>
   );
 }
 
@@ -146,165 +165,6 @@ function ConnectCta({
     );
   }
   return <ConnectLink href={href} label={label} variant="primary" />;
-}
-
-function LinkedRepoRow({
-  repo,
-  teams,
-  canManage,
-  onCall,
-}: {
-  repo: LinkedRepository;
-  teams: readonly IntegrationTeam[];
-  canManage: boolean;
-  onCall: CallFn;
-}) {
-  return (
-    <li className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0">
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate font-mono text-dense text-text">{repo.repositoryName}</span>
-        <span className="text-2xs text-faint">{teamName(teams, repo.teamId)}</span>
-      </span>
-      {canManage ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            onCall(
-              `/api/integrations/github?repositoryId=${encodeURIComponent(repo.repositoryId)}`,
-              'DELETE',
-              {},
-            )
-          }
-        >
-          Unlink
-        </Button>
-      ) : null}
-    </li>
-  );
-}
-
-function RepoPicker({
-  open,
-  onOpenChange,
-  settings,
-  onCall,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  settings: IntegrationSettings;
-  onCall: CallFn;
-}) {
-  const query = useRepositorySearch(open);
-  const linkedIds = new Set(settings.repositories.map((repo) => repo.repositoryId));
-  const byId = new Map<string, PickerRepository>();
-  for (const page of query.data?.pages ?? []) {
-    for (const repo of page.repositories) {
-      if (!byId.has(repo.repositoryId)) byId.set(repo.repositoryId, repo);
-    }
-  }
-  const items: PickerItem[] = [...byId.values()].map((repo) => ({
-    id: repo.repositoryId,
-    label: repo.repositoryName,
-    linked: linkedIds.has(repo.repositoryId),
-  }));
-
-  return (
-    <IntegrationPicker
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Link a repository"
-      description="Search your installed repositories and map one to a team."
-      searchPlaceholder="Search repositories…"
-      items={items}
-      isLoading={query.isLoading}
-      isError={query.isError}
-      hasNextPage={query.hasNextPage}
-      isFetchingNextPage={query.isFetchingNextPage}
-      onLoadMore={() => query.fetchNextPage()}
-      teams={settings.teams}
-      submitLabel="Link"
-      onSubmit={async (item, teamId) => {
-        const repo = byId.get(item.id);
-        if (repo === undefined || teamId === null) return;
-        await onCall('/api/integrations/github', 'POST', {
-          repositoryId: repo.repositoryId,
-          repositoryName: repo.repositoryName,
-          installationId: repo.installationId,
-          defaultBranch: repo.defaultBranch,
-          teamId,
-        });
-      }}
-    />
-  );
-}
-
-function GithubSection({
-  settings,
-  canManage,
-  onCall,
-}: {
-  settings: IntegrationSettings;
-  canManage: boolean;
-  onCall: CallFn;
-}) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  return (
-    <IntegrationCard
-      title="GitHub"
-      description="Install the Orbit GitHub App, then map each repository to a team. Orbit posts pull request updates on the matching issue and links issues from branch names and PR text such as ENG-42."
-      status={<ConnectionBadge connected={settings.githubConnected} />}
-    >
-      {settings.githubConnected ? (
-        <div className="flex flex-col gap-2.5">
-          <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
-            {settings.repositories.length === 0 ? (
-              <li className="px-3 py-2.5 text-faint text-xs">No repositories linked yet.</li>
-            ) : (
-              settings.repositories.map((repo) => (
-                <LinkedRepoRow
-                  key={repo.repositoryId}
-                  repo={repo}
-                  teams={settings.teams}
-                  canManage={canManage}
-                  onCall={onCall}
-                />
-              ))
-            )}
-          </ul>
-          {canManage ? (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
-                Link a repository
-              </Button>
-              <ConnectLink
-                href="/api/integrations/github/start"
-                label="Add or remove repositories on GitHub"
-                variant="secondary"
-              />
-            </div>
-          ) : null}
-          {canManage ? (
-            <RepoPicker
-              open={pickerOpen}
-              onOpenChange={setPickerOpen}
-              settings={settings}
-              onCall={onCall}
-            />
-          ) : null}
-        </div>
-      ) : (
-        <ConnectCta
-          canManage={canManage}
-          enabled={settings.githubConnectEnabled}
-          href="/api/integrations/github/start"
-          label="Connect GitHub"
-          pendingHint="Ask a workspace admin to finish configuring the GitHub App before connecting."
-        />
-      )}
-    </IntegrationCard>
-  );
 }
 
 function LinkedChannelRow({

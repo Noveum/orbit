@@ -1,16 +1,19 @@
 import {
   activeCycle,
   type CycleRow,
+  type LabelRow,
   listCycles,
   listLabels,
   listMembers,
+  listMilestones,
   listProjects,
   listTeams,
   listWorkflowStates,
+  type MilestoneRow,
   type ProjectRow,
   type TeamRow,
 } from '@orbit/core';
-import { notFound } from '@orbit/shared/errors';
+import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 
 function matches(candidates: readonly (string | null | undefined)[], ref: string): boolean {
@@ -59,6 +62,25 @@ export async function resolveStateId(
   return found.id;
 }
 
+function oneLabelId(labels: readonly LabelRow[], ref: string): string {
+  const needle = ref.trim();
+  const byId = labels.find((label) => label.id === needle);
+  if (byId !== undefined) return byId.id;
+  const named = labels.filter((label) => matches([label.name], needle));
+  const first = named[0];
+  if (first === undefined) throw notFound(`No label matches "${ref}".`);
+  if (named.length > 1) {
+    throw conflict(`More than one label is named "${ref}". Name the one you mean by its id.`, {
+      details: { labelIds: named.map((label) => label.id) },
+    });
+  }
+  return first.id;
+}
+
+export async function resolveLabelId(principal: Principal, ref: string): Promise<string> {
+  return oneLabelId(await listLabels(principal, {}), ref);
+}
+
 export async function resolveLabelIds(
   principal: Principal,
   refs: readonly string[],
@@ -66,17 +88,33 @@ export async function resolveLabelIds(
 ): Promise<string[]> {
   if (refs.length === 0) return [];
   const labels = await listLabels(principal, teamId === undefined ? {} : { teamId });
-  return refs.map((ref) => {
-    const found = pick(labels, ref, (label) => [label.id, label.name]);
-    if (found === undefined) throw notFound(`No label matches "${ref}".`);
-    return found.id;
-  });
+  return refs.map((ref) => oneLabelId(labels, ref));
 }
 
 export async function resolveProject(principal: Principal, ref: string): Promise<ProjectRow> {
   const projects = await listProjects(principal, { includeArchived: true });
   const found = pick(projects, ref, (project) => [project.id, project.slug, project.name]);
   if (found === undefined) throw notFound(`No project matches "${ref}".`);
+  return found;
+}
+
+export async function resolveMilestone(
+  principal: Principal,
+  projectId: string,
+  ref: string,
+): Promise<MilestoneRow> {
+  const milestones = await listMilestones(principal, projectId);
+  const byId = pick(milestones, ref, (milestone) => [milestone.id]);
+  if (byId !== undefined) return byId;
+  const byName = milestones.filter((milestone) => matches([milestone.name], ref));
+  if (byName.length > 1) {
+    throw conflict(
+      `That project has ${byName.length} milestones named "${ref}". Name it by id instead.`,
+      { details: { milestoneIds: byName.map((milestone) => milestone.id) } },
+    );
+  }
+  const found = byName[0];
+  if (found === undefined) throw notFound(`No milestone matches "${ref}" on that project.`);
   return found;
 }
 

@@ -4,7 +4,7 @@ export function GET(): Response {
   const base = publicAppUrl();
   const body = `# Orbit
 
-> Orbit is a free, open source, keyboard-first work tracker for teams. It covers issues, boards, sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever. It is licensed Apache-2.0 and can be self-hosted.
+> Orbit is a free, open source, keyboard-first task manager for teams. It covers issues, boards, sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever. It is licensed Apache-2.0 and can be self-hosted.
 
 ## Capabilities
 

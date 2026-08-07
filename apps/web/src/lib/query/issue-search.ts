@@ -64,8 +64,15 @@ export function assignedSearch(userId: string, query?: IssueQuery): string {
 
 export const ALL_ISSUES_QUERY: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' };
 
-export function allIssuesSearch(query: IssueQuery = ALL_ISSUES_QUERY): string {
-  return searchParams(query).toString();
+export const EMPTY_ISSUE_SCOPE: Readonly<Record<string, string>> = {};
+
+export function allIssuesSearch(
+  query: IssueQuery = ALL_ISSUES_QUERY,
+  scope: Readonly<Record<string, string>> = EMPTY_ISSUE_SCOPE,
+): string {
+  const params = searchParams(query);
+  for (const [key, value] of Object.entries(scope)) params.set(key, value);
+  return params.toString();
 }
 
 export function projectIssuesSearch(
