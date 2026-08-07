@@ -7,11 +7,11 @@ import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { DisplayMenu } from '@/features/filters/display-menu.tsx';
-import type { IssueGroup } from '@/features/filters/grouping.ts';
+import { type IssueGroup, mergedStateResolver } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
-import { Board } from '@/features/issues/board.tsx';
+import { Board, type StateResolver } from '@/features/issues/board.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { facetsSearch } from '@/lib/query/issue-search.ts';
@@ -53,6 +53,8 @@ export function StandupBoard() {
     scopeToTeam: false,
     scope,
   });
+
+  const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
 
   const members = useMemo(
     () => [...workspace.members].sort((left, right) => left.name.localeCompare(right.name)),
@@ -105,6 +107,7 @@ export function StandupBoard() {
         properties={config.display.properties}
         hasMore={hasNextPage}
         loadingMore={isFetchingNextPage}
+        resolveState={resolveState}
         onLoadMore={() => {
           fetchNextPage().catch(() => undefined);
         }}
@@ -134,6 +137,7 @@ interface StandupBodyProps {
   readonly properties: readonly DisplayProperty[];
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
+  readonly resolveState: StateResolver;
   readonly onLoadMore: () => void;
 }
 
@@ -146,6 +150,7 @@ function StandupBody({
   properties,
   hasMore,
   loadingMore,
+  resolveState,
   onLoadMore,
 }: StandupBodyProps) {
   if (loading) {
@@ -192,6 +197,7 @@ function StandupBody({
         properties={properties}
         hasMore={hasMore}
         loadingMore={loadingMore}
+        resolveState={resolveState}
         onLoadMore={onLoadMore}
       />
     </div>
