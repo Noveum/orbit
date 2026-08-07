@@ -26,6 +26,7 @@ import {
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
+  MILESTONES_ROOT,
   PROJECT_SCOPE,
   STANDUP_ROOT,
   VIEWS_ROOT,
@@ -42,6 +43,7 @@ import {
   belongsInList,
   flattenIssuePages,
   searchOf,
+  withoutSubIssue,
 } from '@/lib/query/sync.ts';
 import { useCurrentUserId } from './session.tsx';
 
@@ -54,7 +56,6 @@ const BOOTSTRAP_MODELS: ReadonlySet<SyncModel> = new Set<SyncModel>([
   'workflow_state',
   'label',
   'project',
-  'milestone',
   'cycle',
 ]);
 
@@ -71,6 +72,7 @@ interface RootInvalidations {
   views: boolean;
   docs: boolean;
   relations: boolean;
+  milestones: boolean;
   docIds: Set<string>;
 }
 
@@ -106,6 +108,27 @@ function patchIssueCaches(client: QueryClient, action: SyncAction): void {
     }
   }
 
+  patchIssueDetailCaches(client, action);
+}
+
+function forgetDeletedIssue(client: QueryClient, issueId: string): void {
+  for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
+    const current = query.state.data as IssueDetail | undefined;
+    if (current === undefined) continue;
+    if (current.issue.id === issueId) {
+      client.resetQueries({ queryKey: query.queryKey, exact: true });
+      continue;
+    }
+    const trimmed = withoutSubIssue(current, issueId);
+    if (trimmed !== current) client.setQueryData(query.queryKey, trimmed);
+  }
+}
+
+function patchIssueDetailCaches(client: QueryClient, action: SyncAction): void {
+  if (action.action === 'delete') {
+    forgetDeletedIssue(client, action.modelId);
+    return;
+  }
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
     const current = query.state.data as IssueDetail | undefined;
     if (current === undefined) continue;
@@ -169,6 +192,7 @@ function routeAction(
     patchIssueCaches(client, action);
     roots.counts = true;
     roots.standupBoard = true;
+    roots.milestones = true;
     return;
   }
   if (action.model === 'comment') {
@@ -200,6 +224,10 @@ function routeAction(
     roots.views = true;
     return;
   }
+  if (action.model === 'milestone') {
+    roots.milestones = true;
+    return;
+  }
   if (BOOTSTRAP_MODELS.has(action.model)) roots.bootstrap = true;
 }
 
@@ -214,6 +242,7 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
   if (roots.relations) {
     client.invalidateQueries({ queryKey: [ISSUE_RELATIONS_ROOT] }).catch(noop);
   }
+  if (roots.milestones) client.invalidateQueries({ queryKey: [MILESTONES_ROOT] }).catch(noop);
   if (roots.docs) {
     client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
@@ -253,6 +282,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         views: false,
         docs: false,
         relations: false,
+        milestones: false,
         docIds: new Set<string>(),
       };
 

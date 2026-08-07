@@ -22,6 +22,7 @@ import { z } from 'zod';
 import {
   resolveCycle,
   resolveLabelIds,
+  resolveMilestone,
   resolveProject,
   resolveStateId,
   resolveTeam,
@@ -146,6 +147,14 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
           .nullable()
           .optional()
           .describe('Project name, slug, id or null.'),
+        milestone: z
+          .string()
+          .min(1)
+          .nullable()
+          .optional()
+          .describe(
+            'Milestone name or id on the project the issue is in, or null to take it off the milestone.',
+          ),
         cycle: z.string().min(1).nullable().optional().describe('Sprint name, number, id or null.'),
         parent: issueRef
           .nullable()
@@ -158,7 +167,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const patch = await buildIssuePatch(principal, issue.teamId, args);
+      const patch = await buildIssuePatch(principal, issue.teamId, args, issue.projectId);
       const updated = await updateIssue(principal, issue.id, patch);
       await publish(updated.actions);
       return {
@@ -177,6 +186,7 @@ interface IssuePatchArgs {
   readonly priority?: keyof typeof PRIORITY_VALUES | undefined;
   readonly assignee?: string | null | undefined;
   readonly project?: string | null | undefined;
+  readonly milestone?: string | null | undefined;
   readonly cycle?: string | null | undefined;
   readonly parent?: string | null | undefined;
   readonly labels?: string[] | undefined;
@@ -184,7 +194,20 @@ interface IssuePatchArgs {
   readonly dueDate?: string | null | undefined;
 }
 
-function plainIssueValues(args: IssuePatchArgs): Record<string, unknown> {
+async function milestoneIdFor(
+  principal: Principal,
+  patch: Record<string, unknown>,
+  currentProjectId: string | null,
+  ref: string,
+): Promise<string> {
+  const target = 'projectId' in patch ? patch['projectId'] : currentProjectId;
+  if (typeof target !== 'string') {
+    throw validationFailed('Put the issue on a project before giving it a milestone.');
+  }
+  return (await resolveMilestone(principal, target, ref)).id;
+}
+
+function literalIssueFields(args: IssuePatchArgs): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (args.title !== undefined) patch['title'] = args.title;
   if (args.description !== undefined) patch['description'] = args.description;
@@ -198,8 +221,9 @@ async function buildIssuePatch(
   principal: Principal,
   teamId: string,
   args: IssuePatchArgs,
+  currentProjectId: string | null = null,
 ): Promise<Record<string, unknown>> {
-  const patch = plainIssueValues(args);
+  const patch = literalIssueFields(args);
   if (args.state !== undefined)
     patch['stateId'] = await resolveStateId(principal, teamId, args.state);
   if (args.labels !== undefined)
@@ -211,6 +235,12 @@ async function buildIssuePatch(
   if (args.project !== undefined) {
     patch['projectId'] =
       args.project === null ? null : (await resolveProject(principal, args.project)).id;
+  }
+  if (args.milestone !== undefined) {
+    patch['milestoneId'] =
+      args.milestone === null
+        ? null
+        : await milestoneIdFor(principal, patch, currentProjectId, args.milestone);
   }
   if (args.cycle !== undefined) {
     patch['cycleId'] =

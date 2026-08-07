@@ -1,9 +1,10 @@
-import { and, asc, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
+import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { docReadFilter } from '../content/doc-service.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
+import { viewReadFilter, viewScopes } from '../work/view-service.ts';
 import { buildSyncAction } from './publisher.ts';
 
 export interface SyncCatchupResult {
@@ -613,7 +614,7 @@ const LOADERS: Record<SyncModel, Loader> = {
         .where(
           and(
             eq(schema.view.organizationId, principal.organizationId),
-            or(eq(schema.view.ownerId, principal.userId), eq(schema.view.shared, 'true')),
+            viewReadFilter(principal),
             gt(schema.view.syncId, since),
           ),
         )
@@ -622,7 +623,7 @@ const LOADERS: Record<SyncModel, Loader> = {
     ).map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes: [scopes.organization(row.organizationId), scopes.user(row.ownerId)],
+      scopes: viewScopes(row),
       data: row,
     })),
 

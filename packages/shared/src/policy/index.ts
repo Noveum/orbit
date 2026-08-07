@@ -157,3 +157,18 @@ export function canReadDoc(
   if (!isRestricted(doc.visibility)) return true;
   return grantedDocIds.includes(doc.id);
 }
+
+export interface ReadableViewRow {
+  readonly organizationId: string;
+  readonly ownerId: string;
+  readonly visibility: string;
+  readonly teamId: string | null;
+}
+
+export function canReadView(principal: Principal, view: ReadableViewRow): boolean {
+  if (view.organizationId !== principal.organizationId) return false;
+  if (view.ownerId === principal.userId) return true;
+  if (view.visibility === 'workspace') return true;
+  if (view.visibility !== 'team' || view.teamId === null) return false;
+  return isInTeam(principal, { id: view.teamId, organizationId: view.organizationId });
+}

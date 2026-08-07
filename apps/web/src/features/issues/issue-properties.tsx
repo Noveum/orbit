@@ -7,8 +7,9 @@ import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { useHotkey } from '@/lib/keyboard/index.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { Issue, Milestone } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { useMilestones } from '@/lib/query/use-milestones.ts';
 import { DueDateField } from './due-date-field.tsx';
 import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
@@ -21,6 +22,7 @@ type MenuKey =
   | 'priority'
   | 'assignee'
   | 'project'
+  | 'milestone'
   | 'cycle'
   | 'labels'
   | 'estimate'
@@ -45,6 +47,8 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
   const assignee =
     issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId);
   const project = workspace.projects.find((entry) => entry.id === issue.projectId);
+  const milestonesQuery = useMilestones(issue.projectId);
+  const milestones = milestonesQuery.data ?? [];
   const cycles = workspace.cycles.filter((cycle) => cycle.teamId === issue.teamId);
   const cycle = cycles.find((entry) => entry.id === issue.cycleId);
   const teamLabels = workspace.labels.filter(
@@ -93,6 +97,12 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
     label: 'Change due date',
     section: 'Issues',
     scope: 'issues',
+  });
+  useHotkey('m', () => setOpenMenu('milestone'), {
+    label: 'Change milestone',
+    section: 'Issues',
+    scope: 'issues',
+    enabled: issue.projectId !== null,
   });
 
   return (
@@ -243,6 +253,14 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
         </PropertyMenu>
       </PropertyRow>
 
+      <MilestoneProperty
+        issue={issue}
+        milestones={milestones}
+        open={openMenu === 'milestone'}
+        onOpenChange={toggle('milestone')}
+        onSelect={(milestoneId) => patch({ milestoneId })}
+      />
+
       <PropertyRow label="Due date" shortcut="shift+d">
         <DueDateField
           value={issue.dueDate}
@@ -302,6 +320,51 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
         </PropertyMenu>
       </PropertyRow>
     </aside>
+  );
+}
+
+function MilestoneProperty({
+  issue,
+  milestones,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  readonly issue: Issue;
+  readonly milestones: readonly Milestone[];
+  readonly open: boolean;
+  readonly onOpenChange: (next: boolean) => void;
+  readonly onSelect: (milestoneId: string | null) => void;
+}) {
+  if (issue.projectId === null) {
+    return (
+      <PropertyRow label="Milestone">
+        <p className="px-2 py-1.5 text-dense text-faint" data-testid="property-milestone-empty">
+          Pick a project first
+        </p>
+      </PropertyRow>
+    );
+  }
+  const current = milestones.find((entry) => entry.id === issue.milestoneId);
+  return (
+    <PropertyRow label="Milestone" shortcut="m">
+      <PropertyMenu
+        title="Milestone"
+        open={open}
+        onOpenChange={onOpenChange}
+        options={[
+          { id: 'none', label: 'No milestone' },
+          ...milestones.map((entry) => ({ id: entry.id, label: entry.name })),
+        ]}
+        selected={issue.milestoneId === null ? ['none'] : [issue.milestoneId]}
+        onSelect={(value) => onSelect(value === 'none' ? null : value)}
+        testId="menu-milestone"
+      >
+        <button type="button" className={rowClassName} data-testid="property-milestone">
+          {current?.name ?? 'No milestone'}
+        </button>
+      </PropertyMenu>
+    </PropertyRow>
   );
 }
 
