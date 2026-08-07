@@ -1,4 +1,5 @@
-import { createMilestone, listMilestones } from '@orbit/core';
+import { createMilestone, listMilestonesWithProgress } from '@orbit/core';
+import { milestoneCreateBodySchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, publish, readJson, routeId } from '@/lib/api/handler.ts';
 
 interface RouteParams {
@@ -9,7 +10,14 @@ export async function GET(_request: Request, { params }: RouteParams): Promise<R
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const projectId = routeId((await params).id, 'project');
-    return { milestones: await listMilestones(principal, projectId) };
+    const rows = await listMilestonesWithProgress(principal, projectId);
+    return {
+      milestones: rows.map((row) => ({
+        ...row.milestone,
+        scope: row.scope,
+        completed: row.completed,
+      })),
+    };
   });
 }
 
@@ -17,9 +25,8 @@ export async function POST(request: Request, { params }: RouteParams): Promise<R
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const projectId = routeId((await params).id, 'project');
-    const body = await readJson(request);
-    const input = typeof body === 'object' && body !== null ? body : {};
-    const result = await createMilestone(principal, { ...input, projectId });
+    const draft = milestoneCreateBodySchema.parse(await readJson(request));
+    const result = await createMilestone(principal, { ...draft, projectId });
     await publish(result.actions);
     return { milestone: result.milestone };
   });

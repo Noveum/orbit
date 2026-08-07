@@ -90,6 +90,7 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
     label: 'Change milestone',
     section: 'Issues',
     scope: 'issues',
+    enabled: issue.projectId !== null,
   });
 
   return (

@@ -3,10 +3,11 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { resolvedHotkeys } from '@/components/shortcuts-overlay.tsx';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
-import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Milestone } from '@/lib/query/schemas.ts';
 
@@ -70,6 +71,8 @@ const milestones: readonly Milestone[] = [
     description: '',
     targetDate: null,
     sortOrder: 1,
+    scope: 0,
+    completed: 0,
   },
   {
     id: 'milestone_beta',
@@ -78,6 +81,8 @@ const milestones: readonly Milestone[] = [
     description: '',
     targetDate: null,
     sortOrder: 2,
+    scope: 0,
+    completed: 0,
   },
 ];
 
@@ -131,6 +136,17 @@ function Providers({ children }: { children: ReactNode }) {
         <HotkeyProvider>{children}</HotkeyProvider>
       </ToastProvider>
     </QueryClientProvider>
+  );
+}
+
+function HotkeyNames() {
+  const live = resolvedHotkeys(useHotkeyList());
+  return (
+    <ul data-testid="hotkey-names">
+      {live.map((entry) => (
+        <li key={entry.id}>{entry.label}</li>
+      ))}
+    </ul>
   );
 }
 
@@ -190,5 +206,29 @@ describe('the milestone row on the issue properties panel', () => {
     expect(await screen.findByTestId('property-milestone-empty')).toBeInTheDocument();
     expect(screen.queryByTestId('property-milestone')).toBeNull();
     expect(requested).toEqual([]);
+  });
+
+  it('stops advertising the m shortcut when there is no milestone menu to open', async () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue({ projectId: null })} />
+        <HotkeyNames />
+      </Providers>,
+    );
+
+    const names = await screen.findByTestId('hotkey-names');
+    expect(names).not.toHaveTextContent('Change milestone');
+    expect(names).toHaveTextContent('Change project');
+  });
+
+  it('advertises the m shortcut once the issue is on a project', async () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+        <HotkeyNames />
+      </Providers>,
+    );
+
+    expect(await screen.findByTestId('hotkey-names')).toHaveTextContent('Change milestone');
   });
 });

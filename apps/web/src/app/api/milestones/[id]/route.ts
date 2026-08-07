@@ -1,4 +1,5 @@
 import { deleteMilestone, updateMilestone } from '@orbit/core';
+import { milestoneUpdateSchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, publish, readJson, routeId } from '@/lib/api/handler.ts';
 
 interface RouteParams {
@@ -9,7 +10,8 @@ export async function PATCH(request: Request, { params }: RouteParams): Promise<
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const id = routeId((await params).id, 'milestone');
-    const result = await updateMilestone(principal, id, await readJson(request));
+    const patch = milestoneUpdateSchema.parse(await readJson(request));
+    const result = await updateMilestone(principal, id, patch);
     await publish(result.actions);
     return { milestone: result.milestone };
   });

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { ProgressBar } from '@/features/charts/donut.tsx';
+import { formatDay } from '@/features/projects/dates.ts';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Milestone } from '@/lib/query/schemas.ts';
@@ -18,25 +19,14 @@ import {
   useUpdateMilestone,
 } from '@/lib/query/use-milestones.ts';
 
-export interface MilestoneProgressView {
-  readonly scope: number;
-  readonly completed: number;
-}
-
 export interface MilestoneBoardProps {
   readonly projectId: string;
   readonly milestones: readonly Milestone[];
-  readonly progress: Readonly<Record<string, MilestoneProgressView>>;
   readonly canManage: boolean;
 }
 
 function formatDate(value: string | null): string {
-  if (value === null) return 'No target';
-  return new Date(value).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDay(value, { withYear: true, missing: 'No target' });
 }
 
 function draftFrom(milestone: Milestone): MilestoneFormValues {
@@ -135,7 +125,6 @@ function MilestoneForm({
 
 function MilestoneRow({
   milestone,
-  progress,
   canManage,
   index,
   total,
@@ -145,7 +134,6 @@ function MilestoneRow({
   busy,
 }: {
   readonly milestone: Milestone;
-  readonly progress: MilestoneProgressView;
   readonly canManage: boolean;
   readonly index: number;
   readonly total: number;
@@ -162,15 +150,15 @@ function MilestoneRow({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-dense text-text">{milestone.name}</span>
         <span className="text-2xs text-faint tabular">
-          {progress.completed}/{progress.scope} · {formatDate(milestone.targetDate)}
+          {milestone.completed}/{milestone.scope} · {formatDate(milestone.targetDate)}
         </span>
       </div>
       {milestone.description.length === 0 ? null : (
         <p className="text-muted text-xs">{milestone.description}</p>
       )}
       <ProgressBar
-        completed={progress.completed}
-        scope={progress.scope}
+        completed={milestone.completed}
+        scope={milestone.scope}
         label={`${milestone.name} completion`}
       />
       {canManage ? (
@@ -225,14 +213,7 @@ function MilestoneRow({
   );
 }
 
-const NO_PROGRESS: MilestoneProgressView = { scope: 0, completed: 0 };
-
-export function MilestoneBoard({
-  projectId,
-  milestones,
-  progress,
-  canManage,
-}: MilestoneBoardProps) {
+export function MilestoneBoard({ projectId, milestones, canManage }: MilestoneBoardProps) {
   const query = useMilestones(projectId);
   const create = useCreateMilestone(projectId);
   const update = useUpdateMilestone(projectId);
@@ -328,7 +309,6 @@ export function MilestoneBoard({
               <MilestoneRow
                 key={milestone.id}
                 milestone={milestone}
-                progress={progress[milestone.id] ?? NO_PROGRESS}
                 canManage={canManage}
                 index={index}
                 total={rows.length}

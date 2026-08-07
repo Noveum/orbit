@@ -18,6 +18,8 @@ function milestone(id: string, name: string, sortOrder: number): Milestone {
     description: '',
     targetDate: null,
     sortOrder,
+    scope: 0,
+    completed: 0,
   };
 }
 
@@ -74,12 +76,7 @@ function Providers({ children }: { children: ReactNode }) {
 function mountBoard(canManage = true) {
   render(
     <Providers>
-      <MilestoneBoard
-        projectId={PROJECT_ID}
-        milestones={served}
-        progress={{}}
-        canManage={canManage}
-      />
+      <MilestoneBoard projectId={PROJECT_ID} milestones={served} canManage={canManage} />
     </Providers>,
   );
 }
@@ -192,6 +189,15 @@ describe('MilestoneBoard', () => {
     expect(firstWrite()).toMatchObject({
       body: { milestoneIds: ['milestone_1', 'milestone_3', 'milestone_2'] },
     });
+  });
+
+  it('shows the counts the server sent rather than any it worked out itself', async () => {
+    served = [{ ...milestone('milestone_1', 'One', 1), scope: 7, completed: 3 }];
+    mountBoard();
+
+    const row = await screen.findByTestId('milestone-milestone_1');
+    await waitFor(() => expect(row).toHaveTextContent('3/7'));
+    expect(screen.getByLabelText('One completion')).toHaveAttribute('aria-valuenow', '43');
   });
 
   it('cannot move the first one up or the last one down', () => {

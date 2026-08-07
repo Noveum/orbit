@@ -7,6 +7,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { listProjectSummaries } from '@/features/projects/data.ts';
+import { formatDay } from '@/features/projects/dates.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { NewProjectDialog } from '@/features/projects/new-project-dialog.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -16,8 +17,7 @@ import { rowHover } from '@/lib/interaction.ts';
 export const metadata: Metadata = { title: 'Projects' };
 
 function formatDate(value: string | null): string {
-  if (value === null) return 'No target';
-  return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return formatDay(value, { withYear: false, missing: 'No target' });
 }
 
 export default async function ProjectsPage() {

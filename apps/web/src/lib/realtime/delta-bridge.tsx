@@ -168,6 +168,7 @@ function routeAction(
     patchIssueCaches(client, action);
     roots.counts = true;
     roots.standupBoard = true;
+    roots.milestones = true;
     return;
   }
   if (action.model === 'comment') {

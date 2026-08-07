@@ -1,10 +1,7 @@
 import { can } from '@orbit/shared/policy';
 import { notFound } from 'next/navigation';
 import { findProjectDetail } from '@/features/projects/data.ts';
-import {
-  MilestoneBoard,
-  type MilestoneProgressView,
-} from '@/features/projects/milestone-board.tsx';
+import { MilestoneBoard } from '@/features/projects/milestone-board.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import type { Milestone } from '@/lib/query/schemas.ts';
 
@@ -25,11 +22,9 @@ export default async function ProjectOverviewPage({ params }: PageProps) {
     description: milestone.description,
     targetDate: milestone.targetDate,
     sortOrder: milestone.sortOrder,
+    scope: milestone.scope,
+    completed: milestone.completed,
   }));
-  const progress: Record<string, MilestoneProgressView> = {};
-  for (const milestone of detail.milestones) {
-    progress[milestone.id] = { scope: milestone.scope, completed: milestone.completed };
-  }
 
   return (
     <>
@@ -43,7 +38,6 @@ export default async function ProjectOverviewPage({ params }: PageProps) {
       <MilestoneBoard
         projectId={detail.summary.id}
         milestones={milestones}
-        progress={progress}
         canManage={can(principal, 'milestone:manage')}
       />
     </>

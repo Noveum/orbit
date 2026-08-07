@@ -415,6 +415,8 @@ export const milestoneSchema = z.object({
   description: z.string().default(''),
   targetDate: z.string().nullable(),
   sortOrder: z.number(),
+  scope: z.number().default(0),
+  completed: z.number().default(0),
 });
 
 export type Milestone = z.infer<typeof milestoneSchema>;

@@ -487,6 +487,28 @@ describe('milestones over mcp', () => {
     expect(errorPayload(failed).code).toBe('not_found');
   });
 
+  it('refuses a name that two milestones on the project share, rather than guessing', async () => {
+    const project = await projectWithMilestones('Twice named', ['Cut over', 'Cut over']);
+    const listed = milestonesOf(await admin.result('list_milestones', { project }));
+    const [first, second] = listed;
+    if (first === undefined || second === undefined) throw new Error('missing seeded milestones');
+    const issue = await newIssue('Ambiguous target', { project });
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Cut over',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('conflict');
+
+    const resolved = await admin.result('update_issue', {
+      issue: issue.identifier,
+      milestone: second.id,
+    });
+    expect(issueOf(resolved).milestoneId).toBe(second.id);
+  });
+
   it('refuses a milestone on an issue that is on no project', async () => {
     await projectWithMilestones('Unreachable milestone', ['Orphaned']);
     const issue = await newIssue('No project at all');

@@ -16,7 +16,8 @@ mock.module('@orbit/core', () => ({
   },
 }));
 
-const { createMilestone, createProject, createTeam, listMilestones } = coreModule;
+const { createIssue, createMilestone, createProject, createTeam, listMilestones, updateIssue } =
+  coreModule;
 const { addMember, createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
 
 type Workspace = Awaited<ReturnType<typeof createWorkspace>>;
@@ -45,7 +46,14 @@ const milestoneShape = z.object({
   milestone: z.object({ id: z.string(), name: z.string(), projectId: z.string() }),
 });
 const listShape = z.object({
-  milestones: z.array(z.object({ id: z.string(), name: z.string() })),
+  milestones: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      scope: z.number(),
+      completed: z.number(),
+    }),
+  ),
 });
 const errorShape = z.object({ error: z.object({ code: z.string(), message: z.string() }) });
 
@@ -188,6 +196,41 @@ describe('GET /api/projects/[id]/milestones', () => {
     const payload = listShape.parse(await response.json());
 
     expect(payload.milestones.map((row) => row.name)).toEqual(['One', 'Two', 'Three']);
+  });
+
+  it('counts the issues on each milestone on the server, never in the browser', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Counted',
+      teamIds: [workspace.teamId],
+    });
+    const { milestone } = await createMilestone(workspace.admin, {
+      projectId: project.id,
+      name: 'Alpha',
+    });
+    const done = workspace.states.find((state) => state.category === 'completed');
+    if (done === undefined) throw new Error('missing a completed state');
+
+    for (const title of ['Open work', 'Finished work']) {
+      const { issue } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title,
+        projectId: project.id,
+        milestoneId: milestone.id,
+      });
+      if (title === 'Finished work') {
+        await updateIssue(workspace.admin, issue.id, { stateId: done.id });
+      }
+    }
+
+    const response = await listRoute.GET(
+      new Request('http://localhost:3000/api/projects/x/milestones'),
+      params(project.id),
+    );
+    const payload = listShape.parse(await response.json());
+
+    expect(payload.milestones).toEqual([
+      expect.objectContaining({ id: milestone.id, scope: 2, completed: 1 }),
+    ]);
   });
 
   it('hides a project the reader teams do not reach', async () => {

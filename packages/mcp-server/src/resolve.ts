@@ -12,7 +12,7 @@ import {
   type ProjectRow,
   type TeamRow,
 } from '@orbit/core';
-import { notFound } from '@orbit/shared/errors';
+import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 
 function matches(candidates: readonly (string | null | undefined)[], ref: string): boolean {
@@ -88,7 +88,16 @@ export async function resolveMilestone(
   ref: string,
 ): Promise<MilestoneRow> {
   const milestones = await listMilestones(principal, projectId);
-  const found = pick(milestones, ref, (milestone) => [milestone.id, milestone.name]);
+  const byId = pick(milestones, ref, (milestone) => [milestone.id]);
+  if (byId !== undefined) return byId;
+  const byName = milestones.filter((milestone) => matches([milestone.name], ref));
+  if (byName.length > 1) {
+    throw conflict(
+      `That project has ${byName.length} milestones named "${ref}". Name it by id instead.`,
+      { details: { milestoneIds: byName.map((milestone) => milestone.id) } },
+    );
+  }
+  const found = byName[0];
   if (found === undefined) throw notFound(`No milestone matches "${ref}" on that project.`);
   return found;
 }
