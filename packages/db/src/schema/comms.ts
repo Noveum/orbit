@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -14,7 +15,7 @@ import {
 import { user } from './auth.ts';
 import { comment } from './content.ts';
 import { organization, team } from './org.ts';
-import { issue, workflowState } from './work.ts';
+import { issue, project, workflowState } from './work.ts';
 
 export const notificationReason = pgEnum('notification_reason', [
   'assigned',
@@ -131,6 +132,23 @@ export const integration = pgTable(
   ],
 );
 
+export const integrationOauthState = pgTable(
+  'integration_oauth_state',
+  {
+    nonce: text('nonce').primaryKey(),
+    provider: text('provider').notNull(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('integration_oauth_state_expires_idx').on(table.expiresAt)],
+);
+
 export const integrationChannel = pgTable(
   'integration_channel',
   {
@@ -155,6 +173,92 @@ export const integrationChannel = pgTable(
   ],
 );
 
+export const githubInstallation = pgTable(
+  'github_installation',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    integrationId: text('integration_id')
+      .notNull()
+      .references(() => integration.id, { onDelete: 'cascade' }),
+    installationId: text('installation_id').notNull(),
+    accountLogin: text('account_login').notNull().default(''),
+    accountId: text('account_id').notNull().default(''),
+    accountType: text('account_type').notNull().default('Organization'),
+    repositorySelection: text('repository_selection').notNull().default('selected'),
+    status: text('status').notNull().default('active'),
+    connectedById: text('connected_by_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    repositoriesSyncedAt: timestamp('repositories_synced_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_installation_installation_unique').on(table.installationId),
+    index('github_installation_org_idx').on(table.organizationId),
+  ],
+);
+
+export const githubRepository = pgTable(
+  'github_repository',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    installationRowId: text('installation_row_id')
+      .notNull()
+      .references(() => githubInstallation.id, { onDelete: 'cascade' }),
+    repositoryId: text('repository_id').notNull(),
+    fullName: text('full_name').notNull(),
+    name: text('name').notNull().default(''),
+    ownerLogin: text('owner_login').notNull().default(''),
+    private: boolean('private').notNull().default(false),
+    archived: boolean('archived').notNull().default(false),
+    defaultBranch: text('default_branch').notNull().default('main'),
+    htmlUrl: text('html_url').notNull().default(''),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_repository_unique').on(table.installationRowId, table.repositoryId),
+    index('github_repository_org_idx').on(table.organizationId),
+  ],
+);
+
+export const githubRepositoryLink = pgTable(
+  'github_repository_link',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositoryRowId: text('repository_row_id')
+      .notNull()
+      .references(() => githubRepository.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
+    linkedById: text('linked_by_id').references(() => user.id, { onDelete: 'set null' }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_repository_link_project_unique')
+      .on(table.repositoryRowId, table.projectId)
+      .where(sql`${table.projectId} is not null`),
+    uniqueIndex('github_repository_link_workspace_unique')
+      .on(table.repositoryRowId)
+      .where(sql`${table.projectId} is null`),
+    index('github_repository_link_project_idx').on(table.projectId),
+    index('github_repository_link_org_idx').on(table.organizationId),
+  ],
+);
+
 export const githubRepositorySync = pgTable(
   'github_repository_sync',
   {
@@ -165,9 +269,7 @@ export const githubRepositorySync = pgTable(
     integrationId: text('integration_id')
       .notNull()
       .references(() => integration.id, { onDelete: 'cascade' }),
-    teamId: text('team_id')
-      .notNull()
-      .references(() => team.id, { onDelete: 'cascade' }),
+    teamId: text('team_id').references(() => team.id, { onDelete: 'cascade' }),
     repositoryId: text('repository_id').notNull(),
     repositoryName: text('repository_name').notNull(),
     installationId: text('installation_id').notNull().default(''),

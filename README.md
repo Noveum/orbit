@@ -4,11 +4,11 @@
 
 # Orbit
 
-**A free, realtime, keyboard-first work tracker.**
+**A free, realtime, keyboard-first task manager.**
 
 Issues, boards, sprints, projects and docs that update the moment anyone changes
-anything. The polish you expect from paid tooling, with no per-seat bill at the
-end of the month.
+anything. The polish you expect from a paid task manager, with no per-seat bill
+at the end of the month.
 
 **No pricing. No billing. No paid tiers. Not now, not later.**
 
@@ -35,15 +35,15 @@ end of the month.
 
 ## Why Orbit exists
 
-The tools teams use to track work cost around 18 dollars per person per month.
-For a team of twenty that is over four thousand pounds a year to keep a list of
-tasks in order.
+A task manager costs around 18 dollars per person per month. For a team of
+twenty that is over four thousand dollars a year to keep a list of tasks in
+order.
 
 The alternatives were not a real answer. The free ones are slow and feel like
 filling in a form. The self-hosted ones are heavy to run. The cheap ones are
 cheap for a reason, and every one of them eventually asks for a card.
 
-So we built the tracker we wanted and made it free. Not free-with-an-asterisk,
+So we built the task manager we wanted, made it free and open-sourced it. Not free-with-an-asterisk,
 not free-for-three-users, not free-until-we-raise. There is no billing code in
 this repository and there is no plan to add any.
 
@@ -269,7 +269,7 @@ If Orbit is useful to you, a star helps other people find it.
 [Noveum AI](https://noveum.ai) builds evaluation and observability tooling for AI
 systems, and pays for Orbit's hosting and engineering time. Orbit is not a
 funnel for it. There is no upsell, no "contact sales" and no gated feature. We
-needed a tracker, we could not find a free one that was good, so we built one
+needed a task manager, we could not find a free one that was good, so we built one
 and gave it away.
 
 ## License

@@ -1,22 +1,10 @@
 import { db } from '@orbit/db';
-import { ensureGithubInstallation, ensureSlackIntegration } from '@orbit/services';
+import { ensureSlackIntegration } from '@orbit/services';
 import { internal } from '@orbit/shared/errors';
 import { z } from 'zod';
 
 const SLACK_OAUTH_ACCESS_URL = 'https://slack.com/api/oauth.v2.access';
 const SLACK_REQUEST_TIMEOUT_MS = 10_000;
-
-export async function persistGithubInstallation(input: {
-  readonly organizationId: string;
-  readonly userId: string;
-  readonly installationId: string;
-}): Promise<void> {
-  await ensureGithubInstallation(db, {
-    organizationId: input.organizationId,
-    connectedById: input.userId,
-    installationId: input.installationId,
-  });
-}
 
 const oauthAccessSchema = z.object({
   ok: z.boolean(),

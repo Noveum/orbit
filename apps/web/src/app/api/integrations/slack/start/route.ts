@@ -2,7 +2,8 @@ import { validationFailed } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
 import { apiContext, handleRoute } from '@/lib/api/handler.ts';
 import { absoluteUrl, slackAppConfig, slackConnectReady } from '@/lib/env.ts';
-import { integrationStateSecret, signOAuthState } from '@/lib/integrations/oauth-state.ts';
+import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
+import { issueOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 
 const SLACK_BOT_SCOPES = 'channels:read,groups:read,chat:write,links:read,commands';
 
@@ -12,7 +13,7 @@ export async function GET(): Promise<Response> {
     assertCan(principal, 'integration:manage');
     if (!slackConnectReady()) throw validationFailed('The Slack app is not configured yet.');
 
-    const state = signOAuthState(
+    const state = await issueOAuthState(
       { org: principal.organizationId, user: principal.userId, provider: 'slack' },
       integrationStateSecret(),
     );

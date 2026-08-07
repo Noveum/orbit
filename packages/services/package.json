@@ -8,6 +8,7 @@
     "./markdown": "./src/markdown/index.ts",
     "./storage": "./src/storage/index.ts",
     "./email": "./src/email/index.ts",
+    "./github": "./src/github/index.ts",
     "./notifications": "./src/notifications/index.ts",
     "./slack": "./src/slack/index.ts"
   },
