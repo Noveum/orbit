@@ -36,14 +36,14 @@ at the end of the month.
 ## Why Orbit exists
 
 A task manager costs around 18 dollars per person per month. For a team of
-twenty that is over four thousand pounds a year to keep a list of tasks in
+twenty that is over four thousand dollars a year to keep a list of tasks in
 order.
 
 The alternatives were not a real answer. The free ones are slow and feel like
 filling in a form. The self-hosted ones are heavy to run. The cheap ones are
 cheap for a reason, and every one of them eventually asks for a card.
 
-So we built the task manager we wanted, made it free and open sourced it. Not free-with-an-asterisk,
+So we built the task manager we wanted, made it free and open-sourced it. Not free-with-an-asterisk,
 not free-for-three-users, not free-until-we-raise. There is no billing code in
 this repository and there is no plan to add any.
 
