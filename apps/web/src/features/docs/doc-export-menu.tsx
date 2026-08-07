@@ -1,13 +1,11 @@
 'use client';
 
 import { Download, FileDown, Printer } from 'lucide-react';
-import { Button } from '@/components/ui/button.tsx';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { exportedMarkdown, fileNameFor } from './doc-transfer.ts';
@@ -29,18 +27,16 @@ function download(name: string, body: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function DocExportMenu({ title, content }: DocExportMenuProps) {
+export function DocExportItems({ title, content }: DocExportMenuProps) {
   const { toast } = useToast();
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label="Export doc" className="size-7 px-0">
-          <Download className="size-4" aria-hidden="true" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Export</DropdownMenuLabel>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid="doc-export">
+        <Download className="size-3.5" aria-hidden="true" />
+        Export
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
         <DropdownMenuItem
           data-testid="doc-export-markdown"
           onSelect={() => {
@@ -59,7 +55,7 @@ export function DocExportMenu({ title, content }: DocExportMenuProps) {
           <Printer className="size-3.5" aria-hidden="true" />
           PDF, through print
         </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }

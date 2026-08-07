@@ -1,8 +1,6 @@
 'use client';
 
 import { relativeTime } from '@orbit/shared/utils';
-import { History } from 'lucide-react';
-import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Dialog,
@@ -10,7 +8,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import type { DocVersion } from '@/lib/query/schemas.ts';
@@ -19,20 +16,16 @@ import { useDocVersions, useRestoreDocVersion } from '@/lib/query/use-docs.ts';
 export interface DocHistoryProps {
   readonly docId: string;
   readonly canWrite: boolean;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }
 
-export function DocHistory({ docId, canWrite }: DocHistoryProps) {
-  const [open, setOpen] = useState(false);
+export function DocHistory({ docId, canWrite, open, onOpenChange }: DocHistoryProps) {
   const versions = useDocVersions(docId, open);
   const restore = useRestoreDocVersion(docId);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label="Version history" className="size-7 px-0">
-          <History className="size-4" aria-hidden="true" />
-        </Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="doc-history">
         <DialogHeader>
           <DialogTitle>Version history</DialogTitle>

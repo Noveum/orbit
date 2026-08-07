@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import userEvent from '@testing-library/user-event';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { cleanup, render, screen, waitFor } from '@/test/render.tsx';
-import { DocExportMenu } from '../../../src/features/docs/doc-export-menu.tsx';
+import { DocExportItems } from '../../../src/features/docs/doc-export-menu.tsx';
 
 const createdUrl = 'blob:orbit/export';
 const anchors: { href: string; download: string; clicked: boolean }[] = [];
@@ -50,15 +55,28 @@ afterEach(() => {
 
 const user = userEvent.setup({ pointerEventsCheck: 0 });
 
+function exportMenu(title: string, content: string) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger>More</DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DocExportItems title={title} content={content} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 async function openMenu(): Promise<void> {
-  await user.click(screen.getByRole('button', { name: /export doc/i }));
+  await user.click(screen.getByRole('button', { name: 'More' }));
+  await screen.findByTestId('doc-export');
+  await user.keyboard('{ArrowDown}{ArrowRight}');
   await waitFor(() => expect(screen.getByTestId('doc-export-markdown')).toBeTruthy());
 }
 
 describe('exporting a doc', () => {
   it('downloads markdown named after the doc', async () => {
     trackAnchors();
-    render(<DocExportMenu title="Deploy runbook" content="How we ship." />);
+    render(exportMenu('Deploy runbook', 'How we ship.'));
     await openMenu();
 
     await user.click(screen.getByTestId('doc-export-markdown'));
@@ -72,7 +90,7 @@ describe('exporting a doc', () => {
   it('hands PDF to the browser print dialog rather than rendering one', async () => {
     const print = mock(() => undefined);
     window.print = print as unknown as typeof window.print;
-    render(<DocExportMenu title="Deploy runbook" content="How we ship." />);
+    render(exportMenu('Deploy runbook', 'How we ship.'));
     await openMenu();
 
     await user.click(screen.getByTestId('doc-export-pdf'));

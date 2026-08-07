@@ -130,7 +130,7 @@ async function renderSurface(favorite = false) {
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  await screen.findByLabelText('Export doc');
+  await screen.findByTestId('doc-overflow');
 }
 
 beforeEach(() => {

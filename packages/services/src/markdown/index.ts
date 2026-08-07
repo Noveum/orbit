@@ -18,7 +18,20 @@ const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: fa
     code({ text, lang }): string {
       const alias = languageAlias(lang ?? '');
       const classes = alias.length === 0 ? 'hljs' : `hljs language-${escapeHtml(alias)}`;
-      return `<pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre>\n`;
+      const language = alias.length === 0 ? '' : ` data-code-language="${escapeHtml(alias)}"`;
+      return `<div data-code-block${language}><pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre></div>\n`;
+    },
+    table(token): string {
+      const header = token.header
+        .map((cell) => `<th>${this.parser.parseInline(cell.tokens)}</th>`)
+        .join('');
+      const body = token.rows
+        .map(
+          (row) =>
+            `<tr>${row.map((cell) => `<td>${this.parser.parseInline(cell.tokens)}</td>`).join('')}</tr>`,
+        )
+        .join('');
+      return `<div data-table-scroll><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
     },
   },
 });

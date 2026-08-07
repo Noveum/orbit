@@ -36,6 +36,9 @@ const ALLOWED_TAGS = new Set([
   'sub',
   'details',
   'summary',
+  'div',
+  'figure',
+  'figcaption',
 ]);
 
 const DROP_WITH_CONTENT = new Set([
@@ -157,8 +160,11 @@ function isSafeUrl(raw: string): boolean {
 
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
+const LAYOUT_DATA_ATTR = new Set(['data-table-scroll', 'data-code-block', 'data-code-language']);
+
 function attributeAllowed(tag: string, key: string): boolean {
   if (key === 'id') return HEADING_TAGS.has(tag);
+  if (LAYOUT_DATA_ATTR.has(key)) return tag === 'div' || tag === 'span';
   return ALLOWED_ATTR.has(key);
 }
 
