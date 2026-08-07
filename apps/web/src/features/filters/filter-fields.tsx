@@ -5,6 +5,8 @@ import {
   FILTER_PROPERTY_LABELS,
   LINK_FILTER_LABELS,
   LINK_FILTER_VALUES,
+  NAMED_DATE_VALUES,
+  type NamedDateValue,
   RELATION_FILTER_LABELS,
   RELATION_FILTER_VALUES,
   UNSET_FILTER_VALUE,
@@ -78,9 +80,9 @@ const FIELD_ICONS: Record<FilterProperty, LucideIcon> = {
   stateAge: History,
 };
 
-export const DATE_OPTION_VALUES = ['none', 'any', 'overdue', 'today', 'this_week'] as const;
+export const DATE_OPTION_VALUES = NAMED_DATE_VALUES;
 
-const DATE_OPTION_LABELS: Record<(typeof DATE_OPTION_VALUES)[number], string> = {
+const DATE_OPTION_LABELS: Record<NamedDateValue, string> = {
   none: 'Not set',
   any: 'Set',
   overdue: 'Before today',

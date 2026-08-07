@@ -1,9 +1,14 @@
 'use client';
 
-import { conditionsOf, VIEW_VISIBILITY_LABELS } from '@orbit/shared/filters';
-import { Columns3, LayoutList, Lock, Pencil, Star, Trash2 } from 'lucide-react';
+import {
+  conditionsOf,
+  isVirtualViewId,
+  VIEW_VISIBILITY_LABELS,
+  VIRTUAL_VIEW_DESCRIPTIONS,
+} from '@orbit/shared/filters';
+import { Columns3, LayoutList, Lock, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Dialog,
@@ -13,15 +18,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog.tsx';
-import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { buildFilterFields, describeCondition } from '@/features/filters/filter-fields.tsx';
-import { VIEW_PARAM, withViewParam } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
-import { viewConfigFromState, viewConfigSearch } from '@/features/filters/view-config.ts';
+import type { AudienceTeam } from '@/features/filters/view-visibility.ts';
+import { audienceTeam } from '@/features/filters/view-visibility.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import { CreateViewDialog } from '@/features/views/create-view-dialog.tsx';
+import { viewHref, viewLayoutMode } from '@/features/views/view-href.ts';
 import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
 import { cn } from '@/lib/cn.ts';
+import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { View } from '@/lib/query/schemas.ts';
 import {
   useDeleteView,
@@ -30,13 +37,19 @@ import {
   useViews,
 } from '@/lib/query/use-views.ts';
 
-function layoutMode(layout: string): ViewLayoutMode {
-  return layout === 'board' ? 'board' : 'list';
+export function visibilityLabel(view: View, teams: readonly AudienceTeam[]): string {
+  if (view.virtual) return 'Everyone';
+  if (view.filter.visibility !== 'team') return VIEW_VISIBILITY_LABELS[view.filter.visibility];
+  const team = audienceTeam(teams, view.filter.teamId);
+  return team === null ? VIEW_VISIBILITY_LABELS.team : `Everyone on ${team.name}`;
 }
 
 export function ViewsPage() {
   const workspace = useWorkspace();
   const views = useViews();
+  const [creating, setCreating] = useState(false);
+
+  useHotkey('alt+v', () => setCreating(true), { label: 'New view', section: 'View' });
 
   const rows = views.data ?? [];
   const builtIn = rows.filter((view) => view.virtual);
@@ -48,57 +61,102 @@ export function ViewsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 px-6 py-6" data-testid="views-page">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-semibold text-lg text-text">Views</h1>
-        <p className="text-muted text-xs">
-          Saved filters, grouping and display options. Yours stay private unless you share them.
-        </p>
+    <div className="flex flex-col gap-7 px-6 py-6" data-testid="views-page">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-semibold text-lg text-text">Views</h1>
+          <p className="text-muted text-xs">
+            Saved filters, grouping and display options. Yours stay private unless you share them.
+          </p>
+        </div>
+        <Button variant="primary" data-testid="new-view" onClick={() => setCreating(true)}>
+          <Plus className="size-3.5" aria-hidden="true" />
+          New view
+        </Button>
       </header>
 
-      <ViewSection title="Built in" views={builtIn} />
-      <ViewSection title="Your views" views={mine} />
-      <ViewSection title="Shared with you" views={shared} />
+      <ViewSection
+        title="Built in"
+        description="Always here, for everyone in the workspace."
+        views={builtIn}
+      />
+      <ViewSection
+        title="Your views"
+        description="Only you see these until you share them."
+        views={mine}
+        empty={<NoSavedViews onCreate={() => setCreating(true)} />}
+      />
+      <ViewSection
+        title="Shared with you"
+        description="Saved by teammates and shared with your workspace or your team."
+        views={shared}
+      />
 
-      {mine.length === 0 && shared.length === 0 ? (
-        <EmptyState
-          icon={<LayoutList strokeWidth={1.75} aria-hidden="true" />}
-          title="No saved views yet"
-          description="Filter a team's issues, then press Alt+V to keep that setup as a view."
-        />
-      ) : null}
+      <CreateViewDialog open={creating} onOpenChange={setCreating} />
     </div>
   );
 }
 
-function ViewSection({ title, views }: { title: string; views: readonly View[] }) {
-  if (views.length === 0) return null;
+function NoSavedViews({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div
+      className="flex flex-col items-start gap-2 rounded-md border border-border border-dashed px-4 py-5"
+      data-testid="no-saved-views"
+    >
+      <p className="text-muted text-xs">
+        You have not saved a view yet. Build one here, or filter any issue list and press Alt+V.
+      </p>
+      <Button size="sm" data-testid="new-view-empty" onClick={onCreate}>
+        <Plus className="size-3.5" aria-hidden="true" />
+        New view
+      </Button>
+    </div>
+  );
+}
+
+interface ViewSectionProps {
+  readonly title: string;
+  readonly description: string;
+  readonly views: readonly View[];
+  readonly empty?: ReactNode;
+}
+
+function ViewSection({ title, description, views, empty }: ViewSectionProps) {
+  if (views.length === 0 && empty === undefined) return null;
+
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="font-medium text-2xs text-faint uppercase tracking-wide">{title}</h2>
-      <table className="w-full border-collapse text-dense">
-        <thead>
-          <tr className="border-border border-b text-left text-2xs text-faint">
-            <th scope="col" className="py-1.5 pr-3 font-medium">
-              Name
-            </th>
-            <th scope="col" className="hidden py-1.5 pr-3 font-medium sm:table-cell">
-              Owner
-            </th>
-            <th scope="col" className="hidden py-1.5 pr-3 font-medium md:table-cell">
-              Visibility
-            </th>
-            <th scope="col" className="py-1.5 text-right font-medium">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {views.map((view) => (
-            <ViewRow key={view.id} view={view} />
-          ))}
-        </tbody>
-      </table>
+      <div className="flex flex-col gap-0.5">
+        <h2 className="font-medium text-2xs text-faint uppercase tracking-wide">{title}</h2>
+        <p className="text-2xs text-faint">{description}</p>
+      </div>
+      {views.length === 0 ? (
+        empty
+      ) : (
+        <table className="w-full border-collapse text-dense">
+          <thead>
+            <tr className="border-border border-b text-left text-2xs text-faint">
+              <th scope="col" className="py-1.5 pr-3 font-medium">
+                Name
+              </th>
+              <th scope="col" className="hidden py-1.5 pr-3 font-medium sm:table-cell">
+                Owner
+              </th>
+              <th scope="col" className="hidden py-1.5 pr-3 font-medium md:table-cell">
+                Visibility
+              </th>
+              <th scope="col" className="py-1.5 text-right font-medium">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {views.map((view) => (
+              <ViewRow key={view.id} view={view} />
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   );
 }
@@ -112,26 +170,10 @@ function ViewRow({ view }: { view: View }) {
   const [confirming, setConfirming] = useState(false);
   const [name, setName] = useState(view.name);
 
-  const filterTeamId = view.filter.teamId;
-  const team =
-    workspace.teams.find((entry) => entry.id === filterTeamId) ?? workspace.teams[0] ?? null;
-  const layout = layoutMode(view.layout);
-  const config = viewConfigFromState(view.filter);
+  const layout = viewLayoutMode(view.layout);
   const owner = workspace.members.find((member) => member.id === view.ownerId);
   const editable = !(view.virtual || view.locked) && view.ownerId === workspace.userId;
-
-  const href = ((): string => {
-    if (view.id === 'virtual:standup') {
-      return '/standup';
-    }
-    if (team === null) {
-      return `/views?${VIEW_PARAM}=${encodeURIComponent(view.id)}`;
-    }
-    return `/team/${team.key.toLowerCase()}/${layout === 'board' ? 'board' : 'issues'}${withViewParam(
-      viewConfigSearch(config, layout),
-      view.id,
-    )}`;
-  })();
+  const href = viewHref(view, workspace.teams);
 
   const submitRename = () => {
     const trimmed = name.trim();
@@ -171,7 +213,7 @@ function ViewRow({ view }: { view: View }) {
               >
                 {view.name}
               </Link>
-              {view.locked ? (
+              {view.locked && !view.virtual ? (
                 <Lock className="size-3 text-faint" aria-label="Locked" role="img" />
               ) : null}
             </span>
@@ -183,7 +225,7 @@ function ViewRow({ view }: { view: View }) {
         {view.virtual ? 'Built in' : (owner?.name ?? 'Someone else')}
       </td>
       <td className="hidden py-2 pr-3 align-top text-muted md:table-cell">
-        {VIEW_VISIBILITY_LABELS[view.filter.visibility]}
+        {visibilityLabel(view, workspace.teams)}
       </td>
       <td className="py-2 align-top">
         <div className="flex items-center justify-end gap-1">
@@ -242,6 +284,11 @@ function ViewRow({ view }: { view: View }) {
   );
 }
 
+function builtInDescription(view: View): string | null {
+  if (!isVirtualViewId(view.id)) return null;
+  return VIRTUAL_VIEW_DESCRIPTIONS[view.id];
+}
+
 function ViewSummary({ view, layout }: { view: View; layout: ViewLayoutMode }) {
   const workspace = useWorkspace();
   const conditions = conditionsOf(view.filter.filter);
@@ -252,6 +299,11 @@ function ViewSummary({ view, layout }: { view: View; layout: ViewLayoutMode }) {
       ]),
     [workspace, view.filter.teamId, conditions],
   );
+
+  const description = builtInDescription(view);
+  if (description !== null) {
+    return <p className="text-2xs text-faint">{description}</p>;
+  }
 
   return (
     <p className="flex flex-wrap items-center gap-1.5 text-2xs text-faint">

@@ -7,7 +7,8 @@
 **A free, realtime, keyboard-first work tracker.**
 
 Issues, boards, sprints, projects and docs that update the moment anyone changes
-anything. Linear-grade feel, no per-seat bill at the end of the month.
+anything. The polish you expect from paid tooling, with no per-seat bill at the
+end of the month.
 
 **No pricing. No billing. No paid tiers. Not now, not later.**
 
@@ -34,8 +35,9 @@ anything. Linear-grade feel, no per-seat bill at the end of the month.
 
 ## Why Orbit exists
 
-Linear costs 18 dollars per person per month. For a team of twenty that is a
-little over four thousand pounds a year to keep a list of tasks in order.
+The tools teams use to track work cost around 18 dollars per person per month.
+For a team of twenty that is over four thousand pounds a year to keep a list of
+tasks in order.
 
 The alternatives were not a real answer. The free ones are slow and feel like
 filling in a form. The self-hosted ones are heavy to run. The cheap ones are
