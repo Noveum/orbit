@@ -87,8 +87,8 @@ grounds that an unprioritised issue is not urgent.
 ### Relations
 
 Issues can block, be blocked by, relate to, or duplicate each other. Blocking is
-the one that changes behaviour: blocked issues surface in standup, because that
-is the moment someone can unblock them.
+the one that changes behaviour: an issue blocked by another is flagged wherever
+it appears, so the block is visible before anyone plans around it.
 
 ### Estimates
 
@@ -97,9 +97,41 @@ by points, and analytics shows both.
 
 ## Labels
 
-Workspace-wide tags with a colour. Labels cross teams, which is what makes them
+Tags with a colour. A label is workspace wide by default, which is what makes it
 useful for things like `Bug`, `Performance` or `Docs`, and they are the main
 thing filters and saved views are built from.
+
+A label can instead be pinned to one team. A team label is only visible to that
+team, only pushed over realtime to that team, and only attachable to that team's
+issues. Pinning a workspace label to a team also takes it off the issues of every
+other team, so the rule holds for issues that already carried it rather than only
+for the next edit. Widening a team label back to the workspace touches no issue.
+Carrying an issue to another team works the same way round: the labels the new
+team cannot use come off it as it lands, and the workspace-wide ones stay.
+Manage both under **Settings**, **Labels**.
+
+Two labels may share a name when they live in different places, a workspace
+`Regression` alongside a team `Regression`. The API and the settings screen take
+ids, so that is unambiguous, but a name given to an MCP tool is not: when more
+than one label answers to it, the tool refuses and lists the ids rather than
+picking one.
+
+## Workflow states
+
+The columns of a team board. Each one belongs to a single team, carries a
+position that fixes its place in the order, and carries a **category**, one of
+`triage`, `backlog`, `unstarted`, `started`, `review`, `completed` or `canceled`.
+
+The category is the part the rest of Orbit reads. It is what decides whether an
+issue counts as open on a sprint burndown, when `startedAt` and `completedAt`
+are stamped, and which bucket the standup board puts it in. Renaming a status or
+moving it in the order leaves the category alone; changing the category re-dates
+every issue sitting in that status, on the server, in the same transaction. Those
+issues did not move, so how long they have sat where they are is left alone.
+
+Deleting a status that still holds issues is refused until you name the status
+those issues move to, and a team always keeps at least one status. Manage them
+under **Settings**, **Workflow**.
 
 ## Sprints and cycles
 
@@ -148,15 +180,17 @@ end up here.
 
 ## Standup
 
-A board rather than a meeting. Each person gets a column showing what they
-finished, what they are on, and what is blocking them, built from the issues
-themselves rather than from what someone remembers to type.
+A Kanban board of the whole workspace, with everyone's name in a row of tiles
+along the top. Click a name and the board filters to that person. Click it again,
+or click Everyone, and you are back to the whole team.
 
-There is a timer, a rotation so the same person does not always go first, and
-blockers can be raised and resolved as first class things.
+That is the entire feature. There is no meeting object, no turn order and no
+timer, because the meeting already has a facilitator and they do not need
+software to tell them whose turn it is. What they need is one screen that shows
+what a given person is carrying, in the order the work moves.
 
-Agents can run standup through the MCP server, which is how a bot can post it to
-Slack without anyone opening Orbit.
+Each tile carries a count of the open work for that person, so you can see who
+is loaded before anyone speaks.
 
 ## Views and filters
 

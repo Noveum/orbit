@@ -12,7 +12,6 @@ import {
   ISSUE_SUMMARY_ROOT,
   MILESTONES_ROOT,
   queryKeys,
-  STANDUP_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
@@ -213,16 +212,11 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[DOCS_ROOT], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
-  it('refreshes the counts, the standup board and the milestone counts for an issue delta', () => {
+  it('refreshes the counts and the milestone counts for an issue delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([
-      [ISSUE_SUMMARY_ROOT],
-      [ISSUE_FACETS_ROOT],
-      [STANDUP_ROOT],
-      [MILESTONES_ROOT],
-    ]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 
@@ -292,32 +286,7 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([
-      [ISSUE_SUMMARY_ROOT],
-      [ISSUE_FACETS_ROOT],
-      [STANDUP_ROOT],
-      [MILESTONES_ROOT],
-    ]);
-  });
-});
-
-describe('DeltaBridge standup board', () => {
-  it('refreshes the board when somebody else moves an issue', () => {
-    const client = mount();
-    const seen = trackInvalidations(client);
-    act(() => capturedHandler?.([action()]));
-    expect(seen).toContainEqual([STANDUP_ROOT]);
-  });
-
-  it('leaves the board alone for a ceremony write it reads nothing from', () => {
-    const client = mount();
-    const seen = trackInvalidations(client);
-    act(() =>
-      capturedHandler?.([
-        action({ model: 'standup', modelId: 'standup_1', data: { id: 'standup_1' } }),
-      ]),
-    );
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
   });
 });
 

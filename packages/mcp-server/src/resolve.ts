@@ -1,6 +1,7 @@
 import {
   activeCycle,
   type CycleRow,
+  type LabelRow,
   listCycles,
   listLabels,
   listMembers,
@@ -61,6 +62,25 @@ export async function resolveStateId(
   return found.id;
 }
 
+function oneLabelId(labels: readonly LabelRow[], ref: string): string {
+  const needle = ref.trim();
+  const byId = labels.find((label) => label.id === needle);
+  if (byId !== undefined) return byId.id;
+  const named = labels.filter((label) => matches([label.name], needle));
+  const first = named[0];
+  if (first === undefined) throw notFound(`No label matches "${ref}".`);
+  if (named.length > 1) {
+    throw conflict(`More than one label is named "${ref}". Name the one you mean by its id.`, {
+      details: { labelIds: named.map((label) => label.id) },
+    });
+  }
+  return first.id;
+}
+
+export async function resolveLabelId(principal: Principal, ref: string): Promise<string> {
+  return oneLabelId(await listLabels(principal, {}), ref);
+}
+
 export async function resolveLabelIds(
   principal: Principal,
   refs: readonly string[],
@@ -68,11 +88,7 @@ export async function resolveLabelIds(
 ): Promise<string[]> {
   if (refs.length === 0) return [];
   const labels = await listLabels(principal, teamId === undefined ? {} : { teamId });
-  return refs.map((ref) => {
-    const found = pick(labels, ref, (label) => [label.id, label.name]);
-    if (found === undefined) throw notFound(`No label matches "${ref}".`);
-    return found.id;
-  });
+  return refs.map((ref) => oneLabelId(labels, ref));
 }
 
 export async function resolveProject(principal: Principal, ref: string): Promise<ProjectRow> {

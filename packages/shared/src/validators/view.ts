@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { GROUP_BY_FIELDS, VIEW_LAYOUTS, viewStateSchema } from '../filters/index.ts';
+import { GROUP_BY_FIELDS, VIEW_LAYOUTS, viewStateWriteSchema } from '../filters/index.ts';
 
 export const viewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  filter: viewStateSchema,
+  filter: viewStateWriteSchema,
   layout: z.enum(VIEW_LAYOUTS).default('list'),
   groupBy: z.enum(GROUP_BY_FIELDS).default('state'),
   shared: z.boolean().default(false),
@@ -12,7 +12,7 @@ export const viewCreateSchema = z.object({
 export const viewUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    filter: viewStateSchema,
+    filter: viewStateWriteSchema,
   })
   .partial();
 

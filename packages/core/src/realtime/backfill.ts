@@ -4,6 +4,7 @@ import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { docReadFilter } from '../content/doc-service.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
+import { labelIdsByIssue } from '../work/label-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
 import { buildSyncAction } from './publisher.ts';
 
@@ -56,22 +57,6 @@ async function issueTeamsById(issueIds: readonly string[]): Promise<Map<string, 
     .from(schema.issue)
     .where(inArray(schema.issue.id, ids));
   return new Map(rows.map((row) => [row.id, row.teamId]));
-}
-
-async function labelsForIssues(issueIds: readonly string[]): Promise<Map<string, string[]>> {
-  const grouped = new Map<string, string[]>();
-  const ids = [...new Set(issueIds)];
-  if (ids.length === 0) return grouped;
-  const rows = await db
-    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
-    .from(schema.issueLabel)
-    .where(inArray(schema.issueLabel.issueId, ids));
-  for (const row of rows) {
-    const existing = grouped.get(row.issueId);
-    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
-    else existing.push(row.labelId);
-  }
-  return grouped;
 }
 
 async function commentTeamsById(commentIds: readonly string[]): Promise<Map<string, string>> {
@@ -362,7 +347,10 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.issue.syncId))
       .limit(limit);
-    const labels = await labelsForIssues(rows.map((row) => row.id));
+    const labels = await labelIdsByIssue(
+      db,
+      rows.map((row) => row.id),
+    );
     return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
@@ -657,68 +645,6 @@ const LOADERS: Record<SyncModel, Loader> = {
       ],
       data: row,
     })),
-
-  standup: async (principal, since, limit) =>
-    (
-      await db
-        .select()
-        .from(schema.standup)
-        .where(
-          and(
-            eq(schema.standup.organizationId, principal.organizationId),
-            gt(schema.standup.syncId, since),
-          ),
-        )
-        .orderBy(asc(schema.standup.syncId))
-        .limit(limit)
-    ).map((row) => ({
-      modelId: row.id,
-      syncId: row.syncId,
-      scopes: [scopes.organization(row.organizationId), scopes.team(row.teamId)],
-      data: row,
-    })),
-  standup_rotation: async (principal, since, limit) => {
-    const touched = await db
-      .select({
-        teamId: schema.standupRotation.teamId,
-        syncId: sql<number>`min(${schema.standupRotation.syncId})`.as('sync_id'),
-      })
-      .from(schema.standupRotation)
-      .where(
-        and(
-          eq(schema.standupRotation.organizationId, principal.organizationId),
-          gt(schema.standupRotation.syncId, since),
-        ),
-      )
-      .groupBy(schema.standupRotation.teamId)
-      .orderBy(asc(sql`min(${schema.standupRotation.syncId})`))
-      .limit(limit);
-    if (touched.length === 0) return [];
-
-    const rows = await db
-      .select()
-      .from(schema.standupRotation)
-      .where(
-        and(
-          eq(schema.standupRotation.organizationId, principal.organizationId),
-          inArray(
-            schema.standupRotation.teamId,
-            touched.map((entry) => entry.teamId),
-          ),
-        ),
-      )
-      .orderBy(asc(schema.standupRotation.position));
-
-    return touched.map(({ teamId, syncId }) => {
-      const rotation = rows.filter((row) => row.teamId === teamId);
-      return {
-        modelId: teamId,
-        syncId,
-        scopes: [scopes.team(teamId)],
-        data: { teamId, rotation },
-      };
-    });
-  },
 };
 
 export const SYNC_CATCHUP_MODELS = Object.keys(LOADERS) as SyncModel[];

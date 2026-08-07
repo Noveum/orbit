@@ -76,6 +76,7 @@ function builtInView(id: 'virtual:all' | 'virtual:unassigned', name: string): Vi
     virtual: true,
     locked: true,
     favorite: false,
+    readable: true,
     createdAt: '1970-01-01T00:00:00.000Z',
   };
 }
@@ -161,6 +162,7 @@ describe('the views page', () => {
       virtual: false,
       locked: false,
       favorite: false,
+      readable: true,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     stubCreateView(created);
@@ -208,6 +210,7 @@ describe('the views page', () => {
       virtual: false,
       locked: false,
       favorite: false,
+      readable: true,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     renderPage([teamView]);
@@ -215,6 +218,28 @@ describe('the views page', () => {
     const row = screen.getByTestId('view-Engineering triage');
     expect(within(row).getByText('Everyone on Engineering')).toBeInTheDocument();
     expect(within(row).queryByText('Everyone in the workspace')).toBeNull();
+  });
+
+  it('says a view whose stored settings could not be read shows the defaults', () => {
+    const unreadable: View = {
+      id: 'view-legacy',
+      ownerId: 'user-1',
+      name: 'Legacy view',
+      filter: defaultViewState('list'),
+      layout: 'list',
+      groupBy: 'state',
+      shared: false,
+      virtual: false,
+      locked: false,
+      favorite: false,
+      readable: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    renderPage([unreadable]);
+
+    const row = screen.getByTestId('view-Legacy view');
+    expect(within(row).getByTestId('unreadable-Legacy view')).toBeInTheDocument();
+    expect(within(row).queryByText('No filters')).toBeNull();
   });
 
   it('opens the same dialog from Alt+V so the old keystroke still works', async () => {

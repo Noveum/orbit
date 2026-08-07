@@ -14,3 +14,7 @@ export const labelUpdateSchema = z
     teamId: idSchema.nullable(),
   })
   .partial();
+
+export const labelListQuerySchema = z.object({
+  teamId: idSchema.optional(),
+});

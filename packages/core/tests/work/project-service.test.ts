@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, eq, schema } from '@orbit/db';
+import {
+  bindGithubInstallation,
+  linkGithubRepository,
+  replaceGithubRepositories,
+} from '@orbit/services/github';
 import { scopes } from '@orbit/shared/events';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -435,5 +441,88 @@ describe('a project delta reaches only the teams that own the project', () => {
     });
     const update = renamed[0];
     expect(update === undefined ? false : reaches(stranger, update)).toBe(true);
+  });
+});
+
+describe('deleteProject and watched repositories', () => {
+  const INSTALLATION_ID = '151887625';
+  const REPOSITORY_ID = '884762793';
+
+  async function connectRepository(): Promise<void> {
+    await db.transaction(async (tx) => {
+      const installation = await bindGithubInstallation(tx, {
+        organizationId: workspace.organizationId,
+        connectedById: workspace.adminUser.id,
+        account: {
+          installationId: INSTALLATION_ID,
+          accountLogin: 'Noveum',
+          accountId: '192082188',
+          accountType: 'Organization',
+          repositorySelection: 'all',
+          suspended: false,
+        },
+      });
+      await replaceGithubRepositories(tx, {
+        installation,
+        repositories: [
+          {
+            repositoryId: REPOSITORY_ID,
+            repositoryName: 'Noveum/ai-gateway',
+            name: 'ai-gateway',
+            ownerLogin: 'Noveum',
+            private: true,
+            archived: false,
+            defaultBranch: 'main',
+            htmlUrl: 'https://github.com/Noveum/ai-gateway',
+          },
+        ],
+      });
+    });
+  }
+
+  async function counts(): Promise<{ links: number; watched: number }> {
+    const links = await db
+      .select({ id: schema.githubRepositoryLink.id })
+      .from(schema.githubRepositoryLink)
+      .where(eq(schema.githubRepositoryLink.organizationId, workspace.organizationId));
+    const watched = await db
+      .select({ id: schema.githubRepositorySync.id })
+      .from(schema.githubRepositorySync)
+      .where(eq(schema.githubRepositorySync.organizationId, workspace.organizationId));
+    return { links: links.length, watched: watched.length };
+  }
+
+  async function associate(projectId: string): Promise<void> {
+    await db.transaction(async (tx) =>
+      linkGithubRepository(tx, {
+        organizationId: workspace.organizationId,
+        repositoryId: REPOSITORY_ID,
+        projectId,
+        linkedById: workspace.adminUser.id,
+      }),
+    );
+  }
+
+  it('stops watching a repository whose only project has been deleted', async () => {
+    await connectRepository();
+    const { project } = await createProject(workspace.admin, { name: 'Gateway' });
+    await associate(project.id);
+    expect(await counts()).toEqual({ links: 1, watched: 1 });
+
+    await deleteProject(workspace.admin, project.id);
+
+    expect(await counts()).toEqual({ links: 0, watched: 0 });
+  });
+
+  it('keeps watching a repository another project still associates', async () => {
+    await connectRepository();
+    const { project: doomed } = await createProject(workspace.admin, { name: 'Doomed' });
+    const { project: kept } = await createProject(workspace.admin, { name: 'Kept' });
+    await associate(doomed.id);
+    await associate(kept.id);
+
+    await deleteProject(workspace.admin, doomed.id);
+
+    expect(await counts()).toEqual({ links: 1, watched: 1 });
   });
 });

@@ -1,6 +1,6 @@
 # Orbit documentation
 
-Orbit is a free, realtime, keyboard-first work tracker. Issues, boards, sprints,
+Orbit is a free, realtime, keyboard-first task manager. Issues, boards, sprints,
 projects and docs, all of which update the moment anyone changes anything.
 
 There is no pricing, no billing and no paid tier, so nothing in these docs is
@@ -49,8 +49,8 @@ in [Getting started](getting-started.md).
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
 - **Projects and milestones** that group work across teams.
 - **Docs** with a rich editor, living next to the issues they describe.
-- **Standup** as a board rather than a meeting, with a timer, a rotation and
-  blockers.
+- **Standup** as a Kanban of the whole workspace, filtered to one person with a
+  click.
 - **Analytics**: scope, throughput, churn and distribution by assignee, project,
   label and estimate.
 - **Search, filters and saved views**, shared with the team or kept private.

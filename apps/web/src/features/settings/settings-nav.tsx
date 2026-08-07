@@ -33,6 +33,8 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { href: '/settings/general', label: 'General' },
       { href: '/settings/members', label: 'Members' },
       { href: '/settings/teams', label: 'Teams' },
+      { href: '/settings/labels', label: 'Labels' },
+      { href: '/settings/workflow', label: 'Workflow' },
       { href: '/settings/notifications', label: 'Notifications' },
       { href: '/settings/integrations', label: 'Integrations' },
     ],

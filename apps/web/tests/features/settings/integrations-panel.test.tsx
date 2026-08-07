@@ -18,17 +18,39 @@ mock.module('next/navigation', () => ({
 const MCP_URL = 'https://orbit.example.com/mcp';
 
 const CONNECTED: IntegrationSettings = {
-  githubConnected: true,
-  githubConnectEnabled: true,
-  repositories: [
-    {
-      id: 'sync-1',
-      repositoryId: '123456',
-      repositoryName: 'acme/web',
-      teamId: 'team-1',
-      enabled: true,
-    },
-  ],
+  github: {
+    connected: true,
+    connectEnabled: true,
+    discoveryEnabled: true,
+    installations: [
+      {
+        installationId: '151887625',
+        accountLogin: 'Noveum',
+        accountType: 'Organization',
+        repositorySelection: 'all',
+        status: 'active',
+        repositoryCount: 1,
+        manageUrl: 'https://github.com/organizations/Noveum/settings/installations/151887625',
+      },
+    ],
+    repositories: [
+      {
+        id: 'repo-row-1',
+        repositoryId: '123456',
+        fullName: 'Noveum/web',
+        name: 'web',
+        ownerLogin: 'Noveum',
+        private: false,
+        archived: false,
+        defaultBranch: 'main',
+        htmlUrl: 'https://github.com/Noveum/web',
+        installationId: '151887625',
+        accountLogin: 'Noveum',
+        links: [],
+      },
+    ],
+    projects: [{ id: 'project-1', name: 'Apollo' }],
+  },
   slackConnected: true,
   slackHasToken: true,
   slackConnectEnabled: true,
@@ -37,9 +59,14 @@ const CONNECTED: IntegrationSettings = {
 };
 
 const EMPTY: IntegrationSettings = {
-  githubConnected: false,
-  githubConnectEnabled: true,
-  repositories: [],
+  github: {
+    connected: false,
+    connectEnabled: true,
+    discoveryEnabled: true,
+    installations: [],
+    repositories: [],
+    projects: [],
+  },
   slackConnected: false,
   slackHasToken: false,
   slackConnectEnabled: true,
@@ -49,7 +76,7 @@ const EMPTY: IntegrationSettings = {
 
 const UNCONFIGURED: IntegrationSettings = {
   ...EMPTY,
-  githubConnectEnabled: false,
+  github: { ...EMPTY.github, connectEnabled: false },
   slackConnectEnabled: false,
 };
 
@@ -118,30 +145,11 @@ describe('IntegrationsPanel', () => {
     expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
   });
 
-  it('opens a searchable repository picker to link a repo', async () => {
-    const user = userEvent.setup();
-    renderPanel(CONNECTED, true);
-    await user.click(screen.getByRole('button', { name: 'Link a repository' }));
-    expect(await screen.findByPlaceholderText('Search repositories…')).toBeInTheDocument();
-  });
-
   it('opens a searchable channel picker to connect a channel', async () => {
     const user = userEvent.setup();
     renderPanel(CONNECTED, true);
     await user.click(screen.getByRole('button', { name: 'Connect a channel' }));
     expect(await screen.findByPlaceholderText('Search channels…')).toBeInTheDocument();
-  });
-
-  it('unlinks a linked repository through the github endpoint', async () => {
-    const user = userEvent.setup();
-    renderPanel(CONNECTED, true);
-
-    await user.click(screen.getByRole('button', { name: 'Unlink' }));
-
-    await waitFor(() => {
-      expect(lastRequest?.method).toBe('DELETE');
-    });
-    expect(lastRequest?.url).toBe('/api/integrations/github?repositoryId=123456');
   });
 
   it('disconnects a connected Slack channel through the slack endpoint', async () => {
@@ -174,10 +182,18 @@ describe('IntegrationsPanel', () => {
 
   it('hides management affordances when the viewer cannot manage integrations', () => {
     renderPanel(CONNECTED, false);
-    expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Link a repository' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
-    expect(screen.queryByRole('link', { name: /repositories on GitHub/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Connect another organisation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Remove the/ })).toBeNull();
+    expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
+  });
+
+  it('renders no repository or channel name to a viewer who cannot manage integrations', () => {
+    renderPanel(CONNECTED, false);
+
+    expect(screen.queryByText('Noveum/web')).toBeNull();
+    expect(screen.queryByText('#engineering')).toBeNull();
+    expect(screen.getByTestId('integrations-withheld')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 

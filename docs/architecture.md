@@ -94,7 +94,6 @@ project:<id>   people who can see a project
 issue:<id>     people watching one issue
 doc:<id>       people who can see a doc
 user:<id>      one person
-standup:<id>   participants in a standup
 ```
 
 **A scope has to match who may read the row.** This is the part that is easy to

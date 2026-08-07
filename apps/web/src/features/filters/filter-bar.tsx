@@ -14,7 +14,7 @@ import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { buildFilterFields, operatorLabel, valueLabel } from './filter-fields.tsx';
 import { FilterMenu } from './filter-menu.tsx';
 import { SaveViewDialog } from './save-view-dialog.tsx';
-import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
+import type { ViewConfig, ViewLayoutMode, ViewScope } from './view-config.ts';
 import { viewConfigToState } from './view-config.ts';
 import type { ViewControls } from './view-controls.tsx';
 
@@ -23,6 +23,7 @@ type MenuTarget = FilterProperty | 'new' | null;
 export interface FilterBarProps {
   readonly teamId: string | null;
   readonly teamName: string;
+  readonly scope?: ViewScope | undefined;
   readonly layout: ViewLayoutMode;
   readonly config: ViewConfig;
   readonly onChange: (next: ViewConfig) => void;
@@ -36,6 +37,7 @@ export interface FilterBarProps {
 export function FilterBar({
   teamId,
   teamName,
+  scope,
   layout,
   config,
   onChange,
@@ -46,6 +48,7 @@ export function FilterBar({
   showSaveView = true,
 }: FilterBarProps) {
   const workspace = useWorkspace();
+  const savedScope: ViewScope = scope ?? { teamId, projectId: null };
   const updateView = useUpdateView();
   const [target, setTarget] = useState<MenuTarget>(null);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -160,16 +163,11 @@ export function FilterBar({
               updateView.mutate({
                 id: savedView.id,
                 patch: {
-                  filter: viewConfigToState(
-                    config,
-                    layout,
-                    { teamId, projectId: null },
-                    {
-                      visibility: savedView.filter.visibility,
-                      locked: savedView.filter.locked,
-                      position: savedView.filter.position,
-                    },
-                  ),
+                  filter: viewConfigToState(config, layout, savedScope, {
+                    visibility: savedView.filter.visibility,
+                    locked: savedView.filter.locked,
+                    position: savedView.filter.position,
+                  }),
                 },
               })
             }
@@ -203,7 +201,7 @@ export function FilterBar({
           onOpenChange={setSaveOpen}
           config={config}
           layout={layout}
-          teamId={teamId}
+          scope={savedScope}
           teamName={teamName}
           suggestedName={suggestName(teamName, conditions, fields)}
         />

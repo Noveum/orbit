@@ -33,8 +33,31 @@ import { issueScopes } from './issue-service.ts';
 
 export type CycleRow = typeof schema.cycle.$inferSelect;
 
+export const DEFAULT_SPRINT_DAYS = 14;
+
 function cycleScopes(row: CycleRow): string[] {
   return [scopes.team(row.teamId)];
+}
+
+async function lockTeamCycles(executor: Executor, teamId: string): Promise<void> {
+  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${teamId}`}))`);
+}
+
+async function requireCycleForUpdate(
+  executor: Executor,
+  principal: Principal,
+  cycleId: string,
+): Promise<CycleRow> {
+  const [found] = await executor
+    .select()
+    .from(schema.cycle)
+    .where(
+      and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, principal.organizationId)),
+    )
+    .limit(1);
+  const cycle = requireRow(found, 'That cycle does not exist.');
+  assertInTeam(principal, teamScope(cycle));
+  return cycle;
 }
 
 async function assertCycleWindow(
@@ -44,7 +67,7 @@ async function assertCycleWindow(
   if (window.endsAt.getTime() <= window.startsAt.getTime()) {
     throw conflict('A cycle has to end after it starts.');
   }
-  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${window.teamId}`}))`);
+  await lockTeamCycles(executor, window.teamId);
   const [clash] = await executor
     .select({ id: schema.cycle.id, name: schema.cycle.name })
     .from(schema.cycle)
@@ -52,6 +75,7 @@ async function assertCycleWindow(
       and(
         eq(schema.cycle.teamId, window.teamId),
         isNull(schema.cycle.archivedAt),
+        isNull(schema.cycle.completedAt),
         lt(schema.cycle.startsAt, window.endsAt),
         gt(schema.cycle.endsAt, window.startsAt),
         window.excludingCycleId === null ? undefined : ne(schema.cycle.id, window.excludingCycleId),
@@ -73,18 +97,34 @@ async function nextCycleNumber(executor: Executor, teamId: string): Promise<numb
   return (row?.number ?? 0) + 1;
 }
 
+async function afterTheLastSprint(executor: Executor, teamId: string, now: Date): Promise<Date> {
+  const [latest] = await executor
+    .select({ endsAt: schema.cycle.endsAt })
+    .from(schema.cycle)
+    .where(and(eq(schema.cycle.teamId, teamId), isNull(schema.cycle.archivedAt)))
+    .orderBy(desc(schema.cycle.endsAt))
+    .limit(1);
+  const today = startOfUtcDay(now);
+  if (latest === undefined) return today;
+  return latest.endsAt.getTime() > today.getTime() ? latest.endsAt : today;
+}
+
 export async function createCycle(
   principal: Principal,
   input: unknown,
+  now: Date = new Date(),
 ): Promise<{ cycle: CycleRow; actions: SyncAction[] }> {
   assertCan(principal, 'cycle:manage');
   const parsed = cycleCreateSchema.parse(input);
   return await db.transaction(async (tx) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
+    await lockTeamCycles(tx, team.id);
+    const startsAt = parsed.startsAt ?? (await afterTheLastSprint(tx, team.id, now));
+    const endsAt = parsed.endsAt ?? addUtcDays(startsAt, DEFAULT_SPRINT_DAYS);
     await assertCycleWindow(tx, {
       teamId: parsed.teamId,
-      startsAt: parsed.startsAt,
-      endsAt: parsed.endsAt,
+      startsAt,
+      endsAt,
       excludingCycleId: null,
     });
     const syncId = await nextSyncId(tx);
@@ -98,8 +138,8 @@ export async function createCycle(
         teamId: team.id,
         number,
         name: parsed.name ?? `Sprint ${number}`,
-        startsAt: parsed.startsAt,
-        endsAt: parsed.endsAt,
+        startsAt,
+        endsAt,
         syncId,
       })
       .returning();
@@ -131,18 +171,7 @@ export async function updateCycle(
   const parsed = cycleUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const [found] = await tx
-      .select()
-      .from(schema.cycle)
-      .where(
-        and(
-          eq(schema.cycle.id, cycleId),
-          eq(schema.cycle.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const current = requireRow(found, 'That cycle does not exist.');
-    assertInTeam(principal, teamScope(current));
+    const current = await requireCycleForUpdate(tx, principal, cycleId);
 
     const values: Partial<typeof schema.cycle.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
@@ -189,22 +218,91 @@ export async function updateCycle(
   });
 }
 
+async function assertNothingRunning(
+  executor: Executor,
+  teamId: string,
+  exceptCycleId: string,
+  now: Date,
+): Promise<void> {
+  const [running] = await executor
+    .select({ name: schema.cycle.name })
+    .from(schema.cycle)
+    .where(
+      and(
+        eq(schema.cycle.teamId, teamId),
+        isNull(schema.cycle.archivedAt),
+        isNull(schema.cycle.completedAt),
+        ne(schema.cycle.id, exceptCycleId),
+        lte(schema.cycle.startsAt, now),
+        gt(schema.cycle.endsAt, now),
+      ),
+    )
+    .limit(1);
+  if (running !== undefined) {
+    throw conflict(`${running.name} is still running. Complete it before starting another.`);
+  }
+}
+
+function assertStartable(cycle: CycleRow, now: Date): void {
+  if (cycle.archivedAt !== null) throw conflict('That sprint has been archived.');
+  if (cycle.completedAt !== null) throw conflict('That sprint is already complete.');
+  if (cycle.startsAt.getTime() <= now.getTime()) {
+    throw conflict('That sprint is already under way.');
+  }
+}
+
+export async function startCycle(
+  principal: Principal,
+  cycleId: string,
+  now: Date = new Date(),
+): Promise<{ cycle: CycleRow; actions: SyncAction[] }> {
+  assertCan(principal, 'cycle:manage');
+
+  return await db.transaction(async (tx) => {
+    const current = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockTeamCycles(tx, current.teamId);
+    const locked = await requireCycleForUpdate(tx, principal, cycleId);
+
+    assertStartable(locked, now);
+    await assertNothingRunning(tx, locked.teamId, locked.id, now);
+    await assertCycleWindow(tx, {
+      teamId: locked.teamId,
+      startsAt: now,
+      endsAt: locked.endsAt,
+      excludingCycleId: locked.id,
+    });
+
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const [updated] = await tx
+      .update(schema.cycle)
+      .set({ startsAt: now, syncId })
+      .where(eq(schema.cycle.id, locked.id))
+      .returning();
+    const cycle = requireRow(updated, 'That cycle does not exist.');
+    return {
+      cycle,
+      actions: [
+        buildSyncAction({
+          syncId,
+          organizationId: principal.organizationId,
+          scopes: cycleScopes(cycle),
+          action: 'update',
+          model: 'cycle',
+          modelId: cycle.id,
+          data: cycle,
+          actor,
+        }),
+      ],
+    };
+  });
+}
+
 export async function deleteCycle(principal: Principal, cycleId: string): Promise<SyncAction[]> {
   assertCan(principal, 'cycle:manage');
 
   return await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
-      .from(schema.cycle)
-      .where(
-        and(
-          eq(schema.cycle.id, cycleId),
-          eq(schema.cycle.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const cycle = requireRow(existing, 'That cycle does not exist.');
-    assertInTeam(principal, teamScope(cycle));
+    const cycle = await requireCycleForUpdate(tx, principal, cycleId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -751,26 +849,10 @@ export async function completeCycle(
   assertCan(principal, 'cycle:manage');
 
   return await db.transaction(async (tx) => {
-    const [found] = await tx
-      .select()
-      .from(schema.cycle)
-      .where(
-        and(
-          eq(schema.cycle.id, cycleId),
-          eq(schema.cycle.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const cycle = requireRow(found, 'That cycle does not exist.');
-    assertInTeam(principal, teamScope(cycle));
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${cycle.teamId}`}))`);
-
-    const [locked] = await tx
-      .select({ completedAt: schema.cycle.completedAt })
-      .from(schema.cycle)
-      .where(eq(schema.cycle.id, cycleId))
-      .limit(1);
-    if (requireRow(locked, 'That cycle does not exist.').completedAt !== null) {
+    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockTeamCycles(tx, found.teamId);
+    const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    if (cycle.completedAt !== null) {
       throw conflict('That cycle is already complete.');
     }
 

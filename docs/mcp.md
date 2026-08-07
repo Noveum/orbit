@@ -104,7 +104,7 @@ Point at `http://localhost:3000/mcp` instead. Everything else is the same.
 
 ## What the tools do
 
-Sixty odd tools across eight groups. Read tools need `orbit.read`, write tools
+Sixty odd tools across seven groups. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
 Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
@@ -132,9 +132,9 @@ them.
 | `search_issues` | read | Search and filter |
 | `list_my_issues` | read | Assigned to the caller |
 | `copy_branch_name` | read | The git branch name for an issue |
-| `create_issue` | write | Create one, returns `ENG-42` |
+| `create_issue` | write | Create one, returns `ENG-42`. Name a label by id when two share a name |
 | `update_issue` | write | Title, description, state, priority, assignee, labels, estimate |
-| `move_issue` | write | Move between states or teams |
+| `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
 | `archive_issue`, `unarchive_issue`, `delete_issue` | write | |
@@ -164,22 +164,6 @@ them.
 | `move_to_cycle` | write | Move issues in |
 | `delete_sprint` | write | |
 
-### Standup
-
-The group that makes a bot genuinely useful. An agent can run the whole standup
-and post it to Slack without anyone opening Orbit.
-
-| Tool | Scope | Does |
-| --- | --- | --- |
-| `get_standup`, `list_standups` | read | Standups |
-| `list_blockers` | read | What is blocked |
-| `standup_workload` | read | Who has how much on |
-| `get_standup_rotation` | read | Who goes first |
-| `open_standup`, `run_standup` | write | Start one |
-| `record_standup_turn` | write | Record what someone said |
-| `raise_blocker`, `resolve_blocker` | write | |
-| `set_standup_rotation` | write | |
-
 ### Docs
 
 | Tool | Scope | Does |
@@ -195,17 +179,27 @@ and post it to Slack without anyone opening Orbit.
 
 | Tool | Scope | Does |
 | --- | --- | --- |
-| `list_views` | read | Saved views |
+| `list_views` | read | Saved views, each with the filter state it stores |
 | `create_view`, `update_view`, `delete_view` | write | |
 
-### Teams and labels
+`create_view` takes the same state the app stores. Conditions live under
+`filter.filter.children`, each one shaped like
+`{"kind":"condition","property":"priority","operator":"in","values":["1"]}`. A key the state
+does not define is rejected rather than dropped, so a filter written in some other shape fails
+loudly instead of saving a view that filters nothing. Call `list_views` first and copy a shape
+that already works.
+
+### Teams, labels and workflow states
 
 | Tool | Scope | Does |
 | --- | --- | --- |
 | `create_team`, `update_team` | write | |
 | `add_team_member`, `remove_team_member` | write | |
 | `remove_member` | write | Remove from the workspace |
-| `create_label`, `update_label`, `delete_label` | write | |
+| `create_label`, `update_label`, `delete_label` | write | Pass `team` to pin a label to one team, `null` to widen it back. Name a label by id when two share a name |
+| `create_state`, `update_state` | write | A status carries a category the product reads, so changing it re-dates the issues in it |
+| `delete_state` | write | Refused while issues sit in it unless `moveTo` names the status they go to |
+| `reorder_states` | write | The whole board order, first column first |
 
 ## Things worth asking for
 
@@ -217,10 +211,10 @@ Once connected, these all work:
 - "Summarise what the team finished last sprint and what carried over."
 - "Read ENG-42 and write the migration it describes."
 - "Everything in Design labelled Bug with no assignee, and who should take each one."
-- "Run standup, then post the summary to Slack."
+- "Post a summary of what each person closed yesterday to Slack."
 
 The last one is the shape that pays for itself. An agent with `orbit.read` and a
-Slack connection replaces a daily meeting.
+Slack connection can write the update nobody wants to write.
 
 ## Managing access
 

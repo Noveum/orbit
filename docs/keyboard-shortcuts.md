@@ -110,12 +110,6 @@ a name then <kbd>Enter</kbd> reassigns an issue without touching the mouse.
 <kbd>c</kbd> only appears when you have permission to write docs, which
 contributors and guests do not.
 
-## Standup
-
-| Keys | Does |
-| --- | --- |
-| <kbd>t</kbd> | Start or stop the timer |
-
 ## View
 
 | Keys | Does |

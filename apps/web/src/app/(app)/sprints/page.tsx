@@ -1,3 +1,4 @@
+import { can } from '@orbit/shared/policy';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -27,6 +28,7 @@ export default async function SprintsPage() {
     );
   }
 
+  const canManage = can(principal, 'cycle:manage');
   const panels = await Promise.all(
     teams.map(async (team) => ({
       team,
@@ -46,7 +48,13 @@ export default async function SprintsPage() {
       </header>
       {panels.map((panel) => (
         <section key={panel.team.id} className="flex flex-col gap-4">
-          <CyclePanel cycle={panel.cycle} upcoming={panel.upcoming} teamName={panel.team.name} />
+          <CyclePanel
+            cycle={panel.cycle}
+            upcoming={panel.upcoming}
+            team={panel.team}
+            canManage={canManage}
+            runningSprintId={panel.cycle?.id ?? null}
+          />
           <div className="flex flex-col gap-2">
             <h3 className="font-medium text-dense text-text">Past sprints</h3>
             <SprintHistory sprints={panel.past} />

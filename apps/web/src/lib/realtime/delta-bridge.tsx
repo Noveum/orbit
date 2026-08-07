@@ -28,7 +28,6 @@ import {
   ISSUES_ROOT,
   MILESTONES_ROOT,
   PROJECT_SCOPE,
-  STANDUP_ROOT,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Comment, DocComment, Issue, IssueDetail } from '@/lib/query/schemas.ts';
@@ -67,7 +66,6 @@ function noop(): undefined {
 
 interface RootInvalidations {
   counts: boolean;
-  standupBoard: boolean;
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
@@ -191,7 +189,6 @@ function routeAction(
   if (action.model === 'issue') {
     patchIssueCaches(client, action);
     roots.counts = true;
-    roots.standupBoard = true;
     roots.milestones = true;
     return;
   }
@@ -236,7 +233,6 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
   }
-  if (roots.standupBoard) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
   if (roots.relations) {
@@ -277,7 +273,6 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const tabClientId = clientId();
       const roots: RootInvalidations = {
         counts: false,
-        standupBoard: false,
         bootstrap: false,
         views: false,
         docs: false,

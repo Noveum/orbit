@@ -20,6 +20,16 @@ export const STATE_CATEGORY_ORDER: Record<StateCategory, number> = {
   canceled: 6,
 };
 
+export const STATE_CATEGORY_LABELS: Record<StateCategory, string> = {
+  triage: 'Triage',
+  backlog: 'Backlog',
+  unstarted: 'Unstarted',
+  started: 'Started',
+  review: 'In review',
+  completed: 'Completed',
+  canceled: 'Canceled',
+};
+
 export const OPEN_STATE_CATEGORIES: readonly StateCategory[] = [
   'triage',
   'backlog',
@@ -27,3 +37,7 @@ export const OPEN_STATE_CATEGORIES: readonly StateCategory[] = [
   'started',
   'review',
 ];
+
+export function isOpenCategory(category: string): boolean {
+  return OPEN_STATE_CATEGORIES.some((open) => open === category);
+}

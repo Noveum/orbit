@@ -25,8 +25,6 @@ export * from './work/issue-service.ts';
 export * from './work/label-service.ts';
 export * from './work/milestone-service.ts';
 export * from './work/project-service.ts';
-export * from './work/standup-board.ts';
-export * from './work/standup-service.ts';
 export * from './work/view-preference-service.ts';
 export * from './work/view-service.ts';
 export * from './work/workflow-state-service.ts';

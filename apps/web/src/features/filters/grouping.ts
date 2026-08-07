@@ -172,11 +172,23 @@ export interface MergedStates {
   readonly idMap: ReadonlyMap<string, string>;
 }
 
+export function mergedStateKey(state: WorkflowState): string {
+  return `${state.category}:${state.name.trim().toLowerCase()}`;
+}
+
+export function mergedStateResolver(
+  states: readonly WorkflowState[],
+): (groupId: string, issue: { teamId: string }) => string | null {
+  return (groupId, issue) =>
+    states.find((state) => state.teamId === issue.teamId && mergedStateKey(state) === groupId)
+      ?.id ?? null;
+}
+
 export function mergeStatesByName(states: readonly WorkflowState[]): MergedStates {
   const canonical = new Map<string, WorkflowState>();
   const idMap = new Map<string, string>();
   for (const state of states) {
-    const key = `${state.category}:${state.name.trim().toLowerCase()}`;
+    const key = mergedStateKey(state);
     const existing = canonical.get(key);
     if (existing === undefined) canonical.set(key, { ...state, id: key });
     idMap.set(state.id, key);
