@@ -1,15 +1,9 @@
 import { db, desc, eq, schema } from '@orbit/db';
-import type { Principal } from '@orbit/shared/policy';
-import { githubConnectReady, slackConnectReady } from '@/lib/env.ts';
+import { can, type Principal } from '@orbit/shared/policy';
+import { slackConnectReady } from '@/lib/env.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
-
-export interface LinkedRepository {
-  readonly id: string;
-  readonly repositoryId: string;
-  readonly repositoryName: string;
-  readonly teamId: string;
-  readonly enabled: boolean;
-}
+import { loadGithubSettings } from './github-data.ts';
+import type { GithubSettingsView } from './github-view.ts';
 
 export interface ConnectedChannel {
   readonly channelId: string;
@@ -25,9 +19,7 @@ export interface IntegrationTeam {
 }
 
 export interface IntegrationSettings {
-  readonly githubConnected: boolean;
-  readonly githubConnectEnabled: boolean;
-  readonly repositories: LinkedRepository[];
+  readonly github: GithubSettingsView;
   readonly slackConnected: boolean;
   readonly slackHasToken: boolean;
   readonly slackConnectEnabled: boolean;
@@ -41,8 +33,27 @@ function slackBotTokenFrom(credentials: unknown): string | null {
   return typeof token === 'string' && token.length > 0 ? token : null;
 }
 
+const WITHHELD: IntegrationSettings = {
+  github: {
+    connected: false,
+    connectEnabled: false,
+    discoveryEnabled: false,
+    installations: [],
+    repositories: [],
+    projects: [],
+  },
+  slackConnected: false,
+  slackHasToken: false,
+  slackConnectEnabled: false,
+  channels: [],
+  teams: [],
+};
+
 export async function loadIntegrationSettings(principal: Principal): Promise<IntegrationSettings> {
-  const [integrations, repositories, channels, teams] = await Promise.all([
+  if (!can(principal, 'integration:manage')) return WITHHELD;
+
+  const [github, integrations, channels, teams] = await Promise.all([
+    loadGithubSettings(principal),
     db
       .select({
         provider: schema.integration.provider,
@@ -51,17 +62,6 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
       .from(schema.integration)
       .where(eq(schema.integration.organizationId, principal.organizationId))
       .orderBy(desc(schema.integration.createdAt)),
-    db
-      .select({
-        id: schema.githubRepositorySync.id,
-        repositoryId: schema.githubRepositorySync.repositoryId,
-        repositoryName: schema.githubRepositorySync.repositoryName,
-        teamId: schema.githubRepositorySync.teamId,
-        enabled: schema.githubRepositorySync.enabled,
-      })
-      .from(schema.githubRepositorySync)
-      .where(eq(schema.githubRepositorySync.organizationId, principal.organizationId))
-      .orderBy(desc(schema.githubRepositorySync.createdAt)),
     db
       .select({
         channelId: schema.slackChannelSync.channelId,
@@ -78,9 +78,7 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
   const slackToken = slackRow === undefined ? null : slackBotTokenFrom(slackRow.credentials);
 
   return {
-    githubConnected: integrations.some((row) => row.provider === 'github'),
-    githubConnectEnabled: githubConnectReady(),
-    repositories,
+    github,
     slackConnected: slackRow !== undefined,
     slackHasToken: slackToken !== null,
     slackConnectEnabled: slackConnectReady(),

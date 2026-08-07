@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { absoluteUrl, publicAppUrl } from '@/lib/env.ts';
 
-const TITLE = 'Orbit: the free, open source, realtime work tracker';
+const TITLE = 'Orbit: the free, open source, realtime task manager';
 const DESCRIPTION =
-  'Orbit is a free, open source, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. Apache-2.0 and self-hostable. No pricing, no paid tiers, ever.';
+  'Orbit is a free, open source, keyboard-first task manager for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. Apache-2.0 and self-hostable. No pricing, no paid tiers, ever.';
 
 function ogImage() {
   return {

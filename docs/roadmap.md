@@ -18,7 +18,7 @@ The core is done and in daily use.
 - **Sprints and cycles** with scope, points, burndown and carryover.
 - **Projects and milestones** across teams.
 - **Docs** with a rich editor, collections, public share links and comments.
-- **Standup** as a board, with a timer, a rotation and blockers.
+- **Standup** as a workspace Kanban you filter to one person with a click.
 - **Analytics**: scope, throughput, churn, and distribution by assignee,
   project, label and estimate.
 - **Search, filters and saved views**, shared or private.
@@ -60,7 +60,7 @@ requested integration feature, and the MCP server only partly covers it.
 
 ### Importers
 
-Getting off a paid tracker should take minutes. The Plane importer is finished
+Getting off a paid task manager should take minutes. The Plane importer is finished
 and wired to `bun run db:import-plane`.
 
 The Linear importer is half done: `packages/db/src/import/linear-source.ts`

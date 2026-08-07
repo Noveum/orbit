@@ -69,11 +69,11 @@ function ArchiveIssue({ enabled }: { readonly enabled: boolean }) {
   return null;
 }
 
-function StandupTimer({ run }: { readonly run: () => void }) {
+function CompetingSingleKey({ run }: { readonly run: () => void }) {
   useHotkey('t', run, {
-    label: 'Toggle timer',
-    section: 'Standup',
-    scope: 'standup',
+    label: 'A surface binding on the same key',
+    section: 'Issues',
+    scope: 'issues',
     priority: HOTKEY_PRIORITY.surface,
   });
   return null;
@@ -126,11 +126,11 @@ describe('command palette', () => {
 
   it('routes to sprints when the binding gt is pressed, even with a competing t binding', async () => {
     const user = userEvent.setup();
-    const toggleTimer = mock();
+    const competing = mock();
 
     render(
       <Palette startOpen>
-        <StandupTimer run={toggleTimer} />
+        <CompetingSingleKey run={competing} />
       </Palette>,
     );
 
@@ -140,13 +140,13 @@ describe('command palette', () => {
     push.mockClear();
 
     await user.keyboard('t');
-    expect(toggleTimer).toHaveBeenCalledTimes(1);
+    expect(competing).toHaveBeenCalledTimes(1);
 
-    toggleTimer.mockClear();
+    competing.mockClear();
 
     await user.keyboard('gt');
     expect(push).toHaveBeenCalledWith('/sprints');
-    expect(toggleTimer).not.toHaveBeenCalled();
+    expect(competing).not.toHaveBeenCalled();
   });
 
   it('runs the toggles it advertises', async () => {

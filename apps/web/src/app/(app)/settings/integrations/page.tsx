@@ -1,12 +1,21 @@
 import { listMcpGrants } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
+import {
+  GithubConnectNotice,
+  githubConnectStatusOf,
+} from '@/features/settings/github-connect-notice.tsx';
 import { loadIntegrationSettings } from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { mcpServerUrl } from '@/lib/env.ts';
 
-export default async function IntegrationsSettingsPage() {
+export default async function IntegrationsSettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { principal } = await pageContext();
+  const githubStatus = githubConnectStatusOf((await searchParams)['github']);
   const [settings, grants] = await Promise.all([
     loadIntegrationSettings(principal),
     listMcpGrants(principal.userId),
@@ -27,6 +36,7 @@ export default async function IntegrationsSettingsPage() {
           pull requests to issues, and keeps both sides in sync in realtime.
         </p>
       </div>
+      {githubStatus === null ? null : <GithubConnectNotice status={githubStatus} />}
       <IntegrationsPanel
         settings={settings}
         canManage={can(principal, 'integration:manage')}

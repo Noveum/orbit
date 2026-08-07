@@ -12,6 +12,7 @@ import {
   schema,
   sql,
 } from '@orbit/db';
+import { reconcileWatchedRepositories } from '@orbit/services/github';
 import { conflict, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -339,6 +340,7 @@ export async function deleteProject(
     const actor = await principalActor(tx, principal);
     const reach = await projectScopes(tx, project);
     await tx.delete(schema.project).where(eq(schema.project.id, projectId));
+    await reconcileWatchedRepositories(tx, principal.organizationId);
     return [
       buildSyncAction({
         syncId,

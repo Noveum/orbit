@@ -25,7 +25,6 @@ export const queryKeys = {
   docVersions: (docId: string) => ['doc', docId, 'versions'] as const,
   views: () => ['views'] as const,
   milestones: (projectId: string) => ['milestones', projectId] as const,
-  standupBoard: (since: string) => ['standup', 'board', since] as const,
 } as const;
 
 export const ISSUES_ROOT = 'issues';
@@ -41,6 +40,5 @@ export const DOCS_HOME_ROOT = 'docs-home';
 export const DOC_ROOT = 'doc';
 export const VIEWS_ROOT = 'views';
 export const MILESTONES_ROOT = 'milestones';
-export const STANDUP_ROOT = 'standup';
 export const SEARCH_ROOT = 'search';
 export const VIEW_PREFERENCES_ROOT = 'view-preferences';

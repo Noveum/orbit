@@ -251,3 +251,72 @@ describe('card controls', () => {
     );
   });
 });
+
+describe('planDrop across merged state columns', () => {
+  const states = [
+    {
+      id: 'eng_todo',
+      teamId: 'team_eng',
+      name: 'Todo',
+      category: 'unstarted',
+      color: '#000000',
+      position: 0,
+    },
+    {
+      id: 'des_todo',
+      teamId: 'team_des',
+      name: 'Todo',
+      category: 'unstarted',
+      color: '#000000',
+      position: 0,
+    },
+  ];
+
+  const merged = [
+    {
+      id: 'unstarted:todo',
+      title: 'Todo',
+      category: 'unstarted',
+      color: '#000000',
+      issues: [] as ReturnType<typeof issue>[],
+      total: 0,
+      subGroups: [],
+    },
+  ];
+
+  function resolveState(groupId: string, dragged: { teamId: string }): string | null {
+    const found = states.find(
+      (state) =>
+        state.teamId === dragged.teamId &&
+        `${state.category}:${state.name.trim().toLowerCase()}` === groupId,
+    );
+    return found?.id ?? null;
+  }
+
+  it('lands on the state belonging to the team of the issue being dragged', () => {
+    const dragged = issue({ id: 'a', identifier: 'ENG-1', teamId: 'team_eng' });
+    const plan = planDrop(merged, [dragged], 'a', 'unstarted:todo', 'state', resolveState);
+
+    expect(plan).toMatchObject({ stateId: 'eng_todo' });
+  });
+
+  it('picks a different team own state for the same column', () => {
+    const dragged = issue({ id: 'b', identifier: 'DES-1', teamId: 'team_des' });
+    const plan = planDrop(merged, [dragged], 'b', 'unstarted:todo', 'state', resolveState);
+
+    expect(plan).toMatchObject({ stateId: 'des_todo' });
+  });
+
+  it('refuses the drop when the team has no state for that column', () => {
+    const dragged = issue({ id: 'c', identifier: 'MKT-1', teamId: 'team_mkt' });
+
+    expect(planDrop(merged, [dragged], 'c', 'unstarted:todo', 'state', resolveState)).toBeNull();
+  });
+
+  it('still uses the column id itself when no resolver is given', () => {
+    const dragged = issue({ id: 'a', identifier: 'ENG-1', teamId: 'team_eng' });
+    const plan = planDrop(merged, [dragged], 'a', 'unstarted:todo', 'state');
+
+    expect(plan).toMatchObject({ stateId: 'unstarted:todo' });
+  });
+});

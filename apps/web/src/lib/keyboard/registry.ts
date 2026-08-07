@@ -1,8 +1,8 @@
 import { type BufferedStep, bufferMatches, type HotkeyStep, parseBinding } from './binding.ts';
 
-export type HotkeySection = 'Navigation' | 'General' | 'Issues' | 'View' | 'Standup';
+export type HotkeySection = 'Navigation' | 'General' | 'Issues' | 'View';
 
-export type HotkeyScope = 'global' | 'issues' | 'docs' | 'inbox' | 'filters' | 'standup';
+export type HotkeyScope = 'global' | 'issues' | 'docs' | 'inbox' | 'filters';
 
 export const HOTKEY_PRIORITY = {
   global: 0,

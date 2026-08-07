@@ -14,7 +14,7 @@ const SERVER_VERSION = '0.0.0';
 const JSONRPC_SERVER_ERROR = -32000;
 
 const INSTRUCTIONS = [
-  'Orbit is a work tracker. Issues live on teams and carry identifiers such as ENG-42.',
+  'Orbit is a task manager. Issues live on teams and carry identifiers such as ENG-42.',
   'Call get_me first to learn the caller role and teams, then list_teams, list_states and list_labels before writing.',
   'Every tool acts as the user who owns the API key, so a request can fail with a forbidden error when their role does not allow it.',
 ].join(' ');

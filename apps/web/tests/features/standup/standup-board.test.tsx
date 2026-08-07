@@ -1,76 +1,56 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
-import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
-import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import { createQueryClient } from '@/lib/query/provider.tsx';
-import type { Issue, Member, StandupWorkload, WorkflowState } from '@/lib/query/schemas.ts';
+import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import { emptyFacets } from '@/lib/query/schemas.ts';
+import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
 mock.module('next/navigation', () => ({
-  useRouter: () => ({
-    push: () => undefined,
-    replace: () => undefined,
-    prefetch: () => undefined,
-    back: () => undefined,
-  }),
+  useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
   usePathname: () => '/standup',
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const { IssuePeek: realIssuePeek } = await import('@/features/issues/issue-peek.tsx');
-
-mock.module('@/features/issues/issue-peek.tsx', () => ({
-  IssuePeek: ({ issue }: { issue: Issue | undefined }) =>
-    issue === undefined ? null : <div data-testid="issue-peek">{issue.identifier}</div>,
+mock.module('@/features/comments/viewer-presence.tsx', () => ({
+  ViewerPresence: () => null,
 }));
 
-function state(id: string, category: string): WorkflowState {
-  return { id, teamId: 'team_eng', name: id, category, color: '#666666', position: 0 };
-}
-
-const states: readonly WorkflowState[] = [
-  state('state_todo', 'unstarted'),
-  state('state_doing', 'started'),
-  state('state_done', 'completed'),
-];
-
-function member(id: string, name: string): Member {
-  return { id, name, email: `${id}@orbit.test`, image: null, handle: null, role: 'member' };
-}
-
-const members: readonly Member[] = [
-  member('user_cy', 'Cy Diaz'),
-  member('user_ada', 'Ada Lovelace'),
-  member('user_bo', 'Bo Chen'),
-];
-
-const workspace: WorkspaceData = {
-  ready: true,
-  userId: 'user_ada',
-  role: 'admin',
-  teams: [{ id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
-  states,
-  labels: [],
-  members,
-  projects: [],
-  cycles: [],
-  seedIssues: [],
-  stateById: new Map(states.map((entry) => [entry.id, entry])),
-  labelById: new Map(),
-  memberById: new Map(members.map((entry) => [entry.id, entry])),
-  openQuickCreate: () => undefined,
-};
-
-mock.module('@/features/issues/workspace-provider.tsx', () => ({
+let workspace: WorkspaceData;
+mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspace,
 }));
 
 const { StandupBoard } = await import('../../../src/features/standup/standup-board.tsx');
+
+const todo: WorkflowState = {
+  id: 'state_todo',
+  teamId: 'team_eng',
+  name: 'Todo',
+  category: 'unstarted',
+  color: '#5d6272',
+  position: 1,
+};
+
+const doing: WorkflowState = {
+  id: 'state_doing',
+  teamId: 'team_eng',
+  name: 'In Progress',
+  category: 'started',
+  color: '#f2c94c',
+  position: 2,
+};
+
+function member(id: string, name: string): Member {
+  return { id, name, email: `${id}@orbit.test`, image: null, handle: null, role: 'member' };
+}
+
+const ada = member('user_ada', 'Ada Lovelace');
+const bo = member('user_bo', 'Bo Chen');
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -95,367 +75,234 @@ function issue(overrides: Partial<Issue> = {}): Issue {
     startedAt: null,
     completedAt: null,
     canceledAt: null,
-    stateEnteredAt: '2026-06-08T00:00:00.000Z',
+    stateEnteredAt: '2026-01-01T00:00:00.000Z',
     syncId: 1,
-    createdAt: '2026-06-08T00:00:00.000Z',
-    updatedAt: '2026-06-08T00:00:00.000Z',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     archivedAt: null,
     labelIds: [],
     ...overrides,
   };
 }
 
-const boardIssues: readonly Issue[] = [
-  issue({
-    id: 'issue_done',
-    identifier: 'ENG-1',
-    title: 'Land the importer',
-    stateId: 'state_done',
-  }),
-  issue({
-    id: 'issue_next',
-    identifier: 'ENG-3',
-    title: 'Draft the schema',
-    stateId: 'state_todo',
-  }),
-  issue({
-    id: 'issue_doing',
-    identifier: 'ENG-2',
-    title: 'Wire the socket',
-    stateId: 'state_doing',
-  }),
-  issue({
-    id: 'issue_bo',
-    identifier: 'ENG-9',
-    title: 'Trim the payload',
-    stateId: 'state_doing',
-    assigneeId: 'user_bo',
-  }),
-];
+const ADA_ISSUE = issue({ id: 'issue_ada', identifier: 'ENG-1', assigneeId: ada.id });
+const BO_ISSUE = issue({
+  id: 'issue_bo',
+  identifier: 'ENG-2',
+  number: 2,
+  title: 'Fix the socket',
+  stateId: doing.id,
+  assigneeId: bo.id,
+  creatorId: bo.id,
+});
 
-const boardWorkload: readonly StandupWorkload[] = [
-  { userId: 'user_ada', open: 2, inProgress: 1, completedSince: 1 },
-  { userId: 'user_bo', open: 1, inProgress: 1, completedSince: 0 },
-];
+function buildWorkspace(): WorkspaceData {
+  return {
+    ready: true,
+    userId: ada.id,
+    role: 'admin',
+    teams: [{ id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5b6cf9' }],
+    states: [todo, doing],
+    labels: [],
+    members: [ada, bo],
+    projects: [],
+    cycles: [],
+    seedIssues: [],
+    stateById: new Map([
+      [todo.id, todo],
+      [doing.id, doing],
+    ]),
+    labelById: new Map(),
+    memberById: new Map([
+      [ada.id, ada],
+      [bo.id, bo],
+    ]),
+    openQuickCreate: () => undefined,
+  };
+}
 
 const originalFetch = globalThis.fetch;
-const boardRequests: string[] = [];
 
-interface BoardResponse {
-  readonly issues: readonly Issue[];
-  readonly workload: readonly StandupWorkload[];
+function assigneeIdIn(url: string): string | null {
+  return new URL(url, 'http://localhost:3000').searchParams.get('assigneeId');
 }
 
-let response: BoardResponse = { issues: boardIssues, workload: boardWorkload };
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
 
-function stubFetch(): void {
+interface Served {
+  readonly listUrls: string[];
+  readonly facetUrls: string[];
+}
+
+function serve(options: { failList?: boolean; failFacets?: boolean } = {}): Served {
+  const listUrls: string[] = [];
+  const facetUrls: string[] = [];
+
   globalThis.fetch = mock((input: string | URL | Request) => {
     const url = String(input);
-    if (url.startsWith('/api/standup/board')) boardRequests.push(url);
-    return Promise.resolve(
-      Response.json({
-        since: '2026-06-08T00:00:00.000Z',
-        issues: response.issues,
-        workload: response.workload,
-      }),
-    );
+    const path = url.split('?')[0] ?? url;
+    const assignee = assigneeIdIn(url);
+
+    if (path === '/api/issues/facets') {
+      facetUrls.push(url);
+      if (options.failFacets === true) {
+        return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
+      }
+      const counts = assignee === null ? { [ada.id]: 5, [bo.id]: 2 } : { [assignee]: 7 };
+      return Promise.resolve(
+        json({ scopeTotal: 7, facets: { ...emptyFacets(), assignee: counts } }),
+      );
+    }
+
+    if (path === '/api/issues/summary') {
+      return Promise.resolve(
+        json({ total: assignee === null ? 2 : 1, byState: {}, groupTotals: {} }),
+      );
+    }
+
+    if (path === '/api/issues') {
+      listUrls.push(url);
+      if (options.failList === true) {
+        return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
+      }
+      const rows = [ADA_ISSUE, BO_ISSUE].filter(
+        (row) => assignee === null || row.assigneeId === assignee,
+      );
+      return Promise.resolve(json({ issues: rows, nextCursor: null }));
+    }
+
+    return Promise.resolve(json({}));
   }) as unknown as typeof fetch;
+
+  return { listUrls, facetUrls };
 }
 
-function Providers({ children }: { children: ReactNode }) {
-  return (
-    <QueryClientProvider client={createQueryClient()}>
-      <ToastProvider>
-        <HotkeyProvider>{children}</HotkeyProvider>
-      </ToastProvider>
-    </QueryClientProvider>
-  );
-}
-
-async function mountBoard() {
+function mountBoard(): void {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <Providers>
-      <StandupBoard />
-    </Providers>,
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <HotkeyProvider>
+          <StandupBoard />
+        </HotkeyProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
   );
-  await screen.findByTestId('standup-tiles');
 }
 
-function tileNames(): string[] {
-  return within(screen.getByTestId('standup-tiles'))
-    .getAllByRole('button')
-    .map((tile) => tile.getAttribute('data-testid') ?? '');
+function cardShown(identifier: string): boolean {
+  return screen.queryByTestId(`issue-card-${identifier}`) !== null;
 }
 
-function stageNames(): string[] {
-  return within(screen.getByTestId('standup-stages'))
-    .getAllByRole('heading', { level: 2 })
-    .map((heading) => heading.textContent ?? '');
+function cardHref(identifier: string): string | null {
+  const card = screen.queryByTestId(`issue-card-${identifier}`);
+  return card === null ? null : (card.querySelector('a')?.getAttribute('href') ?? null);
 }
 
-function cardsInStage(category: string): string[] {
-  return within(screen.getByTestId(`standup-stage-${category}`))
-    .getAllByRole('article')
-    .map((card) => card.getAttribute('data-testid') ?? '');
+function tileCount(userId: string): string | null {
+  return screen.queryByTestId(`standup-tile-count-${userId}`)?.textContent ?? null;
 }
-
-function shownCards(): string[] {
-  return within(screen.getByTestId('standup-stages'))
-    .getAllByRole('article')
-    .map((card) => card.getAttribute('data-testid') ?? '');
-}
-
-beforeEach(() => {
-  boardRequests.length = 0;
-  response = { issues: boardIssues, workload: boardWorkload };
-  stubFetch();
-});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-afterAll(() => {
-  globalThis.fetch = originalFetch;
-  mock.module('@/features/issues/issue-peek.tsx', () => ({ IssuePeek: realIssuePeek }));
-});
-
 describe('StandupBoard', () => {
-  it('puts a tile at the top for everyone carrying work', async () => {
-    await mountBoard();
+  it('opens on the whole workspace, asking the server for nobody in particular', async () => {
+    workspace = buildWorkspace();
+    const served = serve();
+    mountBoard();
 
-    expect(tileNames()).toEqual(['standup-tile-user_ada', 'standup-tile-user_bo']);
+    await screen.findByTestId('standup-kanban');
 
-    const ada = within(screen.getByTestId('standup-tile-user_ada'));
-    expect(ada.getByRole('img', { name: 'Ada Lovelace' })).toBeDefined();
+    expect(served.listUrls.length).toBe(1);
+    expect(assigneeIdIn(served.listUrls[0] ?? '')).toBeNull();
+    expect(served.facetUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
   });
 
-  it('leaves out a tile for a person the window found no work for', async () => {
-    await mountBoard();
+  it('shows every person work side by side, not one person at a time', async () => {
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
 
-    expect(screen.queryByTestId('standup-tile-user_cy')).toBeNull();
+    await screen.findByTestId('standup-kanban');
+
+    expect(cardShown('ENG-1')).toBe(true);
+    expect(cardShown('ENG-2')).toBe(true);
   });
 
-  it('shows one person at a time, split into a column per stage', async () => {
-    await mountBoard();
+  it('gives every card a real link to its own issue page', async () => {
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
 
-    expect(stageNames()).toEqual(['Todo', 'In Progress', 'Done']);
-    expect(cardsInStage('started')).toEqual(['issue-card-ENG-2']);
-    expect(cardsInStage('unstarted')).toEqual(['issue-card-ENG-3']);
-    expect(cardsInStage('completed')).toEqual(['issue-card-ENG-1']);
+    await screen.findByTestId('standup-kanban');
+
+    expect(cardHref('ENG-1')).toBe('/issue/ENG-1');
+    expect(cardHref('ENG-2')).toBe('/issue/ENG-2');
   });
 
-  it('opens on the first person rather than an empty screen', async () => {
-    await mountBoard();
-
-    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('aria-pressed')).toBe('true');
-    expect(shownCards()).not.toContain('issue-card-ENG-9');
-  });
-
-  it('swaps the stages over to whoever the facilitator clicks', async () => {
+  it('narrows on the server when a person is picked, never in the browser', async () => {
+    workspace = buildWorkspace();
+    const served = serve();
     const user = userEvent.setup();
-    await mountBoard();
+    mountBoard();
 
-    await user.click(screen.getByTestId('standup-tile-user_bo'));
+    await screen.findByTestId('standup-kanban');
+    await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
 
-    expect(cardsInStage('started')).toEqual(['issue-card-ENG-9']);
-    expect(shownCards()).not.toContain('issue-card-ENG-2');
-    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('marks the person who just spoke as done when the facilitator moves on', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBeNull();
-
-    await user.click(screen.getByTestId('standup-tile-user_bo'));
-
-    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBe('true');
-    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('data-spoken')).toBeNull();
-  });
-
-  it('counts off how far through the room the standup is', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    expect(screen.getByTestId('standup-progress').textContent).toBe('0 of 2 spoken');
-
-    await user.click(screen.getByTestId('standup-tile-user_bo'));
-
-    expect(screen.getByTestId('standup-progress').textContent).toBe('1 of 2 spoken');
-  });
-
-  it('walks to the next person who has not spoken', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.click(screen.getByTestId('next-speaker'));
-
-    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBe('true');
-  });
-
-  it('closes the last turn instead of wrapping back to somebody who spoke', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.click(screen.getByTestId('next-speaker'));
-    await user.click(screen.getByTestId('next-speaker'));
-
-    expect(screen.getByTestId('standup-progress').textContent).toBe('2 of 2 spoken');
-  });
-
-  it('advances on the n key as well as the button', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.keyboard('n');
-
-    expect(screen.getByTestId('standup-tile-user_bo').getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('shuffles the speaking order without losing anybody', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.click(screen.getByTestId('shuffle-standup'));
-
-    expect([...tileNames()].sort()).toEqual(['standup-tile-user_ada', 'standup-tile-user_bo']);
-  });
-
-  it('clears who has spoken when the facilitator resets the room', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.click(screen.getByTestId('next-speaker'));
-    expect(screen.getByTestId('standup-progress').textContent).toBe('1 of 2 spoken');
-
-    await user.click(screen.getByTestId('reset-standup'));
-
-    expect(screen.getByTestId('standup-progress').textContent).toBe('0 of 2 spoken');
-    expect(screen.getByTestId('standup-tile-user_ada').getAttribute('data-spoken')).toBeNull();
-  });
-
-  it('makes every card a real link to its issue page', async () => {
-    await mountBoard();
-
-    for (const identifier of ['ENG-1', 'ENG-2', 'ENG-3']) {
-      const card = within(screen.getByTestId(`issue-card-${identifier}`));
-      const link = card.getByRole('link');
-      expect(link.tagName).toBe('A');
-      expect(link.getAttribute('href')).toBe(`/issue/${identifier}`);
-    }
-  });
-
-  it('peeks the issue in place on a plain click and stays on the board', async () => {
-    await mountBoard();
-
-    const title = within(screen.getByTestId('issue-card-ENG-2')).getByRole('link', {
-      name: 'Wire the socket',
+    await waitFor(() => {
+      expect(served.listUrls.some((url) => assigneeIdIn(url) === bo.id)).toBe(true);
     });
-
-    const leftTheBoard = fireEvent.click(title);
-
-    expect(leftTheBoard).toBe(false);
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
-  });
-
-  it('peeks the focused card when a keyboard user presses space', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    within(screen.getByTestId('issue-card-ENG-3'))
-      .getByRole('link', { name: 'Draft the schema' })
-      .focus();
-    await user.keyboard(' ');
-
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-3');
-  });
-
-  it('lets a cmd click fall through to the link instead of peeking', async () => {
-    await mountBoard();
-
-    const title = within(screen.getByTestId('issue-card-ENG-2')).getByRole('link', {
-      name: 'Wire the socket',
+    await waitFor(() => {
+      expect(cardShown('ENG-1')).toBe(false);
     });
-
-    const followed = fireEvent.click(title, { metaKey: true });
-
-    expect(followed).toBe(true);
-    expect(screen.queryByTestId('issue-peek')).toBeNull();
+    expect(cardShown('ENG-2')).toBe(true);
   });
 
-  it('owns up to the rows the server capped away rather than hiding them', async () => {
-    response = {
-      issues: boardIssues,
-      workload: [
-        { userId: 'user_ada', open: 12, inProgress: 4, completedSince: 3 },
-        { userId: 'user_bo', open: 1, inProgress: 1, completedSince: 0 },
-      ],
-    };
-    await mountBoard();
-
-    expect(screen.getByTestId('standup-tile-count-user_ada').textContent).toBe('3 of 15');
-    expect(screen.getByTestId('standup-tile-count-user_bo').textContent).toBe('1');
-  });
-
-  it('says nobody is on the board when the window came back empty', async () => {
-    response = { issues: [], workload: [] };
-    render(
-      <Providers>
-        <StandupBoard />
-      </Providers>,
-    );
-
-    expect(await screen.findByText('Nobody has work on the board')).toBeDefined();
-    expect(screen.queryByTestId('standup-tiles')).toBeNull();
-  });
-
-  it('says which window the closed cards came out of', async () => {
-    await mountBoard();
-
-    expect(screen.getByTestId('standup-window').textContent).toMatch(/^closed work since \w/);
-  });
-
-  it('shows the timer only after the room asks for it', async () => {
+  it('keeps the tile counts on the whole workspace once a person is picked', async () => {
+    workspace = buildWorkspace();
+    serve();
     const user = userEvent.setup();
-    await mountBoard();
+    mountBoard();
 
-    expect(screen.queryByTestId('standup-timer')).toBeNull();
+    await screen.findByTestId('standup-kanban');
+    expect(tileCount(ada.id)).toBe('5');
 
-    await user.keyboard('t');
-    await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
-    expect(screen.getByTestId('standup-timer').textContent).toMatch(/^\d+:[0-5]\d$/);
+    await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
 
-    await user.keyboard('t');
-    await waitFor(() => expect(screen.queryByTestId('standup-timer')).toBeNull());
+    await waitFor(() => {
+      expect(cardShown('ENG-1')).toBe(false);
+    });
+    expect(tileCount(ada.id)).toBe('5');
+    expect(tileCount(bo.id)).toBe('2');
   });
 
-  it('leaves the timer key to the peek while it is open', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
+  it('marks the tile counts unknown when the roster lookup fails, not zero', async () => {
+    workspace = buildWorkspace();
+    serve({ failFacets: true });
+    mountBoard();
 
-    fireEvent.click(within(screen.getByTestId('issue-card-ENG-2')).getByText('Wire the socket'));
-    await screen.findByTestId('issue-peek');
+    await screen.findByTestId('standup-kanban');
 
-    await user.keyboard('t');
-
-    expect(screen.queryByTestId('standup-timer')).toBeNull();
+    await waitFor(() => {
+      expect(tileCount(ada.id)).toBe('?');
+    });
+    expect(tileCount(bo.id)).toBe('?');
   });
 
-  it('reads the whole meeting out of a single board request', async () => {
-    await mountBoard();
+  it('offers a retry rather than an empty board when the request fails', async () => {
+    workspace = buildWorkspace();
+    serve({ failList: true });
+    mountBoard();
 
-    expect(boardRequests).toHaveLength(1);
+    await screen.findByTestId('retry-standup');
 
-    fireEvent.click(within(screen.getByTestId('issue-card-ENG-2')).getByText('Wire the socket'));
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
-
-    fireEvent.click(screen.getByTestId('standup-tile-user_bo'));
-    fireEvent.click(within(screen.getByTestId('issue-card-ENG-9')).getByText('Trim the payload'));
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
-
-    expect(boardRequests).toHaveLength(1);
+    expect(screen.queryByTestId('standup-kanban')).toBeNull();
   });
 });

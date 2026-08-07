@@ -87,8 +87,8 @@ grounds that an unprioritised issue is not urgent.
 ### Relations
 
 Issues can block, be blocked by, relate to, or duplicate each other. Blocking is
-the one that changes behaviour: blocked issues surface in standup, because that
-is the moment someone can unblock them.
+the one that changes behaviour: an issue blocked by another is flagged wherever
+it appears, so the block is visible before anyone plans around it.
 
 ### Estimates
 
@@ -148,15 +148,17 @@ end up here.
 
 ## Standup
 
-A board rather than a meeting. Each person gets a column showing what they
-finished, what they are on, and what is blocking them, built from the issues
-themselves rather than from what someone remembers to type.
+A Kanban board of the whole workspace, with everyone's name in a row of tiles
+along the top. Click a name and the board filters to that person. Click it again,
+or click Everyone, and you are back to the whole team.
 
-There is a timer, a rotation so the same person does not always go first, and
-blockers can be raised and resolved as first class things.
+That is the entire feature. There is no meeting object, no turn order and no
+timer, because the meeting already has a facilitator and they do not need
+software to tell them whose turn it is. What they need is one screen that shows
+what a given person is carrying, in the order the work moves.
 
-Agents can run standup through the MCP server, which is how a bot can post it to
-Slack without anyone opening Orbit.
+Each tile carries a count of the open work for that person, so you can see who
+is loaded before anyone speaks.
 
 ## Views and filters
 

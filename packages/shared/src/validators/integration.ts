@@ -1,18 +1,37 @@
 import { z } from 'zod';
 import { idSchema } from './common.ts';
 
+const githubInstallationIdSchema = z.string().trim().regex(/^\d+$/).max(32);
+const githubRepositoryIdSchema = z.string().trim().regex(/^\d+$/).max(32);
+
 export const githubLinkRepositorySchema = z.object({
-  repositoryId: z.string().trim().min(1).max(64),
-  repositoryName: z.string().trim().min(1).max(512),
-  teamId: idSchema,
-  installationId: z.string().trim().max(64).default(''),
-  defaultBranch: z.string().trim().min(1).max(255).default('main'),
+  repositoryId: githubRepositoryIdSchema,
+  projectId: idSchema.nullable().default(null),
 });
 export type GithubLinkRepository = z.infer<typeof githubLinkRepositorySchema>;
 
 export const githubUnlinkRepositorySchema = z.object({
-  repositoryId: z.string().trim().min(1).max(64),
+  repositoryId: githubRepositoryIdSchema,
+  projectId: idSchema.optional(),
+  scope: z.enum(['one', 'all']).default('one'),
 });
+export type GithubUnlinkRepository = z.infer<typeof githubUnlinkRepositorySchema>;
+
+export const githubRemoveInstallationSchema = z.object({
+  installationId: githubInstallationIdSchema,
+});
+
+export const githubInstallRequestSchema = z.object({
+  setup_action: z.literal('request'),
+});
+
+export const githubCallbackSchema = z.object({
+  installation_id: githubInstallationIdSchema,
+  setup_action: z.enum(['install', 'update']).optional(),
+  code: z.string().trim().min(1).max(255),
+  state: z.string().trim().min(1).max(2048),
+});
+export type GithubCallback = z.infer<typeof githubCallbackSchema>;
 
 export const gitLinksQuerySchema = z.object({ issueId: idSchema });
 

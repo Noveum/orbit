@@ -657,68 +657,6 @@ const LOADERS: Record<SyncModel, Loader> = {
       ],
       data: row,
     })),
-
-  standup: async (principal, since, limit) =>
-    (
-      await db
-        .select()
-        .from(schema.standup)
-        .where(
-          and(
-            eq(schema.standup.organizationId, principal.organizationId),
-            gt(schema.standup.syncId, since),
-          ),
-        )
-        .orderBy(asc(schema.standup.syncId))
-        .limit(limit)
-    ).map((row) => ({
-      modelId: row.id,
-      syncId: row.syncId,
-      scopes: [scopes.organization(row.organizationId), scopes.team(row.teamId)],
-      data: row,
-    })),
-  standup_rotation: async (principal, since, limit) => {
-    const touched = await db
-      .select({
-        teamId: schema.standupRotation.teamId,
-        syncId: sql<number>`min(${schema.standupRotation.syncId})`.as('sync_id'),
-      })
-      .from(schema.standupRotation)
-      .where(
-        and(
-          eq(schema.standupRotation.organizationId, principal.organizationId),
-          gt(schema.standupRotation.syncId, since),
-        ),
-      )
-      .groupBy(schema.standupRotation.teamId)
-      .orderBy(asc(sql`min(${schema.standupRotation.syncId})`))
-      .limit(limit);
-    if (touched.length === 0) return [];
-
-    const rows = await db
-      .select()
-      .from(schema.standupRotation)
-      .where(
-        and(
-          eq(schema.standupRotation.organizationId, principal.organizationId),
-          inArray(
-            schema.standupRotation.teamId,
-            touched.map((entry) => entry.teamId),
-          ),
-        ),
-      )
-      .orderBy(asc(schema.standupRotation.position));
-
-    return touched.map(({ teamId, syncId }) => {
-      const rotation = rows.filter((row) => row.teamId === teamId);
-      return {
-        modelId: teamId,
-        syncId,
-        scopes: [scopes.team(teamId)],
-        data: { teamId, rotation },
-      };
-    });
-  },
 };
 
 export const SYNC_CATCHUP_MODELS = Object.keys(LOADERS) as SyncModel[];

@@ -443,23 +443,6 @@ export const reactionResultSchema = z.object({ emoji: z.string(), active: z.bool
 export const deletedSchema = z.object({ deleted: z.boolean() });
 export const subscribedSchema = z.object({ subscribed: z.boolean() });
 
-export const standupWorkloadSchema = z.object({
-  userId: z.string(),
-  open: z.number(),
-  inProgress: z.number(),
-  completedSince: z.number(),
-});
-
-export type StandupWorkload = z.infer<typeof standupWorkloadSchema>;
-
-export const standupBoardPayloadSchema = z.object({
-  since: timestamp,
-  issues: z.array(issueSchema).default([]),
-  workload: z.array(standupWorkloadSchema).default([]),
-});
-
-export type StandupBoardPayload = z.infer<typeof standupBoardPayloadSchema>;
-
 export const viewPreferencesSchema = z.object({
   preferences: z
     .array(

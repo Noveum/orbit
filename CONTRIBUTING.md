@@ -1,6 +1,6 @@
 # Contributing to Orbit
 
-Thanks for being here. Orbit is free because a work tracker is infrastructure,
+Thanks for being here. Orbit is free because a task manager is infrastructure,
 and infrastructure should not cost 18 dollars per person per month. Every
 contribution keeps it that way.
 
@@ -309,7 +309,7 @@ two completely different causes.
 ## Proposing features
 
 Orbit is opinionated on purpose. It says no to plenty, and it will keep saying
-no, because a work tracker that does everything is the reason people are looking
+no, because a task manager that does everything is the reason people are looking
 for a replacement in the first place.
 
 A proposal lands well when it explains the workflow that is currently painful,
