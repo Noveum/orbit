@@ -12,6 +12,14 @@ interface PageProps {
   readonly params: Promise<{ id: string }>;
 }
 
+export function viewIdFrom(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 const loadViews = cache(async (): Promise<ViewRecord[]> => {
   const { principal } = await pageContext();
   return await listViews(principal);
@@ -19,12 +27,14 @@ const loadViews = cache(async (): Promise<ViewRecord[]> => {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params;
+  const viewId = viewIdFrom(id);
   const rows = await loadViews();
-  return { title: rows.find((entry) => entry.id === id)?.name ?? 'View' };
+  return { title: rows.find((entry) => entry.id === viewId)?.name ?? 'View' };
 }
 
 export default async function SavedView({ params }: PageProps) {
   const { id } = await params;
+  const viewId = viewIdFrom(id);
   const rows = await loadViews();
   const client = new QueryClient();
   client.setQueryData(
@@ -34,7 +44,7 @@ export default async function SavedView({ params }: PageProps) {
 
   return (
     <HydrationBoundary state={dehydrate(client)}>
-      <SavedViewPage viewId={id} />
+      <SavedViewPage viewId={viewId} />
     </HydrationBoundary>
   );
 }
