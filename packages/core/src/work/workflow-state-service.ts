@@ -1,16 +1,21 @@
-import { and, asc, count, db, eq, inArray, schema } from '@orbit/db';
+import { and, asc, count, db, desc, eq, ne, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
-import { conflict, notFound } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import { conflict, validationFailed } from '@orbit/shared/errors';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
-import { workflowStateCreateSchema, workflowStateUpdateSchema } from '@orbit/shared/validators';
-import { principalActor } from '../activity/activity-service.ts';
-import { type Executor, newId, requireRow } from '../internal.ts';
+import {
+  workflowStateCreateSchema,
+  workflowStateReorderSchema,
+  workflowStateUpdateSchema,
+} from '@orbit/shared/validators';
+import { appendActivities, principalActor } from '../activity/activity-service.ts';
+import { type Executor, isUniqueViolation, newId, requireRow } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { applyStateTimestamps, type IssueRow, issueScopes } from './issue-fields.ts';
 
 export type WorkflowStateRow = typeof schema.workflowState.$inferSelect;
 
@@ -28,8 +33,58 @@ export const DEFAULT_WORKFLOW_STATES: readonly {
   { name: 'Canceled', category: 'canceled', color: '#EF4444' },
 ];
 
-function stateScopes(row: WorkflowStateRow): string[] {
+const NAME_TAKEN = 'That team already has a status with that name.';
+const MISSING_STATE = 'That workflow state does not exist.';
+
+async function refusingDuplicates<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isUniqueViolation(error)) throw conflict(NAME_TAKEN);
+    throw error;
+  }
+}
+
+function stateScopes(row: Pick<WorkflowStateRow, 'teamId'>): string[] {
   return [scopes.team(row.teamId)];
+}
+
+function stateAction(
+  row: WorkflowStateRow,
+  syncId: number,
+  actor: Actor,
+  action: 'insert' | 'update',
+): SyncAction {
+  return buildSyncAction({
+    syncId,
+    organizationId: row.organizationId,
+    scopes: stateScopes(row),
+    action,
+    model: 'workflow_state',
+    modelId: row.id,
+    data: row,
+    actor,
+  });
+}
+
+async function ownedState(
+  executor: Executor,
+  principal: Principal,
+  stateId: string,
+): Promise<WorkflowStateRow> {
+  const [row] = await executor
+    .select()
+    .from(schema.workflowState)
+    .where(
+      and(
+        eq(schema.workflowState.id, stateId),
+        eq(schema.workflowState.organizationId, principal.organizationId),
+      ),
+    )
+    .limit(1);
+  const current = requireRow(row, MISSING_STATE);
+  assertInTeam(principal, teamScope(current));
+  return current;
 }
 
 export async function createDefaultWorkflowStates(
@@ -104,6 +159,59 @@ export async function initialStateFor(
   return requireRow(any, 'That team has no workflow states.');
 }
 
+async function issuesInState(executor: Executor, stateId: string): Promise<IssueRow[]> {
+  return await executor.select().from(schema.issue).where(eq(schema.issue.stateId, stateId));
+}
+
+interface RestateParams {
+  readonly issues: readonly IssueRow[];
+  readonly stateId: string;
+  readonly category: string;
+  readonly syncId: number;
+  readonly actor: Actor;
+}
+
+async function restateIssues(executor: Executor, params: RestateParams): Promise<SyncAction[]> {
+  const now = new Date();
+  const actions: SyncAction[] = [];
+  for (const issue of params.issues) {
+    const [row] = await executor
+      .update(schema.issue)
+      .set({
+        stateId: params.stateId,
+        ...applyStateTimestamps(issue, params.category, now),
+        updatedAt: now,
+        syncId: params.syncId,
+      })
+      .where(eq(schema.issue.id, issue.id))
+      .returning();
+    if (row === undefined) continue;
+    actions.push(
+      buildSyncAction({
+        syncId: params.syncId,
+        organizationId: row.organizationId,
+        scopes: issueScopes(row),
+        action: 'update',
+        model: 'issue',
+        modelId: row.id,
+        data: row,
+        actor: params.actor,
+      }),
+    );
+  }
+  return actions;
+}
+
+async function nextPosition(executor: Executor, teamId: string): Promise<number> {
+  const [row] = await executor
+    .select({ position: schema.workflowState.position })
+    .from(schema.workflowState)
+    .where(eq(schema.workflowState.teamId, teamId))
+    .orderBy(desc(schema.workflowState.position))
+    .limit(1);
+  return row === undefined ? 0 : row.position + 1;
+}
+
 export async function createWorkflowState(
   principal: Principal,
   input: unknown,
@@ -111,44 +219,28 @@ export async function createWorkflowState(
   assertCan(principal, 'workflow:manage');
   const parsed = workflowStateCreateSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
-    const team = await requireTeam(principal, parsed.teamId, tx);
-    const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
-    const [maxPosition] = await tx
-      .select({ total: count() })
-      .from(schema.workflowState)
-      .where(eq(schema.workflowState.teamId, team.id));
-    const [state] = await tx
-      .insert(schema.workflowState)
-      .values({
-        id: newId(),
-        organizationId: principal.organizationId,
-        teamId: team.id,
-        name: parsed.name,
-        category: parsed.category,
-        color: parsed.color,
-        position: parsed.position ?? maxPosition?.total ?? 0,
-        syncId,
-      })
-      .returning();
-    const row = requireRow(state, 'The workflow state could not be created.');
-    return {
-      state: row,
-      actions: [
-        buildSyncAction({
-          syncId,
+  return await refusingDuplicates(async () =>
+    db.transaction(async (tx) => {
+      const team = await requireTeam(principal, parsed.teamId, tx);
+      const syncId = await nextSyncId(tx);
+      const actor = await principalActor(tx, principal);
+      const [state] = await tx
+        .insert(schema.workflowState)
+        .values({
+          id: newId(),
           organizationId: principal.organizationId,
-          scopes: stateScopes(row),
-          action: 'insert',
-          model: 'workflow_state',
-          modelId: row.id,
-          data: row,
-          actor,
-        }),
-      ],
-    };
-  });
+          teamId: team.id,
+          name: parsed.name,
+          category: parsed.category,
+          color: parsed.color,
+          position: await nextPosition(tx, team.id),
+          syncId,
+        })
+        .returning();
+      const row = requireRow(state, 'The workflow state could not be created.');
+      return { state: row, actions: [stateAction(row, syncId, actor, 'insert')] };
+    }),
+  );
 }
 
 export async function updateWorkflowState(
@@ -159,127 +251,193 @@ export async function updateWorkflowState(
   assertCan(principal, 'workflow:manage');
   const parsed = workflowStateUpdateSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
-      .from(schema.workflowState)
-      .where(
-        and(
-          eq(schema.workflowState.id, stateId),
-          eq(schema.workflowState.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const current = requireRow(existing, 'That workflow state does not exist.');
-    assertInTeam(principal, teamScope(current));
+  return await refusingDuplicates(async () =>
+    db.transaction(async (tx) => {
+      const current = await ownedState(tx, principal, stateId);
+      const syncId = await nextSyncId(tx);
+      const actor = await principalActor(tx, principal);
 
-    const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
-    const values: Partial<typeof schema.workflowState.$inferInsert> = { syncId };
-    if (parsed.name !== undefined) values.name = parsed.name;
-    if (parsed.category !== undefined) values.category = parsed.category;
-    if (parsed.color !== undefined) values.color = parsed.color;
-    if (parsed.position !== undefined) values.position = parsed.position;
+      const values: Partial<typeof schema.workflowState.$inferInsert> = { syncId };
+      if (parsed.name !== undefined) values.name = parsed.name;
+      if (parsed.category !== undefined) values.category = parsed.category;
+      if (parsed.color !== undefined) values.color = parsed.color;
 
-    const [updated] = await tx
-      .update(schema.workflowState)
-      .set(values)
-      .where(eq(schema.workflowState.id, stateId))
-      .returning();
-    const row = requireRow(updated, 'That workflow state does not exist.');
-    return {
-      state: row,
-      actions: [
-        buildSyncAction({
-          syncId,
-          organizationId: principal.organizationId,
-          scopes: stateScopes(row),
-          action: 'update',
-          model: 'workflow_state',
-          modelId: row.id,
-          data: row,
-          actor,
-        }),
-      ],
-    };
-  });
+      const [updated] = await tx
+        .update(schema.workflowState)
+        .set(values)
+        .where(eq(schema.workflowState.id, current.id))
+        .returning();
+      const row = requireRow(updated, MISSING_STATE);
+
+      const recategorised =
+        parsed.category !== undefined && parsed.category !== current.category
+          ? await restateIssues(tx, {
+              issues: await issuesInState(tx, current.id),
+              stateId: current.id,
+              category: row.category,
+              syncId,
+              actor,
+            })
+          : [];
+
+      return { state: row, actions: [stateAction(row, syncId, actor, 'update'), ...recategorised] };
+    }),
+  );
+}
+
+async function targetForMove(
+  executor: Executor,
+  current: WorkflowStateRow,
+  moveToStateId: string | undefined,
+  occupants: number,
+): Promise<WorkflowStateRow> {
+  if (moveToStateId === undefined) {
+    throw conflict('Name a status to move those issues to before deleting this one.', {
+      details: { stateId: current.id, issues: occupants },
+    });
+  }
+  const [row] = await executor
+    .select()
+    .from(schema.workflowState)
+    .where(
+      and(
+        eq(schema.workflowState.id, moveToStateId),
+        eq(schema.workflowState.organizationId, current.organizationId),
+        eq(schema.workflowState.teamId, current.teamId),
+        ne(schema.workflowState.id, current.id),
+      ),
+    )
+    .limit(1);
+  if (row === undefined) {
+    throw validationFailed('That replacement status is not another status on this team.');
+  }
+  return row;
+}
+
+export interface DeleteWorkflowStateOptions {
+  readonly moveToStateId?: string | undefined;
 }
 
 export async function deleteWorkflowState(
   principal: Principal,
   stateId: string,
+  options: DeleteWorkflowStateOptions = {},
 ): Promise<SyncAction[]> {
   assertCan(principal, 'workflow:manage');
 
   return await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
-      .from(schema.workflowState)
-      .where(
-        and(
-          eq(schema.workflowState.id, stateId),
-          eq(schema.workflowState.organizationId, principal.organizationId),
-        ),
-      )
-      .limit(1);
-    const current = requireRow(existing, 'That workflow state does not exist.');
-    assertInTeam(principal, teamScope(current));
+    const current = await ownedState(tx, principal, stateId);
 
-    const [used] = await tx
-      .select({ total: count() })
-      .from(schema.issue)
-      .where(eq(schema.issue.stateId, stateId));
-    if ((used?.total ?? 0) > 0) {
-      throw conflict('Move the issues in that status somewhere else first.', {
-        details: { stateId, issues: used?.total ?? 0 },
+    const [total] = await tx
+      .select({ states: count() })
+      .from(schema.workflowState)
+      .where(eq(schema.workflowState.teamId, current.teamId));
+    if ((total?.states ?? 0) <= 1) {
+      throw conflict('A team keeps at least one status, so this one cannot go.', {
+        details: { stateId: current.id },
       });
     }
 
+    const occupants = await issuesInState(tx, current.id);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    await tx.delete(schema.workflowState).where(eq(schema.workflowState.id, stateId));
+
+    const moved =
+      occupants.length === 0
+        ? []
+        : await moveOccupants(tx, { current, occupants, options, syncId, actor, principal });
+
+    await tx.delete(schema.workflowState).where(eq(schema.workflowState.id, current.id));
     return [
       buildSyncAction({
         syncId,
-        organizationId: principal.organizationId,
+        organizationId: current.organizationId,
         scopes: stateScopes(current),
         action: 'delete',
         model: 'workflow_state',
-        modelId: stateId,
-        data: { id: stateId, teamId: current.teamId },
+        modelId: current.id,
+        data: { id: current.id, teamId: current.teamId },
         actor,
       }),
+      ...moved,
     ];
   });
 }
 
+interface MoveOccupantsParams {
+  readonly current: WorkflowStateRow;
+  readonly occupants: readonly IssueRow[];
+  readonly options: DeleteWorkflowStateOptions;
+  readonly syncId: number;
+  readonly actor: Actor;
+  readonly principal: Principal;
+}
+
+async function moveOccupants(
+  tx: Executor,
+  params: MoveOccupantsParams,
+): Promise<readonly SyncAction[]> {
+  const target = await targetForMove(
+    tx,
+    params.current,
+    params.options.moveToStateId,
+    params.occupants.length,
+  );
+  const actions = await restateIssues(tx, {
+    issues: params.occupants,
+    stateId: target.id,
+    category: target.category,
+    syncId: params.syncId,
+    actor: params.actor,
+  });
+  await appendActivities(
+    tx,
+    params.occupants.map((issue) => ({
+      organizationId: params.principal.organizationId,
+      issueId: issue.id,
+      actor: params.actor,
+      field: 'stateId',
+      from: params.current.name,
+      to: target.name,
+      syncId: params.syncId,
+    })),
+  );
+  return actions;
+}
+
 export async function reorderWorkflowStates(
   principal: Principal,
-  teamId: string,
-  orderedStateIds: readonly string[],
+  input: unknown,
 ): Promise<{ states: WorkflowStateRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'workflow:manage');
-  if (orderedStateIds.length === 0) throw notFound('Provide the states to reorder.');
+  const parsed = workflowStateReorderSchema.parse(input);
+  const wanted = [...new Set(parsed.stateIds)];
+  if (wanted.length !== parsed.stateIds.length) {
+    throw validationFailed('That order names the same status twice.');
+  }
 
   return await db.transaction(async (tx) => {
-    await requireTeam(principal, teamId, tx);
+    const team = await requireTeam(principal, parsed.teamId, tx);
     const existing = await tx
       .select()
       .from(schema.workflowState)
       .where(
         and(
-          eq(schema.workflowState.teamId, teamId),
-          inArray(schema.workflowState.id, [...orderedStateIds]),
+          eq(schema.workflowState.organizationId, principal.organizationId),
+          eq(schema.workflowState.teamId, team.id),
         ),
       );
-    if (existing.length !== orderedStateIds.length) {
-      throw conflict('Some of those states do not belong to this team.');
+    const known = new Set(existing.map((row) => row.id));
+    if (existing.length !== wanted.length || wanted.some((id) => !known.has(id))) {
+      throw conflict('Reordering needs every status on the team, exactly once.', {
+        details: { teamId: team.id, expected: existing.length, received: wanted.length },
+      });
     }
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const states: WorkflowStateRow[] = [];
-    for (const [position, id] of orderedStateIds.entries()) {
+    for (const [position, id] of wanted.entries()) {
       const [updated] = await tx
         .update(schema.workflowState)
         .set({ position, syncId })
@@ -290,18 +448,7 @@ export async function reorderWorkflowStates(
 
     return {
       states,
-      actions: states.map((row) =>
-        buildSyncAction({
-          syncId,
-          organizationId: principal.organizationId,
-          scopes: stateScopes(row),
-          action: 'update',
-          model: 'workflow_state',
-          modelId: row.id,
-          data: row,
-          actor,
-        }),
-      ),
+      actions: states.map((row) => stateAction(row, syncId, actor, 'update')),
     };
   });
 }

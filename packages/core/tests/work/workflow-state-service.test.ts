@@ -73,7 +73,10 @@ describe('workflow states', () => {
     const ids = (await listWorkflowStates(workspace.admin, workspace.teamId))
       .map((state) => state.id)
       .reverse();
-    const reordered = await reorderWorkflowStates(workspace.admin, workspace.teamId, ids);
+    const reordered = await reorderWorkflowStates(workspace.admin, {
+      teamId: workspace.teamId,
+      stateIds: ids,
+    });
     expect(reordered.states).toHaveLength(8);
     const after = await listWorkflowStates(workspace.admin, workspace.teamId);
     expect(after.map((state) => state.id)).toEqual(ids);
