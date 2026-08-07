@@ -44,7 +44,7 @@ export function StandupBoard() {
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
-  const counts = roster.data?.facets.assignee ?? null;
+  const counts = roster.isError ? null : (roster.data?.facets.assignee ?? null);
 
   const model = useIssueViewModel({
     teamId: null,
