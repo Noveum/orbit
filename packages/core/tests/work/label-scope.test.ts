@@ -232,6 +232,123 @@ describe('an issue can only carry a label its team is allowed', () => {
   });
 });
 
+describe('narrowing a label to a team takes it off the issues that team cannot see', () => {
+  async function labelIdsOn(issueId: string): Promise<string[]> {
+    const rows = await db
+      .select()
+      .from(schema.issueLabel)
+      .where(eq(schema.issueLabel.issueId, issueId));
+    return rows.map((row) => row.labelId);
+  }
+
+  it('detaches it from an issue on another team and leaves the issue on its own team alone', async () => {
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    const outside = await createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Platform work',
+      labelIds: [shared.label.id],
+    });
+    const inside = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'Design work',
+      labelIds: [shared.label.id],
+    });
+
+    await updateLabel(nova.admin, shared.label.id, { teamId: designTeamId });
+
+    expect(await labelIdsOn(outside.issue.id)).toEqual([]);
+    expect(await labelIdsOn(inside.issue.id)).toEqual([shared.label.id]);
+  });
+
+  it('keeps the other labels of the issue it strips', async () => {
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    const kept = await createLabel(nova.admin, { name: 'Slow', color: '#22C55E' });
+    const outside = await createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Platform work',
+      labelIds: [shared.label.id, kept.label.id],
+    });
+
+    await updateLabel(nova.admin, shared.label.id, { teamId: designTeamId });
+
+    expect(await labelIdsOn(outside.issue.id)).toEqual([kept.label.id]);
+  });
+
+  it('tells the issue audience, so a live board drops the chip without a refetch', async () => {
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    const kept = await createLabel(nova.admin, { name: 'Slow', color: '#22C55E' });
+    const outside = await createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Platform work',
+      labelIds: [shared.label.id, kept.label.id],
+    });
+    const [before] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.id, outside.issue.id));
+
+    const result = await updateLabel(nova.admin, shared.label.id, { teamId: designTeamId });
+
+    const issueAction = result.actions.find((action) => action.model === 'issue');
+    expect(issueAction?.modelId).toBe(outside.issue.id);
+    expect(issueAction?.data['labelIds']).toEqual([kept.label.id]);
+    expect(issueAction?.scopes).toContain(scopes.team(nova.teamId));
+    expect(issueAction?.scopes).not.toContain(scopes.team(designTeamId));
+    const [after] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.id, outside.issue.id));
+    expect(after?.syncId).toBeGreaterThan(before?.syncId ?? 0);
+  });
+
+  it('touches nothing when the label widens back to the whole workspace', async () => {
+    const teamOnly = await createLabel(nova.admin, {
+      name: 'Pixel polish',
+      color: '#EC4899',
+      teamId: designTeamId,
+    });
+    const inside = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'Design work',
+      labelIds: [teamOnly.label.id],
+    });
+
+    const result = await updateLabel(nova.admin, teamOnly.label.id, { teamId: null });
+
+    expect(await labelIdsOn(inside.issue.id)).toEqual([teamOnly.label.id]);
+    expect(result.actions.filter((action) => action.model === 'issue')).toHaveLength(0);
+  });
+});
+
+describe('a patch that changes nothing changes nothing', () => {
+  it('does not bump the sync id and does not fan out', async () => {
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+
+    const empty = await updateLabel(nova.admin, shared.label.id, {});
+    const same = await updateLabel(nova.admin, shared.label.id, {
+      name: 'Flaky',
+      color: '#EF4444',
+      teamId: null,
+    });
+
+    expect(empty.actions).toHaveLength(0);
+    expect(same.actions).toHaveLength(0);
+    expect((await rowById(shared.label.id))?.syncId).toBe(shared.label.syncId);
+  });
+
+  it('still fans out when one field really moves', async () => {
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+
+    const changed = await updateLabel(nova.admin, shared.label.id, {
+      name: 'Flaky',
+      color: '#22C55E',
+    });
+
+    expect(changed.actions).toHaveLength(1);
+    expect((await rowById(shared.label.id))?.color).toBe('#22C55E');
+  });
+});
+
 describe('two labels cannot share a name in the same place', () => {
   it('answers a duplicate workspace name with a conflict, not a server fault', async () => {
     await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });

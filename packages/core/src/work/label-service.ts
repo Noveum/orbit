@@ -1,6 +1,6 @@
-import { and, asc, db, eq, inArray, isNull, or, type SQL, schema } from '@orbit/db';
+import { and, asc, db, eq, inArray, isNull, ne, or, type SQL, schema } from '@orbit/db';
 import { conflict, validationFailed } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -10,6 +10,7 @@ import { type Executor, isUniqueViolation, newId, requireRow } from '../internal
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { issueScopes } from './issue-fields.ts';
 
 export type LabelRow = typeof schema.label.$inferSelect;
 
@@ -110,6 +111,80 @@ export async function assertLabelsUsable(
   }
 }
 
+async function issuesOutsideTeam(
+  executor: Executor,
+  label: LabelRow,
+  teamId: string,
+): Promise<string[]> {
+  const rows = await executor
+    .select({ id: schema.issue.id })
+    .from(schema.issueLabel)
+    .innerJoin(schema.issue, eq(schema.issue.id, schema.issueLabel.issueId))
+    .where(
+      and(
+        eq(schema.issueLabel.labelId, label.id),
+        eq(schema.issue.organizationId, label.organizationId),
+        ne(schema.issue.teamId, teamId),
+      ),
+    );
+  return rows.map((row) => row.id);
+}
+
+async function remainingLabelsByIssue(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const grouped = new Map<string, string[]>();
+  const rows = await executor
+    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
+    .from(schema.issueLabel)
+    .where(inArray(schema.issueLabel.issueId, [...issueIds]));
+  for (const row of rows) {
+    const bucket = grouped.get(row.issueId) ?? [];
+    bucket.push(row.labelId);
+    grouped.set(row.issueId, bucket);
+  }
+  return grouped;
+}
+
+async function detachFromOtherTeams(
+  executor: Executor,
+  label: LabelRow,
+  syncId: number,
+  actor: Actor,
+): Promise<SyncAction[]> {
+  const teamId = label.teamId;
+  if (teamId === null) return [];
+  const issueIds = await issuesOutsideTeam(executor, label, teamId);
+  if (issueIds.length === 0) return [];
+
+  await executor
+    .delete(schema.issueLabel)
+    .where(
+      and(eq(schema.issueLabel.labelId, label.id), inArray(schema.issueLabel.issueId, issueIds)),
+    );
+
+  const remaining = await remainingLabelsByIssue(executor, issueIds);
+  const rows = await executor
+    .update(schema.issue)
+    .set({ syncId, updatedAt: new Date() })
+    .where(inArray(schema.issue.id, issueIds))
+    .returning();
+
+  return rows.map((row) =>
+    buildSyncAction({
+      syncId,
+      organizationId: row.organizationId,
+      scopes: issueScopes(row),
+      action: 'update',
+      model: 'issue',
+      modelId: row.id,
+      data: { ...row, labelIds: remaining.get(row.id) ?? [] },
+      actor,
+    }),
+  );
+}
+
 export async function listLabels(
   principal: Principal,
   options: { teamId?: string } = {},
@@ -172,6 +247,19 @@ export async function createLabel(
   );
 }
 
+function labelChanges(
+  current: LabelRow,
+  parsed: ReturnType<typeof labelUpdateSchema.parse>,
+): Partial<typeof schema.label.$inferInsert> {
+  const values: Partial<typeof schema.label.$inferInsert> = {};
+  if (parsed.name !== undefined && parsed.name !== current.name) values.name = parsed.name;
+  if (parsed.color !== undefined && parsed.color !== current.color) values.color = parsed.color;
+  if (parsed.teamId !== undefined && parsed.teamId !== current.teamId) {
+    values.teamId = parsed.teamId;
+  }
+  return values;
+}
+
 export async function updateLabel(
   principal: Principal,
   labelId: string,
@@ -187,10 +275,8 @@ export async function updateLabel(
         await requireTeam(principal, parsed.teamId, tx);
       }
 
-      const values: Partial<typeof schema.label.$inferInsert> = {};
-      if (parsed.name !== undefined) values.name = parsed.name;
-      if (parsed.color !== undefined) values.color = parsed.color;
-      if (parsed.teamId !== undefined) values.teamId = parsed.teamId;
+      const values = labelChanges(current, parsed);
+      if (Object.keys(values).length === 0) return { label: current, actions: [] };
 
       const syncId = await nextSyncId(tx);
       const actor = await principalActor(tx, principal);
@@ -205,6 +291,8 @@ export async function updateLabel(
         )
         .returning();
       const row = requireRow(updated, MISSING_LABEL);
+      const detached =
+        values.teamId === undefined ? [] : await detachFromOtherTeams(tx, row, syncId, actor);
       return {
         label: row,
         actions: [
@@ -218,6 +306,7 @@ export async function updateLabel(
             data: row,
             actor,
           }),
+          ...detached,
         ],
       };
     }),
