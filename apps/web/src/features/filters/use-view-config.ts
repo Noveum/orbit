@@ -23,7 +23,7 @@ const storedDisplaySchema = z.object({
   subGroupBy: z.enum(GROUP_BY_FIELDS).default('none'),
   orderBy: z.enum(ISSUE_ORDERINGS),
   showSubIssues: z.boolean(),
-  showEmptyGroups: z.boolean(),
+  showEmptyGroups: z.boolean().nullable().default(null),
   showCompleted: z.enum(COMPLETED_WINDOWS).default('all'),
   properties: z.array(z.enum(DISPLAY_PROPERTIES)),
 });

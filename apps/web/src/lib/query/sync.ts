@@ -72,6 +72,16 @@ export function belongsInList(search: string, issue: Issue): boolean {
   });
 }
 
+const GROUPED_PARAMS = ['stateId', 'assigneeId', 'projectId', 'cycleId'] as const;
+
+export function isGroupColumn(search: string, issue: Issue): boolean {
+  const params = new URLSearchParams(search);
+  return GROUPED_PARAMS.some((name) => {
+    const expected = params.get(name);
+    return expected !== null && issue[ISSUE_FIELD_OF[name]] === expected;
+  });
+}
+
 export function searchOf(key: readonly unknown[]): string {
   if (key.length < 3) return '';
   const last = key.at(-1);

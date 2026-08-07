@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
+import { mergedStateResolver } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { LayoutToggle } from '@/features/filters/layout-toggle.tsx';
 import type { ViewConfig, ViewLayoutMode, ViewPage } from '@/features/filters/view-config.ts';
@@ -16,7 +17,8 @@ import {
   viewConfigToState,
 } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
-import { Board } from '@/features/issues/board.tsx';
+import type { StateResolver } from '@/features/issues/board.tsx';
+import { Board, canRegroup } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
@@ -94,6 +96,8 @@ function SavedViewBody({ view }: { view: View }) {
     scope: scope.query,
   });
 
+  const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
+
   const stored = { teamId: view.filter.teamId, projectId: view.filter.projectId };
   const pending = viewConfigToState(config, layout, stored);
 
@@ -130,6 +134,7 @@ function SavedViewBody({ view }: { view: View }) {
       />
 
       <SavedViewContent
+        resolveState={resolveState}
         states={model.states}
         groups={model.groups}
         config={config}
@@ -159,6 +164,7 @@ function SavedViewBody({ view }: { view: View }) {
 }
 
 interface SavedViewContentProps {
+  readonly resolveState: StateResolver;
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly config: ViewConfig;
@@ -171,6 +177,7 @@ interface SavedViewContentProps {
 }
 
 function SavedViewContent({
+  resolveState,
   states,
   groups,
   config,
@@ -210,7 +217,9 @@ function SavedViewContent({
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="saved-view-board">
         <Board
           groups={groups}
-          draggable={false}
+          draggable={canRegroup(config.groupBy)}
+          reorderable={config.orderBy === 'manual'}
+          resolveState={resolveState}
           groupBy={config.groupBy}
           properties={config.display.properties}
           hasMore={hasMore}

@@ -56,6 +56,7 @@ import {
   admitsNewRows,
   belongsInList,
   flattenIssuePages,
+  isGroupColumn,
   mapIssuePages,
   searchOf,
   sortForSearch,
@@ -294,7 +295,12 @@ export interface IssuePatch {
   readonly labelIds?: readonly string[];
 }
 
-function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
+function reconcile(
+  search: string,
+  issues: readonly Issue[],
+  next: Issue,
+  admitNew = false,
+): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
@@ -304,7 +310,7 @@ function reconcile(search: string, issues: readonly Issue[], next: Issue): reado
     copy[index] = next;
     return sortForSearch(search, copy);
   }
-  if (!admitsNewRows(search)) return issues;
+  if (!(admitNew || admitsNewRows(search))) return issues;
   return sortForSearch(search, [...issues, next]);
 }
 
@@ -354,6 +360,12 @@ function placeIssue(client: QueryClient, next: Issue, settle = true): void {
     reconcile(search, issues, next),
   );
   if (settle) settleFilteredLists(client, [next], before);
+}
+
+function placeMovedIssue(client: QueryClient, next: Issue): void {
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
+    reconcile(search, issues, next, isGroupColumn(search, next)),
+  );
 }
 
 function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
@@ -482,7 +494,7 @@ export function useMoveIssue() {
         ...regroupingOf(input),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      placeIssue(client, optimistic, false);
+      placeMovedIssue(client, optimistic);
       return {};
     },
     onError: (error, input) => {

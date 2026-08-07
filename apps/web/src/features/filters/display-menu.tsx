@@ -166,11 +166,11 @@ export function DisplayMenu({
         </DropdownMenuCheckboxItem>
         {capability.showEmptyGroups ? (
           <DropdownMenuCheckboxItem
-            checked={config.display.showEmptyGroups}
+            checked={config.display.showEmptyGroups ?? false}
             data-testid="toggle-empty-groups"
             onSelect={(event) => {
               event.preventDefault();
-              setDisplay({ showEmptyGroups: !config.display.showEmptyGroups });
+              setDisplay({ showEmptyGroups: !(config.display.showEmptyGroups ?? false) });
             }}
           >
             Show empty groups

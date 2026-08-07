@@ -101,7 +101,7 @@ export function useIssueViewModel({
           labels: workspace.labels,
         },
         {
-          showEmptyGroups: config.display.showEmptyGroups,
+          showEmptyGroups: config.display.showEmptyGroups ?? false,
           ordering: config.orderBy,
           subGroupBy: config.subGroupBy,
           totals: groupTotals,

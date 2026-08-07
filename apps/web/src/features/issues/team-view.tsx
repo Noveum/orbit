@@ -220,7 +220,8 @@ function TeamContent({
     return (
       <Board
         groups={groups}
-        draggable={canRegroup(config.groupBy) && config.orderBy === 'manual'}
+        draggable={canRegroup(config.groupBy)}
+        reorderable={config.orderBy === 'manual'}
         groupBy={config.groupBy}
         properties={config.display.properties}
         hasMore={hasMore}
