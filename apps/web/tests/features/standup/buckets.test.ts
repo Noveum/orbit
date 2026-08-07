@@ -2,8 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import {
   bucketIssues,
   groupByAssignee,
-  personColumns,
+  nextSpeaker,
+  orderRoster,
   readingOrder,
+  shuffle,
+  stageGroups,
+  standupRoster,
 } from '../../../src/features/standup/buckets.ts';
 import type { Issue, Member, WorkflowState } from '../../../src/lib/query/schemas.ts';
 
@@ -173,9 +177,9 @@ const roster: readonly Member[] = [
   member('user_bo', 'Bo Chen'),
 ];
 
-describe('personColumns', () => {
-  it('gives every person with work a column, ordered by name', () => {
-    const columns = personColumns(
+describe('standupRoster', () => {
+  it('gives every person with work an entry, ordered by name', () => {
+    const entries = standupRoster(
       [
         issue({ id: 'a', assigneeId: 'user_cy' }),
         issue({ id: 'b', assigneeId: 'user_ada' }),
@@ -186,7 +190,7 @@ describe('personColumns', () => {
       stateById,
     );
 
-    expect(columns.map((column) => column.member.name)).toEqual([
+    expect(entries.map((entry) => entry.member.name)).toEqual([
       'Ada Lovelace',
       'Bo Chen',
       'Cy Diaz',
@@ -194,18 +198,18 @@ describe('personColumns', () => {
   });
 
   it('leaves out a person the window found no work for', () => {
-    const columns = personColumns(
+    const entries = standupRoster(
       [issue({ id: 'a', assigneeId: 'user_bo' })],
       roster,
       [{ userId: 'user_bo', open: 1, inProgress: 0, completedSince: 0 }],
       stateById,
     );
 
-    expect(columns.map((column) => column.member.id)).toEqual(['user_bo']);
+    expect(entries.map((entry) => entry.member.id)).toEqual(['user_bo']);
   });
 
-  it('stacks a column in progress, up next, closed', () => {
-    const columns = personColumns(
+  it('stacks an entry in progress, up next, closed', () => {
+    const entries = standupRoster(
       [
         issue({ id: 'done', assigneeId: 'user_ada', stateId: 'state_done' }),
         issue({ id: 'todo', assigneeId: 'user_ada', stateId: 'state_todo' }),
@@ -216,22 +220,22 @@ describe('personColumns', () => {
       stateById,
     );
 
-    expect(columns[0]?.issues.map((entry) => entry.id)).toEqual(['doing', 'todo', 'done']);
+    expect(entries[0]?.issues.map((row) => row.id)).toEqual(['doing', 'todo', 'done']);
   });
 
-  it('carries the server count so a capped column can own up to it', () => {
-    const columns = personColumns(
+  it('carries the server count so a capped tile can own up to it', () => {
+    const entries = standupRoster(
       [issue({ id: 'a', assigneeId: 'user_ada', stateId: 'state_doing' })],
       roster,
       [{ userId: 'user_ada', open: 12, inProgress: 4, completedSince: 3 }],
       stateById,
     );
 
-    expect(columns[0]?.total).toBe(15);
+    expect(entries[0]?.total).toBe(15);
   });
 
   it('never claims fewer than the cards it hands over', () => {
-    const columns = personColumns(
+    const entries = standupRoster(
       [
         issue({ id: 'a', assigneeId: 'user_ada', stateId: 'state_done' }),
         issue({ id: 'b', assigneeId: 'user_ada', stateId: 'state_done' }),
@@ -241,17 +245,150 @@ describe('personColumns', () => {
       stateById,
     );
 
-    expect(columns[0]?.total).toBe(2);
+    expect(entries[0]?.total).toBe(2);
   });
 
   it('skips work owned by somebody who is not in the workspace roster', () => {
-    const columns = personColumns(
+    const entries = standupRoster(
       [issue({ id: 'a', assigneeId: 'user_ghost' })],
       roster,
       [{ userId: 'user_ghost', open: 1, inProgress: 0, completedSince: 0 }],
       stateById,
     );
 
-    expect(columns).toHaveLength(0);
+    expect(entries).toHaveLength(0);
+  });
+});
+
+describe('stageGroups', () => {
+  it('splits the work of one person into a column per stage, in workflow order', () => {
+    const groups = stageGroups(
+      [
+        issue({ id: 'done', stateId: 'state_done' }),
+        issue({ id: 'doing', stateId: 'state_doing' }),
+        issue({ id: 'todo', stateId: 'state_todo' }),
+      ],
+      stateById,
+    );
+
+    expect(groups.map((group) => group.title)).toEqual(['Todo', 'In Progress', 'Done']);
+    expect(groups.map((group) => group.category)).toEqual(['unstarted', 'started', 'completed']);
+  });
+
+  it('leaves out a stage nobody has work in rather than showing an empty column', () => {
+    const groups = stageGroups([issue({ id: 'a', stateId: 'state_doing' })], stateById);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.category).toBe('started');
+  });
+
+  it('drops an issue whose state is not in the workspace', () => {
+    const groups = stageGroups([issue({ id: 'a', stateId: 'state_missing' })], stateById);
+
+    expect(groups).toEqual([]);
+  });
+
+  it('returns nothing for a person carrying nothing', () => {
+    expect(stageGroups([], stateById)).toEqual([]);
+  });
+});
+
+describe('shuffle', () => {
+  it('keeps every member exactly once', () => {
+    const order = shuffle(['a', 'b', 'c', 'd'], () => 0.5);
+
+    expect([...order].sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('reorders with the randomness it is handed', () => {
+    expect(shuffle(['a', 'b', 'c'], () => 0)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('leaves the array it was given alone', () => {
+    const original = ['a', 'b', 'c'];
+    shuffle(original, () => 0);
+
+    expect(original).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('orderRoster', () => {
+  it('falls back to the roster order when nobody has shuffled', () => {
+    const entries = standupRoster(
+      [issue({ id: 'a', assigneeId: 'user_ada' }), issue({ id: 'b', assigneeId: 'user_bo' })],
+      roster,
+      [],
+      stateById,
+    );
+
+    expect(orderRoster(entries, []).map((entry) => entry.member.id)).toEqual([
+      'user_ada',
+      'user_bo',
+    ]);
+  });
+
+  it('puts the roster into the shuffled order', () => {
+    const entries = standupRoster(
+      [issue({ id: 'a', assigneeId: 'user_ada' }), issue({ id: 'b', assigneeId: 'user_bo' })],
+      roster,
+      [],
+      stateById,
+    );
+
+    expect(orderRoster(entries, ['user_bo', 'user_ada']).map((entry) => entry.member.id)).toEqual([
+      'user_bo',
+      'user_ada',
+    ]);
+  });
+
+  it('keeps somebody the order does not mention, at the end', () => {
+    const entries = standupRoster(
+      [issue({ id: 'a', assigneeId: 'user_ada' }), issue({ id: 'b', assigneeId: 'user_bo' })],
+      roster,
+      [],
+      stateById,
+    );
+
+    expect(orderRoster(entries, ['user_bo']).map((entry) => entry.member.id)).toEqual([
+      'user_bo',
+      'user_ada',
+    ]);
+  });
+});
+
+describe('nextSpeaker', () => {
+  const entries = standupRoster(
+    [
+      issue({ id: 'a', assigneeId: 'user_ada' }),
+      issue({ id: 'b', assigneeId: 'user_bo' }),
+      issue({ id: 'c', assigneeId: 'user_cy' }),
+    ],
+    roster,
+    [],
+    stateById,
+  );
+
+  it('starts at the top when nobody has spoken', () => {
+    expect(nextSpeaker(entries, null, new Set())).toBe('user_ada');
+  });
+
+  it('moves to the next person in order', () => {
+    expect(nextSpeaker(entries, 'user_ada', new Set(['user_ada']))).toBe('user_bo');
+  });
+
+  it('skips somebody who has already spoken', () => {
+    expect(nextSpeaker(entries, 'user_ada', new Set(['user_ada', 'user_bo']))).toBe('user_cy');
+  });
+
+  it('wraps around to somebody skipped earlier', () => {
+    expect(nextSpeaker(entries, 'user_cy', new Set(['user_cy', 'user_bo']))).toBe('user_ada');
+  });
+
+  it('gives back nothing once everybody has spoken', () => {
+    expect(nextSpeaker(entries, 'user_cy', new Set(['user_ada', 'user_bo', 'user_cy']))).toBeNull();
+  });
+
+  it('gives back nothing when there is nobody on the board', () => {
+    expect(nextSpeaker([], null, new Set())).toBeNull();
   });
 });

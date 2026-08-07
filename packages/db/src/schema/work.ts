@@ -592,10 +592,15 @@ export const view = pgTable(
     layout: text('layout').notNull().default('list'),
     groupBy: text('group_by').notNull().default('state'),
     shared: text('shared').notNull().default('false'),
+    visibility: text('visibility').notNull().default('private'),
+    teamId: text('team_id').references(() => team.id, { onDelete: 'cascade' }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('view_org_idx').on(table.organizationId)],
+  (table) => [
+    index('view_org_idx').on(table.organizationId),
+    index('view_team_idx').on(table.teamId),
+  ],
 );
 
 export const viewPreference = pgTable(
