@@ -165,7 +165,7 @@ permission than the person who authorised it**, because the tools run through
 the same policy as everything else. A token with only `orbit.read` is not shown
 the write tools at all.
 
-Around fifty tools covering issues, sprints, projects and docs. Things that work
+Sixty odd tools covering issues, sprints, projects and docs. Things that work
 today:
 
 > "What is blocking the Realtime Sync Engine project?"

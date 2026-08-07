@@ -104,7 +104,7 @@ Point at `http://localhost:3000/mcp` instead. Everything else is the same.
 
 ## What the tools do
 
-Around fifty tools across seven groups. Read tools need `orbit.read`, write tools
+Sixty odd tools across seven groups. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
 Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
