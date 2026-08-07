@@ -180,7 +180,7 @@ describe('sprint controls on the sprint panel', () => {
     expect(calls[0]?.body).toBe(JSON.stringify({ teamId: 'team_eng' }));
   });
 
-  it('sends the name and both dates when a sprint is edited', async () => {
+  it('sends only the name when a sprint is renamed and its dates are left alone', async () => {
     renderPanel({ cycle: RUNNING, canManage: true });
     const user = userEvent.setup();
 
@@ -193,9 +193,36 @@ describe('sprint controls on the sprint panel', () => {
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]?.url).toBe('/api/cycles/cycle_running');
     expect(calls[0]?.method).toBe('PATCH');
-    expect(calls[0]?.body).toBe(
-      JSON.stringify({ name: 'Renamed', startsAt: '2026-01-01', endsAt: '2026-01-15' }),
-    );
+    expect(calls[0]?.body).toBe(JSON.stringify({ name: 'Renamed' }));
+  });
+
+  it('never sends back a day that would drag a started sprint to midnight', async () => {
+    const started: CycleView = { ...RUNNING, startsAt: '2026-01-01T14:32:07.000Z' };
+    renderPanel({ cycle: started, canManage: true });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId('sprint-edit-cycle_running'));
+    const name = await screen.findByTestId('sprint-edit-dialog-name');
+    await user.clear(name);
+    await user.type(name, 'Renamed');
+    await user.click(screen.getByTestId('sprint-edit-dialog-submit'));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(JSON.parse(calls[0]?.body ?? '{}')).not.toHaveProperty('startsAt');
+  });
+
+  it('sends the day the user actually moved', async () => {
+    renderPanel({ cycle: RUNNING, canManage: true });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId('sprint-edit-cycle_running'));
+    const endsAt = await screen.findByTestId('sprint-edit-dialog-ends');
+    await user.clear(endsAt);
+    await user.type(endsAt, '2026-01-22');
+    await user.click(screen.getByTestId('sprint-edit-dialog-submit'));
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]?.body).toBe(JSON.stringify({ name: 'Sprint 4', endsAt: '2026-01-22' }));
   });
 
   it('deletes a planned sprint only after the confirmation is taken', async () => {

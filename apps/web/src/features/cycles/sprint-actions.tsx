@@ -201,6 +201,20 @@ function draftFrom(teamId: string, values: SprintFormValues) {
   };
 }
 
+function movedDay(day: string, was: string): boolean {
+  return day.length > 0 && day !== was;
+}
+
+function editFrom(sprint: SprintSummary, values: SprintFormValues) {
+  const before = formOf(sprint);
+  return {
+    id: sprint.id,
+    ...(values.name.length === 0 ? {} : { name: values.name }),
+    ...(movedDay(values.startsAt, before.startsAt) ? { startsAt: values.startsAt } : {}),
+    ...(movedDay(values.endsAt, before.endsAt) ? { endsAt: values.endsAt } : {}),
+  };
+}
+
 export function NewSprintButton({ teamId }: { readonly teamId: string }) {
   const [open, setOpen] = useState(false);
   const create = useCreateSprint();
@@ -256,15 +270,7 @@ export function EditSprintButton({ sprint }: { readonly sprint: SprintSummary })
           pending={update.isPending}
           testId="sprint-edit-dialog"
           onSubmit={(values) => {
-            update.mutate(
-              {
-                id: sprint.id,
-                ...(values.name.length === 0 ? {} : { name: values.name }),
-                ...(values.startsAt.length === 0 ? {} : { startsAt: values.startsAt }),
-                ...(values.endsAt.length === 0 ? {} : { endsAt: values.endsAt }),
-              },
-              { onSuccess: () => setOpen(false) },
-            );
+            update.mutate(editFrom(sprint, values), { onSuccess: () => setOpen(false) });
           }}
         />
       ) : null}
