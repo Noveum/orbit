@@ -251,6 +251,16 @@ describe('capability matrix', () => {
     expect(capabilityFor('team', 'list').filters).toContain('project');
   });
 
+  it('keeps a column per person on the standup board and drops only the duplicate filter', () => {
+    expect(capabilityFor('standup', 'board').filters).not.toContain('assignee');
+    expect(capabilityFor('standup', 'board').groupBy).toContain('assignee');
+  });
+
+  it('drops both assignee dimensions on my issues, where everything has one assignee', () => {
+    expect(capabilityFor('my_issues', 'board').filters).not.toContain('assignee');
+    expect(capabilityFor('my_issues', 'board').groupBy).not.toContain('assignee');
+  });
+
   it('drops illegal parameters when the layout switches', () => {
     const config = {
       filter: group(inCondition('project', ['project-1']), inCondition('state', ['state-1'])),

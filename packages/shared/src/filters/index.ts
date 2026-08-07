@@ -551,9 +551,10 @@ function matrixFor(page: ViewPage): Record<ViewLayoutMode, ViewCapability> {
       return without(capability, { filters: ['project'], grouping: ['project'] });
     }
     if (page === 'cycle') return without(capability, { filters: ['cycle'], grouping: ['cycle'] });
-    if (page === 'my_issues' || page === 'standup') {
+    if (page === 'my_issues') {
       return without(capability, { filters: ['assignee'], grouping: ['assignee'] });
     }
+    if (page === 'standup') return without(capability, { filters: ['assignee'] });
     return capability;
   };
   return { list: build('list'), board: build('board') };
