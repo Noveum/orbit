@@ -1336,8 +1336,17 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    await tx.update(schema.issue).set({ parentId: null }).where(eq(schema.issue.parentId, issueId));
+    const orphaned = await tx
+      .update(schema.issue)
+      .set({ parentId: null, updatedAt: new Date(), syncId })
+      .where(eq(schema.issue.parentId, issueId))
+      .returning();
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
+
+    const labels = await labelsByIssue(
+      tx,
+      orphaned.map((child) => child.id),
+    );
 
     return [
       buildSyncAction({
@@ -1350,6 +1359,9 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
         data: { id: issueId, teamId: current.teamId, identifier: current.identifier },
         actor,
       }),
+      ...orphaned.map((child) =>
+        issueAction(child, syncId, actor, 'update', labels.get(child.id) ?? []),
+      ),
     ];
   });
 }
