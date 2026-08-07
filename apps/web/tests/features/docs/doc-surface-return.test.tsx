@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
@@ -55,6 +55,8 @@ interface RequestLog {
 }
 
 let requests: RequestLog[] = [];
+let heldFavorites: Array<() => void> = [];
+let holdFavorites = false;
 const realFetch = globalThis.fetch;
 
 function docPayload(favorite: boolean) {
@@ -96,11 +98,20 @@ function stubFetch(favorite: boolean): void {
       body: typeof init?.body === 'string' ? init.body : null,
     });
 
-    const body = (payload: unknown) =>
-      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) });
+    const answered = (payload: unknown) => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(payload),
+    });
+    const body = (payload: unknown) => Promise.resolve(answered(payload));
 
     if (url.endsWith('/visit')) return body({ docId: 'doc_1' });
-    if (url.endsWith('/favorite')) return body({ docId: 'doc_1', favorite: !favorite });
+    if (url.endsWith('/favorite')) {
+      const asked: unknown = JSON.parse(init?.body ?? '{}');
+      const payload = { docId: 'doc_1', favorite: (asked as { favorite: boolean }).favorite };
+      if (!holdFavorites) return body(payload);
+      return new Promise((resolve) => heldFavorites.push(() => resolve(answered(payload))));
+    }
     if (url.startsWith('/api/docs/doc_1')) return body(docPayload(favorite));
     if (url.startsWith('/api/docs')) return body({ docs: [], collections: [], projects: [] });
     if (url.startsWith('/api/comments')) return body({ comments: [] });
@@ -122,7 +133,22 @@ async function renderSurface(favorite = false) {
 
 beforeEach(() => {
   requests = [];
+  heldFavorites = [];
+  holdFavorites = false;
 });
+
+function favoriteBodies(): Array<string | null> {
+  return requests.filter((entry) => entry.url.endsWith('/favorite')).map((entry) => entry.body);
+}
+
+async function release(index: number): Promise<void> {
+  const gate = heldFavorites[index];
+  if (gate === undefined) throw new Error(`favorite write ${index} has not been sent`);
+  await act(async () => {
+    gate();
+    await Promise.resolve();
+  });
+}
 
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -169,6 +195,29 @@ describe('starring a doc', () => {
         body: '{"favorite":true}',
       }),
     );
+  });
+
+  it('still takes a click while the previous write is in flight, and sends them in that order', async () => {
+    const user = userEvent.setup();
+    holdFavorites = true;
+    await renderSurface(false);
+
+    const star = await screen.findByTestId('doc-favorite');
+    await user.click(star);
+    await waitFor(() => expect(heldFavorites).toHaveLength(1));
+
+    expect(star.hasAttribute('disabled')).toBe(false);
+    await user.click(star);
+    expect(favoriteBodies()).toEqual(['{"favorite":true}']);
+
+    await release(0);
+    await waitFor(() => expect(heldFavorites).toHaveLength(2));
+    await release(1);
+
+    await waitFor(() =>
+      expect(favoriteBodies()).toEqual(['{"favorite":true}', '{"favorite":false}']),
+    );
+    expect(star.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('shows an already starred doc as pressed and offers to unstar it', async () => {

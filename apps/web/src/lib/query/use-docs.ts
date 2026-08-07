@@ -88,6 +88,7 @@ export function useToggleDocFavorite(docId: string) {
   const key = queryKeys.doc(docId);
 
   return useMutation({
+    scope: { id: `doc-favorite:${docId}` },
     mutationFn: async (favorite: boolean): Promise<{ docId: string; favorite: boolean }> =>
       await apiFetch(`/api/docs/${docId}/favorite`, docFavoriteResultSchema, {
         method: 'POST',
