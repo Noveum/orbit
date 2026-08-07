@@ -17,7 +17,7 @@ import {
   viewConfigToState,
 } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
-import type { StateResolver } from '@/features/issues/board.tsx';
+import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
 import { Board, canRegroup } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
@@ -27,6 +27,7 @@ import { viewLayoutMode } from '@/features/views/view-href.ts';
 import type { ResolvedViewScope } from '@/features/views/view-scope.ts';
 import { resolveViewScope } from '@/features/views/view-scope.ts';
 import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
+import { columnParamFor } from '@/lib/query/issue-search.ts';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useAllIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
@@ -98,6 +99,19 @@ function SavedViewBody({ view }: { view: View }) {
 
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
 
+  const columnSource = useMemo<BoardColumnSource | undefined>(
+    () =>
+      columnParamFor(config.groupBy) === null
+        ? undefined
+        : {
+            query: { filter: config.filter, orderBy: config.orderBy },
+            groupBy: config.groupBy,
+            scope: scope.query,
+            display: config.display,
+          },
+    [config.groupBy, config.filter, config.orderBy, config.display, scope.query],
+  );
+
   const stored = { teamId: view.filter.teamId, projectId: view.filter.projectId };
   const pending = viewConfigToState(config, layout, stored);
 
@@ -135,6 +149,7 @@ function SavedViewBody({ view }: { view: View }) {
 
       <SavedViewContent
         resolveState={resolveState}
+        columnSource={columnSource}
         states={model.states}
         groups={model.groups}
         config={config}
@@ -165,6 +180,7 @@ function SavedViewBody({ view }: { view: View }) {
 
 interface SavedViewContentProps {
   readonly resolveState: StateResolver;
+  readonly columnSource: BoardColumnSource | undefined;
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly config: ViewConfig;
@@ -178,6 +194,7 @@ interface SavedViewContentProps {
 
 function SavedViewContent({
   resolveState,
+  columnSource,
   states,
   groups,
   config,
@@ -225,6 +242,7 @@ function SavedViewContent({
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}
+          columnSource={columnSource}
         />
       </div>
     );

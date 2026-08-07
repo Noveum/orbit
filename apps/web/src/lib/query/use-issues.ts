@@ -9,16 +9,19 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  boardSearch,
+  columnParamFor,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
   EMPTY_ISSUE_SCOPE,
+  groupColumnSearch,
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
@@ -32,6 +35,7 @@ import {
   queryKeys,
 } from './keys.ts';
 import type {
+  BoardPage,
   Bootstrap,
   Issue,
   IssueCounts,
@@ -41,6 +45,7 @@ import type {
   IssueSummary,
 } from './schemas.ts';
 import {
+  boardPageSchema,
   bootstrapSchema,
   issueCountsSchema,
   issueDeletedSchema,
@@ -176,19 +181,59 @@ export function useIssues(
   });
 }
 
-export function useColumnIssues(
-  teamId: string | null,
-  query: IssueQuery,
-  stateId: string,
-  enabled: boolean,
-) {
-  const search = teamId === null ? '' : columnSearch(teamId, query, stateId);
+export const BOARD_SEED_STALE_MS = 15_000;
+
+export interface BoardColumnKey {
+  readonly query: IssueQuery;
+  readonly groupBy: string;
+  readonly scope: Readonly<Record<string, string>>;
+}
+
+export function columnScopeKey(scope: Readonly<Record<string, string>>): string {
+  return scope['teamId'] ?? scope['projectId'] ?? 'workspace';
+}
+
+export function useColumnIssues(column: BoardColumnKey, groupId: string, enabled: boolean) {
+  const search = groupColumnSearch(column.query, column.groupBy, groupId, column.scope);
   return useInfiniteQuery({
-    ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
-    enabled: enabled && teamId !== null,
+    ...pagedIssueOptions(queryKeys.issues(columnScopeKey(column.scope), search), search),
+    enabled: enabled && search.length > 0,
     select: flattenIssuePages,
+    staleTime: BOARD_SEED_STALE_MS,
     placeholderData: keepPreviousData,
   });
+}
+
+export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
+  const client = useQueryClient();
+  const search = boardSearch(column.query, column.groupBy, column.scope);
+
+  const page = useQuery({
+    queryKey: queryKeys.boardPage(search),
+    enabled: enabled && columnParamFor(column.groupBy) !== null,
+    staleTime: BOARD_SEED_STALE_MS,
+    queryFn: async ({ signal }): Promise<BoardPage> =>
+      await apiFetch(`/api/issues/board?${search}`, boardPageSchema, { signal }),
+  });
+
+  const groups = page.data?.groups;
+
+  useEffect(() => {
+    if (groups === undefined) return;
+    for (const group of groups) {
+      const key = queryKeys.issues(
+        columnScopeKey(column.scope),
+        groupColumnSearch(column.query, column.groupBy, group.id, column.scope),
+      );
+      if (client.getQueryData(key) !== undefined) continue;
+      client.setQueryData<IssuePages>(key, {
+        pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],
+        pageParams: [null],
+      });
+    }
+  }, [groups, client, column.query, column.groupBy, column.scope]);
+
+  return page;
 }
 
 export function useProjectIssues(

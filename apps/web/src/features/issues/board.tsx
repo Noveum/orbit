@@ -31,7 +31,7 @@ import { UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import type { IssueQuery, IssueRegrouping, MoveInput } from '@/lib/query/use-issues.ts';
-import { useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
+import { useBoardPage, useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
@@ -39,8 +39,9 @@ import { useBoardAutoScroll } from './use-board-autoscroll.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardColumnSource {
-  readonly teamId: string;
   readonly query: IssueQuery;
+  readonly groupBy: string;
+  readonly scope: Readonly<Record<string, string>>;
   readonly display: DisplayOptions;
 }
 
@@ -60,6 +61,12 @@ export interface BoardProps {
 }
 
 const EMPTY_QUERY: IssueQuery = { filter: emptyFilterGroup(), orderBy: 'manual' };
+
+const EMPTY_COLUMN = {
+  query: EMPTY_QUERY,
+  groupBy: 'state',
+  scope: {} as Readonly<Record<string, string>>,
+};
 
 export const boardCollision: CollisionDetection = (args) => {
   const under = pointerWithin(args);
@@ -268,6 +275,7 @@ export function Board({
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const move = useMoveIssue();
+  useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
@@ -422,12 +430,7 @@ function BoardColumn({
   onRows,
 }: BoardColumnProps) {
   const { stateById } = useWorkspace();
-  const owned = useColumnIssues(
-    columnSource?.teamId ?? null,
-    columnSource?.query ?? EMPTY_QUERY,
-    group.id,
-    columnSource !== undefined,
-  );
+  const owned = useColumnIssues(columnSource ?? EMPTY_COLUMN, group.id, columnSource !== undefined);
   const ownsData = columnSource !== undefined;
   const fetched = owned.data ?? group.issues;
   const issues = useMemo(

@@ -188,6 +188,17 @@ export const issueListSchema = z.object({
 
 export type IssuePage = z.infer<typeof issueListSchema>;
 
+export const boardGroupSchema = z.object({
+  id: z.string(),
+  total: z.number(),
+  issues: z.array(issueSchema),
+  nextCursor: z.string().nullable().default(null),
+});
+
+export const boardPageSchema = z.object({ groups: z.array(boardGroupSchema) });
+
+export type BoardPage = z.infer<typeof boardPageSchema>;
+
 export const issueCountsSchema = z.object({
   total: z.number(),
   byState: z.record(z.string(), z.number()),
