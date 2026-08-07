@@ -25,7 +25,7 @@ import {
 } from '@/lib/query/use-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
 import { CommentComposer } from './comment-composer.tsx';
-import { type CommentUploads, usePendingCommentFiles } from './comment-uploads.ts';
+import { usePendingCommentFiles } from './comment-uploads.ts';
 
 const QUICK_EMOJI = ['👍', '🎉', '🚀', '👀', '❤️'] as const;
 
@@ -53,24 +53,39 @@ export interface CommentThreadProps {
   readonly members: readonly Member[];
 }
 
-export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
+interface NewCommentProps {
+  readonly issueId: string;
+  readonly members: readonly Member[];
+  readonly parentId: string | null;
+  readonly testId?: string;
+  readonly placeholder?: string;
+  readonly submitLabel?: string;
+  readonly autoFocus?: boolean;
+  readonly onCancel?: () => void;
+}
+
+function NewComment({
+  issueId,
+  members,
+  parentId,
+  testId,
+  placeholder,
+  submitLabel,
+  autoFocus = false,
+  onCancel,
+}: NewCommentProps) {
   const create = useCreateComment(issueId);
   const update = useUpdateComment(issueId);
   const files = usePendingCommentFiles();
-  const memberById = new Map(members.map((member) => [member.id, member]));
-  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
-  const timeline = buildTimeline(activity, comments);
-  const repliesOf = (parentId: string) =>
-    comments.filter((entry) => entry.comment.parentId === parentId);
-
-  const post = (body: string, parentId: string | null) => {
+  const submit = (body: string) => {
+    const draft = files.draft(body);
     create.mutate(
-      { body, parentId },
+      { body: draft.body, parentId },
       {
         onSuccess: (created) => {
-          files
-            .settle(created.comment.id, body)
+          draft
+            .settle(created.comment.id)
             .then((rewritten) => {
               if (rewritten === null) return;
               update.mutate({ id: created.comment.id, body: rewritten });
@@ -79,7 +94,31 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
         },
       },
     );
+    onCancel?.();
   };
+
+  return (
+    <CommentComposer
+      members={members}
+      pending={create.isPending}
+      autoFocus={autoFocus}
+      onUpload={files.hold}
+      onSubmit={submit}
+      {...(testId === undefined ? {} : { testId })}
+      {...(placeholder === undefined ? {} : { placeholder })}
+      {...(submitLabel === undefined ? {} : { submitLabel })}
+      {...(onCancel === undefined ? {} : { onCancel })}
+    />
+  );
+}
+
+export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
+  const memberById = new Map(members.map((member) => [member.id, member]));
+  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
+
+  const timeline = buildTimeline(activity, comments);
+  const repliesOf = (parentId: string) =>
+    comments.filter((entry) => entry.comment.parentId === parentId);
 
   return (
     <section className="flex flex-col gap-4" data-testid="comment-thread">
@@ -94,8 +133,6 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                 entry={item.comment}
                 author={memberById.get(item.comment.comment.authorId)}
                 members={members}
-                files={files}
-                onReply={post}
               />
               <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4 empty:hidden">
                 {repliesOf(item.comment.comment.id).map((reply) => (
@@ -105,8 +142,6 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                     entry={reply}
                     author={memberById.get(reply.comment.authorId)}
                     members={members}
-                    files={files}
-                    onReply={post}
                     isReply
                   />
                 ))}
@@ -116,12 +151,7 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
         )}
       </ul>
 
-      <CommentComposer
-        members={members}
-        pending={create.isPending}
-        onUpload={files.hold}
-        onSubmit={(body) => post(body, null)}
-      />
+      <NewComment issueId={issueId} members={members} parentId={null} />
     </section>
   );
 }
@@ -147,24 +177,15 @@ interface CommentItemProps {
   readonly entry: Comment;
   readonly author: Member | undefined;
   readonly members: readonly Member[];
-  readonly files: CommentUploads;
-  readonly onReply: (body: string, parentId: string) => void;
   readonly isReply?: boolean;
 }
 
-function CommentItem({
-  issueId,
-  entry,
-  author,
-  members,
-  files,
-  onReply,
-  isReply = false,
-}: CommentItemProps) {
+function CommentItem({ issueId, entry, author, members, isReply = false }: CommentItemProps) {
   const currentUserId = useCurrentUserId();
   const react = useToggleReaction(issueId);
   const update = useUpdateComment(issueId);
   const remove = useDeleteComment(issueId);
+  const files = usePendingCommentFiles();
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -275,18 +296,15 @@ function CommentItem({
         </div>
 
         {replying ? (
-          <CommentComposer
+          <NewComment
+            issueId={issueId}
             members={members}
+            parentId={entry.comment.id}
             testId={`comment-reply-${entry.comment.id}`}
             placeholder="Write a reply."
             submitLabel="Reply"
             autoFocus
             onCancel={() => setReplying(false)}
-            onUpload={files.hold}
-            onSubmit={(body) => {
-              onReply(body, entry.comment.id);
-              setReplying(false);
-            }}
           />
         ) : null}
       </div>

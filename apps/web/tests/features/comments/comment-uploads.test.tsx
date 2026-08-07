@@ -103,7 +103,8 @@ describe('usePendingCommentFiles', () => {
     const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
 
     const held = await result.current.hold(textFile());
-    const body = await result.current.settle('comment_7', `See [trace.log](${held.url})`);
+    const draft = result.current.draft(`See [trace.log](${held.url})`);
+    const body = await draft.settle('comment_7');
 
     await waitFor(() => expect(sent.length).toBeGreaterThan(0));
     const presign = sent.find((entry) => entry.url.includes('/api/attachments/presign'));
@@ -121,7 +122,9 @@ describe('usePendingCommentFiles', () => {
     stubFetch();
     const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
 
-    expect(await result.current.settle('comment_7', 'Plain words')).toBeNull();
+    const draft = result.current.draft('Plain words');
+    expect(draft.body).toBe('Plain words');
+    expect(await draft.settle('comment_7')).toBeNull();
     expect(sent).toHaveLength(0);
   });
 
@@ -133,6 +136,38 @@ describe('usePendingCommentFiles', () => {
       result.current.hold(new File(['MZ'], 'payload.exe', { type: 'application/x-msdownload' })),
     ).rejects.toThrow();
     expect(sent).toHaveLength(0);
+  });
+
+  it('never hands the created comment a body that points at browser local bytes', async () => {
+    stubFetch();
+    const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
+
+    const held = await result.current.hold(textFile());
+    const draft = result.current.draft(`See ![trace.log](${held.url}) for the stack`);
+
+    expect(draft.body).toBe('See trace.log for the stack');
+    expect(draft.body.includes('blob:')).toBe(false);
+  });
+
+  it('keeps the files of one composer out of the draft of another', async () => {
+    stubFetch();
+    globalThis.XMLHttpRequest = FakeUpload as unknown as typeof XMLHttpRequest;
+    const reply = renderHook(() => usePendingCommentFiles(), { wrapper });
+    const root = renderHook(() => usePendingCommentFiles(), { wrapper });
+
+    const inReply = await reply.result.current.hold(textFile('reply.log'));
+    const rootDraft = root.result.current.draft('Nothing attached here');
+
+    expect(rootDraft.body).toBe('Nothing attached here');
+    expect(await rootDraft.settle('comment_root')).toBeNull();
+    expect(sent).toHaveLength(0);
+
+    const replyDraft = reply.result.current.draft(`See [reply.log](${inReply.url})`);
+    expect(await replyDraft.settle('comment_reply')).toBe(
+      'See [reply.log](/api/files/org_1/2031/03/file.txt)',
+    );
+    const presign = sent.find((entry) => entry.url.includes('/api/attachments/presign'));
+    expect(presign?.body).toMatchObject({ parentType: 'comment', parentId: 'comment_reply' });
   });
 
   it('uploads straight to an existing comment when one is being edited', async () => {

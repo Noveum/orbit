@@ -9,13 +9,19 @@ import {
   holdAttachment,
   type PendingAttachment,
   releasePending,
+  withoutPlaceholders,
 } from '@/features/issues/pending-attachments.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
+
+export interface CommentDraft {
+  readonly body: string;
+  readonly settle: (commentId: string) => Promise<string | null>;
+}
 
 export interface CommentUploads {
   readonly hold: (file: File) => Promise<UploadedAttachment>;
   readonly upload: (commentId: string, file: File) => Promise<UploadedAttachment>;
-  readonly settle: (commentId: string, body: string) => Promise<string | null>;
+  readonly draft: (body: string) => CommentDraft;
 }
 
 export function usePendingCommentFiles(): CommentUploads {
@@ -56,28 +62,35 @@ export function usePendingCommentFiles(): CommentUploads {
     [refuse],
   );
 
-  const settle = useCallback(
-    async (commentId: string, body: string): Promise<string | null> => {
+  const draft = useCallback(
+    (body: string): CommentDraft => {
       const pending = held.current;
       held.current = [];
-      if (pending.length === 0) return null;
-      const outcome = await attachPending(
-        body,
-        pending,
-        async (file) => await uploadAttachment('comment', commentId, file),
-      );
-      releasePending(pending);
-      for (const failure of outcome.failures) {
-        toast({
-          title: `Could not attach ${failure.fileName}`,
-          description: failure.reason,
-          tone: 'danger',
-        });
-      }
-      return outcome.rewritten === 0 ? null : outcome.description;
+      if (pending.length === 0) return { body, settle: () => Promise.resolve(null) };
+
+      const stripped = withoutPlaceholders(body, pending);
+      return {
+        body: stripped,
+        settle: async (commentId: string): Promise<string | null> => {
+          const outcome = await attachPending(
+            body,
+            pending,
+            async (file) => await uploadAttachment('comment', commentId, file),
+          );
+          releasePending(pending);
+          for (const failure of outcome.failures) {
+            toast({
+              title: `Could not attach ${failure.fileName}`,
+              description: failure.reason,
+              tone: 'danger',
+            });
+          }
+          return outcome.description === stripped ? null : outcome.description;
+        },
+      };
     },
     [toast],
   );
 
-  return { hold, upload, settle };
+  return { hold, upload, draft };
 }
