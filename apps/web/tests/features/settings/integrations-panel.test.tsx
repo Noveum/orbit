@@ -188,6 +188,15 @@ describe('IntegrationsPanel', () => {
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 
+  it('renders no repository or channel name to a viewer who cannot manage integrations', () => {
+    renderPanel(CONNECTED, false);
+
+    expect(screen.queryByText('Noveum/web')).toBeNull();
+    expect(screen.queryByText('#engineering')).toBeNull();
+    expect(screen.getByTestId('integrations-withheld')).toBeInTheDocument();
+    expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
+  });
+
   it('offers a one-click Claude Code command and drops the admin API key copy', () => {
     renderPanel(CONNECTED, true);
     expect(
