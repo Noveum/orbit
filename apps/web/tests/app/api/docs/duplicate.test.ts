@@ -23,6 +23,7 @@ const copy = {
   title: 'Runbook (copy)',
   slug: 'runbook-copy',
   content: 'Steps.',
+  sortOrder: 0,
   visibility: 'workspace',
   publishToken: null,
   authorId: 'user_1',

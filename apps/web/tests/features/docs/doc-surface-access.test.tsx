@@ -69,6 +69,7 @@ function docPayload(access: 'read' | 'write', archivedAt: string | null) {
       title: 'Delta protocol',
       slug: 'delta-protocol',
       content: MARKDOWN,
+      sortOrder: 0,
       visibility: 'private',
       publishToken: null,
       authorId: 'user_author',

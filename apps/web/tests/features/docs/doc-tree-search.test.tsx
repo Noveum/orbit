@@ -22,6 +22,7 @@ function summary(id: string, title: string, snippet = ''): DocSummary {
     title,
     slug: id,
     content: '',
+    sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
     authorId: 'user_1',
@@ -33,6 +34,7 @@ function summary(id: string, title: string, snippet = ''): DocSummary {
     excerpt: 'The head of the doc, which is not why it matched.',
     snippet,
     titleMatch: snippet.length === 0,
+    rank: 0,
   };
 }
 
@@ -49,6 +51,9 @@ function tree(docs: readonly DocSummary[], search: string) {
         onCreateCollection={() => undefined}
         onRenameCollection={() => undefined}
         onDeleteCollection={() => undefined}
+        searching={false}
+        onCreateDoc={() => undefined}
+        onMoveDoc={() => undefined}
         canWrite
       />
     </TooltipProvider>
@@ -80,7 +85,7 @@ describe('the doc tree while searching', () => {
     render(tree([summary('titled', 'Quorum notes')], 'quorum'));
 
     expect(screen.queryByTestId('doc-snippet-titled')).toBeNull();
-    expect(screen.getByText('Quorum notes')).toBeTruthy();
+    expect(screen.getByTestId('doc-row-titled').textContent).toContain('Quorum notes');
   });
 
   it('keeps the server order instead of regrouping the hits into folders', () => {
@@ -102,7 +107,7 @@ describe('the doc tree while searching', () => {
   it('says so when a search matches nothing', () => {
     render(tree([], 'quorum'));
 
-    expect(screen.getByTestId('doc-search-results').textContent).toContain('No matches');
+    expect(screen.getByTestId('doc-search-results').textContent).toContain('Nothing matches');
   });
 
   it('goes back to the folder tree when the search box is cleared', () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
-import { Check } from 'lucide-react';
+import { Check, ChevronRight } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { cn } from '@/lib/cn.ts';
 
@@ -100,4 +100,43 @@ export function DropdownMenuSeparator({
 
 export function DropdownMenuShortcut({ className, ...props }: ComponentProps<'span'>) {
   return <span className={cn('ml-auto text-2xs text-faint', className)} {...props} />;
+}
+
+export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
+
+export function DropdownMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.SubTrigger>) {
+  return (
+    <DropdownMenuPrimitive.SubTrigger
+      className={cn(itemClassName, 'data-[state=open]:bg-surface-2', className)}
+      {...props}
+    >
+      {children}
+      <ChevronRight className="ml-auto size-3.5 text-faint" aria-hidden="true" />
+    </DropdownMenuPrimitive.SubTrigger>
+  );
+}
+
+export function DropdownMenuSubContent({
+  className,
+  sideOffset = 4,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        sideOffset={sideOffset}
+        className={cn(
+          'z-50 min-w-44 rounded-lg border border-border bg-surface p-1 shadow-pop',
+          'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
+          'data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in',
+          className,
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  );
 }

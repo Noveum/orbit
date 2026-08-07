@@ -15,6 +15,7 @@ function doc(id: string, title: string): DocSummary {
     title,
     slug: id,
     content: '',
+    sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
     authorId: 'user_1',
@@ -26,6 +27,7 @@ function doc(id: string, title: string): DocSummary {
     excerpt: '',
     snippet: '',
     titleMatch: false,
+    rank: 0,
   };
 }
 

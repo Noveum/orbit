@@ -18,6 +18,7 @@ const doc: Doc = {
   title: 'Delta protocol',
   slug: 'delta-protocol',
   content: MARKDOWN,
+  sortOrder: 0,
   visibility: 'workspace',
   publishToken: null,
   authorId: 'user_1',

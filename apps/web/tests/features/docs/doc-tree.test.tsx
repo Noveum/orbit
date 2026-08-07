@@ -33,6 +33,7 @@ function summary(id: string, title: string): DocSummary {
     title,
     slug: id,
     content: '',
+    sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
     authorId: 'user_1',
@@ -44,6 +45,7 @@ function summary(id: string, title: string): DocSummary {
     excerpt: '',
     snippet: '',
     titleMatch: false,
+    rank: 0,
   };
 }
 
@@ -64,6 +66,9 @@ function tree(
         onCreateCollection={() => undefined}
         onRenameCollection={() => undefined}
         onDeleteCollection={() => undefined}
+        searching={false}
+        onCreateDoc={() => undefined}
+        onMoveDoc={() => undefined}
         canWrite
       />
     </TooltipProvider>

@@ -30,6 +30,7 @@ function doc(id: string, title: string, snippet: string): DocSummary {
     title,
     slug: id,
     content: '',
+    sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
     authorId: 'user_1',
@@ -41,6 +42,7 @@ function doc(id: string, title: string, snippet: string): DocSummary {
     excerpt: '',
     snippet,
     titleMatch: snippet.length === 0,
+    rank: 0,
   };
 }
 

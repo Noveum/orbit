@@ -4,16 +4,19 @@ export const HIGHLIGHT_END = '\uE001';
 export interface HighlightSegment {
   readonly text: string;
   readonly match: boolean;
+  readonly start: number;
 }
 
 export function highlightSegments(value: string): HighlightSegment[] {
   const segments: HighlightSegment[] = [];
   let buffer = '';
   let inside = false;
+  let start = 0;
 
   const flush = () => {
     if (buffer.length === 0) return;
-    segments.push({ text: buffer, match: inside });
+    segments.push({ text: buffer, match: inside, start });
+    start += buffer.length;
     buffer = '';
   };
 

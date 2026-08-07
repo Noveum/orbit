@@ -31,6 +31,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     title: 'Delta protocol',
     slug: 'delta-protocol',
     content: '',
+    sortOrder: 0,
     visibility,
     publishToken,
     authorId: 'user_1',
