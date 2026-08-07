@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { completeCycle, createCycle, createTeam, listCycles } from '@orbit/core';
 import {
   addMember,
@@ -8,6 +8,7 @@ import {
 } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
 import { z } from 'zod';
+import { mockSession } from '../../../../tests-support.ts';
 
 let workspace: Workspace;
 let contributorUserId: string;
@@ -20,10 +21,7 @@ interface Signed {
 
 const signedIn: { value: Signed | null } = { value: null };
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(signedIn.value),
-  requireSession: () => Promise.resolve(signedIn.value),
-}));
+mockSession(() => signedIn.value);
 
 const cycles = await import('../../../../src/app/api/cycles/route.ts');
 const cycleById = await import('../../../../src/app/api/cycles/[id]/route.ts');

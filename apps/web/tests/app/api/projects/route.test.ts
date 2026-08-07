@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import { z } from 'zod';
+import { mockSession } from '../../../../tests-support.ts';
 
 const coreModule = await import('@orbit/core');
 
@@ -28,10 +29,7 @@ let session: Session | null = null;
 
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(session),
-  requireSession: () => Promise.resolve(session),
-}));
+mockSession(() => session);
 
 const route = await import('../../../../src/app/api/projects/route.ts');
 
