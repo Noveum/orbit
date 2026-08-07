@@ -6,8 +6,10 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { cn } from '@/lib/cn.ts';
+import { revealOnHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
+import { IssueActionsMenu } from './issue-actions.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -132,6 +134,7 @@ export function IssueRow({
         properties={properties}
       />
       {shows('assignee') ? <RowAssignee assignee={assignee} /> : null}
+      <IssueActionsMenu issue={issue} className={revealOnHover} />
     </div>
   );
 }

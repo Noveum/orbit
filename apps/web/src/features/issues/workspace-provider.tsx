@@ -1,8 +1,13 @@
 'use client';
 
-import { STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared/constants';
+import {
+  ORG_ROLES,
+  type OrgRole,
+  STATE_CATEGORY_ORDER,
+  type StateCategory,
+} from '@orbit/shared/constants';
 import { usePathname } from 'next/navigation';
-import { createContext, type ReactNode, useContext, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type {
   Bootstrap,
@@ -14,11 +19,13 @@ import type {
   WorkflowState,
 } from '@/lib/query/schemas.ts';
 import { useBootstrap } from '@/lib/query/use-issues.ts';
+import { IssueDeletionProvider } from './issue-deletion.tsx';
 import { QuickCreateDialog } from './quick-create.tsx';
 
 export interface WorkspaceData {
   readonly ready: boolean;
   readonly userId: string | null;
+  readonly role: OrgRole;
   readonly teams: readonly Team[];
   readonly states: readonly WorkflowState[];
   readonly labels: readonly Label[];
@@ -37,6 +44,7 @@ const EMPTY_MAP = new Map<string, never>();
 const WorkspaceContext = createContext<WorkspaceData>({
   ready: false,
   userId: null,
+  role: 'guest',
   teams: [],
   states: [],
   labels: [],
@@ -52,6 +60,10 @@ const WorkspaceContext = createContext<WorkspaceData>({
 
 export function useWorkspace(): WorkspaceData {
   return useContext(WorkspaceContext);
+}
+
+export function toOrgRole(value: string | undefined): OrgRole {
+  return ORG_ROLES.find((role) => role === value) ?? 'guest';
 }
 
 export function orderStates(states: readonly WorkflowState[]): WorkflowState[] {
@@ -76,6 +88,31 @@ export function teamKeyFromPath(pathname: string): string | null {
   return match?.[1]?.toUpperCase() ?? null;
 }
 
+export function workspaceFrom(
+  data: Bootstrap | undefined,
+  openQuickCreate: (teamId?: string) => void,
+): WorkspaceData {
+  const states = data?.states ?? [];
+  const labels = data?.labels ?? [];
+  const members = data?.members ?? [];
+  return {
+    ready: data !== undefined,
+    userId: data?.userId ?? null,
+    role: toOrgRole(data?.role),
+    teams: data?.teams ?? [],
+    states,
+    labels,
+    members,
+    projects: data?.projects ?? [],
+    cycles: data?.cycles ?? [],
+    seedIssues: data?.issues ?? [],
+    stateById: new Map(states.map((state) => [state.id, state])),
+    labelById: new Map(labels.map((label) => [label.id, label])),
+    memberById: new Map(members.map((member) => [member.id, member])),
+    openQuickCreate,
+  };
+}
+
 export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
   const pathname = usePathname();
@@ -86,29 +123,15 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const routeTeamKey = teamKeyFromPath(pathname);
   const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
 
-  const value = useMemo<WorkspaceData>(() => {
-    const states = data?.states ?? [];
-    const labels = data?.labels ?? [];
-    const members = data?.members ?? [];
-    return {
-      ready: data !== undefined,
-      userId: data?.userId ?? null,
-      teams: data?.teams ?? [],
-      states,
-      labels,
-      members,
-      projects: data?.projects ?? [],
-      cycles: data?.cycles ?? [],
-      seedIssues: data?.issues ?? [],
-      stateById: new Map(states.map((state) => [state.id, state])),
-      labelById: new Map(labels.map((label) => [label.id, label])),
-      memberById: new Map(members.map((member) => [member.id, member])),
-      openQuickCreate: (teamId?: string) => {
-        setCreateTeamId(teamId ?? null);
-        setCreateOpen(true);
-      },
-    };
-  }, [data]);
+  const openQuickCreate = useCallback((teamId?: string) => {
+    setCreateTeamId(teamId ?? null);
+    setCreateOpen(true);
+  }, []);
+
+  const value = useMemo<WorkspaceData>(
+    () => workspaceFrom(data, openQuickCreate),
+    [data, openQuickCreate],
+  );
 
   useHotkey(
     'c',
@@ -121,7 +144,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceContext.Provider value={value}>
-      {children}
+      <IssueDeletionProvider>{children}</IssueDeletionProvider>
       <QuickCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

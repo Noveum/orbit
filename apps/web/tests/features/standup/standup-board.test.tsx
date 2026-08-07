@@ -51,6 +51,7 @@ const members: readonly Member[] = [
 const workspace: WorkspaceData = {
   ready: true,
   userId: 'user_ada',
+  role: 'admin',
   teams: [{ id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
   states,
   labels: [],
