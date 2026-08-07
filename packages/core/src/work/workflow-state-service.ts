@@ -16,6 +16,7 @@ import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { applyStateTimestamps, type IssueRow, issueScopes } from './issue-fields.ts';
+import { labelIdsByIssue } from './label-service.ts';
 
 export type WorkflowStateRow = typeof schema.workflowState.$inferSelect;
 
@@ -203,6 +204,10 @@ interface RestateParams {
 
 async function restateIssues(executor: Executor, params: RestateParams): Promise<SyncAction[]> {
   const now = new Date();
+  const labels = await labelIdsByIssue(
+    executor,
+    params.issues.map((issue) => issue.id),
+  );
   const actions: SyncAction[] = [];
   for (const issue of params.issues) {
     const timestamps = applyStateTimestamps(issue, params.category, now);
@@ -226,7 +231,7 @@ async function restateIssues(executor: Executor, params: RestateParams): Promise
         action: 'update',
         model: 'issue',
         modelId: row.id,
-        data: row,
+        data: { ...row, labelIds: labels.get(row.id) ?? [] },
         actor: params.actor,
       }),
     );

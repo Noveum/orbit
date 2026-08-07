@@ -10,6 +10,7 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { createIssue } from '../../src/work/issue-service.ts';
+import { createLabel } from '../../src/work/label-service.ts';
 import {
   createWorkflowState,
   deleteWorkflowState,
@@ -374,6 +375,61 @@ describe('deleting a status that still holds issues needs an answer', () => {
     expect(await errorOf(() => deleteWorkflowState(workspace.admin, last.id))).toBe('conflict');
 
     expect(await statesOf(workspace.teamId)).toHaveLength(1);
+  });
+});
+
+describe('an issue a status change touches goes out whole, labels and all', () => {
+  it('carries the labels through a category change, so a board cannot blank the chips', async () => {
+    const label = await createLabel(workspace.admin, { name: 'Flaky', color: '#EF4444' });
+    const todo = stateNamed(workspace, 'Todo');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: todo.id,
+      labelIds: [label.label.id],
+    });
+
+    const saved = await updateWorkflowState(workspace.admin, todo.id, { category: 'completed' });
+
+    const action = saved.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([label.label.id]);
+  });
+
+  it('carries them through a delete that moves the issues too', async () => {
+    const label = await createLabel(workspace.admin, { name: 'Flaky', color: '#EF4444' });
+    const todo = stateNamed(workspace, 'Todo');
+    const done = stateNamed(workspace, 'Done');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: todo.id,
+      labelIds: [label.label.id],
+    });
+
+    const actions = await deleteWorkflowState(workspace.admin, todo.id, { moveToStateId: done.id });
+
+    const action = actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([label.label.id]);
+  });
+
+  it('sends an empty list rather than nothing for an issue that carries no label', async () => {
+    const todo = stateNamed(workspace, 'Todo');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Bare',
+      stateId: todo.id,
+    });
+
+    const saved = await updateWorkflowState(workspace.admin, todo.id, { category: 'completed' });
+
+    const action = saved.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([]);
   });
 });
 
