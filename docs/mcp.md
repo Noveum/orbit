@@ -205,7 +205,7 @@ and post it to Slack without anyone opening Orbit.
 | `create_team`, `update_team` | write | |
 | `add_team_member`, `remove_team_member` | write | |
 | `remove_member` | write | Remove from the workspace |
-| `create_label`, `update_label`, `delete_label` | write | Pass `team` to pin a label to one team, `null` to widen it back |
+| `create_label`, `update_label`, `delete_label` | write | Pass `team` to pin a label to one team, `null` to widen it back. Name a label by id when two share a name |
 | `create_state`, `update_state` | write | A status carries a category the product reads, so changing it re-dates the issues in it |
 | `delete_state` | write | Refused while issues sit in it unless `moveTo` names the status they go to |
 | `reorder_states` | write | The whole board order, first column first |

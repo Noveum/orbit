@@ -10,15 +10,16 @@ import {
   updateLabel,
   updateWorkflowState,
 } from '@orbit/core';
-import { STATE_CATEGORIES } from '@orbit/shared/constants';
-import { notFound } from '@orbit/shared/errors';
+import {
+  DEFAULT_LABEL_COLOR,
+  DEFAULT_STATE_COLOR,
+  STATE_CATEGORIES,
+} from '@orbit/shared/constants';
+import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveStateId, resolveTeam } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
-
-const DEFAULT_LABEL_COLOR = '#5a63c8';
-const DEFAULT_STATE_COLOR = '#6b7280';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
 const stateRef = z.string().min(1).describe('A workflow state name or id on that team.');
@@ -35,12 +36,19 @@ const labelTeam = z
   );
 
 async function resolveLabel(principal: Principal, ref: string): Promise<string> {
-  const needle = ref.trim().toLowerCase();
+  const needle = ref.trim();
   const labels = await listLabels(principal, {});
-  const found = labels.find(
-    (label) => label.id === ref.trim() || label.name.trim().toLowerCase() === needle,
-  );
+  const byId = labels.find((label) => label.id === needle);
+  if (byId !== undefined) return byId.id;
+  const lowered = needle.toLowerCase();
+  const byName = labels.filter((label) => label.name.trim().toLowerCase() === lowered);
+  const found = byName[0];
   if (found === undefined) throw notFound(`No label matches "${ref}".`);
+  if (byName.length > 1) {
+    throw conflict(`More than one label is named "${ref}". Name the one you mean by its id.`, {
+      details: { labelIds: byName.map((label) => label.id) },
+    });
+  }
   return found.id;
 }
 

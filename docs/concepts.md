@@ -103,7 +103,10 @@ thing filters and saved views are built from.
 
 A label can instead be pinned to one team. A team label is only visible to that
 team, only pushed over realtime to that team, and only attachable to that team's
-issues. Manage both under **Settings**, **Labels**.
+issues. Pinning a workspace label to a team also takes it off the issues of every
+other team, so the rule holds for issues that already carried it rather than only
+for the next edit. Widening a team label back to the workspace touches no issue.
+Manage both under **Settings**, **Labels**.
 
 ## Workflow states
 
@@ -115,7 +118,8 @@ The category is the part the rest of Orbit reads. It is what decides whether an
 issue counts as open on a sprint burndown, when `startedAt` and `completedAt`
 are stamped, and which bucket the standup board puts it in. Renaming a status or
 moving it in the order leaves the category alone; changing the category re-dates
-every issue sitting in that status, on the server, in the same transaction.
+every issue sitting in that status, on the server, in the same transaction. Those
+issues did not move, so how long they have sat where they are is left alone.
 
 Deleting a status that still holds issues is refused until you name the status
 those issues move to, and a team always keeps at least one status. Manage them

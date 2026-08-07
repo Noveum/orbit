@@ -213,6 +213,26 @@ describe('the label tools carry the team scope through', () => {
     expect(label.teamId).toBeNull();
   });
 
+  it('refuses to guess when a workspace label and a team label share a name', async () => {
+    await admin.result('create_label', { name: 'Regression', color: '#ef4444' });
+    await admin.result('create_label', {
+      name: 'Regression',
+      color: '#22c55e',
+      team: designKey,
+    });
+
+    const ambiguous = await admin.call('update_label', { label: 'Regression', color: '#3b82f6' });
+    expect(errorPayload(ambiguous).code).toBe('conflict');
+
+    const rows = await db.select().from(schema.label).where(eq(schema.label.name, 'Regression'));
+    expect(rows.map((row) => row.color).sort()).toEqual(['#22c55e', '#ef4444']);
+
+    const byId = rows[0];
+    if (byId === undefined) throw new Error('the labels vanished');
+    const named = await admin.result('update_label', { label: byId.id, color: '#3b82f6' });
+    expect((named['label'] as { id: string }).id).toBe(byId.id);
+  });
+
   it('refuses a guest every label write', async () => {
     const created = await guest.call('create_label', { name: 'Sneaky' });
     const removed = await guest.call('delete_label', { label: 'Pixel polish' });
