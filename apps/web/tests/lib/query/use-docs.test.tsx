@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { docFavoriteSchema } from '@orbit/shared/validators';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -22,8 +23,7 @@ function stubServer(): Server {
   const gates: Array<() => void> = [];
 
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
-    const parsed: unknown = JSON.parse(String(init?.body ?? '{}'));
-    const favorite = (parsed as { favorite: boolean }).favorite;
+    const { favorite } = docFavoriteSchema.parse(JSON.parse(String(init?.body ?? '{}')));
     const docId = String(input).split('/').at(-2) ?? '';
     arrivals.push({ docId, favorite });
     return new Promise<Response>((resolve) => {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
+import { docFavoriteSchema } from '@orbit/shared/validators';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -107,8 +108,8 @@ function stubFetch(favorite: boolean): void {
 
     if (url.endsWith('/visit')) return body({ docId: 'doc_1' });
     if (url.endsWith('/favorite')) {
-      const asked: unknown = JSON.parse(init?.body ?? '{}');
-      const payload = { docId: 'doc_1', favorite: (asked as { favorite: boolean }).favorite };
+      const asked = docFavoriteSchema.parse(JSON.parse(init?.body ?? '{}'));
+      const payload = { docId: 'doc_1', favorite: asked.favorite };
       if (!holdFavorites) return body(payload);
       return new Promise((resolve) => heldFavorites.push(() => resolve(answered(payload))));
     }
