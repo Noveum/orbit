@@ -28,6 +28,7 @@ import {
   updateCycle,
 } from '../../src/work/cycle-service.ts';
 import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { raceAcrossTeamCycleLock } from '../support/interleave.ts';
 
 let workspace: Workspace;
 
@@ -309,6 +310,62 @@ describe('startCycle', () => {
     const planned = await plannedSprint();
     const vega = await createWorkspace('Vega');
     await expect(startCycle(vega.admin, planned.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  describe('when another transaction commits while it waits for the team lock', () => {
+    async function readyToStart() {
+      const planned = await plannedSprint();
+      await completeCycle(workspace.admin, (await firstCycle()).id);
+      return planned;
+    }
+
+    function reasonOf(outcome: PromiseSettledResult<unknown>): unknown {
+      return outcome.status === 'rejected' ? outcome.reason : undefined;
+    }
+
+    it('leaves the history of a sprint closed behind its back alone', async () => {
+      const planned = await readyToStart();
+      const closedAt = daysFromNow(1);
+
+      const outcome = await raceAcrossTeamCycleLock({
+        teamId: workspace.teamId,
+        race: () => startCycle(workspace.admin, planned.id, daysFromNow(20)),
+        interlope: async (client) => {
+          await client`update cycle set completed_at = ${closedAt} where id = ${planned.id}`;
+        },
+      });
+
+      expect(outcome.status).toBe('rejected');
+      expect(reasonOf(outcome)).toMatchObject({ code: 'conflict' });
+
+      const after = await getCycle(workspace.admin, planned.id);
+      expect(after.completedAt?.getTime()).toBe(closedAt.getTime());
+      expect(after.startsAt.getTime()).toBe(planned.startsAt.getTime());
+    });
+
+    it('checks the dates it finds after the lock, not the ones it read before', async () => {
+      const planned = await readyToStart();
+      const movedStart = daysFromNow(16);
+      const movedEnd = daysFromNow(18);
+
+      const outcome = await raceAcrossTeamCycleLock({
+        teamId: workspace.teamId,
+        race: () => startCycle(workspace.admin, planned.id, daysFromNow(20)),
+        interlope: async (client) => {
+          await client`
+            update cycle set starts_at = ${movedStart}, ends_at = ${movedEnd}
+            where id = ${planned.id}
+          `;
+        },
+      });
+
+      expect(outcome.status).toBe('rejected');
+      expect(reasonOf(outcome)).toMatchObject({ code: 'conflict' });
+
+      const after = await getCycle(workspace.admin, planned.id);
+      expect(after.startsAt.getTime()).toBe(movedStart.getTime());
+      expect(after.endsAt.getTime()).toBe(movedEnd.getTime());
+    });
   });
 });
 
