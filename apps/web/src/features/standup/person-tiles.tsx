@@ -8,12 +8,14 @@ import type { Member } from '@/lib/query/schemas.ts';
 export interface PersonTilesProps {
   readonly members: readonly Member[];
   readonly selectedId: string | null;
-  readonly counts: Readonly<Record<string, number>>;
+  readonly counts: Readonly<Record<string, number>> | null;
   readonly onSelect: (userId: string | null) => void;
 }
 
 const tile =
   'flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
+
+const UNKNOWN_COUNT = '?';
 
 const selectedTile = 'border-accent bg-accent/10 text-text';
 const idleTile =
@@ -37,7 +39,7 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
       </button>
       {members.map((member) => {
         const selected = member.id === selectedId;
-        const count = counts[member.id] ?? 0;
+        const count = counts === null ? null : (counts[member.id] ?? 0);
         return (
           <button
             key={member.id}
@@ -50,13 +52,14 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
           >
             <Avatar name={member.name} src={member.image} size="xs" />
             <span className="max-w-28 truncate">{member.name}</span>
-            {count > 0 ? (
+            {count === null || count > 0 ? (
               <span
                 data-numeric
                 data-testid={`standup-tile-count-${member.id}`}
+                title={count === null ? 'Workload counts are unavailable' : undefined}
                 className="text-faint"
               >
-                {count}
+                {count ?? UNKNOWN_COUNT}
               </span>
             ) : null}
           </button>

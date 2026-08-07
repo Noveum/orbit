@@ -16,9 +16,13 @@ const members: readonly Member[] = [
 
 const counts: Readonly<Record<string, number>> = { user_ada: 5, user_bo: 2 };
 
-function mount(selectedId: string | null, onSelect: (id: string | null) => void = () => undefined) {
+function mount(
+  selectedId: string | null,
+  onSelect: (id: string | null) => void = () => undefined,
+  shown: Readonly<Record<string, number>> | null = counts,
+) {
   render(
-    <PersonTiles members={members} selectedId={selectedId} counts={counts} onSelect={onSelect} />,
+    <PersonTiles members={members} selectedId={selectedId} counts={shown} onSelect={onSelect} />,
   );
 }
 
@@ -96,5 +100,15 @@ describe('PersonTiles', () => {
     mount(null);
 
     expect(screen.queryByTestId('standup-tile-count-user_cy')).toBeNull();
+  });
+
+  it('says the counts are unknown rather than passing a failed lookup off as nobody working', () => {
+    mount(null, () => undefined, null);
+
+    for (const id of ['user_ada', 'user_bo', 'user_cy']) {
+      const badge = screen.getByTestId(`standup-tile-count-${id}`);
+      expect(badge.textContent).toBe('?');
+      expect(badge.getAttribute('title')).toBe('Workload counts are unavailable');
+    }
   });
 });
