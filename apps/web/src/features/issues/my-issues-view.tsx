@@ -127,7 +127,7 @@ export function MyIssuesView() {
       <HiddenFooter
         hiddenByFilters={model.hiddenByFilters}
         hiddenByDisplay={model.hiddenByDisplay}
-        onClearFilters={() => undefined}
+        onClearFilters={() => setConfig({ ...config, filter: { ...config.filter, children: [] } })}
         onRevealDisplay={() =>
           setConfig({
             ...config,
