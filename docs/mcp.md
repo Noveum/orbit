@@ -197,14 +197,17 @@ and post it to Slack without anyone opening Orbit.
 | `list_views` | read | Saved views |
 | `create_view`, `update_view`, `delete_view` | write | |
 
-### Teams and labels
+### Teams, labels and workflow states
 
 | Tool | Scope | Does |
 | --- | --- | --- |
 | `create_team`, `update_team` | write | |
 | `add_team_member`, `remove_team_member` | write | |
 | `remove_member` | write | Remove from the workspace |
-| `create_label`, `update_label`, `delete_label` | write | |
+| `create_label`, `update_label`, `delete_label` | write | Pass `team` to pin a label to one team, `null` to widen it back |
+| `create_state`, `update_state` | write | A status carries a category the product reads, so changing it re-dates the issues in it |
+| `delete_state` | write | Refused while issues sit in it unless `moveTo` names the status they go to |
+| `reorder_states` | write | The whole board order, first column first |
 
 ## Things worth asking for
 

@@ -97,9 +97,29 @@ by points, and analytics shows both.
 
 ## Labels
 
-Workspace-wide tags with a colour. Labels cross teams, which is what makes them
+Tags with a colour. A label is workspace wide by default, which is what makes it
 useful for things like `Bug`, `Performance` or `Docs`, and they are the main
 thing filters and saved views are built from.
+
+A label can instead be pinned to one team. A team label is only visible to that
+team, only pushed over realtime to that team, and only attachable to that team's
+issues. Manage both under **Settings**, **Labels**.
+
+## Workflow states
+
+The columns of a team board. Each one belongs to a single team, carries a
+position that fixes its place in the order, and carries a **category**, one of
+`triage`, `backlog`, `unstarted`, `started`, `review`, `completed` or `canceled`.
+
+The category is the part the rest of Orbit reads. It is what decides whether an
+issue counts as open on a sprint burndown, when `startedAt` and `completedAt`
+are stamped, and which bucket the standup board puts it in. Renaming a status or
+moving it in the order leaves the category alone; changing the category re-dates
+every issue sitting in that status, on the server, in the same transaction.
+
+Deleting a status that still holds issues is refused until you name the status
+those issues move to, and a team always keeps at least one status. Manage them
+under **Settings**, **Workflow**.
 
 ## Sprints and cycles
 
