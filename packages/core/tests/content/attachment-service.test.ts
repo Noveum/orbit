@@ -32,10 +32,12 @@ let docId: string;
 interface FakeStorage {
   readonly driver: StorageDriver;
   readonly puts: { key: string; bytes: number; contentType: string }[];
+  readonly deletes: string[];
 }
 
 function fakeStorage(): FakeStorage {
   const puts: { key: string; bytes: number; contentType: string }[] = [];
+  const deletes: string[] = [];
   const objects = new Map<string, StoredObject>();
   const driver = {
     name: 's3',
@@ -54,10 +56,14 @@ function fakeStorage(): FakeStorage {
       return Promise.resolve();
     },
     getUrl: () => Promise.reject(new Error('unused')),
-    delete: () => Promise.resolve(),
+    delete: (key: string) => {
+      deletes.push(key);
+      objects.delete(key);
+      return Promise.resolve();
+    },
     stat: (key: string) => Promise.resolve(objects.get(key) ?? null),
   } as unknown as StorageDriver;
-  return { driver, puts };
+  return { driver, puts, deletes };
 }
 
 beforeEach(async () => {
@@ -369,5 +375,58 @@ describe('attachFile', () => {
       ),
     ).rejects.toThrow();
     expect(storage.puts).toHaveLength(0);
+  });
+
+  it('refuses a comment on an issue in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(nova.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(nova.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const secret = await createComment(nova.admin, hidden.id, { body: 'Private' });
+    const { principal } = await addMember(nova, 'member');
+    const storage = fakeStorage();
+
+    expect(
+      await errorOf(() =>
+        attachFile(
+          principal,
+          {
+            parentType: 'comment',
+            parentId: secret.comment.id,
+            fileName: 'notes.txt',
+            contentType: 'text/plain',
+            content: Buffer.from('let me in').toString('base64'),
+          },
+          storage.driver,
+        ),
+      ),
+    ).toEqual({ code: 'not_found', status: 404 });
+    expect(storage.puts).toHaveLength(0);
+  });
+
+  it('takes the stored bytes back out when the row cannot be written', async () => {
+    const storage = fakeStorage();
+    const ghost: Principal = { ...nova.admin, userId: newId() };
+
+    await expect(
+      attachFile(
+        ghost,
+        {
+          parentType: 'issue',
+          parentId: issueId,
+          fileName: 'notes.txt',
+          contentType: 'text/plain',
+          content: Buffer.from('hello orbit').toString('base64'),
+        },
+        storage.driver,
+      ),
+    ).rejects.toThrow();
+
+    expect(storage.puts).toHaveLength(1);
+    expect(storage.deletes).toEqual([storage.puts[0]?.key ?? 'no key was stored']);
   });
 });

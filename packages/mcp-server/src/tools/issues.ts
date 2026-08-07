@@ -14,7 +14,12 @@ import {
   updateIssue,
 } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
-import { ISSUE_RELATION_TYPES, STATE_CATEGORIES } from '@orbit/shared/constants';
+import {
+  base64LengthFor,
+  ISSUE_RELATION_TYPES,
+  MAX_INLINE_UPLOAD_BYTES,
+  STATE_CATEGORIES,
+} from '@orbit/shared/constants';
 import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { branchName } from '@orbit/shared/utils';
@@ -574,7 +579,13 @@ function registerAttachFile(server: McpServer, principal: Principal): void {
           ),
         fileName: z.string().min(1).max(255).describe('Name to store the file under.'),
         contentType: z.string().min(1).max(255).describe('Mime type, for example "image/png".'),
-        content: z.string().min(1).describe('The file bytes, base64 encoded.'),
+        content: z
+          .string()
+          .min(1)
+          .max(base64LengthFor(MAX_INLINE_UPLOAD_BYTES))
+          .describe(
+            `The file bytes, base64 encoded, up to ${MAX_INLINE_UPLOAD_BYTES / (1024 * 1024)}MB decoded.`,
+          ),
       },
     },
     async (args) => {

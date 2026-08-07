@@ -32,12 +32,15 @@ export function attachmentScopes(
 export async function resolveAttachmentScopes(
   executor: Executor,
   row: Pick<AttachmentRecord, 'parentType' | 'parentId' | 'uploadedById'>,
+  organizationId: string,
 ): Promise<string[]> {
   if (row.parentType !== 'comment') return attachmentScopes(row);
   const [comment] = await executor
     .select({ issueId: schema.comment.issueId })
     .from(schema.comment)
-    .where(eq(schema.comment.id, row.parentId))
+    .where(
+      and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
+    )
     .limit(1);
   if (comment === undefined) return [scopes.user(row.uploadedById)];
   return [scopes.issue(comment.issueId)];
@@ -88,7 +91,7 @@ export async function markAttachmentReady(
         buildSyncAction({
           syncId,
           organizationId: updated.organizationId,
-          scopes: await resolveAttachmentScopes(tx, updated),
+          scopes: await resolveAttachmentScopes(tx, updated, updated.organizationId),
           action: 'update',
           model: 'attachment',
           modelId: updated.id,
@@ -141,7 +144,7 @@ async function insertAttachment(
         buildSyncAction({
           syncId,
           organizationId: attachment.organizationId,
-          scopes: await resolveAttachmentScopes(tx, attachment),
+          scopes: await resolveAttachmentScopes(tx, attachment, attachment.organizationId),
           action: 'insert',
           model: 'attachment',
           modelId: attachment.id,
@@ -217,17 +220,22 @@ export async function attachFile(
   });
   await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
 
+  const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
-  await (driver ?? storageDriver()).put(key, bytes, upload.contentType);
-  const stored = await insertAttachment(principal, {
-    parentType: parsed.parentType,
-    parentId: parsed.parentId,
-    fileName: upload.fileName,
-    contentType: upload.contentType,
-    size: upload.size,
-    storageKey: key,
-    status: 'ready',
-  });
-
-  return { ...stored, url: fileUrlFor(key) };
+  await store.put(key, bytes, upload.contentType);
+  try {
+    const stored = await insertAttachment(principal, {
+      parentType: parsed.parentType,
+      parentId: parsed.parentId,
+      fileName: upload.fileName,
+      contentType: upload.contentType,
+      size: upload.size,
+      storageKey: key,
+      status: 'ready',
+    });
+    return { ...stored, url: fileUrlFor(key) };
+  } catch (error: unknown) {
+    await store.delete(key).catch(() => undefined);
+    throw error;
+  }
 }

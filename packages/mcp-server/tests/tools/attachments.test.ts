@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
+import { createComment, createIssue, createTeam } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import type { StorageDriver, StoredObject } from '@orbit/services/storage';
 
@@ -157,5 +158,36 @@ describe('attach_file', () => {
 
     expect(refused.isError).toBe(true);
     expect(errorPayload(refused).code).toBe('not_found');
+  });
+
+  it('refuses a comment on an issue in a team the caller is not in', async () => {
+    const before = puts.length;
+    const walled = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const state = walled.states[0];
+    if (state === undefined) throw new Error('missing state');
+    const behind = await createIssue(workspace.admin, {
+      teamId: walled.team.id,
+      title: 'Behind the wall',
+      stateId: state.id,
+    });
+    const secret = await createComment(workspace.admin, behind.issue.id, { body: 'Private' });
+    const insider = await addMember(workspace, 'member', 'Ida Insider');
+    const outside = await connect(await mintToken(workspace.organizationId, insider.user.id));
+
+    try {
+      const refused = await outside.call('attach_file', {
+        parentType: 'comment',
+        parentId: secret.comment.id,
+        fileName: 'console.log',
+        contentType: 'text/plain',
+        content: Buffer.from('let me in').toString('base64'),
+      });
+
+      expect(refused.isError).toBe(true);
+      expect(errorPayload(refused).code).toBe('not_found');
+      expect(puts.length).toBe(before);
+    } finally {
+      await outside.close();
+    }
   });
 });
