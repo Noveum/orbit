@@ -22,7 +22,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => workspace,
 }));
 
-const { SavedViewPage } = await import('../../../src/features/views/saved-view-page.tsx');
+const { SavedViewPage } = await import('@/features/views/saved-view-page.tsx');
 
 const todo: WorkflowState = {
   id: 'state-todo',

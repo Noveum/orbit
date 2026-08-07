@@ -22,7 +22,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => workspace,
 }));
 
-const { ViewsPage } = await import('../../../src/features/views/views-page.tsx');
+const { ViewsPage } = await import('@/features/views/views-page.tsx');
 
 function buildWorkspace(): WorkspaceData {
   return {
@@ -193,6 +193,27 @@ describe('the views page', () => {
     await user.click(screen.getByTestId('new-view'));
     expect(await screen.findByTestId('create-view-submit')).toBeDisabled();
     expect(posted).toHaveLength(0);
+  });
+
+  it('names the team a team view is shared with, rather than the workspace', () => {
+    const teamView: View = {
+      id: 'view-team',
+      ownerId: 'user-2',
+      name: 'Engineering triage',
+      filter: { ...defaultViewState('list'), teamId: 'team-eng', visibility: 'team' },
+      layout: 'list',
+      groupBy: 'state',
+      shared: true,
+      virtual: false,
+      locked: false,
+      favorite: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    renderPage([teamView]);
+
+    const row = screen.getByTestId('view-Engineering triage');
+    expect(within(row).getByText('Everyone on Engineering')).toBeInTheDocument();
+    expect(within(row).queryByText('Everyone in the workspace')).toBeNull();
   });
 
   it('opens the same dialog from Alt+V so the old keystroke still works', async () => {

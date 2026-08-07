@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { defaultViewState, inCondition, virtualViewState } from '@orbit/shared/filters';
+import { savedViewPath, viewHref, viewLayoutMode } from '@/features/views/view-href.ts';
 import type { Team, View } from '@/lib/query/schemas.ts';
-import { savedViewPath, viewHref, viewLayoutMode } from '../../../src/features/views/view-href.ts';
 
 const TEAMS: readonly Team[] = [
   { id: 'team-ai', name: 'AI', key: 'AI', icon: 'circle', color: '#5b6cf9' },

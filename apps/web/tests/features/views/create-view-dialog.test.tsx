@@ -22,7 +22,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
 }));
 
 const { CreateViewDialog, parseViewScope, viewScopePage } = await import(
-  '../../../src/features/views/create-view-dialog.tsx'
+  '@/features/views/create-view-dialog.tsx'
 );
 
 function buildWorkspace(): WorkspaceData {
@@ -234,5 +234,58 @@ describe('building a view in the dialog', () => {
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(sentState().visibility).toBe('workspace');
     expect(bodies.at(-1)?.['shared']).toBe(true);
+  });
+});
+
+describe('who a new view is shared with', () => {
+  async function pickEngineering(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByTestId('create-view-scope'));
+    await user.click(await screen.findByRole('option', { name: 'Engineering' }));
+  }
+
+  it('offers a team audience only once the view covers a team', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(screen.queryByTestId('create-view-visibility-team')).not.toBeInTheDocument();
+
+    await pickEngineering(user);
+
+    const option = await screen.findByTestId('create-view-visibility-team');
+    expect(option).toBeInTheDocument();
+    expect(screen.getByLabelText('Everyone on Engineering')).toBe(option);
+  });
+
+  it('keeps a team view on the team that owns it', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.type(screen.getByTestId('create-view-name'), 'Engineering triage');
+    await pickEngineering(user);
+    await user.click(await screen.findByTestId('create-view-visibility-team'));
+    await user.click(screen.getByTestId('create-view-submit'));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(sentState().visibility).toBe('team');
+    expect(sentState().teamId).toBe('team-eng');
+    expect(bodies.at(-1)?.['shared']).toBe(true);
+  });
+
+  it('never leaves a team audience on a view that stopped covering a team', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.type(screen.getByTestId('create-view-name'), 'Everything urgent');
+    await pickEngineering(user);
+    await user.click(await screen.findByTestId('create-view-visibility-team'));
+
+    await user.click(screen.getByTestId('create-view-scope'));
+    await user.click(await screen.findByRole('option', { name: 'Everything in the workspace' }));
+    await user.click(screen.getByTestId('create-view-submit'));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(sentState().teamId).toBeNull();
+    expect(sentState().visibility).toBe('private');
+    expect(bodies.at(-1)?.['shared']).toBe(false);
   });
 });

@@ -628,7 +628,7 @@ export type ViewVisibility = (typeof VIEW_VISIBILITIES)[number];
 
 export const VIEW_VISIBILITY_LABELS: Record<ViewVisibility, string> = {
   private: 'Only me',
-  team: 'My teams',
+  team: 'Everyone on the team',
   workspace: 'Everyone in the workspace',
 };
 

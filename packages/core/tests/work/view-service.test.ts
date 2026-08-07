@@ -3,6 +3,8 @@ import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { VirtualViewId } from '@orbit/shared/filters';
 import { VIRTUAL_VIEW_IDS, virtualViewState } from '@orbit/shared/filters';
+import type { Principal } from '@orbit/shared/policy';
+import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -11,7 +13,14 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { createIssue, listIssues } from '../../src/work/issue-service.ts';
-import { createView, deleteView, listViews, updateView } from '../../src/work/view-service.ts';
+import {
+  createView,
+  deleteView,
+  getView,
+  listViews,
+  setViewFavorite,
+  updateView,
+} from '../../src/work/view-service.ts';
 
 let workspace: Workspace;
 
@@ -99,6 +108,160 @@ describe('a saved view only reaches the people who can open it', () => {
     const forTheOwner = actions.filter((action) => action.action !== 'delete');
     expect(forTheOwner).toHaveLength(1);
     expect(forTheOwner[0]?.scopes).toEqual([scopes.user(workspace.admin.userId)]);
+  });
+});
+
+describe('a team view stays inside the team it belongs to', () => {
+  interface TwoTeams {
+    readonly designTeamId: string;
+    readonly engineer: Principal;
+    readonly teammate: Principal;
+    readonly designer: Principal;
+  }
+
+  async function twoTeams(): Promise<TwoTeams> {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const engineer = await addMember(workspace, 'member', {
+      name: 'Engineer',
+      teamIds: [workspace.teamId, design.team.id],
+    });
+    const teammate = await addMember(workspace, 'member', { name: 'Teammate' });
+    const designer = await addMember(workspace, 'member', {
+      name: 'Designer',
+      teamIds: [design.team.id],
+    });
+    return {
+      designTeamId: design.team.id,
+      engineer: engineer.principal,
+      teammate: teammate.principal,
+      designer: designer.principal,
+    };
+  }
+
+  function teamInput(name: string, teamId: string) {
+    return { name, filter: { groupBy: 'state', visibility: 'team', teamId } };
+  }
+
+  async function listedIds(principal: Principal): Promise<string[]> {
+    return (await listViews(principal)).map((view) => view.id);
+  }
+
+  it('publishes a team view to that team alone', async () => {
+    const { engineer, teammate, designer } = await twoTeams();
+
+    const created = await createView(engineer, teamInput('Engineering triage', workspace.teamId));
+
+    const insert = only(created.actions);
+    expect(insert.scopes).toEqual([scopes.team(workspace.teamId), scopes.user(engineer.userId)]);
+    expect(insert.scopes).not.toContain(scopes.organization(workspace.organizationId));
+    expect(reaches(teammate, insert)).toBe(true);
+    expect(reaches(designer, insert)).toBe(false);
+  });
+
+  it('never carries the filter of a team view in a delta another team receives', async () => {
+    const { engineer, designer } = await twoTeams();
+
+    const created = await createView(engineer, teamInput('Reorg candidates', workspace.teamId));
+
+    const insert = only(created.actions);
+    expect(JSON.stringify(insert.data)).toContain('Reorg candidates');
+    expect(reaches(designer, insert)).toBe(false);
+  });
+
+  it('lists a team view for the team and hides it from everyone else', async () => {
+    const { engineer, teammate, designer } = await twoTeams();
+
+    const created = await createView(engineer, teamInput('Engineering triage', workspace.teamId));
+
+    expect(await listedIds(teammate)).toContain(created.view.id);
+    expect(await listedIds(designer)).not.toContain(created.view.id);
+  });
+
+  it('refuses to open a team view from another team', async () => {
+    const { engineer, teammate, designer } = await twoTeams();
+
+    const created = await createView(engineer, teamInput('Engineering triage', workspace.teamId));
+
+    expect((await getView(teammate, created.view.id)).name).toBe('Engineering triage');
+    expect(getView(designer, created.view.id)).rejects.toThrow(/not shared with you/);
+    expect(setViewFavorite(designer, created.view.id, { favorite: true })).rejects.toThrow(
+      /not shared with you/,
+    );
+  });
+
+  it('keeps every later delta of a team view off the workspace scope', async () => {
+    const { engineer, designer } = await twoTeams();
+    const created = await createView(engineer, teamInput('Engineering triage', workspace.teamId));
+
+    const renamed = await updateView(engineer, created.view.id, { name: 'Triage' });
+    const removed = await deleteView(engineer, created.view.id);
+
+    for (const action of [...renamed.actions, ...removed]) {
+      expect(action.scopes).not.toContain(scopes.organization(workspace.organizationId));
+      expect(reaches(designer, action)).toBe(false);
+    }
+  });
+
+  it('tells the workspace a view is gone when its owner narrows it to one team', async () => {
+    const { engineer, teammate, designer } = await twoTeams();
+    const created = await createView(engineer, sharedInput('Everything'));
+    expect(await listedIds(designer)).toContain(created.view.id);
+
+    const { actions } = await updateView(engineer, created.view.id, {
+      filter: { ...created.view.state, visibility: 'team', teamId: workspace.teamId },
+    });
+
+    const forTheOtherTeam = actions.filter((action) => reaches(designer, action));
+    expect(forTheOtherTeam).toHaveLength(1);
+    expect(forTheOtherTeam[0]?.action).toBe('delete');
+    expect(JSON.stringify(forTheOtherTeam[0]?.data)).not.toContain('Everything');
+    expect(await listedIds(designer)).not.toContain(created.view.id);
+    expect(await listedIds(teammate)).toContain(created.view.id);
+  });
+
+  it('drops the old team when a view moves to another one', async () => {
+    const { designTeamId, engineer, teammate, designer } = await twoTeams();
+    const created = await createView(engineer, teamInput('Triage', workspace.teamId));
+
+    const { actions } = await updateView(engineer, created.view.id, {
+      filter: { ...created.view.state, visibility: 'team', teamId: designTeamId },
+    });
+
+    const forTheOldTeam = actions.filter((action) => reaches(teammate, action));
+    expect(forTheOldTeam).toHaveLength(1);
+    expect(forTheOldTeam[0]?.action).toBe('delete');
+    expect(await listedIds(teammate)).not.toContain(created.view.id);
+    expect(await listedIds(designer)).toContain(created.view.id);
+  });
+
+  it('takes nothing away when a team view opens up to the whole workspace', async () => {
+    const { engineer, teammate, designer } = await twoTeams();
+    const created = await createView(engineer, teamInput('Triage', workspace.teamId));
+
+    const { actions } = await updateView(engineer, created.view.id, {
+      filter: { ...created.view.state, visibility: 'workspace' },
+    });
+
+    expect(actions.filter((action) => action.action === 'delete')).toHaveLength(0);
+    expect(reaches(designer, only(actions))).toBe(true);
+    expect(await listedIds(designer)).toContain(created.view.id);
+    expect(await listedIds(teammate)).toContain(created.view.id);
+  });
+
+  it('refuses to publish a view to a team the author is not on', async () => {
+    const { designer } = await twoTeams();
+
+    expect(
+      createView(designer, teamInput('Peek at engineering', workspace.teamId)),
+    ).rejects.toThrow(/not a member of that team/);
+  });
+
+  it('refuses a team view that names no team', async () => {
+    const { engineer } = await twoTeams();
+
+    expect(
+      createView(engineer, { name: 'Nowhere', filter: { visibility: 'team' } }),
+    ).rejects.toThrow(/Pick the team/);
   });
 });
 

@@ -1,7 +1,6 @@
 'use client';
 
 import type { ViewPage, ViewVisibility } from '@orbit/shared/filters';
-import { VIEW_VISIBILITIES, VIEW_VISIBILITY_LABELS } from '@orbit/shared/filters';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -31,6 +30,11 @@ import {
   viewConfigToState,
 } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
+import {
+  allowedVisibility,
+  audienceTeam,
+  visibilityChoices,
+} from '@/features/filters/view-visibility.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { useCreateView } from '@/lib/query/use-views.ts';
 
@@ -90,6 +94,9 @@ export function CreateViewDialog({ open, onOpenChange }: CreateViewDialogProps) 
   const controls = useProvideViewControls(page, layout, config);
   const target = parseViewScope(scope);
   const scopeLabel = scopeLabelFor(scope, workspace.teams, workspace.projects);
+  const team = audienceTeam(workspace.teams, target.teamId);
+  const choices = visibilityChoices(team);
+  const chosen = allowedVisibility(visibility, team);
 
   const submit = () => {
     const trimmed = name.trim();
@@ -97,10 +104,10 @@ export function CreateViewDialog({ open, onOpenChange }: CreateViewDialogProps) 
     create.mutate(
       {
         name: trimmed,
-        filter: viewConfigToState(config, layout, target, { visibility }),
+        filter: viewConfigToState(config, layout, target, { visibility: chosen }),
         layout,
         groupBy: config.groupBy,
-        shared: visibility !== 'private',
+        shared: chosen !== 'private',
       },
       { onSuccess: () => onOpenChange(false) },
     );
@@ -193,23 +200,23 @@ export function CreateViewDialog({ open, onOpenChange }: CreateViewDialogProps) 
 
           <fieldset className="flex flex-col gap-1.5 rounded-md border border-border px-2.5 py-2">
             <legend className="px-1 text-2xs text-faint">Who can see it</legend>
-            {VIEW_VISIBILITIES.map((option) => (
+            {choices.map((choice) => (
               <label
-                key={option}
+                key={choice.value}
                 className="flex items-center gap-2 text-dense text-muted"
-                htmlFor={`create-view-visibility-${option}`}
+                htmlFor={`create-view-visibility-${choice.value}`}
               >
                 <input
                   type="radio"
-                  id={`create-view-visibility-${option}`}
+                  id={`create-view-visibility-${choice.value}`}
                   name="create-view-visibility"
-                  value={option}
-                  checked={visibility === option}
-                  data-testid={`create-view-visibility-${option}`}
-                  onChange={() => setVisibility(option)}
+                  value={choice.value}
+                  checked={chosen === choice.value}
+                  data-testid={`create-view-visibility-${choice.value}`}
+                  onChange={() => setVisibility(choice.value)}
                   className="accent-[var(--color-accent)]"
                 />
-                {VIEW_VISIBILITY_LABELS[option]}
+                {choice.label}
               </label>
             ))}
           </fieldset>

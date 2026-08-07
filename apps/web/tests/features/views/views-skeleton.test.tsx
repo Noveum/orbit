@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { render, screen } from '@testing-library/react';
-import { ViewsSkeleton } from '../../../src/features/views/views-skeleton.tsx';
+import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
 
 describe('views skeleton', () => {
   it('renders the views skeleton', () => {

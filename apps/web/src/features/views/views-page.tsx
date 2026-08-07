@@ -21,6 +21,8 @@ import {
 import { Input } from '@/components/ui/input.tsx';
 import { buildFilterFields, describeCondition } from '@/features/filters/filter-fields.tsx';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
+import type { AudienceTeam } from '@/features/filters/view-visibility.ts';
+import { audienceTeam } from '@/features/filters/view-visibility.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { CreateViewDialog } from '@/features/views/create-view-dialog.tsx';
 import { viewHref, viewLayoutMode } from '@/features/views/view-href.ts';
@@ -35,8 +37,11 @@ import {
   useViews,
 } from '@/lib/query/use-views.ts';
 
-export function visibilityLabel(view: View): string {
-  return view.virtual ? 'Everyone' : VIEW_VISIBILITY_LABELS[view.filter.visibility];
+export function visibilityLabel(view: View, teams: readonly AudienceTeam[]): string {
+  if (view.virtual) return 'Everyone';
+  if (view.filter.visibility !== 'team') return VIEW_VISIBILITY_LABELS[view.filter.visibility];
+  const team = audienceTeam(teams, view.filter.teamId);
+  return team === null ? VIEW_VISIBILITY_LABELS.team : `Everyone on ${team.name}`;
 }
 
 export function ViewsPage() {
@@ -83,7 +88,7 @@ export function ViewsPage() {
       />
       <ViewSection
         title="Shared with you"
-        description="Saved by teammates and shared with your workspace."
+        description="Saved by teammates and shared with your workspace or your team."
         views={shared}
       />
 
@@ -220,7 +225,7 @@ function ViewRow({ view }: { view: View }) {
         {view.virtual ? 'Built in' : (owner?.name ?? 'Someone else')}
       </td>
       <td className="hidden py-2 pr-3 align-top text-muted md:table-cell">
-        {visibilityLabel(view)}
+        {visibilityLabel(view, workspace.teams)}
       </td>
       <td className="py-2 align-top">
         <div className="flex items-center justify-end gap-1">
