@@ -117,3 +117,53 @@ describe('reading a view whose stored state was written by an older client', () 
     expect(readViewState({ groupBy: 'label' }).readable).toBe(true);
   });
 });
+
+describe('a filter key that belongs to the other kind of node', () => {
+  function save(filter: unknown) {
+    return viewStateWriteSchema.safeParse({ ...defaultViewState('list'), filter });
+  }
+
+  it('refuses a condition key placed on a group, instead of stripping it silently', () => {
+    const result = save({
+      kind: 'group',
+      combinator: 'and',
+      children: [],
+      values: ['1'],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('refuses children placed on a condition', () => {
+    const result = save({
+      kind: 'group',
+      combinator: 'and',
+      children: [{ ...inCondition('priority', ['1']), children: [] }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('names where the misplaced key was, so the caller can find it', () => {
+    const result = save({
+      kind: 'group',
+      combinator: 'and',
+      children: [{ ...inCondition('priority', ['1']), combinator: 'or' }],
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(JSON.stringify(result.error.issues)).toContain('children[0].combinator');
+  });
+
+  it('still accepts a filter whose keys are all where they belong', () => {
+    const result = save(URGENT);
+
+    expect(result.success).toBe(true);
+    expect(countConditions(result.success ? result.data.filter : emptyGroup())).toBe(1);
+  });
+});
+
+function emptyGroup() {
+  return { kind: 'group' as const, combinator: 'and' as const, children: [] };
+}

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { db, eq, schema, sql } from '@orbit/db';
 import {
   connect,
   createWorkspace,
@@ -90,5 +91,25 @@ describe('listing views so a caller can copy a shape that works', () => {
 
     expect(found?.filter.filter.children).toHaveLength(1);
     expect(found?.readable).toBe(true);
+  });
+});
+
+describe('a view whose stored state cannot be read', () => {
+  it('is reported as unreadable rather than as an empty filter', async () => {
+    const saved = savedOf(
+      await admin.result('create_view', {
+        name: 'Written by something older',
+        filter: { filter: URGENT },
+      }),
+    );
+    await db
+      .update(schema.view)
+      .set({ filter: sql`to_jsonb('whatever the old client wrote'::text)` })
+      .where(eq(schema.view.id, saved.id));
+
+    const listed = viewsOf(await admin.result('list_views'));
+    const found = listed.find((view) => view.name === 'Written by something older');
+
+    expect(found?.readable).toBe(false);
   });
 });

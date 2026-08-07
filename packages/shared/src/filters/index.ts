@@ -650,10 +650,10 @@ export const viewStateSchema = z.object({
 
 export type ViewState = z.infer<typeof viewStateSchema>;
 
-export const FILTER_NODE_KEYS: readonly string[] = [
+export const FILTER_GROUP_KEYS: readonly string[] = ['kind', 'combinator', 'children'];
+
+export const FILTER_CONDITION_KEYS: readonly string[] = [
   'kind',
-  'combinator',
-  'children',
   'property',
   'negate',
   'operator',
@@ -664,11 +664,25 @@ export const FILTER_NODE_KEYS: readonly string[] = [
   'relative',
 ];
 
+export const FILTER_NODE_KEYS: readonly string[] = [
+  ...FILTER_GROUP_KEYS,
+  ...FILTER_CONDITION_KEYS.filter((key) => !FILTER_GROUP_KEYS.includes(key)),
+];
+
+export function filterNodeKeys(node: unknown): readonly string[] {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return FILTER_NODE_KEYS;
+  const kind = (node as { kind?: unknown }).kind;
+  if (kind === 'group') return FILTER_GROUP_KEYS;
+  if (kind === 'condition') return FILTER_CONDITION_KEYS;
+  return FILTER_NODE_KEYS;
+}
+
 function collectStrayFilterKeys(node: unknown, path: string, found: string[]): void {
   if (node === null || typeof node !== 'object' || Array.isArray(node)) return;
+  const allowed = filterNodeKeys(node);
   for (const [key, value] of Object.entries(node)) {
     const at = path.length === 0 ? key : `${path}.${key}`;
-    if (!FILTER_NODE_KEYS.includes(key)) {
+    if (!allowed.includes(key)) {
       found.push(at);
       continue;
     }

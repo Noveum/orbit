@@ -101,6 +101,19 @@ describe('the catchup script that repairs a stored view state', () => {
     expect(countConditions(reloaded.state.filter)).toBe(0);
   });
 
+  it('leaves an encoded object that is not a view state alone', async () => {
+    const viewId = await savedView('Encodes to nonsense');
+    await db.execute(sql`
+      update ${schema.view}
+      set filter = to_jsonb('{"layout":"unknown"}'::text)
+      where ${schema.view.id} = ${viewId}
+    `);
+
+    await runRepair();
+
+    expect(await storedTypeOf(viewId)).toBe('string');
+  });
+
   it('changes nothing on a second run', async () => {
     const twice = await savedView('Encoded twice');
     await encodeStoredFilter(twice, 2);

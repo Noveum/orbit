@@ -60,6 +60,12 @@ begin
       continue;
     end if;
 
+    if jsonb_typeof(decoded -> 'filter') is distinct from 'object'
+       or jsonb_typeof(decoded -> 'filter' -> 'children') is distinct from 'array' then
+      raise notice 'view % (%) decodes to an object that is not a view state, left untouched', candidate.id, candidate.name;
+      continue;
+    end if;
+
     update public.view set filter = decoded where id = candidate.id;
     raise notice 'view % (%) unwrapped % layer(s) of encoding', candidate.id, candidate.name, unwrapped;
   end loop;

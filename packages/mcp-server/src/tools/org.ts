@@ -225,11 +225,13 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
     {
       name: 'update_view',
       title: 'Update a saved view',
-      description: 'Rename a saved view, change its layout or grouping, or share it.',
+      description:
+        'Rename a saved view, change its layout or grouping, share it, or replace the filter it stores. Read the view first with list_views and send the whole filter state back, because a filter replaces the stored one rather than merging into it.',
       readOnly: false,
       inputSchema: {
         view: z.string().min(1).describe('View name or id.'),
         name: z.string().trim().min(1).max(120).optional(),
+        filter: z.record(z.string(), z.unknown()).optional().describe(VIEW_FILTER_HINT),
         layout: z.enum(VIEW_LAYOUTS).optional(),
         groupBy: z.enum(GROUP_BY_FIELDS).optional(),
         shared: z.boolean().optional(),
@@ -239,12 +241,19 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       const id = await resolveView(principal, args.view);
       const saved = await updateView(principal, id, {
         ...(args.name === undefined ? {} : { name: args.name }),
+        ...(args.filter === undefined ? {} : { filter: args.filter }),
         ...(args.layout === undefined ? {} : { layout: args.layout }),
         ...(args.groupBy === undefined ? {} : { groupBy: args.groupBy }),
         ...(args.shared === undefined ? {} : { shared: args.shared }),
       });
       await publish(saved.actions);
-      return { view: { id: saved.view.id, name: saved.view.name } };
+      return {
+        view: {
+          id: saved.view.id,
+          name: saved.view.name,
+          conditions: countConditions(saved.view.state.filter),
+        },
+      };
     },
   );
 
