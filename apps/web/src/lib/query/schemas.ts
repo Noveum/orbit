@@ -408,6 +408,20 @@ export type View = z.infer<typeof viewSchema>;
 export const viewListSchema = z.object({ views: z.array(viewSchema) });
 export const viewEnvelopeSchema = z.object({ view: viewSchema });
 
+export const milestoneSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  description: z.string().default(''),
+  targetDate: z.string().nullable(),
+  sortOrder: z.number(),
+});
+
+export type Milestone = z.infer<typeof milestoneSchema>;
+
+export const milestoneListSchema = z.object({ milestones: z.array(milestoneSchema) });
+export const milestoneEnvelopeSchema = z.object({ milestone: milestoneSchema });
+
 export const commentListSchema = z.object({
   comments: z.array(commentSchema),
   nextCursor: z.string().nullable().default(null),

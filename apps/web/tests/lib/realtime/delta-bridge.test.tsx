@@ -10,6 +10,7 @@ import {
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_SUMMARY_ROOT,
+  MILESTONES_ROOT,
   queryKeys,
   STANDUP_ROOT,
   VIEWS_ROOT,
@@ -179,6 +180,18 @@ describe('DeltaBridge root invalidation', () => {
       ]),
     );
     expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+  });
+
+  it('invalidates the milestones root, and nothing else, for a milestone delta', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'milestone', modelId: 'milestone_1', data: { id: 'milestone_1' } }),
+        action({ model: 'milestone', modelId: 'milestone_2', data: { id: 'milestone_2' } }),
+      ]),
+    );
+    expect(seen).toEqual([[MILESTONES_ROOT]]);
   });
 
   it('invalidates the views root for a view delta', () => {
