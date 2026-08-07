@@ -9,6 +9,8 @@ import {
 import type { StorageDriver } from '@orbit/services/storage';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
+import type { MembershipContext } from '@/lib/auth/principal.ts';
+import { mockMembership, mockSession } from '../../../../tests-support.ts';
 
 const storageModule = await import('@orbit/services/storage');
 
@@ -50,16 +52,11 @@ interface SessionUser {
 const signedIn: { value: { user: SessionUser; session: { activeOrganizationId: string } } | null } =
   { value: null };
 
-const membership: { value: unknown } = { value: null };
+const membership: { value: MembershipContext | null } = { value: null };
 
 function installSessionMock(): void {
-  mock.module('@/lib/auth/session.ts', () => ({
-    getSession: () => Promise.resolve(signedIn.value),
-    requireSession: () => Promise.resolve(signedIn.value),
-  }));
-  mock.module('@/lib/auth/principal.ts', () => ({
-    resolveMembership: () => Promise.resolve(membership.value),
-  }));
+  mockSession(() => signedIn.value);
+  mockMembership(() => membership.value);
 }
 
 installSessionMock();
