@@ -3,6 +3,7 @@
 import { PRIORITIES } from '@orbit/shared/constants';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
+import { dangerAction } from '@/lib/interaction.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useIssueDeletion } from './issue-deletion.tsx';
@@ -88,7 +89,7 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
           <Button
             size="sm"
             variant="ghost"
-            className="text-danger hover:text-danger"
+            className={dangerAction}
             data-testid="bulk-delete-issues"
             onClick={() => deletion.request({ issues, onDeleted: onClear })}
           >
