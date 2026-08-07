@@ -3,11 +3,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, IssueDetail, WorkflowState } from '@/lib/query/schemas.ts';
-import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
-import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
 const pushed: string[] = [];
 
@@ -68,15 +68,13 @@ const workspace: WorkspaceData = {
   openQuickCreate: () => undefined,
 };
 
-mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspace,
 }));
 
-const { IssueDetailView, teamIssuesPath } = await import(
-  '../../../src/features/issues/issue-detail.tsx'
-);
-const { IssueDeletionProvider } = await import('../../../src/features/issues/issue-deletion.tsx');
+const { IssueDetailView, teamIssuesPath } = await import('@/features/issues/issue-detail.tsx');
+const { IssueDeletionProvider } = await import('@/features/issues/issue-deletion.tsx');
 
 const issue: Issue = {
   id: 'issue_1',
@@ -119,19 +117,41 @@ const detail: IssueDetail = {
 
 const originalFetch = globalThis.fetch;
 const deleted: string[] = [];
+let serverRefuses = false;
+
+function refusal(): Response {
+  return Response.json(
+    { error: { code: 'forbidden', message: 'You cannot delete that issue.' } },
+    { status: 403 },
+  );
+}
 
 function stubFetch(): void {
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if ((init?.method ?? 'GET') === 'DELETE') {
       deleted.push(url);
-      return Promise.resolve(Response.json({ deleted: { id: 'issue_1', identifier: 'ENG-1' } }));
+      return Promise.resolve(
+        serverRefuses
+          ? refusal()
+          : Response.json({ deleted: { id: 'issue_1', identifier: 'ENG-1' } }),
+      );
     }
     return Promise.resolve(Response.json(detail));
   }) as unknown as typeof fetch;
 }
 
-function mountDetail(onDeleted?: () => void) {
+function OpenLayer() {
+  return (
+    <div role="menu" aria-label="Row actions">
+      <button type="button" role="menuitem" data-testid="layer-item">
+        Something else
+      </button>
+    </div>
+  );
+}
+
+function mountDetail(onDeleted?: () => void, withOpenLayer = false): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
@@ -142,11 +162,23 @@ function mountDetail(onDeleted?: () => void) {
         <HotkeyProvider>
           <IssueDeletionProvider>
             <IssueDetailView identifier="ENG-1" onDeleted={onDeleted} />
+            {withOpenLayer ? <OpenLayer /> : null}
           </IssueDeletionProvider>
         </HotkeyProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return client;
+}
+
+async function waitForRefusal(client: QueryClient): Promise<void> {
+  await waitFor(() => {
+    const statuses = client
+      .getMutationCache()
+      .getAll()
+      .map((entry) => entry.state.status);
+    expect(statuses).toContain('error');
+  });
 }
 
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -154,6 +186,7 @@ const user = userEvent.setup({ pointerEventsCheck: 0 });
 beforeEach(() => {
   pushed.length = 0;
   deleted.length = 0;
+  serverRefuses = false;
   stubFetch();
 });
 
@@ -200,6 +233,36 @@ describe('deleting from the issue detail surface', () => {
     expect(pushed).toEqual([]);
   });
 
+  it('stays on the issue when the server refuses the delete', async () => {
+    serverRefuses = true;
+    const client = mountDetail();
+
+    await user.click(await screen.findByTestId('issue-actions-ENG-1'));
+    await user.click(await screen.findByTestId('delete-issue-ENG-1'));
+    await screen.findByTestId('delete-issue-dialog');
+    await user.click(screen.getByTestId('confirm-delete-issue'));
+
+    await waitForRefusal(client);
+    expect(deleted).toEqual(['/api/issues/issue_1']);
+    expect(pushed).toEqual([]);
+    expect(screen.getByTestId('issue-detail')).toBeInTheDocument();
+  });
+
+  it('keeps the peek open when the server refuses the delete', async () => {
+    serverRefuses = true;
+    const closed: string[] = [];
+    const client = mountDetail(() => closed.push('closed'));
+
+    await user.click(await screen.findByTestId('issue-actions-ENG-1'));
+    await user.click(await screen.findByTestId('delete-issue-ENG-1'));
+    await screen.findByTestId('delete-issue-dialog');
+    await user.click(screen.getByTestId('confirm-delete-issue'));
+
+    await waitForRefusal(client);
+    expect(closed).toEqual([]);
+    expect(pushed).toEqual([]);
+  });
+
   it('answers the same shortcut the list uses', async () => {
     mountDetail();
     await screen.findByTestId('issue-detail');
@@ -209,6 +272,17 @@ describe('deleting from the issue detail surface', () => {
     expect((await screen.findByTestId('delete-issue-dialog')).textContent).toContain(
       'Delete ENG-1?',
     );
+    expect(deleted).toEqual([]);
+  });
+
+  it('stays out of the way while an open menu owns the keyboard', async () => {
+    mountDetail(undefined, true);
+    await screen.findByTestId('issue-detail');
+    (await screen.findByTestId('layer-item')).focus();
+
+    await user.keyboard('{Meta>}{Shift>}{Backspace}{/Shift}{/Meta}');
+
+    expect(screen.queryAllByTestId('delete-issue-dialog').length).toBe(0);
     expect(deleted).toEqual([]);
   });
 });

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog.tsx';
 import { DropdownMenuItem, DropdownMenuShortcut } from '@/components/ui/dropdown-menu.tsx';
 import { keyGlyph } from '@/components/ui/kbd.tsx';
+import { dangerMenuAction } from '@/lib/interaction.ts';
 import { formatBinding } from '@/lib/keyboard/index.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useDeleteIssues } from '@/lib/query/use-issues.ts';
@@ -80,8 +81,11 @@ export function IssueDeletionProvider({ children }: { readonly children: ReactNo
     if (request === null) return;
     const { issues, onDeleted } = request;
     setRequest(null);
-    remove.mutate(issues);
-    onDeleted?.();
+    remove.mutate(issues, {
+      onSuccess: () => {
+        onDeleted?.();
+      },
+    });
   };
 
   const copy = describeDeletion(request?.issues ?? []);
@@ -128,7 +132,7 @@ export function DeleteIssueMenuItem({ issue, onDeleted }: DeleteIssueMenuItemPro
   return (
     <DropdownMenuItem
       data-testid={`delete-issue-${issue.identifier}`}
-      className="text-danger data-[highlighted]:text-danger"
+      className={dangerMenuAction}
       onSelect={() => deletion.request({ issues: [issue], onDeleted })}
     >
       <Trash2 className="size-3.5" aria-hidden="true" />

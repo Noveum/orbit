@@ -1,15 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { OrgRole } from '@orbit/shared/constants';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
+import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
+import { dangerAction, dangerMenuAction } from '@/lib/interaction.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
-import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
@@ -91,25 +92,34 @@ function workspaceValue(): WorkspaceData {
   };
 }
 
-mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspaceValue(),
 }));
 
-const { IssueList } = await import('../../../src/features/issues/issue-list.tsx');
-const { IssueCard } = await import('../../../src/features/issues/issue-card.tsx');
+const { IssueList } = await import('@/features/issues/issue-list.tsx');
+const { IssueCard } = await import('@/features/issues/issue-card.tsx');
 const { IssueDeletionProvider, describeDeletion } = await import(
-  '../../../src/features/issues/issue-deletion.tsx'
+  '@/features/issues/issue-deletion.tsx'
 );
 
 const originalFetch = globalThis.fetch;
 const deleted: string[] = [];
+let serverRefuses = false;
+
+function refusal(): Response {
+  return Response.json(
+    { error: { code: 'forbidden', message: 'You cannot delete that issue.' } },
+    { status: 403 },
+  );
+}
 
 function stubFetch(): void {
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if ((init?.method ?? 'GET') === 'DELETE') {
       deleted.push(url);
+      if (serverRefuses) return Promise.resolve(refusal());
       const id = url.slice(url.lastIndexOf('/') + 1);
       return Promise.resolve(Response.json({ deleted: { id, identifier: 'ENG-1' } }));
     }
@@ -143,6 +153,7 @@ afterAll(() => {
 beforeEach(() => {
   role = 'admin';
   deleted.length = 0;
+  serverRefuses = false;
   stubFetch();
 });
 
@@ -150,9 +161,9 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function renderList(withShortcuts = false) {
+function renderList(withShortcuts = false, rows: readonly Issue[] = issues): QueryClient {
   const groups = groupIssues(
-    issues,
+    rows,
     'state',
     { states: [todo], members: [], projects: [], cycles: [], labels: [] },
     { showEmptyGroups: false, ordering: 'manual' },
@@ -172,9 +183,34 @@ function renderList(withShortcuts = false) {
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return client;
+}
+
+async function waitForRefusal(client: QueryClient): Promise<void> {
+  await waitFor(() => {
+    const statuses = client
+      .getMutationCache()
+      .getAll()
+      .map((entry) => entry.state.status);
+    expect(statuses).toContain('error');
+  });
 }
 
 const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+function pressDeleteBinding(): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    key: 'Backspace',
+    metaKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    window.dispatchEvent(event);
+  });
+  return event;
+}
 
 async function openRowMenu(identifier: string): Promise<void> {
   await user.click(await screen.findByTestId(`issue-actions-${identifier}`));
@@ -252,6 +288,26 @@ describe('the delete shortcut', () => {
     const sections = await screen.findByTestId('shortcuts-sections');
     expect(sections.textContent).toContain('Delete issue');
   });
+
+  it('leaves the key alone when the list holds nothing to delete', async () => {
+    renderList(false, []);
+    await screen.findByTestId('issue-list');
+
+    const pressed = pressDeleteBinding();
+
+    expect(pressed.defaultPrevented).toBe(false);
+    expect(screen.queryAllByTestId('delete-issue-dialog').length).toBe(0);
+    expect(deleted).toEqual([]);
+  });
+
+  it('claims the key while a row is there to delete', async () => {
+    renderList();
+    await screen.findByTestId('issue-row-ENG-1');
+
+    const pressed = pressDeleteBinding();
+
+    expect(pressed.defaultPrevented).toBe(true);
+  });
 });
 
 describe('bulk delete from the selection bar', () => {
@@ -273,6 +329,43 @@ describe('bulk delete from the selection bar', () => {
     await user.click(screen.getByTestId('confirm-delete-issue'));
 
     await waitFor(() => expect(deleted).toEqual(['/api/issues/issue_1', '/api/issues/issue_2']));
+  });
+
+  it('keeps the selection when the server refuses the delete', async () => {
+    serverRefuses = true;
+    const client = renderList();
+    await screen.findByTestId('issue-row-ENG-1');
+
+    await user.keyboard('x');
+    await user.keyboard('j');
+    await user.keyboard('x');
+    await user.click(await screen.findByTestId('bulk-delete-issues'));
+    await screen.findByTestId('delete-issue-dialog');
+    await user.click(screen.getByTestId('confirm-delete-issue'));
+
+    await waitForRefusal(client);
+    expect(deleted).toEqual(['/api/issues/issue_1']);
+    const bar = await screen.findByTestId('bulk-edit-bar');
+    expect(within(bar).getByText('2 selected')).toBeInTheDocument();
+  });
+});
+
+describe('the danger colour on a delete affordance', () => {
+  it('holds red when the pointer lands on the bulk delete, not the ghost text colour', async () => {
+    renderList();
+    await screen.findByTestId('issue-row-ENG-1');
+    await user.keyboard('x');
+
+    const button = await screen.findByTestId('bulk-delete-issues');
+
+    expect(button.className).toContain(dangerAction);
+  });
+
+  it('holds red while the row menu highlights the delete item', async () => {
+    renderList();
+    await openRowMenu('ENG-2');
+
+    expect(screen.getByTestId('delete-issue-ENG-2').className).toContain(dangerMenuAction);
   });
 });
 
