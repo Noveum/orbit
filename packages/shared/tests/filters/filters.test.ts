@@ -21,7 +21,9 @@ import {
   resolveRelativeRange,
   sanitizeViewConfig,
   supportsOperator,
+  VIRTUAL_VIEW_DESCRIPTIONS,
   VIRTUAL_VIEW_IDS,
+  VIRTUAL_VIEW_NAMES,
   viewStateDirty,
   viewStateFrom,
   viewStateSchema,
@@ -302,10 +304,46 @@ describe('view state', () => {
 });
 
 describe('virtual views', () => {
-  it('names five built-in views', () => {
-    expect(VIRTUAL_VIEW_IDS).toHaveLength(5);
+  it('names every built-in view and rejects anything else', () => {
+    expect([...VIRTUAL_VIEW_IDS]).toEqual([
+      'virtual:all',
+      'virtual:assigned',
+      'virtual:created',
+      'virtual:subscribed',
+      'virtual:unassigned',
+      'virtual:overdue',
+      'virtual:standup',
+    ]);
     for (const id of VIRTUAL_VIEW_IDS) expect(isVirtualViewId(id)).toBe(true);
     expect(isVirtualViewId('anything-else')).toBe(false);
+  });
+
+  it('gives every built-in a name and a description', () => {
+    for (const id of VIRTUAL_VIEW_IDS) {
+      expect(VIRTUAL_VIEW_NAMES[id].length).toBeGreaterThan(0);
+      expect(VIRTUAL_VIEW_DESCRIPTIONS[id].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('finds unassigned open issues without naming a viewer', () => {
+    const state = virtualViewState('virtual:unassigned', 'user-1');
+    expect(conditionsOf(state.filter)).toEqual([inCondition('assignee', ['none'])]);
+    expect(state.display.showCompleted).toBe('none');
+  });
+
+  it('finds issues past their due date, soonest first, and hides finished ones', () => {
+    const state = virtualViewState('virtual:overdue', 'user-1');
+    expect(conditionsOf(state.filter)).toEqual([inCondition('due', ['overdue'])]);
+    expect(state.orderBy).toBe('due');
+    expect(state.display.showCompleted).toBe('none');
+  });
+
+  it('leaves every built-in scoped to the whole workspace', () => {
+    for (const id of VIRTUAL_VIEW_IDS) {
+      const state = virtualViewState(id, 'user-1');
+      expect(state.teamId).toBeNull();
+      expect(state.projectId).toBeNull();
+    }
   });
 
   it('builds each one from the viewer id rather than a stored row', () => {

@@ -204,6 +204,7 @@ export function FilterBar({
           config={config}
           layout={layout}
           teamId={teamId}
+          teamName={teamName}
           suggestedName={suggestName(teamName, conditions, fields)}
         />
       ) : null}

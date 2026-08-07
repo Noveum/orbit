@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { absoluteUrl, publicAppUrl } from '@/lib/env.ts';
 
-const TITLE = 'Orbit: the free, realtime, keyboard-first work tracker';
+const TITLE = 'Orbit: the free, open source, realtime work tracker';
 const DESCRIPTION =
-  'Orbit is a free, realtime, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
+  'Orbit is a free, open source, keyboard-first work tracker for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. Apache-2.0 and self-hostable. No pricing, no paid tiers, ever.';
 
 function ogImage() {
   return {
@@ -52,6 +52,10 @@ export function landingStructuredData(): string {
     image: absoluteUrl('/og.png'),
     description: DESCRIPTION,
     offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    license: 'https://www.apache.org/licenses/LICENSE-2.0',
+    isAccessibleForFree: true,
+    codeRepository: 'https://github.com/Noveum/orbit',
+    author: { '@type': 'Organization', name: 'Noveum AI', url: 'https://noveum.ai' },
     featureList: [
       'Issues and boards',
       'Cycles and sprints',

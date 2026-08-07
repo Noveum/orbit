@@ -2,11 +2,11 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { useMemo } from 'react';
-import { Avatar } from '@/components/ui/avatar.tsx';
 import { IssueCard } from '@/features/issues/issue-card.tsx';
+import { StateGlyph } from '@/features/issues/state-glyph.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import type { Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
-import type { PersonColumn } from './buckets.ts';
+import type { StageGroup } from './buckets.ts';
 
 const CARD_PROPERTIES: readonly DisplayProperty[] = [
   'priority',
@@ -24,12 +24,13 @@ interface CardLookups {
   readonly projectById: ReadonlyMap<string, Project>;
 }
 
-export interface PersonColumnsProps {
-  readonly columns: readonly PersonColumn[];
+export interface StageColumnsProps {
+  readonly stages: readonly StageGroup[];
+  readonly assignee: Member;
   readonly onOpen: (issueId: string) => void;
 }
 
-export function PersonColumns({ columns, onOpen }: PersonColumnsProps) {
+export function StageColumns({ stages, assignee, onOpen }: StageColumnsProps) {
   const { labelById, memberById, stateById, projects } = useWorkspace();
   const lookups = useMemo<CardLookups>(
     () => ({
@@ -41,15 +42,27 @@ export function PersonColumns({ columns, onOpen }: PersonColumnsProps) {
     [labelById, memberById, stateById, projects],
   );
 
+  if (stages.length === 0) {
+    return (
+      <div
+        data-testid="standup-stages"
+        className="flex min-h-0 flex-1 items-center justify-center p-3 text-dense text-muted"
+      >
+        Nothing on the board for {assignee.name} in this window.
+      </div>
+    );
+  }
+
   return (
     <div
-      data-testid="standup-columns"
+      data-testid="standup-stages"
       className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto p-3"
     >
-      {columns.map((column) => (
-        <PersonColumnView
-          key={column.member.id}
-          column={column}
+      {stages.map((stage) => (
+        <StageColumn
+          key={stage.category}
+          stage={stage}
+          assignee={assignee}
           lookups={lookups}
           onOpen={onOpen}
         />
@@ -58,36 +71,40 @@ export function PersonColumns({ columns, onOpen }: PersonColumnsProps) {
   );
 }
 
-interface PersonColumnViewProps {
-  readonly column: PersonColumn;
+interface StageColumnProps {
+  readonly stage: StageGroup;
+  readonly assignee: Member;
   readonly lookups: CardLookups;
   readonly onOpen: (issueId: string) => void;
 }
 
-function PersonColumnView({ column, lookups, onOpen }: PersonColumnViewProps) {
-  const { member, issues, total } = column;
+function StageColumn({ stage, assignee, lookups, onOpen }: StageColumnProps) {
+  const first = stage.issues[0];
+  const color = first === undefined ? null : (lookups.stateById.get(first.stateId)?.color ?? null);
 
   return (
     <section
-      aria-label={member.name}
-      data-testid={`standup-column-${member.id}`}
-      className="flex w-72 shrink-0 flex-col rounded-lg bg-surface-2/60"
+      aria-label={stage.title}
+      data-testid={`standup-stage-${stage.category}`}
+      className="flex min-w-72 max-w-[26rem] flex-1 shrink-0 flex-col rounded-lg bg-surface-2/60"
     >
       <header className="flex shrink-0 items-center gap-2 px-2.5 py-2">
-        <Avatar name={member.name} src={member.image} size="sm" />
-        <h2 className="min-w-0 flex-1 truncate font-medium text-dense text-text">{member.name}</h2>
+        {color === null ? null : (
+          <StateGlyph category={stage.category} color={color} title={stage.title} />
+        )}
+        <h2 className="min-w-0 flex-1 truncate font-medium text-dense text-text">{stage.title}</h2>
         <span
           data-numeric
           className="shrink-0 text-2xs text-faint"
-          data-testid={`standup-count-${member.id}`}
+          data-testid={`standup-stage-count-${stage.category}`}
         >
-          {issues.length < total ? `${issues.length} of ${total}` : issues.length}
+          {stage.issues.length}
         </span>
       </header>
       <ul className="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto p-2 pt-0">
-        {issues.map((issue) => (
+        {stage.issues.map((issue) => (
           <li key={issue.id} className="list-none">
-            <StandupCard issue={issue} assignee={member} lookups={lookups} onOpen={onOpen} />
+            <StandupCard issue={issue} assignee={assignee} lookups={lookups} onOpen={onOpen} />
           </li>
         ))}
       </ul>

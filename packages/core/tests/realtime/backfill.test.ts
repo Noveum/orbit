@@ -15,6 +15,7 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { createIssue, subscribe, updateIssue } from '../../src/work/issue-service.ts';
+import { createView } from '../../src/work/view-service.ts';
 
 function teamKey(): string {
   return `D${newId()
@@ -330,5 +331,44 @@ describe('catch up scopes reactions to the team that owns the issue', () => {
     for (const action of reacted) {
       expect(ids.has(action.modelId)).toBe(true);
     }
+  });
+});
+
+describe('catch up respects who a saved view was shared with', () => {
+  it('never replays a team view to somebody on another team', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: teamKey() });
+    const { principal: engineer } = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId],
+    });
+    const { principal: designer } = await addMember(workspace, 'member', {
+      teamIds: [design.team.id],
+    });
+
+    const { view } = await createView(engineer, {
+      name: 'Engineering reorg',
+      filter: { visibility: 'team', teamId: workspace.teamId },
+    });
+
+    const forTheDesigner = await catchUp(designer, 0);
+    expect(forTheDesigner.actions.some((action) => action.modelId === view.id)).toBe(false);
+    expect(JSON.stringify(forTheDesigner.actions)).not.toContain('Engineering reorg');
+
+    const forTheEngineer = await catchUp(engineer, 0);
+    expect(forTheEngineer.actions.some((action) => action.modelId === view.id)).toBe(true);
+  });
+
+  it('still replays a workspace view to everyone', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: teamKey() });
+    const { principal: designer } = await addMember(workspace, 'member', {
+      teamIds: [design.team.id],
+    });
+
+    const { view } = await createView(workspace.admin, {
+      name: 'Everything',
+      filter: { visibility: 'workspace' },
+    });
+
+    const result = await catchUp(designer, 0);
+    expect(result.actions.some((action) => action.modelId === view.id)).toBe(true);
   });
 });
