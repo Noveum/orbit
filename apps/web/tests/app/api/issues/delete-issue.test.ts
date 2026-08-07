@@ -12,6 +12,9 @@ import { z } from 'zod';
 
 const published: SyncAction[][] = [];
 const core = await import('@orbit/core');
+const realSession = await import('@/lib/auth/session.ts');
+const realPrincipal = await import('@/lib/auth/principal.ts');
+
 mock.module('@orbit/core', () => ({
   ...core,
   publishDeltas: (actions: readonly SyncAction[]) => {
@@ -55,6 +58,8 @@ const { DELETE } = await import('@/app/api/issues/[id]/route.ts');
 
 afterAll(() => {
   mock.module('@orbit/core', () => core);
+  mock.module('@/lib/auth/session.ts', () => realSession);
+  mock.module('@/lib/auth/principal.ts', () => realPrincipal);
 });
 
 const deletedSchema = z.object({
