@@ -226,7 +226,9 @@ describe('letting go of files the comment never used', () => {
     }
   });
 
-  it('does not revoke the same file twice when a draft already settled it', async () => {
+  it('does not revoke a file twice when settlement already released it', async () => {
+    stubFetch();
+    globalThis.XMLHttpRequest = FakeUpload as unknown as typeof XMLHttpRequest;
     const revoked: string[] = [];
     const originalRevoke = URL.revokeObjectURL;
     URL.revokeObjectURL = (url: string) => revoked.push(url) && undefined;
@@ -235,8 +237,8 @@ describe('letting go of files the comment never used', () => {
       const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
       const held = await result.current.hold(textFile('once.log'));
 
-      const draft = result.current.draft(`before ${held.url} after`);
-      draft.release();
+      const draft = result.current.draft(`See [once.log](${held.url})`);
+      await draft.settle('comment_7');
       result.current.discard();
 
       expect(revoked.filter((url) => url === held.url)).toHaveLength(1);
