@@ -110,6 +110,7 @@ document, with the origin as a placeholder.
 | `GITHUB_APP_ID` | GitHub App, for linking pull requests to issues |
 | `GITHUB_APP_PRIVATE_KEY` | The PEM. Escaped newlines as `\n` are handled |
 | `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
 
 All optional. Orbit hides the affordance when an integration is not configured
