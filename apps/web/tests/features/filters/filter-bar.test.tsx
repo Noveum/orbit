@@ -17,6 +17,7 @@ import type { ViewControls } from '../../../src/features/filters/view-controls.t
 const workspace: WorkspaceData = {
   ready: true,
   userId: 'user-1',
+  role: 'admin',
   teams: [{ id: 'team-1', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
   states: [
     {

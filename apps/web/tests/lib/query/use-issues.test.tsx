@@ -6,7 +6,10 @@ import type { Issue } from '../../../src/lib/query/schemas.ts';
 
 mock.module('@/components/ui/toast.tsx', () => ({ useToast: () => ({ toast: () => undefined }) }));
 
-const { useIssues, useMoveIssue } = await import('../../../src/lib/query/use-issues.ts');
+const { useAssignedIssues, useDeleteIssues, useIssues, useMoveIssue } = await import(
+  '../../../src/lib/query/use-issues.ts'
+);
+const { queryKeys } = await import('../../../src/lib/query/keys.ts');
 
 const TEAM = 'team_eng';
 const originalFetch = globalThis.fetch;
@@ -148,5 +151,181 @@ describe('issue mutations patch the cache without a refetch drain', () => {
 
     expect(log.methods.filter((method) => method === 'POST')).toHaveLength(1);
     expect(log.methods.filter((method) => method === 'GET')).toHaveLength(1);
+  });
+});
+
+function stubDeletes(refuse: boolean): FetchLog {
+  const log: FetchLog = { urls: [], methods: [] };
+  globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    log.urls.push(url);
+    log.methods.push(method);
+    if (method !== 'DELETE') {
+      return Promise.resolve(
+        Response.json({
+          issues: [
+            issue({ id: 'issue_parent', identifier: 'ENG-1' }),
+            issue({ id: 'issue_child', identifier: 'ENG-2', parentId: 'issue_parent' }),
+          ],
+          nextCursor: null,
+        }),
+      );
+    }
+    if (refuse) {
+      return Promise.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'Your role cannot issue delete.' } },
+          { status: 403 },
+        ),
+      );
+    }
+    const id = url.slice(url.lastIndexOf('/') + 1);
+    return Promise.resolve(Response.json({ deleted: { id, identifier: 'ENG-1' } }));
+  }) as unknown as typeof fetch;
+  return log;
+}
+
+async function mountLists(client: QueryClient) {
+  const team = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+  const mine = renderHook(() => useAssignedIssues('user_1'), { wrapper: wrapper(client) });
+  await waitFor(() => expect(team.result.current.data).toBeDefined());
+  await waitFor(() => expect(mine.result.current.data).toBeDefined());
+  return { team, mine };
+}
+
+function detailFor(row: Issue, subIssues: readonly Issue[]) {
+  return {
+    issue: row,
+    descriptionHtml: '',
+    activity: [],
+    activityCursor: null,
+    subIssues,
+    subscribed: false,
+  };
+}
+
+describe('deleting an issue', () => {
+  it('takes the row out of every cached list before the server answers', async () => {
+    stubDeletes(false);
+    const client = newClient();
+    const { team, mine } = await mountLists(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([issue({ id: 'issue_child', identifier: 'ENG-2' })]);
+
+    await waitFor(() =>
+      expect(team.result.current.data?.map((row) => row.id)).toEqual(['issue_parent']),
+    );
+    expect(mine.result.current.data?.map((row) => row.id)).toEqual(['issue_parent']);
+    await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+  });
+
+  it('puts every list back exactly as it was when the server refuses', async () => {
+    stubDeletes(true);
+    const client = newClient();
+    const { team, mine } = await mountLists(client);
+    const before = team.result.current.data?.map((row) => row.id);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([issue({ id: 'issue_child', identifier: 'ENG-2' })]);
+
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
+    expect(team.result.current.data?.map((row) => row.id)).toEqual(before ?? []);
+    expect(mine.result.current.data?.map((row) => row.id)).toEqual(['issue_parent', 'issue_child']);
+  });
+
+  it('frees a cached child rather than leaving it pointing at a row that is gone', async () => {
+    stubDeletes(false);
+    const client = newClient();
+    const { team } = await mountLists(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([issue({ id: 'issue_parent', identifier: 'ENG-1' })]);
+
+    await waitFor(() =>
+      expect(team.result.current.data?.map((row) => row.id)).toEqual(['issue_child']),
+    );
+    expect(team.result.current.data?.[0]?.parentId).toBeNull();
+  });
+
+  it('forgets the detail the deleted issue owned and trims it out of its parent', async () => {
+    stubDeletes(false);
+    const client = newClient();
+    await mountLists(client);
+    const child = issue({ id: 'issue_child', identifier: 'ENG-2', parentId: 'issue_parent' });
+    client.setQueryData(queryKeys.issue('ENG-2'), detailFor(child, []));
+    client.setQueryData(
+      queryKeys.issue('ENG-1'),
+      detailFor(issue({ id: 'issue_parent', identifier: 'ENG-1' }), [child]),
+    );
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([child]);
+
+    await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(queryKeys.issue('ENG-2'))).toBeUndefined();
+    const parent = client.getQueryData<{ subIssues: readonly Issue[] }>(queryKeys.issue('ENG-1'));
+    expect(parent?.subIssues).toEqual([]);
+  });
+
+  it('keeps the issues that really went when a bulk delete is refused half way', async () => {
+    const log: FetchLog = { urls: [], methods: [] };
+    globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      log.urls.push(url);
+      log.methods.push(method);
+      if (method !== 'DELETE') {
+        return Promise.resolve(
+          Response.json({
+            issues: [
+              issue({ id: 'issue_parent', identifier: 'ENG-1' }),
+              issue({ id: 'issue_child', identifier: 'ENG-2' }),
+            ],
+            nextCursor: null,
+          }),
+        );
+      }
+      if (url.endsWith('issue_child')) {
+        return Promise.resolve(
+          Response.json(
+            { error: { code: 'forbidden', message: 'Your role cannot issue delete.' } },
+            { status: 403 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        Response.json({ deleted: { id: 'issue_parent', identifier: 'ENG-1' } }),
+      );
+    }) as unknown as typeof fetch;
+
+    const client = newClient();
+    const { team } = await mountLists(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([
+      issue({ id: 'issue_parent', identifier: 'ENG-1' }),
+      issue({ id: 'issue_child', identifier: 'ENG-2' }),
+    ]);
+
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
+    expect(team.result.current.data?.map((row) => row.id)).toEqual(['issue_child']);
+  });
+
+  it('sends one delete per selected issue when the bar deletes in bulk', async () => {
+    const log = stubDeletes(false);
+    const client = newClient();
+    await mountLists(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    remove.result.current.mutate([
+      issue({ id: 'issue_parent', identifier: 'ENG-1' }),
+      issue({ id: 'issue_child', identifier: 'ENG-2' }),
+    ]);
+
+    await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+    const deletes = log.urls.filter((_url, index) => log.methods[index] === 'DELETE');
+    expect(deletes).toEqual(['/api/issues/issue_parent', '/api/issues/issue_child']);
   });
 });

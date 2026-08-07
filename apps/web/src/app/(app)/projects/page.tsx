@@ -1,3 +1,5 @@
+import { listTeams } from '@orbit/core';
+import { can } from '@orbit/shared/policy';
 import { FolderKanban } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -5,7 +7,9 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { listProjectSummaries } from '@/features/projects/data.ts';
+import { formatDay } from '@/features/projects/dates.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
+import { NewProjectDialog } from '@/features/projects/new-project-dialog.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
@@ -13,13 +17,17 @@ import { rowHover } from '@/lib/interaction.ts';
 export const metadata: Metadata = { title: 'Projects' };
 
 function formatDate(value: string | null): string {
-  if (value === null) return 'No target';
-  return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return formatDay(value, { withYear: false, missing: 'No target' });
 }
 
 export default async function ProjectsPage() {
   const { principal } = await pageContext();
-  const projects = await listProjectSummaries(principal);
+  const [projects, teams] = await Promise.all([
+    listProjectSummaries(principal),
+    listTeams(principal),
+  ]);
+  const canManage = can(principal, 'project:manage');
+  const teamOptions = teams.map((team) => ({ id: team.id, key: team.key, name: team.name }));
 
   if (projects.length === 0) {
     return (
@@ -27,17 +35,27 @@ export default async function ProjectsPage() {
         icon={<FolderKanban strokeWidth={1.75} aria-hidden="true" />}
         title="No projects yet"
         description="Projects group issues around an outcome, with milestones and a health signal."
+        action={
+          <NewProjectDialog
+            teams={teamOptions}
+            canManage={canManage}
+            label="Create the first project"
+          />
+        }
       />
     );
   }
 
   return (
     <div className="flex flex-col gap-4 px-6 py-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-semibold text-lg text-text">Projects</h1>
-        <p className="text-muted text-xs">
-          {projects.length} active {projects.length === 1 ? 'project' : 'projects'}.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-semibold text-lg text-text">Projects</h1>
+          <p className="text-muted text-xs">
+            {projects.length} active {projects.length === 1 ? 'project' : 'projects'}.
+          </p>
+        </div>
+        <NewProjectDialog teams={teamOptions} canManage={canManage} />
       </header>
 
       <div className="overflow-x-auto rounded-lg border border-border">

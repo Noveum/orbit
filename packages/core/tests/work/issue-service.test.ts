@@ -33,6 +33,7 @@ import {
   unsubscribe,
   updateIssue,
 } from '../../src/work/issue-service.ts';
+import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
 let workspace: Workspace;
@@ -162,6 +163,50 @@ describe('permissions', () => {
     await expect(getIssue(workspace.admin, issue.id)).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+
+  it('refuses a member of another team even though delete is in their role', async () => {
+    const issue = await newIssue('Someone else team work');
+    const outsider = await addMember(workspace, 'member', { teamIds: [] });
+
+    await expect(deleteIssue(outsider.principal, issue.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(await getIssue(workspace.admin, issue.id)).toMatchObject({ id: issue.id });
+  });
+});
+
+describe('deleteIssue and sub issues', () => {
+  it('promotes children to top level and announces each one so no cache points at the gone row', async () => {
+    const parent = await newIssue('Parent');
+    const child = await newIssue('Child');
+    const other = await newIssue('Unrelated');
+    await updateIssue(workspace.admin, child.id, { parentId: parent.id });
+
+    const actions = await deleteIssue(workspace.admin, parent.id);
+
+    const [survivor] = await db.select().from(schema.issue).where(eq(schema.issue.id, child.id));
+    expect(survivor?.parentId).toBeNull();
+
+    const announced = actions.filter((action) => action.action === 'update');
+    expect(announced.map((action) => action.modelId)).toEqual([child.id]);
+    expect(announced[0]?.data['parentId']).toBeNull();
+    expect(announced[0]?.syncId).toBe(actions[0]?.syncId ?? -1);
+    expect(actions.map((action) => action.modelId)).not.toContain(other.id);
+
+    const remaining = await listIssues(workspace.admin, {});
+    expect(remaining.issues.map((issue) => issue.id).sort()).toEqual([child.id, other.id].sort());
+  });
+
+  it('bumps the child sync id past the stale one every open tab is holding', async () => {
+    const parent = await newIssue('Parent');
+    const child = await newIssue('Child');
+    const attached = await updateIssue(workspace.admin, child.id, { parentId: parent.id });
+
+    const actions = await deleteIssue(workspace.admin, parent.id);
+
+    const announced = actions.find((action) => action.modelId === child.id);
+    expect(announced?.data['syncId']).toBeGreaterThan(attached.issue.syncId);
   });
 });
 
@@ -925,5 +970,70 @@ describe('tenancy', () => {
     await expect(listSubscribers(guest.principal, issue.id)).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+describe('an issue milestone has to belong to the project the issue is on', () => {
+  async function projectWithMilestone(
+    name: string,
+  ): Promise<{ projectId: string; milestoneId: string }> {
+    const { project } = await createProject(workspace.admin, {
+      name,
+      teamIds: [workspace.teamId],
+    });
+    const { milestone } = await createMilestone(workspace.admin, {
+      projectId: project.id,
+      name: `${name} alpha`,
+    });
+    return { projectId: project.id, milestoneId: milestone.id };
+  }
+
+  it('refuses a milestone from a sibling project on the same team', async () => {
+    const here = await projectWithMilestone('Here');
+    const elsewhere = await projectWithMilestone('Elsewhere');
+    const issue = await newIssue('Grouped work', { projectId: here.projectId });
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { milestoneId: elsewhere.milestoneId }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+
+    const [stored] = await db
+      .select({ milestoneId: schema.issue.milestoneId })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issue.id));
+    expect(stored?.milestoneId).toBeNull();
+  });
+
+  it('refuses a milestone on an issue that is on no project at all', async () => {
+    const orphan = await projectWithMilestone('Orphan');
+    const issue = await newIssue('Loose work');
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { milestoneId: orphan.milestoneId }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('takes the milestone of the project the same patch moves the issue onto', async () => {
+    const here = await projectWithMilestone('Landing');
+    const issue = await newIssue('Moving in');
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      projectId: here.projectId,
+      milestoneId: here.milestoneId,
+    });
+
+    expect(updated.issue.projectId).toBe(here.projectId);
+    expect(updated.issue.milestoneId).toBe(here.milestoneId);
+  });
+
+  it('still takes a milestone of the project the issue is already on', async () => {
+    const here = await projectWithMilestone('Steady');
+    const issue = await newIssue('Already here', { projectId: here.projectId });
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+
+    expect(updated.issue.milestoneId).toBe(here.milestoneId);
   });
 });

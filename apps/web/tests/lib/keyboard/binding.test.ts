@@ -7,6 +7,7 @@ import {
   isEditableTarget,
   isModifierKey,
   type KeyEventLike,
+  ownsKeyboardLayer,
   parseBinding,
   pruneBuffer,
   SEQUENCE_TIMEOUT_MS,
@@ -303,5 +304,22 @@ describe('activatesFocusedControl', () => {
     expect(activatesFocusedControl(keyEvent('Escape'), button)).toBe(false);
     expect(activatesFocusedControl(keyEvent('Enter', { metaKey: true }), button)).toBe(false);
     expect(activatesFocusedControl(keyEvent(' ', { altKey: true }), button)).toBe(false);
+  });
+
+  it('reports when an open menu, dialog or listbox owns the keyboard', () => {
+    for (const role of ['menu', 'menuitem', 'dialog', 'alertdialog', 'listbox']) {
+      const layer = node('div', { role });
+      const inside = document.createElement('span');
+      layer.append(inside);
+      expect(ownsKeyboardLayer(layer)).toBe(true);
+      expect(ownsKeyboardLayer(inside)).toBe(true);
+    }
+  });
+
+  it('leaves an ordinary surface to the surface hotkeys', () => {
+    expect(ownsKeyboardLayer(node('div'))).toBe(false);
+    expect(ownsKeyboardLayer(node('button'))).toBe(false);
+    expect(ownsKeyboardLayer(document.body)).toBe(false);
+    expect(ownsKeyboardLayer(null)).toBe(false);
   });
 });

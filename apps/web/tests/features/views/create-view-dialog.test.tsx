@@ -29,6 +29,7 @@ function buildWorkspace(): WorkspaceData {
   return {
     ready: true,
     userId: 'user-1',
+    role: 'admin',
     teams: [{ id: 'team-eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#f95b6c' }],
     states: [
       {
