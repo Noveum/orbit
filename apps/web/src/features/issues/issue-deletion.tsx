@@ -123,7 +123,7 @@ export interface DeleteIssueMenuItemProps {
 
 export function DeleteIssueMenuItem({ issue, onDeleted }: DeleteIssueMenuItemProps) {
   const deletion = useIssueDeletion();
-  if (deletion === null || !deletion.allowed) return null;
+  if (deletion?.allowed !== true) return null;
 
   return (
     <DropdownMenuItem

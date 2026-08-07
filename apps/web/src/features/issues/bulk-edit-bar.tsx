@@ -84,7 +84,7 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
       </PropertyMenu>
 
       <div className="ml-auto flex items-center gap-1">
-        {deletion !== null && deletion.allowed ? (
+        {deletion?.allowed === true ? (
           <Button
             size="sm"
             variant="ghost"

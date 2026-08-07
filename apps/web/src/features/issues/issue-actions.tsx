@@ -19,7 +19,7 @@ export interface IssueActionsMenuProps {
 
 export function IssueActionsMenu({ issue, onDeleted, className }: IssueActionsMenuProps) {
   const deletion = useIssueDeletion();
-  if (deletion === null || !deletion.allowed) return null;
+  if (deletion?.allowed !== true) return null;
 
   const swallow = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.stopPropagation();

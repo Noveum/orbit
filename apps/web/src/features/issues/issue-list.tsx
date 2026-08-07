@@ -225,7 +225,7 @@ export function IssueList({
       section: 'Issues',
       scope: 'issues',
       priority: HOTKEY_PRIORITY.surface,
-      enabled: peekId === null && deletion !== null && deletion.allowed,
+      enabled: peekId === null && deletion?.allowed === true,
     },
   );
   useHotkey(

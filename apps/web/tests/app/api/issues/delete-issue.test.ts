@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   addMember,
   createWorkspace,
@@ -64,9 +64,12 @@ const errorSchema = z.object({ error: z.object({ code: z.string() }) });
 
 let workspace: Workspace;
 
+beforeAll(async () => {
+  await resetDatabase();
+});
+
 beforeEach(async () => {
   published.length = 0;
-  await resetDatabase();
   workspace = await createWorkspace('Nova');
   actor = workspace.admin;
 });

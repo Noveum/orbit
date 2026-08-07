@@ -193,7 +193,7 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
     section: 'Issues',
     scope: 'issues',
     priority: HOTKEY_PRIORITY.layer,
-    enabled: issue !== undefined && deletion !== null && deletion.allowed,
+    enabled: issue !== undefined && deletion?.allowed === true,
   });
 
   if (detail.isPending) {
