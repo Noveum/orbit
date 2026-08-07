@@ -1,4 +1,4 @@
-import { and, asc, count, db, desc, eq, ne, schema } from '@orbit/db';
+import { and, asc, count, db, desc, eq, inArray, ne, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import { conflict, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
@@ -126,6 +126,28 @@ export async function listWorkflowStates(
     .orderBy(asc(schema.workflowState.position));
 }
 
+export async function listWorkflowStatesForTeams(
+  principal: Principal,
+  teamIds: readonly string[],
+): Promise<WorkflowStateRow[]> {
+  assertCan(principal, 'issue:read');
+  const reachable =
+    principal.role === 'admin'
+      ? [...new Set(teamIds)]
+      : [...new Set(teamIds)].filter((teamId) => principal.teamIds.includes(teamId));
+  if (reachable.length === 0) return [];
+  return await db
+    .select()
+    .from(schema.workflowState)
+    .where(
+      and(
+        eq(schema.workflowState.organizationId, principal.organizationId),
+        inArray(schema.workflowState.teamId, reachable),
+      ),
+    )
+    .orderBy(asc(schema.workflowState.position));
+}
+
 export async function defaultStateFor(
   executor: Executor,
   teamId: string,
@@ -159,8 +181,15 @@ export async function initialStateFor(
   return requireRow(any, 'That team has no workflow states.');
 }
 
-async function issuesInState(executor: Executor, stateId: string): Promise<IssueRow[]> {
-  return await executor.select().from(schema.issue).where(eq(schema.issue.stateId, stateId));
+async function issuesInState(
+  executor: Executor,
+  organizationId: string,
+  stateId: string,
+): Promise<IssueRow[]> {
+  return await executor
+    .select()
+    .from(schema.issue)
+    .where(and(eq(schema.issue.organizationId, organizationId), eq(schema.issue.stateId, stateId)));
 }
 
 interface RestateParams {
@@ -169,17 +198,20 @@ interface RestateParams {
   readonly category: string;
   readonly syncId: number;
   readonly actor: Actor;
+  readonly moved: boolean;
 }
 
 async function restateIssues(executor: Executor, params: RestateParams): Promise<SyncAction[]> {
   const now = new Date();
   const actions: SyncAction[] = [];
   for (const issue of params.issues) {
+    const timestamps = applyStateTimestamps(issue, params.category, now);
     const [row] = await executor
       .update(schema.issue)
       .set({
         stateId: params.stateId,
-        ...applyStateTimestamps(issue, params.category, now),
+        ...timestamps,
+        ...(params.moved ? {} : { stateEnteredAt: issue.stateEnteredAt }),
         updatedAt: now,
         syncId: params.syncId,
       })
@@ -243,6 +275,19 @@ export async function createWorkflowState(
   );
 }
 
+function stateChanges(
+  current: WorkflowStateRow,
+  parsed: ReturnType<typeof workflowStateUpdateSchema.parse>,
+): Partial<typeof schema.workflowState.$inferInsert> {
+  const values: Partial<typeof schema.workflowState.$inferInsert> = {};
+  if (parsed.name !== undefined && parsed.name !== current.name) values.name = parsed.name;
+  if (parsed.category !== undefined && parsed.category !== current.category) {
+    values.category = parsed.category;
+  }
+  if (parsed.color !== undefined && parsed.color !== current.color) values.color = parsed.color;
+  return values;
+}
+
 export async function updateWorkflowState(
   principal: Principal,
   stateId: string,
@@ -254,31 +299,29 @@ export async function updateWorkflowState(
   return await refusingDuplicates(async () =>
     db.transaction(async (tx) => {
       const current = await ownedState(tx, principal, stateId);
+      const values = stateChanges(current, parsed);
+      if (Object.keys(values).length === 0) return { state: current, actions: [] };
+
       const syncId = await nextSyncId(tx);
       const actor = await principalActor(tx, principal);
-
-      const values: Partial<typeof schema.workflowState.$inferInsert> = { syncId };
-      if (parsed.name !== undefined) values.name = parsed.name;
-      if (parsed.category !== undefined) values.category = parsed.category;
-      if (parsed.color !== undefined) values.color = parsed.color;
-
       const [updated] = await tx
         .update(schema.workflowState)
-        .set(values)
+        .set({ ...values, syncId })
         .where(eq(schema.workflowState.id, current.id))
         .returning();
       const row = requireRow(updated, MISSING_STATE);
 
       const recategorised =
-        parsed.category !== undefined && parsed.category !== current.category
-          ? await restateIssues(tx, {
-              issues: await issuesInState(tx, current.id),
+        values.category === undefined
+          ? []
+          : await restateIssues(tx, {
+              issues: await issuesInState(tx, current.organizationId, current.id),
               stateId: current.id,
               category: row.category,
               syncId,
               actor,
-            })
-          : [];
+              moved: false,
+            });
 
       return { state: row, actions: [stateAction(row, syncId, actor, 'update'), ...recategorised] };
     }),
@@ -338,7 +381,7 @@ export async function deleteWorkflowState(
       });
     }
 
-    const occupants = await issuesInState(tx, current.id);
+    const occupants = await issuesInState(tx, current.organizationId, current.id);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
@@ -389,6 +432,7 @@ async function moveOccupants(
     category: target.category,
     syncId: params.syncId,
     actor: params.actor,
+    moved: true,
   });
   await appendActivities(
     tx,

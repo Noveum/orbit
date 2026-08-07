@@ -14,6 +14,7 @@ import {
   createWorkflowState,
   deleteWorkflowState,
   listWorkflowStates,
+  listWorkflowStatesForTeams,
   reorderWorkflowStates,
   updateWorkflowState,
   type WorkflowStateRow,
@@ -191,6 +192,64 @@ describe('a status carries a category the rest of the product reads', () => {
     expect(saved.actions.some((action) => action.model === 'issue')).toBe(false);
   });
 
+  it('keeps the age of an issue that never moved when only the category is renamed', async () => {
+    const todo = stateNamed(workspace, 'Todo');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: todo.id,
+    });
+    const before = await issueById(created.issue.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await updateWorkflowState(workspace.admin, todo.id, { category: 'backlog' });
+
+    const after = await issueById(created.issue.id);
+    expect(after.stateId).toBe(todo.id);
+    expect(after.stateEnteredAt.getTime()).toBe(before.stateEnteredAt.getTime());
+  });
+
+  it('restarts the age of an issue that really was carried to another status', async () => {
+    const todo = stateNamed(workspace, 'Todo');
+    const done = stateNamed(workspace, 'Done');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: todo.id,
+    });
+    const before = await issueById(created.issue.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await deleteWorkflowState(workspace.admin, todo.id, { moveToStateId: done.id });
+
+    const after = await issueById(created.issue.id);
+    expect(after.stateId).toBe(done.id);
+    expect(after.stateEnteredAt.getTime()).toBeGreaterThan(before.stateEnteredAt.getTime());
+  });
+
+  it('answers a patch that changes nothing with no action and no sync id bump', async () => {
+    const todo = stateNamed(workspace, 'Todo');
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: todo.id,
+    });
+
+    const empty = await updateWorkflowState(workspace.admin, todo.id, {});
+    const same = await updateWorkflowState(workspace.admin, todo.id, {
+      name: todo.name,
+      category: 'unstarted',
+      color: todo.color,
+    });
+
+    expect(empty.actions).toHaveLength(0);
+    expect(same.actions).toHaveLength(0);
+    expect((await statesOf(workspace.teamId)).find((s) => s.id === todo.id)?.syncId).toBe(
+      todo.syncId,
+    );
+    expect((await issueById(created.issue.id)).syncId).toBe(created.issue.syncId);
+  });
+
   it('refuses two statuses of the same name on one team', async () => {
     expect(
       await errorOf(() =>
@@ -329,6 +388,36 @@ describe('the server is the gate, whatever the caller sends', () => {
       'forbidden',
     );
     expect((await listWorkflowStates(workspace.admin, design.team.id))[0]?.name).toBe(target.name);
+  });
+
+  it('never answers a batch read with a team the caller has not joined', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const vega = await createWorkspace('Vega');
+    const outsider = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+
+    const asked = await listWorkflowStatesForTeams(outsider.principal, [
+      workspace.teamId,
+      design.team.id,
+      vega.teamId,
+    ]);
+
+    expect(new Set(asked.map((state) => state.teamId))).toEqual(new Set([workspace.teamId]));
+    expect(asked).toHaveLength(7);
+  });
+
+  it('gives an admin every team it asks for and still stops at the workspace edge', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const vega = await createWorkspace('Vega');
+
+    const asked = await listWorkflowStatesForTeams(workspace.admin, [
+      workspace.teamId,
+      design.team.id,
+      vega.teamId,
+    ]);
+
+    expect(new Set(asked.map((state) => state.teamId))).toEqual(
+      new Set([workspace.teamId, design.team.id]),
+    );
   });
 
   it('refuses a status in another workspace outright', async () => {
