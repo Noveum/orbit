@@ -75,6 +75,7 @@ describe('discovery', () => {
     expect(names).toContain('open_standup');
     expect(names).toContain('run_standup');
     expect(names).toContain('complete_cycle');
+    expect(names).toContain('start_cycle');
     expect(names).toContain('create_milestone');
     expect(names).toContain('reorder_milestones');
 
@@ -660,6 +661,72 @@ describe('sprints over mcp', () => {
     });
     expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
   });
+
+  it('closes a sprint two weeks out when no end date is given', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 101',
+      startsAt: '2033-01-05',
+    });
+    const sprint = created['cycle'] as { startsAt: string; endsAt: string };
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+  });
+
+  it('appends a sprint after the last one when it is given no dates', async () => {
+    const team = await admin.result('create_team', { name: 'Appender', key: 'APND' });
+    const teamKey = (team['team'] as { key: string }).key;
+    const before = await admin.result('list_cycles', { team: teamKey });
+    const last = (before['cycles'] as { endsAt: string }[]).at(-1);
+    if (last === undefined) throw new Error('the new team has no sprint');
+
+    const created = await admin.result('create_cycle', { team: teamKey });
+    const sprint = created['cycle'] as { startsAt: string; endsAt: string };
+
+    expect(sprint.startsAt).toBe(last.endsAt);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+  });
+
+  it('starts the sprint that follows the one it just closed, and refuses to start it twice', async () => {
+    const team = await admin.result('create_team', { name: 'Runway', key: 'RUNW' });
+    const teamKey = (team['team'] as { key: string }).key;
+
+    const opened = await admin.result('active_cycle', { team: teamKey });
+    const running = opened['cycle'] as { id: string };
+
+    const closed = await admin.result('complete_cycle', { cycleId: running.id });
+    const successor = closed['nextCycle'] as { id: string };
+
+    const between = await admin.result('active_cycle', { team: teamKey });
+    expect(between['cycle']).toBeNull();
+
+    const started = await admin.result('start_cycle', { cycleId: successor.id });
+    const startsAt = Date.parse((started['cycle'] as { startsAt: string }).startsAt);
+    expect(Math.abs(startsAt - Date.now())).toBeLessThan(60_000);
+
+    const after = await admin.result('active_cycle', { team: teamKey });
+    expect((after['cycle'] as { id: string }).id).toBe(successor.id);
+
+    const again = await admin.call('start_cycle', { cycleId: successor.id });
+    expect(again.isError).toBe(true);
+    expect(errorPayload(again).code).toBe('conflict');
+  });
+
+  it('refuses to start a sprint for somebody whose role cannot manage sprints', async () => {
+    const created = await admin.result('create_cycle', {
+      team: workspace.teamKey,
+      name: 'Sprint 102',
+      startsAt: '2034-01-05',
+    });
+    const sprint = created['cycle'] as { id: string; startsAt: string };
+
+    const denied = await guest.call('start_cycle', { cycleId: sprint.id });
+    expect(denied.isError).toBe(true);
+    expect(errorPayload(denied).code).toBe('forbidden');
+
+    const untouched = await admin.result('list_cycles', { team: workspace.teamKey });
+    const rows = untouched['cycles'] as { id: string; startsAt: string }[];
+    expect(rows.find((row) => row.id === sprint.id)?.startsAt).toBe(sprint.startsAt);
+  });
 });
 
 describe('what a token is allowed to do', () => {
@@ -679,6 +746,7 @@ describe('what a token is allowed to do', () => {
       expect(names).not.toContain('update_issue');
       expect(names).not.toContain('open_standup');
       expect(names).not.toContain('complete_cycle');
+      expect(names).not.toContain('start_cycle');
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {
