@@ -1,17 +1,19 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  attachFile,
   createComment,
   createIssue,
   getIssue,
   listIssueLabels,
   listIssues,
   listLabels,
-  listRelations,
+  listRelatedIssues,
   moveIssue,
+  removeRelation,
   setRelation,
   updateIssue,
 } from '@orbit/core';
-import { db, eq, inArray, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { ISSUE_RELATION_TYPES, STATE_CATEGORIES } from '@orbit/shared/constants';
 import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
@@ -55,22 +57,12 @@ async function issueLabelNames(principal: Principal, issueId: string): Promise<s
 async function issueRelationViews(
   principal: Principal,
   issueId: string,
-): Promise<{ type: string; identifier: string }[]> {
-  const relations = await listRelations(principal, issueId);
-  if (relations.length === 0) return [];
-  const rows = await db
-    .select({ id: schema.issue.id, identifier: schema.issue.identifier })
-    .from(schema.issue)
-    .where(
-      inArray(
-        schema.issue.id,
-        relations.map((relation) => relation.relatedIssueId),
-      ),
-    );
-  const identifiers = new Map(rows.map((row) => [row.id, row.identifier]));
-  return relations.map((relation) => ({
-    type: relation.type,
-    identifier: identifiers.get(relation.relatedIssueId) ?? relation.relatedIssueId,
+): Promise<{ type: string; identifier: string; title: string }[]> {
+  const related = await listRelatedIssues(principal, issueId);
+  return related.map((entry) => ({
+    type: entry.type,
+    identifier: entry.issue.identifier,
+    title: entry.issue.title,
   }));
 }
 
@@ -113,9 +105,6 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
         ...patch,
         teamId: team.id,
         title: args.title,
-        ...(args.parent === undefined
-          ? {}
-          : { parentId: (await getIssue(principal, args.parent)).id }),
       });
       await publish(created.actions);
       return {
@@ -158,6 +147,10 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
           .optional()
           .describe('Project name, slug, id or null.'),
         cycle: z.string().min(1).nullable().optional().describe('Sprint name, number, id or null.'),
+        parent: issueRef
+          .nullable()
+          .optional()
+          .describe('Parent issue, making this a sub issue, or null to detach it.'),
         labels: labelsRef.optional(),
         estimate: z.number().int().min(0).max(100).nullable().optional(),
         dueDate: dueDateRef.nullable().optional(),
@@ -185,9 +178,20 @@ interface IssuePatchArgs {
   readonly assignee?: string | null | undefined;
   readonly project?: string | null | undefined;
   readonly cycle?: string | null | undefined;
+  readonly parent?: string | null | undefined;
   readonly labels?: string[] | undefined;
   readonly estimate?: number | null | undefined;
   readonly dueDate?: string | null | undefined;
+}
+
+function plainIssueValues(args: IssuePatchArgs): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (args.title !== undefined) patch['title'] = args.title;
+  if (args.description !== undefined) patch['description'] = args.description;
+  if (args.estimate !== undefined) patch['estimate'] = args.estimate;
+  if (args.dueDate !== undefined) patch['dueDate'] = args.dueDate;
+  if (args.priority !== undefined) patch['priority'] = PRIORITY_VALUES[args.priority];
+  return patch;
 }
 
 async function buildIssuePatch(
@@ -195,12 +199,7 @@ async function buildIssuePatch(
   teamId: string,
   args: IssuePatchArgs,
 ): Promise<Record<string, unknown>> {
-  const patch: Record<string, unknown> = {};
-  if (args.title !== undefined) patch['title'] = args.title;
-  if (args.description !== undefined) patch['description'] = args.description;
-  if (args.estimate !== undefined) patch['estimate'] = args.estimate;
-  if (args.dueDate !== undefined) patch['dueDate'] = args.dueDate;
-  if (args.priority !== undefined) patch['priority'] = PRIORITY_VALUES[args.priority];
+  const patch = plainIssueValues(args);
   if (args.state !== undefined)
     patch['stateId'] = await resolveStateId(principal, teamId, args.state);
   if (args.labels !== undefined)
@@ -216,6 +215,9 @@ async function buildIssuePatch(
   if (args.cycle !== undefined) {
     patch['cycleId'] =
       args.cycle === null ? null : (await resolveCycle(principal, teamId, args.cycle)).id;
+  }
+  if (args.parent !== undefined) {
+    patch['parentId'] = args.parent === null ? null : (await getIssue(principal, args.parent)).id;
   }
   return patch;
 }
@@ -489,6 +491,80 @@ function registerSetRelation(server: McpServer, principal: Principal): void {
   );
 }
 
+function registerRemoveRelation(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'remove_relation',
+      title: 'Unlink two issues',
+      description:
+        'Remove a link between two issues. The inverse link on the other issue goes with it, so removing "blocks" also removes "blocked by".',
+      readOnly: false,
+      inputSchema: {
+        issue: issueRef,
+        relatedIssue: issueRef.describe('The issue on the other end of the link.'),
+        type: z.enum(ISSUE_RELATION_TYPES).describe('How the first issue relates to the second.'),
+      },
+    },
+    async (args) => {
+      const issue = await getIssue(principal, args.issue);
+      const related = await getIssue(principal, args.relatedIssue);
+      const actions = await removeRelation(principal, issue.id, {
+        relatedIssueId: related.id,
+        type: args.type,
+      });
+      await publish(actions);
+      return {
+        issue: issue.identifier,
+        relations: await issueRelationViews(principal, issue.id),
+        deltas: deltaViews(actions),
+      };
+    },
+  );
+}
+
+function registerAttachFile(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'attach_file',
+      title: 'Attach a file',
+      description:
+        'Upload a file and attach it to an issue, a comment, a doc or a project. Returns a url you can put in markdown, for example ![name](url).',
+      readOnly: false,
+      inputSchema: {
+        parentType: z
+          .enum(['issue', 'comment', 'doc', 'project'])
+          .describe('What the file hangs off.'),
+        parentId: z
+          .string()
+          .min(1)
+          .describe(
+            'Id of the issue, comment, doc or project. Issue identifiers are not accepted.',
+          ),
+        fileName: z.string().min(1).max(255).describe('Name to store the file under.'),
+        contentType: z.string().min(1).max(255).describe('Mime type, for example "image/png".'),
+        content: z.string().min(1).describe('The file bytes, base64 encoded.'),
+      },
+    },
+    async (args) => {
+      const stored = await attachFile(principal, args);
+      await publish(stored.actions);
+      return {
+        attachment: {
+          id: stored.attachment.id,
+          fileName: stored.attachment.fileName,
+          contentType: stored.attachment.contentType,
+          size: stored.attachment.size,
+        },
+        url: stored.url,
+        markdown: `[${stored.attachment.fileName}](${stored.url})`,
+        deltas: deltaViews(stored.actions),
+      };
+    },
+  );
+}
+
 function registerCopyBranchName(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -529,5 +605,7 @@ export function registerIssueTools(server: McpServer, principal: Principal): voi
   registerMoveIssue(server, principal);
   registerAddComment(server, principal);
   registerSetRelation(server, principal);
+  registerRemoveRelation(server, principal);
+  registerAttachFile(server, principal);
   registerCopyBranchName(server, principal);
 }
