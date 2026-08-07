@@ -23,6 +23,7 @@ import {
   getIssueFacets,
   getIssueSummary,
   listIssues,
+  listRelatedIssues,
   listRelations,
   listSubscribers,
   moveIssue,
@@ -763,6 +764,53 @@ describe('getIssue', () => {
   });
 });
 
+describe('parent and due date writes', () => {
+  it('stores a due date the caller sends and clears it again', async () => {
+    const issue = await newIssue('Ships friday');
+
+    const dated = await updateIssue(workspace.admin, issue.id, { dueDate: '2031-03-04' });
+    expect(dated.issue.dueDate).toBe('2031-03-04');
+    expect(dated.changes.map((change) => change.field)).toContain('dueDate');
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { dueDate: null });
+    expect(cleared.issue.dueDate).toBeNull();
+  });
+
+  it('refuses a parent that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+    const mine = await newIssue('Out in the open');
+
+    await expect(updateIssue(principal, mine.id, { parentId: hidden.id })).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    await expect(
+      createIssue(principal, {
+        teamId: workspace.teamId,
+        title: 'Smuggled child',
+        parentId: hidden.id,
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('accepts a parent the caller shares a team with', async () => {
+    const { principal } = await addMember(workspace, 'member');
+    const parent = await newIssue('Epic');
+    const child = await newIssue('Task');
+
+    const updated = await updateIssue(principal, child.id, { parentId: parent.id });
+    expect(updated.issue.parentId).toBe(parent.id);
+  });
+});
+
 describe('relations', () => {
   it('keeps the inverse relation consistent', async () => {
     const blocker = await newIssue('Blocker');
@@ -790,6 +838,55 @@ describe('relations', () => {
     await expect(
       setRelation(workspace.admin, issue.id, { relatedIssueId: issue.id, type: 'related' }),
     ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('returns the related issue rows alongside the link', async () => {
+    const blocker = await newIssue('Blocker');
+    const blocked = await newIssue('Blocked');
+    await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+
+    const related = await listRelatedIssues(workspace.admin, blocker.id);
+    expect(related).toHaveLength(1);
+    expect(related[0]?.type).toBe('blocks');
+    expect(related[0]?.issue.identifier).toBe(blocked.identifier);
+    expect(related[0]?.issue.title).toBe('Blocked');
+  });
+
+  it('refuses to list the relations of an issue the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(listRelations(principal, hidden.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(listRelatedIssues(principal, hidden.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('leaves out a related issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const mine = await newIssue('Out in the open');
+    await setRelation(workspace.admin, mine.id, { relatedIssueId: hidden.id, type: 'blocks' });
+    const { principal } = await addMember(workspace, 'member');
+
+    expect(await listRelatedIssues(workspace.admin, mine.id)).toHaveLength(1);
+    expect(await listRelatedIssues(principal, mine.id)).toEqual([]);
   });
 });
 
