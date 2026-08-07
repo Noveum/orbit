@@ -72,6 +72,7 @@ const issues = [issue(), issue({ id: 'issue_2', number: 2, identifier: 'ENG-2', 
 const workspace: WorkspaceData = {
   ready: true,
   userId: 'user_1',
+  role: 'admin',
   teams: [{ id: 'team_1', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
   states: [todo],
   labels: [],

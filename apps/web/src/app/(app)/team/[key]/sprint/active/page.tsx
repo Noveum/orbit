@@ -1,3 +1,4 @@
+import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
@@ -32,7 +33,13 @@ export default async function ActiveSprintPage({ params }: PageProps) {
         <h1 className="font-semibold text-lg text-text">{team.name} sprint</h1>
         <p className="text-muted text-xs">Scope, pace, and who is carrying what this sprint.</p>
       </header>
-      <CyclePanel cycle={cycle} upcoming={upcoming} teamName={team.name} />
+      <CyclePanel
+        cycle={cycle}
+        upcoming={upcoming}
+        team={team}
+        canManage={can(principal, 'cycle:manage')}
+        runningSprintId={cycle?.id ?? null}
+      />
     </div>
   );
 }

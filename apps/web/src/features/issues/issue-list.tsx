@@ -6,10 +6,11 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, ownsKeyboardLayer, useHotkey } from '@/lib/keyboard/index.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { BulkEditBar } from './bulk-edit-bar.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
+import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow, ROW_HEIGHT } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
@@ -150,6 +151,12 @@ export function IssueList({
     if (activeIssue === undefined && issueIndexes[0] !== undefined) setActiveIndex(issueIndexes[0]);
   }, [activeIssue, issueIndexes]);
 
+  const deletion = useIssueDeletion();
+  const deletionTargets = useMemo(() => {
+    if (selected.length > 0) return issues.filter((issue) => selected.includes(issue.id));
+    return activeIssue === undefined ? [] : [activeIssue];
+  }, [selected, issues, activeIssue]);
+
   useHotkey('j', () => step(1), {
     label: 'Next issue',
     section: 'Issues',
@@ -206,6 +213,21 @@ export function IssueList({
       if (activeIssue !== undefined) router.push(`/issue/${activeIssue.identifier}`);
     },
     { label: 'Open issue', section: 'Issues', scope: 'issues' },
+  );
+  useHotkey(
+    DELETE_ISSUE_BINDING,
+    (event) => {
+      if (ownsKeyboardLayer(event.target)) return;
+      if (deletionTargets.length === 0) return;
+      deletion?.request({ issues: deletionTargets, onDeleted: () => setSelected([]) });
+    },
+    {
+      label: 'Delete issue',
+      section: 'Issues',
+      scope: 'issues',
+      priority: HOTKEY_PRIORITY.surface,
+      enabled: peekId === null && deletion?.allowed === true && deletionTargets.length > 0,
+    },
   );
   useHotkey(
     'escape',

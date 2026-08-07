@@ -172,6 +172,32 @@ export function applyIssueDeltaToPages(
   return mapIssuePages(data, (issues) => applyIssueDelta(issues, action, belongs, search));
 }
 
+export function withoutIssues(
+  issues: readonly Issue[],
+  removed: ReadonlySet<string>,
+): readonly Issue[] {
+  let changed = false;
+  const next = issues.flatMap((issue) => {
+    if (removed.has(issue.id)) {
+      changed = true;
+      return [];
+    }
+    if (issue.parentId === null || !removed.has(issue.parentId)) return [issue];
+    changed = true;
+    return [{ ...issue, parentId: null }];
+  });
+  return changed ? next : issues;
+}
+
+export function withoutSubIssue<T extends { issue: Issue; subIssues: readonly Issue[] }>(
+  detail: T | undefined,
+  removedId: string,
+): T | undefined {
+  if (detail === undefined) return detail;
+  const subIssues = detail.subIssues.filter((child) => child.id !== removedId);
+  return subIssues.length === detail.subIssues.length ? detail : { ...detail, subIssues };
+}
+
 export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?: string }>(
   detail: T | undefined,
   action: SyncAction,

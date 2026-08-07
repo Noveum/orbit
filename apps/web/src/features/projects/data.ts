@@ -91,9 +91,11 @@ export async function listProjectSummaries(principal: Principal): Promise<Projec
 
 export interface MilestoneView {
   readonly id: string;
+  readonly projectId: string;
   readonly name: string;
   readonly description: string;
   readonly targetDate: string | null;
+  readonly sortOrder: number;
   readonly scope: number;
   readonly completed: number;
 }
@@ -168,9 +170,11 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
     progress,
     milestones: milestones.map((milestone) => ({
       id: milestone.id,
+      projectId: milestone.projectId,
       name: milestone.name,
       description: milestone.description,
       targetDate: milestone.targetDate,
+      sortOrder: milestone.sortOrder,
       scope: milestoneProgress.get(milestone.id)?.scope ?? 0,
       completed: milestoneProgress.get(milestone.id)?.completed ?? 0,
     })),
