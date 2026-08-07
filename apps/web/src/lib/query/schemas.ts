@@ -404,6 +404,7 @@ export const viewSchema = z.object({
   virtual: z.boolean().catch(false),
   locked: z.boolean().catch(false),
   favorite: z.boolean().catch(false),
+  readable: z.boolean().default(true).catch(true),
   createdAt: timestamp,
 });
 

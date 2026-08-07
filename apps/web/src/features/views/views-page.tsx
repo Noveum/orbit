@@ -173,7 +173,7 @@ function ViewRow({ view }: { view: View }) {
   const layout = viewLayoutMode(view.layout);
   const owner = workspace.members.find((member) => member.id === view.ownerId);
   const editable = !(view.virtual || view.locked) && view.ownerId === workspace.userId;
-  const href = viewHref(view, workspace.teams);
+  const href = viewHref(view, workspace);
 
   const submitRename = () => {
     const trimmed = name.trim();
@@ -303,6 +303,15 @@ function ViewSummary({ view, layout }: { view: View; layout: ViewLayoutMode }) {
   const description = builtInDescription(view);
   if (description !== null) {
     return <p className="text-2xs text-faint">{description}</p>;
+  }
+
+  if (!view.readable) {
+    return (
+      <p className="text-2xs text-danger" data-testid={`unreadable-${view.name}`}>
+        Orbit could not read what this view stored, so it shows the defaults. Open it and save it
+        again to replace them.
+      </p>
+    );
   }
 
   return (
