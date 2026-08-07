@@ -18,11 +18,9 @@ afterAll(() => {
 });
 
 const { IssueWorkspaceProvider, toOrgRole, workspaceFrom } = await import(
-  '../../../src/features/issues/workspace-provider.tsx'
+  '@/features/issues/workspace-provider.tsx'
 );
-const { canDeleteIssues, useIssueDeletion } = await import(
-  '../../../src/features/issues/issue-deletion.tsx'
-);
+const { canDeleteIssues, useIssueDeletion } = await import('@/features/issues/issue-deletion.tsx');
 
 const originalFetch = globalThis.fetch;
 

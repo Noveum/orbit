@@ -51,7 +51,7 @@ mock.module('@/lib/auth/principal.ts', () => ({
     }),
 }));
 
-const { DELETE } = await import('../../../../src/app/api/issues/[id]/route.ts');
+const { DELETE } = await import('@/app/api/issues/[id]/route.ts');
 
 afterAll(() => {
   mock.module('@orbit/core', () => core);
