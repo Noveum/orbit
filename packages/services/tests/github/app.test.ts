@@ -5,6 +5,8 @@ import {
   fetchGithubInstallation,
   fetchInstalledRepositories,
   forgetGithubInstallationTokens,
+  GITHUB_MAX_REPOSITORY_PAGES,
+  GITHUB_REPOSITORY_PAGE_SIZE,
   GITHUB_TOKEN_REFRESH_MARGIN_MS,
   githubAppJwt,
   githubInstallationToken,
@@ -276,6 +278,40 @@ describe('fetchInstalledRepositories', () => {
     expect(repos).toHaveLength(150);
     expect(pages).toHaveLength(2);
     expect(repos.at(-1)?.repositoryName).toBe('Noveum/repo-149');
+  });
+
+  it('refuses to hand back a truncated snapshot when the pages never run out', async () => {
+    let pages = 0;
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_x' }), { status: 201 });
+      }
+      pages += 1;
+      const page = Number(new URL(url).searchParams.get('page') ?? '1');
+      const perPage = GITHUB_REPOSITORY_PAGE_SIZE;
+      const start = (page - 1) * perPage;
+      return new Response(
+        JSON.stringify({
+          total_count: 1_000_000,
+          repositories: Array.from({ length: perPage }, (_unused, index) => ({
+            id: start + index,
+            full_name: `Noveum/repo-${start + index}`,
+          })),
+        }),
+        { status: 200 },
+      );
+    });
+
+    await expect(
+      fetchInstalledRepositories({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/snapshot is incomplete/);
+
+    expect(pages).toBe(GITHUB_MAX_REPOSITORY_PAGES);
   });
 
   it('stops rather than looping when a page comes back short of the claimed total', async () => {

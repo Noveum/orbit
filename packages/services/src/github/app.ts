@@ -59,7 +59,7 @@ const repositoriesSchema = z.object({
 });
 
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
-const GITHUB_MAX_REPOSITORY_PAGES = 20;
+export const GITHUB_MAX_REPOSITORY_PAGES = 100;
 
 export const GITHUB_REPOSITORY_SELECTIONS = ['all', 'selected'] as const;
 export type GithubRepositorySelection = (typeof GITHUB_REPOSITORY_SELECTIONS)[number];
@@ -280,9 +280,11 @@ export async function fetchInstalledRepositories(
   for (let page = 1; page <= GITHUB_MAX_REPOSITORY_PAGES; page += 1) {
     const result = await listInstallationRepositoryPage({ token, page, ...overrides });
     collected.push(...result.repositories);
-    if (!result.hasMore) break;
+    if (!result.hasMore) return collected;
   }
-  return collected;
+  throw internal(
+    `GitHub installation ${input.installationId} lists more than ${GITHUB_MAX_REPOSITORY_PAGES * GITHUB_REPOSITORY_PAGE_SIZE} repositories, so this snapshot is incomplete.`,
+  );
 }
 
 export interface GithubUserAuthorization {

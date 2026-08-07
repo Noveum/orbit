@@ -357,6 +357,45 @@ describe('refreshWorkspaceRepositories', () => {
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(2);
   });
 
+  it('keeps the catalogue when the snapshot would be truncated, rather than pruning to it', async () => {
+    await install(workspace, NOVEUM);
+    const installations = await listGithubInstallations(db, workspace.organizationId);
+    const endless = ((input: string) => {
+      const url = String(input);
+      if (url.includes('/access_tokens')) {
+        return Promise.resolve(new Response(JSON.stringify({ token: 'ghs_x' }), { status: 201 }));
+      }
+      const page = Number(new URL(url).searchParams.get('page') ?? '1');
+      const start = (page - 1) * 100;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            total_count: 1_000_000,
+            repositories: Array.from({ length: 100 }, (_unused, index) => ({
+              id: 5_000_000 + start + index,
+              full_name: `Noveum/bulk-${start + index}`,
+            })),
+          }),
+          { status: 200 },
+        ),
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    const refreshed = await refreshWorkspaceRepositories({
+      installations,
+      force: true,
+      config: CONFIG,
+      fetch: endless,
+    });
+
+    expect(refreshed).toBe(0);
+    const catalogue = await listGithubCatalogue(db, workspace.organizationId);
+    expect(catalogue.map((entry) => entry.fullName).sort()).toEqual([
+      'Noveum/ai-gateway',
+      'Noveum/magic-experiments',
+    ]);
+  });
+
   it('skips a suspended installation', async () => {
     await install(workspace, NOVEUM);
     await db
