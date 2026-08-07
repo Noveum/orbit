@@ -1,0 +1,113 @@
+name: Bug report
+description: Something in Orbit behaves differently to how it should.
+title: "[bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing this. The faster we can reproduce it, the faster it gets fixed.
+
+        If this is a security problem, close this and
+        [open a private advisory](https://github.com/Noveum/orbit/security/advisories/new) instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the behaviour you saw.
+      placeholder: Dragging an issue between board columns moves it back after about a second.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      placeholder: The issue stays in the column I dropped it into.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Start from the seeded demo workspace where you can, since that is what we run.
+      value: |
+        1. Sign in as pulkit@noveum.ai
+        2. Go to
+        3. Do
+        4. See
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did you see this
+      options:
+        - Local development, bun run dev
+        - Self-hosted deployment
+        - orbit.noveum.ai
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Orbit
+      options:
+        - Issues, lists and boards
+        - Sprints and cycles
+        - Projects and milestones
+        - Docs and the editor
+        - Standup
+        - Analytics
+        - Search, filters and saved views
+        - Realtime sync
+        - Notifications and inbox
+        - Authentication and accounts
+        - MCP server
+        - GitHub or Slack integration
+        - Settings and permissions
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: realtime
+    attributes:
+      label: If this is a realtime problem
+      options:
+        - label: A "Reconnecting to live updates" banner appeared
+        - label: More than one tab or browser was open
+        - label: More than one user was in the workspace
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Only needed for local or self-hosted reports.
+      value: |
+        - Orbit commit or version:
+        - Bun version (bun --version):
+        - OS:
+        - Browser:
+      render: markdown
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, errors or screenshots
+      description: Browser console output, server logs, or a screen recording. Redact anything sensitive.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and this is not a duplicate
+          required: true
+        - label: I can reproduce this consistently, or I have said how often it happens
+          required: true

@@ -2,6 +2,15 @@
   "name": "orbit",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Noveum/orbit.git"
+  },
+  "homepage": "https://orbit.noveum.ai",
+  "bugs": {
+    "url": "https://github.com/Noveum/orbit/issues"
+  },
   "engines": {
     "bun": ">=1.3.0"
   },
@@ -38,6 +47,8 @@
     "db:verify-plane": "bun run --filter '@orbit/db' import:verify",
     "plane:fetch": "bun scripts/fetch-plane.ts",
     "bench:outline": "bun apps/web/bench/outline-cost.ts",
+    "labels:sync": "bun scripts/sync-labels.ts",
+    "screenshots": "bun --env-file=.env apps/web/scripts/capture-screenshots.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",

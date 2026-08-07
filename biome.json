@@ -234,6 +234,7 @@
     {
       "includes": [
         "scripts/**",
+        "**/scripts/**",
         "**/seed/**",
         "packages/db/src/ensure-*.ts",
         "packages/db/src/drop-test-lanes.ts",

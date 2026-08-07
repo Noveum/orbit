@@ -1,0 +1,84 @@
+name: Feature request
+description: Suggest something Orbit should be able to do.
+title: "[feature]: "
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Orbit is opinionated on purpose, so it says no to plenty. The proposals that
+        land describe a workflow that is currently painful rather than a widget.
+        "I cannot see which issues are blocked before standup" gets built.
+        "Add a Gantt chart" gets a question back.
+
+        Three things are permanently off the table: pricing or billing of any kind,
+        telemetry that phones home, and a second way to do something Orbit already does.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is painful today
+      description: Describe the situation, not the solution. What are you trying to get done, and where does Orbit get in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Orbit
+      options:
+        - Issues, lists and boards
+        - Sprints and cycles
+        - Projects and milestones
+        - Docs and the editor
+        - Standup
+        - Analytics
+        - Search, filters and saved views
+        - Realtime sync
+        - Notifications and inbox
+        - Keyboard and command palette
+        - Authentication and accounts
+        - MCP server and AI tooling
+        - Integrations
+        - Self-hosting and deployment
+        - Accessibility
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How you work around it now
+      description: Including "I do it in a spreadsheet" or "I gave up". Knowing the workaround tells us how much the gap costs.
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: If another tool solves this well, say which and what it gets right. Screenshots help.
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to build it
+      options:
+        - label: I would like to work on this myself
+        - label: I could help test it
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and the roadmap, and this is not a duplicate
+          required: true
+        - label: This does not involve pricing, billing, seats or usage limits
+          required: true

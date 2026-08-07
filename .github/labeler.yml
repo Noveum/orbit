@@ -1,0 +1,111 @@
+"area: web":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/**"
+
+"area: realtime":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/realtime/**"
+          - "packages/realtime-server/**"
+          - "packages/realtime-client/**"
+          - "apps/web/src/app/api/ws/**"
+
+"area: mcp":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/mcp-server/**"
+          - "apps/web/src/app/mcp/**"
+          - "apps/web/src/app/.well-known/**"
+
+"area: database":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/db/**"
+
+"area: auth":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/src/lib/auth/**"
+          - "apps/web/src/app/(auth)/**"
+          - "apps/web/src/app/api/auth/**"
+          - "packages/db/src/schema/auth.ts"
+          - "packages/db/src/schema/oauth.ts"
+
+"area: policy":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/shared/src/policy/**"
+
+"area: docs-feature":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/src/features/docs/**"
+          - "apps/web/src/app/(app)/docs/**"
+          - "apps/web/src/app/api/docs/**"
+          - "packages/services/src/markdown/**"
+
+"area: issues":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/src/features/issues/**"
+          - "apps/web/src/app/(app)/issue/**"
+          - "apps/web/src/app/api/issues/**"
+
+"area: sprints":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/src/features/cycles/**"
+          - "apps/web/src/app/(app)/sprints/**"
+          - "apps/web/src/app/(app)/cycles/**"
+          - "apps/web/src/app/api/cycles/**"
+
+"area: integrations":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "packages/services/src/slack/**"
+          - "packages/services/src/github/**"
+          - "apps/web/src/app/api/integrations/**"
+          - "apps/web/src/app/api/webhooks/**"
+
+"area: landing":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/src/features/landing/**"
+          - "apps/web/src/app/home/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+          - "README.md"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "lefthook.yml"
+          - "scripts/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "bun.lock"
+          - "**/package.json"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/tests/**"
+          - "apps/web/e2e/**"
+
+"needs tests":
+  - all:
+      - changed-files:
+          - any-glob-to-any-file:
+              - "packages/*/src/**"
+              - "apps/web/src/**"
+          - all-globs-to-all-files:
+              - "!**/tests/**"
+              - "!apps/web/e2e/**"

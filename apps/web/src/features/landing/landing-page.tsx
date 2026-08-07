@@ -5,17 +5,21 @@ import {
   Check,
   CircleDot,
   FileText,
+  GitFork,
   GitPullRequest,
   Inbox,
   IterationCw,
   Layers,
   type LucideIcon,
+  Scale,
   Search,
+  Server,
   SignalHigh,
   SignalLow,
   SignalMedium,
   SlidersHorizontal,
   SquareKanban,
+  Star,
   Target,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -27,9 +31,17 @@ import { EnterToSignIn } from './enter-to-sign-in.tsx';
 
 const SIGN_IN_HREF = '/login';
 const GITHUB_HREF = 'https://github.com/Noveum/orbit';
+const DOCS_HREF = 'https://github.com/Noveum/orbit/tree/main/docs';
+const SELF_HOST_HREF = 'https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md';
+const CONTRIBUTING_HREF = 'https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md';
+const LICENSE_HREF = 'https://github.com/Noveum/orbit/blob/main/LICENSE';
+const SPONSOR_HREF = 'https://noveum.ai';
 
 const primaryCta =
   'inline-flex h-10 items-center justify-center rounded-md bg-accent px-5 text-sm font-medium text-accent-contrast transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)] hover:bg-accent-hover active:scale-[0.985]';
+
+const secondaryCta =
+  'inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-surface px-5 text-sm font-medium text-text transition-[background-color,border-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)] hover:bg-surface-2 active:scale-[0.985]';
 
 const quietLink = 'text-muted transition-[color] duration-[var(--duration-fast)] hover:text-text';
 
@@ -109,7 +121,19 @@ function LandingHeader() {
           >
             Pricing
           </a>
-          <a href={GITHUB_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
+          <a href="#open-source" className={quietLink}>
+            Open source
+          </a>
+          <a href={DOCS_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
+            Docs
+          </a>
+          <a
+            href={GITHUB_HREF}
+            className={cn(quietLink, 'inline-flex items-center gap-1.5')}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Star className="size-3.5" aria-hidden="true" />
             GitHub
           </a>
         </nav>
@@ -376,7 +400,7 @@ function Hero() {
           style={{ animationDelay: '40ms' }}
         >
           <span className="landing-live-dot size-1.5 rounded-full bg-success" aria-hidden="true" />
-          Free forever · No paid tiers · No catch
+          Open source · Free forever · No paid tiers
         </p>
         <h1 className="landing-h1 mx-auto mt-6 max-w-3xl" style={{ animationDelay: '90ms' }}>
           <span className="landing-rise inline-block" style={{ animationDelay: '90ms' }}>
@@ -398,12 +422,20 @@ function Hero() {
           <Link href={SIGN_IN_HREF} className={primaryCta}>
             Sign in to Orbit
           </Link>
-          <span className="flex items-center gap-1.5 text-sm text-muted">
-            or press <Kbd keys={['enter']} /> anywhere
+          <a href={GITHUB_HREF} className={secondaryCta} target="_blank" rel="noopener noreferrer">
+            <Star className="size-4" aria-hidden="true" />
+            Star on GitHub
+          </a>
+          <span className="hidden items-center gap-1.5 text-sm text-muted sm:flex">
+            or press <Kbd keys={['enter']} />
           </span>
         </div>
         <p className="landing-rise mt-4 text-xs text-faint" style={{ animationDelay: '250ms' }}>
-          Google, GitHub, passkey, or magic link. No password to invent.
+          Google, GitHub, passkey, or magic link. No password to invent. Or{' '}
+          <a href={SELF_HOST_HREF} className="underline" target="_blank" rel="noopener noreferrer">
+            run the whole thing yourself
+          </a>
+          .
         </p>
         <div
           className="landing-rise mx-auto mt-14 max-w-4xl 2xl:max-w-5xl"
@@ -718,6 +750,91 @@ function PricingSection() {
   );
 }
 
+const OPEN_SOURCE_POINTS: {
+  icon: LucideIcon;
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+}[] = [
+  {
+    icon: Scale,
+    title: 'Apache-2.0 licensed',
+    body: 'Use it, change it, ship it, commercially or otherwise. The patent grant protects you, and nothing here expires.',
+    href: LICENSE_HREF,
+    cta: 'Read the licence',
+  },
+  {
+    icon: Server,
+    title: 'Self-host in an afternoon',
+    body: 'One Next.js app, Postgres, Redis and a bucket. Every piece has a free tier, so a small team runs Orbit for nothing.',
+    href: SELF_HOST_HREF,
+    cta: 'Self-hosting guide',
+  },
+  {
+    icon: GitFork,
+    title: 'Built in the open',
+    body: 'Every issue, every review and every decision is public. Good first issues are scoped small with the file paths written down.',
+    href: CONTRIBUTING_HREF,
+    cta: 'Start contributing',
+  },
+];
+
+function OpenSourceSection() {
+  return (
+    <section
+      id="open-source"
+      className="mx-auto w-full max-w-6xl 2xl:max-w-7xl scroll-mt-20 px-5 py-24 sm:px-8"
+    >
+      <SectionEyebrow id="ORB-105" label="Open source" />
+      <h2 className="landing-h2 mt-4 max-w-2xl">Yours to keep.</h2>
+      <p className="landing-lede mt-4 max-w-2xl text-muted">
+        Orbit is free because a work tracker is infrastructure, and infrastructure should not cost
+        eighteen dollars per person per month. The whole thing is on GitHub, so you are never one
+        pricing change away from losing it.
+      </p>
+      <div className="mt-12 grid gap-6 md:grid-cols-3">
+        {OPEN_SOURCE_POINTS.map((point) => (
+          <div
+            key={point.title}
+            className="flex flex-col rounded-xl border border-border bg-surface p-7"
+          >
+            <point.icon className="size-5 text-accent" aria-hidden="true" strokeWidth={1.75} />
+            <h3 className="mt-4 font-medium text-base">{point.title}</h3>
+            <p className="mt-2 flex-1 text-sm text-muted">{point.body}</p>
+            <a
+              href={point.href}
+              className="mt-5 text-sm text-accent hover:underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {point.cta}
+            </a>
+          </div>
+        ))}
+      </div>
+      <div className="mt-10 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+        <a href={GITHUB_HREF} className={secondaryCta} target="_blank" rel="noopener noreferrer">
+          <Star className="size-4" aria-hidden="true" />
+          Star Orbit on GitHub
+        </a>
+        <p className="text-sm text-muted">
+          Sponsored by{' '}
+          <a
+            href={SPONSOR_HREF}
+            className="text-text hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Noveum AI
+          </a>
+          , who pay for the hosting and the engineering time. There is no upsell.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function ClosingCta() {
   return (
     <section className="relative overflow-hidden">
@@ -728,13 +845,23 @@ function ClosingCta() {
       <div className="relative mx-auto w-full max-w-6xl 2xl:max-w-7xl px-5 py-28 text-center sm:px-8">
         <h2 className="landing-h2">Ready when you are.</h2>
         <p className="landing-lede mx-auto mt-4 max-w-xl text-muted">
-          Sign in with Google, GitHub, a passkey, or a magic link, and bring your team with you.
+          Sign in with Google, GitHub, a passkey, or a magic link, and bring your team with you. Or
+          clone the repository and run it on your own infrastructure.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <Link href={SIGN_IN_HREF} className={primaryCta}>
             Sign in to Orbit
           </Link>
-          <span className="flex items-center gap-1.5 text-sm text-muted">
+          <a
+            href={SELF_HOST_HREF}
+            className={secondaryCta}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Server className="size-4" aria-hidden="true" />
+            Self-host it
+          </a>
+          <span className="hidden items-center gap-1.5 text-sm text-muted sm:flex">
             or press <Kbd keys={['enter']} />
           </span>
         </div>
@@ -750,6 +877,18 @@ function LandingFooter() {
         <div className="flex flex-col gap-2">
           <OrbitWordmark />
           <p className="text-sm text-muted">The free, realtime, keyboard-first work tracker.</p>
+          <p className="text-xs text-faint">
+            Apache-2.0. Sponsored by{' '}
+            <a
+              href={SPONSOR_HREF}
+              className="hover:text-muted"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Noveum AI
+            </a>
+            .
+          </p>
         </div>
         <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
           <a href="#features" className={quietLink}>
@@ -763,6 +902,20 @@ function LandingFooter() {
           </a>
           <a href="#pricing" className={quietLink}>
             Pricing
+          </a>
+          <a href={DOCS_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
+            Docs
+          </a>
+          <a
+            href={CONTRIBUTING_HREF}
+            className={quietLink}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Contribute
+          </a>
+          <a href={LICENSE_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
+            Licence
           </a>
           <a href={GITHUB_HREF} className={quietLink} target="_blank" rel="noopener noreferrer">
             GitHub
@@ -787,6 +940,7 @@ export function LandingPage() {
         <RealtimeSection />
         <KeyboardSection />
         <PricingSection />
+        <OpenSourceSection />
         <ClosingCta />
       </main>
       <LandingFooter />

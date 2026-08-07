@@ -1,0 +1,85 @@
+version: 2
+
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 8
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      biome-and-tooling:
+        patterns:
+          - "@biomejs/*"
+          - "lefthook"
+          - "typescript"
+          - "@types/*"
+      next-and-react:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      codemirror:
+        patterns:
+          - "@codemirror/*"
+          - "codemirror"
+      tiptap:
+        patterns:
+          - "@tiptap/*"
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      drizzle:
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+      auth:
+        patterns:
+          - "better-auth"
+          - "@better-auth/*"
+      patch-and-minor:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"

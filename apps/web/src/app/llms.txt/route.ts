@@ -4,7 +4,7 @@ export function GET(): Response {
   const base = publicAppUrl();
   const body = `# Orbit
 
-> Orbit is a free, realtime, keyboard-first work tracker for teams. It covers issues, boards, sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever.
+> Orbit is a free, open source, keyboard-first work tracker for teams. It covers issues, boards, sprints, projects, and docs with a rich editor. Every change syncs instantly to every open screen over WebSockets. There is no pricing, no billing, and no paid tier: the whole product is free, forever. It is licensed Apache-2.0 and can be self-hosted.
 
 ## Capabilities
 
@@ -19,10 +19,19 @@ export function GET(): Response {
 - Notifications inbox
 - MCP server, so agents can read the board, file issues, and update work
 
+## Open source
+
+- Licensed Apache-2.0, sponsored by Noveum AI
+- Source: https://github.com/Noveum/orbit
+- Self-hostable on Vercel with Postgres, Redis, and an S3-compatible bucket
+
 ## Links
 
 - [Landing page](${base}/)
 - [Sign in](${absoluteUrl('/login')}) with Google, GitHub, a passkey, or a magic link
+- [Source code](https://github.com/Noveum/orbit)
+- [Documentation](https://github.com/Noveum/orbit/tree/main/docs)
+- [Self-hosting guide](https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md)
 `;
   return new Response(body, {
     headers: { 'content-type': 'text/plain; charset=utf-8' },
