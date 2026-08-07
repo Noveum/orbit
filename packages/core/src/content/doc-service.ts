@@ -239,6 +239,14 @@ async function writeGrantedDocIds(
   return rows.length > 0;
 }
 
+export async function docReadableBy(
+  executor: Executor,
+  principal: Principal,
+  doc: DocRow,
+): Promise<boolean> {
+  return canReadDoc(principal, doc, await grantedDocIds(executor, principal, [doc.id]));
+}
+
 export async function docAccessLevel(
   executor: Executor,
   principal: Principal,

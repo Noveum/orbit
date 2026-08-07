@@ -57,6 +57,17 @@ export const docAccessSetSchema = z.object({
   grants: z.array(docAccessGrantSchema).max(200),
 });
 
+export const DOC_ACCESS_MESSAGE_LIMIT = 500;
+
+export const docAccessRequestSchema = z.object({
+  message: z.string().trim().max(DOC_ACCESS_MESSAGE_LIMIT).optional(),
+});
+
+export const docAccessDecisionSchema = z.object({
+  grant: z.boolean(),
+  level: z.enum(DOC_ACCESS_LEVELS).default('read'),
+});
+
 export const DOC_LIST_LIMIT = 500;
 
 export const docFilterSchema = z.object({
