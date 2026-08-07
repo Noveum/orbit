@@ -12,7 +12,6 @@ import {
   Indent,
   Lock,
   PanelLeft,
-  Pencil,
   Search,
   Star,
 } from 'lucide-react';
@@ -32,7 +31,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
-import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
@@ -55,6 +53,7 @@ import { DocAttachments } from './doc-attachments.tsx';
 import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
 import { DocExportMenu } from './doc-export-menu.tsx';
+import { DocGateway } from './doc-gateway.tsx';
 import { DocHistory } from './doc-history.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import { DocBacklinks, DocContextRow, DocReader } from './doc-reader.tsx';
@@ -165,15 +164,7 @@ export function DocSurface(props: DocSurfaceProps) {
     );
   }
 
-  if (detail.data === undefined) {
-    return (
-      <EmptyState
-        icon={<Pencil strokeWidth={1.75} aria-hidden="true" />}
-        title="Doc not found"
-        description="It may have been archived or it belongs to another workspace."
-      />
-    );
-  }
+  if (detail.data === undefined) return <DocGateway docId={props.docId} />;
 
   return <LoadedDoc key={detail.data.doc.id} detail={detail.data} {...props} />;
 }
