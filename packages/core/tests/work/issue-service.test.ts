@@ -3,6 +3,7 @@ import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { ZodError } from 'zod';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -854,6 +855,46 @@ describe('parent and due date writes', () => {
     const updated = await updateIssue(principal, child.id, { parentId: parent.id });
     expect(updated.issue.parentId).toBe(parent.id);
   });
+
+  it('refuses a due date that is not a calendar day', async () => {
+    const issue = await newIssue('Ships never');
+
+    for (const nonsense of [true, false, 0, 1_700_000_000_000, 'banana', {}, []]) {
+      await expect(updateIssue(workspace.admin, issue.id, { dueDate: nonsense })).rejects.toThrow();
+    }
+
+    expect((await getIssue(workspace.admin, issue.id)).dueDate).toBeNull();
+  });
+
+  it('refuses a due date outside the years a date column can hold', async () => {
+    const issue = await newIssue('Ships eventually');
+
+    for (const extreme of ['+275760-09-13', '-000001-01-01', '0000-12-31', '10000-01-01']) {
+      await expect(
+        updateIssue(workspace.admin, issue.id, { dueDate: extreme }),
+      ).rejects.toBeInstanceOf(ZodError);
+      await expect(
+        createIssue(workspace.admin, {
+          teamId: workspace.teamId,
+          title: 'Far off',
+          dueDate: extreme,
+        }),
+      ).rejects.toBeInstanceOf(ZodError);
+    }
+
+    expect((await getIssue(workspace.admin, issue.id)).dueDate).toBeNull();
+  });
+
+  it('keeps a due date at either end of the range a date column can hold', async () => {
+    const issue = await newIssue('Ships at the edge');
+
+    expect(
+      (await updateIssue(workspace.admin, issue.id, { dueDate: '0001-01-01' })).issue.dueDate,
+    ).toBe('0001-01-01');
+    expect(
+      (await updateIssue(workspace.admin, issue.id, { dueDate: '9999-12-31' })).issue.dueDate,
+    ).toBe('9999-12-31');
+  });
 });
 
 describe('relations', () => {
@@ -932,6 +973,45 @@ describe('relations', () => {
 
     expect(await listRelatedIssues(workspace.admin, mine.id)).toHaveLength(1);
     expect(await listRelatedIssues(principal, mine.id)).toEqual([]);
+  });
+
+  it('refuses to unlink an issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const mine = await newIssue('Out in the open');
+    await setRelation(workspace.admin, mine.id, { relatedIssueId: hidden.id, type: 'blocks' });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(
+      removeRelation(principal, mine.id, { relatedIssueId: hidden.id, type: 'blocks' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    expect(await listRelations(workspace.admin, hidden.id)).toHaveLength(1);
+    expect(await listRelations(workspace.admin, mine.id)).toHaveLength(1);
+  });
+
+  it('refuses to link an issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+    const mine = await createIssue(principal, { teamId: workspace.teamId, title: 'Mine' });
+
+    await expect(
+      setRelation(principal, mine.issue.id, { relatedIssueId: hidden.id, type: 'blocks' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(await listRelations(workspace.admin, hidden.id)).toHaveLength(0);
   });
 });
 

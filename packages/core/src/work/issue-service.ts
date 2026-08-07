@@ -1932,6 +1932,7 @@ export async function removeRelation(
 
   return await db.transaction(async (tx) => {
     await loadIssue(tx, principal, issueId);
+    await loadIssue(tx, principal, parsed.relatedIssueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);

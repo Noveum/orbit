@@ -170,6 +170,26 @@ beforeEach(() => {
 
 const BASE = 'http://localhost:3000/api/issues';
 
+async function createRelation(
+  issueId: string,
+  relatedIssueId: string,
+  type: string,
+): Promise<void> {
+  const signedInBefore = signedIn.value;
+  const membershipBefore = membership.value;
+  signInAs(adminUser);
+  const response = await relations.POST(
+    new Request(`${BASE}/${issueId}/relations`, {
+      method: 'POST',
+      body: JSON.stringify({ relatedIssueId, type }),
+    }),
+    contextFor(issueId),
+  );
+  if (response.status !== 200) throw new Error(`the relation was not written: ${response.status}`);
+  signedIn.value = signedInBefore;
+  membership.value = membershipBefore;
+}
+
 describe('POST /api/issues/[id]/relations', () => {
   it('writes both directions and lists the related issue back', async () => {
     const response = await relations.POST(
@@ -282,6 +302,30 @@ describe('DELETE /api/issues/[id]/relations', () => {
 
     expect(response.status).toBe(403);
   });
+
+  it('refuses to unlink an issue the caller cannot see from the end they can', async () => {
+    const mine = await createIssue(nova.admin, { teamId: nova.teamId, title: 'Reaches over' });
+    await createRelation(mine.issue.id, hidden.id, 'blocks');
+    const { user } = await addMember(nova, 'member', { name: 'Ida Insider' });
+    signInAs(await actorFor(user));
+
+    const response = await relations.DELETE(
+      new Request(`${BASE}/${mine.issue.id}/relations?relatedIssueId=${hidden.id}&type=blocks`, {
+        method: 'DELETE',
+      }),
+      contextFor(mine.issue.id),
+    );
+
+    expect(response.status).toBe(404);
+
+    signInAs(adminUser);
+    const left = relationListSchema.parse(
+      await (
+        await relations.GET(new Request(`${BASE}/${hidden.id}/relations`), contextFor(hidden.id))
+      ).json(),
+    );
+    expect(left.relations).toHaveLength(1);
+  });
 });
 
 describe('GET /api/issues/[id]/relations', () => {
@@ -321,6 +365,24 @@ describe('PATCH /api/issues/[id]', () => {
     );
 
     expect(issueSchema.parse(await response.json()).issue.parentId).toBe(first.id);
+  });
+
+  it('answers 422 for a due date the client made up, never 500', async () => {
+    for (const nonsense of [true, 0, 1_700_000_000_000, 'banana', '+275760-09-13', '10000-01-01']) {
+      const response = await issueRoute.PATCH(
+        new Request(`${BASE}/${second.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ dueDate: nonsense }),
+        }),
+        contextFor(second.id),
+      );
+
+      expect({ sent: nonsense, status: response.status }).toEqual({
+        sent: nonsense,
+        status: 422,
+      });
+      expect(errorSchema.parse(await response.json()).error.code).toBe('validation_failed');
+    }
   });
 
   it('refuses a parent in a team the caller cannot see', async () => {
