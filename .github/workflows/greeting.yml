@@ -16,8 +16,8 @@ jobs:
     steps:
       - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
             Thanks for opening your first issue on Orbit.
 
             A maintainer will triage this. If it is a bug, the fastest way to move it
@@ -25,8 +25,8 @@ jobs:
             since that is what we run locally.
 
             If you fancy fixing it yourself, [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md)
-            has the setup, and it is five commands.
-          pr-message: |
+            walks through the setup. You need Bun and Docker, and nothing else.
+          pr_message: |
             Thanks for your first pull request to Orbit.
 
             Two things that will save you a review round: `bun run verify` runs the
