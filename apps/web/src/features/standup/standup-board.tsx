@@ -15,10 +15,11 @@ import { IssuePeek } from '@/features/issues/issue-peek.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
-import { useAllIssues, useAssignedIssues } from '@/lib/query/use-issues.ts';
+import { useAllIssues } from '@/lib/query/use-issues.ts';
 import { PersonTiles } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
+const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
 
 export function assigneeCounts(issues: readonly Issue[]): ReadonlyMap<string, number> {
   const counts = new Map<string, number>();
@@ -44,9 +45,13 @@ export function StandupBoard() {
     [config.filter, config.orderBy],
   );
 
-  const everyone = useAllIssues(query, selectedId === null);
-  const person = useAssignedIssues(selectedId, query);
-  const active = selectedId === null ? everyone : person;
+  const scope = useMemo(
+    () => (selectedId === null ? WHOLE_WORKSPACE : { assigneeId: selectedId }),
+    [selectedId],
+  );
+
+  const everyone = useAllIssues(query, WHOLE_WORKSPACE);
+  const active = useAllIssues(query, scope);
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   useEffect(() => {
@@ -64,10 +69,6 @@ export function StandupBoard() {
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
   const counts = useMemo(() => assigneeCounts(everyone.data ?? NO_ISSUES), [everyone.data]);
 
-  const scope = useMemo(
-    () => (selectedId === null ? {} : { assigneeId: selectedId }),
-    [selectedId],
-  );
   const model = useIssueViewModel({
     teamId: null,
     config,
