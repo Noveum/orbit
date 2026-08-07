@@ -25,6 +25,7 @@ import {
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
+  MILESTONES_ROOT,
   PROJECT_SCOPE,
   STANDUP_ROOT,
   VIEWS_ROOT,
@@ -54,7 +55,6 @@ const BOOTSTRAP_MODELS: ReadonlySet<SyncModel> = new Set<SyncModel>([
   'workflow_state',
   'label',
   'project',
-  'milestone',
   'cycle',
 ]);
 
@@ -70,6 +70,7 @@ interface RootInvalidations {
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
+  milestones: boolean;
   docIds: Set<string>;
 }
 
@@ -189,6 +190,7 @@ function routeAction(
     patchIssueCaches(client, action);
     roots.counts = true;
     roots.standupBoard = true;
+    roots.milestones = true;
     return;
   }
   if (action.model === 'comment') {
@@ -216,6 +218,10 @@ function routeAction(
     roots.views = true;
     return;
   }
+  if (action.model === 'milestone') {
+    roots.milestones = true;
+    return;
+  }
   if (BOOTSTRAP_MODELS.has(action.model)) roots.bootstrap = true;
 }
 
@@ -227,6 +233,7 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
   if (roots.standupBoard) client.invalidateQueries({ queryKey: [STANDUP_ROOT] }).catch(noop);
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
+  if (roots.milestones) client.invalidateQueries({ queryKey: [MILESTONES_ROOT] }).catch(noop);
   if (roots.docs) {
     client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
@@ -265,6 +272,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         bootstrap: false,
         views: false,
         docs: false,
+        milestones: false,
         docIds: new Set<string>(),
       };
 

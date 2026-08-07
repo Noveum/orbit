@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
-import { integrationStateSecret, verifyOAuthState } from '@/lib/integrations/oauth-state.ts';
+import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
+import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 
 const callbackSchema = z.object({
   code: z.string().min(1),
@@ -16,7 +17,7 @@ export async function GET(request: Request): Promise<Response> {
   const parsed = callbackSchema.safeParse(params);
   if (!parsed.success) return settingsRedirect('error');
 
-  const state = verifyOAuthState(parsed.data.state, integrationStateSecret(), 'slack');
+  const state = await consumeOAuthState(parsed.data.state, integrationStateSecret(), 'slack');
   if (state === null) return settingsRedirect('error');
 
   const config = slackAppConfig();

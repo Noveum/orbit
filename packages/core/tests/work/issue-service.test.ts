@@ -33,6 +33,7 @@ import {
   unsubscribe,
   updateIssue,
 } from '../../src/work/issue-service.ts';
+import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
 let workspace: Workspace;
@@ -969,5 +970,70 @@ describe('tenancy', () => {
     await expect(listSubscribers(guest.principal, issue.id)).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+});
+
+describe('an issue milestone has to belong to the project the issue is on', () => {
+  async function projectWithMilestone(
+    name: string,
+  ): Promise<{ projectId: string; milestoneId: string }> {
+    const { project } = await createProject(workspace.admin, {
+      name,
+      teamIds: [workspace.teamId],
+    });
+    const { milestone } = await createMilestone(workspace.admin, {
+      projectId: project.id,
+      name: `${name} alpha`,
+    });
+    return { projectId: project.id, milestoneId: milestone.id };
+  }
+
+  it('refuses a milestone from a sibling project on the same team', async () => {
+    const here = await projectWithMilestone('Here');
+    const elsewhere = await projectWithMilestone('Elsewhere');
+    const issue = await newIssue('Grouped work', { projectId: here.projectId });
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { milestoneId: elsewhere.milestoneId }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+
+    const [stored] = await db
+      .select({ milestoneId: schema.issue.milestoneId })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issue.id));
+    expect(stored?.milestoneId).toBeNull();
+  });
+
+  it('refuses a milestone on an issue that is on no project at all', async () => {
+    const orphan = await projectWithMilestone('Orphan');
+    const issue = await newIssue('Loose work');
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, { milestoneId: orphan.milestoneId }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('takes the milestone of the project the same patch moves the issue onto', async () => {
+    const here = await projectWithMilestone('Landing');
+    const issue = await newIssue('Moving in');
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      projectId: here.projectId,
+      milestoneId: here.milestoneId,
+    });
+
+    expect(updated.issue.projectId).toBe(here.projectId);
+    expect(updated.issue.milestoneId).toBe(here.milestoneId);
+  });
+
+  it('still takes a milestone of the project the issue is already on', async () => {
+    const here = await projectWithMilestone('Steady');
+    const issue = await newIssue('Already here', { projectId: here.projectId });
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+
+    expect(updated.issue.milestoneId).toBe(here.milestoneId);
   });
 });

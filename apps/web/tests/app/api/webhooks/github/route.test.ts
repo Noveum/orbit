@@ -2,6 +2,12 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
+import {
+  bindGithubInstallation,
+  listGithubCatalogue,
+  listGithubInstallations,
+  replaceGithubRepositories,
+} from '@orbit/services';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -29,6 +35,7 @@ afterAll(() => {
 
 const bodySchema = z.union([
   z.object({ ok: z.literal(true), actions: z.number() }),
+  z.object({ ok: z.literal(true), handled: z.boolean() }),
   z.object({ status: z.literal('duplicate') }),
   z.object({ error: z.string() }),
 ]);
@@ -233,5 +240,189 @@ describe('POST /api/webhooks/github', () => {
     await POST(signed(raw, 'delivery-named', 'pull_request_review'));
 
     expect((await deliveryRow('delivery-named'))?.event).toBe('pull_request_review');
+  });
+});
+
+const CONNECTED_INSTALLATION = '151887625';
+
+async function connectInstallation(): Promise<void> {
+  const installation = await db.transaction(async (tx) =>
+    bindGithubInstallation(tx, {
+      organizationId: workspace.organizationId,
+      connectedById: workspace.adminUser.id,
+      account: {
+        installationId: CONNECTED_INSTALLATION,
+        accountLogin: 'Noveum',
+        accountId: '192082188',
+        accountType: 'Organization',
+        repositorySelection: 'all',
+        suspended: false,
+      },
+    }),
+  );
+  await db.transaction(async (tx) =>
+    replaceGithubRepositories(tx, {
+      installation,
+      repositories: [
+        {
+          repositoryId: '884762793',
+          repositoryName: 'Noveum/ai-gateway',
+          name: 'ai-gateway',
+          ownerLogin: 'Noveum',
+          private: false,
+          archived: false,
+          defaultBranch: 'main',
+          htmlUrl: 'https://github.com/Noveum/ai-gateway',
+        },
+      ],
+    }),
+  );
+}
+
+function installationEnvelope(action: string): string {
+  return JSON.stringify({
+    action,
+    installation: {
+      id: Number(CONNECTED_INSTALLATION),
+      account: { login: 'Noveum', id: 192082188, type: 'Organization' },
+      repository_selection: 'all',
+    },
+  });
+}
+
+describe('POST /api/webhooks/github, installation events', () => {
+  it('rejects an unsigned installation delete before it can remove anything', async () => {
+    await connectInstallation();
+    const raw = installationEnvelope('deleted');
+
+    const response = await POST(
+      request(raw, {
+        'x-hub-signature-256': sign(raw, 'the-wrong-secret'),
+        'x-github-event': 'installation',
+        'x-github-delivery': 'install-forged',
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(1);
+  });
+
+  it('removes the installation and its repositories when GitHub says it was deleted', async () => {
+    await connectInstallation();
+    const raw = installationEnvelope('deleted');
+
+    const response = await POST(signed(raw, 'install-deleted', 'installation'));
+
+    expect(response.status).toBe(200);
+    expect(bodySchema.parse(await response.json())).toEqual({ ok: true, handled: true });
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+    expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
+    expect((await deliveryRow('install-deleted'))?.status).toBe('processed');
+  });
+
+  it('treats a redelivered installation delete as a duplicate', async () => {
+    await connectInstallation();
+    const raw = installationEnvelope('deleted');
+    await POST(signed(raw, 'install-repeat', 'installation'));
+
+    const response = await POST(signed(raw, 'install-repeat', 'installation'));
+
+    expect(bodySchema.parse(await response.json())).toEqual({ status: 'duplicate' });
+  });
+
+  it('suspends the installation without unbinding it', async () => {
+    await connectInstallation();
+
+    await POST(signed(installationEnvelope('suspend'), 'install-suspend', 'installation'));
+
+    const rows = await listGithubInstallations(db, workspace.organizationId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe('suspended');
+  });
+
+  it('unsuspends it again', async () => {
+    await connectInstallation();
+    await POST(signed(installationEnvelope('suspend'), 'install-suspend-2', 'installation'));
+
+    await POST(signed(installationEnvelope('unsuspend'), 'install-unsuspend', 'installation'));
+
+    const rows = await listGithubInstallations(db, workspace.organizationId);
+    expect(rows[0]?.status).toBe('active');
+  });
+
+  it('adds a repository granted on GitHub to the catalogue', async () => {
+    await connectInstallation();
+    const raw = JSON.stringify({
+      action: 'added',
+      installation: { id: Number(CONNECTED_INSTALLATION) },
+      repository_selection: 'selected',
+      repositories_added: [
+        {
+          id: 900712888,
+          name: 'magic-experiments',
+          full_name: 'Noveum/magic-experiments',
+          private: true,
+        },
+      ],
+      repositories_removed: [],
+    });
+
+    await POST(signed(raw, 'repos-added', 'installation_repositories'));
+
+    const catalogue = await listGithubCatalogue(db, workspace.organizationId);
+    expect(catalogue.map((entry) => entry.fullName).sort()).toEqual([
+      'Noveum/ai-gateway',
+      'Noveum/magic-experiments',
+    ]);
+    expect(catalogue.find((entry) => entry.fullName === 'Noveum/magic-experiments')?.private).toBe(
+      true,
+    );
+  });
+
+  it('removes a repository revoked on GitHub from the catalogue', async () => {
+    await connectInstallation();
+    const raw = JSON.stringify({
+      action: 'removed',
+      installation: { id: Number(CONNECTED_INSTALLATION) },
+      repositories_added: [],
+      repositories_removed: [
+        { id: 884762793, name: 'ai-gateway', full_name: 'Noveum/ai-gateway', private: false },
+      ],
+    });
+
+    await POST(signed(raw, 'repos-removed', 'installation_repositories'));
+
+    expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
+  });
+
+  it('follows a repository rename', async () => {
+    await connectInstallation();
+    const raw = JSON.stringify({
+      action: 'renamed',
+      repository: {
+        id: 884762793,
+        name: 'gateway',
+        full_name: 'Noveum/gateway',
+        private: false,
+        archived: false,
+        default_branch: 'main',
+        html_url: 'https://github.com/Noveum/gateway',
+        owner: { login: 'Noveum' },
+      },
+      installation: { id: Number(CONNECTED_INSTALLATION) },
+    });
+
+    await POST(signed(raw, 'repo-renamed', 'repository'));
+
+    const catalogue = await listGithubCatalogue(db, workspace.organizationId);
+    expect(catalogue.map((entry) => entry.fullName)).toEqual(['Noveum/gateway']);
+  });
+
+  it('publishes no realtime action for an installation event, so private names stay put', async () => {
+    await connectInstallation();
+
+    await POST(signed(installationEnvelope('suspend'), 'install-quiet', 'installation'));
+
+    expect(published.flat()).toHaveLength(0);
   });
 });

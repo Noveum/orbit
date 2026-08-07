@@ -63,12 +63,24 @@ jobs:
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
+      GITHUB_APP_SLUG: orbit-ci
+      GITHUB_APP_ID: "1"
+      GITHUB_APP_CLIENT_ID: Iv1.ci
+      GITHUB_APP_CLIENT_SECRET: ci-github-app-client-secret
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
+      - name: Mint a throwaway signing key for the GitHub connect tests
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/orbit-ci-app-key.pem
+          {
+            echo "GITHUB_APP_PRIVATE_KEY<<ORBIT_CI_KEY_EOF"
+            cat /tmp/orbit-ci-app-key.pem
+            echo "ORBIT_CI_KEY_EOF"
+          } >> "$GITHUB_ENV"
       - name: Create an isolated database per package
         run: |
           for db in orbit_test_core orbit_test_svc orbit_test_rt orbit_test_rts orbit_test_mcp orbit_test_web; do

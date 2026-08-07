@@ -4,12 +4,21 @@ import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { milestoneCreateSchema, milestoneUpdateSchema } from '@orbit/shared/validators';
+import {
+  milestoneCreateSchema,
+  milestoneOrderSchema,
+  milestoneUpdateSchema,
+} from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { assertProjectVisible, projectReachScopes, projectTeamIds } from './project-service.ts';
+import {
+  assertProjectVisible,
+  projectProgress,
+  projectReachScopes,
+  projectTeamIds,
+} from './project-service.ts';
 
 export type MilestoneRow = typeof schema.milestone.$inferSelect;
 
@@ -183,12 +192,35 @@ export async function listMilestones(
     .orderBy(asc(schema.milestone.sortOrder), asc(schema.milestone.createdAt));
 }
 
+export interface MilestoneWithProgress {
+  readonly milestone: MilestoneRow;
+  readonly scope: number;
+  readonly completed: number;
+}
+
+export async function listMilestonesWithProgress(
+  principal: Principal,
+  projectId: string,
+): Promise<MilestoneWithProgress[]> {
+  const [milestones, progress] = await Promise.all([
+    listMilestones(principal, projectId),
+    projectProgress(principal, projectId),
+  ]);
+  const counted = new Map(progress.milestones.map((entry) => [entry.milestoneId, entry]));
+  return milestones.map((milestone) => ({
+    milestone,
+    scope: counted.get(milestone.id)?.scope ?? 0,
+    completed: counted.get(milestone.id)?.completed ?? 0,
+  }));
+}
+
 export async function reorderMilestones(
   principal: Principal,
   projectId: string,
-  orderedMilestoneIds: readonly string[],
+  input: readonly string[],
 ): Promise<{ milestones: MilestoneRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'milestone:manage');
+  const orderedMilestoneIds = milestoneOrderSchema.parse(input);
   if (orderedMilestoneIds.length === 0) throw conflict('Provide the milestones to reorder.');
 
   return await db.transaction(async (tx) => {

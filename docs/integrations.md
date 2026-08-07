@@ -31,14 +31,20 @@ is the right shape for something reading your code host.
 1. Create a GitHub App, under your organisation if the repositories belong to
    one.
 2. Set the callback URL to `https://orbit.example.com/api/integrations/github/callback`.
-3. Set the webhook URL to `https://orbit.example.com/api/webhooks/github`, and
+3. Tick **Request user authorization (OAuth) during installation**. This is not
+   optional. It is what makes GitHub send a `code` back with the installation,
+   and that code is the only evidence Orbit has that the person finishing the
+   flow actually controls the installation they named. A callback without one is
+   refused.
+4. Set the webhook URL to `https://orbit.example.com/api/webhooks/github`, and
    set a webhook secret.
-4. Give it these repository permissions:
+5. Give it these repository permissions:
    - **Contents**: read
    - **Metadata**: read
    - **Pull requests**: read and write
-5. Subscribe to **Pull request** and **Push** events.
-6. Generate a private key and download the PEM.
+6. Subscribe to **Pull request** and **Push** events.
+7. Generate a private key and download the PEM, and note the app's client ID and
+   a generated client secret.
 
 Then set:
 
@@ -46,6 +52,8 @@ Then set:
 GITHUB_APP_ID=123456
 GITHUB_APP_SLUG=your-app-slug
 GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+GITHUB_APP_CLIENT_ID=Iv1.abc123
+GITHUB_APP_CLIENT_SECRET=<the client secret you generated>
 GITHUB_WEBHOOK_SECRET=<the secret you set>
 ```
 
@@ -54,7 +62,11 @@ paste it as one line into a hosting dashboard that will not take newlines.
 
 `GITHUB_APP_SLUG` is what makes the connect button appear.
 `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are what let it discover
-repositories, so all three need to be set for the flow to complete.
+repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are what let
+it exchange the callback code and confirm the installation belongs to the person
+connecting, so it refuses to connect anything without them rather than binding an
+installation it cannot attribute. All five need to be set for the flow to
+complete.
 
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.

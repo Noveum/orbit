@@ -1,7 +1,8 @@
+import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
-import { getSprintView, listUpcomingCycleViews } from '@/features/cycles/data.ts';
+import { getSprintView, listUpcomingCycleViews, runningSprintId } from '@/features/cycles/data.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
@@ -30,9 +31,10 @@ export default async function SprintPage({ params }: PageProps) {
   const team = teams.find((entry) => entry.key.toLowerCase() === key.toLowerCase());
   if (team === undefined) notFound();
 
-  const [sprint, upcoming] = await Promise.all([
+  const [sprint, upcoming, running] = await Promise.all([
     getSprintView(principal, team, wanted),
     listUpcomingCycleViews(principal, team),
+    runningSprintId(principal, team),
   ]);
   if (sprint === null) notFound();
 
@@ -53,7 +55,13 @@ export default async function SprintPage({ params }: PageProps) {
           </p>
         )}
       </header>
-      <CyclePanel cycle={sprint} upcoming={upcoming} teamName={team.name} />
+      <CyclePanel
+        cycle={sprint}
+        upcoming={upcoming}
+        team={team}
+        canManage={can(principal, 'cycle:manage')}
+        runningSprintId={running}
+      />
     </div>
   );
 }
