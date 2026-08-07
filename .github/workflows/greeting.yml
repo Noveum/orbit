@@ -1,0 +1,36 @@
+name: Greet first time contributors
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  greet:
+    name: Say hello
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue on Orbit.
+
+            A maintainer will triage this. If it is a bug, the fastest way to move it
+            along is exact steps to reproduce starting from the seeded demo workspace,
+            since that is what we run locally.
+
+            If you fancy fixing it yourself, [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md)
+            has the setup, and it is five commands.
+          pr-message: |
+            Thanks for your first pull request to Orbit.
+
+            Two things that will save you a review round: `bun run verify` runs the
+            same four checks CI does, and the repo has no comments in code by policy,
+            so `bun run check-comments` will flag any you added out of habit.
+
+            A maintainer will review this shortly. Ask anything on the thread.

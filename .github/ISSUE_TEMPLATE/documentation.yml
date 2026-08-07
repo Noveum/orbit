@@ -1,0 +1,48 @@
+name: Documentation
+description: Something in the docs is wrong, missing or hard to follow.
+title: "[docs]: "
+labels: ["documentation", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Docs issues are some of the most valuable ones we get, because the person who
+        just hit the wall is the only one who can see it clearly. If you already know
+        the fix, a pull request is even better.
+
+  - type: input
+    id: location
+    attributes:
+      label: Which page
+      description: A path or a link.
+      placeholder: docs/self-hosting.md, or the Quick start in the README
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong with it
+      options:
+        - It is wrong, the instructions do not work
+        - It is missing, there is nothing written about this
+        - It is unclear or ambiguous
+        - It is out of date
+        - A link is broken
+        - A typo or formatting problem
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: Detail
+      description: What you expected to find, what you found, and where you got stuck. If a command failed, paste it and the output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What it should say instead
+      description: Optional, and very welcome.

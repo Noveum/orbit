@@ -1,0 +1,14 @@
+*                            @imshashank @pulkitxm
+
+/LICENSE                     @imshashank
+/NOTICE                      @imshashank
+/SECURITY.md                 @imshashank
+/CODE_OF_CONDUCT.md          @imshashank
+
+/.github/workflows/          @imshashank @pulkitxm
+/packages/shared/src/policy/ @imshashank @pulkitxm
+/packages/db/src/schema/     @imshashank @pulkitxm
+/apps/web/src/lib/auth/      @imshashank @pulkitxm
+/apps/web/src/app/api/ws/    @imshashank @pulkitxm
+/packages/realtime-server/   @imshashank @pulkitxm
+/packages/mcp-server/        @imshashank @pulkitxm

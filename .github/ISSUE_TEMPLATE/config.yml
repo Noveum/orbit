@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/Noveum/orbit/discussions
+    about: Ask how something works, or float an idea before it becomes a feature request.
+  - name: Documentation
+    url: https://github.com/Noveum/orbit/tree/main/docs
+    about: Setup, self-hosting, architecture, keyboard shortcuts and the MCP server.
+  - name: Report a security vulnerability
+    url: https://github.com/Noveum/orbit/security/advisories/new
+    about: Please report privately. Never open a public issue for a security problem.

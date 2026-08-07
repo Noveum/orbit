@@ -1,0 +1,50 @@
+name: Stale issues and pull requests
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  stale:
+    name: Mark and close stale threads
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          days-before-pr-stale: 30
+          days-before-pr-close: 14
+          stale-issue-label: "stale"
+          stale-pr-label: "stale"
+          exempt-issue-labels: "roadmap,pinned,security,good first issue,help wanted,epic"
+          exempt-pr-labels: "pinned,security,work in progress"
+          exempt-all-milestones: true
+          stale-issue-message: |
+            This issue has had no activity for 60 days, so it is being marked stale.
+
+            If it still matters, say so and it stays open. Adding what you have
+            learned since filing it helps more than a bump on its own. Otherwise it
+            will close in 14 days, and closing is not a judgement, it just keeps the
+            list honest about what is actually being worked on. Reopening is always
+            fine.
+          close-issue-message: |
+            Closing this after 60 days without activity and 14 days after it was
+            marked stale. If you are still hitting this, comment and we will reopen
+            it. No need to file a new one.
+          stale-pr-message: |
+            This pull request has had no activity for 30 days, so it is being marked
+            stale.
+
+            If you are still working on it, say so and it stays open. If you are stuck
+            or have lost interest, say that too and we will either pick it up or close
+            it cleanly. It will close in 14 days otherwise.
+          close-pr-message: |
+            Closing this after 30 days without activity. The branch and the commits are
+            still there, so reopening loses nothing. Thanks for the work you put in.
+          operations-per-run: 100
+          ascending: true
