@@ -4,9 +4,11 @@ import {
   listCycles,
   listLabels,
   listMembers,
+  listMilestones,
   listProjects,
   listTeams,
   listWorkflowStates,
+  type MilestoneRow,
   type ProjectRow,
   type TeamRow,
 } from '@orbit/core';
@@ -77,6 +79,17 @@ export async function resolveProject(principal: Principal, ref: string): Promise
   const projects = await listProjects(principal, { includeArchived: true });
   const found = pick(projects, ref, (project) => [project.id, project.slug, project.name]);
   if (found === undefined) throw notFound(`No project matches "${ref}".`);
+  return found;
+}
+
+export async function resolveMilestone(
+  principal: Principal,
+  projectId: string,
+  ref: string,
+): Promise<MilestoneRow> {
+  const milestones = await listMilestones(principal, projectId);
+  const found = pick(milestones, ref, (milestone) => [milestone.id, milestone.name]);
+  if (found === undefined) throw notFound(`No milestone matches "${ref}" on that project.`);
   return found;
 }
 
