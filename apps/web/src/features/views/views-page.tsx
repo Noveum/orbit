@@ -173,7 +173,7 @@ function ViewRow({ view }: { view: View }) {
   const layout = viewLayoutMode(view.layout);
   const owner = workspace.members.find((member) => member.id === view.ownerId);
   const editable = !(view.virtual || view.locked) && view.ownerId === workspace.userId;
-  const href = viewHref(view, workspace.teams);
+  const href = viewHref(view, workspace);
 
   const submitRename = () => {
     const trimmed = name.trim();
