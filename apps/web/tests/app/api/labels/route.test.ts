@@ -269,6 +269,40 @@ describe('GET, PATCH and DELETE /api/labels/[id]', () => {
     expect(published).toHaveLength(0);
   });
 
+  it('refuses a body that is not json rather than calling it an empty patch', async () => {
+    const created = await coreModule.createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    published.length = 0;
+
+    const response = await PATCH(
+      new Request(`http://localhost:3000/api/labels/${created.label.id}`, {
+        method: 'PATCH',
+        body: '{"name": "Broken"',
+      }),
+      params(created.label.id),
+    );
+
+    expect(response.status).toBe(422);
+    expect(published).toHaveLength(0);
+    const [survivor] = await db
+      .select()
+      .from(schema.label)
+      .where(eq(schema.label.id, created.label.id));
+    expect(survivor?.name).toBe('Flaky');
+  });
+
+  it('still takes a patch that sends no body at all as a patch that changes nothing', async () => {
+    const created = await coreModule.createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    published.length = 0;
+
+    const response = await PATCH(
+      new Request(`http://localhost:3000/api/labels/${created.label.id}`, { method: 'PATCH' }),
+      params(created.label.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(published).toHaveLength(0);
+  });
+
   it('turns away an id no label could carry before the service is asked', async () => {
     const response = await DELETE(request('/api/labels/x', 'DELETE'), params('l'.repeat(65)));
 
