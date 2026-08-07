@@ -9,11 +9,6 @@ const serverEnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
-  GITHUB_APP_ID: z.string().optional(),
-  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
-  GITHUB_APP_SLUG: z.string().optional(),
-  GITHUB_APP_CLIENT_ID: z.string().optional(),
-  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
   SLACK_CLIENT_ID: z.string().optional(),
   SLACK_CLIENT_SECRET: z.string().optional(),
   ORBIT_PASSWORD_AUTH: z
@@ -39,15 +34,23 @@ export interface GithubAppConfig {
   readonly clientSecret: string;
 }
 
+const githubAppEnvSchema = z.object({
+  GITHUB_APP_SLUG: z.string().default(''),
+  GITHUB_APP_ID: z.string().default(''),
+  GITHUB_APP_PRIVATE_KEY: z.string().default(''),
+  GITHUB_APP_CLIENT_ID: z.string().default(''),
+  GITHUB_APP_CLIENT_SECRET: z.string().default(''),
+});
+
 export function githubAppConfig(): GithubAppConfig {
-  const env = serverEnv();
-  const rawKey = env.GITHUB_APP_PRIVATE_KEY ?? '';
+  const env = githubAppEnvSchema.parse(process.env);
+  const rawKey = env.GITHUB_APP_PRIVATE_KEY;
   return {
-    slug: env.GITHUB_APP_SLUG ?? '',
-    appId: env.GITHUB_APP_ID ?? '',
+    slug: env.GITHUB_APP_SLUG,
+    appId: env.GITHUB_APP_ID,
     privateKey: rawKey.includes('\\n') ? rawKey.replace(/\\n/g, '\n') : rawKey,
-    clientId: env.GITHUB_APP_CLIENT_ID ?? '',
-    clientSecret: env.GITHUB_APP_CLIENT_SECRET ?? '',
+    clientId: env.GITHUB_APP_CLIENT_ID,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
   };
 }
 

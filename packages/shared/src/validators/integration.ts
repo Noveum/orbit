@@ -21,10 +21,14 @@ export const githubRemoveInstallationSchema = z.object({
   installationId: githubInstallationIdSchema,
 });
 
+export const githubInstallRequestSchema = z.object({
+  setup_action: z.literal('request'),
+});
+
 export const githubCallbackSchema = z.object({
   installation_id: githubInstallationIdSchema,
-  setup_action: z.enum(['install', 'update', 'request']).optional(),
-  code: z.string().trim().min(1).max(255).optional(),
+  setup_action: z.enum(['install', 'update']).optional(),
+  code: z.string().trim().min(1).max(255),
   state: z.string().trim().min(1).max(2048),
 });
 export type GithubCallback = z.infer<typeof githubCallbackSchema>;

@@ -30,13 +30,19 @@ export interface CompleteInstallInput extends GithubConnectDeps {
   readonly organizationId: string;
   readonly userId: string;
   readonly installationId: string;
-  readonly code?: string | undefined;
+  readonly code: string;
   readonly now?: Date;
 }
 
 async function assertUserControlsInstallation(input: CompleteInstallInput): Promise<void> {
-  if (input.code === undefined) return;
-  if (input.config.clientId.length === 0 || input.config.clientSecret.length === 0) return;
+  if (input.code.trim().length === 0) {
+    throw forbidden('That GitHub callback carried no proof that you control the installation.');
+  }
+  if (input.config.clientId.length === 0 || input.config.clientSecret.length === 0) {
+    throw validationFailed(
+      'The GitHub App has no client credentials, so Orbit cannot check who is connecting.',
+    );
+  }
   const overrides = fetchOverride(input);
   const userToken = await exchangeGithubUserCode({
     clientId: input.config.clientId,

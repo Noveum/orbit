@@ -129,7 +129,7 @@ beforeEach(async () => {
   currentInstallation = NOVEUM;
 });
 
-function install(target: Workspace, installationId: string, stub = NOVEUM_STUB, code?: string) {
+function install(target: Workspace, installationId: string, stub = NOVEUM_STUB, code = 'the-code') {
   currentInstallation = installationId;
   return completeGithubInstall({
     organizationId: target.organizationId,
@@ -137,7 +137,7 @@ function install(target: Workspace, installationId: string, stub = NOVEUM_STUB, 
     installationId,
     config: CONFIG,
     fetch: githubFetch(stub),
-    ...(code === undefined ? {} : { code }),
+    code,
   });
 }
 
@@ -206,8 +206,35 @@ describe('completeGithubInstall', () => {
     expect(row.installationId).toBe(NOVEUM);
   });
 
+  it('refuses a callback carrying no code, which proves nothing about the caller', async () => {
+    await expect(install(workspace, NOVEUM, NOVEUM_STUB, '')).rejects.toThrow(
+      /no proof that you control the installation/,
+    );
+
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+    expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
+  });
+
+  it('refuses when the app has no client credentials rather than skipping the check', async () => {
+    await expect(
+      completeGithubInstall({
+        organizationId: workspace.organizationId,
+        userId: workspace.adminUser.id,
+        installationId: NOVEUM,
+        code: 'the-code',
+        config: { ...CONFIG, clientId: '', clientSecret: '' },
+        fetch: githubFetch(NOVEUM_STUB),
+      }),
+    ).rejects.toThrow(/no client credentials/);
+
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+  });
+
   it('refuses when GitHub does not know the installation at all', async () => {
-    await expect(install(workspace, '999999999')).rejects.toThrow(/HTTP 404/);
+    const stub: GithubStub = { ...NOVEUM_STUB, userInstallations: [999999999] };
+
+    await expect(install(workspace, '999999999', stub)).rejects.toThrow(/HTTP 404/);
+
     expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
   });
 
@@ -217,6 +244,7 @@ describe('completeGithubInstall', () => {
         organizationId: workspace.organizationId,
         userId: workspace.adminUser.id,
         installationId: NOVEUM,
+        code: 'the-code',
         config: { ...CONFIG, appId: '', privateKey: '' },
         fetch: githubFetch(NOVEUM_STUB),
       }),
