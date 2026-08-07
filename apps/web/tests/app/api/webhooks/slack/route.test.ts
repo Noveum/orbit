@@ -8,10 +8,14 @@ import { z } from 'zod';
 const SIGNING_SECRET = 'a-slack-signing-secret';
 process.env['SLACK_SIGNING_SECRET'] = SIGNING_SECRET;
 
-interface UnfurlCall {
+interface UnfurlInput {
   readonly channel: string;
   readonly ts: string;
   readonly unfurls: Record<string, unknown>;
+}
+
+interface UnfurlCall extends UnfurlInput {
+  readonly token: string;
 }
 
 const unfurlCalls: UnfurlCall[] = [];
@@ -20,8 +24,8 @@ const services = await import('@orbit/services');
 class RecordingSlackClient {
   constructor(readonly options: { token: string }) {}
 
-  unfurl(input: UnfurlCall): Promise<void> {
-    unfurlCalls.push(input);
+  unfurl(input: UnfurlInput): Promise<void> {
+    unfurlCalls.push({ ...input, token: this.options.token });
     return Promise.resolve();
   }
 }
@@ -36,17 +40,26 @@ afterAll(() => {
 
 const SLACK_TEAM = 'T-orbit-first';
 const OTHER_SLACK_TEAM = 'T-orbit-second';
+const SECOND_SLACK_TEAM_OF_FIRST = 'T-orbit-first-annex';
 
-async function connect(name: string, slackTeamId: string, title: string): Promise<Workspace> {
-  const workspace = await createWorkspace(name);
+function botTokenFor(slackTeamId: string): string {
+  return `xoxb-${slackTeamId}`;
+}
+
+async function addSlackIntegration(workspace: Workspace, slackTeamId: string): Promise<void> {
   await db.insert(schema.integration).values({
     id: `int_${randomUUIDv7()}`,
     organizationId: workspace.organizationId,
     provider: 'slack',
     externalId: slackTeamId,
     connectedById: workspace.adminUser.id,
-    credentials: { botToken: `xoxb-${slackTeamId}` },
+    credentials: { botToken: botTokenFor(slackTeamId) },
   });
+}
+
+async function connect(name: string, slackTeamId: string, title: string): Promise<Workspace> {
+  const workspace = await createWorkspace(name);
+  await addSlackIntegration(workspace, slackTeamId);
   await db.update(schema.team).set({ key: 'ORB' }).where(eq(schema.team.id, workspace.teamId));
   const todo = workspace.states.find((state) => state.category === 'unstarted');
   if (todo === undefined) throw new Error('the seeded team has no unstarted state');
@@ -65,7 +78,8 @@ async function connect(name: string, slackTeamId: string, title: string): Promis
 
 async function seed(): Promise<void> {
   await resetDatabase();
-  await connect('Slackedone', SLACK_TEAM, 'Owned by the first workspace');
+  const first = await connect('Slackedone', SLACK_TEAM, 'Owned by the first workspace');
+  await addSlackIntegration(first, SECOND_SLACK_TEAM_OF_FIRST);
   await connect('Slackedtwo', OTHER_SLACK_TEAM, 'Owned by the second workspace');
 }
 
@@ -164,6 +178,26 @@ describe('POST /api/webhooks/slack', () => {
     expect(unfurlCalls[0]?.ts).toBe('1700000000.000100');
     expect(Object.keys(unfurlCalls[0]?.unfurls ?? {})).toEqual(['https://orbit.local/issue/ORB-5']);
     expect(JSON.stringify(unfurlCalls[0]?.unfurls)).toContain('Owned by the first workspace');
+  });
+
+  it('answers with the bot token of the slack workspace the event came from', async () => {
+    await POST(signed(linkShared(SLACK_TEAM, 'https://orbit.local/issue/ORB-5')));
+    await POST(signed(linkShared(SECOND_SLACK_TEAM_OF_FIRST, 'https://orbit.local/issue/ORB-5')));
+
+    expect(unfurlCalls.map((call) => call.token)).toEqual([
+      botTokenFor(SLACK_TEAM),
+      botTokenFor(SECOND_SLACK_TEAM_OF_FIRST),
+    ]);
+  });
+
+  it('signs a second slack workspace unfurl with that other workspace token', async () => {
+    await POST(signed(linkShared(OTHER_SLACK_TEAM, 'https://orbit.local/issue/ORB-5')));
+    await POST(signed(linkShared(SLACK_TEAM, 'https://orbit.local/issue/ORB-5')));
+
+    expect(unfurlCalls.map((call) => call.token)).toEqual([
+      botTokenFor(OTHER_SLACK_TEAM),
+      botTokenFor(SLACK_TEAM),
+    ]);
   });
 
   it('answers each slack workspace with the issue of the workspace bound to it', async () => {

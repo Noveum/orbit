@@ -10,7 +10,6 @@ export interface StandupTimerProps {
 }
 
 export function StandupTimer({ startedAt }: StandupTimerProps) {
-  const [personStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -19,13 +18,8 @@ export function StandupTimer({ startedAt }: StandupTimerProps) {
   }, []);
 
   return (
-    <span className="flex items-baseline gap-2" data-testid="standup-timer">
-      <span data-numeric className="text-dense text-text" data-testid="standup-timer-person">
-        {formatElapsed(now - personStartedAt)}
-      </span>
-      <span data-numeric className="text-2xs text-faint" data-testid="standup-timer-total">
-        {formatElapsed(now - startedAt)} total
-      </span>
+    <span data-numeric className="text-dense text-text" data-testid="standup-timer">
+      {formatElapsed(now - startedAt)}
     </span>
   );
 }

@@ -8,7 +8,7 @@ import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
-import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
+import type { Issue, Member, StandupWorkload, WorkflowState } from '@/lib/query/schemas.ts';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({
@@ -112,16 +112,16 @@ const boardIssues: readonly Issue[] = [
     stateId: 'state_done',
   }),
   issue({
-    id: 'issue_doing',
-    identifier: 'ENG-2',
-    title: 'Wire the socket',
-    stateId: 'state_doing',
-  }),
-  issue({
     id: 'issue_next',
     identifier: 'ENG-3',
     title: 'Draft the schema',
     stateId: 'state_todo',
+  }),
+  issue({
+    id: 'issue_doing',
+    identifier: 'ENG-2',
+    title: 'Wire the socket',
+    stateId: 'state_doing',
   }),
   issue({
     id: 'issue_bo',
@@ -132,8 +132,20 @@ const boardIssues: readonly Issue[] = [
   }),
 ];
 
+const boardWorkload: readonly StandupWorkload[] = [
+  { userId: 'user_ada', open: 2, inProgress: 1, completedSince: 1 },
+  { userId: 'user_bo', open: 1, inProgress: 1, completedSince: 0 },
+];
+
 const originalFetch = globalThis.fetch;
 const boardRequests: string[] = [];
+
+interface BoardResponse {
+  readonly issues: readonly Issue[];
+  readonly workload: readonly StandupWorkload[];
+}
+
+let response: BoardResponse = { issues: boardIssues, workload: boardWorkload };
 
 function stubFetch(): void {
   globalThis.fetch = mock((input: string | URL | Request) => {
@@ -142,11 +154,8 @@ function stubFetch(): void {
     return Promise.resolve(
       Response.json({
         since: '2026-06-08T00:00:00.000Z',
-        issues: boardIssues,
-        workload: [
-          { userId: 'user_ada', open: 2, inProgress: 1, completedSince: 1 },
-          { userId: 'user_bo', open: 1, inProgress: 1, completedSince: 0 },
-        ],
+        issues: response.issues,
+        workload: response.workload,
       }),
     );
   }) as unknown as typeof fetch;
@@ -168,15 +177,24 @@ async function mountBoard() {
       <StandupBoard />
     </Providers>,
   );
-  await screen.findByTestId('standup-tiles');
+  await screen.findByTestId('standup-columns');
 }
 
-function activeName(): string {
-  return screen.getByTestId('standup-person').textContent ?? '';
+function columnNames(): string[] {
+  return within(screen.getByTestId('standup-columns'))
+    .getAllByRole('heading', { level: 2 })
+    .map((heading) => heading.textContent ?? '');
+}
+
+function cardsIn(userId: string): string[] {
+  return within(screen.getByTestId(`standup-column-${userId}`))
+    .getAllByRole('article')
+    .map((card) => card.getAttribute('data-testid') ?? '');
 }
 
 beforeEach(() => {
   boardRequests.length = 0;
+  response = { issues: boardIssues, workload: boardWorkload };
   stubFetch();
 });
 
@@ -190,106 +208,120 @@ afterAll(() => {
 });
 
 describe('StandupBoard', () => {
-  it('seats every workspace member in the tile row, alphabetically', async () => {
+  it('gives every person with work a column headed by their name and avatar', async () => {
     await mountBoard();
 
-    const tiles = within(screen.getByTestId('standup-tiles')).getAllByRole('button');
-    expect(tiles.map((tile) => tile.getAttribute('data-testid'))).toEqual([
-      'standup-tile-user_ada',
-      'standup-tile-user_bo',
-      'standup-tile-user_cy',
+    expect(columnNames()).toEqual(['Ada Lovelace', 'Bo Chen']);
+
+    const ada = within(screen.getByTestId('standup-column-user_ada'));
+    expect(ada.getByRole('img', { name: 'Ada Lovelace' })).toBeDefined();
+  });
+
+  it('shows everyone at once instead of behind a selection step', async () => {
+    await mountBoard();
+
+    expect(cardsIn('user_ada')).toContain('issue-card-ENG-2');
+    expect(cardsIn('user_bo')).toEqual(['issue-card-ENG-9']);
+  });
+
+  it('drops a column for a person the window found no work for', async () => {
+    await mountBoard();
+
+    expect(screen.queryByTestId('standup-column-user_cy')).toBeNull();
+  });
+
+  it('stacks a column with what is in progress above what is queued and closed', async () => {
+    await mountBoard();
+
+    expect(cardsIn('user_ada')).toEqual([
+      'issue-card-ENG-2',
+      'issue-card-ENG-3',
+      'issue-card-ENG-1',
     ]);
-    expect(screen.getByTestId('standup-position').textContent).toBe('1 of 3');
   });
 
-  it('splits the first person work into closed, in progress and up next', async () => {
+  it('makes every card a real link to its issue page', async () => {
     await mountBoard();
 
-    expect(activeName()).toBe('Ada Lovelace');
-    expect(screen.getByTestId('standup-column-closed').textContent).toContain('ENG-1');
-    expect(screen.getByTestId('standup-column-in-flight').textContent).toContain('ENG-2');
-    expect(screen.getByTestId('standup-column-up-next').textContent).toContain('ENG-3');
-    expect(screen.getByTestId('standup-column-closed').textContent).not.toContain('ENG-9');
+    for (const identifier of ['ENG-1', 'ENG-2', 'ENG-3', 'ENG-9']) {
+      const card = within(screen.getByTestId(`issue-card-${identifier}`));
+      const link = card.getByRole('link');
+      expect(link.tagName).toBe('A');
+      expect(link.getAttribute('href')).toBe(`/issue/${identifier}`);
+    }
   });
 
-  it('swaps the panel on a tile click without asking the server again', async () => {
-    await mountBoard();
-    expect(boardRequests).toHaveLength(1);
-
-    fireEvent.click(screen.getByTestId('standup-tile-user_bo'));
-
-    expect(activeName()).toBe('Bo Chen');
-    expect(screen.getByTestId('standup-column-in-flight').textContent).toContain('ENG-9');
-    expect(boardRequests).toHaveLength(1);
-  });
-
-  it('walks the roster with the arrow keys and still issues no request', async () => {
-    const user = userEvent.setup();
+  it('peeks the issue in place on a plain click and stays on the board', async () => {
     await mountBoard();
 
-    await user.keyboard('{ArrowRight}');
-    expect(activeName()).toBe('Bo Chen');
-    expect(screen.getByTestId('standup-position').textContent).toBe('2 of 3');
-
-    await user.keyboard('{ArrowRight}');
-    expect(activeName()).toBe('Cy Diaz');
-
-    await user.keyboard('{ArrowLeft}');
-    expect(activeName()).toBe('Bo Chen');
-
-    expect(boardRequests).toHaveLength(1);
-  });
-
-  it('stops at the ends of the roster instead of wrapping past them', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.keyboard('{ArrowLeft}');
-    expect(activeName()).toBe('Ada Lovelace');
-
-    await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}');
-    expect(activeName()).toBe('Cy Diaz');
-  });
-
-  it('links a standup row to its issue page and peeks it in place on a plain click', async () => {
-    await mountBoard();
-
-    const row = within(screen.getByTestId('issue-row-ENG-2'));
-    const title = row.getByRole('link', { name: 'Wire the socket' });
-    expect(title.getAttribute('href')).toBe('/issue/ENG-2');
+    const title = within(screen.getByTestId('issue-card-ENG-9')).getByRole('link', {
+      name: 'Trim the payload',
+    });
 
     const leftTheBoard = fireEvent.click(title);
 
     expect(leftTheBoard).toBe(false);
-    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
   });
 
-  it('peeks the focused row when the presenter presses space', async () => {
+  it('peeks the focused card when a keyboard user presses space', async () => {
     const user = userEvent.setup();
     await mountBoard();
 
-    const title = within(screen.getByTestId('issue-row-ENG-3')).getByRole('link', {
-      name: 'Draft the schema',
-    });
-    title.focus();
+    within(screen.getByTestId('issue-card-ENG-3'))
+      .getByRole('link', { name: 'Draft the schema' })
+      .focus();
     await user.keyboard(' ');
 
     expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-3');
   });
 
-  it('leaves the arrow keys to the peek while it is open', async () => {
-    const user = userEvent.setup();
+  it('lets a cmd click fall through to the link instead of peeking', async () => {
     await mountBoard();
 
-    fireEvent.click(within(screen.getByTestId('issue-row-ENG-2')).getByText('Wire the socket'));
-    await screen.findByTestId('issue-peek');
+    const title = within(screen.getByTestId('issue-card-ENG-2')).getByRole('link', {
+      name: 'Wire the socket',
+    });
 
-    await user.keyboard('{ArrowRight}');
+    const followed = fireEvent.click(title, { metaKey: true });
 
-    expect(activeName()).toBe('Ada Lovelace');
+    expect(followed).toBe(true);
+    expect(screen.queryByTestId('issue-peek')).toBeNull();
   });
 
-  it('shows the timer only after the presenter asks for it', async () => {
+  it('owns up to the rows the server capped away rather than hiding them', async () => {
+    response = {
+      issues: boardIssues,
+      workload: [
+        { userId: 'user_ada', open: 12, inProgress: 4, completedSince: 3 },
+        { userId: 'user_bo', open: 1, inProgress: 1, completedSince: 0 },
+      ],
+    };
+    await mountBoard();
+
+    expect(screen.getByTestId('standup-count-user_ada').textContent).toBe('3 of 15');
+    expect(screen.getByTestId('standup-count-user_bo').textContent).toBe('1');
+  });
+
+  it('says nobody is on the board when the window came back empty', async () => {
+    response = { issues: [], workload: [] };
+    render(
+      <Providers>
+        <StandupBoard />
+      </Providers>,
+    );
+
+    expect(await screen.findByText('Nobody has work on the board')).toBeDefined();
+    expect(screen.queryByTestId('standup-columns')).toBeNull();
+  });
+
+  it('says which window the closed cards came out of', async () => {
+    await mountBoard();
+
+    expect(screen.getByTestId('standup-window').textContent).toMatch(/^closed work since \w/);
+  });
+
+  it('shows the timer only after the room asks for it', async () => {
     const user = userEvent.setup();
     await mountBoard();
 
@@ -297,16 +329,17 @@ describe('StandupBoard', () => {
 
     await user.keyboard('t');
     await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
+    expect(screen.getByTestId('standup-timer').textContent).toMatch(/^\d+:[0-5]\d$/);
 
     await user.keyboard('t');
     await waitFor(() => expect(screen.queryByTestId('standup-timer')).toBeNull());
   });
 
-  it('leaves the timer to the peek while it is open', async () => {
+  it('leaves the timer key to the peek while it is open', async () => {
     const user = userEvent.setup();
     await mountBoard();
 
-    fireEvent.click(within(screen.getByTestId('issue-row-ENG-2')).getByText('Wire the socket'));
+    fireEvent.click(within(screen.getByTestId('issue-card-ENG-2')).getByText('Wire the socket'));
     await screen.findByTestId('issue-peek');
 
     await user.keyboard('t');
@@ -314,27 +347,16 @@ describe('StandupBoard', () => {
     expect(screen.queryByTestId('standup-timer')).toBeNull();
   });
 
-  it('restarts the timer when the presenter moves to the next person', async () => {
-    const user = userEvent.setup();
-    await mountBoard();
-
-    await user.keyboard('t');
-    await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
-    const first = screen.getByTestId('standup-timer').textContent;
-
-    await user.keyboard('{ArrowRight}');
-    await waitFor(() => expect(screen.getByTestId('standup-timer')).toBeDefined());
-
-    expect(screen.getByTestId('standup-timer').textContent).toBe(first);
-  });
-
   it('reads the whole meeting out of a single board request', async () => {
-    const user = userEvent.setup();
     await mountBoard();
 
-    fireEvent.click(screen.getByTestId('standup-tile-user_cy'));
-    await user.keyboard('{ArrowLeft}');
-    fireEvent.click(screen.getByTestId('standup-tile-user_ada'));
+    expect(boardRequests).toHaveLength(1);
+
+    fireEvent.click(within(screen.getByTestId('issue-card-ENG-9')).getByText('Trim the payload'));
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-9');
+
+    fireEvent.click(within(screen.getByTestId('issue-card-ENG-2')).getByText('Wire the socket'));
+    expect((await screen.findByTestId('issue-peek')).textContent).toBe('ENG-2');
 
     expect(boardRequests).toHaveLength(1);
   });

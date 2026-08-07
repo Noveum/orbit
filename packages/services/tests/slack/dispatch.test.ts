@@ -24,18 +24,28 @@ import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 interface Fixture {
   readonly organizationId: string;
   readonly integrationId: string;
+  readonly userId: string;
   readonly teamA: string;
   readonly teamB: string;
 }
 
-async function seed(tx: TestTransaction): Promise<Fixture> {
+interface WorkspaceOptions {
+  readonly name: string;
+  readonly slackTeamId?: string;
+  readonly botToken?: string;
+  readonly connectGithubFirst?: boolean;
+}
+
+async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Promise<Fixture> {
   const suffix = randomUUIDv7();
+  const slug = options.name.toLowerCase().replace(/[^a-z0-9]/g, '');
   const organizationId = `org_${suffix}`;
   await tx
     .insert(organization)
-    .values({ id: organizationId, name: 'Acme', slug: `acme-${suffix.toLowerCase()}` });
+    .values({ id: organizationId, name: options.name, slug: `${slug}-${suffix.toLowerCase()}` });
+  const userId = `usr_${suffix}`;
   await tx.insert(user).values({
-    id: `usr_${suffix}`,
+    id: userId,
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
@@ -48,17 +58,34 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
     { id: teamB, organizationId, name: 'Design', key: 'DES' },
   ]);
 
-  const integrationId = `int_${suffix}`;
-  await tx.insert(integration).values({
-    id: integrationId,
-    organizationId,
-    provider: 'slack',
-    externalId: 'T123',
-    connectedById: `usr_${suffix}`,
-    credentials: { botToken: 'xoxb-test' },
-  });
+  if (options.connectGithubFirst === true) {
+    await tx.insert(integration).values({
+      id: `int_gh_${suffix}`,
+      organizationId,
+      provider: 'github',
+      externalId: `gh-${suffix}`,
+      connectedById: userId,
+      credentials: { accessToken: 'gho-not-a-slack-token' },
+    });
+  }
 
-  return { organizationId, integrationId, teamA, teamB };
+  const integrationId = `int_${suffix}`;
+  if (options.botToken !== undefined) {
+    await tx.insert(integration).values({
+      id: integrationId,
+      organizationId,
+      provider: 'slack',
+      externalId: options.slackTeamId ?? 'T123',
+      connectedById: userId,
+      credentials: { botToken: options.botToken },
+    });
+  }
+
+  return { organizationId, integrationId, userId, teamA, teamB };
+}
+
+async function seed(tx: TestTransaction): Promise<Fixture> {
+  return await seedWorkspace(tx, { name: 'Acme', botToken: 'xoxb-test' });
 }
 
 describe('resolveSlackContext', () => {
@@ -67,6 +94,136 @@ describe('resolveSlackContext', () => {
       const fixture = await seed(tx);
       const context = await resolveSlackContext(tx, fixture.organizationId);
       expect(context?.token).toBe('xoxb-test');
+    });
+  });
+});
+
+describe('resolveSlackContext stays inside the workspace it was asked about', () => {
+  it('hands each workspace its own integration row and its own bot token', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const globex = await seedWorkspace(tx, {
+        name: 'Globex',
+        slackTeamId: 'T-globex',
+        botToken: 'xoxb-globex',
+      });
+
+      expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
+        integrationId: acme.integrationId,
+        token: 'xoxb-acme',
+      });
+      expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
+        integrationId: globex.integrationId,
+        token: 'xoxb-globex',
+      });
+    });
+  });
+
+  it('finds no slack context in a workspace that only connected another provider', async () => {
+    await withRollback(async (tx) => {
+      await seedWorkspace(tx, { name: 'Acme', slackTeamId: 'T-acme', botToken: 'xoxb-acme' });
+      const githubOnly = await seedWorkspace(tx, {
+        name: 'Initech',
+        connectGithubFirst: true,
+      });
+
+      expect(await resolveSlackContext(tx, githubOnly.organizationId)).toBeNull();
+    });
+  });
+
+  it('reads past an older integration from another provider in the same workspace', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+        connectGithubFirst: true,
+      });
+
+      expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
+        integrationId: acme.integrationId,
+        token: 'xoxb-acme',
+      });
+    });
+  });
+});
+
+describe('resolveSlackTargets keeps a channel inside the workspace it belongs to', () => {
+  it('never offers another workspace channel to an issue on this one', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const globex = await seedWorkspace(tx, {
+        name: 'Globex',
+        slackTeamId: 'T-globex',
+        botToken: 'xoxb-globex',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: globex.organizationId,
+        integrationId: globex.integrationId,
+        channelId: 'C-globex-all',
+        channelName: 'globex-everything',
+        teamId: null,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: globex.organizationId,
+        integrationId: globex.integrationId,
+        channelId: 'C-globex-eng',
+        channelName: 'globex-engineering',
+        teamId: globex.teamA,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: acme.organizationId,
+        integrationId: acme.integrationId,
+        channelId: 'C-acme-eng',
+        channelName: 'acme-engineering',
+        teamId: acme.teamA,
+      });
+
+      expect(
+        (await resolveSlackTargets(tx, acme.organizationId, [acme.teamA])).map(
+          (target) => target.channelId,
+        ),
+      ).toEqual(['C-acme-eng']);
+      expect(await resolveSlackTargets(tx, acme.organizationId, [])).toEqual([]);
+      expect(
+        (await resolveSlackTargets(tx, globex.organizationId, [globex.teamA]))
+          .map((target) => target.channelId)
+          .sort(),
+      ).toEqual(['C-globex-all', 'C-globex-eng']);
+    });
+  });
+
+  it('never offers another workspace channel bound to a team id it does not know', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const globex = await seedWorkspace(tx, {
+        name: 'Globex',
+        slackTeamId: 'T-globex',
+        botToken: 'xoxb-globex',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: globex.organizationId,
+        integrationId: globex.integrationId,
+        channelId: 'C-globex-design',
+        channelName: 'globex-design',
+        teamId: globex.teamB,
+      });
+
+      expect(
+        await resolveSlackTargets(tx, acme.organizationId, [acme.teamA, globex.teamB]),
+      ).toEqual([]);
     });
   });
 });
@@ -244,7 +401,7 @@ describe('resolveSlackTargets keeps a channel inside the team it is bound to', (
         organizationId: fixture.organizationId,
         provider: 'slack',
         externalId: 'T456',
-        connectedById: `usr_${fixture.organizationId.slice(4)}`,
+        connectedById: fixture.userId,
         credentials: { botToken: 'xoxb-second' },
       });
       await connectSlackChannel(tx, {
@@ -295,6 +452,11 @@ describe('resolveSlackTargets keeps a channel inside the team it is bound to', (
 
 interface PostLog {
   readonly channels: string[];
+  readonly authorizations: string[];
+}
+
+function newLog(): PostLog {
+  return { channels: [], authorizations: [] };
 }
 
 function fetchStub(log: PostLog, failing: readonly string[] = []): typeof globalThis.fetch {
@@ -302,6 +464,8 @@ function fetchStub(log: PostLog, failing: readonly string[] = []): typeof global
     const body = JSON.parse(String(init?.body ?? '{}')) as { channel?: string };
     const channel = body.channel ?? '';
     log.channels.push(channel);
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    log.authorizations.push(headers['authorization'] ?? '');
     if (failing.includes(channel)) {
       return Promise.resolve(
         new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 }),
@@ -312,6 +476,90 @@ function fetchStub(log: PostLog, failing: readonly string[] = []): typeof global
     );
   }) as unknown as typeof globalThis.fetch;
 }
+
+describe('dispatchSlackMessage never crosses a workspace boundary', () => {
+  it('posts only into the asking workspace channels, with only its own bot token', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const globex = await seedWorkspace(tx, {
+        name: 'Globex',
+        slackTeamId: 'T-globex',
+        botToken: 'xoxb-globex',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: globex.organizationId,
+        integrationId: globex.integrationId,
+        channelId: 'C-globex-all',
+        channelName: 'globex-everything',
+        teamId: null,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: acme.organizationId,
+        integrationId: acme.integrationId,
+        channelId: 'C-acme-eng',
+        channelName: 'acme-engineering',
+        teamId: acme.teamA,
+      });
+      const log = newLog();
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: acme.organizationId,
+        teamIds: [acme.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(1);
+      expect(log.channels).toEqual(['C-acme-eng']);
+      expect(log.authorizations).toEqual(['Bearer xoxb-acme']);
+    });
+  });
+
+  it('signs the other workspace dispatch with the other workspace token', async () => {
+    await withRollback(async (tx) => {
+      const acme = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const globex = await seedWorkspace(tx, {
+        name: 'Globex',
+        slackTeamId: 'T-globex',
+        botToken: 'xoxb-globex',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: globex.organizationId,
+        integrationId: globex.integrationId,
+        channelId: 'C-globex-eng',
+        channelName: 'globex-engineering',
+        teamId: globex.teamA,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: acme.organizationId,
+        integrationId: acme.integrationId,
+        channelId: 'C-acme-eng',
+        channelName: 'acme-engineering',
+        teamId: acme.teamA,
+      });
+      const log = newLog();
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: globex.organizationId,
+        teamIds: [globex.teamA],
+        text: 'ENG-1 moved',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(1);
+      expect(log.channels).toEqual(['C-globex-eng']);
+      expect(log.authorizations).toEqual(['Bearer xoxb-globex']);
+    });
+  });
+});
 
 describe('dispatchSlackMessage', () => {
   it('posts to every resolved channel and counts what it delivered', async () => {
@@ -330,7 +578,7 @@ describe('dispatchSlackMessage', () => {
           teamId,
         });
       }
-      const log: PostLog = { channels: [] };
+      const log = newLog();
 
       const delivered = await dispatchSlackMessage(tx, {
         organizationId: fixture.organizationId,
@@ -356,7 +604,7 @@ describe('dispatchSlackMessage', () => {
           teamId: null,
         });
       }
-      const log: PostLog = { channels: [] };
+      const log = newLog();
 
       const delivered = await dispatchSlackMessage(tx, {
         organizationId: fixture.organizationId,
@@ -384,7 +632,7 @@ describe('dispatchSlackMessage', () => {
         .update(integration)
         .set({ credentials: {} })
         .where(eq(integration.id, fixture.integrationId));
-      const log: PostLog = { channels: [] };
+      const log = newLog();
 
       const delivered = await dispatchSlackMessage(tx, {
         organizationId: fixture.organizationId,
@@ -408,7 +656,7 @@ describe('dispatchSlackMessage', () => {
         channelName: 'design',
         teamId: fixture.teamB,
       });
-      const log: PostLog = { channels: [] };
+      const log = newLog();
 
       const delivered = await dispatchSlackMessage(tx, {
         organizationId: fixture.organizationId,
