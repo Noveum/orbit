@@ -48,6 +48,7 @@ export interface CycleView {
   readonly teamName: string;
   readonly startsAt: string;
   readonly endsAt: string;
+  readonly completedAt: string | null;
   readonly progress: CycleProgress;
   readonly groups: StateGroup[];
   readonly assignees: AssigneeTally[];
@@ -176,10 +177,20 @@ export async function getActiveCycleView(
     teamName: team.name,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
+    completedAt: cycle.completedAt?.toISOString() ?? null,
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
   };
+}
+
+export async function runningSprintId(
+  principal: Principal,
+  team: { id: string },
+  now: Date = new Date(),
+): Promise<string | null> {
+  const cycle = await activeCycle(principal, team.id, now);
+  return cycle?.id ?? null;
 }
 
 export async function listUpcomingCycleViews(
@@ -248,6 +259,7 @@ export async function getSprintView(
     teamName: team.name,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
+    completedAt: cycle.completedAt?.toISOString() ?? null,
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
