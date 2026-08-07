@@ -5,5 +5,4 @@ export const scopes = {
   issue: (issueId: string): string => `issue:${issueId}`,
   doc: (docId: string): string => `doc:${docId}`,
   user: (userId: string): string => `user:${userId}`,
-  standup: (standupId: string): string => `standup:${standupId}`,
 } as const;

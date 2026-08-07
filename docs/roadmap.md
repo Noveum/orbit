@@ -18,7 +18,7 @@ The core is done and in daily use.
 - **Sprints and cycles** with scope, points, burndown and carryover.
 - **Projects and milestones** across teams.
 - **Docs** with a rich editor, collections, public share links and comments.
-- **Standup** as a board, with a timer, a rotation and blockers.
+- **Standup** as a workspace Kanban you filter to one person with a click.
 - **Analytics**: scope, throughput, churn, and distribution by assignee,
   project, label and estimate.
 - **Search, filters and saved views**, shared or private.

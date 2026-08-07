@@ -49,8 +49,8 @@ in [Getting started](getting-started.md).
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
 - **Projects and milestones** that group work across teams.
 - **Docs** with a rich editor, living next to the issues they describe.
-- **Standup** as a board rather than a meeting, with a timer, a rotation and
-  blockers.
+- **Standup** as a Kanban of the whole workspace, filtered to one person with a
+  click.
 - **Analytics**: scope, throughput, churn and distribution by assignee, project,
   label and estimate.
 - **Search, filters and saved views**, shared with the team or kept private.

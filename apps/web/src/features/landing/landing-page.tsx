@@ -452,7 +452,7 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
   {
     icon: SquareKanban,
     title: 'Issues and boards',
-    body: 'Fast lists and drag-and-drop boards over the same issues, so triage and standup share one source of truth.',
+    body: 'Fast lists and drag-and-drop boards over the same issues, filtered to one person the moment you click their name.',
   },
   {
     icon: IterationCw,

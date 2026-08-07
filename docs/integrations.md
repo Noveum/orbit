@@ -74,8 +74,8 @@ What you get:
 - **Notifications in Slack**, following the same per-event preferences and quiet
   hours as everywhere else.
 - **Channel routing**, so a team's activity goes to that team's channel.
-- **Standup posted to Slack**, which combined with the MCP server means an agent
-  can run standup and post the summary without anyone opening Orbit.
+- **Daily summaries posted to Slack**, which combined with the MCP server means
+  an agent can write the update without anyone opening Orbit.
 
 ### Setting it up
 

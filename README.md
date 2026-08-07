@@ -63,7 +63,7 @@ yourself and never depend on us at all.
 <td width="50%"><img src="docs/assets/screenshots/doc-light.png" alt="Docs" /><br /><sub><b>Docs</b> with a rich editor, living beside the issues they describe.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/screenshots/standup-dark.png" alt="Standup" /><br /><sub><b>Standup</b> as a board, not a meeting. Timer, rotation, blockers.</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/standup-dark.png" alt="Standup" /><br /><sub><b>Standup</b>: the whole workspace as a Kanban, filtered to one person with a click.</sub></td>
 <td width="50%"><img src="docs/assets/screenshots/analytics-light.png" alt="Analytics" /><br /><sub><b>Analytics</b>: scope, throughput, churn and distributions.</sub></td>
 </tr>
 </table>
@@ -78,7 +78,7 @@ yourself and never depend on us at all.
 | **Sprints and cycles** | Timeboxed planning with scope, points, burndown and carryover |
 | **Projects and milestones** | Group work that spans teams and sprints |
 | **Docs** | Rich editor, collections, comments, public share links |
-| **Standup** | A board rather than a meeting, with a timer, a rotation and real blockers |
+| **Standup** | The whole workspace as a Kanban, filtered to one person by clicking their tile |
 | **Analytics** | Scope, throughput, churn, and distribution by assignee, project, label and estimate |
 | **Search and views** | Filters over everything, saved and shared or kept private |
 | **Realtime** | Every change fans out over a websocket to exactly the people allowed to see it |
@@ -165,15 +165,15 @@ permission than the person who authorised it**, because the tools run through
 the same policy as everything else. A token with only `orbit.read` is not shown
 the write tools at all.
 
-Sixty odd tools covering issues, sprints, projects, docs and standup. Things
-that work today:
+Around fifty tools covering issues, sprints, projects and docs. Things that work
+today:
 
 > "What is blocking the Realtime Sync Engine project?"
 >
 > "File a bug on Engineering: passkey sign-in fails on Safari when no credential
 > is registered. High priority, assign it to me."
 >
-> "Run standup, then post the summary to Slack."
+> "Post a summary of what each person closed yesterday to Slack."
 
 [docs/mcp.md](docs/mcp.md) has the setup and the full tool list.
 

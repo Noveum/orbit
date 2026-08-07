@@ -488,7 +488,14 @@ export function describeRelative(relative: RelativeDate): string {
   return `in the past ${relative.offset} ${unit}`;
 }
 
-export const VIEW_PAGES = ['team', 'my_issues', 'project', 'cycle', 'saved_view'] as const;
+export const VIEW_PAGES = [
+  'team',
+  'my_issues',
+  'standup',
+  'project',
+  'cycle',
+  'saved_view',
+] as const;
 export type ViewPage = (typeof VIEW_PAGES)[number];
 
 export const VIEW_LAYOUT_MODES = ['list', 'board'] as const;
@@ -541,7 +548,7 @@ function matrixFor(page: ViewPage): Record<ViewLayoutMode, ViewCapability> {
       return without(capability, { filters: ['project'], grouping: ['project'] });
     }
     if (page === 'cycle') return without(capability, { filters: ['cycle'], grouping: ['cycle'] });
-    if (page === 'my_issues') {
+    if (page === 'my_issues' || page === 'standup') {
       return without(capability, { filters: ['assignee'], grouping: ['assignee'] });
     }
     return capability;
@@ -552,6 +559,7 @@ function matrixFor(page: ViewPage): Record<ViewLayoutMode, ViewCapability> {
 export const VIEW_CAPABILITIES: Record<ViewPage, Record<ViewLayoutMode, ViewCapability>> = {
   team: matrixFor('team'),
   my_issues: matrixFor('my_issues'),
+  standup: matrixFor('standup'),
   project: matrixFor('project'),
   cycle: matrixFor('cycle'),
   saved_view: matrixFor('saved_view'),

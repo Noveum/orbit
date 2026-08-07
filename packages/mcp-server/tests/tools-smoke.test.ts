@@ -101,22 +101,6 @@ const SMOKE: readonly SmokeCase[] = [
     args: () => ({ project: state['project'] }),
     expect: hasRows('milestones'),
   },
-  { tool: 'list_standups', args: () => ({ team: state['team'] }), expect: hasRows('standups') },
-  {
-    tool: 'standup_workload',
-    args: () => ({ team: state['team'] }),
-    expect: hasRows('workload'),
-  },
-  {
-    tool: 'get_standup_rotation',
-    args: () => ({ team: state['team'] }),
-    expect: hasKey('rotation'),
-  },
-  {
-    tool: 'set_standup_rotation',
-    args: () => ({ team: state['team'], members: [{ person: 'Bea Builder' }] }),
-    expect: hasKey('rotation'),
-  },
   {
     tool: 'update_team',
     args: () => ({ team: state['team'], name: 'Renamed team' }),
@@ -171,7 +155,7 @@ describe('every tool the rest of the suite never calls still answers', () => {
     const registered = new Set(tools.map((tool) => tool.name));
 
     for (const entry of SMOKE) expect(registered.has(entry.tool)).toBe(true);
-    expect(SMOKE.length).toBeGreaterThan(20);
+    expect(SMOKE.length).toBeGreaterThan(15);
   });
 
   for (const entry of SMOKE) {

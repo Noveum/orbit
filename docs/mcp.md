@@ -104,7 +104,7 @@ Point at `http://localhost:3000/mcp` instead. Everything else is the same.
 
 ## What the tools do
 
-Sixty odd tools across eight groups. Read tools need `orbit.read`, write tools
+Around fifty tools across seven groups. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
 Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
@@ -163,22 +163,6 @@ them.
 | `move_to_cycle` | write | Move issues in |
 | `delete_sprint` | write | |
 
-### Standup
-
-The group that makes a bot genuinely useful. An agent can run the whole standup
-and post it to Slack without anyone opening Orbit.
-
-| Tool | Scope | Does |
-| --- | --- | --- |
-| `get_standup`, `list_standups` | read | Standups |
-| `list_blockers` | read | What is blocked |
-| `standup_workload` | read | Who has how much on |
-| `get_standup_rotation` | read | Who goes first |
-| `open_standup`, `run_standup` | write | Start one |
-| `record_standup_turn` | write | Record what someone said |
-| `raise_blocker`, `resolve_blocker` | write | |
-| `set_standup_rotation` | write | |
-
 ### Docs
 
 | Tool | Scope | Does |
@@ -216,10 +200,10 @@ Once connected, these all work:
 - "Summarise what the team finished last sprint and what carried over."
 - "Read ENG-42 and write the migration it describes."
 - "Everything in Design labelled Bug with no assignee, and who should take each one."
-- "Run standup, then post the summary to Slack."
+- "Post a summary of what each person closed yesterday to Slack."
 
 The last one is the shape that pays for itself. An agent with `orbit.read` and a
-Slack connection replaces a daily meeting.
+Slack connection can write the update nobody wants to write.
 
 ## Managing access
 
