@@ -1,7 +1,13 @@
 -- Brings a database created before the GitHub connect work up to the current schema.
--- Adds three tables: github_installation, github_repository and github_repository_link, and
--- relaxes one existing column, github_repository_sync.team_id, from not null to nullable so a
--- repository can be watched at workspace level with no team.
+-- Adds four tables: github_installation, github_repository, github_repository_link and
+-- integration_oauth_state, and relaxes one existing column, github_repository_sync.team_id,
+-- from not null to nullable so a repository can be watched at workspace level with no team.
+--
+--   integration_oauth_state holds one row per OAuth state Orbit mints for a GitHub or Slack
+--   install round trip, keyed by the nonce carried inside the signed state. The callback
+--   deletes the row it finds, so a state that is replayed a second time matches nothing and is
+--   refused. Without the row the signature alone would keep verifying for the whole ten minute
+--   window and the same callback could be replayed.
 --
 -- Why the tables look the way they do:
 --   github_installation.installation_id carries a unique index with NO organization_id in it.
@@ -59,6 +65,15 @@ create table if not exists public.github_repository (
     sync_id bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+create table if not exists public.integration_oauth_state (
+    nonce text NOT NULL,
+    provider text NOT NULL,
+    organization_id text NOT NULL,
+    user_id text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 create table if not exists public.github_repository_link (
@@ -173,6 +188,30 @@ begin
             add constraint github_repository_link_linked_by_id_user_id_fk
             foreign key (linked_by_id) references public."user"(id) on delete set null;
     end if;
+
+    if not exists (
+        select 1 from pg_constraint where conname = 'integration_oauth_state_pkey'
+    ) then
+        alter table public.integration_oauth_state
+            add constraint integration_oauth_state_pkey primary key (nonce);
+    end if;
+
+    if not exists (
+        select 1 from pg_constraint
+        where conname = 'integration_oauth_state_organization_id_organization_id_fk'
+    ) then
+        alter table public.integration_oauth_state
+            add constraint integration_oauth_state_organization_id_organization_id_fk
+            foreign key (organization_id) references public.organization(id) on delete cascade;
+    end if;
+
+    if not exists (
+        select 1 from pg_constraint where conname = 'integration_oauth_state_user_id_user_id_fk'
+    ) then
+        alter table public.integration_oauth_state
+            add constraint integration_oauth_state_user_id_user_id_fk
+            foreign key (user_id) references public."user"(id) on delete cascade;
+    end if;
 end
 $$;
 
@@ -201,6 +240,9 @@ create index if not exists github_repository_link_project_idx
 
 create index if not exists github_repository_link_org_idx
     on public.github_repository_link using btree (organization_id);
+
+create index if not exists integration_oauth_state_expires_idx
+    on public.integration_oauth_state using btree (expires_at);
 
 alter table public.github_repository_sync alter column team_id drop not null;
 

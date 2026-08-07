@@ -132,6 +132,23 @@ export const integration = pgTable(
   ],
 );
 
+export const integrationOauthState = pgTable(
+  'integration_oauth_state',
+  {
+    nonce: text('nonce').primaryKey(),
+    provider: text('provider').notNull(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('integration_oauth_state_expires_idx').on(table.expiresAt)],
+);
+
 export const integrationChannel = pgTable(
   'integration_channel',
   {
