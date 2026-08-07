@@ -12,7 +12,6 @@ import { scopes } from '@orbit/shared/events';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
-const sessionModule = await import('@/lib/auth/session.ts');
 const published: SyncAction[] = [];
 
 mock.module('@orbit/core', () => ({
@@ -54,7 +53,6 @@ const {
 
 afterAll(() => {
   mock.module('@orbit/core', () => coreModule);
-  mock.module('@/lib/auth/session.ts', () => sessionModule);
 });
 
 const labelSchema = z.object({

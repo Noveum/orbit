@@ -13,7 +13,6 @@ import { scopes } from '@orbit/shared/events';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
-const sessionModule = await import('@/lib/auth/session.ts');
 const published: SyncAction[] = [];
 
 mock.module('@orbit/core', () => ({
@@ -50,7 +49,6 @@ const { POST: REORDER } = await import('../../../../src/app/api/workflow-states/
 
 afterAll(() => {
   mock.module('@orbit/core', () => coreModule);
-  mock.module('@/lib/auth/session.ts', () => sessionModule);
 });
 
 const stateSchema = z.object({
