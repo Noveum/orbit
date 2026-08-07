@@ -37,3 +37,7 @@ export const OPEN_STATE_CATEGORIES: readonly StateCategory[] = [
   'started',
   'review',
 ];
+
+export function isOpenCategory(category: string): boolean {
+  return OPEN_STATE_CATEGORIES.some((open) => open === category);
+}

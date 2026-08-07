@@ -1,5 +1,5 @@
 import { and, asc, count, db, desc, eq, inArray, ne, schema } from '@orbit/db';
-import type { StateCategory } from '@orbit/shared/constants';
+import { isOpenCategory, type StateCategory } from '@orbit/shared/constants';
 import { conflict, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -172,13 +172,13 @@ export async function initialStateFor(
   if (unstarted !== undefined) return unstarted;
   const backlog = await defaultStateFor(executor, teamId, 'backlog');
   if (backlog !== undefined) return backlog;
-  const [any] = await executor
+  const board = await executor
     .select()
     .from(schema.workflowState)
     .where(eq(schema.workflowState.teamId, teamId))
-    .orderBy(asc(schema.workflowState.position))
-    .limit(1);
-  return requireRow(any, 'That team has no workflow states.');
+    .orderBy(asc(schema.workflowState.position));
+  const open = board.find((state) => isOpenCategory(state.category));
+  return requireRow(open ?? board[0], 'That team has no workflow states.');
 }
 
 async function issuesInState(

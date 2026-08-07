@@ -250,6 +250,36 @@ describe('a status carries a category the rest of the product reads', () => {
     expect((await issueById(created.issue.id)).syncId).toBe(created.issue.syncId);
   });
 
+  it('never births a new issue into a closed column when the open ones are gone', async () => {
+    const board = await statesOf(workspace.teamId);
+    for (const state of board) {
+      if (state.name === 'In Review') continue;
+      await updateWorkflowState(workspace.admin, state.id, { category: 'completed' });
+    }
+    await updateWorkflowState(workspace.admin, stateNamed(workspace, 'In Review').id, {
+      category: 'review',
+    });
+
+    const created = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'New' });
+
+    const landed = await issueById(created.issue.id);
+    expect(landed.stateId).toBe(stateNamed(workspace, 'In Review').id);
+    expect(landed.completedAt).toBeNull();
+  });
+
+  it('still takes the first column when a team has closed every one of them', async () => {
+    const board = await statesOf(workspace.teamId);
+    const first = board[0];
+    if (first === undefined) throw new Error('the fixture had no states');
+    for (const state of board) {
+      await updateWorkflowState(workspace.admin, state.id, { category: 'canceled' });
+    }
+
+    const created = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'New' });
+
+    expect((await issueById(created.issue.id)).stateId).toBe(first.id);
+  });
+
   it('refuses two statuses of the same name on one team', async () => {
     expect(
       await errorOf(() =>
