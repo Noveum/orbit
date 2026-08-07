@@ -42,6 +42,17 @@ export function StageColumns({ stages, assignee, onOpen }: StageColumnsProps) {
     [labelById, memberById, stateById, projects],
   );
 
+  if (stages.length === 0) {
+    return (
+      <div
+        data-testid="standup-stages"
+        className="flex min-h-0 flex-1 items-center justify-center p-3 text-dense text-muted"
+      >
+        Nothing on the board for {assignee.name} in this window.
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid="standup-stages"
