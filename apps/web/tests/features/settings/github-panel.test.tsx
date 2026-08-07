@@ -157,7 +157,9 @@ describe('GithubPanel, installations', () => {
   it('flags a suspended installation so the empty repository list makes sense', () => {
     renderPanel({
       ...SETTINGS,
-      installations: [{ ...SETTINGS.installations[0]!, status: 'suspended' }],
+      installations: SETTINGS.installations
+        .slice(0, 1)
+        .map((installation) => ({ ...installation, status: 'suspended' })),
     });
     expect(screen.getByText('Suspended')).toBeInTheDocument();
   });
