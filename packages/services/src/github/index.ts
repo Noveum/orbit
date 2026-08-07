@@ -4,7 +4,10 @@ import { z } from 'zod';
 
 export * from './app.ts';
 export * from './apply.ts';
-export * from './install.ts';
+export * from './associations.ts';
+export * from './installations.ts';
+export * from './watched.ts';
+export * from './webhook-events.ts';
 
 export function verifyGithubSignature(
   rawBody: string,
