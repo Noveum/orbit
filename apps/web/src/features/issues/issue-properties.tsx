@@ -6,6 +6,8 @@ import { X } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { Issue, Milestone } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
@@ -291,7 +293,10 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
               aria-label="Clear parent"
               data-testid="clear-parent"
               onClick={() => patch({ parentId: null })}
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
+              className={cn(
+                'flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:text-text',
+                rowHover,
+              )}
             >
               <X className="size-3.5" aria-hidden="true" />
             </button>
