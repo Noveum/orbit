@@ -219,6 +219,10 @@ describe('the milestone row on the issue properties panel', () => {
     const names = await screen.findByTestId('hotkey-names');
     expect(names).not.toHaveTextContent('Change milestone');
     expect(names).toHaveTextContent('Change project');
+
+    const row = screen.getByTestId('property-milestone-empty').parentElement;
+    expect(row?.textContent).toContain('Milestone');
+    expect(row?.querySelector('kbd')).toBeNull();
   });
 
   it('advertises the m shortcut once the issue is on a project', async () => {
