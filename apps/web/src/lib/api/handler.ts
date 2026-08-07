@@ -121,7 +121,9 @@ export async function cachedJson(
 }
 
 export async function readJson(request: Request): Promise<unknown> {
-  const raw = await request.text().catch(() => '');
+  const raw = await request.text().catch(() => {
+    throw validationFailed('That request body could not be read.');
+  });
   if (raw.trim() === '') return {};
   try {
     return JSON.parse(raw) as unknown;
