@@ -6,8 +6,8 @@ const instantSchema = z.union([z.string().trim().min(1), z.date()]).pipe(z.coerc
 export const cycleCreateSchema = z.object({
   teamId: idSchema,
   name: z.string().trim().min(1).max(120).optional(),
-  startsAt: instantSchema,
-  endsAt: instantSchema,
+  startsAt: instantSchema.optional(),
+  endsAt: instantSchema.optional(),
 });
 
 export const cycleUpdateSchema = z

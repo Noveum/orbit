@@ -29,6 +29,7 @@ function cycleWith(overrides: ProgressOverrides): CycleView {
     teamName: 'Engineering',
     startsAt: '2026-01-01T00:00:00.000Z',
     endsAt: '2026-01-15T00:00:00.000Z',
+    completedAt: null,
     groups: [],
     assignees: [{ id: 'member_1', name: 'Ada Lovelace', image: null, scope: 3, completed: 2 }],
     progress: {

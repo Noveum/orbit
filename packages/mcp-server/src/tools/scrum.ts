@@ -18,6 +18,7 @@ import {
   type StandupDetail,
   setRotation,
   standupWorkload,
+  startCycle,
   startStandup,
   today,
   updateCycle,
@@ -369,13 +370,20 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
     {
       name: 'create_cycle',
       title: 'Create a sprint',
-      description: 'Open a new sprint (cycle) for a team over a date range.',
+      description:
+        'Open a new sprint (cycle) for a team over a date range. Send neither date and the server appends a two week sprint straight after the last one the team has.',
       readOnly: false,
       inputSchema: {
         team: teamRef,
         name: z.string().optional(),
-        startsAt: instant.describe('ISO timestamp or date the sprint opens.'),
-        endsAt: instant.describe('ISO timestamp or date the sprint closes.'),
+        startsAt: instant
+          .optional()
+          .describe('ISO timestamp or date the sprint opens. Defaults to after the last sprint.'),
+        endsAt: instant
+          .optional()
+          .describe(
+            'ISO timestamp or date the sprint closes. Defaults to two weeks after it opens.',
+          ),
       },
     },
     async (input) => {
@@ -383,8 +391,8 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
       const result = await createCycle(principal, {
         teamId,
         ...(input.name === undefined ? {} : { name: input.name }),
-        startsAt: input.startsAt,
-        endsAt: input.endsAt,
+        ...(input.startsAt === undefined ? {} : { startsAt: input.startsAt }),
+        ...(input.endsAt === undefined ? {} : { endsAt: input.endsAt }),
       });
       await publish(result.actions);
       return { cycle: cycleView(result.cycle) };
@@ -411,6 +419,23 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
         ...(input.startsAt === undefined ? {} : { startsAt: input.startsAt }),
         ...(input.endsAt === undefined ? {} : { endsAt: input.endsAt }),
       });
+      await publish(result.actions);
+      return { cycle: cycleView(result.cycle) };
+    },
+  );
+
+  defineTool(
+    server,
+    {
+      name: 'start_cycle',
+      title: 'Start a sprint',
+      description:
+        'Start a sprint that has not begun yet, by pulling its start date to now. A sprint has no separate started flag: it runs whenever the clock sits inside its dates and it has not been completed. The sprint keeps its planned end date, and the team has to have no sprint running.',
+      readOnly: false,
+      inputSchema: { cycleId: z.string().min(1) },
+    },
+    async (input) => {
+      const result = await startCycle(principal, input.cycleId);
       await publish(result.actions);
       return { cycle: cycleView(result.cycle) };
     },
