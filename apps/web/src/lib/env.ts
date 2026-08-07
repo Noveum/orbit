@@ -12,6 +12,8 @@ const serverEnvSchema = z.object({
   GITHUB_APP_ID: z.string().optional(),
   GITHUB_APP_PRIVATE_KEY: z.string().optional(),
   GITHUB_APP_SLUG: z.string().optional(),
+  GITHUB_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().optional(),
   SLACK_CLIENT_ID: z.string().optional(),
   SLACK_CLIENT_SECRET: z.string().optional(),
   ORBIT_PASSWORD_AUTH: z
@@ -33,6 +35,8 @@ export interface GithubAppConfig {
   readonly slug: string;
   readonly appId: string;
   readonly privateKey: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
 }
 
 export function githubAppConfig(): GithubAppConfig {
@@ -42,7 +46,14 @@ export function githubAppConfig(): GithubAppConfig {
     slug: env.GITHUB_APP_SLUG ?? '',
     appId: env.GITHUB_APP_ID ?? '',
     privateKey: rawKey.includes('\\n') ? rawKey.replace(/\\n/g, '\n') : rawKey,
+    clientId: env.GITHUB_APP_CLIENT_ID ?? '',
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET ?? '',
   };
+}
+
+export function githubUserVerificationReady(): boolean {
+  const config = githubAppConfig();
+  return config.clientId.length > 0 && config.clientSecret.length > 0;
 }
 
 export function githubConnectReady(): boolean {
