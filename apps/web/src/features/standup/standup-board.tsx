@@ -1,8 +1,9 @@
 'use client';
 
 import type { DisplayProperty } from '@orbit/shared/filters';
-import { SearchX } from 'lucide-react';
+import { SearchX, WifiOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { DisplayMenu } from '@/features/filters/display-menu.tsx';
@@ -14,22 +15,14 @@ import { Board } from '@/features/issues/board.tsx';
 import { IssuePeek } from '@/features/issues/issue-peek.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import { facetsSearch } from '@/lib/query/issue-search.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
-import { useAllIssues } from '@/lib/query/use-issues.ts';
+import { useAllIssues, useIssueFacets } from '@/lib/query/use-issues.ts';
 import { PersonTiles } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
+const NO_COUNTS: Readonly<Record<string, number>> = {};
 const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
-
-export function assigneeCounts(issues: readonly Issue[]): ReadonlyMap<string, number> {
-  const counts = new Map<string, number>();
-  for (const issue of issues) {
-    const assigneeId = issue.assigneeId;
-    if (assigneeId === null) continue;
-    counts.set(assigneeId, (counts.get(assigneeId) ?? 0) + 1);
-  }
-  return counts;
-}
 
 export function StandupBoard() {
   const workspace = useWorkspace();
@@ -50,8 +43,8 @@ export function StandupBoard() {
     [selectedId],
   );
 
-  const everyone = useAllIssues(query, WHOLE_WORKSPACE);
   const active = useAllIssues(query, scope);
+  const roster = useIssueFacets(facetsSearch(null, WHOLE_WORKSPACE));
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   useEffect(() => {
@@ -67,7 +60,7 @@ export function StandupBoard() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
-  const counts = useMemo(() => assigneeCounts(everyone.data ?? NO_ISSUES), [everyone.data]);
+  const counts = roster.data?.facets.assignee ?? NO_COUNTS;
 
   const model = useIssueViewModel({
     teamId: null,
@@ -77,7 +70,7 @@ export function StandupBoard() {
     scope,
   });
 
-  const roster = useMemo(
+  const members = useMemo(
     () => [...workspace.members].sort((left, right) => left.name.localeCompare(right.name)),
     [workspace.members],
   );
@@ -103,7 +96,7 @@ export function StandupBoard() {
         </span>
         <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
           <PersonTiles
-            members={roster}
+            members={members}
             selectedId={selectedId}
             counts={counts}
             onSelect={setSelectedId}
@@ -119,6 +112,10 @@ export function StandupBoard() {
 
       <StandupBody
         loading={active.isPending}
+        failed={active.isError}
+        onRetry={() => {
+          active.refetch().catch(() => undefined);
+        }}
         empty={empty}
         groups={model.groups}
         properties={config.display.properties}
@@ -132,7 +129,7 @@ export function StandupBoard() {
       <HiddenFooter
         hiddenByFilters={model.hiddenByFilters}
         hiddenByDisplay={model.hiddenByDisplay}
-        onClearFilters={() => undefined}
+        onClearFilters={() => setConfig({ ...config, filter: { ...config.filter, children: [] } })}
         onRevealDisplay={() =>
           setConfig({
             ...config,
@@ -151,6 +148,8 @@ export function StandupBoard() {
 
 interface StandupBodyProps {
   readonly loading: boolean;
+  readonly failed: boolean;
+  readonly onRetry: () => void;
   readonly empty: boolean;
   readonly groups: readonly IssueGroup[];
   readonly properties: readonly DisplayProperty[];
@@ -161,6 +160,8 @@ interface StandupBodyProps {
 
 function StandupBody({
   loading,
+  failed,
+  onRetry,
   empty,
   groups,
   properties,
@@ -175,6 +176,22 @@ function StandupBody({
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-24 w-2/3" />
       </div>
+    );
+  }
+
+  if (failed) {
+    return (
+      <EmptyState
+        icon={<WifiOff strokeWidth={1.75} aria-hidden="true" />}
+        title="Could not load the board"
+        description="The request for this workspace did not come back. Try again."
+        className="flex-1"
+        action={
+          <Button size="sm" variant="secondary" data-testid="retry-standup" onClick={onRetry}>
+            Try again
+          </Button>
+        }
+      />
     );
   }
 

@@ -8,7 +8,7 @@ import type { Member } from '@/lib/query/schemas.ts';
 export interface PersonTilesProps {
   readonly members: readonly Member[];
   readonly selectedId: string | null;
-  readonly counts: ReadonlyMap<string, number>;
+  readonly counts: Readonly<Record<string, number>>;
   readonly onSelect: (userId: string | null) => void;
 }
 
@@ -37,7 +37,7 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
       </button>
       {members.map((member) => {
         const selected = member.id === selectedId;
-        const count = counts.get(member.id) ?? 0;
+        const count = counts[member.id] ?? 0;
         return (
           <button
             key={member.id}
@@ -51,7 +51,11 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
             <Avatar name={member.name} src={member.image} size="xs" />
             <span className="max-w-28 truncate">{member.name}</span>
             {count > 0 ? (
-              <span data-numeric className="text-faint">
+              <span
+                data-numeric
+                data-testid={`standup-tile-count-${member.id}`}
+                className="text-faint"
+              >
                 {count}
               </span>
             ) : null}
