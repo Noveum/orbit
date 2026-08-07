@@ -259,6 +259,10 @@ export const issueMoveResultSchema = z.object({
   rebalanced: z.array(issueSchema),
 });
 
+export const issueDeletedSchema = z.object({
+  deleted: z.object({ id: z.string(), identifier: z.string() }),
+});
+
 export const issueDetailSchema = z.object({
   issue: issueSchema,
   descriptionHtml: z.string(),

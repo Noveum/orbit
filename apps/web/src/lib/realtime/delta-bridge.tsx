@@ -41,6 +41,7 @@ import {
   belongsInList,
   flattenIssuePages,
   searchOf,
+  withoutSubIssue,
 } from '@/lib/query/sync.ts';
 import { useCurrentUserId } from './session.tsx';
 
@@ -104,6 +105,27 @@ function patchIssueCaches(client: QueryClient, action: SyncAction): void {
     }
   }
 
+  patchIssueDetailCaches(client, action);
+}
+
+function forgetDeletedIssue(client: QueryClient, issueId: string): void {
+  for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
+    const current = query.state.data as IssueDetail | undefined;
+    if (current === undefined) continue;
+    if (current.issue.id === issueId) {
+      client.removeQueries({ queryKey: query.queryKey, exact: true });
+      continue;
+    }
+    const trimmed = withoutSubIssue(current, issueId);
+    if (trimmed !== current) client.setQueryData(query.queryKey, trimmed);
+  }
+}
+
+function patchIssueDetailCaches(client: QueryClient, action: SyncAction): void {
+  if (action.action === 'delete') {
+    forgetDeletedIssue(client, action.modelId);
+    return;
+  }
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
     const current = query.state.data as IssueDetail | undefined;
     if (current === undefined) continue;
