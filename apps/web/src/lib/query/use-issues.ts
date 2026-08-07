@@ -24,7 +24,13 @@ import {
   issueSearch,
   projectIssuesSearch,
 } from './issue-search.ts';
-import { ISSUE_SUMMARY_ROOT, ISSUES_ROOT, queryKeys } from './keys.ts';
+import {
+  ISSUE_FACETS_ROOT,
+  ISSUE_ROOT,
+  ISSUE_SUMMARY_ROOT,
+  ISSUES_ROOT,
+  queryKeys,
+} from './keys.ts';
 import type {
   Bootstrap,
   Issue,
@@ -37,6 +43,7 @@ import type {
 import {
   bootstrapSchema,
   issueCountsSchema,
+  issueDeletedSchema,
   issueDetailSchema,
   issueEnvelopeSchema,
   issueFacetsSchema,
@@ -52,6 +59,8 @@ import {
   mapIssuePages,
   searchOf,
   sortForSearch,
+  withoutIssues,
+  withoutSubIssue,
 } from './sync.ts';
 
 export type { IssueQuery };
@@ -338,13 +347,6 @@ function eachIssueList(
   }
 }
 
-function patchIssueLists(
-  client: QueryClient,
-  update: (issues: readonly Issue[]) => readonly Issue[],
-): void {
-  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues) => update(issues));
-}
-
 function placeIssue(client: QueryClient, next: Issue, settle = true): void {
   const before = filteredListsHolding(client, [next]);
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
@@ -535,28 +537,81 @@ export function useCreateIssue(_teamId: string) {
   });
 }
 
-export function useDeleteIssue(_teamId: string) {
+type ListSnapshot = readonly [QueryKey, IssuePages | undefined][];
+
+function dropFromIssueLists(client: QueryClient, removed: ReadonlySet<string>): void {
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues) => withoutIssues(issues, removed));
+}
+
+function dropFromIssueDetails(client: QueryClient, removed: ReadonlySet<string>): void {
+  for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
+    if (detail === undefined) continue;
+    if (removed.has(detail.issue.id)) {
+      client.resetQueries({ queryKey: key, exact: true });
+      continue;
+    }
+    let next = detail;
+    for (const id of removed) next = withoutSubIssue(next, id) ?? next;
+    if (next !== detail) client.setQueryData(key, next);
+  }
+}
+
+function restoreIssueLists(client: QueryClient, snapshot: ListSnapshot): void {
+  for (const [key, pages] of snapshot) client.setQueryData(key, pages);
+}
+
+export class PartialIssueDelete extends Error {
+  readonly gone: readonly string[];
+
+  constructor(gone: readonly string[], cause: unknown) {
+    super(messageOf(cause, 'That delete did not go through.'));
+    this.name = 'PartialIssueDelete';
+    this.gone = gone;
+    this.cause = cause;
+  }
+}
+
+async function deleteEach(issues: readonly Issue[]): Promise<readonly Issue[]> {
+  const gone: string[] = [];
+  for (const issue of issues) {
+    try {
+      await apiFetch(`/api/issues/${issue.id}`, issueDeletedSchema, { method: 'DELETE' });
+    } catch (error: unknown) {
+      throw new PartialIssueDelete(gone, error);
+    }
+    gone.push(issue.id);
+  }
+  return issues;
+}
+
+export function useDeleteIssues() {
   const client = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (issue: Issue): Promise<void> => {
-      await apiFetch(`/api/issues/${issue.id}`, issueEnvelopeSchema.partial(), {
-        method: 'DELETE',
-      });
-    },
-    onMutate: async (issue) => {
+    mutationFn: deleteEach,
+    onMutate: async (issues) => {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
-      patchIssueLists(client, (issues) => issues.filter((entry) => entry.id !== issue.id));
-      return {};
+      const snapshot: ListSnapshot = client.getQueriesData<IssuePages>({
+        queryKey: [ISSUES_ROOT],
+      });
+      dropFromIssueLists(client, new Set(issues.map((issue) => issue.id)));
+      return { snapshot };
     },
-    onError: (error, issue) => {
-      addToLists(client, issue);
+    onError: (error, _issues, context) => {
+      if (context !== undefined) restoreIssueLists(client, context.snapshot);
+      if (error instanceof PartialIssueDelete && error.gone.length > 0) {
+        dropFromIssueLists(client, new Set(error.gone));
+        dropFromIssueDetails(client, new Set(error.gone));
+      }
       toast({ title: 'Could not delete', description: messageOf(error), tone: 'danger' });
     },
-    onSettled: (_data, _error, issue) => {
-      client.removeQueries({ queryKey: queryKeys.issue(issue.identifier) });
+    onSuccess: (issues) => {
+      dropFromIssueDetails(client, new Set(issues.map((issue) => issue.id)));
+    },
+    onSettled: () => {
       refreshCounts(client);
+      client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(() => undefined);
     },
   });
 }

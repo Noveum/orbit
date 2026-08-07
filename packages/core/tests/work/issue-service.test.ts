@@ -163,6 +163,50 @@ describe('permissions', () => {
       code: 'not_found',
     });
   });
+
+  it('refuses a member of another team even though delete is in their role', async () => {
+    const issue = await newIssue('Someone else team work');
+    const outsider = await addMember(workspace, 'member', { teamIds: [] });
+
+    await expect(deleteIssue(outsider.principal, issue.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(await getIssue(workspace.admin, issue.id)).toMatchObject({ id: issue.id });
+  });
+});
+
+describe('deleteIssue and sub issues', () => {
+  it('promotes children to top level and announces each one so no cache points at the gone row', async () => {
+    const parent = await newIssue('Parent');
+    const child = await newIssue('Child');
+    const other = await newIssue('Unrelated');
+    await updateIssue(workspace.admin, child.id, { parentId: parent.id });
+
+    const actions = await deleteIssue(workspace.admin, parent.id);
+
+    const [survivor] = await db.select().from(schema.issue).where(eq(schema.issue.id, child.id));
+    expect(survivor?.parentId).toBeNull();
+
+    const announced = actions.filter((action) => action.action === 'update');
+    expect(announced.map((action) => action.modelId)).toEqual([child.id]);
+    expect(announced[0]?.data['parentId']).toBeNull();
+    expect(announced[0]?.syncId).toBe(actions[0]?.syncId ?? -1);
+    expect(actions.map((action) => action.modelId)).not.toContain(other.id);
+
+    const remaining = await listIssues(workspace.admin, {});
+    expect(remaining.issues.map((issue) => issue.id).sort()).toEqual([child.id, other.id].sort());
+  });
+
+  it('bumps the child sync id past the stale one every open tab is holding', async () => {
+    const parent = await newIssue('Parent');
+    const child = await newIssue('Child');
+    const attached = await updateIssue(workspace.admin, child.id, { parentId: parent.id });
+
+    const actions = await deleteIssue(workspace.admin, parent.id);
+
+    const announced = actions.find((action) => action.modelId === child.id);
+    expect(announced?.data['syncId']).toBeGreaterThan(attached.issue.syncId);
+  });
 });
 
 describe('updateIssue', () => {

@@ -20,11 +20,12 @@ import {
 } from '@orbit/core';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { issueRefSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { resolveCycle, resolveProject, resolveTeam } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
-const issueRef = z.string().min(1).describe('An issue identifier like "ENG-42", or an issue id.');
+const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
 
 const DEFAULT_LABEL_COLOR = '#5a63c8';
