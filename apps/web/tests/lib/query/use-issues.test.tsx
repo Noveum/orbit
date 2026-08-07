@@ -6,9 +6,14 @@ import type { Issue } from '../../../src/lib/query/schemas.ts';
 
 mock.module('@/components/ui/toast.tsx', () => ({ useToast: () => ({ toast: () => undefined }) }));
 
-const { useAssignedIssues, useDeleteIssues, useIssues, useMoveIssue } = await import(
-  '../../../src/lib/query/use-issues.ts'
-);
+const {
+  useAssignedIssues,
+  useDeleteIssues,
+  useIssueDetail,
+  useIssues,
+  useMoveIssue,
+  useUpdateIssue,
+} = await import('../../../src/lib/query/use-issues.ts');
 const { queryKeys } = await import('../../../src/lib/query/keys.ts');
 
 const TEAM = 'team_eng';
@@ -327,5 +332,79 @@ describe('deleting an issue', () => {
     await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
     const deletes = log.urls.filter((_url, index) => log.methods[index] === 'DELETE');
     expect(deletes).toEqual(['/api/issues/issue_parent', '/api/issues/issue_child']);
+  });
+});
+
+describe('reparenting refreshes every cache a parent can move', () => {
+  const subIssuesOnly = {
+    filter: {
+      kind: 'group' as const,
+      combinator: 'and' as const,
+      children: [
+        {
+          kind: 'condition' as const,
+          property: 'relation' as const,
+          negate: false,
+          operator: 'in' as const,
+          values: ['sub_issue'],
+        },
+      ],
+    },
+    orderBy: 'manual' as const,
+  };
+
+  function detailPayload(parentId: string | null) {
+    return {
+      issue: issue({ id: 'issue_child', identifier: 'ENG-2', parentId }),
+      descriptionHtml: '',
+      activity: [],
+      activityCursor: null,
+      subIssues: [],
+      parent: null,
+      subscribed: false,
+    };
+  }
+
+  it('refetches the filtered list and the detail an adopted issue can appear in', async () => {
+    let parentId: string | null = null;
+    const log = stubFetch((url, init) => {
+      if (init?.method === 'PATCH') {
+        parentId = 'issue_parent';
+        return { issue: issue({ id: 'issue_child', identifier: 'ENG-2', parentId }) };
+      }
+      if (url.startsWith('/api/issues/ENG-2')) return detailPayload(parentId);
+      if (url.includes('filter=')) {
+        return {
+          issues: parentId === null ? [] : [issue({ id: 'issue_child' })],
+          nextCursor: null,
+        };
+      }
+      return page(['issue_child'], null);
+    });
+    const client = newClient();
+
+    const filtered = renderHook(() => useIssues(TEAM, undefined, subIssuesOnly), {
+      wrapper: wrapper(client),
+    });
+    const detail = renderHook(() => useIssueDetail('ENG-2'), { wrapper: wrapper(client) });
+    await waitFor(() => expect(filtered.result.current.data).toEqual([]));
+    await waitFor(() => expect(detail.result.current.data).toBeDefined());
+    const before = log.urls.length;
+
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+    update.result.current.mutate({
+      issue: issue({ id: 'issue_child', identifier: 'ENG-2' }),
+      patch: { parentId: 'issue_parent' },
+    });
+
+    await waitFor(() => expect(update.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(detail.result.current.data?.issue.parentId).toBe('issue_parent'));
+    await waitFor(() =>
+      expect(filtered.result.current.data?.map((row) => row.id)).toEqual(['issue_child']),
+    );
+
+    const after = log.urls.slice(before);
+    expect(after.some((url) => url.includes('filter='))).toBe(true);
+    expect(after.some((url) => url.startsWith('/api/issues/ENG-2'))).toBe(true);
   });
 });
