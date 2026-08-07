@@ -233,6 +233,28 @@ describe('the label tools carry the team scope through', () => {
     expect((named['label'] as { id: string }).id).toBe(byId.id);
   });
 
+  it('refuses to guess on the issue tools too, not only on the label tools', async () => {
+    const created = await admin.call('create_issue', {
+      team: designKey,
+      title: 'Which regression',
+      labels: ['Regression'],
+    });
+    expect(errorPayload(created).code).toBe('conflict');
+
+    const searched = await admin.call('search_issues', { label: 'Regression' });
+    expect(errorPayload(searched).code).toBe('conflict');
+
+    const rows = await db.select().from(schema.label).where(eq(schema.label.name, 'Regression'));
+    const named = rows.find((row) => row.teamId !== null);
+    if (named === undefined) throw new Error('the team label vanished');
+    const accepted = await admin.result('create_issue', {
+      team: designKey,
+      title: 'That regression',
+      labels: [named.id],
+    });
+    expect((accepted['issue'] as { title: string }).title).toBe('That regression');
+  });
+
   it('refuses a guest every label write', async () => {
     const created = await guest.call('create_label', { name: 'Sneaky' });
     const removed = await guest.call('delete_label', { label: 'Pixel polish' });

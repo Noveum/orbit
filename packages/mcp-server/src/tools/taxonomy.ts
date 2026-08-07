@@ -4,7 +4,6 @@ import {
   createWorkflowState,
   deleteLabel,
   deleteWorkflowState,
-  listLabels,
   listWorkflowStates,
   reorderWorkflowStates,
   updateLabel,
@@ -15,10 +14,9 @@ import {
   DEFAULT_STATE_COLOR,
   STATE_CATEGORIES,
 } from '@orbit/shared/constants';
-import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
-import { resolveStateId, resolveTeam } from '../resolve.ts';
+import { resolveLabelId, resolveStateId, resolveTeam } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
@@ -34,23 +32,6 @@ const labelTeam = z
   .describe(
     'Team key, name or id to restrict the label to. Null or omitted keeps it workspace wide.',
   );
-
-async function resolveLabel(principal: Principal, ref: string): Promise<string> {
-  const needle = ref.trim();
-  const labels = await listLabels(principal, {});
-  const byId = labels.find((label) => label.id === needle);
-  if (byId !== undefined) return byId.id;
-  const lowered = needle.toLowerCase();
-  const byName = labels.filter((label) => label.name.trim().toLowerCase() === lowered);
-  const found = byName[0];
-  if (found === undefined) throw notFound(`No label matches "${ref}".`);
-  if (byName.length > 1) {
-    throw conflict(`More than one label is named "${ref}". Name the one you mean by its id.`, {
-      details: { labelIds: byName.map((label) => label.id) },
-    });
-  }
-  return found.id;
-}
 
 async function labelTeamId(
   principal: Principal,
@@ -109,7 +90,7 @@ function registerLabelTools(server: McpServer, principal: Principal): void {
       },
     },
     async (args) => {
-      const id = await resolveLabel(principal, args.label);
+      const id = await resolveLabelId(principal, args.label);
       const saved = await updateLabel(principal, id, {
         ...(args.name === undefined ? {} : { name: args.name }),
         ...(args.color === undefined ? {} : { color: args.color }),
@@ -137,7 +118,7 @@ function registerLabelTools(server: McpServer, principal: Principal): void {
       inputSchema: { label: labelRef },
     },
     async (args) => {
-      const id = await resolveLabel(principal, args.label);
+      const id = await resolveLabelId(principal, args.label);
       const actions = await deleteLabel(principal, id);
       await publish(actions);
       return { deleted: id };

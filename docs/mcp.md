@@ -132,9 +132,9 @@ them.
 | `search_issues` | read | Search and filter |
 | `list_my_issues` | read | Assigned to the caller |
 | `copy_branch_name` | read | The git branch name for an issue |
-| `create_issue` | write | Create one, returns `ENG-42` |
+| `create_issue` | write | Create one, returns `ENG-42`. Name a label by id when two share a name |
 | `update_issue` | write | Title, description, state, priority, assignee, labels, estimate |
-| `move_issue` | write | Move between states or teams |
+| `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
 | `archive_issue`, `unarchive_issue`, `delete_issue` | write | |

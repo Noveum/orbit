@@ -106,7 +106,15 @@ team, only pushed over realtime to that team, and only attachable to that team's
 issues. Pinning a workspace label to a team also takes it off the issues of every
 other team, so the rule holds for issues that already carried it rather than only
 for the next edit. Widening a team label back to the workspace touches no issue.
+Carrying an issue to another team works the same way round: the labels the new
+team cannot use come off it as it lands, and the workspace-wide ones stay.
 Manage both under **Settings**, **Labels**.
+
+Two labels may share a name when they live in different places, a workspace
+`Regression` alongside a team `Regression`. The API and the settings screen take
+ids, so that is unambiguous, but a name given to an MCP tool is not: when more
+than one label answers to it, the tool refuses and lists the ids rather than
+picking one.
 
 ## Workflow states
 
