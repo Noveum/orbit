@@ -212,7 +212,7 @@ describe('DeltaBridge root invalidation', () => {
     expect(seen).toEqual([[DOCS_ROOT], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']]);
   });
 
-  it('refreshes the counts and the milestone counts for an issue delta it patches in place', () => {
+  it('refreshes the counts and the milestone counts for an issue delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
