@@ -2,27 +2,40 @@
 
 import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 import { sprintLabel } from '@orbit/shared/utils';
+import { X } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { DueDateField } from './due-date-field.tsx';
+import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { PropertyMenu } from './property-menu.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
-type MenuKey = 'status' | 'priority' | 'assignee' | 'project' | 'cycle' | 'labels' | 'estimate';
+type MenuKey =
+  | 'status'
+  | 'priority'
+  | 'assignee'
+  | 'project'
+  | 'cycle'
+  | 'labels'
+  | 'estimate'
+  | 'dueDate'
+  | 'parent';
 
 const rowClassName =
   'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-dense text-text transition-colors duration-[var(--duration-fast)] hover:bg-surface-2';
 
 export interface IssuePropertiesProps {
   readonly issue: Issue;
+  readonly parent?: Issue | null;
 }
 
-export function IssueProperties({ issue }: IssuePropertiesProps) {
+export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
@@ -37,6 +50,8 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
   const teamLabels = workspace.labels.filter(
     (label) => label.teamId === null || label.teamId === issue.teamId,
   );
+  const parentLabel =
+    issue.parentId === null ? 'No parent' : (parent?.identifier ?? 'Parent issue');
 
   const patch = (values: Parameters<typeof update.mutate>[0]['patch']) => {
     update.mutate({ issue, patch: values });
@@ -71,6 +86,11 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
   });
   useHotkey('shift+e', () => setOpenMenu('estimate'), {
     label: 'Change estimate',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('shift+d', () => setOpenMenu('dueDate'), {
+    label: 'Change due date',
     section: 'Issues',
     scope: 'issues',
   });
@@ -221,6 +241,44 @@ export function IssueProperties({ issue }: IssuePropertiesProps) {
             {project?.name ?? 'No project'}
           </button>
         </PropertyMenu>
+      </PropertyRow>
+
+      <PropertyRow label="Due date" shortcut="shift+d">
+        <DueDateField
+          value={issue.dueDate}
+          open={openMenu === 'dueDate'}
+          onOpenChange={toggle('dueDate')}
+          onChange={(dueDate) => patch({ dueDate })}
+          triggerClassName={rowClassName}
+        />
+      </PropertyRow>
+
+      <PropertyRow label="Parent">
+        <div className="flex items-center gap-1">
+          <IssuePicker
+            open={openMenu === 'parent'}
+            onOpenChange={toggle('parent')}
+            excludedIds={[issue.id, ...(issue.parentId === null ? [] : [issue.parentId])]}
+            testId="parent-picker"
+            placeholder="Search for a parent issue"
+            onPick={(picked) => patch({ parentId: picked.id })}
+          >
+            <button type="button" className={rowClassName} data-testid="property-parent">
+              {parentLabel}
+            </button>
+          </IssuePicker>
+          {issue.parentId === null ? null : (
+            <button
+              type="button"
+              aria-label="Clear parent"
+              data-testid="clear-parent"
+              onClick={() => patch({ parentId: null })}
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </PropertyRow>
 
       <PropertyRow label="Sprint">

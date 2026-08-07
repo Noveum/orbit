@@ -25,6 +25,7 @@ import {
 } from '@/lib/query/use-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
 import { CommentComposer } from './comment-composer.tsx';
+import { type CommentUploads, usePendingCommentFiles } from './comment-uploads.ts';
 
 const QUICK_EMOJI = ['👍', '🎉', '🚀', '👀', '❤️'] as const;
 
@@ -54,12 +55,31 @@ export interface CommentThreadProps {
 
 export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
   const create = useCreateComment(issueId);
+  const update = useUpdateComment(issueId);
+  const files = usePendingCommentFiles();
   const memberById = new Map(members.map((member) => [member.id, member]));
   useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
   const timeline = buildTimeline(activity, comments);
   const repliesOf = (parentId: string) =>
     comments.filter((entry) => entry.comment.parentId === parentId);
+
+  const post = (body: string, parentId: string | null) => {
+    create.mutate(
+      { body, parentId },
+      {
+        onSuccess: (created) => {
+          files
+            .settle(created.comment.id, body)
+            .then((rewritten) => {
+              if (rewritten === null) return;
+              update.mutate({ id: created.comment.id, body: rewritten });
+            })
+            .catch(() => undefined);
+        },
+      },
+    );
+  };
 
   return (
     <section className="flex flex-col gap-4" data-testid="comment-thread">
@@ -74,6 +94,8 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                 entry={item.comment}
                 author={memberById.get(item.comment.comment.authorId)}
                 members={members}
+                files={files}
+                onReply={post}
               />
               <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4 empty:hidden">
                 {repliesOf(item.comment.comment.id).map((reply) => (
@@ -83,6 +105,8 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                     entry={reply}
                     author={memberById.get(reply.comment.authorId)}
                     members={members}
+                    files={files}
+                    onReply={post}
                     isReply
                   />
                 ))}
@@ -95,7 +119,8 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
       <CommentComposer
         members={members}
         pending={create.isPending}
-        onSubmit={(body) => create.mutate({ body, parentId: null })}
+        onUpload={files.hold}
+        onSubmit={(body) => post(body, null)}
       />
     </section>
   );
@@ -122,15 +147,24 @@ interface CommentItemProps {
   readonly entry: Comment;
   readonly author: Member | undefined;
   readonly members: readonly Member[];
+  readonly files: CommentUploads;
+  readonly onReply: (body: string, parentId: string) => void;
   readonly isReply?: boolean;
 }
 
-function CommentItem({ issueId, entry, author, members, isReply = false }: CommentItemProps) {
+function CommentItem({
+  issueId,
+  entry,
+  author,
+  members,
+  files,
+  onReply,
+  isReply = false,
+}: CommentItemProps) {
   const currentUserId = useCurrentUserId();
   const react = useToggleReaction(issueId);
   const update = useUpdateComment(issueId);
   const remove = useDeleteComment(issueId);
-  const createReply = useCreateComment(issueId);
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -161,6 +195,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
             submitLabel="Save"
             autoFocus
             onCancel={() => setEditing(false)}
+            onUpload={async (file) => await files.upload(entry.comment.id, file)}
             onSubmit={(body) => {
               update.mutate({ id: entry.comment.id, body });
               setEditing(false);
@@ -247,8 +282,9 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
             submitLabel="Reply"
             autoFocus
             onCancel={() => setReplying(false)}
+            onUpload={files.hold}
             onSubmit={(body) => {
-              createReply.mutate({ body, parentId: entry.comment.id });
+              onReply(body, entry.comment.id);
               setReplying(false);
             }}
           />
