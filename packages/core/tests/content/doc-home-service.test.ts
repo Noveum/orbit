@@ -37,13 +37,31 @@ async function visitedAtOf(userId: string, docId: string): Promise<Date> {
   return row.visitedAt;
 }
 
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.now() - minutes * 60_000);
+}
+
+async function backdateVisit(docId: string, visitedAt: Date): Promise<Date> {
+  await db
+    .update(schema.recentVisit)
+    .set({ visitedAt })
+    .where(eq(schema.recentVisit.entityId, docId));
+  return visitedAt;
+}
+
+async function backdateDoc(docId: string, updatedAt: Date): Promise<void> {
+  await db.update(schema.doc).set({ updatedAt }).where(eq(schema.doc.id, docId));
+}
+
 describe('recordDocVisit', () => {
   it('lists what you opened, most recent first', async () => {
     const first = await newDoc('Runbook');
     const second = await newDoc('Postmortem');
 
     await recordDocVisit(workspace.admin, first.id);
+    await backdateVisit(first.id, minutesAgo(10));
     await recordDocVisit(workspace.admin, second.id);
+    await backdateVisit(second.id, minutesAgo(5));
 
     const recent = await listRecentDocs(workspace.admin, 10);
     expect(recent.map((entry) => entry.title)).toEqual(['Postmortem', 'Runbook']);
@@ -55,7 +73,9 @@ describe('recordDocVisit', () => {
 
     await recordDocVisit(workspace.admin, first.id);
     await recordDocVisit(workspace.admin, second.id);
-    const before = await visitedAtOf(workspace.admin.userId, first.id);
+    await backdateVisit(second.id, minutesAgo(5));
+    const before = await backdateVisit(first.id, minutesAgo(10));
+
     await recordDocVisit(workspace.admin, first.id);
 
     const recent = await listRecentDocs(workspace.admin, 10);
@@ -174,6 +194,8 @@ describe('docsHome', () => {
   it('answers with recents, favourites and what changed, newest change first', async () => {
     const runbook = await newDoc('Runbook');
     const postmortem = await newDoc('Postmortem');
+    await backdateDoc(runbook.id, minutesAgo(10));
+    await backdateDoc(postmortem.id, minutesAgo(5));
     await recordDocVisit(workspace.admin, runbook.id);
     await setDocFavorite(workspace.admin, postmortem.id, { favorite: true });
 
