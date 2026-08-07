@@ -1069,6 +1069,58 @@ export async function archiveDoc(
   });
 }
 
+export interface DeletedDoc {
+  readonly promoted: DocRow[];
+  readonly actions: SyncAction[];
+}
+
+export async function deleteDoc(principal: Principal, docId: string): Promise<DeletedDoc> {
+  assertCan(principal, 'doc:write');
+
+  return await db.transaction(async (tx) => {
+    const current = await loadReadableDoc(tx, principal, docId);
+    if (principal.role !== 'admin' && current.authorId !== principal.userId) {
+      throw forbidden('Only the author or an admin can delete a doc for good.');
+    }
+
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const promoted = await tx
+      .update(schema.doc)
+      .set({ parentId: current.parentId, updatedAt: new Date(), syncId })
+      .where(eq(schema.doc.parentId, docId))
+      .returning();
+
+    await tx
+      .delete(schema.attachment)
+      .where(and(eq(schema.attachment.parentType, 'doc'), eq(schema.attachment.parentId, docId)));
+    await tx
+      .delete(schema.favorite)
+      .where(and(eq(schema.favorite.entityType, 'doc'), eq(schema.favorite.entityId, docId)));
+    await tx
+      .delete(schema.recentVisit)
+      .where(and(eq(schema.recentVisit.entityType, 'doc'), eq(schema.recentVisit.entityId, docId)));
+    await tx.delete(schema.doc).where(eq(schema.doc.id, docId));
+
+    return {
+      promoted,
+      actions: [
+        buildSyncAction({
+          syncId,
+          organizationId: current.organizationId,
+          scopes: docScopes(current),
+          action: 'delete',
+          model: 'doc',
+          modelId: docId,
+          data: { id: docId, collectionId: current.collectionId, projectId: current.projectId },
+          actor,
+        }),
+        ...promoted.map((row) => docAction(row, syncId, actor, 'update')),
+      ],
+    };
+  });
+}
+
 export interface SharedDoc extends SavedDoc {
   readonly publishToken: string | null;
 }
