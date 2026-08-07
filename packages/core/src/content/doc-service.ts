@@ -15,13 +15,18 @@ import {
 } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import type { DocAccessLevel } from '@orbit/shared/constants';
-import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
+import {
+  isExternallyShared,
+  isRestricted,
+  REBALANCE_THRESHOLD,
+  SORT_ORDER_STEP,
+} from '@orbit/shared/constants';
 import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, can, canReadDoc } from '@orbit/shared/policy';
-import { docUrl, slugify, truncate } from '@orbit/shared/utils';
+import { docUrl, slugify, sortOrderBetween, truncate } from '@orbit/shared/utils';
 import {
   DOC_TITLE_LIMIT,
   docAccessSetSchema,
@@ -30,6 +35,7 @@ import {
   docCreateSchema,
   docDuplicateSchema,
   docFilterSchema,
+  docMoveSchema,
   docShareSchema,
   docUpdateSchema,
 } from '@orbit/shared/validators';
@@ -346,6 +352,236 @@ async function assertPlacement(
   }
 }
 
+export interface DocPlacement {
+  readonly collectionId: string | null;
+  readonly projectId: string | null;
+  readonly parentId: string | null;
+}
+
+export interface DocPlacementPatch {
+  readonly collectionId?: string | null | undefined;
+  readonly projectId?: string | null | undefined;
+  readonly parentId?: string | null | undefined;
+}
+
+export function placementOf(row: Pick<DocRow, keyof DocPlacement>): DocPlacement {
+  return {
+    collectionId: row.collectionId,
+    projectId: row.projectId,
+    parentId: row.parentId,
+  };
+}
+
+export function touchesPlacement(patch: DocPlacementPatch): boolean {
+  return (
+    patch.collectionId !== undefined ||
+    patch.projectId !== undefined ||
+    patch.parentId !== undefined
+  );
+}
+
+export function samePlacement(left: DocPlacement, right: DocPlacement): boolean {
+  return (
+    left.collectionId === right.collectionId &&
+    left.projectId === right.projectId &&
+    left.parentId === right.parentId
+  );
+}
+
+async function resolvePlacement(
+  executor: Executor,
+  principal: Principal,
+  current: DocPlacement,
+  patch: DocPlacementPatch,
+): Promise<DocPlacement> {
+  if (patch.parentId !== undefined && patch.parentId !== null) {
+    const [parent] = await executor
+      .select({
+        collectionId: schema.doc.collectionId,
+        projectId: schema.doc.projectId,
+      })
+      .from(schema.doc)
+      .where(
+        and(
+          eq(schema.doc.id, patch.parentId),
+          eq(schema.doc.organizationId, principal.organizationId),
+        ),
+      )
+      .limit(1);
+    const home = requireRow(parent, 'That parent doc does not exist.');
+    return { collectionId: home.collectionId, projectId: home.projectId, parentId: patch.parentId };
+  }
+
+  const collectionId = patch.collectionId === undefined ? current.collectionId : patch.collectionId;
+  const projectId = patch.projectId === undefined ? current.projectId : patch.projectId;
+  const parentId = patch.parentId === undefined ? current.parentId : null;
+  if (parentId === null) return { collectionId, projectId, parentId };
+
+  const [parent] = await executor
+    .select({ collectionId: schema.doc.collectionId, projectId: schema.doc.projectId })
+    .from(schema.doc)
+    .where(
+      and(eq(schema.doc.id, parentId), eq(schema.doc.organizationId, principal.organizationId)),
+    )
+    .limit(1);
+  if (parent === undefined) return { collectionId, projectId, parentId: null };
+  const stays = parent.collectionId === collectionId && parent.projectId === projectId;
+  return { collectionId, projectId, parentId: stays ? parentId : null };
+}
+
+async function adoptDescendants(
+  executor: Executor,
+  organizationId: string,
+  docId: string,
+  placement: DocPlacement,
+  syncId: number,
+): Promise<DocRow[]> {
+  return await executor
+    .update(schema.doc)
+    .set({
+      collectionId: placement.collectionId,
+      projectId: placement.projectId,
+      updatedAt: new Date(),
+      syncId,
+    })
+    .where(
+      and(
+        eq(schema.doc.organizationId, organizationId),
+        sql`${schema.doc.id} in (
+          with recursive subtree as (
+            select id from doc
+            where parent_id = ${docId} and organization_id = ${organizationId}
+            union all
+            select child.id from doc child
+            join subtree on child.parent_id = subtree.id
+            where child.organization_id = ${organizationId}
+          )
+          select id from subtree
+        )`,
+      ),
+    )
+    .returning();
+}
+
+async function nextSiblingOrder(
+  executor: Executor,
+  organizationId: string,
+  placement: DocPlacement,
+): Promise<number> {
+  const [row] = await executor
+    .select({ last: sql<number | null>`max(${schema.doc.sortOrder})` })
+    .from(schema.doc)
+    .where(and(eq(schema.doc.organizationId, organizationId), ...siblingFilters(placement)));
+  return (row?.last ?? 0) + SORT_ORDER_STEP;
+}
+
+function siblingFilters(placement: DocPlacement): SQL[] {
+  return [
+    placement.collectionId === null
+      ? isNull(schema.doc.collectionId)
+      : eq(schema.doc.collectionId, placement.collectionId),
+    placement.projectId === null
+      ? isNull(schema.doc.projectId)
+      : eq(schema.doc.projectId, placement.projectId),
+    placement.parentId === null
+      ? isNull(schema.doc.parentId)
+      : eq(schema.doc.parentId, placement.parentId),
+  ];
+}
+
+async function orderOf(executor: Executor, docId: string | null): Promise<number | null> {
+  if (docId === null) return null;
+  const [row] = await executor
+    .select({ sortOrder: schema.doc.sortOrder })
+    .from(schema.doc)
+    .where(eq(schema.doc.id, docId))
+    .limit(1);
+  return row?.sortOrder ?? null;
+}
+
+async function rebalanceSiblings(
+  executor: Executor,
+  organizationId: string,
+  placement: DocPlacement,
+  syncId: number,
+): Promise<DocRow[]> {
+  const rows = await executor
+    .select({ id: schema.doc.id })
+    .from(schema.doc)
+    .where(and(eq(schema.doc.organizationId, organizationId), ...siblingFilters(placement)))
+    .orderBy(asc(schema.doc.sortOrder), asc(schema.doc.createdAt));
+
+  const updated: DocRow[] = [];
+  for (const [index, row] of rows.entries()) {
+    const [next] = await executor
+      .update(schema.doc)
+      .set({ sortOrder: (index + 1) * SORT_ORDER_STEP, syncId })
+      .where(eq(schema.doc.id, row.id))
+      .returning();
+    if (next !== undefined) updated.push(next);
+  }
+  return updated;
+}
+
+export interface MovedDoc extends SavedDoc {
+  readonly moved: DocRow[];
+}
+
+export async function moveDoc(
+  principal: Principal,
+  docId: string,
+  input: unknown,
+): Promise<MovedDoc> {
+  assertCan(principal, 'doc:write');
+  const parsed = docMoveSchema.parse(input);
+
+  return await db.transaction(async (tx) => {
+    const current = await loadReadableDoc(tx, principal, docId);
+    await assertDocWritable(tx, principal, current);
+    if (current.archivedAt !== null) throw conflict('That doc is archived.');
+    await assertPlacement(tx, principal, parsed, docId);
+
+    const placement = await resolvePlacement(tx, principal, placementOf(current), parsed);
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+
+    let before = await orderOf(tx, parsed.beforeId);
+    let after = await orderOf(tx, parsed.afterId);
+    let rebalanced: DocRow[] = [];
+    if (before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD) {
+      rebalanced = await rebalanceSiblings(tx, principal.organizationId, placement, syncId);
+      before = await orderOf(tx, parsed.beforeId);
+      after = await orderOf(tx, parsed.afterId);
+    }
+
+    const [saved] = await tx
+      .update(schema.doc)
+      .set({
+        ...placement,
+        sortOrder: sortOrderBetween(before, after),
+        updatedAt: new Date(),
+        syncId,
+      })
+      .where(eq(schema.doc.id, docId))
+      .returning();
+    const doc = requireRow(saved, 'That doc does not exist.');
+
+    const descendants = samePlacement(placement, placementOf(current))
+      ? []
+      : await adoptDescendants(tx, principal.organizationId, docId, placement, syncId);
+
+    const moved = [...rebalanced.filter((row) => row.id !== doc.id), ...descendants];
+    return {
+      doc,
+      moved,
+      actions: [
+        docAction(doc, syncId, actor, 'update'),
+        ...moved.map((row) => docAction(row, syncId, actor, 'update')),
+      ],
+    };
+  });
+}
+
 export interface DocListRow extends Omit<DocRow, 'content'> {
   readonly content: string;
   readonly excerpt: string;
@@ -405,7 +641,7 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
 
   const order =
     term === null
-      ? [desc(schema.doc.updatedAt)]
+      ? [asc(schema.doc.sortOrder), desc(schema.doc.updatedAt)]
       : [desc(titleMatchExpression(term)), desc(schema.doc.updatedAt)];
 
   return await db
@@ -422,7 +658,7 @@ export async function listDocCollections(principal: Principal): Promise<DocColle
     .select()
     .from(schema.docCollection)
     .where(eq(schema.docCollection.organizationId, principal.organizationId))
-    .orderBy(asc(schema.docCollection.name));
+    .orderBy(asc(schema.docCollection.position), asc(schema.docCollection.name));
 }
 
 async function attachmentsFor(docId: string): Promise<AttachmentRow[]> {
@@ -550,6 +786,12 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
 
   return await db.transaction(async (tx) => {
     await assertPlacement(tx, principal, parsed);
+    const placement = await resolvePlacement(
+      tx,
+      principal,
+      { collectionId: null, projectId: null, parentId: null },
+      parsed,
+    );
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [created] = await tx
@@ -557,12 +799,11 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
       .values({
         id: newId(),
         organizationId: principal.organizationId,
-        collectionId: parsed.collectionId,
-        projectId: parsed.projectId,
-        parentId: parsed.parentId,
+        ...placement,
         title: parsed.title,
         slug: docSlug(parsed.title),
         content: parsed.content,
+        sortOrder: await nextSiblingOrder(tx, principal.organizationId, placement),
         visibility: parsed.visibility,
         publishToken: tokenFor(parsed.visibility, null),
         authorId: principal.userId,
@@ -624,6 +865,7 @@ export async function duplicateDoc(
         title,
         slug: docSlug(title),
         content: source.content,
+        sortOrder: source.sortOrder + SORT_ORDER_STEP / 2,
         visibility: copyVisibility(source.visibility),
         publishToken: null,
         authorId: principal.userId,
@@ -703,12 +945,19 @@ export async function updateDoc(
     assertMayWiden(principal, current, parsed.visibility);
     await assertPlacement(tx, principal, parsed, docId);
 
+    const placement = touchesPlacement(parsed)
+      ? await resolvePlacement(tx, principal, placementOf(current), parsed)
+      : placementOf(current);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [saved] = await tx
       .update(schema.doc)
       .set({
         ...parsed,
+        ...placement,
+        ...(samePlacement(placement, placementOf(current))
+          ? {}
+          : { sortOrder: await nextSiblingOrder(tx, principal.organizationId, placement) }),
         ...(current.slug.length === 0 ? { slug: docSlug(parsed.title ?? current.title) } : {}),
         ...(parsed.visibility === undefined
           ? {}
@@ -723,6 +972,10 @@ export async function updateDoc(
       await snapshotVersion(tx, principal, doc, null);
     }
 
+    const descendants = samePlacement(placement, placementOf(current))
+      ? []
+      : await adoptDescendants(tx, principal.organizationId, docId, placement, syncId);
+
     const notifications = await docMentionNotifications(
       tx,
       principal,
@@ -731,7 +984,14 @@ export async function updateDoc(
       actor,
     );
 
-    return { doc, actions: [docAction(doc, syncId, actor, 'update'), ...notifications] };
+    return {
+      doc,
+      actions: [
+        docAction(doc, syncId, actor, 'update'),
+        ...descendants.map((row) => docAction(row, syncId, actor, 'update')),
+        ...notifications,
+      ],
+    };
   });
 }
 
@@ -858,6 +1118,10 @@ export async function createDocCollection(
   return await db.transaction(async (tx) => {
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const [last] = await tx
+      .select({ position: sql<number | null>`max(${schema.docCollection.position})` })
+      .from(schema.docCollection)
+      .where(eq(schema.docCollection.organizationId, principal.organizationId));
     const [created] = await tx
       .insert(schema.docCollection)
       .values({
@@ -865,6 +1129,7 @@ export async function createDocCollection(
         organizationId: principal.organizationId,
         name: parsed.name,
         icon: parsed.icon,
+        position: (last?.position ?? 0) + SORT_ORDER_STEP,
         syncId,
       })
       .returning();

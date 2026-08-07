@@ -34,6 +34,14 @@ export const docDuplicateSchema = z.object({
   title: z.string().trim().min(1).max(DOC_TITLE_LIMIT).optional(),
 });
 
+export const docMoveSchema = z.object({
+  collectionId: idSchema.nullable().optional(),
+  projectId: idSchema.nullable().optional(),
+  parentId: idSchema.nullable().optional(),
+  beforeId: idSchema.nullable().default(null),
+  afterId: idSchema.nullable().default(null),
+});
+
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),
   rotateToken: z.boolean().default(false),
@@ -74,6 +82,7 @@ export const docCollectionUpdateSchema = docCollectionCreateSchema.partial();
 
 export type DocCreateInput = z.infer<typeof docCreateSchema>;
 export type DocUpdateInput = z.infer<typeof docUpdateSchema>;
+export type DocMoveInput = z.infer<typeof docMoveSchema>;
 export type DocFilterInput = z.infer<typeof docFilterSchema>;
 export type DocHomeInput = z.infer<typeof docHomeSchema>;
 export type DocCollectionCreateInput = z.infer<typeof docCollectionCreateSchema>;

@@ -867,11 +867,14 @@ describe('the access level a doc reports is the level the write path enforces', 
 describe('duplicateDoc', () => {
   it('copies the body and placement under a copy title owned by the duplicator', async () => {
     const { collection } = await createDocCollection(workspace.admin, { name: 'Playbooks' });
-    const { doc: parent } = await createDoc(workspace.admin, { title: 'Parent', content: 'Top.' });
+    const { doc: parent } = await createDoc(workspace.admin, {
+      title: 'Parent',
+      content: 'Top.',
+      collectionId: collection.id,
+    });
     const { doc: source } = await createDoc(workspace.admin, {
       title: 'Incident runbook',
       content: '# Incident runbook\n\nPage the on call.',
-      collectionId: collection.id,
       parentId: parent.id,
     });
     const other = await addMember(workspace, 'member', { name: 'Mo Member' });

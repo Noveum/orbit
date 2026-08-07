@@ -1,6 +1,10 @@
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { type IssueRelationType, SORT_ORDER_STEP } from '@orbit/shared/constants';
+import {
+  type IssueRelationType,
+  REBALANCE_THRESHOLD,
+  SORT_ORDER_STEP,
+} from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -47,7 +51,7 @@ export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
-export const REBALANCE_THRESHOLD = 0.0001;
+export { REBALANCE_THRESHOLD };
 
 export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
   blocks: 'blocked_by',
