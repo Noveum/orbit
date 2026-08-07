@@ -170,6 +170,27 @@ describe('usePendingCommentFiles', () => {
     expect(presign?.body).toMatchObject({ parentType: 'comment', parentId: 'comment_reply' });
   });
 
+  it('lets the held bytes go when the comment is never created', async () => {
+    stubFetch();
+    const revoked: string[] = [];
+    const revoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (url: string) => {
+      revoked.push(url);
+    };
+    try {
+      const { result } = renderHook(() => usePendingCommentFiles(), { wrapper });
+
+      const held = await result.current.hold(textFile());
+      const draft = result.current.draft(`See [trace.log](${held.url})`);
+      draft.release();
+
+      expect(revoked).toEqual([held.url]);
+      expect(sent).toHaveLength(0);
+    } finally {
+      URL.revokeObjectURL = revoke;
+    }
+  });
+
   it('uploads straight to an existing comment when one is being edited', async () => {
     stubFetch();
     globalThis.XMLHttpRequest = FakeUpload as unknown as typeof XMLHttpRequest;

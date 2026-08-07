@@ -92,6 +92,7 @@ function NewComment({
             })
             .catch(() => undefined);
         },
+        onError: () => draft.release(),
       },
     );
     onCancel?.();

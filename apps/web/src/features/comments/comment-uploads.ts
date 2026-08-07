@@ -16,6 +16,7 @@ import { messageOf } from '@/lib/query/fetcher.ts';
 export interface CommentDraft {
   readonly body: string;
   readonly settle: (commentId: string) => Promise<string | null>;
+  readonly release: () => void;
 }
 
 export interface CommentUploads {
@@ -66,11 +67,14 @@ export function usePendingCommentFiles(): CommentUploads {
     (body: string): CommentDraft => {
       const pending = held.current;
       held.current = [];
-      if (pending.length === 0) return { body, settle: () => Promise.resolve(null) };
+      if (pending.length === 0) {
+        return { body, settle: () => Promise.resolve(null), release: () => undefined };
+      }
 
       const stripped = withoutPlaceholders(body, pending);
       return {
         body: stripped,
+        release: () => releasePending(pending),
         settle: async (commentId: string): Promise<string | null> => {
           const outcome = await attachPending(
             body,
