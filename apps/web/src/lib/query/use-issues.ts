@@ -18,6 +18,7 @@ import {
   assignedSearch,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
+  EMPTY_ISSUE_SCOPE,
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
@@ -60,6 +61,7 @@ export {
   assignedSearch,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
+  EMPTY_ISSUE_SCOPE,
   ISSUE_PAGE_SIZE,
   issueSearch,
 };
@@ -202,8 +204,12 @@ export function useAssignedIssues(userId: string | null, query?: IssueQuery) {
   });
 }
 
-export function useAllIssues(query: IssueQuery = ALL_ISSUES_QUERY, enabled = true) {
-  const search = allIssuesSearch(query);
+export function useAllIssues(
+  query: IssueQuery = ALL_ISSUES_QUERY,
+  scope: Readonly<Record<string, string>> = EMPTY_ISSUE_SCOPE,
+  enabled = true,
+) {
+  const search = allIssuesSearch(query, scope);
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.allIssues(search), search),
     enabled,
