@@ -20,7 +20,7 @@ import type {
   FilterNode,
   RelativeDate,
 } from '@orbit/shared/filters';
-import { resolveRelativeRange, UNSET_FILTER_VALUE } from '@orbit/shared/filters';
+import { NAMED_DATE_VALUES, resolveRelativeRange, UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import type { AnyColumn, SQL } from 'drizzle-orm';
 import { addUtcDays } from '../internal.ts';
 
@@ -245,8 +245,6 @@ function dayBounds(column: AnyColumn, from: string | null, to: string | null): S
   if (to !== null) parts.push(sql`${column}::date <= ${to}::date`);
   return allOf(parts);
 }
-
-const NAMED_DATE_VALUES = ['none', 'any', 'overdue', 'today', 'this_week'] as const;
 
 function namedDateClause(
   property: DateProperty,

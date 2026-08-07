@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
+import type { VirtualViewId } from '@orbit/shared/filters';
+import { VIRTUAL_VIEW_IDS, virtualViewState } from '@orbit/shared/filters';
 import {
   addMember,
   createWorkspace,
@@ -8,6 +10,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
+import { createIssue, listIssues } from '../../src/work/issue-service.ts';
 import { createView, deleteView, listViews, updateView } from '../../src/work/view-service.ts';
 
 let workspace: Workspace;
@@ -96,5 +99,67 @@ describe('a saved view only reaches the people who can open it', () => {
     const forTheOwner = actions.filter((action) => action.action !== 'delete');
     expect(forTheOwner).toHaveLength(1);
     expect(forTheOwner[0]?.scopes).toEqual([scopes.user(workspace.admin.userId)]);
+  });
+});
+
+describe('the built-in views select the issues they promise', () => {
+  async function issueNamed(
+    title: string,
+    overrides: Record<string, unknown> = {},
+  ): Promise<string> {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title,
+      ...overrides,
+    });
+    return issue.id;
+  }
+
+  function stateFor(id: VirtualViewId) {
+    return virtualViewState(id, workspace.admin.userId);
+  }
+
+  async function titlesFor(id: VirtualViewId): Promise<string[]> {
+    const page = await listIssues(workspace.admin, { filter: stateFor(id).filter });
+    return page.issues.map((issue) => issue.title).sort();
+  }
+
+  it('keeps only issues with nobody assigned in the unassigned view', async () => {
+    const { user: teammate } = await addMember(workspace, 'member', { name: 'Teammate' });
+    await issueNamed('Nobody owns this');
+    await issueNamed('Someone owns this', { assigneeId: teammate.id });
+
+    expect(await titlesFor('virtual:unassigned')).toEqual(['Nobody owns this']);
+  });
+
+  it('keeps only issues whose due date has passed in the overdue view', async () => {
+    await issueNamed('Late', { dueDate: '2020-01-01' });
+    await issueNamed('Not due for ages', { dueDate: '2999-01-01' });
+    await issueNamed('No due date at all');
+
+    expect(await titlesFor('virtual:overdue')).toEqual(['Late']);
+  });
+
+  it('keeps every issue in the all issues view and only mine in the assigned view', async () => {
+    const { user: teammate } = await addMember(workspace, 'member', { name: 'Teammate' });
+    await issueNamed('Mine', { assigneeId: workspace.admin.userId });
+    await issueNamed('Theirs', { assigneeId: teammate.id });
+
+    expect(await titlesFor('virtual:all')).toEqual(['Mine', 'Theirs']);
+    expect(await titlesFor('virtual:assigned')).toEqual(['Mine']);
+  });
+
+  it('offers every built-in to a brand new workspace with nothing saved', async () => {
+    const listed = await listViews(workspace.admin);
+    expect(listed.filter((view) => view.virtual).map((view) => view.id)).toEqual([
+      ...VIRTUAL_VIEW_IDS,
+    ]);
+    expect(listed.filter((view) => !view.virtual)).toHaveLength(0);
+  });
+
+  it('hides finished work from the triage built-ins so they stay actionable', () => {
+    expect(stateFor('virtual:unassigned').display.showCompleted).toBe('none');
+    expect(stateFor('virtual:overdue').display.showCompleted).toBe('none');
+    expect(stateFor('virtual:all').display.showCompleted).toBe('all');
   });
 });
