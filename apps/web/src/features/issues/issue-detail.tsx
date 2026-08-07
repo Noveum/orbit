@@ -14,7 +14,7 @@ import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 import { uploadAttachment } from '@/features/docs/upload.ts';
 import { useAutosave } from '@/features/docs/use-autosave.ts';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
-import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, ownsKeyboardLayer, useHotkey } from '@/lib/keyboard/index.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
 import type { Issue, Member, Team } from '@/lib/query/schemas.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
@@ -183,10 +183,14 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
     if (issue !== undefined) router.push(teamIssuesPath(teams, issue.teamId));
   }, [onDeleted, router, teams, issue]);
 
-  const askToDelete = useCallback(() => {
-    if (issue === undefined) return;
-    deletion?.request({ issues: [issue], onDeleted: leave });
-  }, [deletion, issue, leave]);
+  const askToDelete = useCallback(
+    (event: KeyboardEvent) => {
+      if (ownsKeyboardLayer(event.target)) return;
+      if (issue === undefined) return;
+      deletion?.request({ issues: [issue], onDeleted: leave });
+    },
+    [deletion, issue, leave],
+  );
 
   useHotkey(DELETE_ISSUE_BINDING, askToDelete, {
     label: 'Delete issue',

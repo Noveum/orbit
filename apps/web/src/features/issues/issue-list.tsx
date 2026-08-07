@@ -218,6 +218,7 @@ export function IssueList({
     DELETE_ISSUE_BINDING,
     (event) => {
       if (ownsKeyboardLayer(event.target)) return;
+      if (deletionTargets.length === 0) return;
       deletion?.request({ issues: deletionTargets, onDeleted: () => setSelected([]) });
     },
     {
@@ -225,7 +226,7 @@ export function IssueList({
       section: 'Issues',
       scope: 'issues',
       priority: HOTKEY_PRIORITY.surface,
-      enabled: peekId === null && deletion?.allowed === true,
+      enabled: peekId === null && deletion?.allowed === true && deletionTargets.length > 0,
     },
   );
   useHotkey(
