@@ -40,6 +40,18 @@ function stubFetch(docs: readonly unknown[] = [hit]): string[] {
   return urls;
 }
 
+function stubFetchPerTerm(byTerm: Readonly<Record<string, string>>): void {
+  globalThis.fetch = mock((input: string | URL | Request) => {
+    const asked = new URL(String(input), 'http://localhost').searchParams.get('query') ?? '';
+    const id = byTerm[asked];
+    const docs = id === undefined ? [] : [{ ...hit, id }];
+    return new Response(JSON.stringify({ docs, collections: [], projects: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+}
+
 function wrapper(client: QueryClient) {
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -79,6 +91,48 @@ describe('useDocSearch', () => {
 
     view.rerender({ term: 'quorum' });
     await waitFor(() => expect(urls.length).toBe(1));
+  });
+
+  it('stops offering the earlier term hits the moment the typed term moves on', async () => {
+    stubFetchPerTerm({ quorum: 'doc_quorum', handshake: 'doc_handshake' });
+    const view = renderHook(({ term }) => useDocSearch(term), {
+      wrapper: wrapper(newClient()),
+      initialProps: { term: 'quorum' },
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.docs.map((doc) => doc.id)).toEqual(['doc_quorum']),
+    );
+
+    view.rerender({ term: 'handshake' });
+
+    expect(view.result.current.docs).toEqual([]);
+    expect(view.result.current.searching).toBe(true);
+
+    await waitFor(() =>
+      expect(view.result.current.docs.map((doc) => doc.id)).toEqual(['doc_handshake']),
+    );
+  });
+
+  it('withholds an already cached answer that belongs to a term nobody is looking at', async () => {
+    stubFetchPerTerm({ quorum: 'doc_quorum', handshake: 'doc_handshake' });
+    const client = newClient();
+    const view = renderHook(({ term }) => useDocSearch(term), {
+      wrapper: wrapper(client),
+      initialProps: { term: 'quorum' },
+    });
+
+    await waitFor(() =>
+      expect(view.result.current.docs.map((doc) => doc.id)).toEqual(['doc_quorum']),
+    );
+    view.rerender({ term: 'handshake' });
+    await waitFor(() =>
+      expect(view.result.current.docs.map((doc) => doc.id)).toEqual(['doc_handshake']),
+    );
+
+    view.rerender({ term: 'quorum' });
+
+    expect(view.result.current.docs).toEqual([]);
   });
 
   it('reports nothing at all once the term drops back below the threshold', async () => {
