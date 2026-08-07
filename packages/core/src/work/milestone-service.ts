@@ -4,7 +4,11 @@ import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { milestoneCreateSchema, milestoneUpdateSchema } from '@orbit/shared/validators';
+import {
+  milestoneCreateSchema,
+  milestoneOrderSchema,
+  milestoneUpdateSchema,
+} from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -186,9 +190,10 @@ export async function listMilestones(
 export async function reorderMilestones(
   principal: Principal,
   projectId: string,
-  orderedMilestoneIds: readonly string[],
+  input: readonly string[],
 ): Promise<{ milestones: MilestoneRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'milestone:manage');
+  const orderedMilestoneIds = milestoneOrderSchema.parse(input);
   if (orderedMilestoneIds.length === 0) throw conflict('Provide the milestones to reorder.');
 
   return await db.transaction(async (tx) => {

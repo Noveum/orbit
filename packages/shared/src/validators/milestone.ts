@@ -15,3 +15,9 @@ export const milestoneUpdateSchema = z
     targetDate: z.coerce.date().nullable(),
   })
   .partial();
+
+export const milestoneOrderSchema = z.array(idSchema).max(200);
+
+export const milestoneReorderSchema = z.object({
+  milestoneIds: milestoneOrderSchema,
+});
