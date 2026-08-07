@@ -85,6 +85,12 @@ beforeEach(() => {
     ...workspaceProvider,
     useWorkspace: () => workspaceFixture(),
   }));
+  mock.module('@/lib/query/use-issue-search.ts', () => ({
+    useIssueSearch: () => ({
+      issues: [issue({ id: 'issue_9', identifier: 'ENG-9', title: 'The parent to be' })],
+      searching: false,
+    }),
+  }));
   mock.module('@/lib/query/use-issues.ts', () => ({
     ...issuesQuery,
     useBootstrap: () => ({ data: undefined }),
@@ -292,5 +298,35 @@ describe('SubIssues', () => {
 
     expect(screen.getByText('Child work')).toBeInTheDocument();
     expect(screen.getByText('ENG-2')).toBeInTheDocument();
+  });
+});
+
+describe('choosing an issue from a picker', () => {
+  it('sets the parent to the issue that was picked', async () => {
+    render(
+      <HotkeyProvider>
+        <IssueProperties issue={issue()} />
+      </HotkeyProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('property-parent'));
+    fireEvent.click(await screen.findByTestId('parent-picker-option-ENG-9'));
+
+    await waitFor(() => expect(patched).toHaveLength(1));
+    expect(patched[0]).toEqual({ parentId: 'issue_9' });
+  });
+
+  it('makes the picked issue a child, rather than repointing the issue being viewed', async () => {
+    render(
+      <HotkeyProvider>
+        <SubIssues issue={issue()} subIssues={[]} />
+      </HotkeyProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('link-sub-issue'));
+    fireEvent.click(await screen.findByTestId('sub-issue-picker-option-ENG-9'));
+
+    await waitFor(() => expect(patched).toHaveLength(1));
+    expect(patched[0]).toEqual({ parentId: 'issue_1' });
   });
 });
