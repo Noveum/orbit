@@ -28,6 +28,7 @@ function buildWorkspace(): WorkspaceData {
   return {
     ready: true,
     userId: 'user-1',
+    role: 'admin',
     teams: [
       { id: 'team-ai', name: 'AI', key: 'AI', icon: 'circle', color: '#5b6cf9' },
       { id: 'team-eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#f95b6c' },
