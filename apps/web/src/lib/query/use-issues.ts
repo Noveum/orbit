@@ -541,7 +541,7 @@ function dropFromIssueDetails(client: QueryClient, removed: ReadonlySet<string>)
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;
     if (removed.has(detail.issue.id)) {
-      client.removeQueries({ queryKey: key, exact: true });
+      client.resetQueries({ queryKey: key, exact: true });
       continue;
     }
     let next = detail;

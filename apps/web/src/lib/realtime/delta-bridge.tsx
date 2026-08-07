@@ -113,7 +113,7 @@ function forgetDeletedIssue(client: QueryClient, issueId: string): void {
     const current = query.state.data as IssueDetail | undefined;
     if (current === undefined) continue;
     if (current.issue.id === issueId) {
-      client.removeQueries({ queryKey: query.queryKey, exact: true });
+      client.resetQueries({ queryKey: query.queryKey, exact: true });
       continue;
     }
     const trimmed = withoutSubIssue(current, issueId);
