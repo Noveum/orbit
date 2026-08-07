@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { docFavoriteSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 const coreModule = await import('@orbit/core');
@@ -62,7 +63,8 @@ mock.module('@orbit/core', () => ({
   },
   setDocFavorite: (_principal: Principal, docId: string, input: unknown) => {
     favoriteCalls.push({ docId, input });
-    return Promise.resolve({ docId, favorite: true, actions: [favoriteAction] });
+    const { favorite } = docFavoriteSchema.parse(input);
+    return Promise.resolve({ docId, favorite, actions: [favoriteAction] });
   },
   publishDeltas: (actions: SyncAction[]) => {
     published.push(actions);
@@ -155,6 +157,19 @@ describe('POST /api/docs/[id]/visit', () => {
 
     expect(response.status).toBe(403);
   });
+
+  it('turns away an id no doc could carry before the service is asked', async () => {
+    const statuses: number[] = [];
+    for (const id of ['', 'd'.repeat(65)]) {
+      const response = await VISIT(new Request('http://localhost:3000/api/docs/x/visit'), {
+        params: Promise.resolve({ id }),
+      });
+      statuses.push(response.status);
+    }
+
+    expect(statuses).toEqual([404, 404]);
+    expect(visitCalls).toEqual([]);
+  });
 });
 
 describe('POST /api/docs/[id]/favorite', () => {
@@ -170,5 +185,36 @@ describe('POST /api/docs/[id]/favorite', () => {
     expect(response.status).toBe(200);
     expect(favoriteCalls).toEqual([{ docId: 'doc_1', input: { favorite: true } }]);
     expect(published).toEqual([[favoriteAction]]);
+  });
+
+  it('turns away an id no doc could carry before the service is asked', async () => {
+    const statuses: number[] = [];
+    for (const id of ['', 'd'.repeat(65)]) {
+      const response = await FAVORITE(
+        new Request('http://localhost:3000/api/docs/x/favorite', {
+          method: 'POST',
+          body: JSON.stringify({ favorite: true }),
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      statuses.push(response.status);
+    }
+
+    expect(statuses).toEqual([404, 404]);
+    expect(favoriteCalls).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  it('reports a body the validator rejects as a 422, not as a server fault', async () => {
+    const response = await FAVORITE(
+      new Request('http://localhost:3000/api/docs/doc_1/favorite', {
+        method: 'POST',
+        body: JSON.stringify({ favorite: 'yes' }),
+      }),
+      { params: Promise.resolve({ id: 'doc_1' }) },
+    );
+
+    expect(response.status).toBe(422);
+    expect(published).toEqual([]);
   });
 });
