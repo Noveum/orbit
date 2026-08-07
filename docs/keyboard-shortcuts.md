@@ -75,6 +75,7 @@ Selecting several issues and then pressing <kbd>s</kbd>, <kbd>p</kbd>,
 | <kbd>a</kbd> | Assign |
 | <kbd>l</kbd> | Change labels |
 | <kbd>i</kbd> | Change project |
+| <kbd>m</kbd> | Change milestone |
 | <kbd>Shift</kbd> <kbd>e</kbd> | Change estimate |
 
 Each opens a menu you then drive with the keyboard, so `a` then a few letters of

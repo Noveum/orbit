@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { ZodError } from 'zod';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -137,6 +138,18 @@ describe('milestone project relationship invariant', () => {
     const listed = await listMilestones(workspace.admin, projectId);
     expect(listed.map((row) => row.name)).toEqual(['Three', 'One', 'Two']);
     expect(new Set(listed.map((row) => row.sortOrder)).size).toBe(3);
+  });
+
+  it('refuses an order carrying something that is not an id', async () => {
+    const projectId = await newProject('Validated');
+    await createMilestone(workspace.admin, { projectId, name: 'Only' });
+
+    await expect(
+      reorderMilestones(workspace.admin, projectId, ['x'.repeat(65)]),
+    ).rejects.toBeInstanceOf(ZodError);
+    await expect(
+      reorderMilestones(workspace.admin, projectId, [42 as unknown as string]),
+    ).rejects.toBeInstanceOf(ZodError);
   });
 
   it('refuses a milestone on a project outside the organization', async () => {

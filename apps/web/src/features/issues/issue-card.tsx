@@ -5,9 +5,11 @@ import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
+import { revealOnCardHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
+import { IssueActionsMenu } from './issue-actions.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 
@@ -53,7 +55,7 @@ export function IssueCard({
       onFocusCapture={warm}
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(
-        'relative flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
+        'group/card relative flex select-none flex-col gap-2 rounded-lg border border-border bg-surface p-2.5',
         'transition-[transform,box-shadow,opacity,background-color,border-color] ease-[var(--ease-standard)] motion-reduce:transition-none',
         'duration-[var(--duration-instant)] hover:duration-[var(--duration-base)]',
         'hover:border-border-strong hover:bg-surface-2',
@@ -69,14 +71,14 @@ export function IssueCard({
             {issue.identifier}
           </span>
         ) : null}
-        {shows('estimate') && issue.estimate !== null ? (
-          <span
-            data-numeric
-            className="ml-auto rounded-sm bg-surface-2 px-1 py-px text-2xs text-muted"
-          >
-            {issue.estimate}
-          </span>
-        ) : null}
+        <span className="ml-auto flex items-center gap-1.5">
+          {shows('estimate') && issue.estimate !== null ? (
+            <span data-numeric className="rounded-sm bg-surface-2 px-1 py-px text-2xs text-muted">
+              {issue.estimate}
+            </span>
+          ) : null}
+          {dragging ? null : <IssueActionsMenu issue={issue} className={revealOnCardHover} />}
+        </span>
       </div>
 
       <IssueLink

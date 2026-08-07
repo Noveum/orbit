@@ -681,7 +681,7 @@ async function assertMilestoneInTeam(
   if (milestone.organizationId !== organizationId) {
     throw validationFailed('That milestone belongs to another workspace.');
   }
-  if (projectId !== undefined && projectId !== null && projectId !== milestone.projectId) {
+  if (projectId !== undefined && projectId !== milestone.projectId) {
     throw validationFailed('That milestone belongs to another project.');
   }
   const teams = await projectTeamIds(executor, milestone.projectId);
@@ -723,6 +723,7 @@ async function assertAssignableToTeam(
   organizationId: string,
   teamId: string,
   values: Pick<IssueValues, 'cycleId' | 'projectId' | 'milestoneId'>,
+  currentProjectId?: string | null,
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
@@ -732,7 +733,8 @@ async function assertAssignableToTeam(
     await assertProjectInTeam(executor, organizationId, teamId, projectId);
   }
   if (milestoneId !== undefined && milestoneId !== null) {
-    await assertMilestoneInTeam(executor, organizationId, teamId, milestoneId, projectId);
+    const onProject = projectId === undefined ? currentProjectId : projectId;
+    await assertMilestoneInTeam(executor, organizationId, teamId, milestoneId, onProject);
   }
 }
 
@@ -885,7 +887,13 @@ async function applyIssueUpdates(
       Object.assign(values, applyStateTimestamps(current, state.category, now));
     }
     await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
-    await assertAssignableToTeam(tx, principal.organizationId, current.teamId, values);
+    await assertAssignableToTeam(
+      tx,
+      principal.organizationId,
+      current.teamId,
+      values,
+      current.projectId,
+    );
     pending.push({ current, values, changes });
   }
 
@@ -1336,8 +1344,17 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    await tx.update(schema.issue).set({ parentId: null }).where(eq(schema.issue.parentId, issueId));
+    const orphaned = await tx
+      .update(schema.issue)
+      .set({ parentId: null, updatedAt: new Date(), syncId })
+      .where(eq(schema.issue.parentId, issueId))
+      .returning();
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
+
+    const labels = await labelsByIssue(
+      tx,
+      orphaned.map((child) => child.id),
+    );
 
     return [
       buildSyncAction({
@@ -1350,6 +1367,9 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
         data: { id: issueId, teamId: current.teamId, identifier: current.identifier },
         actor,
       }),
+      ...orphaned.map((child) =>
+        issueAction(child, syncId, actor, 'update', labels.get(child.id) ?? []),
+      ),
     ];
   });
 }

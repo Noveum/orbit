@@ -138,6 +138,7 @@ function buildWorkspace(): WorkspaceData {
   return {
     ready: true,
     userId: 'me',
+    role: 'admin',
     teams: [
       { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5b6cf9' },
       { id: 'team_des', name: 'Design', key: 'DES', icon: 'circle', color: '#f95b6c' },

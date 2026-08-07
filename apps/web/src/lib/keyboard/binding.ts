@@ -128,6 +128,14 @@ export function activatesFocusedControl(event: KeyEventLike, target: EventTarget
   return target.closest(ACTIVATION_CONTROLS) !== null;
 }
 
+const LAYER_SURFACES =
+  '[role="menu"], [role="menuitem"], [role="dialog"], [role="alertdialog"], [role="listbox"]';
+
+export function ownsKeyboardLayer(target: EventTarget | null): boolean {
+  if (target === null || !(target instanceof Element)) return false;
+  return target.closest(LAYER_SURFACES) !== null;
+}
+
 export function formatBinding(binding: string): string[] {
   return binding
     .trim()
