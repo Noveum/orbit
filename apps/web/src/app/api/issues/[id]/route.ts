@@ -9,7 +9,7 @@ import {
 } from '@orbit/core';
 import { db } from '@orbit/db';
 import { renderMarkdown } from '@orbit/services/markdown';
-import { paginationSchema } from '@orbit/shared/validators';
+import { issueRefSchema, paginationSchema } from '@orbit/shared/validators';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 import { attachLabels } from '@/lib/api/issues.ts';
 
@@ -63,8 +63,8 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
 export async function DELETE(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params;
   return await handle(async (principal) => {
-    const actions = await deleteIssue(principal, id);
-    await publish(actions);
-    return { deleted: true };
+    const issue = await getIssue(principal, issueRefSchema.parse(id));
+    await publish(await deleteIssue(principal, issue.id));
+    return { deleted: { id: issue.id, identifier: issue.identifier } };
   });
 }

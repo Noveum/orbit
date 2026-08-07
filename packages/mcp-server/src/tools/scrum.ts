@@ -13,6 +13,7 @@ import {
   type MilestoneRow,
   openBlockers,
   openStandup,
+  reorderMilestones,
   resolveBlocker,
   type StandupDetail,
   setRotation,
@@ -25,7 +26,7 @@ import {
 } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
-import { resolveProject, resolveTeam, resolveUserId } from '../resolve.ts';
+import { resolveMilestone, resolveProject, resolveTeam, resolveUserId } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
 const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or team id.');
@@ -478,6 +479,35 @@ function registerMilestoneTools(server: McpServer, principal: Principal): void {
       });
       await publish(result.actions);
       return { milestone: milestoneView(result.milestone) };
+    },
+  );
+
+  defineTool(
+    server,
+    {
+      name: 'reorder_milestones',
+      title: 'Reorder the milestones on a project',
+      description:
+        'Put the milestones of a project into the order given. The list has to name every milestone on the project exactly once, so read them with list_milestones first.',
+      readOnly: false,
+      inputSchema: {
+        project: z.string().min(1).describe('Project name, slug, or id.'),
+        milestones: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Every milestone on the project, by name or id, in the order you want.'),
+      },
+    },
+    async (input) => {
+      const projectId = (await resolveProject(principal, input.project)).id;
+      const ordered: string[] = [];
+      for (const ref of input.milestones) {
+        ordered.push((await resolveMilestone(principal, projectId, ref)).id);
+      }
+      const result = await reorderMilestones(principal, projectId, ordered);
+      await publish(result.actions);
+      return { milestones: result.milestones.map(milestoneView) };
     },
   );
 }

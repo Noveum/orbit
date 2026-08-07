@@ -22,6 +22,7 @@ interface IssueShape {
   readonly priority: string;
   readonly assignee: string | null;
   readonly cycleId: string | null;
+  readonly milestoneId: string | null;
 }
 
 interface DeltaShape {
@@ -75,6 +76,7 @@ describe('discovery', () => {
     expect(names).toContain('run_standup');
     expect(names).toContain('complete_cycle');
     expect(names).toContain('create_milestone');
+    expect(names).toContain('reorder_milestones');
 
     expect(names).toContain('create_doc');
     expect(names).toContain('update_doc');
@@ -383,6 +385,141 @@ describe('planning', () => {
   it('lists cycles for a team', async () => {
     const payload = await admin.result('list_cycles', { team: workspace.teamKey });
     expect((payload['cycles'] as unknown[]).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+interface MilestoneShape {
+  readonly id: string;
+  readonly name: string;
+  readonly projectId: string;
+}
+
+function milestonesOf(payload: Record<string, unknown>): MilestoneShape[] {
+  return payload['milestones'] as MilestoneShape[];
+}
+
+describe('milestones over mcp', () => {
+  async function projectWithMilestones(
+    name: string,
+    milestoneNames: readonly string[],
+  ): Promise<string> {
+    await admin.result('create_project', { name, teams: [workspace.teamKey] });
+    for (const milestoneName of milestoneNames) {
+      await admin.result('create_milestone', { project: name, name: milestoneName });
+    }
+    return name;
+  }
+
+  it('reorders the milestones of a project by name', async () => {
+    const project = await projectWithMilestones('Reordered launch', ['One', 'Two', 'Three']);
+
+    const reordered = await admin.result('reorder_milestones', {
+      project,
+      milestones: ['Three', 'One', 'Two'],
+    });
+
+    expect(milestonesOf(reordered).map((row) => row.name)).toEqual(['Three', 'One', 'Two']);
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['Three', 'One', 'Two']);
+  });
+
+  it('refuses an order that leaves one of the milestones out', async () => {
+    const project = await projectWithMilestones('Partial order', ['Alpha', 'Beta']);
+
+    const failed = await admin.call('reorder_milestones', { project, milestones: ['Alpha'] });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('conflict');
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('refuses a guest, whose role cannot manage milestones', async () => {
+    const project = await projectWithMilestones('Guarded order', ['First', 'Second']);
+
+    const created = await guest.call('create_milestone', { project, name: 'Guest milestone' });
+    const reordered = await guest.call('reorder_milestones', {
+      project,
+      milestones: ['Second', 'First'],
+    });
+
+    expect(created.isError).toBe(true);
+    expect(errorPayload(created).code).toBe('forbidden');
+    expect(reordered.isError).toBe(true);
+    expect(errorPayload(reordered).code).toBe('forbidden');
+    const listed = await admin.result('list_milestones', { project });
+    expect(milestonesOf(listed).map((row) => row.name)).toEqual(['First', 'Second']);
+  });
+
+  it('puts an issue on a milestone of its own project and takes it back off', async () => {
+    const project = await projectWithMilestones('Milestone bearing', ['Cut over']);
+    const issue = await newIssue('Do the cut over', { project });
+    const listed = milestonesOf(await admin.result('list_milestones', { project }));
+    const target = listed[0];
+    if (target === undefined) throw new Error('missing seeded milestone');
+
+    const attached = await admin.result('update_issue', {
+      issue: issue.identifier,
+      project,
+      milestone: 'Cut over',
+    });
+    expect(attached['changed']).toContain('milestoneId');
+    expect(issueOf(attached).milestoneId).toBe(target.id);
+
+    const detached = await admin.result('update_issue', {
+      issue: issue.identifier,
+      milestone: null,
+    });
+    expect(issueOf(detached).milestoneId).toBeNull();
+  });
+
+  it('refuses a milestone that belongs to another project', async () => {
+    const here = await projectWithMilestones('Milestone here', ['Ours']);
+    await projectWithMilestones('Milestone elsewhere', ['Theirs']);
+    const issue = await newIssue('Cross project attempt', { project: here });
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Theirs',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('not_found');
+  });
+
+  it('refuses a name that two milestones on the project share, rather than guessing', async () => {
+    const project = await projectWithMilestones('Twice named', ['Cut over', 'Cut over']);
+    const listed = milestonesOf(await admin.result('list_milestones', { project }));
+    const [first, second] = listed;
+    if (first === undefined || second === undefined) throw new Error('missing seeded milestones');
+    const issue = await newIssue('Ambiguous target', { project });
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Cut over',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('conflict');
+
+    const resolved = await admin.result('update_issue', {
+      issue: issue.identifier,
+      milestone: second.id,
+    });
+    expect(issueOf(resolved).milestoneId).toBe(second.id);
+  });
+
+  it('refuses a milestone on an issue that is on no project', async () => {
+    await projectWithMilestones('Unreachable milestone', ['Orphaned']);
+    const issue = await newIssue('No project at all');
+
+    const failed = await admin.call('update_issue', {
+      issue: issue.identifier,
+      milestone: 'Orphaned',
+    });
+
+    expect(failed.isError).toBe(true);
+    expect(errorPayload(failed).code).toBe('validation_failed');
   });
 });
 

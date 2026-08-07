@@ -144,6 +144,9 @@ export const LINK_FILTER_LABELS: Record<LinkFilterValue, string> = {
 
 export const MILESTONE_FILTER_VALUES = ['any', 'none'] as const;
 
+export const NAMED_DATE_VALUES = ['none', 'any', 'overdue', 'today', 'this_week'] as const;
+export type NamedDateValue = (typeof NAMED_DATE_VALUES)[number];
+
 export const RELATIVE_UNITS = ['day', 'week', 'month'] as const;
 export type RelativeUnit = (typeof RELATIVE_UNITS)[number];
 
@@ -625,7 +628,7 @@ export type ViewVisibility = (typeof VIEW_VISIBILITIES)[number];
 
 export const VIEW_VISIBILITY_LABELS: Record<ViewVisibility, string> = {
   private: 'Only me',
-  team: 'My teams',
+  team: 'Everyone on the team',
   workspace: 'Everyone in the workspace',
 };
 
@@ -661,6 +664,8 @@ export const VIRTUAL_VIEW_IDS = [
   'virtual:assigned',
   'virtual:created',
   'virtual:subscribed',
+  'virtual:unassigned',
+  'virtual:overdue',
   'virtual:standup',
 ] as const;
 
@@ -675,7 +680,19 @@ export const VIRTUAL_VIEW_NAMES: Record<VirtualViewId, string> = {
   'virtual:assigned': 'Assigned to me',
   'virtual:created': 'Created by me',
   'virtual:subscribed': 'Subscribed',
+  'virtual:unassigned': 'Unassigned',
+  'virtual:overdue': 'Overdue',
   'virtual:standup': 'Standup',
+};
+
+export const VIRTUAL_VIEW_DESCRIPTIONS: Record<VirtualViewId, string> = {
+  'virtual:all': 'Every issue in the workspace.',
+  'virtual:assigned': 'Issues assigned to you, across every team.',
+  'virtual:created': 'Issues you opened.',
+  'virtual:subscribed': 'Issues you follow.',
+  'virtual:unassigned': 'Open issues nobody owns yet.',
+  'virtual:overdue': 'Open issues whose due date has passed.',
+  'virtual:standup': 'What moved since yesterday, grouped by project.',
 };
 
 const VIRTUAL_VIEW_PROPERTIES: Partial<Record<VirtualViewId, FilterProperty>> = {
@@ -684,15 +701,33 @@ const VIRTUAL_VIEW_PROPERTIES: Partial<Record<VirtualViewId, FilterProperty>> = 
   'virtual:subscribed': 'subscriber',
 };
 
+function onlyCondition(condition: FilterCondition): FilterGroup {
+  return { kind: 'group', combinator: 'and', children: [condition] };
+}
+
+function openIssuesOnly(state: ViewState): ViewState {
+  return { ...state, display: { ...state.display, showCompleted: 'none' } };
+}
+
 export function virtualViewState(id: VirtualViewId, userId: string): ViewState {
   const base = defaultViewState('list');
   if (id === 'virtual:standup') return { ...base, groupBy: 'project' };
+  if (id === 'virtual:unassigned') {
+    return openIssuesOnly({
+      ...base,
+      filter: onlyCondition(inCondition('assignee', [UNSET_FILTER_VALUE])),
+    });
+  }
+  if (id === 'virtual:overdue') {
+    return openIssuesOnly({
+      ...base,
+      filter: onlyCondition(inCondition('due', ['overdue'])),
+      orderBy: 'due',
+    });
+  }
   const property = VIRTUAL_VIEW_PROPERTIES[id];
   if (property === undefined) return base;
-  return {
-    ...base,
-    filter: { kind: 'group', combinator: 'and', children: [inCondition(property, [userId])] },
-  };
+  return { ...base, filter: onlyCondition(inCondition(property, [userId])) };
 }
 
 function comparableViewState(state: ViewState) {

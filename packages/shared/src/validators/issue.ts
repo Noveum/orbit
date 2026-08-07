@@ -93,6 +93,8 @@ export const issueRelationSchema = z.object({
 
 export const issueSubscribeSchema = z.object({ subscribed: z.boolean().default(true) });
 
+export const issueRefSchema = z.string().trim().min(1).max(128);
+
 export type IssueCreateInput = z.infer<typeof issueCreateSchema>;
 export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;

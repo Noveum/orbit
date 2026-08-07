@@ -1,10 +1,12 @@
 'use client';
 
 import { PRIORITIES } from '@orbit/shared/constants';
-import { X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
+import { dangerAction } from '@/lib/interaction.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { useIssueDeletion } from './issue-deletion.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { PropertyMenu } from './property-menu.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -18,6 +20,7 @@ export interface BulkEditBarProps {
 
 export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
   const update = useUpdateIssue();
+  const deletion = useIssueDeletion();
   const { members } = useWorkspace();
 
   const applyToAll = (patch: Parameters<typeof update.mutate>[0]['patch']) => {
@@ -81,10 +84,25 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
         </Button>
       </PropertyMenu>
 
-      <Button size="sm" variant="ghost" className="ml-auto" onClick={onClear}>
-        <X className="size-3.5" aria-hidden="true" />
-        Clear
-      </Button>
+      <div className="ml-auto flex items-center gap-1">
+        {deletion?.allowed === true ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className={dangerAction}
+            data-testid="bulk-delete-issues"
+            onClick={() => deletion.request({ issues, onDeleted: onClear })}
+          >
+            <Trash2 className="size-3.5" aria-hidden="true" />
+            Delete
+          </Button>
+        ) : null}
+
+        <Button size="sm" variant="ghost" onClick={onClear}>
+          <X className="size-3.5" aria-hidden="true" />
+          Clear
+        </Button>
+      </div>
     </div>
   );
 }

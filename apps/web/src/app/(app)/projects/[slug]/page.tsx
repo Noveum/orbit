@@ -1,21 +1,12 @@
+import { can } from '@orbit/shared/policy';
 import { notFound } from 'next/navigation';
-import { ProgressBar } from '@/features/charts/donut.tsx';
 import { findProjectDetail } from '@/features/projects/data.ts';
+import { MilestoneBoard } from '@/features/projects/milestone-board.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
-import { cn } from '@/lib/cn.ts';
-import { cardHover } from '@/lib/interaction.ts';
+import type { Milestone } from '@/lib/query/schemas.ts';
 
 interface PageProps {
   readonly params: Promise<{ slug: string }>;
-}
-
-function formatDate(value: string | null): string {
-  if (value === null) return 'Not set';
-  return new Date(value).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
 }
 
 export default async function ProjectOverviewPage({ params }: PageProps) {
@@ -23,6 +14,17 @@ export default async function ProjectOverviewPage({ params }: PageProps) {
   const { principal } = await pageContext();
   const detail = await findProjectDetail(principal, slug);
   if (detail === null) notFound();
+
+  const milestones: Milestone[] = detail.milestones.map((milestone) => ({
+    id: milestone.id,
+    projectId: milestone.projectId,
+    name: milestone.name,
+    description: milestone.description,
+    targetDate: milestone.targetDate,
+    sortOrder: milestone.sortOrder,
+    scope: milestone.scope,
+    completed: milestone.completed,
+  }));
 
   return (
     <>
@@ -33,36 +35,11 @@ export default async function ProjectOverviewPage({ params }: PageProps) {
         </section>
       )}
 
-      <section className="flex flex-col gap-3">
-        <h2 className="font-medium text-dense text-text">Milestones</h2>
-        {detail.milestones.length === 0 ? (
-          <p className="text-faint text-xs">No milestones yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {detail.milestones.map((milestone) => (
-              <li
-                key={milestone.id}
-                className={cn('flex flex-col gap-2 rounded-lg border border-border p-3', cardHover)}
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-dense text-text">{milestone.name}</span>
-                  <span className="text-2xs text-faint tabular">
-                    {milestone.completed}/{milestone.scope} · {formatDate(milestone.targetDate)}
-                  </span>
-                </div>
-                {milestone.description.length === 0 ? null : (
-                  <p className="text-muted text-xs">{milestone.description}</p>
-                )}
-                <ProgressBar
-                  completed={milestone.completed}
-                  scope={milestone.scope}
-                  label={`${milestone.name} completion`}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <MilestoneBoard
+        projectId={detail.summary.id}
+        milestones={milestones}
+        canManage={can(principal, 'milestone:manage')}
+      />
     </>
   );
 }

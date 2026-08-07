@@ -17,6 +17,7 @@ import type { ViewControls } from '../../../src/features/filters/view-controls.t
 const workspace: WorkspaceData = {
   ready: true,
   userId: 'user-1',
+  role: 'admin',
   teams: [{ id: 'team-1', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
   states: [
     {
@@ -99,13 +100,20 @@ function groupOf(...conditions: FilterCondition[]): FilterGroup {
   return { kind: 'group', combinator: 'and', children: conditions };
 }
 
-function renderBar(conditions: readonly FilterCondition[] = []) {
+interface BarScope {
+  readonly id: string | null;
+  readonly name: string;
+}
+
+const ENGINEERING: BarScope = { id: 'team-1', name: 'Engineering' };
+
+function renderBar(conditions: readonly FilterCondition[] = [], scope: BarScope = ENGINEERING) {
   const config: ViewConfig = { ...defaultViewConfig('list'), filter: groupOf(...conditions) };
   render(
     <Providers>
       <FilterBar
-        teamId="team-1"
-        teamName="Engineering"
+        teamId={scope.id}
+        teamName={scope.name}
         layout="list"
         config={config}
         onChange={onChange}
@@ -198,6 +206,29 @@ describe('filter hotkeys', () => {
     expect(screen.getByTestId('save-view-name')).toHaveValue('Engineering: Aditi Rao');
     expect(screen.getByTestId('save-view-visibility-workspace')).toBeInTheDocument();
     expect(screen.getByTestId('save-view-locked')).toBeInTheDocument();
+  });
+});
+
+describe('who a saved view is shared with', () => {
+  it('names the team a view on a team page would go to', async () => {
+    const user = userEvent.setup();
+    renderBar();
+
+    await user.keyboard('{Alt>}v{/Alt}');
+    await waitFor(() => expect(screen.getByTestId('save-view-dialog')).toBeInTheDocument());
+    expect(screen.getByLabelText('Everyone on Engineering')).toBe(
+      screen.getByTestId('save-view-visibility-team'),
+    );
+  });
+
+  it('offers no team audience where no team is in scope', async () => {
+    const user = userEvent.setup();
+    renderBar([], { id: null, name: 'All issues' });
+
+    await user.keyboard('{Alt>}v{/Alt}');
+    await waitFor(() => expect(screen.getByTestId('save-view-dialog')).toBeInTheDocument());
+    expect(screen.queryByTestId('save-view-visibility-team')).not.toBeInTheDocument();
+    expect(screen.getByTestId('save-view-visibility-workspace')).toBeInTheDocument();
   });
 });
 

@@ -1,8 +1,8 @@
 # Concepts
 
 The vocabulary Orbit uses, and what each thing is actually for. If you have used
-Linear or Jira most of this will be familiar, and the places where Orbit differs
-are called out.
+any other issue tracker most of this will be familiar, and the places where
+Orbit differs are called out.
 
 ## Workspace
 

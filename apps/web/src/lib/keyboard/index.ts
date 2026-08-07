@@ -9,6 +9,7 @@ export {
   isModifierKey,
   type KeyEventLike,
   normalizeKey,
+  ownsKeyboardLayer,
   parseBinding,
   pruneBuffer,
   SEQUENCE_TIMEOUT_MS,

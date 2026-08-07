@@ -150,6 +150,7 @@ them.
 | `create_project`, `update_project` | write | |
 | `archive_project`, `delete_project` | write | |
 | `create_milestone`, `update_milestone`, `delete_milestone` | write | |
+| `reorder_milestones` | write | The whole order of a project milestones |
 
 ### Sprints and cycles
 
