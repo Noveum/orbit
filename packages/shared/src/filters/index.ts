@@ -659,13 +659,104 @@ export const viewStateSchema = z.object({
 
 export type ViewState = z.infer<typeof viewStateSchema>;
 
+export const FILTER_GROUP_KEYS: readonly string[] = ['kind', 'combinator', 'children'];
+
+export const FILTER_CONDITION_KEYS: readonly string[] = [
+  'kind',
+  'property',
+  'negate',
+  'operator',
+  'value',
+  'values',
+  'from',
+  'to',
+  'relative',
+];
+
+export const FILTER_NODE_KEYS: readonly string[] = [
+  ...FILTER_GROUP_KEYS,
+  ...FILTER_CONDITION_KEYS.filter((key) => !FILTER_GROUP_KEYS.includes(key)),
+];
+
+export function filterNodeKeys(node: unknown): readonly string[] {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return FILTER_NODE_KEYS;
+  const kind = (node as { kind?: unknown }).kind;
+  if (kind === 'group') return FILTER_GROUP_KEYS;
+  if (kind === 'condition') return FILTER_CONDITION_KEYS;
+  return FILTER_NODE_KEYS;
+}
+
+function collectStrayFilterKeys(node: unknown, path: string, found: string[]): void {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return;
+  const allowed = filterNodeKeys(node);
+  for (const [key, value] of Object.entries(node)) {
+    const at = path.length === 0 ? key : `${path}.${key}`;
+    if (!allowed.includes(key)) {
+      found.push(at);
+      continue;
+    }
+    if (key !== 'children' || !Array.isArray(value)) continue;
+    for (const [index, child] of value.entries()) {
+      collectStrayFilterKeys(child, `${at}[${index}]`, found);
+    }
+  }
+}
+
+export function strayFilterKeys(node: unknown): string[] {
+  const found: string[] = [];
+  collectStrayFilterKeys(node, '', found);
+  return found;
+}
+
+export const filterGroupWriteSchema = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    const stray = strayFilterKeys(value);
+    if (stray.length === 0) return;
+    ctx.addIssue({
+      code: 'custom',
+      message: `A saved filter does not store ${stray.join(', ')}. Send conditions under children.`,
+    });
+  })
+  .pipe(filterGroupSchema);
+
+export const viewStateWriteSchema = z.strictObject({
+  ...viewStateSchema.shape,
+  filter: filterGroupWriteSchema.default(emptyFilterGroup()),
+  display: z.strictObject(displayOptionsSchema.shape).default(displayOptionsSchema.parse({})),
+});
+
 export function defaultViewState(layout: ViewLayoutMode = 'list'): ViewState {
   return viewStateSchema.parse({ layout, display: defaultDisplayOptions(layout) });
 }
 
+const MAX_JSON_UNWRAP = 4;
+
+function unwrapEncodedJson(raw: unknown): unknown {
+  let current = raw;
+  for (let attempt = 0; attempt < MAX_JSON_UNWRAP && typeof current === 'string'; attempt += 1) {
+    try {
+      current = JSON.parse(current);
+    } catch {
+      return current;
+    }
+  }
+  return current;
+}
+
+export interface StoredViewState {
+  readonly state: ViewState;
+  readonly readable: boolean;
+}
+
+export function readViewState(raw: unknown, layout: ViewLayoutMode = 'list'): StoredViewState {
+  const parsed = viewStateSchema.safeParse(unwrapEncodedJson(raw));
+  if (parsed.success) return { state: parsed.data, readable: true };
+  return { state: defaultViewState(layout), readable: false };
+}
+
 export function viewStateFrom(raw: unknown, layout: ViewLayoutMode = 'list'): ViewState {
-  const parsed = viewStateSchema.safeParse(raw);
-  return parsed.success ? parsed.data : defaultViewState(layout);
+  return readViewState(raw, layout).state;
 }
 
 export const VIRTUAL_VIEW_IDS = [

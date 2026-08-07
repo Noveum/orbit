@@ -20,9 +20,10 @@ import { Board } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
-import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { viewLayoutMode } from '@/features/views/view-href.ts';
+import type { ResolvedViewScope } from '@/features/views/view-scope.ts';
+import { resolveViewScope } from '@/features/views/view-scope.ts';
 import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useAllIssues } from '@/lib/query/use-issues.ts';
@@ -49,24 +50,19 @@ export function SavedViewPage({ viewId }: SavedViewPageProps) {
   return <SavedViewBody key={view.id} view={view} />;
 }
 
-export function scopeRecord(view: View): Record<string, string> {
-  const scope: Record<string, string> = {};
-  if (view.filter.teamId !== null) scope['teamId'] = view.filter.teamId;
-  if (view.filter.projectId !== null) scope['projectId'] = view.filter.projectId;
-  return scope;
+export function viewPageOf(scope: ResolvedViewScope): ViewPage {
+  return scope.project === null ? 'saved_view' : 'project';
 }
 
-export function scopeLabelOf(view: View, workspace: WorkspaceData): string {
-  const project = workspace.projects.find((entry) => entry.id === view.filter.projectId);
-  if (project !== undefined) return project.name;
-  const team = workspace.teams.find((entry) => entry.id === view.filter.teamId);
-  if (team !== undefined) return team.name;
-  return 'Workspace';
-}
+const UNREADABLE_HINT =
+  'Orbit could not read what this view stored, so it is showing the defaults. Save it again to replace them.';
 
-export function viewPageOf(view: View): ViewPage {
-  if (view.filter.projectId !== null) return 'project';
-  return 'saved_view';
+function UnreadableNotice() {
+  return (
+    <Badge tone="danger" data-testid="view-unreadable" title={UNREADABLE_HINT}>
+      Saved settings could not be read
+    </Badge>
+  );
 }
 
 function SavedViewBody({ view }: { view: View }) {
@@ -79,30 +75,27 @@ function SavedViewBody({ view }: { view: View }) {
     setLayout(viewLayoutMode(view.layout));
   }, [view.layout]);
 
-  const page = viewPageOf(view);
+  const scope = useMemo(() => resolveViewScope(view, workspace), [view, workspace]);
+  const page = viewPageOf(scope);
   const config = useMemo(
     () => applyCapabilities(edited ?? viewConfigFromState(view.filter), page, layout),
     [edited, view.filter, page, layout],
   );
   const controls = useProvideViewControls(page, layout, config);
 
-  const scope = useMemo(() => scopeRecord(view), [view]);
-  const issues = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, scope);
+  const issues = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, scope.query);
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
 
   const model = useIssueViewModel({
-    teamId: view.filter.teamId,
+    teamId: scope.team?.id ?? null,
     config,
     issues: rows,
     scopeToTeam: false,
-    scope,
+    scope: scope.query,
   });
 
-  const scopeLabel = scopeLabelOf(view, workspace);
-  const pending = viewConfigToState(config, layout, {
-    teamId: view.filter.teamId,
-    projectId: view.filter.projectId,
-  });
+  const stored = { teamId: view.filter.teamId, projectId: view.filter.projectId };
+  const pending = viewConfigToState(config, layout, stored);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="saved-view-page">
@@ -111,17 +104,22 @@ function SavedViewBody({ view }: { view: View }) {
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
           {model.total}
         </span>
-        <Badge tone="outline" data-testid="view-scope">
-          {scopeLabel}
+        <Badge
+          tone={scope.unresolved.length === 0 ? 'outline' : 'warning'}
+          data-testid="view-scope"
+        >
+          {scope.label}
         </Badge>
+        {view.readable ? null : <UnreadableNotice />}
         <div className="ml-auto flex items-center gap-1">
           <LayoutToggle layout={layout} onChange={setLayout} />
         </div>
       </div>
 
       <FilterBar
-        teamId={view.filter.teamId}
-        teamName={scopeLabel}
+        teamId={scope.team?.id ?? null}
+        teamName={scope.name}
+        scope={stored}
         layout={layout}
         config={config}
         onChange={(next) => setEdited(next)}

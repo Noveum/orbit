@@ -132,9 +132,9 @@ them.
 | `search_issues` | read | Search and filter |
 | `list_my_issues` | read | Assigned to the caller |
 | `copy_branch_name` | read | The git branch name for an issue |
-| `create_issue` | write | Create one, returns `ENG-42` |
+| `create_issue` | write | Create one, returns `ENG-42`. Name a label by id when two share a name |
 | `update_issue` | write | Title, description, state, priority, assignee, labels, estimate |
-| `move_issue` | write | Move between states or teams |
+| `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
 | `archive_issue`, `unarchive_issue`, `delete_issue` | write | |
@@ -179,17 +179,27 @@ them.
 
 | Tool | Scope | Does |
 | --- | --- | --- |
-| `list_views` | read | Saved views |
+| `list_views` | read | Saved views, each with the filter state it stores |
 | `create_view`, `update_view`, `delete_view` | write | |
 
-### Teams and labels
+`create_view` takes the same state the app stores. Conditions live under
+`filter.filter.children`, each one shaped like
+`{"kind":"condition","property":"priority","operator":"in","values":["1"]}`. A key the state
+does not define is rejected rather than dropped, so a filter written in some other shape fails
+loudly instead of saving a view that filters nothing. Call `list_views` first and copy a shape
+that already works.
+
+### Teams, labels and workflow states
 
 | Tool | Scope | Does |
 | --- | --- | --- |
 | `create_team`, `update_team` | write | |
 | `add_team_member`, `remove_team_member` | write | |
 | `remove_member` | write | Remove from the workspace |
-| `create_label`, `update_label`, `delete_label` | write | |
+| `create_label`, `update_label`, `delete_label` | write | Pass `team` to pin a label to one team, `null` to widen it back. Name a label by id when two share a name |
+| `create_state`, `update_state` | write | A status carries a category the product reads, so changing it re-dates the issues in it |
+| `delete_state` | write | Refused while issues sit in it unless `moveTo` names the status they go to |
+| `reorder_states` | write | The whole board order, first column first |
 
 ## Things worth asking for
 

@@ -3,6 +3,7 @@ import {
   listMembers,
   listProjectsForTeams,
   listTeams,
+  listWorkflowStatesForTeams,
   projectTeamLinks,
 } from '@orbit/core';
 import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
@@ -15,25 +16,16 @@ export interface BootstrapQuery {
   readonly team?: string | undefined;
 }
 
-async function listWorkflowStatesForTeams(principal: Principal, teamIds: readonly string[]) {
-  if (teamIds.length === 0) return [];
-  return await db
-    .select({
-      id: schema.workflowState.id,
-      teamId: schema.workflowState.teamId,
-      name: schema.workflowState.name,
-      category: schema.workflowState.category,
-      color: schema.workflowState.color,
-      position: schema.workflowState.position,
-    })
-    .from(schema.workflowState)
-    .where(
-      and(
-        eq(schema.workflowState.organizationId, principal.organizationId),
-        inArray(schema.workflowState.teamId, [...teamIds]),
-      ),
-    )
-    .orderBy(asc(schema.workflowState.position));
+async function boardColumnsForTeams(principal: Principal, teamIds: readonly string[]) {
+  const states = await listWorkflowStatesForTeams(principal, teamIds);
+  return states.map((state) => ({
+    id: state.id,
+    teamId: state.teamId,
+    name: state.name,
+    category: state.category,
+    color: state.color,
+    position: state.position,
+  }));
 }
 
 async function listRecentCyclesForTeams(principal: Principal, teamIds: readonly string[]) {
@@ -97,7 +89,7 @@ export async function bootstrapPayload(principal: Principal, query: BootstrapQue
   const teamIds = teams.map((team) => team.id);
 
   const [states, cycles, labels, members, projects, links] = await Promise.all([
-    listWorkflowStatesForTeams(principal, teamIds),
+    boardColumnsForTeams(principal, teamIds),
     listRecentCyclesForTeams(principal, teamIds),
     listLabels(principal),
     listMembers(principal),

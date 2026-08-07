@@ -15,7 +15,7 @@ import {
 import { Input } from '@/components/ui/input.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
 import { useCreateView } from '@/lib/query/use-views.ts';
-import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
+import type { ViewConfig, ViewLayoutMode, ViewScope } from './view-config.ts';
 import { viewConfigToState } from './view-config.ts';
 import { allowedVisibility, visibilityChoices } from './view-visibility.ts';
 
@@ -24,7 +24,7 @@ export interface SaveViewDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly config: ViewConfig;
   readonly layout: ViewLayoutMode;
-  readonly teamId: string | null;
+  readonly scope: ViewScope;
   readonly teamName: string;
   readonly suggestedName: string;
 }
@@ -34,7 +34,7 @@ export function SaveViewDialog({
   onOpenChange,
   config,
   layout,
-  teamId,
+  scope,
   teamName,
   suggestedName,
 }: SaveViewDialogProps) {
@@ -48,7 +48,7 @@ export function SaveViewDialog({
   }, [open, suggestedName]);
 
   const count = conditionsOf(config.filter).length;
-  const team = teamId === null ? null : { id: teamId, name: teamName };
+  const team = scope.teamId === null ? null : { id: scope.teamId, name: teamName };
   const choices = visibilityChoices(team);
   const chosen = allowedVisibility(visibility, team);
 
@@ -58,12 +58,7 @@ export function SaveViewDialog({
     create.mutate(
       {
         name: trimmed,
-        filter: viewConfigToState(
-          config,
-          layout,
-          { teamId, projectId: null },
-          { visibility: chosen, locked },
-        ),
+        filter: viewConfigToState(config, layout, scope, { visibility: chosen, locked }),
         layout,
         groupBy: config.groupBy,
         shared: chosen !== 'private',

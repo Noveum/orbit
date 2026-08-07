@@ -17,6 +17,19 @@ export function requireRow<T>(row: T | undefined, message: string): T {
   return row;
 }
 
+const UNIQUE_VIOLATION = '23505';
+const CAUSE_DEPTH = 5;
+
+export function isUniqueViolation(error: unknown): boolean {
+  let cursor: unknown = error;
+  for (let depth = 0; depth < CAUSE_DEPTH; depth += 1) {
+    if (typeof cursor !== 'object' || cursor === null) return false;
+    if ('code' in cursor && (cursor as { code: unknown }).code === UNIQUE_VIOLATION) return true;
+    cursor = (cursor as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function toDateString(value: Date | null | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
