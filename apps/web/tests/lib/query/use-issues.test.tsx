@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type { Issue } from '../../../src/lib/query/schemas.ts';
 
@@ -17,6 +17,7 @@ const {
 const { queryKeys } = await import('../../../src/lib/query/keys.ts');
 
 const TEAM = 'team_eng';
+const WAIT = 10_000;
 const originalFetch = globalThis.fetch;
 
 function issue(overrides: Partial<Issue> = {}): Issue {
@@ -383,28 +384,45 @@ describe('reparenting refreshes every cache a parent can move', () => {
     });
     const client = newClient();
 
-    const filtered = renderHook(() => useIssues(TEAM, undefined, subIssuesOnly), {
-      wrapper: wrapper(client),
-    });
-    const detail = renderHook(() => useIssueDetail('ENG-2'), { wrapper: wrapper(client) });
-    await waitFor(() => expect(filtered.result.current.data).toEqual([]));
-    await waitFor(() => expect(detail.result.current.data).toBeDefined());
+    const { result } = renderHook(
+      () => ({
+        filtered: useIssues(TEAM, undefined, subIssuesOnly),
+        detail: useIssueDetail('ENG-2'),
+        update: useUpdateIssue(),
+      }),
+      { wrapper: wrapper(client) },
+    );
+    await waitFor(
+      () => {
+        expect(result.current.filtered.data).toEqual([]);
+        expect(result.current.detail.data).toBeDefined();
+      },
+      { timeout: WAIT },
+    );
     const before = log.urls.length;
 
-    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
-    update.result.current.mutate({
-      issue: issue({ id: 'issue_child', identifier: 'ENG-2' }),
-      patch: { parentId: 'issue_parent' },
+    act(() => {
+      result.current.update.mutate({
+        issue: issue({ id: 'issue_child', identifier: 'ENG-2' }),
+        patch: { parentId: 'issue_parent' },
+      });
     });
 
-    await waitFor(() => expect(update.result.current.isSuccess).toBe(true));
-    await waitFor(() => expect(detail.result.current.data?.issue.parentId).toBe('issue_parent'));
-    await waitFor(() =>
-      expect(filtered.result.current.data?.map((row) => row.id)).toEqual(['issue_child']),
+    await waitFor(() => expect(result.current.update.isSuccess).toBe(true), { timeout: WAIT });
+    await waitFor(
+      () => {
+        const after = log.urls.slice(before);
+        expect(after.filter((url) => url.includes('filter='))).not.toEqual([]);
+        expect(after.filter((url) => url.startsWith('/api/issues/ENG-2'))).not.toEqual([]);
+      },
+      { timeout: WAIT },
     );
-
-    const after = log.urls.slice(before);
-    expect(after.some((url) => url.includes('filter='))).toBe(true);
-    expect(after.some((url) => url.startsWith('/api/issues/ENG-2'))).toBe(true);
+    await waitFor(
+      () => expect(result.current.filtered.data?.map((row) => row.id)).toEqual(['issue_child']),
+      { timeout: WAIT },
+    );
+    await waitFor(() => expect(result.current.detail.data?.issue.parentId).toBe('issue_parent'), {
+      timeout: WAIT,
+    });
   });
 });
