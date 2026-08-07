@@ -195,8 +195,15 @@ and post it to Slack without anyone opening Orbit.
 
 | Tool | Scope | Does |
 | --- | --- | --- |
-| `list_views` | read | Saved views |
+| `list_views` | read | Saved views, each with the filter state it stores |
 | `create_view`, `update_view`, `delete_view` | write | |
+
+`create_view` takes the same state the app stores. Conditions live under
+`filter.filter.children`, each one shaped like
+`{"kind":"condition","property":"priority","operator":"in","values":["1"]}`. A key the state
+does not define is rejected rather than dropped, so a filter written in some other shape fails
+loudly instead of saving a view that filters nothing. Call `list_views` first and copy a shape
+that already works.
 
 ### Teams and labels
 

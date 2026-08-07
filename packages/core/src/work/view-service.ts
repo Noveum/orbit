@@ -5,6 +5,7 @@ import { scopes } from '@orbit/shared/events';
 import type { ViewState, ViewVisibility, VirtualViewId } from '@orbit/shared/filters';
 import {
   isVirtualViewId,
+  readViewState,
   VIEW_VISIBILITIES,
   VIRTUAL_VIEW_IDS,
   VIRTUAL_VIEW_NAMES,
@@ -32,6 +33,7 @@ export interface ViewRecord {
   readonly virtual: boolean;
   readonly locked: boolean;
   readonly favorite: boolean;
+  readonly readable: boolean;
   readonly createdAt: Date;
 }
 
@@ -98,8 +100,8 @@ function teamVisibleFilter(principal: Principal): SQL {
 }
 
 function toRecord(row: ViewRow, favorite: boolean): ViewRecord {
-  const stored = viewStateFrom(row.filter, row.layout === 'board' ? 'board' : 'list');
-  const state: ViewState = { ...stored, visibility: visibilityOf(row) };
+  const stored = readViewState(row.filter, row.layout === 'board' ? 'board' : 'list');
+  const state: ViewState = { ...stored.state, visibility: visibilityOf(row) };
   return {
     id: row.id,
     ownerId: row.ownerId,
@@ -111,6 +113,7 @@ function toRecord(row: ViewRow, favorite: boolean): ViewRecord {
     virtual: false,
     locked: state.locked,
     favorite,
+    readable: stored.readable,
     createdAt: row.createdAt,
   };
 }
@@ -128,6 +131,7 @@ function virtualRecord(id: VirtualViewId, principal: Principal): ViewRecord {
     virtual: true,
     locked: true,
     favorite: false,
+    readable: true,
     createdAt: new Date(0),
   };
 }

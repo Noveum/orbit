@@ -12,7 +12,7 @@ import {
   updateView,
 } from '@orbit/core';
 import { conflict, notFound } from '@orbit/shared/errors';
-import { GROUP_BY_FIELDS, VIEW_LAYOUTS } from '@orbit/shared/filters';
+import { countConditions, GROUP_BY_FIELDS, VIEW_LAYOUTS } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveTeam, resolveUserId } from '../resolve.ts';
@@ -20,6 +20,11 @@ import { defineTool, publish } from './support.ts';
 
 const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or team id.');
 const personRef = z.string().min(1).describe('Person name, handle, email, id, or "me".');
+
+const VIEW_FILTER_HINT =
+  'The saved view state. Conditions live under filter.filter.children, each one {"kind":"condition","property":"priority","operator":"in","values":["1"]}. Other keys are teamId, projectId, groupBy, subGroupBy, orderBy, layout, display, visibility, locked and position. A key this list does not name is rejected rather than dropped.';
+
+const VIEW_FILTER_GUIDE = `Save a filtered issue view. Call list_views first and copy the filter of a view that already works. ${VIEW_FILTER_HINT} The reply says how many conditions were stored, so check it matches what you sent.`;
 
 async function resolveView(principal: Principal, ref: string): Promise<string> {
   const needle = ref.trim();
@@ -160,7 +165,8 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
     {
       name: 'list_views',
       title: 'List saved views',
-      description: 'Return the saved issue views this user can open.',
+      description:
+        'Return the saved issue views this user can open, each with the filter state it stores. Copy that shape when creating or updating a view.',
       readOnly: true,
       inputSchema: {},
     },
@@ -173,6 +179,8 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
           layout: view.layout,
           groupBy: view.groupBy,
           shared: view.shared,
+          readable: view.readable,
+          filter: view.state,
         })),
       };
     },
@@ -183,12 +191,11 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
     {
       name: 'create_view',
       title: 'Create a saved view',
-      description:
-        'Save a filtered issue view. The filter takes the same shape the app stores, so read an existing view first if you are unsure.',
+      description: VIEW_FILTER_GUIDE,
       readOnly: false,
       inputSchema: {
         name: z.string().trim().min(1).max(120).describe('View name.'),
-        filter: z.record(z.string(), z.unknown()).describe('The saved view filter state.'),
+        filter: z.record(z.string(), z.unknown()).describe(VIEW_FILTER_HINT),
         layout: z.enum(VIEW_LAYOUTS).optional(),
         groupBy: z.enum(GROUP_BY_FIELDS).optional(),
         shared: z.boolean().optional().describe('Share the view with the whole workspace.'),
@@ -203,7 +210,13 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
         ...(args.shared === undefined ? {} : { shared: args.shared }),
       });
       await publish(saved.actions);
-      return { view: { id: saved.view.id, name: saved.view.name } };
+      return {
+        view: {
+          id: saved.view.id,
+          name: saved.view.name,
+          conditions: countConditions(saved.view.state.filter),
+        },
+      };
     },
   );
 

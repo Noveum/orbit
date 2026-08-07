@@ -12,6 +12,7 @@ export interface ViewPayload {
   readonly virtual: boolean;
   readonly locked: boolean;
   readonly favorite: boolean;
+  readonly readable: boolean;
   readonly createdAt: string;
 }
 
@@ -27,6 +28,7 @@ export function toViewPayload(record: ViewRecord): ViewPayload {
     virtual: record.virtual,
     locked: record.locked,
     favorite: record.favorite,
+    readable: record.readable,
     createdAt: record.createdAt.toISOString(),
   };
 }
