@@ -9,7 +9,7 @@ import { FilterBar } from '@/features/filters/filter-bar.tsx';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { LayoutToggle } from '@/features/filters/layout-toggle.tsx';
-import type { ViewConfig, ViewLayoutMode, ViewPage } from '@/features/filters/view-config.ts';
+import type { ViewConfig, ViewLayoutMode } from '@/features/filters/view-config.ts';
 import {
   applyCapabilities,
   viewConfigFromState,
@@ -20,9 +20,9 @@ import { Board } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
-import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { viewLayoutMode } from '@/features/views/view-href.ts';
+import { resolveViewScope } from '@/features/views/view-scope.ts';
 import { ViewsSkeleton } from '@/features/views/views-skeleton.tsx';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useAllIssues } from '@/lib/query/use-issues.ts';
@@ -34,9 +34,10 @@ export interface SavedViewPageProps {
 
 export function SavedViewPage({ viewId }: SavedViewPageProps) {
   const views = useViews();
+  const workspace = useWorkspace();
   const view = (views.data ?? []).find((entry) => entry.id === viewId);
 
-  if (views.isPending) return <ViewsSkeleton />;
+  if (views.isPending || !workspace.ready) return <ViewsSkeleton />;
   if (view === undefined) {
     return (
       <EmptyState
@@ -49,26 +50,6 @@ export function SavedViewPage({ viewId }: SavedViewPageProps) {
   return <SavedViewBody key={view.id} view={view} />;
 }
 
-export function scopeRecord(view: View): Record<string, string> {
-  const scope: Record<string, string> = {};
-  if (view.filter.teamId !== null) scope['teamId'] = view.filter.teamId;
-  if (view.filter.projectId !== null) scope['projectId'] = view.filter.projectId;
-  return scope;
-}
-
-export function scopeLabelOf(view: View, workspace: WorkspaceData): string {
-  const project = workspace.projects.find((entry) => entry.id === view.filter.projectId);
-  if (project !== undefined) return project.name;
-  const team = workspace.teams.find((entry) => entry.id === view.filter.teamId);
-  if (team !== undefined) return team.name;
-  return 'Workspace';
-}
-
-export function viewPageOf(view: View): ViewPage {
-  if (view.filter.projectId !== null) return 'project';
-  return 'saved_view';
-}
-
 function SavedViewBody({ view }: { view: View }) {
   const workspace = useWorkspace();
   const [layout, setLayout] = useState<ViewLayoutMode>(viewLayoutMode(view.layout));
@@ -79,30 +60,28 @@ function SavedViewBody({ view }: { view: View }) {
     setLayout(viewLayoutMode(view.layout));
   }, [view.layout]);
 
-  const page = viewPageOf(view);
+  const scope = useMemo(() => resolveViewScope(view, workspace), [view, workspace]);
+  const page = scope.page;
   const config = useMemo(
     () => applyCapabilities(edited ?? viewConfigFromState(view.filter), page, layout),
     [edited, view.filter, page, layout],
   );
   const controls = useProvideViewControls(page, layout, config);
 
-  const scope = useMemo(() => scopeRecord(view), [view]);
-  const issues = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, scope);
+  const issues = useAllIssues({ filter: config.filter, orderBy: config.orderBy }, scope.params);
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
 
   const model = useIssueViewModel({
-    teamId: view.filter.teamId,
+    teamId: scope.teamId,
     config,
     issues: rows,
     scopeToTeam: false,
-    scope,
+    scope: scope.params,
   });
 
-  const scopeLabel = scopeLabelOf(view, workspace);
-  const pending = viewConfigToState(config, layout, {
-    teamId: view.filter.teamId,
-    projectId: view.filter.projectId,
-  });
+  const scopeLabel = scope.label;
+  const stored = { teamId: view.filter.teamId, projectId: view.filter.projectId };
+  const pending = viewConfigToState(config, layout, stored);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="saved-view-page">
@@ -120,7 +99,7 @@ function SavedViewBody({ view }: { view: View }) {
       </div>
 
       <FilterBar
-        teamId={view.filter.teamId}
+        teamId={scope.teamId}
         teamName={scopeLabel}
         layout={layout}
         config={config}
@@ -128,6 +107,7 @@ function SavedViewBody({ view }: { view: View }) {
         controls={controls}
         facets={model.facets}
         savedView={view}
+        savedViewScope={stored}
         dirty={viewStateDirty(pending, view.filter)}
       />
 

@@ -298,4 +298,19 @@ describe('opening a saved view', () => {
 
     expect(screen.getByText('No such view')).toBeInTheDocument();
   });
+
+  it('asks for nothing until the workspace it has to scope against arrives', async () => {
+    workspace = { ...buildWorkspace(), ready: false, teams: [] };
+    const teamView = savedView({
+      id: 'view-team',
+      filter: { ...savedView().filter, teamId: 'team-eng' },
+    });
+
+    renderView([teamView], 'view-team');
+    await waitFor(() => {
+      expect(screen.getByTestId('views-skeleton')).toBeInTheDocument();
+    });
+
+    expect(requested).toEqual([]);
+  });
 });
