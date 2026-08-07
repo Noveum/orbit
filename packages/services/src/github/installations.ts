@@ -34,12 +34,12 @@ export async function bindGithubInstallation(
   const { organizationId, account } = input;
   const now = input.now ?? new Date();
 
-  const [existing] = await database
-    .select()
+  const [claimed] = await database
+    .select({ organizationId: githubInstallation.organizationId })
     .from(githubInstallation)
     .where(eq(githubInstallation.installationId, account.installationId))
     .limit(1);
-  if (existing !== undefined && existing.organizationId !== organizationId) {
+  if (claimed !== undefined && claimed.organizationId !== organizationId) {
     throw conflict(CLAIMED_ELSEWHERE);
   }
 
@@ -60,17 +60,7 @@ export async function bindGithubInstallation(
     connectedById: input.connectedById,
   };
 
-  if (existing !== undefined) {
-    const [updated] = await database
-      .update(githubInstallation)
-      .set({ ...facts, updatedAt: now })
-      .where(eq(githubInstallation.id, existing.id))
-      .returning();
-    if (updated === undefined) throw notFound('That GitHub installation disappeared mid-connect.');
-    return updated;
-  }
-
-  const [inserted] = await database
+  const [bound] = await database
     .insert(githubInstallation)
     .values({
       id: randomUUIDv7(),
@@ -78,9 +68,14 @@ export async function bindGithubInstallation(
       installationId: account.installationId,
       ...facts,
     })
+    .onConflictDoUpdate({
+      target: githubInstallation.installationId,
+      set: { ...facts, updatedAt: now },
+      setWhere: eq(githubInstallation.organizationId, organizationId),
+    })
     .returning();
-  if (inserted === undefined) throw conflict(CLAIMED_ELSEWHERE);
-  return inserted;
+  if (bound === undefined) throw conflict(CLAIMED_ELSEWHERE);
+  return bound;
 }
 
 async function ensureIntegrationRow(

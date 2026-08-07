@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import {
   exchangeGithubUserCode,
   fetchGithubInstallation,
   fetchInstalledRepositories,
+  forgetGithubInstallationTokens,
+  GITHUB_TOKEN_REFRESH_MARGIN_MS,
   githubAppJwt,
+  githubInstallationToken,
   listInstallationRepositoryPage,
   listUserInstallationIds,
 } from '../../src/github/app.ts';
@@ -25,6 +28,80 @@ function jsonFetch(
   return ((url: string, init?: RequestInit) =>
     Promise.resolve(handler(url, init))) as unknown as typeof globalThis.fetch;
 }
+
+beforeEach(() => {
+  forgetGithubInstallationTokens();
+});
+
+describe('githubInstallationToken', () => {
+  function countingFetch(counts: { minted: number }, expiresAt: string | null) {
+    return jsonFetch((url) => {
+      expect(url).toContain('/access_tokens');
+      counts.minted += 1;
+      return new Response(
+        JSON.stringify({ token: `ghs_${counts.minted}`, expires_at: expiresAt }),
+        {
+          status: 201,
+        },
+      );
+    });
+  }
+
+  it('mints once and serves the cached token to later callers', async () => {
+    const counts = { minted: 0 };
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const request = {
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      fetch: countingFetch(counts, expiresAt),
+    };
+
+    expect(await githubInstallationToken(request)).toBe('ghs_1');
+    expect(await githubInstallationToken(request)).toBe('ghs_1');
+    expect(await githubInstallationToken(request)).toBe('ghs_1');
+    expect(counts.minted).toBe(1);
+  });
+
+  it('mints again once the token is inside its refresh margin', async () => {
+    const counts = { minted: 0 };
+    const nearlyExpired = new Date(
+      Date.now() + GITHUB_TOKEN_REFRESH_MARGIN_MS - 1000,
+    ).toISOString();
+    const request = {
+      appId: '123456',
+      privateKey,
+      installationId: '9002',
+      fetch: countingFetch(counts, nearlyExpired),
+    };
+
+    expect(await githubInstallationToken(request)).toBe('ghs_1');
+    expect(await githubInstallationToken(request)).toBe('ghs_2');
+    expect(counts.minted).toBe(2);
+  });
+
+  it('never serves one installation the token minted for another', async () => {
+    const counts = { minted: 0 };
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const fetchImpl = countingFetch(counts, expiresAt);
+
+    const first = await githubInstallationToken({
+      appId: '123456',
+      privateKey,
+      installationId: '9003',
+      fetch: fetchImpl,
+    });
+    const second = await githubInstallationToken({
+      appId: '123456',
+      privateKey,
+      installationId: '9004',
+      fetch: fetchImpl,
+    });
+
+    expect(first).not.toBe(second);
+    expect(counts.minted).toBe(2);
+  });
+});
 
 describe('githubAppJwt', () => {
   it('produces a well-formed RS256 JWT with the expected claims', () => {

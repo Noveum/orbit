@@ -1,4 +1,4 @@
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import { internal } from '@orbit/shared';
 import { z } from 'zod';
 
@@ -37,7 +37,10 @@ export function githubAppJwt(input: GithubAppJwtInput): string {
   return `${header}.${payload}.${signature}`;
 }
 
-const installationTokenSchema = z.object({ token: z.string().min(1) });
+const installationTokenSchema = z.object({
+  token: z.string().min(1),
+  expires_at: z.string().min(1).nullish(),
+});
 
 const repositorySchema = z.object({
   id: z.number().int().nonnegative(),
@@ -145,7 +148,37 @@ function credentialOverrides(input: GithubAppCredentials): {
   };
 }
 
+export const GITHUB_TOKEN_DEFAULT_TTL_MS = 3_600_000;
+export const GITHUB_TOKEN_REFRESH_MARGIN_MS = 300_000;
+
+interface CachedToken {
+  readonly token: string;
+  readonly usableUntil: number;
+}
+
+const installationTokens = new Map<string, CachedToken>();
+
+function tokenCacheKey(input: GithubAppRequest): string {
+  const keyDigest = createHash('sha256').update(input.privateKey).digest('hex').slice(0, 16);
+  return `${input.apiBase ?? GITHUB_API_BASE}|${input.appId}|${keyDigest}|${input.installationId}`;
+}
+
+function usableUntil(expiresAt: string | null | undefined, now: number): number {
+  const parsed = expiresAt === null || expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
+  const expiry = Number.isNaN(parsed) ? now + GITHUB_TOKEN_DEFAULT_TTL_MS : parsed;
+  return expiry - GITHUB_TOKEN_REFRESH_MARGIN_MS;
+}
+
+export function forgetGithubInstallationTokens(): void {
+  installationTokens.clear();
+}
+
 export async function githubInstallationToken(input: GithubAppRequest): Promise<string> {
+  const now = Date.now();
+  const key = tokenCacheKey(input);
+  const cached = installationTokens.get(key);
+  if (cached !== undefined && cached.usableUntil > now) return cached.token;
+
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const base = input.apiBase ?? GITHUB_API_BASE;
   const jwt = githubAppJwt({ appId: input.appId, privateKey: input.privateKey });
@@ -156,6 +189,10 @@ export async function githubInstallationToken(input: GithubAppRequest): Promise<
     installationTokenSchema,
     'installation token',
   );
+  installationTokens.set(key, {
+    token: body.token,
+    usableUntil: usableUntil(body.expires_at, now),
+  });
   return body.token;
 }
 
