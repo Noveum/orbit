@@ -11,6 +11,7 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { View } from '@/lib/query/schemas.ts';
 import { bootstrapSchema, viewListSchema } from '@/lib/query/schemas.ts';
+import { mockSession } from '../../../tests-support.ts';
 
 const ORIGIN = 'http://localhost:3000';
 
@@ -37,10 +38,7 @@ const session = {
   session: { activeOrganizationId: seeded.organizationId },
 };
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(session),
-  requireSession: () => Promise.resolve(session),
-}));
+mockSession(() => session);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
