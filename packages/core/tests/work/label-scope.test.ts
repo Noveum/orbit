@@ -7,9 +7,10 @@ import {
   addMember,
   createWorkspace,
   resetDatabase,
+  stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createIssue, moveIssue, updateIssue } from '../../src/work/issue-service.ts';
 import {
   createLabel,
   deleteLabel,
@@ -317,6 +318,86 @@ describe('narrowing a label to a team takes it off the issues that team cannot s
 
     expect(await labelIdsOn(inside.issue.id)).toEqual([teamOnly.label.id]);
     expect(result.actions.filter((action) => action.model === 'issue')).toHaveLength(0);
+  });
+});
+
+describe('carrying an issue to another team drops the labels that team cannot use', () => {
+  async function labelIdsOn(issueId: string): Promise<string[]> {
+    const rows = await db
+      .select()
+      .from(schema.issueLabel)
+      .where(eq(schema.issueLabel.issueId, issueId));
+    return rows.map((row) => row.labelId);
+  }
+
+  it('strips the old team label, keeps the workspace one, and says so over the wire', async () => {
+    const designOnly = await createLabel(nova.admin, {
+      name: 'Pixel polish',
+      color: '#EC4899',
+      teamId: designTeamId,
+    });
+    const shared = await createLabel(nova.admin, { name: 'Flaky', color: '#EF4444' });
+    const issue = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'Design work',
+      labelIds: [designOnly.label.id, shared.label.id],
+    });
+
+    const moved = await moveIssue(nova.admin, issue.issue.id, {
+      teamId: nova.teamId,
+      stateId: stateNamed(nova, 'Todo').id,
+    });
+
+    expect(moved.issue.teamId).toBe(nova.teamId);
+    expect(await labelIdsOn(issue.issue.id)).toEqual([shared.label.id]);
+    const action = moved.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === issue.issue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([shared.label.id]);
+    expect(action?.scopes).toContain(scopes.team(nova.teamId));
+  });
+
+  it('takes it off the issue that moved and off no other', async () => {
+    const designOnly = await createLabel(nova.admin, {
+      name: 'Pixel polish',
+      color: '#EC4899',
+      teamId: designTeamId,
+    });
+    const leaving = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'Design work',
+      labelIds: [designOnly.label.id],
+    });
+    const staying = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'More design work',
+      labelIds: [designOnly.label.id],
+    });
+
+    await moveIssue(nova.admin, leaving.issue.id, {
+      teamId: nova.teamId,
+      stateId: stateNamed(nova, 'Todo').id,
+    });
+
+    expect(await labelIdsOn(leaving.issue.id)).toEqual([]);
+    expect(await labelIdsOn(staying.issue.id)).toEqual([designOnly.label.id]);
+  });
+
+  it('leaves the labels alone when the move keeps the issue on its own team', async () => {
+    const designOnly = await createLabel(nova.admin, {
+      name: 'Pixel polish',
+      color: '#EC4899',
+      teamId: designTeamId,
+    });
+    const issue = await createIssue(nova.admin, {
+      teamId: designTeamId,
+      title: 'Design work',
+      labelIds: [designOnly.label.id],
+    });
+
+    await moveIssue(nova.admin, issue.issue.id, {});
+
+    expect(await labelIdsOn(issue.issue.id)).toEqual([designOnly.label.id]);
   });
 });
 

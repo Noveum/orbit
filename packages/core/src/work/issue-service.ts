@@ -46,7 +46,7 @@ import {
   stateTimestamps,
 } from './issue-fields.ts';
 import { buildFilterFilters, today } from './issue-predicates.ts';
-import { assertLabelsUsable } from './label-service.ts';
+import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
 export {
@@ -348,25 +348,6 @@ async function loadIssue(
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
   return issue;
-}
-
-async function labelsByIssue(
-  executor: Executor,
-  issueIds: readonly string[],
-): Promise<Map<string, string[]>> {
-  const grouped = new Map<string, string[]>();
-  const ids = [...new Set(issueIds)];
-  if (ids.length === 0) return grouped;
-  const rows = await executor
-    .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
-    .from(schema.issueLabel)
-    .where(inArray(schema.issueLabel.issueId, ids));
-  for (const row of rows) {
-    const existing = grouped.get(row.issueId);
-    if (existing === undefined) grouped.set(row.issueId, [row.labelId]);
-    else existing.push(row.labelId);
-  }
-  return grouped;
 }
 
 async function replaceLabelsFor(
@@ -959,7 +940,7 @@ async function applyIssueUpdates(
     updated,
     state,
   });
-  const labels = await labelsByIssue(
+  const labels = await labelIdsByIssue(
     tx,
     pending.map((entry) => entry.current.id),
   );
@@ -1125,6 +1106,22 @@ async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Pro
   }
 }
 
+async function carryToTeam(
+  executor: Executor,
+  current: IssueRow,
+  team: TeamRow,
+  values: IssueValues,
+): Promise<void> {
+  const number = await allocateIssueNumber(executor, team);
+  values.teamId = team.id;
+  values.number = number;
+  values.identifier = issueIdentifier(team.key, number);
+  values.cycleId = null;
+  if (await projectFitsTeam(executor, team.id, current.projectId)) return;
+  values.projectId = null;
+  values.milestoneId = null;
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -1157,18 +1154,9 @@ export async function moveIssue(
     }
 
     const now = new Date();
+    const changingTeam = teamId !== current.teamId;
     const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
-    if (teamId !== current.teamId) {
-      const number = await allocateIssueNumber(tx, team);
-      values.teamId = teamId;
-      values.number = number;
-      values.identifier = issueIdentifier(team.key, number);
-      values.cycleId = null;
-      if (!(await projectFitsTeam(tx, teamId, current.projectId))) {
-        values.projectId = null;
-        values.milestoneId = null;
-      }
-    }
+    if (changingTeam) await carryToTeam(tx, current, team, values);
     if (state.id !== current.stateId) {
       values.stateId = state.id;
       Object.assign(values, applyStateTimestamps(current, state.category, now));
@@ -1188,6 +1176,8 @@ export async function moveIssue(
       .where(eq(schema.issue.id, issueId))
       .returning();
     const issue = requireRow(moved, 'That issue does not exist.');
+
+    if (changingTeam) await dropLabelsForeignToTeam(tx, principal.organizationId, issue.id, teamId);
 
     if (state.id !== current.stateId) {
       await appendActivities(tx, [
@@ -1213,7 +1203,7 @@ export async function moveIssue(
       issue,
     });
 
-    const movedLabels = await labelsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+    const movedLabels = await labelIdsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
     const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
@@ -1314,7 +1304,7 @@ async function setArchived(
           syncId,
           actor,
           archivedAt === null ? 'unarchive' : 'archive',
-          (await labelsByIssue(tx, [issue.id])).get(issue.id) ?? [],
+          (await labelIdsByIssue(tx, [issue.id])).get(issue.id) ?? [],
         ),
       ],
     };
@@ -1350,7 +1340,7 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
       .returning();
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
-    const labels = await labelsByIssue(
+    const labels = await labelIdsByIssue(
       tx,
       orphaned.map((child) => child.id),
     );

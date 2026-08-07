@@ -130,21 +130,55 @@ async function issuesOutsideTeam(
   return rows.map((row) => row.id);
 }
 
-async function remainingLabelsByIssue(
+export async function labelIdsByIssue(
   executor: Executor,
   issueIds: readonly string[],
 ): Promise<Map<string, string[]>> {
   const grouped = new Map<string, string[]>();
+  const ids = [...new Set(issueIds)];
+  if (ids.length === 0) return grouped;
   const rows = await executor
     .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
     .from(schema.issueLabel)
-    .where(inArray(schema.issueLabel.issueId, [...issueIds]));
+    .where(inArray(schema.issueLabel.issueId, ids));
   for (const row of rows) {
     const bucket = grouped.get(row.issueId) ?? [];
     bucket.push(row.labelId);
     grouped.set(row.issueId, bucket);
   }
   return grouped;
+}
+
+export async function dropLabelsForeignToTeam(
+  executor: Executor,
+  organizationId: string,
+  issueId: string,
+  teamId: string,
+): Promise<void> {
+  const attached = await executor
+    .select({ labelId: schema.issueLabel.labelId })
+    .from(schema.issueLabel)
+    .where(eq(schema.issueLabel.issueId, issueId));
+  if (attached.length === 0) return;
+
+  const wanted = [...new Set(attached.map((row) => row.labelId))];
+  const usable = await executor
+    .select({ id: schema.label.id })
+    .from(schema.label)
+    .where(
+      and(
+        eq(schema.label.organizationId, organizationId),
+        inArray(schema.label.id, wanted),
+        or(isNull(schema.label.teamId), eq(schema.label.teamId, teamId)),
+      ),
+    );
+  const keep = new Set(usable.map((row) => row.id));
+  const drop = wanted.filter((labelId) => !keep.has(labelId));
+  if (drop.length === 0) return;
+
+  await executor
+    .delete(schema.issueLabel)
+    .where(and(eq(schema.issueLabel.issueId, issueId), inArray(schema.issueLabel.labelId, drop)));
 }
 
 async function detachFromOtherTeams(
@@ -164,7 +198,7 @@ async function detachFromOtherTeams(
       and(eq(schema.issueLabel.labelId, label.id), inArray(schema.issueLabel.issueId, issueIds)),
     );
 
-  const remaining = await remainingLabelsByIssue(executor, issueIds);
+  const remaining = await labelIdsByIssue(executor, issueIds);
   const rows = await executor
     .update(schema.issue)
     .set({ syncId, updatedAt: new Date() })
