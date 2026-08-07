@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
+import { mockSession } from '../../../tests-support.ts';
 
 const coreModule = await import('@orbit/core');
 
@@ -115,10 +116,7 @@ const session = {
 };
 const sessionHolder: { value: typeof session | null } = { value: session };
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () => Promise.resolve(sessionHolder.value),
-  requireSession: () => Promise.resolve(sessionHolder.value),
-}));
+mockSession(() => sessionHolder.value);
 
 const { GET } = await import('../../../src/app/api/standup/board/route.ts');
 
