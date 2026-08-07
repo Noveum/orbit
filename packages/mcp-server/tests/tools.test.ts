@@ -306,6 +306,25 @@ describe('issues', () => {
     expect(relationsOf(await admin.result('get_issue', { issue: first.identifier }))).toEqual([]);
   });
 
+  it('unlinks from the end that wrote the relation, not only the inverse end', async () => {
+    const first = await newIssue('Blocks, removed from its own end');
+    const second = await newIssue('Blocked, left alone');
+    await admin.result('set_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    const removed = await admin.result('remove_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    expect(removed['relations']).toEqual([]);
+    expect(relationsOf(await admin.result('get_issue', { issue: second.identifier }))).toEqual([]);
+  });
+
   it('refuses to unlink a relation that was never written', async () => {
     const first = await newIssue('Unrelated one');
     const second = await newIssue('Unrelated two');

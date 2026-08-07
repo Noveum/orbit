@@ -116,6 +116,17 @@ describe('calendar dates', () => {
     }
   });
 
+  it('fails the parse on such a year instead of quietly storing no date', () => {
+    for (const extreme of ['+275760-09-13', '-000001-01-01', '0000-12-31', '10000-01-01']) {
+      const parsed = issueUpdateSchema.safeParse({ dueDate: extreme });
+
+      expect({ sent: extreme, accepted: parsed.success }).toEqual({
+        sent: extreme,
+        accepted: false,
+      });
+    }
+  });
+
   it('refuses anything that is not a calendar day', () => {
     for (const nonsense of [
       true,
