@@ -14,7 +14,7 @@ import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { buildFilterFields, operatorLabel, valueLabel } from './filter-fields.tsx';
 import { FilterMenu } from './filter-menu.tsx';
 import { SaveViewDialog } from './save-view-dialog.tsx';
-import type { ViewConfig, ViewLayoutMode } from './view-config.ts';
+import type { ViewConfig, ViewLayoutMode, ViewScope } from './view-config.ts';
 import { viewConfigToState } from './view-config.ts';
 import type { ViewControls } from './view-controls.tsx';
 
@@ -29,6 +29,7 @@ export interface FilterBarProps {
   readonly controls: ViewControls;
   readonly facets?: IssueFacets['facets'] | undefined;
   readonly savedView?: View | null;
+  readonly savedViewScope?: ViewScope | null;
   readonly dirty?: boolean;
   readonly showSaveView?: boolean;
 }
@@ -42,6 +43,7 @@ export function FilterBar({
   controls,
   facets,
   savedView = null,
+  savedViewScope = null,
   dirty = false,
   showSaveView = true,
 }: FilterBarProps) {
@@ -163,7 +165,7 @@ export function FilterBar({
                   filter: viewConfigToState(
                     config,
                     layout,
-                    { teamId, projectId: null },
+                    savedViewScope ?? { teamId, projectId: null },
                     {
                       visibility: savedView.filter.visibility,
                       locked: savedView.filter.locked,
