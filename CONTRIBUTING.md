@@ -15,7 +15,7 @@ database, the realtime hub and the MCP server at once.
 - [The development loop](#the-development-loop)
 - [The rules that are not negotiable](#the-rules-that-are-not-negotiable)
 - [Writing tests](#writing-tests)
-- [Working with AI assistants](#working-with-ai-assistants)
+- [Editor and assistant setup](#editor-and-assistant-setup)
 - [Sending a pull request](#sending-a-pull-request)
 - [Review and merge](#review-and-merge)
 - [Reporting bugs](#reporting-bugs)
@@ -214,21 +214,23 @@ That is the bar, and it is the one thing reviewers push back on most.
 
 [docs/testing.md](docs/testing.md) has the longer version.
 
-## Working with AI assistants
+## Editor and assistant setup
 
-Most of Orbit was built with AI assistance and we expect yours to be too. The
-repo is set up for it.
+Use whatever tooling you like. The repository carries its own context files so
+that an editor or assistant picks up the conventions without you explaining them
+every time.
 
 - [`CLAUDE.md`](CLAUDE.md) is the full context file: architecture, hard rules,
-  the toolchain table, the conventions. Claude Code reads it automatically.
-- [`AGENTS.md`](AGENTS.md) points other assistants at the same file.
-- Orbit's own MCP server lets your assistant read the board and file issues
-  while it works. See [docs/mcp.md](docs/mcp.md).
+  the toolchain table, the conventions.
+- [`AGENTS.md`](AGENTS.md) points at the same file for tools that look for that
+  name instead.
+- Orbit's own MCP server can expose the board to a connected editor. See
+  [docs/mcp.md](docs/mcp.md).
 
-Two things we ask. Read the diff before you send it, because you are the author
-and the reviewer's time is real. And run `bun run verify` yourself rather than
-asking the reviewer to find what an assistant guessed at, since the comment
-policy and the strict type settings catch a lot of generated code.
+Whatever you use, you are the author of what you send. Read your own diff first,
+and run `bun run verify` before you push rather than leaving the reviewer to find
+it. The comment policy and the strict type settings reject a lot of generated
+code, so this is where that shows up.
 
 ## Sending a pull request
 

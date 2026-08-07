@@ -236,9 +236,9 @@ meaning in names and the prose in the pull request. **No `any`**, no non-null
 assertions. **No em-dashes.** And a feature is not done until it has a test that
 would fail if the feature broke.
 
-Full guide in [CONTRIBUTING.md](CONTRIBUTING.md). Most of Orbit was built with
-AI assistance and the repo is set up for it, so [`CLAUDE.md`](CLAUDE.md) and
-[`AGENTS.md`](AGENTS.md) will get your assistant up to speed.
+Full guide in [CONTRIBUTING.md](CONTRIBUTING.md). The repository carries its own
+context files, [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md), so your
+editor picks up the conventions without you explaining them each time.
 
 ## Contributors
 
