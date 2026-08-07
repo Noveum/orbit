@@ -1761,6 +1761,102 @@ const summarySchema = issueListSchema.extend({
   groupBy: z.enum(FACET_PROPERTIES).default('state'),
 });
 
+export const BOARD_GROUP_PROPERTIES = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'project',
+  'cycle',
+] as const;
+
+export type BoardGroupProperty = (typeof BOARD_GROUP_PROPERTIES)[number];
+
+export const BOARD_COLUMN_LIMIT = 25;
+
+const boardSchema = issueListSchema.extend({
+  groupBy: z.enum(BOARD_GROUP_PROPERTIES).default('state'),
+  perGroup: z.coerce.number().int().min(1).max(100).default(BOARD_COLUMN_LIMIT),
+});
+
+export interface BoardGroup {
+  readonly id: string;
+  readonly total: number;
+  readonly issues: IssueListRow[];
+  readonly nextCursor: string | null;
+}
+
+export interface BoardPage {
+  readonly groups: BoardGroup[];
+}
+
+const UNGROUPED_KEY = 'none';
+
+export async function listBoardGroups(
+  principal: Principal,
+  input: unknown = {},
+): Promise<BoardPage> {
+  assertCan(principal, 'issue:read');
+  const filter = boardSchema.parse(input);
+  const ordering = ORDERINGS[filter.orderBy];
+  const column = FACET_COLUMNS[filter.groupBy]();
+  const direction = ordering.descending ? desc : asc;
+  const matching = and(...buildIssueFilters(principal, filter));
+
+  const ranked = db
+    .select({
+      ...ISSUE_LIST_COLUMNS,
+      groupKey: sql<string | null>`${column}::text`.as('group_key'),
+      seat: sql<number>`row_number() over (
+        partition by ${column}
+        order by ${ordering.expression} ${sql.raw(ordering.descending ? 'desc' : 'asc')},
+                 ${schema.issue.id} ${sql.raw(ordering.descending ? 'desc' : 'asc')}
+      )`.as('seat'),
+    })
+    .from(schema.issue)
+    .where(matching)
+    .as('ranked');
+
+  const [rows, totals] = await Promise.all([
+    db
+      .select()
+      .from(ranked)
+      .where(sql`${ranked.seat} <= ${filter.perGroup}`)
+      .orderBy(direction(ranked.seat)),
+    db
+      .select({ groupKey: sql<string | null>`${column}::text`, total: count() })
+      .from(schema.issue)
+      .where(matching)
+      .groupBy(column),
+  ]);
+
+  const byGroup = new Map<string, IssueListRow[]>();
+  for (const row of rows) {
+    const { groupKey, seat: _seat, ...issue } = row;
+    const key = groupKey ?? UNGROUPED_KEY;
+    byGroup.set(key, [...(byGroup.get(key) ?? []), issue as IssueListRow]);
+  }
+
+  const groups: BoardGroup[] = [];
+  for (const row of totals) {
+    const key = row.groupKey ?? UNGROUPED_KEY;
+    const issues = byGroup.get(key) ?? [];
+    const last = issues.at(-1);
+    groups.push({
+      id: key,
+      total: Number(row.total),
+      issues,
+      nextCursor:
+        Number(row.total) > issues.length && last !== undefined
+          ? encodeCursor(ordering.read(last), last.id)
+          : null,
+    });
+  }
+
+  return { groups };
+}
+
 export async function getIssueSummary(
   principal: Principal,
   input: unknown = {},
