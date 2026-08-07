@@ -2,6 +2,7 @@ import {
   deleteIssue,
   describeActivity,
   getIssue,
+  getParentIssue,
   listActivityPage,
   listIssues,
   listSubscribers,
@@ -26,7 +27,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   return await handle(async (principal) => {
     const row = await getIssue(principal, id);
     const [issue] = await attachLabels([row]);
-    const [activityPage, subPage, subscribers] = await Promise.all([
+    const [activityPage, subPage, subscribers, parentRow] = await Promise.all([
       listActivityPage(db, principal, row.id, {
         oldestFirst: true,
         limit: ACTIVITY_LIMIT,
@@ -34,7 +35,9 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       }),
       listIssues(principal, { parentId: row.id, limit: SUB_ISSUE_LIMIT }),
       listSubscribers(principal, row.id),
+      getParentIssue(principal, row.id),
     ]);
+    const [parent] = parentRow === null ? [null] : await attachLabels([parentRow]);
     return {
       issue,
       descriptionHtml: renderMarkdown(row.description),
@@ -44,6 +47,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       })),
       activityCursor: activityPage.nextCursor,
       subIssues: await attachLabels(subPage.issues),
+      parent: parent ?? null,
       subscribed: subscribers.some((row) => row.userId === principal.userId),
     };
   });
