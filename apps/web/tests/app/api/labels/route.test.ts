@@ -10,6 +10,7 @@ import { db, eq, schema } from '@orbit/db';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { z } from 'zod';
+import { mockSession } from '../../../../tests-support.ts';
 
 const coreModule = await import('@orbit/core');
 const published: SyncAction[] = [];
@@ -31,17 +32,9 @@ let caller: Caller = { userId: '', organizationId: '' };
 
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
-mock.module('@/lib/auth/session.ts', () => ({
-  getSession: () =>
-    Promise.resolve({
-      user: { id: caller.userId, name: 'Somebody', email: 'somebody@orbit.test' },
-      session: { activeOrganizationId: caller.organizationId },
-    }),
-  requireSession: () =>
-    Promise.resolve({
-      user: { id: caller.userId, name: 'Somebody', email: 'somebody@orbit.test' },
-      session: { activeOrganizationId: caller.organizationId },
-    }),
+mockSession(() => ({
+  user: { id: caller.userId, name: 'Somebody', email: 'somebody@orbit.test' },
+  session: { activeOrganizationId: caller.organizationId },
 }));
 
 const { GET, POST } = await import('../../../../src/app/api/labels/route.ts');
