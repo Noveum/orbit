@@ -173,7 +173,7 @@ Commit: `feat(storage): track presigned upload expiry`
 - Produces: `StorageDriver.deletePrefix(prefix: string): Promise<void>`.
 - Produces: `storagePrefixFor(organizationId: string): string` and `assertSafePrefix(prefix: string): string`.
 
-- [ ] **Step 1: Write failing prefix validation and summary tests**
+- [x] **Step 1: Write failing prefix validation and summary tests**
 
 ```ts
 expect(storagePrefixFor('org_1')).toBe('org_1/');
@@ -184,13 +184,13 @@ expect(await driver.summarizePrefix('org_1/')).toEqual({ objects: 3, bytes: 60 }
 
 The controlled S3 client must return two `ListObjectsV2Command` pages so the test asserts the second request uses the first continuation token.
 
-- [ ] **Step 2: Run the prefix tests and confirm they fail**
+- [x] **Step 2: Run the prefix tests and confirm they fail**
 
 Run: `bun --filter @orbit/services test tests/storage/storage-prefix.test.ts`
 
 Expected: FAIL because prefix operations do not exist.
 
-- [ ] **Step 3: Implement validated pagination and batching**
+- [x] **Step 3: Implement validated pagination and batching**
 
 ```ts
 export interface StoragePrefixSummary {
@@ -204,7 +204,7 @@ async deletePrefix(prefix: string): Promise<void>
 
 Use `ListObjectsV2Command` with `Prefix` and `ContinuationToken`. Sum each returned object's `Size`. Send `DeleteObjectsCommand` requests of no more than 1,000 exact returned keys, reject any response containing `Errors`, and repeat listing until an empty page proves the prefix is empty.
 
-- [ ] **Step 4: Add deletion tests for all safety boundaries**
+- [x] **Step 4: Add deletion tests for all safety boundaries**
 
 ```ts
 await driver.deletePrefix('org_1/');
@@ -215,7 +215,7 @@ await expect(partialFailure()).rejects.toMatchObject({ code: 'internal' });
 
 Cover empty prefixes, more than one list page, more than one delete batch, missing keys, malformed prefixes, and a per-object S3 error.
 
-- [ ] **Step 5: Run service tests and commit**
+- [x] **Step 5: Run service tests and commit**
 
 Run: `bun --filter @orbit/services test tests/storage/storage-prefix.test.ts tests/storage/storage.test.ts`
 

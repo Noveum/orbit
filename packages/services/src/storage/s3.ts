@@ -1,7 +1,9 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -9,14 +11,21 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   formatBytes,
   internal,
+  isDomainError,
   MAX_UPLOAD_BYTES,
   payloadTooLarge,
   validationFailed,
 } from '@orbit/shared';
 import { z } from 'zod';
 import { createCredentialResolver, type ResolvedCredentials } from './credentials.ts';
-import { assertSafeKey } from './key.ts';
-import type { DownloadOptions, StorageDriver, StoredObject, UploadTarget } from './types.ts';
+import { assertSafeKey, assertSafePrefix } from './key.ts';
+import type {
+  DownloadOptions,
+  StorageDriver,
+  StoragePrefixSummary,
+  StoredObject,
+  UploadTarget,
+} from './types.ts';
 
 export const s3ConfigSchema = z.object({
   bucket: z.string().min(1),
@@ -30,8 +39,36 @@ export const s3ConfigSchema = z.object({
 
 export type S3Config = z.input<typeof s3ConfigSchema>;
 
-const UPLOAD_URL_TTL_SECONDS = 900;
+export const UPLOAD_URL_TTL_SECONDS = 900;
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
+const MAX_DELETE_OBJECTS = 1000;
+
+interface ListedObject {
+  readonly key: string;
+  readonly size: number;
+}
+
+function listedObjects(
+  contents: readonly {
+    readonly Key?: string | undefined;
+    readonly Size?: number | undefined;
+  }[],
+  prefix: string,
+): ListedObject[] {
+  return contents.map((entry) => {
+    const key = entry.Key;
+    const size = entry.Size ?? 0;
+    if (key === undefined || !key.startsWith(prefix) || !Number.isSafeInteger(size) || size < 0) {
+      throw internal('Object storage returned an invalid workspace file listing.');
+    }
+    return { key, size };
+  });
+}
+
+function throwStorageError(message: string, error: unknown): never {
+  if (isDomainError(error)) throw error;
+  throw internal(message, error);
+}
 
 function assertSignableLength(contentLength: number): void {
   if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
@@ -53,12 +90,14 @@ export class S3StorageDriver implements StorageDriver {
     endpoint?: string;
   };
   private readonly resolveCredentials: () => Promise<ResolvedCredentials | undefined>;
+  private readonly providedClient: S3Client | null;
   private cached: { key: string; client: S3Client } | null = null;
 
-  constructor(config: S3Config) {
+  constructor(config: S3Config, providedClient: S3Client | null = null) {
     const parsed = s3ConfigSchema.parse(config);
     const { accessKeyId, secretAccessKey, sessionToken, endpoint } = parsed;
     this.bucket = parsed.bucket;
+    this.providedClient = providedClient;
     this.base = {
       region: parsed.region,
       forcePathStyle: parsed.forcePathStyle ?? endpoint !== undefined,
@@ -72,6 +111,7 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   private async client(): Promise<S3Client> {
+    if (this.providedClient !== null) return this.providedClient;
     const credentials = await this.resolveCredentials();
     const key =
       credentials === undefined
@@ -158,6 +198,83 @@ export class S3StorageDriver implements StorageDriver {
     assertSafeKey(key);
     const client = await this.client();
     await client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  async summarizePrefix(prefix: string): Promise<StoragePrefixSummary> {
+    const safePrefix = assertSafePrefix(prefix);
+    const client = await this.client();
+    let continuationToken: string | undefined;
+    let objects = 0;
+    let bytes = 0;
+    try {
+      do {
+        const page = await client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: safePrefix,
+            MaxKeys: MAX_DELETE_OBJECTS,
+            ...(continuationToken === undefined ? {} : { ContinuationToken: continuationToken }),
+          }),
+        );
+        const listed = listedObjects(page.Contents ?? [], safePrefix);
+        objects += listed.length;
+        bytes += listed.reduce((total, entry) => total + entry.size, 0);
+        if (!(Number.isSafeInteger(objects) && Number.isSafeInteger(bytes))) {
+          throw internal('The workspace file inventory is too large to summarize safely.');
+        }
+        if (page.IsTruncated !== true) {
+          continuationToken = undefined;
+          continue;
+        }
+        if (page.NextContinuationToken === undefined) {
+          throw internal('Object storage returned an incomplete workspace file listing.');
+        }
+        continuationToken = page.NextContinuationToken;
+      } while (continuationToken !== undefined);
+      return { objects, bytes };
+    } catch (error: unknown) {
+      throwStorageError('Could not inspect workspace files in storage.', error);
+    }
+  }
+
+  async deletePrefix(prefix: string): Promise<void> {
+    const safePrefix = assertSafePrefix(prefix);
+    const client = await this.client();
+    try {
+      while (true) {
+        const page = await client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: safePrefix,
+            MaxKeys: MAX_DELETE_OBJECTS,
+          }),
+        );
+        const listed = listedObjects(page.Contents ?? [], safePrefix);
+        if (listed.length === 0) {
+          if (page.IsTruncated === true) {
+            throw internal('Object storage returned an incomplete workspace file listing.');
+          }
+          return;
+        }
+        for (let offset = 0; offset < listed.length; offset += MAX_DELETE_OBJECTS) {
+          const batch = listed.slice(offset, offset + MAX_DELETE_OBJECTS);
+          const deleted = await client.send(
+            new DeleteObjectsCommand({
+              Bucket: this.bucket,
+              Delete: {
+                Objects: batch.map((entry) => ({ Key: entry.key })),
+                Quiet: true,
+              },
+            }),
+          );
+          if ((deleted.Errors?.length ?? 0) > 0) {
+            throw internal('Object storage could not delete every workspace file.');
+          }
+        }
+      }
+    } catch (error: unknown) {
+      throwStorageError('Could not delete workspace files from storage.', error);
+    }
   }
 
   async stat(key: string): Promise<StoredObject | null> {
