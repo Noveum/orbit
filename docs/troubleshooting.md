@@ -215,6 +215,27 @@ bun run check-comments
 
 names the file and line.
 
+### `bun run check-deps` fails after a dependency bump
+
+A package listed in the root `overrides` block resolved to two versions, or a
+manifest asked for a version the override will not let it have. Bun keeps a
+transitive resolution that still satisfies its own range, so a bump applied to
+one manifest alone leaves the previous copy nested under everything else that
+depends on it. Two copies of a library whose types cross module boundaries, any
+CodeMirror package above all, fail typecheck with `TS2375` on
+`exactOptionalPropertyTypes`, and a facet or an instance compared across the two
+copies fails at runtime as soon as the code reaches for one.
+
+An override also shadows a direct dependency, which is why the second failure
+exists: without it a bump could sit in `package.json` and install nothing. Move
+both, then install.
+
+```bash
+bun pm why @codemirror/view
+bun install
+bun run check-deps
+```
+
 ### Typecheck fails on something that looks fine
 
 `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` are on, so

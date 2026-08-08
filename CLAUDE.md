@@ -117,6 +117,16 @@ domain verified in Resend, otherwise every send fails.
 - **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the task managers we measured against do, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.
 - **Accessibility.** Keyboard operable everywhere, visible focus rings, real semantics from Radix primitives.
+- **Single instance dependencies.** A library whose types or runtime identity cross package boundaries,
+  CodeMirror above all, must resolve to exactly one version. Bun keeps a transitive resolution that still
+  satisfies its range, so bumping only the direct dependency leaves the old copy nested under every other
+  package that wanted it. Two copies of `@codemirror/view` fail typecheck under `exactOptionalPropertyTypes`
+  the moment a value crosses between them, and a facet or instance compared across the two copies is a
+  runtime bug waiting for the next refactor to expose it. The `overrides` block
+  in the root `package.json` is what collapses them, and `bun run check-deps` fails the build when an
+  overridden package resolves twice or when a bump left in a manifest is one the override silently swallows.
+  An override shadows a direct dependency too, so a real version move means editing both the manifest range
+  and the override, then running `bun install`.
 
 ## Testing
 
