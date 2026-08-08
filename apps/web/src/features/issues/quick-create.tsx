@@ -1,6 +1,6 @@
 'use client';
 
-import { PRIORITIES } from '@orbit/shared/constants';
+import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { ChevronRight } from 'lucide-react';
@@ -57,6 +57,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [labelIds, setLabelIds] = useState<readonly string[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cycleId, setCycleId] = useState<string | null>(null);
+  const [estimate, setEstimate] = useState<number | null>(null);
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
@@ -84,6 +85,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setLabelIds([]);
     setProjectId(null);
     setCycleId(null);
+    setEstimate(null);
     setPending([]);
   }, [open]);
 
@@ -156,7 +158,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         assigneeId,
         projectId,
         cycleId,
-        estimate: null,
+        estimate,
         labelIds,
       },
       {
@@ -346,6 +348,23 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                   const found = cycles.find((cycle) => cycle.id === cycleId);
                   return found === undefined ? 'Sprint' : sprintLabel(found);
                 })()}
+              </button>
+            </PropertyMenu>
+
+            <PropertyMenu
+              title="Estimate"
+              options={[
+                { id: 'none', label: 'No estimate' },
+                ...DEFAULT_ESTIMATE_SCALE.map((value) => ({
+                  id: String(value),
+                  label: `${value} points`,
+                })),
+              ]}
+              selected={estimate === null ? ['none'] : [String(estimate)]}
+              onSelect={(value) => setEstimate(value === 'none' ? null : Number(value))}
+            >
+              <button type="button" className={chipClassName} data-testid="quick-create-estimate">
+                {estimate === null ? 'Estimate' : `${estimate} points`}
               </button>
             </PropertyMenu>
           </div>

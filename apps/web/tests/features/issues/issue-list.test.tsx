@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
@@ -103,11 +104,13 @@ function renderList() {
   });
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <IssueList states={[todo]} groups={groups} />
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <IssueList states={[todo]} groups={groups} />
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }

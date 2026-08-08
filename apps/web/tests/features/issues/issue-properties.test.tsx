@@ -25,6 +25,7 @@ const workspace: WorkspaceData = {
   ...({} as WorkspaceData),
   ready: true,
   userId: 'user_1',
+  role: 'admin',
   teams: [{ id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#5a63c8' }],
   states: [
     {
@@ -62,6 +63,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
 }));
 
 const { IssueProperties } = await import('@/features/issues/issue-properties.tsx');
+const { IssueDeletionProvider } = await import('@/features/issues/issue-deletion.tsx');
 
 const milestones: readonly Milestone[] = [
   {
@@ -234,5 +236,37 @@ describe('the milestone row on the issue properties panel', () => {
     );
 
     expect(await screen.findByTestId('hotkey-names')).toHaveTextContent('Change milestone');
+  });
+});
+
+describe('the delete affordance on the properties panel', () => {
+  it('sits in the panel rather than only behind the header menu', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    render(
+      <Providers>
+        <IssueDeletionProvider>
+          <IssueProperties issue={issue()} />
+        </IssueDeletionProvider>
+      </Providers>,
+    );
+
+    await user.click(screen.getByTestId('property-delete-issue'));
+
+    expect(await screen.findByTestId('delete-issue-dialog')).toBeInTheDocument();
+  });
+
+  it('stays hidden from a role that cannot delete', () => {
+    const previous = workspace.role;
+    Object.assign(workspace, { role: 'guest' });
+    render(
+      <Providers>
+        <IssueDeletionProvider>
+          <IssueProperties issue={issue()} />
+        </IssueDeletionProvider>
+      </Providers>,
+    );
+
+    expect(screen.queryByTestId('property-delete-issue')).not.toBeInTheDocument();
+    Object.assign(workspace, { role: previous });
   });
 });

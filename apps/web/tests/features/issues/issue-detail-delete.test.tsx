@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -159,14 +160,16 @@ function mountDetail(onDeleted?: () => void, withOpenLayer = false): QueryClient
   client.setQueryData(queryKeys.issue('ENG-1'), detail);
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <IssueDeletionProvider>
-            <IssueDetailView identifier="ENG-1" onDeleted={onDeleted} />
-            {withOpenLayer ? <OpenLayer /> : null}
-          </IssueDeletionProvider>
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <IssueDeletionProvider>
+              <IssueDetailView identifier="ENG-1" onDeleted={onDeleted} />
+              {withOpenLayer ? <OpenLayer /> : null}
+            </IssueDeletionProvider>
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return client;

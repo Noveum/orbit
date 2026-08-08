@@ -20,6 +20,7 @@ import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { IssueActionsMenu } from './issue-actions.tsx';
+import { IssueCopyActions } from './issue-copy-actions.tsx';
 import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
 import { IssueProperties } from './issue-properties.tsx';
 import { IssueRelations } from './issue-relations.tsx';
@@ -259,6 +260,7 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
           )}
           <PriorityGlyph priority={issue.priority} />
           <div className="ml-auto flex items-center gap-3">
+            <IssueCopyActions issue={issue} />
             <ViewerPresence issueId={issue.id} />
             <Button
               size="sm"

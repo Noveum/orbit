@@ -366,6 +366,34 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create-cycle')).toBeTruthy();
   });
 
+  it('offers an estimate, so effort does not have to be set after the fact', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    const chip = screen.getByTestId('quick-create-estimate');
+    expect(chip).toHaveTextContent('Estimate');
+
+    await user.click(chip);
+    await user.click(await screen.findByText('3 points'));
+
+    expect(screen.getByTestId('quick-create-estimate')).toHaveTextContent('3 points');
+  });
+
+  it('creates the issue with the estimate that was picked', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Ship the thing');
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('3 points'));
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    expect(created.mock.calls[0]?.[0]?.['estimate']).toBe(3);
+  });
+
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
     workspace = buildWorkspace();
     open();

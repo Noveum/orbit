@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys, VIEW_PREFERENCES_ROOT } from '@/lib/query/keys.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
@@ -162,11 +163,13 @@ function renderEmptyCacheView(): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <MyIssuesView />
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <MyIssuesView />
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -207,11 +210,13 @@ function renderView(viewerId = 'me', layout: 'list' | 'board' = 'list'): void {
   );
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <MyIssuesView />
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <MyIssuesView />
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }

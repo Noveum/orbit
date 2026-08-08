@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
@@ -105,11 +106,13 @@ function renderBoard() {
   });
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <Board groups={groups} draggable={false} />
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <Board groups={groups} draggable={false} />
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -246,16 +249,18 @@ function renderWindowedBoard(count: number, onLoadMore?: () => void) {
   });
   render(
     <QueryClientProvider client={client}>
-      <ToastProvider>
-        <HotkeyProvider>
-          <Board
-            groups={groups}
-            draggable={false}
-            hasMore={onLoadMore !== undefined}
-            onLoadMore={onLoadMore}
-          />
-        </HotkeyProvider>
-      </ToastProvider>
+      <TooltipProvider>
+        <ToastProvider>
+          <HotkeyProvider>
+            <Board
+              groups={groups}
+              draggable={false}
+              hasMore={onLoadMore !== undefined}
+              onLoadMore={onLoadMore}
+            />
+          </HotkeyProvider>
+        </ToastProvider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }

@@ -38,6 +38,53 @@ export function branchName(params: {
   return title.length > 0 ? `${user}/${id}-${title}` : `${user}/${id}`;
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export interface IssuePromptInput {
+  readonly identifier: string;
+  readonly title: string;
+  readonly branch: string;
+  readonly team?: string | null | undefined;
+  readonly state?: string | null | undefined;
+  readonly priority?: string | null | undefined;
+  readonly assignee?: string | null | undefined;
+  readonly project?: string | null | undefined;
+  readonly labels?: readonly string[] | undefined;
+  readonly description?: string | null | undefined;
+  readonly url?: string | null | undefined;
+}
+
+export function issuePrompt(issue: IssuePromptInput): string {
+  const lines = [`<issue identifier="${escapeXml(issue.identifier)}">`];
+  lines.push(`<title>${escapeXml(issue.title)}</title>`);
+  if (issue.team) lines.push(`<team name="${escapeXml(issue.team)}"/>`);
+  if (issue.state) lines.push(`<state name="${escapeXml(issue.state)}"/>`);
+  if (issue.priority) lines.push(`<priority name="${escapeXml(issue.priority)}"/>`);
+  if (issue.assignee) lines.push(`<assignee name="${escapeXml(issue.assignee)}"/>`);
+  for (const label of issue.labels ?? []) lines.push(`<label>${escapeXml(label)}</label>`);
+  if (issue.project) lines.push(`<project name="${escapeXml(issue.project)}"/>`);
+  if (issue.url) lines.push(`<url>${escapeXml(issue.url)}</url>`);
+  const description = issue.description?.trim() ?? '';
+  if (description.length > 0) {
+    lines.push(`<description>\n${escapeXml(description)}\n</description>`);
+  }
+  lines.push('</issue>');
+
+  return [
+    `Work on Orbit issue ${issue.identifier}:`,
+    '',
+    `Suggested branch name: ${issue.branch}`,
+    '',
+    lines.join('\n'),
+  ].join('\n');
+}
+
 export function sortOrderBetween(before: number | null, after: number | null): number {
   if (before === null && after === null) return SORT_ORDER_STEP;
   if (before === null && after !== null) return after - SORT_ORDER_STEP;

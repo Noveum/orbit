@@ -1,9 +1,15 @@
 'use client';
 
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, MoreHorizontal, Settings2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Collapsible } from '@/components/ui/collapsible.tsx';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { NavLink, NavTeamNode } from '@/lib/navigation.ts';
@@ -111,31 +117,57 @@ export function SidebarTeam({
 
   return (
     <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className={cn(
-          'group flex w-full items-center gap-2 rounded-md px-2 text-dense',
-          'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
-          touch ? 'h-11 gap-3 px-3' : 'h-7 3xl:h-8',
-          withinTeam && !open ? 'text-text' : 'text-muted',
-          'hover:bg-surface-2/70 hover:text-text',
-        )}
-      >
-        {tile}
-        <span className="min-w-0 flex-1 truncate text-left font-medium">{team.name}</span>
-        {!open && typeof team.count === 'number' && team.count > 0 ? (
-          <CountBadge count={team.count} />
-        ) : null}
-        <ChevronRight
+      <div className="group/team relative flex items-center">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          data-testid={`team-toggle-${team.key}`}
           className={cn(
-            'size-3.5 shrink-0 text-faint transition-transform duration-[var(--duration-fast)]',
-            open && 'rotate-90',
+            'group flex w-full items-center gap-2 rounded-md px-2 text-dense',
+            'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
+            touch ? 'h-11 gap-3 px-3' : 'h-7 3xl:h-8',
+            withinTeam && !open ? 'text-text' : 'text-muted',
+            'hover:bg-surface-2/70 hover:text-text',
           )}
-          aria-hidden="true"
-        />
-      </button>
+        >
+          {tile}
+          <span className="min-w-0 flex-1 truncate text-left font-medium">{team.name}</span>
+          {!open && typeof team.count === 'number' && team.count > 0 ? (
+            <CountBadge count={team.count} />
+          ) : null}
+          <ChevronRight
+            className={cn(
+              'size-3.5 shrink-0 text-faint transition-transform duration-[var(--duration-fast)]',
+              open && 'rotate-90',
+            )}
+            aria-hidden="true"
+          />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`${team.name} options`}
+            data-testid={`team-menu-${team.key}`}
+            className={cn(
+              'absolute right-6 flex items-center justify-center rounded-sm text-faint',
+              'opacity-0 transition-opacity duration-[var(--duration-fast)]',
+              'hover:text-text focus-visible:opacity-100 data-[state=open]:opacity-100',
+              'group-hover/team:opacity-100',
+              touch ? 'size-8' : 'size-5',
+            )}
+          >
+            <MoreHorizontal className="size-3.5" aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem asChild>
+              <Link href={`/team/${team.key.toLowerCase()}/settings`}>
+                <Settings2 className="size-3.5" aria-hidden="true" />
+                Team settings
+              </Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <Collapsible open={open}>
         <div className="relative mt-0.5 mb-1 flex flex-col gap-0.5 pl-6">
           <div className="absolute top-0 bottom-1 left-[15px] w-px bg-border" aria-hidden="true" />

@@ -267,6 +267,41 @@ export async function archiveTeam(
   });
 }
 
+export async function restoreTeam(
+  principal: Principal,
+  teamId: string,
+): Promise<{ team: TeamRow; actions: SyncAction[] }> {
+  assertCan(principal, 'team:manage');
+
+  return await db.transaction(async (tx) => {
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const [updated] = await tx
+      .update(schema.team)
+      .set({ archivedAt: null, updatedAt: new Date(), syncId })
+      .where(
+        and(eq(schema.team.id, teamId), eq(schema.team.organizationId, principal.organizationId)),
+      )
+      .returning();
+    const team = requireRow(updated, 'That team does not exist.');
+    return {
+      team,
+      actions: [
+        buildSyncAction({
+          syncId,
+          organizationId: principal.organizationId,
+          scopes: [scopes.organization(principal.organizationId), scopes.team(team.id)],
+          action: 'update',
+          model: 'team',
+          modelId: team.id,
+          data: team,
+          actor,
+        }),
+      ],
+    };
+  });
+}
+
 export async function addTeamMember(
   principal: Principal,
   teamId: string,

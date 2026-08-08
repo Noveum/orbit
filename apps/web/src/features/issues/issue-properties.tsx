@@ -2,17 +2,18 @@
 
 import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 import { sprintLabel } from '@orbit/shared/utils';
-import { X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { cn } from '@/lib/cn.ts';
-import { rowHover } from '@/lib/interaction.ts';
+import { dangerMenuAction, rowHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { Issue, Milestone } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useMilestones } from '@/lib/query/use-milestones.ts';
 import { DueDateField } from './due-date-field.tsx';
+import { useIssueDeletion } from './issue-deletion.tsx';
 import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { PropertyMenu } from './property-menu.tsx';
@@ -326,7 +327,31 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
           </button>
         </PropertyMenu>
       </PropertyRow>
+
+      <DeleteIssueRow issue={issue} />
     </aside>
+  );
+}
+
+function DeleteIssueRow({ issue }: { readonly issue: Issue }) {
+  const deletion = useIssueDeletion();
+  if (deletion?.allowed !== true) return null;
+
+  return (
+    <div className="mt-1 border-border border-t pt-2">
+      <button
+        type="button"
+        data-testid="property-delete-issue"
+        onClick={() => deletion.request({ issues: [issue] })}
+        className={cn(
+          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-dense',
+          dangerMenuAction,
+        )}
+      >
+        <Trash2 className="size-3.5" aria-hidden="true" />
+        Delete issue
+      </button>
+    </div>
   );
 }
 
