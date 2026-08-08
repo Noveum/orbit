@@ -3,6 +3,10 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
+import {
+  noveumOrganizationValues,
+  NOVEUM_IMPORT_ORGANIZATION_ID as ORGANIZATION_ID,
+} from '../noveum-workspace.ts';
 import * as schema from '../schema/index.ts';
 import { type AssetStore, createAssetStore } from './assets.ts';
 import { type BuildContext, buildDocs, buildProject } from './build-project.ts';
@@ -10,9 +14,6 @@ import { displayNameFor, handleFor, orgRoleFor } from './plane-mapping.ts';
 import { type PlaneMember, readPlaneExport } from './plane-source.ts';
 import { countRows, emptyRows, type ImportRows } from './rows.ts';
 
-const ORGANIZATION_ID = 'org_noveum';
-const ORGANIZATION_SLUG = 'noveum';
-const ORGANIZATION_NAME = 'Noveum';
 const CHUNK = 400;
 
 const { values } = parseArgs({
@@ -189,14 +190,7 @@ async function main(): Promise<void> {
 
   await db
     .insert(schema.organization)
-    .values({
-      id: ORGANIZATION_ID,
-      name: ORGANIZATION_NAME,
-      slug: ORGANIZATION_SLUG,
-      logo: null,
-      allowedEmailDomains: ['noveum.ai'],
-      createdAt: floor,
-    })
+    .values(noveumOrganizationValues(ORGANIZATION_ID, floor))
     .onConflictDoNothing();
 
   const rows = emptyRows();
