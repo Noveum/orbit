@@ -1,0 +1,41 @@
+title: "[show and tell]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Show what you built with Orbit, or what you built on top of it. Deployments,
+        integrations, MCP clients, scripts, themes, importers, or the way your team
+        uses it that nobody expected.
+
+        This is also the best place to tell us something is missing without filing
+        anything. If you had to work around Orbit to build your thing, that is worth
+        knowing.
+
+        Do not post screenshots containing anything private. Issue titles and names
+        from a real workspace are easy to forget about.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What you built
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How it works
+      description: Which parts of Orbit it uses. The MCP server, the realtime socket, the importers, the docs product.
+
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      description: Repository, site, or a video. Optional.
+
+  - type: textarea
+    id: friction
+    attributes:
+      label: What got in your way
+      description: Anything you had to work around, or wished existed. This is the part we read most carefully.
