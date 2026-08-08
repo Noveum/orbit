@@ -1214,3 +1214,63 @@ describe('an issue milestone has to belong to the project the issue is on', () =
     expect(updated.issue.milestoneId).toBe(here.milestoneId);
   });
 });
+
+describe('allocating an issue number under concurrency', () => {
+  it('gives every concurrent create a distinct number', async () => {
+    const created = await Promise.all(
+      Array.from({ length: 8 }, (_, at) =>
+        createIssue(workspace.admin, { teamId: workspace.teamId, title: `Racing ${at}` }),
+      ),
+    );
+
+    const numbers = created.map((entry) => entry.issue.number);
+
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
+  it('gives every concurrent create a distinct identifier', async () => {
+    const created = await Promise.all(
+      Array.from({ length: 8 }, (_, at) =>
+        createIssue(workspace.admin, { teamId: workspace.teamId, title: `Identified ${at}` }),
+      ),
+    );
+
+    const identifiers = created.map((entry) => entry.issue.identifier);
+
+    expect(new Set(identifiers).size).toBe(identifiers.length);
+  });
+
+  it('does not hold the team row while the rest of the write runs', async () => {
+    const before = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Before',
+    });
+
+    await expect(
+      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'After' }),
+    ).resolves.toBeDefined();
+
+    const after = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Later',
+    });
+
+    expect(after.issue.number).toBeGreaterThan(before.issue.number);
+  });
+
+  it('leaves a gap rather than reusing a number when the write is refused', async () => {
+    const before = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Kept' });
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Refused',
+        stateId: 'state_that_does_not_exist',
+      }),
+    ).rejects.toThrow();
+
+    const after = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Next' });
+
+    expect(after.issue.number).toBeGreaterThan(before.issue.number + 1);
+  });
+});
