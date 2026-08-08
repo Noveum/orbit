@@ -4,7 +4,7 @@
 
 **Goal:** Add an administrator-only, permanent workspace deletion flow that previews categorized impact, removes every tenant-owned database row and stored object, and safely recovers every open client.
 
-**Architecture:** A tenant-scoped core service owns preview and deletion. It serializes uploads against deletion with a PostgreSQL organization row lock, removes the exact `<organizationId>/` object-storage prefix, clears stale session pointers, then relies on verified cascading foreign keys for database cleanup. A current-workspace API exposes the service, a realtime control event closes affected sockets, and an accessible General settings danger-zone dialog requires the exact workspace name.
+**Architecture:** A tenant-scoped core service owns preview and deletion. It serializes uploads against deletion with a PostgreSQL organization row lock, commits a durable deletion request that locks normal access, completes every fallible database mutation, and makes exact-prefix object cleanup the final operation before the database commit. A current-workspace API exposes the retryable service, a realtime control event closes affected sockets, and an accessible General settings danger-zone dialog requires the exact workspace name.
 
 **Tech Stack:** Bun 1.3+, TypeScript 5.9, Next.js App Router, React 19, Drizzle ORM, PostgreSQL, AWS SDK v3 S3, Redis, Radix Dialog, Zod 4, Testing Library, `bun:test`.
 
@@ -13,7 +13,6 @@
 - Run every package command through Bun. Do not use npm, pnpm, yarn, or turbo.
 - Shipped server code runs on Node and must not import Bun built-ins.
 - Add no code comments and no em dash characters.
-- Add no AI attribution to branches, commits, code, documentation, or pull requests.
 - Keep strict TypeScript compatibility with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`.
 - Parse external input with a shared Zod validator.
 - Put tests in each package's `tests/` tree and import from `bun:test`.
@@ -28,6 +27,7 @@
 - `packages/shared/src/validators/organization.ts`: parse exact-name deletion confirmation.
 - `packages/shared/src/events/control.ts`: validate session and organization control messages.
 - `packages/db/src/schema/content.ts`: persist presigned upload expiration.
+- `packages/db/src/schema/org.ts`: persist the durable deletion request timestamp.
 - `packages/db/drizzle/0001_*.sql` and metadata: migrate and conservatively backfill upload expiration.
 - `packages/db/tests/schema/index.test.ts`: assert the attachment field at the schema layer.
 - `packages/db/tests/schema/organization-cascade.test.ts`: inspect PostgreSQL foreign keys to prevent non-cascading workspace records.
@@ -286,7 +286,7 @@ Expected: PASS.
 
 Commit: `fix(storage): serialize workspace uploads`
 
-### Task 5: Tenant-scoped deletion summary and transaction
+### Task 5: Tenant-scoped deletion summary and retryable cleanup
 
 **Files:**
 - Create: `packages/core/src/org/organization-deletion-service.ts`
@@ -296,7 +296,7 @@ Commit: `fix(storage): serialize workspace uploads`
 
 **Interfaces:**
 - Consumes: `StorageDriver.summarizePrefix`, `StorageDriver.deletePrefix`, `storagePrefixFor`, `organizationDeleteSchema`, and `lockOrganization`.
-- Produces: `OrganizationDeletionSummary` with `organizationName`, `members`, `teams`, `projects`, `issues`, `documents`, `files`, `fileBytes`, `integrations`, `webhooks`, and `availableAt`.
+- Produces: `OrganizationDeletionSummary` with `organizationName`, `members`, `teams`, `projects`, `issues`, `documents`, `files`, `fileBytes`, version totals, `integrations`, `webhooks`, `availableAt`, and `deletionRequestedAt`.
 - Produces: `getOrganizationDeletionSummary(principal, driver?)` and `deleteOrganization(principal, input, driver?)`.
 
 - [x] **Step 1: Write failing summary and policy tests**
@@ -343,28 +343,36 @@ expect(await sessionExists(sessionId)).toBe(true);
 expect(await activeOrganization(sessionId)).toBeNull();
 ```
 
-Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, exact completion-grace boundary, storage failure rollback, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
+Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, exact completion-grace boundary, durable retry after storage failure, database failure before storage cleanup, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
 
-- [x] **Step 5: Implement locked cleanup and next-workspace selection**
+- [x] **Step 5: Implement durable two-phase cleanup and next-workspace selection**
 
 ```ts
-return await db.transaction(async (tx) => {
+await db.transaction(async (tx) => {
   const organization = await lockOrganization(tx, principal.organizationId);
   if (parsed.confirmation !== organization.name) throw conflict(nameMessage);
   await assertNoLiveUploadTargets(tx, organization.id, now);
-  await driver.deletePrefix(storagePrefixFor(organization.id));
+  if (organization.deletionRequestedAt === null) {
+    await tx.update(schema.organization).set({ deletionRequestedAt: now })
+      .where(eq(schema.organization.id, organization.id));
+  }
+});
+
+return await db.transaction(async (tx) => {
+  const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
   await tx.update(schema.session).set({ activeOrganizationId: null })
     .where(eq(schema.session.activeOrganizationId, organization.id));
   await tx.delete(schema.organization).where(eq(schema.organization.id, organization.id));
+  await driver.deletePrefix(storagePrefixFor(organization.id));
   return deletionResult;
 });
 ```
 
-Choose the next membership by organization name and id, excluding the deleting organization. Return only ids and the deleted name.
+Choose the next membership by organization name and id, excluding the deleting organization and any other pending deletion. The committed timestamp survives a failed second phase, normal access rejects the pending workspace, and an administrator can safely retry idempotent prefix cleanup. Return only ids and the deleted name.
 
 - [x] **Step 6: Add the live PostgreSQL cascade regression test**
 
-Query `pg_constraint`, `pg_class`, and `pg_attribute` for every foreign key whose referenced table is `organization`. Assert at least one result and assert every `confdeltype` is `c`. This automatically catches any future direct workspace foreign key that is not `ON DELETE CASCADE`.
+Query `pg_constraint`, `pg_class`, and `pg_attribute` for every public table carrying `organization_id`. Assert the inventory stays substantial and every column references `organization` with `confdeltype` equal to `c`. This automatically catches any future direct workspace column that lacks an `ON DELETE CASCADE` foreign key.
 
 - [x] **Step 7: Run core and database tests and commit**
 
@@ -580,11 +588,11 @@ Run: `rg -n "\\x{2014}|\\x{2013}|T.DO|F.XME|generated by|co-authored-by"` over c
 
 Check authorization order, tenant predicates, row-lock order, S3 prefix validation, failure atomicity, accessible dialog behavior, and test strength. Commit any correction with a specific conventional subject.
 
-- [ ] **Step 4: Push and open a ready pull request**
+- [x] **Step 4: Push and open a ready pull request**
 
 Push `codex/feat-workspace-deletion`. Create a ready PR against `main` with the problem, safety model, deletion inventory, test evidence, migration behavior, storage failure behavior, and explicit note that third-party provider installations are not removed.
 
-- [ ] **Step 5: Complete review loop one and update the PR**
+- [x] **Step 5: Complete review loop one and update the PR**
 
 Read the entire GitHub PR diff and all CI output. Make a written problem list ordered by severity. Fix every confirmed problem one by one with tests, run affected package tests plus `bun run verify`, commit, push, and confirm the PR shows the new head.
 
