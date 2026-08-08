@@ -383,7 +383,7 @@ export function Board({
     </div>
   );
 
-  const peek = <IssuePeek issue={peekIssue} onClose={() => setPeekId(null)} />;
+  const peek = <IssuePeek issueId={peekId} issue={peekIssue} onClose={() => setPeekId(null)} />;
 
   if (!draggable) {
     return (
