@@ -16,6 +16,22 @@ export interface PullRequestRow {
   readonly updatedAt: string;
 }
 
+export type PullsConnection = 'no_repositories' | 'connected';
+
+export async function githubRepositoriesConnected(principal: Principal): Promise<boolean> {
+  const [row] = await db
+    .select({ id: schema.githubRepositorySync.id })
+    .from(schema.githubRepositorySync)
+    .where(
+      and(
+        eq(schema.githubRepositorySync.organizationId, principal.organizationId),
+        eq(schema.githubRepositorySync.enabled, true),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 export async function loadPullRequests(principal: Principal): Promise<PullRequestRow[]> {
   const rows = await db
     .select({

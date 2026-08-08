@@ -4,9 +4,11 @@ import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/re
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
 import { GitPullRequest } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
+import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
 import type { PullRequestRow } from './data.ts';
@@ -15,6 +17,36 @@ import { PR_GROUP_ORDER, prStateLabel, prStateTone } from './pr-state.ts';
 export interface PullsViewProps {
   readonly pulls: readonly PullRequestRow[];
   readonly userId: string;
+  readonly repositoriesConnected: boolean;
+}
+
+export function PullsEmptyState({ repositoriesConnected }: { repositoriesConnected: boolean }) {
+  if (!repositoriesConnected) {
+    return (
+      <EmptyState
+        icon={<GitPullRequest strokeWidth={1.75} aria-hidden="true" />}
+        title="No repository is connected yet"
+        description="Orbit reads pull requests from the repositories you connect. Connect one, then pull requests naming an issue show up here."
+        action={
+          <Button asChild variant="primary">
+            <Link href="/settings/integrations" data-testid="pulls-connect-github">
+              Connect GitHub
+            </Link>
+          </Button>
+        }
+        className="flex-1"
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={<GitPullRequest strokeWidth={1.75} aria-hidden="true" />}
+      title="No pull requests linked to your issues"
+      description="Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches."
+      className="flex-1"
+    />
+  );
 }
 
 function groupPulls(pulls: readonly PullRequestRow[]): { state: string; rows: PullRequestRow[] }[] {
@@ -31,7 +63,7 @@ function indexOfState(state: string): number {
   return index === -1 ? PR_GROUP_ORDER.length : index;
 }
 
-export function PullsView({ pulls, userId }: PullsViewProps) {
+export function PullsView({ pulls, userId, repositoriesConnected }: PullsViewProps) {
   const router = useRouter();
   useScopeSubscription([scopes.user(userId)]);
   useDeltaHandler(
@@ -61,12 +93,7 @@ export function PullsView({ pulls, userId }: PullsViewProps) {
       </header>
 
       {pulls.length === 0 ? (
-        <EmptyState
-          icon={<GitPullRequest strokeWidth={1.75} aria-hidden="true" />}
-          title="No pull requests yet"
-          description="Pull requests linked to your issues appear here with their review state."
-          className="flex-1"
-        />
+        <PullsEmptyState repositoriesConnected={repositoriesConnected} />
       ) : (
         <div className="flex flex-col gap-6 p-5">
           {groups.map((group) => (

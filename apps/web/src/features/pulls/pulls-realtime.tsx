@@ -12,9 +12,16 @@ export interface PullsRealtimeProps {
   readonly userId: string;
   readonly organizationId: string;
   readonly realtimeUrl: string;
+  readonly repositoriesConnected: boolean;
 }
 
-export function PullsRealtime({ pulls, userId, organizationId, realtimeUrl }: PullsRealtimeProps) {
+export function PullsRealtime({
+  pulls,
+  userId,
+  organizationId,
+  realtimeUrl,
+  repositoriesConnected,
+}: PullsRealtimeProps) {
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
   const socketUrl =
     typeof window === 'undefined'
@@ -22,7 +29,7 @@ export function PullsRealtime({ pulls, userId, organizationId, realtimeUrl }: Pu
       : resolveRealtimeUrl(realtimeUrl, window.location.origin);
   return (
     <RealtimeProvider url={socketUrl} organizationId={organizationId} fetchTicket={fetchTicket}>
-      <PullsView pulls={pulls} userId={userId} />
+      <PullsView pulls={pulls} userId={userId} repositoriesConnected={repositoriesConnected} />
     </RealtimeProvider>
   );
 }

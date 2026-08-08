@@ -35,7 +35,7 @@ const pull: PullRequestRow = {
 
 describe('PullsView', () => {
   it('links the issue behind each pull request, identifier and title together', () => {
-    render(<PullsView pulls={[pull]} userId="user_1" />);
+    render(<PullsView pulls={[pull]} userId="user_1" repositoriesConnected />);
 
     const link = screen.getByTestId('pull-issue-ENG-12');
     expect(link.tagName).toBe('A');
@@ -45,12 +45,32 @@ describe('PullsView', () => {
   });
 
   it('keeps the pull request itself pointing at the forge', () => {
-    render(<PullsView pulls={[pull]} userId="user_1" />);
+    render(<PullsView pulls={[pull]} userId="user_1" repositoriesConnected />);
 
     const row = screen.getByRole('listitem');
     const forge = within(row).getByRole('link', {
       name: 'Buffer the socket until the hub attaches',
     });
     expect(forge).toHaveAttribute('href', 'https://github.com/noveum/orbit/pull/42');
+  });
+});
+
+describe('the empty pull request page explaining itself', () => {
+  it('offers a way to connect GitHub when no repository is connected', () => {
+    render(<PullsView pulls={[]} userId="user_1" repositoriesConnected={false} />);
+
+    expect(screen.getByText('No repository is connected yet')).toBeInTheDocument();
+    expect(screen.getByTestId('pulls-connect-github')).toHaveAttribute(
+      'href',
+      '/settings/integrations',
+    );
+  });
+
+  it('says what makes a pull request link once a repository is connected', () => {
+    render(<PullsView pulls={[]} userId="user_1" repositoriesConnected />);
+
+    expect(screen.getByText('No pull requests linked to your issues')).toBeInTheDocument();
+    expect(screen.getByText(/branch or title names an issue/)).toBeInTheDocument();
+    expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
   });
 });
