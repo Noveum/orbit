@@ -38,6 +38,7 @@ const bodySchema = z.union([
   z.object({ ok: z.literal(true), actions: z.number() }),
   z.object({ ok: z.literal(true), handled: z.boolean() }),
   z.object({ status: z.literal('duplicate') }),
+  z.object({ status: z.literal('unhandled'), event: z.string() }),
   z.object({ error: z.string() }),
 ]);
 
@@ -471,5 +472,54 @@ describe('telling a delivery that landed from one that was dropped', () => {
     const row = await deliveryRow('delivery-landed');
     expect(row?.status).toBe('processed');
     expect(row?.error).toBeNull();
+  });
+});
+
+describe('events that reach no handler', () => {
+  const NEVER_HANDLED = [
+    'check_run',
+    'workflow_job',
+    'workflow_run',
+    'status',
+    'repository_dispatch',
+    'issues',
+    'pull_request_review_comment',
+    'push',
+    'pull_request_review_thread',
+    'sub_issues',
+    'create',
+    'delete',
+  ];
+
+  it('accepts them without writing a delivery row', async () => {
+    for (const [at, event] of NEVER_HANDLED.entries()) {
+      const deliveryId = `delivery-unhandled-${at}`;
+      const response = await POST(signed('{}', deliveryId, event));
+
+      expect(response.status).toBe(200);
+      expect(await deliveryRow(deliveryId)).toBeUndefined();
+    }
+  });
+
+  it('still refuses one whose signature does not check out', async () => {
+    const raw = '{}';
+    const response = await POST(
+      request(raw, {
+        'x-hub-signature-256': sign(raw, 'the-wrong-secret'),
+        'x-github-event': 'check_run',
+        'x-github-delivery': 'delivery-unhandled-forged',
+      }),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it('keeps recording every event that does reach a handler', async () => {
+    for (const [at, event] of ['pull_request', 'pull_request_review', 'check_suite'].entries()) {
+      const deliveryId = `delivery-handled-${at}`;
+      await POST(signed(pullRequestBody('orb-3-dashboard'), deliveryId, event));
+
+      expect(await deliveryRow(deliveryId)).toBeDefined();
+    }
   });
 });
