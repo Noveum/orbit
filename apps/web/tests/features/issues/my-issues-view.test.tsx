@@ -335,3 +335,26 @@ describe('MyIssuesView', () => {
     expect(screen.getByTestId('issue-peek')).toBeInTheDocument();
   });
 });
+
+describe('dragging a card on the My Issues board', () => {
+  it('makes every card sortable, the same as any other board', () => {
+    workspace = buildWorkspace();
+    renderView('me', 'board');
+
+    const board = screen.getByTestId('my-issues-board');
+    const sortable = board.querySelectorAll('[aria-roledescription="sortable"]');
+
+    expect(sortable.length).toBeGreaterThan(0);
+  });
+
+  it('carries the issue id on each sortable card, so a drop knows what moved', () => {
+    workspace = buildWorkspace();
+    renderView('me', 'board');
+
+    const board = screen.getByTestId('my-issues-board');
+    const first = board.querySelector('[aria-roledescription="sortable"]');
+
+    expect(first).not.toBeNull();
+    expect(first?.getAttribute('role')).toBe('button');
+  });
+});

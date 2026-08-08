@@ -1,6 +1,6 @@
 'use client';
 
-import type { DisplayProperty, IssueOrdering } from '@orbit/shared/filters';
+import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { CircleDot } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { DisplayMenu } from '@/features/filters/display-menu.tsx';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
+import { mergedStateResolver } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { LayoutToggle } from '@/features/filters/layout-toggle.tsx';
 import { useLayoutPreference } from '@/features/filters/use-layout-preference.ts';
@@ -17,7 +18,8 @@ import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAssignedIssues } from '@/lib/query/use-issues.ts';
-import { Board } from './board.tsx';
+import type { StateResolver } from './board.tsx';
+import { Board, canRegroup } from './board.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
@@ -78,6 +80,7 @@ export function MyIssuesView() {
     scope,
   });
   const groups = model.groups;
+  const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
 
   if (!workspace.ready) {
     return (
@@ -116,6 +119,9 @@ export function MyIssuesView() {
         layout={layout}
         model={model}
         groups={groups}
+        groupBy={config.groupBy}
+        orderBy={config.orderBy}
+        resolveState={resolveState}
         properties={config.display.properties}
         workspace={workspace}
         peekId={peekId}
@@ -149,6 +155,9 @@ interface BodyProps {
   readonly layout: ViewLayoutMode;
   readonly model: ReturnType<typeof useIssueViewModel>;
   readonly groups: readonly IssueGroup[];
+  readonly groupBy: GroupByField;
+  readonly orderBy: IssueOrdering;
+  readonly resolveState: StateResolver;
   readonly properties: readonly DisplayProperty[];
   readonly workspace: ReturnType<typeof useWorkspace>;
   readonly peekId: string | null;
@@ -164,6 +173,9 @@ function MyIssuesBody({
   layout,
   model,
   groups,
+  groupBy,
+  orderBy,
+  resolveState,
   properties,
   workspace,
   peekId,
@@ -189,7 +201,10 @@ function MyIssuesBody({
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="my-issues-board">
         <Board
           groups={groups}
-          draggable={false}
+          draggable={canRegroup(groupBy)}
+          reorderable={orderBy === 'manual'}
+          groupBy={groupBy}
+          resolveState={resolveState}
           properties={properties}
           hasMore={hasNextPage}
           loadingMore={loadingMore}
