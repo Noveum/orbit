@@ -7,7 +7,6 @@ import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx
 import { resolveMembership } from '@/lib/auth/principal.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam, ShellWorkspace } from '@/lib/navigation.ts';
-import { WorkspaceCachePersistence } from '@/lib/query/persistence.tsx';
 import { dehydratedWorkspace } from '@/lib/query/prefetch.ts';
 import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
 import { configuredRealtimeUrl } from '@/lib/realtime/url.ts';
@@ -64,10 +63,6 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
 
   return (
     <HydrationBoundary state={dehydrated}>
-      <WorkspaceCachePersistence
-        userId={membership.principal.userId}
-        organizationId={membership.principal.organizationId}
-      />
       <WorkspaceRealtime
         url={realtimeUrl()}
         userId={membership.principal.userId}
