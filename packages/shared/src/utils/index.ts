@@ -149,6 +149,54 @@ export function extractIssueIdentifiers(text: string): string[] {
   return [...found];
 }
 
+const LINKING_KEYWORDS = [
+  'close',
+  'closes',
+  'closed',
+  'fix',
+  'fixes',
+  'fixed',
+  'resolve',
+  'resolves',
+  'resolved',
+  'ref',
+  'refs',
+  'part of',
+  'relates to',
+  'related to',
+];
+
+const IDENTIFIER_SOURCE = '[A-Z][A-Z0-9]{1,5}-\\d+';
+
+export function withoutNonProse(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/~~~[\s\S]*?~~~/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .split('\n')
+    .filter((line) => !/^\s*>/.test(line))
+    .join('\n');
+}
+
+export function declaredIssueIdentifiers(text: string): string[] {
+  const prose = withoutNonProse(text).toUpperCase();
+  const keywords = LINKING_KEYWORDS.map((word) => word.toUpperCase().replace(' ', '\\s+')).join(
+    '|',
+  );
+  const pattern = new RegExp(
+    `\\b(?:${keywords})\\b[\\s:#]*((?:${IDENTIFIER_SOURCE})(?:\\s*,\\s*${IDENTIFIER_SOURCE})*)`,
+    'g',
+  );
+  const found = new Set<string>();
+  let match = pattern.exec(prose);
+  while (match !== null) {
+    for (const id of extractIssueIdentifiers(match[1] ?? '')) found.add(id);
+    match = pattern.exec(prose);
+  }
+  return [...found];
+}
+
 export function truncate(value: string, max: number): string {
   if (value.length <= max) return value;
   return `${value.slice(0, Math.max(0, max - 1)).trimEnd()}…`;

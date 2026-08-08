@@ -75,6 +75,7 @@ function buildWorkspace(): WorkspaceData {
     projects: [
       {
         id: 'proj_1',
+        slug: 'proj-1',
         name: 'API market',
         status: 'started',
         color: '#00f',
@@ -83,6 +84,7 @@ function buildWorkspace(): WorkspaceData {
       },
       {
         id: 'proj_2',
+        slug: 'proj-2',
         name: 'Brand refresh',
         status: 'started',
         color: '#0f0',

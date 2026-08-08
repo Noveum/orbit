@@ -51,6 +51,7 @@ const context: GroupContext = {
   projects: [
     {
       id: 'project_1',
+      slug: '1',
       name: 'Atlas',
       status: 'planned',
       color: '#5a63c8',

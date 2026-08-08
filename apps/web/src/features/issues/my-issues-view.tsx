@@ -143,6 +143,7 @@ export function MyIssuesView() {
       />
 
       <IssuePeek
+        issueId={peekId}
         issue={mine.find((issue) => issue.id === peekId)}
         onClose={() => setPeekId(null)}
       />

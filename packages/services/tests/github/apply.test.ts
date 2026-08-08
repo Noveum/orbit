@@ -111,6 +111,7 @@ function prEvent(overrides: {
   state?: 'open' | 'closed';
   title?: string;
   headRef?: string;
+  body?: string;
 }): { eventName: string; body: unknown } {
   return {
     eventName: 'pull_request',
@@ -119,6 +120,7 @@ function prEvent(overrides: {
       pull_request: {
         number: 7,
         title: overrides.title ?? 'Rework dashboard',
+        body: overrides.body ?? null,
         html_url: 'https://github.com/acme/web/pull/7',
         draft: overrides.draft ?? false,
         merged: overrides.merged ?? false,
@@ -163,6 +165,89 @@ describe('applyGithubEvent', () => {
       });
       expect(result.handled).toBe(false);
       expect(result.actions).toHaveLength(0);
+    });
+  });
+
+  it('ignores an identifier that is only mentioned, not declared', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/tidy',
+          title: 'Tidy the dashboard',
+          body: 'This looks a lot like ENG-3 but is a separate piece of work.',
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(0);
+    });
+  });
+
+  it('ignores an identifier inside a code block, a comment or a quote', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/tidy',
+          title: 'Tidy the dashboard',
+          body: [
+            '<!-- Template: write "Fixes ENG-3" here -->',
+            '```',
+            'git checkout -b fixes-eng-3',
+            '```',
+            'Inline `Fixes ENG-3` in backticks.',
+            '> Somebody quoted: Fixes ENG-3',
+          ].join('\n'),
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(0);
+    });
+  });
+
+  it('links an issue named only in the pull request description', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/no-identifier-here',
+          title: 'Tidy the dashboard',
+          body: 'Rewrites the panel.\n\nFixes ENG-3, which nothing else in this PR names.',
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(1);
+    });
+  });
+
+  it('still links nothing when no identifier appears anywhere, description included', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/tidy',
+          title: 'Tidy the dashboard',
+          body: 'No identifier in here at all.',
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(0);
     });
   });
 
@@ -302,6 +387,61 @@ describe('applyGithubEvent', () => {
         true,
       );
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Review');
+    });
+  });
+});
+
+describe('saying why a delivery changed nothing', () => {
+  it('names an unconnected repository, which is what a fresh install looks like', async () => {
+    await withRollback(async (tx) => {
+      const result = await applyGithubEvent(tx, {
+        eventName: 'pull_request',
+        body: {
+          action: 'opened',
+          pull_request: {
+            number: 1,
+            title: 'x',
+            html_url: 'https://x',
+            head: { ref: 'eng-3' },
+            base: { ref: 'main' },
+          },
+          repository: { id: 12345, full_name: 'nobody/repo' },
+          sender: { login: 'x', id: 1 },
+        },
+      });
+
+      expect(result.ignoredReason).toBe('repository_not_connected');
+    });
+  });
+
+  it('names an event the parser does not cover', async () => {
+    await withRollback(async (tx) => {
+      const result = await applyGithubEvent(tx, { eventName: 'star', body: {} });
+
+      expect(result.ignoredReason).toBe('unsupported_event');
+    });
+  });
+
+  it('names a branch that mentions no issue, so the delivery is not mistaken for a failure', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({ headRef: 'chore/tidy-up', title: 'Tidy up' }),
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.ignoredReason).toBe('no_issue_identifier');
+    });
+  });
+
+  it('reports nothing ignored when the event actually lands', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      const result = await applyGithubEvent(tx, prEvent({}));
+
+      expect(result.handled).toBe(true);
+      expect(result.ignoredReason).toBeNull();
     });
   });
 });

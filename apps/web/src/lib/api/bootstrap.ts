@@ -126,6 +126,7 @@ export async function bootstrapPayload(principal: Principal, query: BootstrapQue
     })),
     projects: projects.map((project) => ({
       id: project.id,
+      slug: project.slug,
       name: project.name,
       status: project.status,
       color: project.color,

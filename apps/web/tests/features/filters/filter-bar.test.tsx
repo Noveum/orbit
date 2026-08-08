@@ -59,6 +59,7 @@ const workspace: WorkspaceData = {
   projects: [
     {
       id: 'project-1',
+      slug: '1',
       name: 'Atlas',
       status: 'planned',
       color: '#5a63c8',

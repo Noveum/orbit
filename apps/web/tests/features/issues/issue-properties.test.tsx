@@ -42,6 +42,7 @@ const workspace: WorkspaceData = {
   projects: [
     {
       id: 'project_launch',
+      slug: 'launch',
       name: 'Launch',
       status: 'started',
       color: '#5a63c8',
@@ -49,7 +50,17 @@ const workspace: WorkspaceData = {
       teamIds: ['team_eng'],
     },
   ],
-  cycles: [],
+  cycles: [
+    {
+      id: 'cycle_7',
+      teamId: 'team_eng',
+      number: 7,
+      name: 'Sprint 7',
+      startsAt: '2026-01-01T00:00:00.000Z',
+      endsAt: '2026-01-14T00:00:00.000Z',
+      completedAt: null,
+    },
+  ],
   seedIssues: [],
   stateById: new Map(),
   labelById: new Map(),
@@ -288,5 +299,55 @@ describe('the delete affordance on the properties panel', () => {
 
     expect(screen.queryByTestId('property-delete-issue')).not.toBeInTheDocument();
     Object.assign(workspace, { role: previous });
+  });
+});
+
+describe('reaching what the properties panel names', () => {
+  it('offers a way into the project rather than only a picker', () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+      </Providers>,
+    );
+
+    expect(screen.getByTestId('open-project')).toHaveAttribute('href', '/projects/launch');
+  });
+
+  it('offers a way into the sprint the issue sits in', () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue({ cycleId: 'cycle_7' })} />
+      </Providers>,
+    );
+
+    expect(screen.getByTestId('open-sprint')).toHaveAttribute('href', '/team/eng/sprint/7');
+  });
+
+  it('hides the project link when the payload carried no slug, rather than linking nowhere', () => {
+    const projects = workspace.projects;
+    Object.assign(workspace, {
+      projects: projects.map((entry) => ({ ...entry, slug: '' })),
+    });
+
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+      </Providers>,
+    );
+
+    expect(screen.getByTestId('property-project')).toHaveTextContent('Launch');
+    expect(screen.queryByTestId('open-project')).not.toBeInTheDocument();
+    Object.assign(workspace, { projects });
+  });
+
+  it('offers no link when the issue is on no project and no sprint', () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue({ projectId: null, cycleId: null })} />
+      </Providers>,
+    );
+
+    expect(screen.queryByTestId('open-project')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('open-sprint')).not.toBeInTheDocument();
   });
 });

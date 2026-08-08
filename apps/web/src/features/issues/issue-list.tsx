@@ -311,7 +311,7 @@ export function IssueList({
         />
       ) : null}
 
-      <IssuePeek issue={peekIssue} onClose={() => setPeekId(null)} />
+      <IssuePeek issueId={peekId} issue={peekIssue} onClose={() => setPeekId(null)} />
     </div>
   );
 }

@@ -86,6 +86,7 @@ export type Member = z.infer<typeof memberSchema>;
 
 export const projectSchema = z.object({
   id: z.string(),
+  slug: z.string().catch(''),
   name: z.string(),
   status: z.string(),
   color: z.string(),

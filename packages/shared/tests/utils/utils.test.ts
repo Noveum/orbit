@@ -3,6 +3,7 @@ import { IDENTIFIER_PATTERN, SORT_ORDER_STEP } from '../../src/constants/index.t
 import {
   branchName,
   chunk,
+  declaredIssueIdentifiers,
   extractIssueIdentifiers,
   extractMentions,
   formatBytes,
@@ -202,5 +203,53 @@ describe('relativeTime', () => {
     expect(relativeTime(new Date('2026-07-22T11:30:00.000Z'), now)).toBe('30m ago');
     expect(relativeTime(new Date('2026-07-22T09:00:00.000Z'), now)).toBe('3h ago');
     expect(relativeTime(new Date('2026-07-19T12:00:00.000Z'), now)).toBe('3d ago');
+  });
+});
+
+describe('identifiers a pull request description actually declares', () => {
+  it('takes one behind a linking keyword', () => {
+    expect(declaredIssueIdentifiers('Fixes ENG-3')).toEqual(['ENG-3']);
+    expect(declaredIssueIdentifiers('closes eng-4')).toEqual(['ENG-4']);
+    expect(declaredIssueIdentifiers('Part of ENG-5')).toEqual(['ENG-5']);
+  });
+
+  it('takes several listed after one keyword', () => {
+    expect(declaredIssueIdentifiers('Fixes ENG-3, ENG-4')).toEqual(['ENG-3', 'ENG-4']);
+  });
+
+  it('leaves a bare mention alone, which is the whole point', () => {
+    expect(declaredIssueIdentifiers('This looks like ENG-3 but is separate')).toEqual([]);
+    expect(declaredIssueIdentifiers('ENG-3')).toEqual([]);
+  });
+
+  it('leaves a fenced code block alone', () => {
+    expect(declaredIssueIdentifiers('```\nFixes ENG-3\n```')).toEqual([]);
+    expect(declaredIssueIdentifiers('~~~\nFixes ENG-3\n~~~')).toEqual([]);
+  });
+
+  it('leaves inline code alone', () => {
+    expect(declaredIssueIdentifiers('Write `Fixes ENG-3` in the box')).toEqual([]);
+  });
+
+  it('leaves an html comment alone, which is where templates put the example', () => {
+    expect(declaredIssueIdentifiers('<!-- e.g. Fixes ENG-3 -->')).toEqual([]);
+  });
+
+  it('leaves a quoted line alone', () => {
+    expect(declaredIssueIdentifiers('> Fixes ENG-3')).toEqual([]);
+  });
+
+  it('still finds a real declaration in a description that also has all of those', () => {
+    const body = [
+      '<!-- Template: Fixes ENG-1 -->',
+      '```',
+      'Fixes ENG-2',
+      '```',
+      '> Fixes ENG-4',
+      '',
+      'Fixes ENG-9 for real.',
+    ].join('\n');
+
+    expect(declaredIssueIdentifiers(body)).toEqual(['ENG-9']);
   });
 });

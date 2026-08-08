@@ -48,6 +48,7 @@ function buildWorkspace(): WorkspaceData {
     projects: [
       {
         id: 'project-atlas',
+        slug: 'atlas',
         name: 'Atlas',
         status: 'planned',
         color: '#5a63c8',
