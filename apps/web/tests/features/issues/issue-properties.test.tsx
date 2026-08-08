@@ -323,6 +323,23 @@ describe('reaching what the properties panel names', () => {
     expect(screen.getByTestId('open-sprint')).toHaveAttribute('href', '/team/eng/sprint/7');
   });
 
+  it('hides the project link when the payload carried no slug, rather than linking nowhere', () => {
+    const projects = workspace.projects;
+    Object.assign(workspace, {
+      projects: projects.map((entry) => ({ ...entry, slug: '' })),
+    });
+
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+      </Providers>,
+    );
+
+    expect(screen.getByTestId('property-project')).toHaveTextContent('Launch');
+    expect(screen.queryByTestId('open-project')).not.toBeInTheDocument();
+    Object.assign(workspace, { projects });
+  });
+
   it('offers no link when the issue is on no project and no sprint', () => {
     render(
       <Providers>
