@@ -36,6 +36,14 @@ Anything imported from `bun` fails there with `Cannot find module 'bun'`.
 Test files and `apps/realtime` may use Bun built-ins, because both only ever run
 under Bun. `packages/realtime-server` is imported by the web app, so it may not.
 
+`bun run check-bun-imports` enforces that, and `bun run verify` runs it. It fails
+on a value import, a bare import, a `require` or a dynamic `import()` of `bun` or
+`bun:*` from anything the web app ships. A type-only import is allowed, because
+it is erased before it reaches the runtime: `packages/realtime-server/src/socket.ts`
+takes `ServerWebSocket` that way so `fromBunSocket` can adapt the development
+server's socket without the node build ever resolving `bun`. Dev runs Next under
+Bun and production runs it under node, so nothing else catches this before deploy.
+
 Bun does not implement `process.loadEnvFile`. Load the repository `.env` with `bun --env-file=../../.env` in the script, never from inside a config file.
 
 Bun does not load a parent directory `.env`, so a script running with its cwd inside a workspace package needs `--env-file=../../.env` to see the repository environment.
