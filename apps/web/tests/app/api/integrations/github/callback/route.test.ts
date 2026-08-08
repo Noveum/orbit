@@ -191,10 +191,28 @@ describe('GET /api/integrations/github/callback', () => {
       state: await validState(rival),
     });
 
-    expect(locationOf(response)).toContain('github=error');
+    expect(locationOf(response)).toContain('github=unverified');
     expect(githubCalls).toHaveLength(0);
     expect(await listGithubInstallations(db, rival.organizationId)).toHaveLength(0);
     expect(await listGithubCatalogue(db, rival.organizationId)).toHaveLength(0);
+  });
+
+  it('says the app is unverified, not that something went wrong, when GitHub sent no code', async () => {
+    const response = await callback({
+      installation_id: NOVEUM,
+      setup_action: 'install',
+      state: await validState(rival),
+    });
+
+    const location = locationOf(response);
+    expect(location).toContain('github=unverified');
+    expect(location).not.toContain('github=error');
+  });
+
+  it('still reports a plain error when the parameters are junk rather than a real install', async () => {
+    const response = await callback({ installation_id: NOVEUM, state: await validState(rival) });
+
+    expect(locationOf(response)).toContain('github=error');
   });
 
   it('refuses a callback whose code is blank rather than treating it as absent', async () => {

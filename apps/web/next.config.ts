@@ -18,11 +18,15 @@ const workspacePackages = [
 
 const devServerOnlyBundledPackages = ['@react-email/render', '@react-email/components', 'prettier'];
 
+function standaloneOutputUnlessVercelTracesItItself(): Pick<NextConfig, 'output'> {
+  return process.env['VERCEL'] === '1' ? {} : { output: 'standalone' };
+}
+
 export default function config(phase: string): NextConfig {
   const isDevServer = phase === PHASE_DEVELOPMENT_SERVER;
   return {
     reactStrictMode: true,
-    output: 'standalone',
+    ...standaloneOutputUnlessVercelTracesItItself(),
     outputFileTracingRoot: workspaceRoot,
     turbopack: {
       root: workspaceRoot,
