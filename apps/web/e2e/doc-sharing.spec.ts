@@ -25,8 +25,7 @@ test('a private doc can be shared with a named person, who can then open it', as
   expect(await statusOf(reader, `/api/docs/${docId}`)).toBe(404);
 
   await owner.goto(`${BASE}/docs/${docId}`);
-  await owner.getByTestId('doc-publish').click();
-  await owner.getByTestId('doc-open-people').click();
+  await owner.getByTestId('doc-share').click();
   await expect(owner.getByTestId('doc-people-access')).toBeVisible();
 
   await owner.getByTestId('doc-access-search').fill('Aditi');

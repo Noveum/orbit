@@ -1808,7 +1808,6 @@ export async function listBoardGroups(
   const filter = boardSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
   const column = FACET_COLUMNS[filter.groupBy]();
-  const direction = ordering.descending ? desc : asc;
   const matching = and(...buildIssueFilters(principal, filter));
 
   const ranked = db
@@ -1830,7 +1829,7 @@ export async function listBoardGroups(
       .select()
       .from(ranked)
       .where(sql`${ranked.seat} <= ${filter.perGroup}`)
-      .orderBy(direction(ranked.seat)),
+      .orderBy(asc(ranked.seat)),
     db
       .select({ groupKey: sql<string | null>`${column}::text`, total: count() })
       .from(schema.issue)

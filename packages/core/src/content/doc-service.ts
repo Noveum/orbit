@@ -553,8 +553,28 @@ async function rebalanceSiblings(
   return updated;
 }
 
+export interface MovedPlacement {
+  readonly id: string;
+  readonly collectionId: string | null;
+  readonly projectId: string | null;
+  readonly parentId: string | null;
+  readonly sortOrder: number;
+  readonly syncId: number;
+}
+
+export function movedPlacement(row: DocRow): MovedPlacement {
+  return {
+    id: row.id,
+    collectionId: row.collectionId,
+    projectId: row.projectId,
+    parentId: row.parentId,
+    sortOrder: row.sortOrder,
+    syncId: row.syncId,
+  };
+}
+
 export interface MovedDoc extends SavedDoc {
-  readonly moved: DocRow[];
+  readonly moved: MovedPlacement[];
 }
 
 export async function moveDoc(
@@ -608,13 +628,14 @@ export async function moveDoc(
       ? []
       : await adoptDescendants(tx, principal.organizationId, docId, placement, syncId);
 
-    const moved = [...rebalanced.filter((row) => row.id !== doc.id), ...descendants];
+    const touched = [...rebalanced.filter((row) => row.id !== doc.id), ...descendants];
+    const moved = touched.map(movedPlacement);
     return {
       doc,
       moved,
       actions: [
         docAction(doc, syncId, actor, 'update'),
-        ...moved.map((row) => docAction(row, syncId, actor, 'update')),
+        ...touched.map((row) => docAction(row, syncId, actor, 'update')),
       ],
     };
   });

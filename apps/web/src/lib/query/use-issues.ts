@@ -221,10 +221,9 @@ export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
   useEffect(() => {
     if (groups === undefined) return;
     for (const group of groups) {
-      const key = queryKeys.issues(
-        columnScopeKey(column.scope),
-        groupColumnSearch(column.query, column.groupBy, group.id, column.scope),
-      );
+      const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
+      if (search.length === 0) continue;
+      const key = queryKeys.issues(columnScopeKey(column.scope), search);
       if (client.getQueryData(key) !== undefined) continue;
       client.setQueryData<IssuePages>(key, {
         pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],

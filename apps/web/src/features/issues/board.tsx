@@ -21,8 +21,10 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
@@ -99,6 +101,10 @@ export const REGROUPABLE_FIELDS: readonly GroupByField[] = [
 
 export function canRegroup(groupBy: GroupByField): boolean {
   return REGROUPABLE_FIELDS.includes(groupBy);
+}
+
+export function canDragBoard(role: OrgRole, groupBy: GroupByField): boolean {
+  return canRegroup(groupBy) && permissionsFor(role).includes('issue:update');
 }
 
 export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegrouping | null {

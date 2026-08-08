@@ -51,11 +51,15 @@ describe('groupColumnSearch', () => {
     expect(search.get('teamId')).toBe('team_1');
   });
 
-  it('leaves the scope parameter off the ungrouped column', () => {
-    const search = params(groupColumnSearch(query, 'assignee', 'none', { teamId: 'team_1' }));
+  it('refuses the ungrouped column, which the list endpoint cannot scope', () => {
+    expect(groupColumnSearch(query, 'assignee', 'none', { teamId: 'team_1' })).toBe('');
+  });
 
-    expect(search.get('assigneeId')).toBeNull();
-    expect(search.get('teamId')).toBe('team_1');
+  it('never lets a column widen past the scope it was given', () => {
+    const search = params(groupColumnSearch(query, 'state', 's1', { projectId: 'apollo' }));
+
+    expect(search.get('projectId')).toBe('apollo');
+    expect(search.get('stateId')).toBe('s1');
   });
 
   it('returns nothing for a grouping that cannot be scoped', () => {

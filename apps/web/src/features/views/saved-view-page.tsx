@@ -18,7 +18,7 @@ import {
 } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
-import { Board, canRegroup } from '@/features/issues/board.tsx';
+import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
@@ -98,10 +98,11 @@ function SavedViewBody({ view }: { view: View }) {
   });
 
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
+  const canDrag = canDragBoard(workspace.role, config.groupBy);
 
   const columnSource = useMemo<BoardColumnSource | undefined>(
     () =>
-      columnParamFor(config.groupBy) === null
+      config.groupBy === 'state' || columnParamFor(config.groupBy) === null
         ? undefined
         : {
             query: { filter: config.filter, orderBy: config.orderBy },
@@ -150,6 +151,7 @@ function SavedViewBody({ view }: { view: View }) {
       <SavedViewContent
         resolveState={resolveState}
         columnSource={columnSource}
+        canDrag={canDrag}
         states={model.states}
         groups={model.groups}
         config={config}
@@ -181,6 +183,7 @@ function SavedViewBody({ view }: { view: View }) {
 interface SavedViewContentProps {
   readonly resolveState: StateResolver;
   readonly columnSource: BoardColumnSource | undefined;
+  readonly canDrag: boolean;
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly config: ViewConfig;
@@ -195,6 +198,7 @@ interface SavedViewContentProps {
 function SavedViewContent({
   resolveState,
   columnSource,
+  canDrag,
   states,
   groups,
   config,
@@ -234,7 +238,7 @@ function SavedViewContent({
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="saved-view-board">
         <Board
           groups={groups}
-          draggable={canRegroup(config.groupBy)}
+          draggable={canDrag}
           reorderable={config.orderBy === 'manual'}
           resolveState={resolveState}
           groupBy={config.groupBy}

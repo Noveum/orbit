@@ -12,7 +12,7 @@ import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
-import { Board, canRegroup } from '@/features/issues/board.tsx';
+import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
@@ -39,11 +39,12 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
 
   const workspace = useWorkspace();
+  const canDrag = canDragBoard(workspace.role, config.groupBy);
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
   const scope = useMemo(() => ({ projectId }), [projectId]);
   const columnSource = useMemo<BoardColumnSource | undefined>(
     () =>
-      columnParamFor(config.groupBy) === null
+      config.groupBy === 'state' || columnParamFor(config.groupBy) === null
         ? undefined
         : {
             query: { filter: config.filter, orderBy: config.orderBy },
@@ -114,6 +115,7 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
         orderBy={config.orderBy}
         resolveState={resolveState}
         columnSource={columnSource}
+        canDrag={canDrag}
         loading={issues.isPending}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
@@ -131,6 +133,7 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
 interface BodyProps {
   readonly model: IssueViewModel;
   readonly columnSource: BoardColumnSource | undefined;
+  readonly canDrag: boolean;
   readonly groupBy: GroupByField;
   readonly orderBy: IssueOrdering;
   readonly resolveState: StateResolver;
@@ -147,6 +150,7 @@ interface BodyProps {
 function ProjectIssueBody({
   model,
   columnSource,
+  canDrag,
   groupBy,
   orderBy,
   resolveState,
@@ -193,7 +197,7 @@ function ProjectIssueBody({
     return (
       <Board
         groups={model.groups}
-        draggable={canRegroup(groupBy)}
+        draggable={canDrag}
         reorderable={orderBy === 'manual'}
         resolveState={resolveState}
         groupBy={groupBy}

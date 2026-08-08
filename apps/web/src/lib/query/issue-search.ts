@@ -33,6 +33,8 @@ export function columnSearch(teamId: string, query: IssueQuery, stateId: string)
   return params.toString();
 }
 
+export const UNGROUPED_COLUMN = 'none';
+
 const GROUP_PARAM_OF: Readonly<Record<string, string>> = {
   state: 'stateId',
   assignee: 'assigneeId',
@@ -65,10 +67,10 @@ export function groupColumnSearch(
   scope: Readonly<Record<string, string>> = {},
 ): string {
   const param = columnParamFor(groupBy);
-  if (param === null) return '';
+  if (param === null || groupId === UNGROUPED_COLUMN) return '';
   const params = searchParams(query);
   for (const [key, value] of Object.entries(scope)) params.set(key, value);
-  if (groupId !== 'none') params.set(param, groupId);
+  params.set(param, groupId);
   return params.toString();
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { showsEmptyGroups } from '@orbit/shared/filters';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { columnsReadyFor, planDrop } from '@/features/issues/board.tsx';
+import { canDragBoard, columnsReadyFor, planDrop } from '@/features/issues/board.tsx';
 import { scrollStep } from '@/features/issues/use-board-autoscroll.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 
@@ -116,5 +116,19 @@ describe('what a board asks for on first paint', () => {
     expect(columnsReadyFor(undefined, true)).toBe(true);
     expect(columnsReadyFor({}, true)).toBe(false);
     expect(columnsReadyFor({}, false)).toBe(true);
+  });
+});
+
+describe('who may drag a card', () => {
+  it('offers drag to a member who may update issues', () => {
+    expect(canDragBoard('member', 'state')).toBe(true);
+  });
+
+  it('never offers drag to a guest, who cannot update an issue', () => {
+    expect(canDragBoard('guest', 'state')).toBe(false);
+  });
+
+  it('never offers drag for a grouping that cannot be regrouped', () => {
+    expect(canDragBoard('admin', 'label')).toBe(false);
   });
 });

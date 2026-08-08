@@ -108,7 +108,12 @@ function CopyRow({
     <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1.5">
       <span className="min-w-0 flex-1">
         <span className="block text-2xs text-faint">{label}</span>
-        <span className="block truncate font-mono text-2xs text-muted">{url}</span>
+        <span
+          data-testid={`${testId}-url`}
+          className="block truncate font-mono text-2xs text-muted"
+        >
+          {url}
+        </span>
       </span>
       <Button
         variant="secondary"
