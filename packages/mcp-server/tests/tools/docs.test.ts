@@ -300,3 +300,25 @@ describe('contradictory filters', () => {
     expect(error.code).toBe('validation_failed');
   });
 });
+
+describe('moving under a parent that lives somewhere else', () => {
+  it('orders against the siblings of the home it inherits from its new parent', async () => {
+    const shelf = await collectionId('Shelf');
+    const parent = await makeDoc({ title: 'Binder', collection: shelf });
+    const firstChild = await makeDoc({ title: 'Tab one', parent: parent.id });
+    const secondChild = await makeDoc({ title: 'Tab two', parent: parent.id });
+    const stray = await makeDoc({ title: 'Loose page' });
+
+    await admin.result('move_doc', {
+      doc: stray.id,
+      parent: parent.id,
+      after: firstChild.id,
+    });
+
+    const filed = await listDocs({ collection: shelf });
+    const nested = filed.filter((row) => row.parentId === parent.id).map((row) => row.title);
+    expect(nested).toEqual(['Tab one', 'Loose page', 'Tab two']);
+    expect(filed.find((row) => row.id === stray.id)?.collectionId).toBe(shelf);
+    expect(secondChild.parentId).toBe(parent.id);
+  });
+});

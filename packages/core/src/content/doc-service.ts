@@ -468,6 +468,16 @@ async function resolvePlacement(
   return { collectionId, projectId, parentId: stays ? parentId : null };
 }
 
+export async function plannedPlacement(
+  principal: Principal,
+  docId: string,
+  patch: DocPlacementPatch,
+): Promise<DocPlacement> {
+  assertCan(principal, 'doc:read');
+  const current = await loadReadableDoc(db, principal, docId);
+  return await resolvePlacement(db, principal, placementOf(current), patch);
+}
+
 async function adoptDescendants(
   executor: Executor,
   organizationId: string,

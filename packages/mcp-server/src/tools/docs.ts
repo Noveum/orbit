@@ -12,7 +12,7 @@ import {
   listDocComments,
   listDocs,
   moveDoc,
-  oneHome,
+  plannedPlacement,
   updateDoc,
   updateDocCollection,
   updateDocComment,
@@ -97,10 +97,6 @@ async function resolveOptional(
   if (ref === undefined) return undefined;
   if (ref === null) return null;
   return await resolve(ref);
-}
-
-function patched<T>(value: T | undefined, current: T): T {
-  return value === undefined ? current : value;
 }
 
 interface Neighbour {
@@ -541,9 +537,11 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         async (ref) => (await resolveProject(principal, ref)).id,
       );
 
-      const current = (await getDoc(principal, id)).doc;
-      const settled = oneHome(current, { collectionId, projectId });
-      const home: DocHome = { ...settled, parentId: patched(parentId, current.parentId) };
+      const home = await plannedPlacement(principal, id, {
+        ...(collectionId === undefined ? {} : { collectionId }),
+        ...(parentId === undefined ? {} : { parentId }),
+        ...(projectId === undefined ? {} : { projectId }),
+      });
 
       const neighbour = await neighbourOf(principal, args.after, args.before);
       const anchors =
