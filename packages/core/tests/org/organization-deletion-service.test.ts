@@ -566,6 +566,53 @@ describe('deleteOrganization', () => {
     }
   });
 
+  it('keeps a retry state when the final database commit fails after storage cleanup', async () => {
+    const now = new Date('2026-08-08T15:00:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
+    await db.execute(sql`
+      create table organization_deletion_commit_blocker (
+        organization_id text primary key references organization(id)
+          deferrable initially deferred
+      )
+    `);
+    try {
+      await db.execute(sql`
+        insert into organization_deletion_commit_blocker (organization_id)
+        values (${nova.organizationId})
+      `);
+      const storage = fakeStorage();
+
+      await expect(
+        deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, now),
+      ).rejects.toBeDefined();
+
+      expect(storage.deleted).toEqual([`${nova.organizationId}/`]);
+      expect(await organizationCount(nova.organizationId)).toBe(1);
+      const [organization] = await db
+        .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
+        .from(schema.organization)
+        .where(eq(schema.organization.id, nova.organizationId));
+      expect(organization?.deletionRequestedAt).toBeInstanceOf(Date);
+
+      await db.execute(sql`
+        delete from organization_deletion_commit_blocker
+        where organization_id = ${nova.organizationId}
+      `);
+
+      const retried = await deleteOrganization(
+        nova.admin,
+        { confirmation: 'Nova' },
+        storage.driver,
+        now,
+      );
+      expect(retried.deletedOrganizationId).toBe(nova.organizationId);
+      expect(storage.deleted).toEqual([`${nova.organizationId}/`, `${nova.organizationId}/`]);
+      expect(await organizationCount(nova.organizationId)).toBe(0);
+    } finally {
+      await db.execute(sql`drop table organization_deletion_commit_blocker`);
+    }
+  });
+
   it('blocks at URL expiry while an upload may still be finishing', async () => {
     const now = new Date('2026-08-08T12:00:00.000Z');
     await makeDeletionReady(nova.organizationId, now);
