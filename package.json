@@ -41,6 +41,8 @@
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
     "db:push": "bun run --filter '@orbit/db' push",
+    "db:check-drift": "bun run --filter '@orbit/db' check-drift",
+    "db:catchup": "bun run --filter '@orbit/db' catchup",
     "db:seed": "bun run --filter '@orbit/db' seed",
     "db:test-setup": "bun run --filter '@orbit/db' test-setup",
     "db:studio": "bun run --filter '@orbit/db' studio",
