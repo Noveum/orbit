@@ -78,7 +78,7 @@ describe('the preference store', () => {
     expect(result.current.width).toBe('comfortable');
   });
 
-  it('follows a change made in another tab', () => {
+  it('re-reads what another tab wrote when storage announces a change', () => {
     const { result } = renderHook(() => useDocPreferences());
     expect(result.current.width).toBe('wide');
 
@@ -87,7 +87,7 @@ describe('the preference store', () => {
         DOC_PREFERENCES_STORAGE_KEY,
         JSON.stringify({ mode: 'rich', toolbar: true, width: 'full' }),
       );
-      window.dispatchEvent(new StorageEvent('storage', { key: DOC_PREFERENCES_STORAGE_KEY }));
+      window.dispatchEvent(new StorageEvent('storage'));
     });
 
     expect(result.current.width).toBe('full');
