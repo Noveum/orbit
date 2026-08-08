@@ -1,5 +1,4 @@
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";--> statement-breakpoint
-CREATE TYPE "public"."notification_reason" AS ENUM('assigned', 'mentioned', 'subscribed', 'commented', 'state_changed', 'review_requested', 'review_approved', 'pull_request_merged', 'due_soon', 'manual');--> statement-breakpoint
+CREATE TYPE "public"."notification_reason" AS ENUM('assigned', 'mentioned', 'subscribed', 'commented', 'state_changed', 'review_requested', 'review_approved', 'pull_request_merged', 'due_soon', 'access_requested', 'access_granted', 'manual');--> statement-breakpoint
 CREATE SEQUENCE "public"."sync_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
 CREATE TABLE "account" (
 	"id" text PRIMARY KEY NOT NULL,
@@ -158,6 +157,23 @@ CREATE TABLE "github_comment_sync" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "github_installation" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"integration_id" text NOT NULL,
+	"installation_id" text NOT NULL,
+	"account_login" text DEFAULT '' NOT NULL,
+	"account_id" text DEFAULT '' NOT NULL,
+	"account_type" text DEFAULT 'Organization' NOT NULL,
+	"repository_selection" text DEFAULT 'selected' NOT NULL,
+	"status" text DEFAULT 'active' NOT NULL,
+	"connected_by_id" text NOT NULL,
+	"repositories_synced_at" timestamp with time zone,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "github_issue_sync" (
 	"id" text PRIMARY KEY NOT NULL,
 	"organization_id" text NOT NULL,
@@ -183,11 +199,39 @@ CREATE TABLE "github_pr_state_mapping" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "github_repository" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"installation_row_id" text NOT NULL,
+	"repository_id" text NOT NULL,
+	"full_name" text NOT NULL,
+	"name" text DEFAULT '' NOT NULL,
+	"owner_login" text DEFAULT '' NOT NULL,
+	"private" boolean DEFAULT false NOT NULL,
+	"archived" boolean DEFAULT false NOT NULL,
+	"default_branch" text DEFAULT 'main' NOT NULL,
+	"html_url" text DEFAULT '' NOT NULL,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "github_repository_link" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"repository_row_id" text NOT NULL,
+	"project_id" text,
+	"linked_by_id" text,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "github_repository_sync" (
 	"id" text PRIMARY KEY NOT NULL,
 	"organization_id" text NOT NULL,
 	"integration_id" text NOT NULL,
-	"team_id" text NOT NULL,
+	"team_id" text,
 	"repository_id" text NOT NULL,
 	"repository_name" text NOT NULL,
 	"installation_id" text DEFAULT '' NOT NULL,
@@ -219,6 +263,15 @@ CREATE TABLE "integration_channel" (
 	"channel_id" text NOT NULL,
 	"channel_name" text NOT NULL,
 	"events" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "integration_oauth_state" (
+	"nonce" text PRIMARY KEY NOT NULL,
+	"provider" text NOT NULL,
+	"organization_id" text NOT NULL,
+	"user_id" text NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -354,7 +407,10 @@ CREATE TABLE "doc" (
 	"parent_id" text,
 	"project_id" text,
 	"title" text NOT NULL,
+	"slug" text DEFAULT '' NOT NULL,
 	"content" text DEFAULT '' NOT NULL,
+	"sort_order" double precision DEFAULT 0 NOT NULL,
+	"search_vector" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')) STORED,
 	"visibility" text DEFAULT 'workspace' NOT NULL,
 	"publish_token" text,
 	"author_id" text NOT NULL,
@@ -366,13 +422,54 @@ CREATE TABLE "doc" (
 	CONSTRAINT "doc_publish_token_unique" UNIQUE("publish_token")
 );
 --> statement-breakpoint
+CREATE TABLE "doc_access" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"doc_id" text NOT NULL,
+	"subject_type" text NOT NULL,
+	"subject_id" text NOT NULL,
+	"level" text DEFAULT 'read' NOT NULL,
+	"granted_by_id" text,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "doc_access_request" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"doc_id" text NOT NULL,
+	"requester_id" text NOT NULL,
+	"message" text,
+	"status" text DEFAULT 'pending' NOT NULL,
+	"decided_by_id" text,
+	"decided_at" timestamp with time zone,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "doc_collection" (
 	"id" text PRIMARY KEY NOT NULL,
 	"organization_id" text NOT NULL,
 	"name" text NOT NULL,
 	"icon" text DEFAULT 'book' NOT NULL,
+	"position" double precision DEFAULT 0 NOT NULL,
 	"sync_id" bigint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "doc_comment" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"doc_id" text NOT NULL,
+	"author_id" text NOT NULL,
+	"parent_id" text,
+	"body" text NOT NULL,
+	"anchor" jsonb,
+	"edited_at" timestamp with time zone,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"deleted_at" timestamp with time zone
 );
 --> statement-breakpoint
 CREATE TABLE "doc_subscription" (
@@ -384,12 +481,13 @@ CREATE TABLE "doc_subscription" (
 --> statement-breakpoint
 CREATE TABLE "doc_version" (
 	"id" text PRIMARY KEY NOT NULL,
-	"organization_id" text NOT NULL,
 	"doc_id" text NOT NULL,
-	"version" integer NOT NULL,
+	"organization_id" text NOT NULL,
 	"title" text NOT NULL,
-	"content" text DEFAULT '' NOT NULL,
-	"author_id" text NOT NULL,
+	"content" text NOT NULL,
+	"owned_by_id" text NOT NULL,
+	"restored_from_id" text,
+	"last_saved_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"sync_id" bigint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -426,8 +524,7 @@ CREATE TABLE "reaction" (
 	"user_id" text NOT NULL,
 	"emoji" text NOT NULL,
 	"sync_id" bigint DEFAULT 0 NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "reaction_one_parent" CHECK (num_nonnulls("reaction"."comment_id", "reaction"."issue_id") = 1)
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "recent_visit" (
@@ -439,6 +536,58 @@ CREATE TABLE "recent_visit" (
 	"visited_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"sync_id" bigint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "mcp_grant" (
+	"id" text PRIMARY KEY NOT NULL,
+	"client_id" text NOT NULL,
+	"user_id" text NOT NULL,
+	"organization_id" text NOT NULL,
+	"scopes" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_used_at" timestamp with time zone,
+	"revoked_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "oauth_access_token" (
+	"id" text PRIMARY KEY NOT NULL,
+	"access_token" text NOT NULL,
+	"refresh_token" text NOT NULL,
+	"access_token_expires_at" timestamp with time zone NOT NULL,
+	"refresh_token_expires_at" timestamp with time zone NOT NULL,
+	"client_id" text NOT NULL,
+	"user_id" text,
+	"scopes" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "oauth_access_token_access_token_unique" UNIQUE("access_token"),
+	CONSTRAINT "oauth_access_token_refresh_token_unique" UNIQUE("refresh_token")
+);
+--> statement-breakpoint
+CREATE TABLE "oauth_application" (
+	"id" text PRIMARY KEY NOT NULL,
+	"name" text NOT NULL,
+	"icon" text,
+	"metadata" text,
+	"client_id" text NOT NULL,
+	"client_secret" text,
+	"redirect_urls" text NOT NULL,
+	"type" text NOT NULL,
+	"disabled" boolean DEFAULT false NOT NULL,
+	"user_id" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "oauth_application_client_id_unique" UNIQUE("client_id")
+);
+--> statement-breakpoint
+CREATE TABLE "oauth_consent" (
+	"id" text PRIMARY KEY NOT NULL,
+	"client_id" text NOT NULL,
+	"user_id" text NOT NULL,
+	"scopes" text NOT NULL,
+	"consent_given" boolean NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "invitation" (
@@ -661,6 +810,7 @@ CREATE TABLE "issue_subscription" (
 	"id" text PRIMARY KEY NOT NULL,
 	"issue_id" text NOT NULL,
 	"user_id" text NOT NULL,
+	"sync_id" bigint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -795,8 +945,22 @@ CREATE TABLE "view" (
 	"layout" text DEFAULT 'list' NOT NULL,
 	"group_by" text DEFAULT 'state' NOT NULL,
 	"shared" text DEFAULT 'false' NOT NULL,
+	"visibility" text DEFAULT 'private' NOT NULL,
+	"team_id" text,
 	"sync_id" bigint DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "view_preference" (
+	"id" text PRIMARY KEY NOT NULL,
+	"organization_id" text NOT NULL,
+	"user_id" text NOT NULL,
+	"page" text NOT NULL,
+	"scope" text DEFAULT '' NOT NULL,
+	"layout" text DEFAULT 'list' NOT NULL,
+	"display" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "workflow_state" (
@@ -824,18 +988,29 @@ ALTER TABLE "git_link" ADD CONSTRAINT "git_link_issue_id_issue_id_fk" FOREIGN KE
 ALTER TABLE "github_comment_sync" ADD CONSTRAINT "github_comment_sync_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_comment_sync" ADD CONSTRAINT "github_comment_sync_comment_id_comment_id_fk" FOREIGN KEY ("comment_id") REFERENCES "public"."comment"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_comment_sync" ADD CONSTRAINT "github_comment_sync_repository_sync_fk" FOREIGN KEY ("repository_sync_id") REFERENCES "public"."github_repository_sync"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_installation" ADD CONSTRAINT "github_installation_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_installation" ADD CONSTRAINT "github_installation_integration_id_integration_id_fk" FOREIGN KEY ("integration_id") REFERENCES "public"."integration"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_installation" ADD CONSTRAINT "github_installation_connected_by_id_user_id_fk" FOREIGN KEY ("connected_by_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_issue_sync" ADD CONSTRAINT "github_issue_sync_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_issue_sync" ADD CONSTRAINT "github_issue_sync_issue_id_issue_id_fk" FOREIGN KEY ("issue_id") REFERENCES "public"."issue"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_issue_sync" ADD CONSTRAINT "github_issue_sync_repository_sync_fk" FOREIGN KEY ("repository_sync_id") REFERENCES "public"."github_repository_sync"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_pr_state_mapping" ADD CONSTRAINT "github_pr_state_mapping_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_pr_state_mapping" ADD CONSTRAINT "github_pr_state_mapping_state_id_workflow_state_id_fk" FOREIGN KEY ("state_id") REFERENCES "public"."workflow_state"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_pr_state_mapping" ADD CONSTRAINT "github_pr_state_mapping_repository_sync_fk" FOREIGN KEY ("repository_sync_id") REFERENCES "public"."github_repository_sync"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository" ADD CONSTRAINT "github_repository_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository" ADD CONSTRAINT "github_repository_installation_row_id_github_installation_id_fk" FOREIGN KEY ("installation_row_id") REFERENCES "public"."github_installation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository_link" ADD CONSTRAINT "github_repository_link_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository_link" ADD CONSTRAINT "github_repository_link_repository_row_id_github_repository_id_fk" FOREIGN KEY ("repository_row_id") REFERENCES "public"."github_repository"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository_link" ADD CONSTRAINT "github_repository_link_project_id_project_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."project"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "github_repository_link" ADD CONSTRAINT "github_repository_link_linked_by_id_user_id_fk" FOREIGN KEY ("linked_by_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_repository_sync" ADD CONSTRAINT "github_repository_sync_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_repository_sync" ADD CONSTRAINT "github_repository_sync_integration_id_integration_id_fk" FOREIGN KEY ("integration_id") REFERENCES "public"."integration"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "github_repository_sync" ADD CONSTRAINT "github_repository_sync_team_id_team_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."team"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "integration" ADD CONSTRAINT "integration_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "integration" ADD CONSTRAINT "integration_connected_by_id_user_id_fk" FOREIGN KEY ("connected_by_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "integration_channel" ADD CONSTRAINT "integration_channel_integration_id_integration_id_fk" FOREIGN KEY ("integration_id") REFERENCES "public"."integration"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "integration_oauth_state" ADD CONSTRAINT "integration_oauth_state_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "integration_oauth_state" ADD CONSTRAINT "integration_oauth_state_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification" ADD CONSTRAINT "notification_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification" ADD CONSTRAINT "notification_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification_preference" ADD CONSTRAINT "notification_preference_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -857,12 +1032,23 @@ ALTER TABLE "doc" ADD CONSTRAINT "doc_collection_id_doc_collection_id_fk" FOREIG
 ALTER TABLE "doc" ADD CONSTRAINT "doc_parent_id_doc_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."doc"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc" ADD CONSTRAINT "doc_project_id_project_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."project"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc" ADD CONSTRAINT "doc_author_id_user_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access" ADD CONSTRAINT "doc_access_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access" ADD CONSTRAINT "doc_access_doc_id_doc_id_fk" FOREIGN KEY ("doc_id") REFERENCES "public"."doc"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access" ADD CONSTRAINT "doc_access_granted_by_id_user_id_fk" FOREIGN KEY ("granted_by_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access_request" ADD CONSTRAINT "doc_access_request_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access_request" ADD CONSTRAINT "doc_access_request_doc_id_doc_id_fk" FOREIGN KEY ("doc_id") REFERENCES "public"."doc"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access_request" ADD CONSTRAINT "doc_access_request_requester_id_user_id_fk" FOREIGN KEY ("requester_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_access_request" ADD CONSTRAINT "doc_access_request_decided_by_id_user_id_fk" FOREIGN KEY ("decided_by_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc_collection" ADD CONSTRAINT "doc_collection_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_comment" ADD CONSTRAINT "doc_comment_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_comment" ADD CONSTRAINT "doc_comment_doc_id_doc_id_fk" FOREIGN KEY ("doc_id") REFERENCES "public"."doc"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_comment" ADD CONSTRAINT "doc_comment_author_id_user_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_comment" ADD CONSTRAINT "doc_comment_parent_id_doc_comment_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."doc_comment"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc_subscription" ADD CONSTRAINT "doc_subscription_doc_id_doc_id_fk" FOREIGN KEY ("doc_id") REFERENCES "public"."doc"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc_subscription" ADD CONSTRAINT "doc_subscription_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "doc_version" ADD CONSTRAINT "doc_version_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "doc_version" ADD CONSTRAINT "doc_version_doc_id_doc_id_fk" FOREIGN KEY ("doc_id") REFERENCES "public"."doc"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "doc_version" ADD CONSTRAINT "doc_version_author_id_user_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_version" ADD CONSTRAINT "doc_version_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "doc_version" ADD CONSTRAINT "doc_version_owned_by_id_user_id_fk" FOREIGN KEY ("owned_by_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "favorite" ADD CONSTRAINT "favorite_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "favorite" ADD CONSTRAINT "favorite_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "home_widget_preference" ADD CONSTRAINT "home_widget_preference_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -873,6 +1059,14 @@ ALTER TABLE "reaction" ADD CONSTRAINT "reaction_issue_id_issue_id_fk" FOREIGN KE
 ALTER TABLE "reaction" ADD CONSTRAINT "reaction_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "recent_visit" ADD CONSTRAINT "recent_visit_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "recent_visit" ADD CONSTRAINT "recent_visit_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_client_id_oauth_application_client_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."oauth_application"("client_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_client_id_oauth_application_client_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."oauth_application"("client_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_application" ADD CONSTRAINT "oauth_application_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_consent" ADD CONSTRAINT "oauth_consent_client_id_oauth_application_client_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."oauth_application"("client_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_consent" ADD CONSTRAINT "oauth_consent_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "invitation" ADD CONSTRAINT "invitation_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "invitation" ADD CONSTRAINT "invitation_inviter_id_user_id_fk" FOREIGN KEY ("inviter_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member" ADD CONSTRAINT "member_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -942,6 +1136,9 @@ ALTER TABLE "saved_analytics_view" ADD CONSTRAINT "saved_analytics_view_organiza
 ALTER TABLE "saved_analytics_view" ADD CONSTRAINT "saved_analytics_view_owner_id_user_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "view" ADD CONSTRAINT "view_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "view" ADD CONSTRAINT "view_owner_id_user_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "view" ADD CONSTRAINT "view_team_id_team_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."team"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "view_preference" ADD CONSTRAINT "view_preference_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "view_preference" ADD CONSTRAINT "view_preference_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workflow_state" ADD CONSTRAINT "workflow_state_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workflow_state" ADD CONSTRAINT "workflow_state_team_id_team_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."team"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "account_user_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
@@ -958,13 +1155,22 @@ CREATE UNIQUE INDEX "git_link_unique" ON "git_link" USING btree ("provider","ext
 CREATE INDEX "git_link_issue_idx" ON "git_link" USING btree ("issue_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "github_comment_sync_unique" ON "github_comment_sync" USING btree ("repository_sync_id","external_id");--> statement-breakpoint
 CREATE INDEX "github_comment_sync_comment_idx" ON "github_comment_sync" USING btree ("comment_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "github_installation_installation_unique" ON "github_installation" USING btree ("installation_id");--> statement-breakpoint
+CREATE INDEX "github_installation_org_idx" ON "github_installation" USING btree ("organization_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "github_issue_sync_unique" ON "github_issue_sync" USING btree ("repository_sync_id","external_id");--> statement-breakpoint
 CREATE INDEX "github_issue_sync_issue_idx" ON "github_issue_sync" USING btree ("issue_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "github_pr_state_mapping_unique" ON "github_pr_state_mapping" USING btree ("repository_sync_id","pull_request_state");--> statement-breakpoint
+CREATE UNIQUE INDEX "github_repository_unique" ON "github_repository" USING btree ("installation_row_id","repository_id");--> statement-breakpoint
+CREATE INDEX "github_repository_org_idx" ON "github_repository" USING btree ("organization_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "github_repository_link_project_unique" ON "github_repository_link" USING btree ("repository_row_id","project_id") WHERE "github_repository_link"."project_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "github_repository_link_workspace_unique" ON "github_repository_link" USING btree ("repository_row_id") WHERE "github_repository_link"."project_id" is null;--> statement-breakpoint
+CREATE INDEX "github_repository_link_project_idx" ON "github_repository_link" USING btree ("project_id");--> statement-breakpoint
+CREATE INDEX "github_repository_link_org_idx" ON "github_repository_link" USING btree ("organization_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "github_repository_sync_unique" ON "github_repository_sync" USING btree ("organization_id","repository_id");--> statement-breakpoint
 CREATE INDEX "github_repository_sync_team_idx" ON "github_repository_sync" USING btree ("team_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "integration_org_provider_unique" ON "integration" USING btree ("organization_id","provider","external_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "integration_channel_unique" ON "integration_channel" USING btree ("integration_id","entity_type","entity_id","channel_id");--> statement-breakpoint
+CREATE INDEX "integration_oauth_state_expires_idx" ON "integration_oauth_state" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "notification_user_idx" ON "notification" USING btree ("user_id","created_at");--> statement-breakpoint
 CREATE INDEX "notification_unread_idx" ON "notification" USING btree ("user_id","read_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "notification_preference_unique" ON "notification_preference" USING btree ("user_id","channel","type");--> statement-breakpoint
@@ -979,21 +1185,35 @@ CREATE INDEX "comment_parent_idx" ON "comment" USING btree ("parent_id");--> sta
 CREATE INDEX "doc_org_idx" ON "doc" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "doc_project_idx" ON "doc" USING btree ("project_id");--> statement-breakpoint
 CREATE INDEX "doc_parent_idx" ON "doc" USING btree ("parent_id");--> statement-breakpoint
+CREATE INDEX "doc_collection_order_idx" ON "doc" USING btree ("collection_id","sort_order");--> statement-breakpoint
 CREATE INDEX "doc_title_trgm_idx" ON "doc" USING gin ("title" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "doc_content_trgm_idx" ON "doc" USING gin ("content" gin_trgm_ops);--> statement-breakpoint
-CREATE INDEX "doc_collection_org_idx" ON "doc_collection" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "doc_search_idx" ON "doc" USING gin ("search_vector");--> statement-breakpoint
+CREATE UNIQUE INDEX "doc_access_unique" ON "doc_access" USING btree ("doc_id","subject_type","subject_id");--> statement-breakpoint
+CREATE INDEX "doc_access_subject_idx" ON "doc_access" USING btree ("subject_type","subject_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "doc_access_request_pending_unique" ON "doc_access_request" USING btree ("doc_id","requester_id") WHERE status = 'pending';--> statement-breakpoint
+CREATE INDEX "doc_access_request_doc_idx" ON "doc_access_request" USING btree ("doc_id","created_at");--> statement-breakpoint
+CREATE INDEX "doc_access_request_requester_idx" ON "doc_access_request" USING btree ("requester_id");--> statement-breakpoint
+CREATE INDEX "doc_collection_org_idx" ON "doc_collection" USING btree ("organization_id","position");--> statement-breakpoint
+CREATE INDEX "doc_comment_doc_idx" ON "doc_comment" USING btree ("doc_id","created_at");--> statement-breakpoint
+CREATE INDEX "doc_comment_parent_idx" ON "doc_comment" USING btree ("parent_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "doc_subscription_unique" ON "doc_subscription" USING btree ("doc_id","user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "doc_version_unique" ON "doc_version" USING btree ("doc_id","version");--> statement-breakpoint
-CREATE INDEX "doc_version_doc_idx" ON "doc_version" USING btree ("doc_id","created_at");--> statement-breakpoint
+CREATE INDEX "doc_version_doc_idx" ON "doc_version" USING btree ("doc_id","last_saved_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "favorite_unique" ON "favorite" USING btree ("user_id","entity_type","entity_id");--> statement-breakpoint
 CREATE INDEX "favorite_user_idx" ON "favorite" USING btree ("user_id","sort_order");--> statement-breakpoint
 CREATE UNIQUE INDEX "home_widget_preference_unique" ON "home_widget_preference" USING btree ("user_id","organization_id","widget");--> statement-breakpoint
 CREATE UNIQUE INDEX "reaction_comment_unique" ON "reaction" USING btree ("comment_id","user_id","emoji");--> statement-breakpoint
-CREATE UNIQUE INDEX "reaction_issue_unique" ON "reaction" USING btree ("issue_id","user_id","emoji");--> statement-breakpoint
 CREATE INDEX "reaction_comment_idx" ON "reaction" USING btree ("comment_id");--> statement-breakpoint
 CREATE INDEX "reaction_issue_idx" ON "reaction" USING btree ("issue_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "recent_visit_unique" ON "recent_visit" USING btree ("user_id","organization_id","entity_type","entity_id");--> statement-breakpoint
 CREATE INDEX "recent_visit_user_idx" ON "recent_visit" USING btree ("user_id","visited_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "mcp_grant_client_user_unique" ON "mcp_grant" USING btree ("client_id","user_id");--> statement-breakpoint
+CREATE INDEX "mcp_grant_user_idx" ON "mcp_grant" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "oauth_access_token_client_idx" ON "oauth_access_token" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX "oauth_access_token_user_idx" ON "oauth_access_token" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "oauth_application_user_idx" ON "oauth_application" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "oauth_consent_client_idx" ON "oauth_consent" USING btree ("client_id");--> statement-breakpoint
+CREATE INDEX "oauth_consent_user_idx" ON "oauth_consent" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "invitation_org_idx" ON "invitation" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "invitation_email_idx" ON "invitation" USING btree ("email");--> statement-breakpoint
 CREATE UNIQUE INDEX "invitation_org_email_pending_unique" ON "invitation" USING btree ("organization_id",lower("email")) WHERE "invitation"."status" = 'pending';--> statement-breakpoint
@@ -1023,6 +1243,7 @@ CREATE INDEX "issue_project_idx" ON "issue" USING btree ("project_id");--> state
 CREATE INDEX "issue_cycle_idx" ON "issue" USING btree ("cycle_id");--> statement-breakpoint
 CREATE INDEX "issue_parent_idx" ON "issue" USING btree ("parent_id");--> statement-breakpoint
 CREATE INDEX "issue_sync_idx" ON "issue" USING btree ("organization_id","sync_id");--> statement-breakpoint
+CREATE INDEX "issue_org_active_idx" ON "issue" USING btree ("organization_id","completed_at") WHERE "issue"."archived_at" is null;--> statement-breakpoint
 CREATE INDEX "issue_team_order_idx" ON "issue" USING btree ("team_id","sort_order","id") WHERE "issue"."archived_at" is null;--> statement-breakpoint
 CREATE INDEX "issue_team_updated_idx" ON "issue" USING btree ("team_id","updated_at") WHERE "issue"."archived_at" is null;--> statement-breakpoint
 CREATE INDEX "issue_team_created_idx" ON "issue" USING btree ("team_id","created_at") WHERE "issue"."archived_at" is null;--> statement-breakpoint
@@ -1030,6 +1251,7 @@ CREATE INDEX "issue_milestone_idx" ON "issue" USING btree ("milestone_id") WHERE
 CREATE INDEX "issue_title_trgm_idx" ON "issue" USING gin ("title" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "issue_description_trgm_idx" ON "issue" USING gin ("description" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "issue_activity_issue_idx" ON "issue_activity" USING btree ("issue_id","created_at");--> statement-breakpoint
+CREATE INDEX "issue_activity_cycle_moves_idx" ON "issue_activity" USING btree ("organization_id","created_at") WHERE "issue_activity"."field" = 'cycleId';--> statement-breakpoint
 CREATE UNIQUE INDEX "issue_identifier_alias_unique" ON "issue_identifier_alias" USING btree ("organization_id","identifier");--> statement-breakpoint
 CREATE INDEX "issue_identifier_alias_issue_idx" ON "issue_identifier_alias" USING btree ("issue_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "issue_label_unique" ON "issue_label" USING btree ("issue_id","label_id");--> statement-breakpoint
@@ -1057,5 +1279,7 @@ CREATE INDEX "project_update_project_idx" ON "project_update" USING btree ("proj
 CREATE INDEX "saved_analytics_view_org_idx" ON "saved_analytics_view" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "saved_analytics_view_owner_idx" ON "saved_analytics_view" USING btree ("owner_id");--> statement-breakpoint
 CREATE INDEX "view_org_idx" ON "view" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "view_team_idx" ON "view" USING btree ("team_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "view_preference_unique" ON "view_preference" USING btree ("user_id","organization_id","page","scope");--> statement-breakpoint
 CREATE INDEX "workflow_state_team_idx" ON "workflow_state" USING btree ("team_id","position");--> statement-breakpoint
 CREATE UNIQUE INDEX "workflow_state_team_name_unique" ON "workflow_state" USING btree ("team_id","name");
