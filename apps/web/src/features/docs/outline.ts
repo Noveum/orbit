@@ -134,6 +134,13 @@ export function outlineFor(
   return { signature, headings: build(markdown) };
 }
 
+function closesFence(content: string, fence: string): boolean {
+  const marker = FENCE.exec(content)?.[0];
+  if (marker === undefined) return false;
+  if (marker[0] !== fence[0] || marker.length < fence.length) return false;
+  return content.slice(marker.length).trim().length === 0;
+}
+
 export function headingLineNumbers(markdown: string): number[] {
   const lines = markdown.split('\n');
   const found: number[] = [];
@@ -141,13 +148,11 @@ export function headingLineNumbers(markdown: string): number[] {
 
   for (const [index, line] of lines.entries()) {
     const content = blockContent(line);
-    const marker = FENCE.exec(content)?.[0];
     if (fence !== null) {
-      if (marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length) {
-        fence = null;
-      }
+      if (closesFence(content, fence)) fence = null;
       continue;
     }
+    const marker = FENCE.exec(content)?.[0];
     if (marker !== undefined) {
       fence = marker;
       continue;

@@ -56,6 +56,17 @@ describe('headingLineNumbers', () => {
     expect(headingLineNumbers(source)).toEqual([3]);
   });
 
+  it('does not let a marker with text after it close a fence', () => {
+    const source = ['```', '```not-a-closer', '# still hidden', '```', '# after'].join('\n');
+    expect(headingLineNumbers(source)).toEqual([4]);
+  });
+
+  it('stays in step with the rendered outline when a fence holds a fence-like line', () => {
+    const source = ['# One', '```', '```js', '# hidden', '```', '## Two'].join('\n');
+    const rendered = extractHeadings(renderMarkdownWithHeadingIds(source));
+    expect(headingLineNumbers(source)).toHaveLength(rendered.length);
+  });
+
   it('counts a setext heading at the line its text sits on', () => {
     const source = ['Title', '=====', '', '# Later'].join('\n');
     expect(headingLineNumbers(source)).toEqual([0, 3]);

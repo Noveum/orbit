@@ -118,18 +118,34 @@ describe('an outline whose editor surface is swapped', () => {
       return (
         <div>
           <span data-testid="active">{activeId ?? 'none'}</span>
-          <span data-testid="measuring">{scroller === null ? 'no' : 'yes'}</span>
-          <div key={surface} ref={setScroller} data-testid={`surface-${surface}`} />
+          <div key={surface} ref={setScroller} data-testid={`surface-${surface}`}>
+            <h1 id="one">One</h1>
+            <h2 id="two">Two</h2>
+          </div>
         </div>
       );
     }
 
     const view = render(<Swapping surface="rich" />);
-    await screen.findByTestId('surface-rich');
+    const first = await screen.findByTestId('surface-rich');
+    placeHeadings(first, [0, 500]);
+    first.scrollTop = 0;
+    act(() => {
+      first.dispatchEvent(new Event('scroll'));
+    });
+    runNextFrame();
+    expect(screen.getByTestId('active').textContent).toBe('one');
 
     view.rerender(<Swapping surface="markdown" />);
+    const second = await screen.findByTestId('surface-markdown');
+    placeHeadings(second, [0, 500]);
+    second.scrollTop = 600;
 
-    expect(await screen.findByTestId('surface-markdown')).toBeTruthy();
-    expect(screen.getByTestId('measuring').textContent).toBe('yes');
+    act(() => {
+      second.dispatchEvent(new Event('scroll'));
+    });
+    runNextFrame();
+
+    expect(screen.getByTestId('active').textContent).toBe('two');
   });
 });
