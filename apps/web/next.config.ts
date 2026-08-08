@@ -26,6 +26,7 @@ export default function config(phase: string): NextConfig {
   const isDevServer = phase === PHASE_DEVELOPMENT_SERVER;
   return {
     reactStrictMode: true,
+    reactCompiler: true,
     ...standaloneOutputUnlessVercelTracesItItself(),
     outputFileTracingRoot: workspaceRoot,
     turbopack: {

@@ -3,6 +3,7 @@ import {
   applyGithubEvent,
   applyGithubInstallationEvent,
   dispatchSlackMessage,
+  handlesGithubEvent,
   isGithubInstallationEvent,
   verifyGithubSignature,
 } from '@orbit/services';
@@ -28,6 +29,9 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (deliveryId.length === 0) {
     return Response.json({ error: 'missing delivery id' }, { status: 400 });
+  }
+  if (!handlesGithubEvent(eventName)) {
+    return Response.json({ status: 'unhandled', event: eventName });
   }
 
   const claimed = await db

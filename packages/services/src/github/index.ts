@@ -9,6 +9,8 @@ export * from './installations.ts';
 export * from './watched.ts';
 export * from './webhook-events.ts';
 
+import { isGithubInstallationEvent } from './webhook-events.ts';
+
 export function verifyGithubSignature(
   rawBody: string,
   signatureHeader: string | null,
@@ -185,65 +187,82 @@ function toReviewDecision(state: string): ReviewDecision {
   return 'commented';
 }
 
+function parsePullRequestEvent(body: unknown): NormalizedGithubEvent | null {
+  const result = pullRequestEventSchema.safeParse(body);
+  if (!result.success) return null;
+  const parsed = result.data;
+  return {
+    action: parsed.action,
+    repository: {
+      externalId: String(parsed.repository.id),
+      fullName: parsed.repository.full_name,
+    },
+    pullRequest: normalizePullRequest(parsed.pull_request),
+    review: null,
+    requestedReviewer: parsed.requested_reviewer ?? null,
+    checks: null,
+    sender: parsed.sender,
+  };
+}
+
+function parseReviewEvent(body: unknown): NormalizedGithubEvent | null {
+  const result = reviewEventSchema.safeParse(body);
+  if (!result.success) return null;
+  const parsed = result.data;
+  return {
+    action: parsed.action,
+    repository: {
+      externalId: String(parsed.repository.id),
+      fullName: parsed.repository.full_name,
+    },
+    pullRequest: normalizePullRequest(parsed.pull_request),
+    review: {
+      decision: toReviewDecision(parsed.review.state),
+      url: parsed.review.html_url ?? parsed.pull_request.html_url,
+      reviewer: parsed.review.user ?? null,
+    },
+    requestedReviewer: null,
+    checks: null,
+    sender: parsed.sender,
+  };
+}
+
+function parseCheckSuiteEvent(body: unknown): NormalizedGithubEvent | null {
+  const result = checkSuiteEventSchema.safeParse(body);
+  if (!result.success) return null;
+  const parsed = result.data;
+  return {
+    action: parsed.action,
+    repository: {
+      externalId: String(parsed.repository.id),
+      fullName: parsed.repository.full_name,
+    },
+    pullRequest: null,
+    review: null,
+    requestedReviewer: null,
+    checks: {
+      failed: (parsed.check_suite.conclusion ?? '').toLowerCase() === 'failure',
+      headBranch: parsed.check_suite.head_branch ?? '',
+      prNumbers: parsed.check_suite.pull_requests.map((entry) => entry.number),
+    },
+    sender: parsed.sender,
+  };
+}
+
+const GITHUB_EVENT_PARSERS: Readonly<
+  Record<string, (body: unknown) => NormalizedGithubEvent | null>
+> = {
+  pull_request: parsePullRequestEvent,
+  pull_request_review: parseReviewEvent,
+  check_suite: parseCheckSuiteEvent,
+};
+
+export const GITHUB_PARSED_EVENTS: readonly string[] = Object.keys(GITHUB_EVENT_PARSERS);
+
 export function parseGithubEvent(eventName: string, body: unknown): NormalizedGithubEvent | null {
-  if (eventName === 'pull_request') {
-    const result = pullRequestEventSchema.safeParse(body);
-    if (!result.success) return null;
-    const parsed = result.data;
-    return {
-      action: parsed.action,
-      repository: {
-        externalId: String(parsed.repository.id),
-        fullName: parsed.repository.full_name,
-      },
-      pullRequest: normalizePullRequest(parsed.pull_request),
-      review: null,
-      requestedReviewer: parsed.requested_reviewer ?? null,
-      checks: null,
-      sender: parsed.sender,
-    };
-  }
-  if (eventName === 'pull_request_review') {
-    const result = reviewEventSchema.safeParse(body);
-    if (!result.success) return null;
-    const parsed = result.data;
-    return {
-      action: parsed.action,
-      repository: {
-        externalId: String(parsed.repository.id),
-        fullName: parsed.repository.full_name,
-      },
-      pullRequest: normalizePullRequest(parsed.pull_request),
-      review: {
-        decision: toReviewDecision(parsed.review.state),
-        url: parsed.review.html_url ?? parsed.pull_request.html_url,
-        reviewer: parsed.review.user ?? null,
-      },
-      requestedReviewer: null,
-      checks: null,
-      sender: parsed.sender,
-    };
-  }
-  if (eventName === 'check_suite') {
-    const result = checkSuiteEventSchema.safeParse(body);
-    if (!result.success) return null;
-    const parsed = result.data;
-    return {
-      action: parsed.action,
-      repository: {
-        externalId: String(parsed.repository.id),
-        fullName: parsed.repository.full_name,
-      },
-      pullRequest: null,
-      review: null,
-      requestedReviewer: null,
-      checks: {
-        failed: (parsed.check_suite.conclusion ?? '').toLowerCase() === 'failure',
-        headBranch: parsed.check_suite.head_branch ?? '',
-        prNumbers: parsed.check_suite.pull_requests.map((entry) => entry.number),
-      },
-      sender: parsed.sender,
-    };
-  }
-  return null;
+  return GITHUB_EVENT_PARSERS[eventName]?.(body) ?? null;
+}
+
+export function handlesGithubEvent(eventName: string): boolean {
+  return isGithubInstallationEvent(eventName) || eventName in GITHUB_EVENT_PARSERS;
 }
