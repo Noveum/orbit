@@ -37,7 +37,7 @@
     "check-bytes": "bun scripts/check-source-bytes.ts",
     "check-deps": "bun scripts/check-dependency-dedupe.ts",
     "strip-comments": "bun scripts/strip-comments.ts",
-    "verify": "bun run lint && bun run check-comments && bun run check-bytes && bun run check-deps && bun run typecheck && bun run test",
+    "verify": "bun run lint && bun run check-comments && bun run check-bytes && bun run check-bun-imports && bun run check-deps && bun run typecheck && bun run test",
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
     "db:push": "bun run --filter '@orbit/db' push",
@@ -54,7 +54,8 @@
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",
     "prepare": "lefthook install || true",
-    "db:test-lanes-drop": "bun run --filter '@orbit/db' test-lanes-drop"
+    "db:test-lanes-drop": "bun run --filter '@orbit/db' test-lanes-drop",
+    "check-bun-imports": "bun scripts/check-bun-imports.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
