@@ -21,7 +21,7 @@ The dialog shows counts for:
 
 It also states that comments, cycles, milestones, modules, labels, saved views, notifications, activity, invitations, OAuth grants, API keys, repository links, automations, and workspace settings are included. User accounts and their data in other workspaces are not deleted.
 
-The administrator must type the exact workspace name. The destructive button remains disabled while the summary is loading, the typed name differs, or a recent upload is still protected. A pending deletion changes the danger zone into a retry flow and keeps the exact-name requirement. The dialog explains that deletion is permanent.
+The administrator must type the exact workspace name. The destructive button remains disabled while the summary is loading or the typed name differs. The first confirmation locks the workspace even when a recent upload is still protected. A pending deletion changes the danger zone into a retry flow, keeps the exact-name requirement, and disables the retry until every upload capability has drained. The dialog explains that deletion is permanent.
 
 If the deleted workspace is not the user's only workspace, the client activates another membership and performs a full navigation to `/my-issues`. If no membership remains, it navigates to `/workspaces/new`.
 
@@ -37,20 +37,20 @@ The confirmation is preserved exactly and compared case-sensitively with the cur
 
 `getOrganizationDeletionSummary` returns the organization name, categorized counts, actual stored object bytes, stored object-version bytes, an optional `availableAt` timestamp, and an optional `deletionRequestedAt` timestamp. Database counts come from bounded aggregate queries over direct organization columns. File counts and bytes come from `StorageDriver.summarizePrefix`, so pending uploads, orphaned objects, and recoverable historical versions under the organization prefix are visible even when they do not have an attachment row. The summary does not fetch row bodies or enumerate names.
 
-`availableAt` protects outstanding presigned uploads. A nullable `attachment.uploadExpiresAt` records the expiration of each presigned target and remains null for inline uploads. The summary uses the latest expiration plus a 15-minute upload-completion grace. If present, the dialog names when deletion becomes available and the server refuses an early delete even if a client bypasses the UI.
+`availableAt` protects outstanding presigned uploads. A nullable `attachment.uploadExpiresAt` records the expiration of each committed presigned target and remains null for inline uploads. The summary uses the later of the latest recorded expiration plus a 15-minute upload-completion grace and the deletion request plus the 15-minute URL lifetime and 15-minute completion grace. Once deletion is pending, the dialog names when a retry becomes available and the server refuses an early cleanup even if a client bypasses the UI.
 
 ## Upload and deletion serialization
 
 Storage keys already begin with `<organizationId>/`. Deleting the whole prefix removes tracked attachments, pending uploads, and orphaned objects.
 
-S3 checks a presigned URL when the HTTP request begins, so a request started before expiration can finish afterward. A prefix that was empty at deletion time could otherwise receive a late upload. The upload registration and deletion paths therefore serialize on the organization row, and deletion waits through a completion grace after the last URL expires:
+S3 checks a presigned URL when the HTTP request begins, so a request started before expiration can finish afterward. A prefix that was empty at deletion time could otherwise receive a late upload. Creating a presigned target is also external work: the target can remain valid if its database transaction later fails and no attachment guard row is committed. The upload registration and deletion paths therefore serialize on the organization row, and every confirmed deletion drains both recorded and potentially unrecorded capabilities:
 
 1. Upload registration locks the organization row before it creates a target and attachment record.
 2. The target expiration is stored on the attachment, and the transaction commits before the target is returned to the browser.
-3. Workspace deletion obtains the same lock.
-4. Deletion refuses while any attachment can still have an unexpired upload target or a started upload inside the completion grace.
-5. After the last completion grace closes, deletion commits `organization.deletionRequestedAt` before storage work begins.
-6. Upload registration and inline storage reject a workspace carrying that timestamp, so a retry cannot recreate the prefix.
+3. Workspace deletion obtains the same lock and commits `organization.deletionRequestedAt` before storage work begins.
+4. Upload registration and inline storage reject a workspace carrying that timestamp, so no new capability or object can be created.
+5. Final cleanup waits until both every recorded target expiration plus completion grace and the deletion timestamp plus one full URL lifetime and completion grace have passed.
+6. The timestamp-based drain covers a target issued immediately before deletion whose attachment insert or transaction commit failed.
 
 Inline uploads use the same organization lock around storage and attachment registration. A deletion that wins the lock removes the organization before a waiting upload can proceed. The waiting upload then fails closed instead of recreating the prefix.
 
@@ -74,9 +74,9 @@ The implementation sends exact keys and version ids returned by S3 and never bro
 
 PostgreSQL and object storage cannot share one atomic transaction. The deletion service therefore uses a durable two-phase retry state.
 
-The first transaction locks the active organization, locks and rechecks the caller's current membership role, rechecks the confirmation and upload guard, and commits `organization.deletionRequestedAt`. A demoted or removed administrator cannot start or resume deletion using a stale principal. Once this state is present, normal API and page access is redirected or rejected, uploads cannot create new objects, ordinary organization lists omit the workspace, MCP and realtime authentication fail closed, and public docs and attachments stop resolving. The deletion summary and delete endpoint remain available. The app switcher includes pending workspaces only for their administrators, so an authorized retry remains discoverable after a sign-out or workspace switch.
+The first transaction locks the active organization, locks and rechecks the caller's current membership role, rechecks the confirmation, and commits `organization.deletionRequestedAt`. A demoted or removed administrator cannot start or resume deletion using a stale principal. Once this state is present, normal API and page access is redirected or rejected, uploads cannot create new objects, ordinary organization lists omit the workspace, MCP and realtime authentication fail closed, and public docs and attachments stop resolving. The deletion summary and delete endpoint remain available. The app switcher includes pending workspaces only for their administrators, so an authorized retry remains discoverable after a sign-out or workspace switch.
 
-The second transaction repeats the lock, role, confirmation, and upload checks. It clears `session.active_organization_id`, chooses a next organization that is not itself pending deletion, and executes the organization delete before it calls object storage. This means a failing database statement cannot run after irreversible storage work. Existing foreign keys cascade through workspace-owned rows. User, account, passkey, and avatar records remain because they belong to the person rather than a workspace.
+The second transaction repeats the lock, role, and confirmation checks, then calculates the later of the tracked-upload guard and deletion-request drain. An early retry returns that exact timestamp without touching storage. A ready retry clears `session.active_organization_id`, chooses a next organization that is not itself pending deletion, and executes the organization delete before it calls object storage. This means a failing database statement cannot run after irreversible storage work. Existing foreign keys cascade through workspace-owned rows. User, account, passkey, and avatar records remain because they belong to the person rather than a workspace.
 
 Storage prefix deletion is the last operation inside the second transaction. If storage fails, the database mutations roll back but the deletion timestamp from the first transaction remains committed. If the final database commit fails after storage cleanup, that durable timestamp also remains. The dialog can retry the same endpoint, and prefix deletion is idempotent even after partial or complete cleanup. A successful commit removes the organization and its deletion state together.
 
@@ -135,7 +135,7 @@ Core integration tests cover:
 - preservation of the neighboring workspace and shared users
 - deletion of every direct organization table through cascades
 - clearing active session references without deleting user sessions
-- presigned expiration storage, conservative migration backfill, completion-grace blocking, and the grace boundary
+- presigned expiration storage, conservative migration backfill, tracked completion-grace blocking, untracked capability draining, and both exact boundaries
 - stale administrator role refusal inside the deletion transaction
 - durable retry state and database rollback when storage cleanup fails
 - database failures before storage cleanup

@@ -106,9 +106,9 @@ export function WorkspaceDangerZone({
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const availableAt = summary?.availableAt ?? null;
-  const blocked = availableAt !== null && Date.parse(availableAt) > clock;
   const currentName = summary?.organizationName ?? organizationName;
   const pending = (summary?.deletionRequestedAt ?? deletionRequestedAt) !== null;
+  const blocked = pending && availableAt !== null && Date.parse(availableAt) > clock;
   const canDelete =
     summary !== null && !loading && !blocked && !deleting && confirmation === currentName;
 

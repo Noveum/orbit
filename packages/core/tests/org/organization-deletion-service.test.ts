@@ -4,6 +4,7 @@ import {
   type StorageDriver,
   type StoragePrefixSummary,
   UPLOAD_COMPLETION_GRACE_SECONDS,
+  UPLOAD_URL_TTL_SECONDS,
 } from '@orbit/services/storage';
 import { internal } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
@@ -58,6 +59,7 @@ const expectedCore = core as typeof core & {
   ) => Promise<DeletionResult>;
 };
 const { deleteOrganization, getOrganizationDeletionSummary } = expectedCore;
+const deletionDrainMilliseconds = (UPLOAD_URL_TTL_SECONDS + UPLOAD_COMPLETION_GRACE_SECONDS) * 1000;
 
 interface FakeStorage {
   readonly driver: StorageDriver;
@@ -130,6 +132,13 @@ async function organizationCount(organizationId: string): Promise<number> {
     .from(schema.organization)
     .where(eq(schema.organization.id, organizationId));
   return row?.total ?? 0;
+}
+
+async function makeDeletionReady(organizationId: string, now: Date): Promise<void> {
+  await db
+    .update(schema.organization)
+    .set({ deletionRequestedAt: new Date(now.getTime() - deletionDrainMilliseconds) })
+    .where(eq(schema.organization.id, organizationId));
 }
 
 function databaseUrl(): string {
@@ -238,6 +247,24 @@ describe('getOrganizationDeletionSummary', () => {
       new Date(later.getTime() + UPLOAD_COMPLETION_GRACE_SECONDS * 1000).toISOString(),
     );
   });
+
+  it('reports the deletion request drain when it ends after tracked uploads', async () => {
+    const requestedAt = new Date('2026-08-08T12:00:00.000Z');
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: requestedAt })
+      .where(eq(schema.organization.id, nova.organizationId));
+
+    const summary = await getOrganizationDeletionSummary(
+      nova.admin,
+      fakeStorage().driver,
+      requestedAt,
+    );
+
+    expect(summary.availableAt).toBe(
+      new Date(requestedAt.getTime() + deletionDrainMilliseconds).toISOString(),
+    );
+  });
 });
 
 describe('deleteOrganization', () => {
@@ -286,6 +313,7 @@ describe('deleteOrganization', () => {
 
   it('blocks while a presigned target can still recreate the prefix', async () => {
     const now = new Date('2026-08-08T12:00:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
     const uploadExpiresAt = new Date('2026-08-08T12:01:00.000Z');
     const availableAt = new Date(
       uploadExpiresAt.getTime() + UPLOAD_COMPLETION_GRACE_SECONDS * 1000,
@@ -314,6 +342,92 @@ describe('deleteOrganization', () => {
     expect(storage.deleted).toEqual([]);
   });
 
+  it('drains a presigned target whose attachment transaction failed', async () => {
+    const requestedAt = new Date('2026-08-08T12:00:00.000Z');
+    const availableAt = new Date(requestedAt.getTime() + deletionDrainMilliseconds);
+    const { issue } = await createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Failed upload registration',
+    });
+    let targetCreated = false;
+    const uploadDriver = {
+      ...fakeStorage().driver,
+      createUploadTarget: (key: string, contentType: string, contentLength: number) => {
+        targetCreated = true;
+        return Promise.resolve({
+          key,
+          url: `https://storage.example/${key}`,
+          method: 'PUT' as const,
+          headers: { 'content-type': contentType },
+          maxBytes: contentLength,
+          expiresAt: new Date(requestedAt.getTime() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString(),
+        });
+      },
+    } as StorageDriver;
+    await db.execute(sql`drop trigger if exists reject_attachment_registration on attachment`);
+    await db.execute(sql`
+      create or replace function reject_attachment_registration() returns trigger as $$
+      begin
+        raise exception 'attachment registration failed';
+      end;
+      $$ language plpgsql
+    `);
+    await db.execute(sql`
+      create trigger reject_attachment_registration
+      before insert on attachment
+      for each row execute function reject_attachment_registration()
+    `);
+    try {
+      await expect(
+        registerUpload(
+          nova.admin,
+          {
+            fileName: 'untracked.txt',
+            contentType: 'text/plain',
+            size: 4,
+            parentType: 'issue',
+            parentId: issue.id,
+          },
+          uploadDriver,
+        ),
+      ).rejects.toBeDefined();
+    } finally {
+      await db.execute(sql`drop trigger if exists reject_attachment_registration on attachment`);
+      await db.execute(sql`drop function if exists reject_attachment_registration()`);
+    }
+    const [untracked] = await db
+      .select({ total: count() })
+      .from(schema.attachment)
+      .where(eq(schema.attachment.organizationId, nova.organizationId));
+    expect(targetCreated).toBe(true);
+    expect(untracked?.total).toBe(0);
+    const storage = fakeStorage();
+
+    await expect(
+      deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, requestedAt),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: { availableAt: availableAt.toISOString() },
+    });
+
+    const [pending] = await db
+      .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, nova.organizationId));
+    expect(pending?.deletionRequestedAt).toEqual(requestedAt);
+    expect(storage.deleted).toEqual([]);
+
+    const result = await deleteOrganization(
+      nova.admin,
+      { confirmation: 'Nova' },
+      storage.driver,
+      availableAt,
+    );
+
+    expect(result.deletedOrganizationId).toBe(nova.organizationId);
+    expect(storage.deleted).toEqual([`${nova.organizationId}/`]);
+  });
+
   it('deletes the exact prefix and tenant rows while preserving shared people and sessions', async () => {
     await seedDeletionInventory();
     await db.insert(schema.member).values({
@@ -336,8 +450,15 @@ describe('deleteOrganization', () => {
       versions: 4,
       versionBytes: 4_096,
     });
+    const now = new Date('2026-08-08T14:00:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
 
-    const result = await deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver);
+    const result = await deleteOrganization(
+      nova.admin,
+      { confirmation: 'Nova' },
+      storage.driver,
+      now,
+    );
 
     expect(result).toEqual({
       deletedOrganizationId: nova.organizationId,
@@ -366,6 +487,7 @@ describe('deleteOrganization', () => {
 
   it('keeps a durable retry state when storage cleanup fails', async () => {
     const now = new Date('2026-08-08T13:00:00.000Z');
+    const availableAt = new Date(now.getTime() + deletionDrainMilliseconds);
     const sessionId = newId();
     await db.insert(schema.session).values({
       id: sessionId,
@@ -381,6 +503,12 @@ describe('deleteOrganization', () => {
 
     await expect(
       deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, now),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: { availableAt: availableAt.toISOString() },
+    });
+    await expect(
+      deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, availableAt),
     ).rejects.toMatchObject({ code: 'internal' });
 
     expect(await organizationCount(nova.organizationId)).toBe(1);
@@ -400,7 +528,7 @@ describe('deleteOrganization', () => {
       nova.admin,
       { confirmation: 'Nova' },
       retryStorage.driver,
-      now,
+      availableAt,
     );
     expect(retried.deletedOrganizationId).toBe(nova.organizationId);
     expect(retryStorage.deleted).toEqual([`${nova.organizationId}/`]);
@@ -408,6 +536,8 @@ describe('deleteOrganization', () => {
   });
 
   it('finishes every fallible database mutation before deleting storage', async () => {
+    const now = new Date('2026-08-08T14:00:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
     await db.execute(sql`
       create table organization_deletion_test_blocker (
         organization_id text primary key references organization(id)
@@ -421,7 +551,7 @@ describe('deleteOrganization', () => {
       const storage = fakeStorage();
 
       await expect(
-        deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver),
+        deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, now),
       ).rejects.toBeDefined();
 
       expect(storage.deleted).toEqual([]);
@@ -438,6 +568,7 @@ describe('deleteOrganization', () => {
 
   it('blocks at URL expiry while an upload may still be finishing', async () => {
     const now = new Date('2026-08-08T12:00:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
     await db.insert(schema.attachment).values({
       id: newId(),
       organizationId: nova.organizationId,
@@ -465,6 +596,7 @@ describe('deleteOrganization', () => {
 
   it('allows deletion at the exact upload-completion boundary and returns no fallback', async () => {
     const now = new Date('2026-08-08T12:15:00.000Z');
+    await makeDeletionReady(nova.organizationId, now);
     const uploadExpiresAt = new Date(now.getTime() - UPLOAD_COMPLETION_GRACE_SECONDS * 1000);
     await db.insert(schema.attachment).values({
       id: newId(),
@@ -502,6 +634,8 @@ describe('deleteOrganization', () => {
   });
 
   it('prevents a waiting upload from minting a target after deletion starts', async () => {
+    const now = new Date();
+    await makeDeletionReady(nova.organizationId, now);
     const { issue } = await createIssue(nova.admin, {
       teamId: nova.teamId,
       title: 'Upload race',
@@ -552,6 +686,7 @@ describe('deleteOrganization', () => {
       nova.admin,
       { confirmation: 'Nova' },
       blockingDeletionDriver,
+      now,
     );
     await deletionStarted;
     const competingLock = challenger`

@@ -327,7 +327,7 @@ Expected: FAIL because the service does not exist.
 
 - [x] **Step 3: Implement bounded aggregate summary queries**
 
-Use one `count()` query per category with `eq(table.organizationId, principal.organizationId)`, a latest protected-upload query that adds the exported completion grace, and `driver.summarizePrefix(storagePrefixFor(principal.organizationId))`. Call `assertCan(principal, 'org:delete')` before database or storage access. Lock and recheck the current membership role inside the deletion transaction before touching storage.
+Use one `count()` query per category with `eq(table.organizationId, principal.organizationId)`, a latest protected-upload query that adds the exported completion grace, a deletion-request drain that adds the URL lifetime and completion grace, and `driver.summarizePrefix(storagePrefixFor(principal.organizationId))`. Call `assertCan(principal, 'org:delete')` before database or storage access. Lock and recheck the current membership role inside the deletion transaction before touching storage.
 
 - [x] **Step 4: Write failing destructive service tests**
 
@@ -343,7 +343,7 @@ expect(await sessionExists(sessionId)).toBe(true);
 expect(await activeOrganization(sessionId)).toBeNull();
 ```
 
-Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, exact completion-grace boundary, durable retry after storage failure, database failure before storage cleanup, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
+Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, tracked and untracked capability boundaries, durable retry after storage failure, database failure before storage cleanup, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
 
 - [x] **Step 5: Implement durable two-phase cleanup and next-workspace selection**
 
@@ -351,7 +351,6 @@ Cover stale-name refusal, stale-administrator refusal, future upload refusal wit
 await db.transaction(async (tx) => {
   const organization = await lockOrganization(tx, principal.organizationId);
   if (parsed.confirmation !== organization.name) throw conflict(nameMessage);
-  await assertNoLiveUploadTargets(tx, organization.id, now);
   if (organization.deletionRequestedAt === null) {
     await tx.update(schema.organization).set({ deletionRequestedAt: now })
       .where(eq(schema.organization.id, organization.id));
@@ -359,7 +358,8 @@ await db.transaction(async (tx) => {
 });
 
 return await db.transaction(async (tx) => {
-  const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
+  const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
+  await assertDeletionReady(tx, organization, now);
   await tx.update(schema.session).set({ activeOrganizationId: null })
     .where(eq(schema.session.activeOrganizationId, organization.id));
   await tx.delete(schema.organization).where(eq(schema.organization.id, organization.id));
@@ -368,7 +368,7 @@ return await db.transaction(async (tx) => {
 });
 ```
 
-Choose the next membership by organization name and id, excluding the deleting organization and any other pending deletion. The committed timestamp survives a failed second phase, normal access rejects the pending workspace, and an administrator can safely retry idempotent prefix cleanup. Return only ids and the deleted name.
+Choose the next membership by organization name and id, excluding the deleting organization and any other pending deletion. The committed timestamp survives a failed second phase, normal access rejects the pending workspace, and an administrator can safely retry idempotent prefix cleanup. The second phase waits one full presigned URL lifetime plus completion grace after the timestamp, in addition to recorded attachment expiration guards. This covers a presigned target whose attachment insert or transaction commit failed. Return only ids and the deleted name.
 
 - [x] **Step 6: Add the live PostgreSQL cascade regression test**
 
@@ -487,7 +487,7 @@ Expected: FAIL because the component does not exist.
 
 - [x] **Step 3: Implement summary loading and accessible destructive state**
 
-Use the shared `Dialog` primitives with a title, description, labelled input, alert error region, and `danger` button. Load a fresh summary on each open. Render all eight categories and the nested-data disclosure. Disable deletion during loading, before an exact case-sensitive name match, before `availableAt`, and while the DELETE request is pending. Keep the dialog open on an error and allow summary retry.
+Use the shared `Dialog` primitives with a title, description, labelled input, alert error region, and `danger` button. Load a fresh summary on each open. Render all eight categories and the nested-data disclosure. Disable deletion during loading, before an exact case-sensitive name match, before `availableAt` on a pending deletion, and while the DELETE request is pending. The initial confirmation remains available so it can lock the workspace before upload capabilities drain. Keep the dialog open on an error and allow summary retry.
 
 - [x] **Step 4: Add request and navigation tests**
 

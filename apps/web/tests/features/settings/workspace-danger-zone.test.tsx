@@ -114,7 +114,7 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps deletion blocked until a protected upload completion window closes', async () => {
+  it('allows the first confirmation to lock a workspace with protected upload links', async () => {
     installFetch([
       response({
         summary: { ...summary, availableAt: new Date(Date.now() + 60_000).toISOString() },
@@ -126,8 +126,34 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     await openDialog(user);
     await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
 
+    expect(screen.queryByText(/pending upload links and their completion window/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Permanently delete workspace' })).toBeEnabled();
+  });
+
+  it('keeps a pending deletion blocked until every upload capability has drained', async () => {
+    installFetch([
+      response({
+        summary: {
+          ...summary,
+          availableAt: new Date(Date.now() + 60_000).toISOString(),
+          deletionRequestedAt: new Date().toISOString(),
+        },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(
+      <WorkspaceDangerZone
+        organizationName="Nova"
+        deletionRequestedAt={new Date().toISOString()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Retry workspace deletion' }));
+    await screen.findByText('2 members');
+    await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
+
     expect(screen.getByText(/pending upload links and their completion window/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Permanently delete workspace' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Retry permanent deletion' })).toBeDisabled();
   });
 
   it('shows summary failures in an alert and retries in place', async () => {
@@ -249,5 +275,40 @@ describe('WorkspaceDangerZone deletion', () => {
     );
     expect(screen.getByRole('dialog')).toBeVisible();
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('refreshes into a locked retry state while upload capabilities drain', async () => {
+    const availableAt = new Date(Date.now() + 60_000).toISOString();
+    const requestedAt = new Date().toISOString();
+    const fetchMock = installFetch([
+      response({ summary }),
+      response(
+        {
+          error: {
+            code: 'conflict',
+            message: 'Workspace deletion is pending while upload links expire.',
+            details: { availableAt },
+          },
+        },
+        409,
+      ),
+      response({
+        summary: { ...summary, availableAt, deletionRequestedAt: requestedAt },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<WorkspaceDangerZone organizationName="Nova" />);
+    await openDialog(user);
+    await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
+
+    await user.click(screen.getByRole('button', { name: 'Permanently delete workspace' }));
+
+    expect(await screen.findByText(/locked for normal use/)).toBeVisible();
+    expect(screen.getByText(/pending upload links and their completion window/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry permanent deletion' })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Workspace deletion is pending while upload links expire.',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

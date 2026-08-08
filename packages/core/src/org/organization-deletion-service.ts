@@ -4,6 +4,7 @@ import {
   storageDriver,
   storagePrefixFor,
   UPLOAD_COMPLETION_GRACE_SECONDS,
+  UPLOAD_URL_TTL_SECONDS,
 } from '@orbit/services/storage';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
@@ -34,6 +35,11 @@ export interface OrganizationDeletionResult {
   readonly deletedOrganizationId: string;
   readonly deletedOrganizationName: string;
   readonly nextOrganizationId: string | null;
+}
+
+interface DeletionProtectionTarget {
+  readonly id: string;
+  readonly deletionRequestedAt: Date | null;
 }
 
 function totalOf(rows: readonly { readonly total: number }[]): number {
@@ -85,6 +91,30 @@ async function latestUploadProtectionEnd(
   return new Date(expiration.getTime() + graceMs);
 }
 
+function deletionRequestProtectionEnd(deletionRequestedAt: Date | null): Date | null {
+  if (deletionRequestedAt === null) return null;
+  const protectionMs = (UPLOAD_URL_TTL_SECONDS + UPLOAD_COMPLETION_GRACE_SECONDS) * 1000;
+  return new Date(deletionRequestedAt.getTime() + protectionMs);
+}
+
+function laterDate(first: Date | null, second: Date | null): Date | null {
+  if (first === null) return second;
+  if (second === null) return first;
+  return first.getTime() >= second.getTime() ? first : second;
+}
+
+async function deletionAvailableAt(
+  executor: Executor,
+  organization: DeletionProtectionTarget,
+  now: Date,
+): Promise<Date | null> {
+  const trackedUploadEnd = await latestUploadProtectionEnd(executor, organization.id, now);
+  const untrackedUploadEnd = deletionRequestProtectionEnd(organization.deletionRequestedAt);
+  const availableAt = laterDate(trackedUploadEnd, untrackedUploadEnd);
+  if (availableAt === null || availableAt.getTime() <= now.getTime()) return null;
+  return availableAt;
+}
+
 export async function getOrganizationDeletionSummary(
   principal: Principal,
   driver: StorageDriver = storageDriver(),
@@ -93,6 +123,7 @@ export async function getOrganizationDeletionSummary(
   assertCan(principal, 'org:delete');
   const [organization] = await db
     .select({
+      id: schema.organization.id,
       name: schema.organization.name,
       deletionRequestedAt: schema.organization.deletionRequestedAt,
     })
@@ -130,7 +161,7 @@ export async function getOrganizationDeletionSummary(
         .select({ total: count() })
         .from(schema.webhook)
         .where(eq(schema.webhook.organizationId, principal.organizationId)),
-      latestUploadProtectionEnd(db, principal.organizationId, now),
+      deletionAvailableAt(db, current, now),
       driver.summarizePrefix(storagePrefixFor(principal.organizationId)),
     ]);
   return {
@@ -155,20 +186,28 @@ async function validatedDeletionTarget(
   tx: Transaction,
   principal: Principal,
   confirmation: string,
-  now: Date,
 ): Promise<typeof schema.organization.$inferSelect> {
   const organization = await lockOrganization(tx, principal.organizationId);
   await assertCurrentDeletionPermission(tx, principal);
   if (confirmation !== organization.name) {
     throw conflict('Type the current workspace name exactly to confirm deletion.');
   }
-  const availableAt = await latestUploadProtectionEnd(tx, organization.id, now);
-  if (availableAt !== null) {
-    throw conflict('Wait for pending upload links to expire before deleting this workspace.', {
-      details: { availableAt: availableAt.toISOString() },
-    });
-  }
   return organization;
+}
+
+async function assertDeletionReady(
+  tx: Transaction,
+  organization: typeof schema.organization.$inferSelect,
+  now: Date,
+): Promise<void> {
+  const availableAt = await deletionAvailableAt(tx, organization, now);
+  if (availableAt === null) return;
+  throw conflict(
+    'Workspace deletion is pending while upload links expire. Retry after this time.',
+    {
+      details: { availableAt: availableAt.toISOString() },
+    },
+  );
 }
 
 export async function deleteOrganization(
@@ -180,7 +219,7 @@ export async function deleteOrganization(
   assertCan(principal, 'org:delete');
   const parsed = organizationDeleteSchema.parse(input);
   await db.transaction(async (tx) => {
-    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
+    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
     if (organization.deletionRequestedAt !== null) return;
     await tx
       .update(schema.organization)
@@ -188,7 +227,8 @@ export async function deleteOrganization(
       .where(eq(schema.organization.id, organization.id));
   });
   return await db.transaction(async (tx) => {
-    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
+    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
+    await assertDeletionReady(tx, organization, now);
     await tx
       .update(schema.session)
       .set({ activeOrganizationId: null })
