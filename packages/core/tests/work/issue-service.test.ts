@@ -1240,22 +1240,35 @@ describe('allocating an issue number under concurrency', () => {
     expect(new Set(identifiers).size).toBe(identifiers.length);
   });
 
-  it('does not hold the team row while the rest of the write runs', async () => {
-    const before = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Before',
-    });
+  it('commits the counter independently of the write that follows it', async () => {
+    const counter = async (): Promise<number> => {
+      const [row] = await db
+        .select({ value: schema.team.issueCounter })
+        .from(schema.team)
+        .where(eq(schema.team.id, workspace.teamId));
+      return row?.value ?? 0;
+    };
+
+    const before = await counter();
 
     await expect(
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'After' }),
-    ).resolves.toBeDefined();
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Refused',
+        stateId: 'state_that_does_not_exist',
+      }),
+    ).rejects.toThrow();
 
-    const after = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Later',
-    });
+    expect(await counter()).toBe(before + 1);
+  });
 
-    expect(after.issue.number).toBeGreaterThan(before.issue.number);
+  it('refuses a team the principal may not write to', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Sealed', key: 'SEAL' });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(createIssue(principal, { teamId: team.id, title: 'Not mine' })).rejects.toThrow(
+      DomainError,
+    );
   });
 
   it('leaves a gap rather than reusing a number when the write is refused', async () => {
