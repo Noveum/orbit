@@ -104,7 +104,7 @@ Point at `http://localhost:3000/mcp` instead. Everything else is the same.
 
 ## What the tools do
 
-Sixty odd tools across seven groups. Read tools need `orbit.read`, write tools
+Seventy odd tools across seven groups. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
 Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
@@ -129,6 +129,7 @@ them.
 | Tool | Scope | Does |
 | --- | --- | --- |
 | `get_issue` | read | One issue by identifier |
+| `list_issue_comments` | read | The comment thread on an issue, oldest first |
 | `search_issues` | read | Search and filter |
 | `list_my_issues` | read | Assigned to the caller |
 | `copy_branch_name` | read | The git branch name for an issue |
