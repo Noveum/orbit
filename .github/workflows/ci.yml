@@ -124,8 +124,6 @@ jobs:
       - name: A database built the way someone installing this would build one
         run: |
           PGPASSWORD=orbit createdb -h localhost -p 5433 -U orbit orbit_from_migrations
-          PGPASSWORD=orbit psql -h localhost -p 5433 -U orbit -d orbit_from_migrations \
-            -c 'create extension if not exists pg_trgm'
           bun run --filter '@orbit/db' migrate
       - name: The committed migrations carry everything the schema declares
         run: bun run db:check-drift
