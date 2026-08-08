@@ -3,6 +3,10 @@ import { validationFailed } from '@orbit/shared';
 
 export const FILE_ROUTE = '/api/files';
 
+export function fileUrlFor(key: string): string {
+  return `${FILE_ROUTE}/${key.split('/').map(encodeURIComponent).join('/')}`;
+}
+
 export function assertSafeKey(key: string): string {
   const normalized = path.posix.normalize(key).replace(/^\/+/, '');
   const escapes =

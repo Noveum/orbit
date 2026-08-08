@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ISSUE_RELATION_TYPES, PRIORITIES, STATE_CATEGORIES } from '../constants/index.ts';
 import { filterGroupQuerySchema, ISSUE_ORDERINGS } from '../filters/index.ts';
-import { idSchema, markdownSchema, titleSchema } from './common.ts';
+import { calendarDateSchema, idSchema, markdownSchema, titleSchema } from './common.ts';
 
 export function booleanFlag(fallback: boolean) {
   return z
@@ -31,7 +31,7 @@ export const issueCreateSchema = z.object({
   cycleId: idSchema.nullable().default(null),
   parentId: idSchema.nullable().default(null),
   estimate: z.number().int().min(0).max(100).nullable().default(null),
-  dueDate: z.coerce.date().nullable().default(null),
+  dueDate: calendarDateSchema.nullable().default(null),
   labelIds: z.array(idSchema).max(50).default([]),
 });
 
@@ -47,7 +47,7 @@ export const issueUpdateSchema = z
     cycleId: idSchema.nullable(),
     parentId: idSchema.nullable(),
     estimate: z.number().int().min(0).max(100).nullable(),
-    dueDate: z.coerce.date().nullable(),
+    dueDate: calendarDateSchema.nullable(),
     labelIds: z.array(idSchema).max(50),
     sortOrder: z.number(),
   })

@@ -1,21 +1,70 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
+import type { StorageDriver, StoredObject } from '@orbit/services/storage';
 import type { Principal } from '@orbit/shared/policy';
 import {
   type AttachmentRecord,
+  attachFile,
   attachmentScopes,
   findAttachmentForOrganization,
+  finishUpload,
   markAttachmentReady,
+  registerUpload,
 } from '../../src/content/attachment-service.ts';
+import { createComment } from '../../src/content/comment-service.ts';
 import { createDoc } from '../../src/content/doc-service.ts';
 import { newId } from '../../src/internal.ts';
-import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
+import { createTeam } from '../../src/org/team-service.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../../src/test-support.ts';
 import { createIssue } from '../../src/work/issue-service.ts';
 
 let nova: Workspace;
 let orion: Workspace;
 let issueId: string;
+let commentId: string;
 let docId: string;
+
+interface FakeStorage {
+  readonly driver: StorageDriver;
+  readonly puts: { key: string; bytes: number; contentType: string }[];
+  readonly deletes: string[];
+}
+
+function fakeStorage(): FakeStorage {
+  const puts: { key: string; bytes: number; contentType: string }[] = [];
+  const deletes: string[] = [];
+  const objects = new Map<string, StoredObject>();
+  const driver = {
+    name: 's3',
+    createUploadTarget: (key: string, contentType: string, contentLength: number) =>
+      Promise.resolve({
+        key,
+        url: `https://storage.test/${key}`,
+        method: 'PUT',
+        headers: { 'content-type': contentType },
+        maxBytes: contentLength,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    put: (key: string, body: Uint8Array, contentType: string) => {
+      puts.push({ key, bytes: body.byteLength, contentType });
+      objects.set(key, { key, size: body.byteLength, contentType, updatedAt: new Date() });
+      return Promise.resolve();
+    },
+    getUrl: () => Promise.reject(new Error('unused')),
+    delete: (key: string) => {
+      deletes.push(key);
+      objects.delete(key);
+      return Promise.resolve();
+    },
+    stat: (key: string) => Promise.resolve(objects.get(key) ?? null),
+  } as unknown as StorageDriver;
+  return { driver, puts, deletes };
+}
 
 beforeEach(async () => {
   await resetDatabase();
@@ -23,6 +72,8 @@ beforeEach(async () => {
   orion = await createWorkspace('Orion');
   const { issue } = await createIssue(nova.admin, { teamId: nova.teamId, title: 'With a file' });
   issueId = issue.id;
+  const comment = await createComment(nova.admin, issue.id, { body: 'Look at this' });
+  commentId = comment.comment.id;
   const created = await createDoc(nova.admin, { title: 'With a file', content: '' });
   docId = created.doc.id;
 });
@@ -161,5 +212,221 @@ describe('markAttachmentReady', () => {
 
     expect(completed.attachment.syncId).toBeGreaterThan(record.syncId);
     expect(completed.actions[0]?.syncId).toBe(completed.attachment.syncId);
+  });
+});
+
+describe('registerUpload', () => {
+  it('registers a comment upload and publishes it on the issue of that comment', async () => {
+    const storage = fakeStorage();
+
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'trace.log',
+        contentType: 'text/plain',
+        size: 12,
+        parentType: 'comment',
+        parentId: commentId,
+      },
+      storage.driver,
+    );
+
+    expect(registered.attachment.parentType).toBe('comment');
+    expect(registered.attachment.parentId).toBe(commentId);
+    expect(registered.attachment.status).toBe('pending');
+    expect(registered.upload.method).toBe('PUT');
+    expect(registered.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
+  });
+
+  it('refuses a comment on an issue in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(nova.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(nova.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const secret = await createComment(nova.admin, hidden.id, { body: 'Private' });
+    const { principal } = await addMember(nova, 'member');
+    const storage = fakeStorage();
+
+    expect(
+      await errorOf(() =>
+        registerUpload(
+          principal,
+          {
+            fileName: 'trace.log',
+            contentType: 'text/plain',
+            size: 12,
+            parentType: 'comment',
+            parentId: secret.comment.id,
+          },
+          storage.driver,
+        ),
+      ),
+    ).toEqual({ code: 'not_found', status: 404 });
+  });
+});
+
+describe('finishUpload', () => {
+  it('flips a finished upload to ready with the size storage reported', async () => {
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'trace.log',
+        contentType: 'text/plain',
+        size: 64,
+        parentType: 'comment',
+        parentId: commentId,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(registered.attachment.storageKey, new Uint8Array(40), 'text/plain');
+
+    const done = await finishUpload(nova.admin, registered.attachment.id, storage.driver);
+
+    expect(done.attachment.status).toBe('ready');
+    expect(done.attachment.size).toBe(40);
+  });
+
+  it('refuses to finish an upload someone else registered', async () => {
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'trace.log',
+        contentType: 'text/plain',
+        size: 64,
+        parentType: 'comment',
+        parentId: commentId,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(registered.attachment.storageKey, new Uint8Array(40), 'text/plain');
+    const { principal } = await addMember(nova, 'member');
+
+    expect(
+      await errorOf(() => finishUpload(principal, registered.attachment.id, storage.driver)),
+    ).toEqual({ code: 'not_found', status: 404 });
+  });
+});
+
+describe('attachFile', () => {
+  it('stores the decoded bytes and returns a url that serves them back', async () => {
+    const storage = fakeStorage();
+
+    const stored = await attachFile(
+      nova.admin,
+      {
+        parentType: 'comment',
+        parentId: commentId,
+        fileName: 'notes.txt',
+        contentType: 'text/plain',
+        content: Buffer.from('hello orbit').toString('base64'),
+      },
+      storage.driver,
+    );
+
+    expect(storage.puts).toHaveLength(1);
+    expect(storage.puts[0]?.bytes).toBe(11);
+    expect(stored.attachment.size).toBe(11);
+    expect(stored.attachment.status).toBe('ready');
+    expect(stored.url).toBe(`/api/files/${stored.attachment.storageKey}`);
+    expect(stored.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
+  });
+
+  it('refuses a workspace the caller does not belong to', async () => {
+    const storage = fakeStorage();
+
+    expect(
+      await errorOf(() =>
+        attachFile(
+          orion.admin,
+          {
+            parentType: 'comment',
+            parentId: commentId,
+            fileName: 'notes.txt',
+            contentType: 'text/plain',
+            content: Buffer.from('hello orbit').toString('base64'),
+          },
+          storage.driver,
+        ),
+      ),
+    ).toEqual({ code: 'not_found', status: 404 });
+    expect(storage.puts).toHaveLength(0);
+  });
+
+  it('refuses a file type the workspace does not allow', async () => {
+    const storage = fakeStorage();
+
+    await expect(
+      attachFile(
+        nova.admin,
+        {
+          parentType: 'comment',
+          parentId: commentId,
+          fileName: 'payload.exe',
+          contentType: 'application/x-msdownload',
+          content: Buffer.from('MZ').toString('base64'),
+        },
+        storage.driver,
+      ),
+    ).rejects.toThrow();
+    expect(storage.puts).toHaveLength(0);
+  });
+
+  it('refuses a comment on an issue in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(nova.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(nova.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const secret = await createComment(nova.admin, hidden.id, { body: 'Private' });
+    const { principal } = await addMember(nova, 'member');
+    const storage = fakeStorage();
+
+    expect(
+      await errorOf(() =>
+        attachFile(
+          principal,
+          {
+            parentType: 'comment',
+            parentId: secret.comment.id,
+            fileName: 'notes.txt',
+            contentType: 'text/plain',
+            content: Buffer.from('let me in').toString('base64'),
+          },
+          storage.driver,
+        ),
+      ),
+    ).toEqual({ code: 'not_found', status: 404 });
+    expect(storage.puts).toHaveLength(0);
+  });
+
+  it('takes the stored bytes back out when the row cannot be written', async () => {
+    const storage = fakeStorage();
+    const ghost: Principal = { ...nova.admin, userId: newId() };
+
+    await expect(
+      attachFile(
+        ghost,
+        {
+          parentType: 'issue',
+          parentId: issueId,
+          fileName: 'notes.txt',
+          contentType: 'text/plain',
+          content: Buffer.from('hello orbit').toString('base64'),
+        },
+        storage.driver,
+      ),
+    ).rejects.toThrow();
+
+    expect(storage.puts).toHaveLength(1);
+    expect(storage.deletes).toEqual([storage.puts[0]?.key ?? 'no key was stored']);
   });
 });

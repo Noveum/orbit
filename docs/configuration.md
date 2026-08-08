@@ -138,11 +138,16 @@ you get deadlocks and foreign key violations that look like real failures.
 
 ```bash
 ORBIT_TEST_LANE=my-branch bun run test
-bun run db:test-lanes-drop
+ORBIT_TEST_LANE=my-branch bun run db:test-lanes-drop
 ```
 
 The lane name becomes a readable stub plus a digest of the raw value, so two
 lanes that normalise alike stay apart.
+
+The cleanup drops only the lane named by `ORBIT_TEST_LANE`, and refuses when
+that is unset. `bun run db:test-lanes-drop --all` drops every lane on the
+server, including lanes another worktree is using. Neither mode touches the six
+base databases.
 
 ## Reference: a production environment
 

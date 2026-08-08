@@ -1,7 +1,6 @@
 'use client';
 
 import { Bell, BellOff, Check } from 'lucide-react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -23,8 +22,10 @@ import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { IssueActionsMenu } from './issue-actions.tsx';
 import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
 import { IssueProperties } from './issue-properties.tsx';
+import { IssueRelations } from './issue-relations.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { StateGlyph } from './state-glyph.tsx';
+import { SubIssues } from './sub-issues.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface IssueDetailViewProps {
@@ -296,26 +297,12 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
             />
           </section>
 
-          {detail.data.subIssues.length > 0 ? (
-            <section className="flex flex-col gap-1">
-              <h2 className="text-2xs text-faint uppercase tracking-wide">Sub issues</h2>
-              <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
-                {detail.data.subIssues.map((child) => (
-                  <li key={child.id}>
-                    <Link
-                      href={`/issue/${child.identifier}`}
-                      className="flex items-center gap-2 px-2.5 py-1.5 text-dense hover:bg-surface-2"
-                    >
-                      <span data-numeric className="text-2xs text-faint">
-                        {child.identifier}
-                      </span>
-                      <span className="truncate text-text">{child.title}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+          {detail.isPlaceholderData ? null : (
+            <>
+              <SubIssues issue={issue} subIssues={detail.data.subIssues} />
+              <IssueRelations issue={issue} />
+            </>
+          )}
 
           {detail.isPlaceholderData ? (
             <div className="flex flex-col gap-2" data-testid="issue-activity-pending">
@@ -337,7 +324,7 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
         </div>
       </div>
 
-      <IssueProperties issue={issue} />
+      <IssueProperties issue={issue} parent={detail.data.parent} />
     </div>
   );
 }

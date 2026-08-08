@@ -22,7 +22,15 @@ interface IssueShape {
   readonly priority: string;
   readonly assignee: string | null;
   readonly cycleId: string | null;
+  readonly parentId: string | null;
+  readonly dueDate: string | null;
   readonly milestoneId: string | null;
+}
+
+interface RelationShape {
+  readonly type: string;
+  readonly identifier: string;
+  readonly title: string;
 }
 
 interface DeltaShape {
@@ -41,6 +49,11 @@ function issuesOf(payload: Record<string, unknown>): IssueShape[] {
 
 function deltasOf(payload: Record<string, unknown>): DeltaShape[] {
   return payload['deltas'] as DeltaShape[];
+}
+
+function relationsOf(payload: Record<string, unknown>): RelationShape[] {
+  const issue = payload['issue'] as { relations?: RelationShape[] };
+  return issue.relations ?? [];
 }
 
 async function newIssue(title: string, extra: Record<string, unknown> = {}): Promise<IssueShape> {
@@ -265,11 +278,136 @@ describe('issues', () => {
       type: 'blocks',
     });
 
-    const fetched = await admin.result('get_issue', { issue: second.identifier });
-    const issue = issueOf(fetched) as IssueShape & {
-      relations: { type: string; identifier: string }[];
-    };
-    expect(issue.relations).toContainEqual({ type: 'blocked_by', identifier: first.identifier });
+    expect(
+      relationsOf(await admin.result('get_issue', { issue: second.identifier })),
+    ).toContainEqual({
+      type: 'blocked_by',
+      identifier: first.identifier,
+      title: 'Blocks the other',
+    });
+  });
+
+  it('unlinks two issues from either end', async () => {
+    const first = await newIssue('Still blocks the other');
+    const second = await newIssue('Still blocked by the first');
+    await admin.result('set_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    const removed = await admin.result('remove_relation', {
+      issue: second.identifier,
+      relatedIssue: first.identifier,
+      type: 'blocked_by',
+    });
+
+    expect(removed['relations']).toEqual([]);
+    expect(relationsOf(await admin.result('get_issue', { issue: first.identifier }))).toEqual([]);
+  });
+
+  it('unlinks from the end that wrote the relation, not only the inverse end', async () => {
+    const first = await newIssue('Blocks, removed from its own end');
+    const second = await newIssue('Blocked, left alone');
+    await admin.result('set_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    const removed = await admin.result('remove_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    expect(removed['relations']).toEqual([]);
+    expect(relationsOf(await admin.result('get_issue', { issue: second.identifier }))).toEqual([]);
+  });
+
+  it('refuses to unlink a relation that was never written', async () => {
+    const first = await newIssue('Unrelated one');
+    const second = await newIssue('Unrelated two');
+
+    const failure = await admin.call('remove_relation', {
+      issue: first.identifier,
+      relatedIssue: second.identifier,
+      type: 'blocks',
+    });
+
+    expect(failure.isError).toBe(true);
+    expect(errorPayload(failure).code).toBe('not_found');
+  });
+
+  it('makes an issue a sub issue and detaches it again', async () => {
+    const parent = await newIssue('Epic parent');
+    const child = await newIssue('Loose task');
+
+    const attached = await admin.result('update_issue', {
+      issue: child.identifier,
+      parent: parent.identifier,
+    });
+    expect(issueOf(attached).parentId).toBe(parent.id);
+
+    const detached = await admin.result('update_issue', {
+      issue: child.identifier,
+      parent: null,
+    });
+    expect(issueOf(detached).parentId).toBeNull();
+  });
+
+  it('writes a due date and clears it', async () => {
+    const created = await newIssue('Ships on a date');
+
+    const dated = await admin.result('update_issue', {
+      issue: created.identifier,
+      dueDate: '2031-03-04',
+    });
+    expect(issueOf(dated).dueDate).toBe('2031-03-04');
+
+    const cleared = await admin.result('update_issue', {
+      issue: created.identifier,
+      dueDate: null,
+    });
+    expect(issueOf(cleared).dueDate).toBeNull();
+  });
+
+  it('refuses a guest every write to the new fields, whatever the tool offers', async () => {
+    const parent = await newIssue('Guarded parent');
+    const child = await newIssue('Guarded child');
+    await admin.result('set_relation', {
+      issue: parent.identifier,
+      relatedIssue: child.identifier,
+      type: 'blocks',
+    });
+
+    const refusals = await Promise.all([
+      guest.call('update_issue', { issue: child.identifier, dueDate: '2031-03-04' }),
+      guest.call('update_issue', { issue: child.identifier, parent: parent.identifier }),
+      guest.call('remove_relation', {
+        issue: parent.identifier,
+        relatedIssue: child.identifier,
+        type: 'blocks',
+      }),
+      guest.call('attach_file', {
+        parentType: 'issue',
+        parentId: child.id,
+        fileName: 'notes.txt',
+        contentType: 'text/plain',
+        content: 'aGVsbG8=',
+      }),
+    ]);
+
+    expect(refusals.map((refusal) => refusal.isError)).toEqual([true, true, true, true]);
+    expect(refusals.map((refusal) => errorPayload(refusal).code)).toEqual([
+      'forbidden',
+      'forbidden',
+      'forbidden',
+      'forbidden',
+    ]);
+    expect(relationsOf(await admin.result('get_issue', { issue: parent.identifier }))).toHaveLength(
+      1,
+    );
   });
 
   it('builds a git branch name from an issue', async () => {
