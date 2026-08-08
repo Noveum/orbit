@@ -4,7 +4,7 @@ import { RealtimeProvider } from '@orbit/realtime-client/react';
 import { useCallback } from 'react';
 import { fetchRealtimeTicket } from '@/lib/realtime/ticket.ts';
 import { resolveRealtimeUrl } from '@/lib/realtime/url.ts';
-import type { PullRequestRow } from './data.ts';
+import type { GithubReach, PullRequestRow } from './data.ts';
 import { PullsView } from './pulls-view.tsx';
 
 export interface PullsRealtimeProps {
@@ -12,7 +12,8 @@ export interface PullsRealtimeProps {
   readonly userId: string;
   readonly organizationId: string;
   readonly realtimeUrl: string;
-  readonly repositoriesConnected: boolean;
+  readonly reach: GithubReach;
+  readonly canManageIntegrations: boolean;
 }
 
 export function PullsRealtime({
@@ -20,7 +21,8 @@ export function PullsRealtime({
   userId,
   organizationId,
   realtimeUrl,
-  repositoriesConnected,
+  reach,
+  canManageIntegrations,
 }: PullsRealtimeProps) {
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
   const socketUrl =
@@ -29,7 +31,12 @@ export function PullsRealtime({
       : resolveRealtimeUrl(realtimeUrl, window.location.origin);
   return (
     <RealtimeProvider url={socketUrl} organizationId={organizationId} fetchTicket={fetchTicket}>
-      <PullsView pulls={pulls} userId={userId} repositoriesConnected={repositoriesConnected} />
+      <PullsView
+        pulls={pulls}
+        userId={userId}
+        reach={reach}
+        canManageIntegrations={canManageIntegrations}
+      />
     </RealtimeProvider>
   );
 }
