@@ -2,6 +2,10 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
+import {
+  noveumOrganizationValues,
+  NOVEUM_IMPORT_ORGANIZATION_ID as ORGANIZATION_ID,
+} from '../noveum-workspace.ts';
 import * as schema from '../schema/index.ts';
 import { createAssetStore } from './assets.ts';
 import { combine } from './combine.ts';
@@ -9,9 +13,6 @@ import { readLinearExport } from './linear-source.ts';
 import { readPlaneExport } from './plane-source.ts';
 import { countRows, type ImportRows } from './rows.ts';
 
-const ORGANIZATION_ID = 'org_noveum';
-const ORGANIZATION_SLUG = 'noveum';
-const ORGANIZATION_NAME = 'Noveum';
 const CHUNK = 400;
 
 const { values } = parseArgs({
@@ -179,14 +180,7 @@ async function main(): Promise<void> {
 
   await db
     .insert(schema.organization)
-    .values({
-      id: ORGANIZATION_ID,
-      name: ORGANIZATION_NAME,
-      slug: ORGANIZATION_SLUG,
-      logo: null,
-      allowedEmailDomains: ['noveum.ai'],
-      createdAt: floor,
-    })
+    .values(noveumOrganizationValues(ORGANIZATION_ID, floor))
     .onConflictDoNothing();
 
   const assets = createAssetStore(PLANE, STORAGE, ORGANIZATION_ID);

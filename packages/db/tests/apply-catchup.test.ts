@@ -66,7 +66,10 @@ describe('applyCatchup against a real database', () => {
       await sql
         .unsafe(`
         create table public."user" (id text primary key);
-        create table public.organization (id text primary key);
+        create table public.organization (
+          id text primary key,
+          allowed_email_domains jsonb not null default '[]'::jsonb
+        );
         create table public.doc (
           id text primary key,
           organization_id text not null references public.organization(id),
@@ -133,6 +136,37 @@ describe('applyCatchup against a real database', () => {
       `;
     });
     expect(row?.hit).toBe(true);
+  }, 30_000);
+
+  it('adds Yodu to Noveum workspaces without changing other domains', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        insert into public.organization (id, allowed_email_domains)
+        values
+          ('org_noveum', ${sql.json(['noveum.ai'])}),
+          ('org_noveum_demo', ${sql.json(['noveum.ai', 'example.com'])}),
+          ('org_other', ${sql.json(['example.com'])})
+        on conflict (id) do update
+        set allowed_email_domains = excluded.allowed_email_domains
+      `;
+    });
+
+    await applyCatchup(urlFor(SCRATCH), 'noveum-yodu-domain-catchup.sql');
+    await applyCatchup(urlFor(SCRATCH), 'noveum-yodu-domain-catchup.sql');
+
+    const rows = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ id: string; allowed_email_domains: string[] }[]>`
+        select id, allowed_email_domains
+        from public.organization
+        where id in ('org_noveum', 'org_noveum_demo', 'org_other')
+      `,
+    );
+    const byId = new Map(rows.map((row) => [row.id, row.allowed_email_domains]));
+
+    expect(byId.get('org_noveum')).toEqual(['noveum.ai', 'yodu.ai']);
+    expect(byId.get('org_noveum_demo')).toEqual(['noveum.ai', 'example.com', 'yodu.ai']);
+    expect(byId.get('org_other')).toEqual(['example.com']);
   }, 30_000);
 
   it('refuses a file outside the catchup directory before it opens anything', async () => {

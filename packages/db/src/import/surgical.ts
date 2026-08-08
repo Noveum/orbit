@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
+import { NOVEUM_IMPORT_ORGANIZATION_ID as ORGANIZATION_ID } from '../noveum-workspace.ts';
 import * as schema from '../schema/index.ts';
 import { createAssetStore } from './assets.ts';
 import { combine } from './combine.ts';
@@ -9,7 +10,6 @@ import { readLinearExport } from './linear-source.ts';
 import { readPlaneExport } from './plane-source.ts';
 import { countRows } from './rows.ts';
 
-const ORGANIZATION_ID = 'org_noveum';
 const CHUNK = 400;
 
 const { values } = parseArgs({

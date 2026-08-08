@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { STATE_CATEGORY_ORDER, unique } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
+import {
+  noveumOrganizationValues,
+  NOVEUM_SEED_ORGANIZATION_ID as ORGANIZATION_ID,
+} from '../noveum-workspace.ts';
 import * as schema from '../schema/index.ts';
 import {
   SEED_COLLECTIONS,
@@ -15,8 +19,6 @@ import {
   SEED_USERS,
 } from './data.ts';
 
-const ORGANIZATION_ID = 'org_noveum_demo';
-const ORGANIZATION_SLUG = 'noveum';
 const SORT_STEP = 1024;
 
 function id(): string {
@@ -89,14 +91,9 @@ async function reset(): Promise<void> {
 }
 
 async function seedOrganizationAndUsers(): Promise<Map<string, string>> {
-  await db.insert(schema.organization).values({
-    id: ORGANIZATION_ID,
-    name: 'Noveum',
-    slug: ORGANIZATION_SLUG,
-    logo: null,
-    allowedEmailDomains: ['noveum.ai'],
-    createdAt: daysAgo(240),
-  });
+  await db
+    .insert(schema.organization)
+    .values(noveumOrganizationValues(ORGANIZATION_ID, daysAgo(240)));
 
   const userIds = new Map<string, string>();
   const userRows = SEED_USERS.map((entry) => {
