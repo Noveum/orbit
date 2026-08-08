@@ -252,6 +252,7 @@ export const attachment = pgTable(
     width: bigint('width', { mode: 'number' }),
     height: bigint('height', { mode: 'number' }),
     durationSeconds: bigint('duration_seconds', { mode: 'number' }),
+    uploadExpiresAt: timestamp('upload_expires_at', { withTimezone: true }),
     uploadedById: text('uploaded_by_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),

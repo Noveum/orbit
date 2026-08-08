@@ -137,6 +137,10 @@ describe('list and search indexes', () => {
 });
 
 describe('domain invariants', () => {
+  it('tracks the expiration of presigned attachment targets', () => {
+    expect(getTableColumns(schema.attachment).uploadExpiresAt?.name).toBe('upload_expires_at');
+  });
+
   it('keeps authored rows when their author is deleted', () => {
     expect(deleteActionOf(schema.issue, 'creator_id')).toBe('restrict');
     expect(deleteActionOf(schema.comment, 'author_id')).toBe('restrict');

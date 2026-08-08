@@ -121,19 +121,19 @@ Commit: `feat(workspace): define deletion contracts`
 **Interfaces:**
 - Produces: nullable `schema.attachment.uploadExpiresAt: Date | null` mapped to `upload_expires_at`.
 
-- [ ] **Step 1: Write the failing schema assertion**
+- [x] **Step 1: Write the failing schema assertion**
 
 ```ts
 expect(getTableColumns(schema.attachment).uploadExpiresAt?.name).toBe('upload_expires_at');
 ```
 
-- [ ] **Step 2: Run the schema test and confirm it fails**
+- [x] **Step 2: Run the schema test and confirm it fails**
 
 Run: `bun --filter @orbit/db test tests/schema/index.test.ts`
 
 Expected: FAIL because the attachment field does not exist.
 
-- [ ] **Step 3: Add the nullable timestamp and generate the migration**
+- [x] **Step 3: Add the nullable timestamp and generate the migration**
 
 ```ts
 uploadExpiresAt: timestamp('upload_expires_at', { withTimezone: true }),
@@ -148,7 +148,7 @@ UPDATE "attachment"
 SET "upload_expires_at" = "created_at" + interval '900 seconds';
 ```
 
-- [ ] **Step 4: Recreate lane schemas and run the database tests**
+- [x] **Step 4: Recreate lane schemas and run the database tests**
 
 Run: `bun run db:test-setup`
 
