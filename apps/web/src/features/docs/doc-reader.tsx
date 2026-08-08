@@ -5,12 +5,14 @@ import { Book, GitBranch, Link2, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
+import { cn } from '@/lib/cn.ts';
 import type { Attachment, Doc } from '@/lib/query/schemas.ts';
 import { DocAttachments } from './doc-attachments.tsx';
 import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import type { DocHeading } from './outline.ts';
 import { readTimeMinutes, wordCount } from './outline.ts';
+import { READING_WIDTH_CLASS, useDocPreferences } from './use-doc-preferences.ts';
 import { useHashScroll } from './use-hash-scroll.ts';
 import { useScrollSpy } from './use-scroll-spy.ts';
 
@@ -105,21 +107,23 @@ export function DocReader({
   projectName,
   backlinks = [],
 }: DocReaderProps) {
+  const { width } = useDocPreferences();
   const [headings, setHeadings] = useState<DocHeading[]>([]);
   const activeId = useScrollSpy(headings);
   useHashScroll(`${doc.id}:${headings.map((heading) => heading.id).join('|')}`);
 
   return (
     <article
-      className="mx-auto flex w-full max-w-[68rem] gap-10 px-6 py-10"
+      className={cn('mx-auto flex w-full gap-10 px-6 pt-4 pb-16', READING_WIDTH_CLASS[width])}
       data-testid="doc-reader"
+      data-reading-width={width}
     >
-      <div className="min-w-0 flex-1 xl:max-w-[45rem]">
+      <div className={cn('min-w-0 flex-1', width === 'comfortable' && 'xl:max-w-[45rem]')}>
         <DocContextRow doc={doc} collectionName={collectionName} projectName={projectName} />
 
-        <h1 className="mt-4 font-semibold text-2xl text-text tracking-tight">{doc.title}</h1>
+        <h1 className="mt-2 font-semibold text-2xl text-text tracking-tight">{doc.title}</h1>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-border border-b pb-5 text-2xs text-faint">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-border border-b pb-3 text-2xs text-faint">
           <span className="flex items-center gap-1.5">
             <Avatar name={author.name} src={author.image} size="sm" />
             <span className="text-muted">{author.name}</span>

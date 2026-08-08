@@ -28,6 +28,7 @@ import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Doc, DocCollection } from '@/lib/query/schemas.ts';
 import { DocExportItems } from './doc-export-menu.tsx';
+import { type ReadingWidth, useDocPreferences } from './use-doc-preferences.ts';
 
 export interface DocHeaderProps {
   readonly doc: Doc;
@@ -107,6 +108,33 @@ function MoveSubmenu({
         ))}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
+  );
+}
+
+const READING_WIDTHS: readonly { value: ReadingWidth; label: string }[] = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'wide', label: 'Wide' },
+  { value: 'full', label: 'Full width' },
+];
+
+function ReadingWidthItems() {
+  const { width, setWidth } = useDocPreferences();
+  return (
+    <>
+      {READING_WIDTHS.map((option) => (
+        <DropdownMenuItem
+          key={option.value}
+          data-testid={`doc-width-${option.value}`}
+          onSelect={() => setWidth(option.value)}
+        >
+          <Check
+            className={cn('size-3.5', width === option.value ? 'opacity-100' : 'opacity-0')}
+            aria-hidden="true"
+          />
+          {option.label}
+        </DropdownMenuItem>
+      ))}
+    </>
   );
 }
 
@@ -216,6 +244,8 @@ export function DocHeader({
             </>
           ) : null}
 
+          <DropdownMenuSeparator />
+          <ReadingWidthItems />
           <DropdownMenuSeparator />
           <DocExportItems title={doc.title} content={doc.content} />
           <DropdownMenuItem data-testid="doc-history-open" onSelect={onOpenHistory}>

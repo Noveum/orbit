@@ -417,6 +417,17 @@ export function samePlacement(left: DocPlacement, right: DocPlacement): boolean 
   );
 }
 
+type DocHome = Pick<DocPlacement, 'collectionId' | 'projectId'>;
+
+export function oneHome(current: DocHome, patch: DocPlacementPatch): DocHome {
+  if (patch.collectionId != null) return { collectionId: patch.collectionId, projectId: null };
+  if (patch.projectId != null) return { collectionId: null, projectId: patch.projectId };
+  return {
+    collectionId: patch.collectionId === undefined ? current.collectionId : patch.collectionId,
+    projectId: patch.projectId === undefined ? current.projectId : patch.projectId,
+  };
+}
+
 async function resolvePlacement(
   executor: Executor,
   principal: Principal,
@@ -441,8 +452,7 @@ async function resolvePlacement(
     return { collectionId: home.collectionId, projectId: home.projectId, parentId: patch.parentId };
   }
 
-  const collectionId = patch.collectionId === undefined ? current.collectionId : patch.collectionId;
-  const projectId = patch.projectId === undefined ? current.projectId : patch.projectId;
+  const { collectionId, projectId } = oneHome(current, patch);
   const parentId = patch.parentId === undefined ? current.parentId : null;
   if (parentId === null) return { collectionId, projectId, parentId };
 
@@ -456,6 +466,61 @@ async function resolvePlacement(
   if (parent === undefined) return { collectionId, projectId, parentId: null };
   const stays = parent.collectionId === collectionId && parent.projectId === projectId;
   return { collectionId, projectId, parentId: stays ? parentId : null };
+}
+
+export interface DocRefMatch {
+  readonly id: string;
+  readonly title: string;
+}
+
+export async function findDocsByRef(
+  principal: Principal,
+  ref: string,
+  includeArchived: boolean,
+): Promise<DocRefMatch[]> {
+  assertCan(principal, 'doc:read');
+  const needle = ref.trim();
+  const lifecycle = includeArchived ? [] : [isNull(schema.doc.archivedAt)];
+  return await db
+    .select({ id: schema.doc.id, title: schema.doc.title })
+    .from(schema.doc)
+    .where(
+      and(
+        eq(schema.doc.organizationId, principal.organizationId),
+        docReadFilter(principal),
+        ...lifecycle,
+        or(eq(schema.doc.id, needle), sql`lower(btrim(${schema.doc.title})) = lower(${needle})`),
+      ),
+    );
+}
+
+export async function listDocSiblings(
+  principal: Principal,
+  placement: DocPlacement,
+): Promise<DocRefMatch[]> {
+  assertCan(principal, 'doc:read');
+  return await db
+    .select({ id: schema.doc.id, title: schema.doc.title })
+    .from(schema.doc)
+    .where(
+      and(
+        eq(schema.doc.organizationId, principal.organizationId),
+        docReadFilter(principal),
+        isNull(schema.doc.archivedAt),
+        ...siblingFilters(placement),
+      ),
+    )
+    .orderBy(asc(schema.doc.sortOrder), desc(schema.doc.updatedAt));
+}
+
+export async function plannedPlacement(
+  principal: Principal,
+  docId: string,
+  patch: DocPlacementPatch,
+): Promise<DocPlacement> {
+  assertCan(principal, 'doc:read');
+  const current = await loadReadableDoc(db, principal, docId);
+  return await resolvePlacement(db, principal, placementOf(current), patch);
 }
 
 async function adoptDescendants(
@@ -772,6 +837,7 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
   if (filter.collectionId !== undefined) {
     conditions.push(eq(schema.doc.collectionId, filter.collectionId));
   }
+  if (filter.unfiled) conditions.push(isNull(schema.doc.collectionId));
   if (filter.projectId !== undefined) conditions.push(eq(schema.doc.projectId, filter.projectId));
   if (term !== null) conditions.push(matchExpression(term));
 
@@ -788,10 +854,22 @@ export async function listDocs(principal: Principal, input: unknown = {}): Promi
     .limit(filter.limit);
 }
 
-export async function listDocCollections(principal: Principal): Promise<DocCollectionRow[]> {
+export interface DocCollectionWithCount extends DocCollectionRow {
+  readonly docCount: number;
+}
+
+export async function listDocCollections(principal: Principal): Promise<DocCollectionWithCount[]> {
   assertCan(principal, 'doc:read');
+  const readable = and(
+    eq(schema.doc.collectionId, schema.docCollection.id),
+    isNull(schema.doc.archivedAt),
+    docReadFilter(principal),
+  );
   return await db
-    .select()
+    .select({
+      ...getTableColumns(schema.docCollection),
+      docCount: sql<number>`(select count(*)::int from ${schema.doc} where ${readable})`,
+    })
     .from(schema.docCollection)
     .where(eq(schema.docCollection.organizationId, principal.organizationId))
     .orderBy(asc(schema.docCollection.position), asc(schema.docCollection.name));
@@ -1029,15 +1107,19 @@ async function snapshotVersion(
   const now = new Date();
   if (restoredFromId === null) {
     const [latest] = await executor
-      .select()
+      .select({
+        id: schema.docVersion.id,
+        ownedById: schema.docVersion.ownedById,
+        lastSavedAt: schema.docVersion.lastSavedAt,
+        same: sql<boolean>`${schema.docVersion.title} = ${doc.title}
+          and ${schema.docVersion.content} = ${doc.content}`,
+      })
       .from(schema.docVersion)
       .where(eq(schema.docVersion.docId, doc.id))
       .orderBy(desc(schema.docVersion.lastSavedAt))
       .limit(1);
 
-    if (latest !== undefined && latest.title === doc.title && latest.content === doc.content) {
-      return;
-    }
+    if (latest?.same === true) return;
     if (
       latest !== undefined &&
       latest.ownedById === principal.userId &&
@@ -1404,15 +1486,16 @@ async function emptyCollection(
   organizationId: string,
   collectionId: string,
   syncId: number,
+  reassignToId: string | null,
 ): Promise<DocRow[]> {
   const base = await nextSiblingOrder(executor, organizationId, {
-    collectionId: null,
+    collectionId: reassignToId,
     projectId: null,
     parentId: null,
   });
   const orphaned = await executor
     .update(schema.doc)
-    .set({ collectionId: null, updatedAt: new Date(), syncId })
+    .set({ collectionId: reassignToId, updatedAt: new Date(), syncId })
     .where(
       and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
     )
@@ -1437,13 +1520,36 @@ async function emptyCollection(
 export async function deleteDocCollection(
   principal: Principal,
   collectionId: string,
+  reassignToId: string | null = null,
 ): Promise<SyncAction[]> {
   assertCan(principal, 'doc:write');
+  if (reassignToId === collectionId) {
+    throw validationFailed('A collection cannot take over its own pages.');
+  }
 
   return await db.transaction(async (tx) => {
+    if (reassignToId !== null) {
+      const [target] = await tx
+        .select({ id: schema.docCollection.id })
+        .from(schema.docCollection)
+        .where(
+          and(
+            eq(schema.docCollection.id, reassignToId),
+            eq(schema.docCollection.organizationId, principal.organizationId),
+          ),
+        )
+        .limit(1);
+      requireRow(target, 'That collection does not exist.');
+    }
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    const homeless = await emptyCollection(tx, principal.organizationId, collectionId, syncId);
+    const homeless = await emptyCollection(
+      tx,
+      principal.organizationId,
+      collectionId,
+      syncId,
+      reassignToId,
+    );
     const [removed] = await tx
       .delete(schema.docCollection)
       .where(

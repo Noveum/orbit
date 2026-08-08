@@ -133,3 +133,35 @@ export function outlineFor(
   if (signature === memo.signature) return memo;
   return { signature, headings: build(markdown) };
 }
+
+function closesFence(content: string, fence: string): boolean {
+  const marker = FENCE.exec(content)?.[0];
+  if (marker === undefined) return false;
+  if (marker[0] !== fence[0] || marker.length < fence.length) return false;
+  return content.slice(marker.length).trim().length === 0;
+}
+
+export function headingLineNumbers(markdown: string): number[] {
+  const lines = markdown.split('\n');
+  const found: number[] = [];
+  let fence: string | null = null;
+
+  for (const [index, line] of lines.entries()) {
+    const content = blockContent(line);
+    if (fence !== null) {
+      if (closesFence(content, fence)) fence = null;
+      continue;
+    }
+    const marker = FENCE.exec(content)?.[0];
+    if (marker !== undefined) {
+      fence = marker;
+      continue;
+    }
+    if (ATX_HEADING.test(content)) {
+      found.push(index);
+      continue;
+    }
+    if (underlinesAParagraph(lines, index)) found.push(index - 1);
+  }
+  return found;
+}

@@ -3,7 +3,7 @@
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough } from 'lucide-react';
-import type { RefObject } from 'react';
+import type { Ref } from 'react';
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -47,6 +47,7 @@ export interface RichTextEditorProps {
   readonly className?: string;
   readonly autoFocus?: boolean;
   readonly toolbar?: 'full' | 'compact';
+  readonly toolbarCollapsed?: boolean;
   readonly editable?: boolean;
   readonly ariaLabel: string;
   readonly onSubmit?: () => void;
@@ -59,7 +60,7 @@ export interface RichTextEditorProps {
   readonly toolbarLeading?: React.ReactNode | undefined;
   readonly toolbarTrailing?: React.ReactNode | undefined;
   readonly onBlur?: () => void;
-  readonly scrollRef?: RefObject<HTMLDivElement | null>;
+  readonly scrollRef?: Ref<HTMLDivElement>;
 }
 
 interface MenuPosition {
@@ -111,6 +112,7 @@ export function RichTextEditor({
   className,
   autoFocus = false,
   toolbar,
+  toolbarCollapsed = false,
   editable = true,
   ariaLabel,
   onSubmit,
@@ -413,6 +415,7 @@ export function RichTextEditor({
         <EditorToolbar
           editor={editor}
           compact={toolbar === 'compact'}
+          collapsed={toolbarCollapsed}
           className={toolbar === 'compact' ? 'mb-2 border-border border-b pb-2' : ''}
           onPickFile={() => fileRef.current?.click()}
           testId={`${testId}-toolbar`}
@@ -423,7 +426,7 @@ export function RichTextEditor({
       <div
         ref={scrollRef}
         className={
-          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 pt-3 pb-16' : 'contents'
+          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-16' : 'contents'
         }
       >
         <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />

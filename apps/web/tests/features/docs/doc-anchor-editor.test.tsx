@@ -13,6 +13,10 @@ import {
   type DocAnchorTarget,
   type DocCommenting,
 } from '../../../src/features/docs/use-doc-anchors.ts';
+import {
+  DOC_PREFERENCES_STORAGE_KEY,
+  resetDocPreferences,
+} from '../../../src/features/docs/use-doc-preferences.ts';
 
 const SOURCE = [
   '# Launch plan',
@@ -134,6 +138,11 @@ async function selectEverything(user: ReturnType<typeof userEvent.setup>): Promi
 }
 
 beforeEach(() => {
+  window.localStorage.setItem(
+    DOC_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ mode: 'rich', toolbar: true, width: 'wide' }),
+  );
+  resetDocPreferences();
   scrolled.length = 0;
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     writable: true,

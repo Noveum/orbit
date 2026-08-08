@@ -10,14 +10,25 @@ export const docContentSchema = z.string().max(DOC_CONTENT_LIMIT, {
   message: 'This document is too long to save. Split it into linked pages.',
 });
 
-export const docCreateSchema = z.object({
-  title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
-  content: docContentSchema.default(''),
-  projectId: idSchema.nullable().default(null),
-  collectionId: idSchema.nullable().default(null),
-  parentId: idSchema.nullable().default(null),
-  visibility: z.enum(DOC_VISIBILITIES).default('workspace'),
-});
+export const ONE_HOME_MESSAGE = 'A doc lives in a folder or in a project, never both.';
+
+function livesInOnePlace(placement: {
+  collectionId?: string | null | undefined;
+  projectId?: string | null | undefined;
+}): boolean {
+  return placement.collectionId == null || placement.projectId == null;
+}
+
+export const docCreateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
+    content: docContentSchema.default(''),
+    projectId: idSchema.nullable().default(null),
+    collectionId: idSchema.nullable().default(null),
+    parentId: idSchema.nullable().default(null),
+    visibility: z.enum(DOC_VISIBILITIES).default('workspace'),
+  })
+  .refine(livesInOnePlace, { message: ONE_HOME_MESSAGE, path: ['collectionId'] });
 
 export const docUpdateSchema = z
   .object({
@@ -28,7 +39,8 @@ export const docUpdateSchema = z
     parentId: idSchema.nullable(),
     visibility: z.enum(DOC_VISIBILITIES),
   })
-  .partial();
+  .partial()
+  .refine(livesInOnePlace, { message: ONE_HOME_MESSAGE, path: ['collectionId'] });
 
 export const docDuplicateSchema = z.object({
   title: z.string().trim().min(1).max(DOC_TITLE_LIMIT).optional(),
@@ -42,10 +54,7 @@ export const docMoveSchema = z
     beforeId: idSchema.nullable().default(null),
     afterId: idSchema.nullable().default(null),
   })
-  .refine((move) => move.collectionId == null || move.projectId == null, {
-    message: 'A doc lives in a folder or in a project, never both.',
-    path: ['collectionId'],
-  });
+  .refine(livesInOnePlace, { message: ONE_HOME_MESSAGE, path: ['collectionId'] });
 
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),
@@ -79,6 +88,7 @@ export const docFilterSchema = z.object({
   query: z.string().trim().max(200).optional(),
   collectionId: idSchema.optional(),
   projectId: idSchema.optional(),
+  unfiled: booleanFlag(false),
   includeArchived: booleanFlag(false),
   limit: z.coerce.number().int().min(1).max(DOC_LIST_LIMIT).default(DOC_LIST_LIMIT),
 });
