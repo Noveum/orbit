@@ -3,6 +3,7 @@ import {
   type CycleRow,
   type LabelRow,
   listCycles,
+  listDocCollections,
   listLabels,
   listMembers,
   listMilestones,
@@ -89,6 +90,22 @@ export async function resolveLabelIds(
   if (refs.length === 0) return [];
   const labels = await listLabels(principal, teamId === undefined ? {} : { teamId });
   return refs.map((ref) => oneLabelId(labels, ref));
+}
+
+export async function resolveDocCollectionId(principal: Principal, ref: string): Promise<string> {
+  const collections = await listDocCollections(principal);
+  const needle = ref.trim();
+  const byId = collections.find((collection) => collection.id === needle);
+  if (byId !== undefined) return byId.id;
+  const named = collections.filter((collection) => matches([collection.name], needle));
+  const first = named[0];
+  if (first === undefined) throw notFound(`No collection matches "${ref}".`);
+  if (named.length > 1) {
+    throw conflict(`More than one collection is named "${ref}". Name the one you mean by its id.`, {
+      details: { collectionIds: named.map((collection) => collection.id) },
+    });
+  }
+  return first.id;
 }
 
 export async function resolveProject(principal: Principal, ref: string): Promise<ProjectRow> {

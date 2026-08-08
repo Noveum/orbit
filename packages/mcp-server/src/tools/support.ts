@@ -75,7 +75,7 @@ export function defineTool<Shape extends z.ZodRawShape>(
   run: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolPayload>,
 ): void {
   if (!mayRegister(server, config.readOnly)) return;
-  const inputSchema = z.object(config.inputSchema) as unknown as z.ZodObject<Shape>;
+  const inputSchema = z.strictObject(config.inputSchema) as unknown as z.ZodObject<Shape>;
   server.registerTool<z.ZodRawShape, z.ZodObject<Shape>>(
     config.name,
     {
