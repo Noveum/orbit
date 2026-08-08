@@ -159,6 +159,61 @@ function DateField({
   );
 }
 
+function TeamPicker({
+  teams,
+  teamIds,
+  pending,
+  onChange,
+}: {
+  readonly teams: readonly ProjectTeamChoice[];
+  readonly teamIds: readonly string[];
+  readonly pending: boolean;
+  readonly onChange: (next: readonly string[]) => void;
+}) {
+  const saved = teamIds.join(',');
+  const [chosen, setChosen] = useState<readonly string[]>(teamIds);
+  const [seen, setSeen] = useState(saved);
+  if (seen !== saved) {
+    setSeen(saved);
+    setChosen(teamIds);
+  }
+  const picked = new Set(chosen);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Change which teams own this project"
+        data-testid="project-teams"
+        disabled={pending}
+        className={fieldTrigger}
+      >
+        <TeamBadges teams={teams} chosen={picked} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
+        {teams.map((team) => (
+          <DropdownMenuItem
+            key={team.id}
+            data-testid={`project-team-${team.id}`}
+            onSelect={(event) => {
+              event.preventDefault();
+              const next = picked.has(team.id)
+                ? chosen.filter((id) => id !== team.id)
+                : [...chosen, team.id];
+              setChosen(next);
+              onChange(next);
+            }}
+          >
+            <span className="flex-1 truncate">{team.name}</span>
+            {picked.has(team.id) ? (
+              <Check className="size-3.5 text-accent" aria-hidden="true" />
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function ProjectFields({
   projectId,
   lead,
@@ -172,7 +227,6 @@ export function ProjectFields({
   progress,
 }: ProjectFieldsProps) {
   const { patch, pending } = useProjectPatch(projectId);
-  const chosen = new Set(teamIds);
 
   return (
     <dl
@@ -268,38 +322,14 @@ export function ProjectFields({
 
       <Field label="Teams">
         {canManage ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label="Change which teams own this project"
-              data-testid="project-teams"
-              disabled={pending}
-              className={fieldTrigger}
-            >
-              <TeamBadges teams={teams} chosen={chosen} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-              {teams.map((team) => (
-                <DropdownMenuItem
-                  key={team.id}
-                  data-testid={`project-team-${team.id}`}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    const next = chosen.has(team.id)
-                      ? teamIds.filter((id) => id !== team.id)
-                      : [...teamIds, team.id];
-                    patch({ teamIds: next });
-                  }}
-                >
-                  <span className="flex-1 truncate">{team.name}</span>
-                  {chosen.has(team.id) ? (
-                    <Check className="size-3.5 text-accent" aria-hidden="true" />
-                  ) : null}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <TeamPicker
+            teams={teams}
+            teamIds={teamIds}
+            pending={pending}
+            onChange={(next) => patch({ teamIds: next })}
+          />
         ) : (
-          <TeamBadges teams={teams} chosen={chosen} />
+          <TeamBadges teams={teams} chosen={new Set(teamIds)} />
         )}
       </Field>
 

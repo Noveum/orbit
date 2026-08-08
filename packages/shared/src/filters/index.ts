@@ -845,7 +845,11 @@ function comparableViewState(state: ViewState) {
     groupBy: state.groupBy,
     subGroupBy: state.subGroupBy,
     orderBy: state.orderBy,
-    display: { ...state.display, properties: [...state.display.properties].sort() },
+    display: {
+      ...state.display,
+      showEmptyGroups: showsEmptyGroups(state.display.showEmptyGroups, state.layout),
+      properties: [...state.display.properties].sort(),
+    },
     layout: state.layout,
   };
 }

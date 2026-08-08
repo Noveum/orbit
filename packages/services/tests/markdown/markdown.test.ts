@@ -10,6 +10,23 @@ import {
 } from '../../src/markdown/index.ts';
 
 describe('renderMarkdown', () => {
+  it('keeps the column alignment a table asked for', () => {
+    const html = renderMarkdown('| L | C | R |\n| :-- | :-: | --: |\n| a | b | c |');
+
+    expect(html).toContain('<th align="left">L</th>');
+    expect(html).toContain('<th align="center">C</th>');
+    expect(html).toContain('<th align="right">R</th>');
+    expect(html).toContain('<td align="center">b</td>');
+    expect(html).toContain('<td align="right">c</td>');
+  });
+
+  it('leaves a table that asked for nothing unaligned', () => {
+    const html = renderMarkdown('| A |\n| --- |\n| b |');
+
+    expect(html).toContain('<th>A</th>');
+    expect(html).toContain('<td>b</td>');
+  });
+
   it('renders GFM tables, task lists, strikethrough and autolinks', () => {
     const html = renderMarkdown(
       [

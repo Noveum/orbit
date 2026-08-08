@@ -36,6 +36,8 @@ export const docProseClassName = cn(
   '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-dense',
   '[&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-medium [&_th]:text-text',
   '[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_td]:align-top',
+  '[&_th[align=center]]:text-center [&_th[align=right]]:text-right',
+  '[&_td[align=center]]:text-center [&_td[align=right]]:text-right',
   '[&_[data-table-scroll]]:my-5 [&_[data-table-scroll]]:overflow-x-auto [&_[data-table-scroll]]:rounded-lg [&_[data-table-scroll]]:border [&_[data-table-scroll]]:border-border',
   '[&_[data-table-scroll]_th]:sticky [&_[data-table-scroll]_th]:top-0 [&_[data-table-scroll]_th]:z-10',
   '[&_[data-table-scroll]_th]:border-t-0 [&_[data-table-scroll]_tr>:first-child]:border-l-0 [&_[data-table-scroll]_tr>:last-child]:border-r-0',

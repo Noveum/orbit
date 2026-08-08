@@ -13,6 +13,10 @@ const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
 const HEADING_TAG = /<h([1-3])((?:[^>"]|"[^"]*")*)>([\s\S]*?)<\/h\1>/gi;
 const EXISTING_ID = /\sid="[^"]*"/gi;
 
+function alignment(align: 'center' | 'left' | 'right' | null): string {
+  return align === null ? '' : ` align="${align}"`;
+}
+
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false }).use({
   renderer: {
     code({ text, lang }): string {
@@ -23,12 +27,12 @@ const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: fa
     },
     table(token): string {
       const header = token.header
-        .map((cell) => `<th>${this.parser.parseInline(cell.tokens)}</th>`)
+        .map((cell) => `<th${alignment(cell.align)}>${this.parser.parseInline(cell.tokens)}</th>`)
         .join('');
       const body = token.rows
         .map(
           (row) =>
-            `<tr>${row.map((cell) => `<td>${this.parser.parseInline(cell.tokens)}</td>`).join('')}</tr>`,
+            `<tr>${row.map((cell) => `<td${alignment(cell.align)}>${this.parser.parseInline(cell.tokens)}</td>`).join('')}</tr>`,
         )
         .join('');
       return `<div data-table-scroll><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
