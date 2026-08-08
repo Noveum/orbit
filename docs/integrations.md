@@ -30,20 +30,27 @@ is the right shape for something reading your code host.
 
 1. Create a GitHub App, under your organisation if the repositories belong to
    one.
-2. Set the callback URL to `https://orbit.example.com/api/integrations/github/callback`.
+2. Set the **Callback URL** to `https://orbit.example.com/api/integrations/github/callback`.
 3. Tick **Request user authorization (OAuth) during installation**. This is not
    optional. It is what makes GitHub send a `code` back with the installation,
    and that code is the only evidence Orbit has that the person finishing the
    flow actually controls the installation they named. A callback without one is
    refused.
-4. Set the webhook URL to `https://orbit.example.com/api/webhooks/github`, and
+4. Leave the **Setup URL** empty, or set it to that same callback. This is a
+   different field from the Callback URL and it is the one that decides where
+   GitHub sends somebody after they install. Point it at a page rather than the
+   callback and the install finishes in the browser without Orbit ever seeing
+   it: the settings page fills with `installation_id` and `setup_action` in the
+   address bar, nothing is saved, and the workspace still reads Not connected.
+   Orbit now recognises that landing and says so, but the fix is here.
+5. Set the webhook URL to `https://orbit.example.com/api/webhooks/github`, and
    set a webhook secret.
-5. Give it these repository permissions:
+6. Give it these repository permissions:
    - **Contents**: read
    - **Metadata**: read
    - **Pull requests**: read and write
-6. Subscribe to **Pull request** and **Push** events.
-7. Generate a private key and download the PEM, and note the app's client ID and
+7. Subscribe to **Pull request** and **Push** events.
+8. Generate a private key and download the PEM, and note the app's client ID and
    a generated client secret.
 
 Then set:
@@ -147,6 +154,19 @@ Until then the MCP server covers most of what people want webhooks for, since an
 agent can poll or be triggered and has full read access.
 
 ## When one does not work
+
+**The install finished but the workspace still says Not connected, and the
+address bar shows `installation_id` and `setup_action`.** The App's **Setup
+URL** points at a page instead of `/api/integrations/github/callback`, so GitHub
+handed the install to the browser and Orbit never saw it. Fix the Setup URL, then
+connect again. Nothing needs undoing first: the installation on GitHub is real,
+it was only never recorded.
+
+**The install finished and Orbit says it could not verify who owns it.**
+**Request user authorization (OAuth) during installation** is unticked, so
+GitHub sent no `code` and Orbit refused to bind an installation it cannot
+attribute to the person connecting. Tick it, confirm `GITHUB_APP_CLIENT_ID` and
+`GITHUB_APP_CLIENT_SECRET` are set, then connect again.
 
 **The connect button is missing.** The environment variable behind it is unset.
 GitHub needs `GITHUB_APP_SLUG`, Slack needs `SLACK_CLIENT_ID` and
