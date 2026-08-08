@@ -452,7 +452,7 @@ Commit: `feat(workspace): expose deletion endpoint`
 - Produces: `WorkspaceDangerZone({ organizationName }: { organizationName: string })`.
 - Produces: `formatDeletionBytes(bytes: number): string` for deterministic file-size rendering.
 
-- [ ] **Step 1: Write failing dialog rendering and confirmation tests**
+- [x] **Step 1: Write failing dialog rendering and confirmation tests**
 
 ```tsx
 render(<WorkspaceDangerZone organizationName="Nova" />);
@@ -464,21 +464,21 @@ await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
 expect(screen.getByRole('button', { name: 'Permanently delete workspace' })).toBeEnabled();
 ```
 
-- [ ] **Step 2: Run the component test and confirm it fails**
+- [x] **Step 2: Run the component test and confirm it fails**
 
 Run: `bun --filter @orbit/web test tests/features/settings/workspace-danger-zone.test.tsx`
 
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement summary loading and accessible destructive state**
+- [x] **Step 3: Implement summary loading and accessible destructive state**
 
 Use the shared `Dialog` primitives with a title, description, labelled input, alert error region, and `danger` button. Load a fresh summary on each open. Render all eight categories and the nested-data disclosure. Disable deletion during loading, before an exact case-sensitive name match, before `availableAt`, and while the DELETE request is pending. Keep the dialog open on an error and allow summary retry.
 
-- [ ] **Step 4: Add request and navigation tests**
+- [x] **Step 4: Add request and navigation tests**
 
 Assert one DELETE request for repeated clicks. Assert `setActive({ organizationId: nextId })` and `/my-issues` for a surviving workspace. Assert `/workspaces/new` without calling `setActive` when `nextOrganizationId` is null. Assert a server conflict appears in the alert region and leaves the dialog open.
 
-- [ ] **Step 5: Render the danger zone only for administrators**
+- [x] **Step 5: Render the danger zone only for administrators**
 
 ```tsx
 {can(principal, 'org:delete') ? (
@@ -486,7 +486,7 @@ Assert one DELETE request for repeated clicks. Assert `setActive({ organizationI
 ) : null}
 ```
 
-- [ ] **Step 6: Run component tests and commit**
+- [x] **Step 6: Run component tests and commit**
 
 Run: `bun --filter @orbit/web test tests/features/settings/workspace-danger-zone.test.tsx`
 

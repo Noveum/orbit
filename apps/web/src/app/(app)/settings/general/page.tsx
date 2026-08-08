@@ -1,6 +1,7 @@
 import { getOrganization } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
 import { GeneralForm } from '@/features/settings/general-form.tsx';
+import { WorkspaceDangerZone } from '@/features/settings/workspace-danger-zone.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 
 export default async function GeneralSettingsPage() {
@@ -16,6 +17,9 @@ export default async function GeneralSettingsPage() {
         allowedEmailDomains={organization.allowedEmailDomains}
         canManage={can(principal, 'org:manage')}
       />
+      {can(principal, 'org:delete') ? (
+        <WorkspaceDangerZone organizationName={organization.name} />
+      ) : null}
     </section>
   );
 }
