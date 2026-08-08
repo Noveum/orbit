@@ -179,3 +179,45 @@ describe('removing an association', () => {
     expect(entry(listed, REPOSITORY)?.projectIds).toEqual([projectId]);
   });
 });
+
+describe('reading the pull requests on an issue', () => {
+  it('shows them to somebody who may read the issue but not manage integrations', async () => {
+    const created = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Wire the socket',
+    });
+    const issue = created['issue'] as { id: string; identifier: string };
+
+    await db.insert(schema.gitLink).values({
+      id: randomUUIDv7(),
+      organizationId: workspace.organizationId,
+      issueId: issue.id,
+      kind: 'pull_request',
+      externalId: 'pr-1',
+      number: 7,
+      repository: REPOSITORY,
+      branch: 'shashank/eng-1-wire-the-socket',
+      title: 'Wire the socket',
+      url: 'https://github.com/Noveum/orbit/pull/7',
+      state: 'open',
+    });
+
+    const listed = await guest.result('list_issue_pull_requests', { issue: issue.identifier });
+    const links = listed['links'] as { url: string; branch: string }[];
+
+    expect(links).toHaveLength(1);
+    expect(links[0]?.url).toBe('https://github.com/Noveum/orbit/pull/7');
+  });
+
+  it('returns nothing for an issue with no pull request', async () => {
+    const created = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Nothing linked here',
+    });
+    const issue = created['issue'] as { identifier: string };
+
+    const listed = await admin.result('list_issue_pull_requests', { issue: issue.identifier });
+
+    expect(listed['links']).toHaveLength(0);
+  });
+});

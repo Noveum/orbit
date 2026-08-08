@@ -153,13 +153,14 @@ export function registerGithubTools(server: McpServer, principal: Principal): vo
       name: 'list_issue_pull_requests',
       title: 'List the pull requests linked to an issue',
       description:
-        'The branches, pull requests and checks Orbit has linked to an issue. A link is created when a pull request names the issue identifier in its branch name, title or description, so copy_branch_name produces a branch that links itself.',
+        'The pull requests Orbit has linked to an issue, with the branch each one is on. A link is created when a pull request names the issue identifier in its branch name, title or description, so copy_branch_name produces a branch that links itself. Requires only the permission to read the issue, matching what the issue page itself shows.',
       readOnly: true,
       inputSchema: {
         issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
       },
     },
     async (args) => {
+      assertCan(principal, 'issue:read');
       const issue = await getIssue(principal, args.issue);
       const rows = await db
         .select()
@@ -168,6 +169,7 @@ export function registerGithubTools(server: McpServer, principal: Principal): vo
           and(
             eq(schema.gitLink.organizationId, principal.organizationId),
             eq(schema.gitLink.issueId, issue.id),
+            eq(schema.gitLink.kind, 'pull_request'),
           ),
         )
         .orderBy(desc(schema.gitLink.createdAt));
