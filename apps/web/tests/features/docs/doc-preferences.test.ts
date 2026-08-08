@@ -87,7 +87,7 @@ describe('the preference store', () => {
         DOC_PREFERENCES_STORAGE_KEY,
         JSON.stringify({ mode: 'rich', toolbar: true, width: 'full' }),
       );
-      window.dispatchEvent(new StorageEvent('storage'));
+      window.dispatchEvent(Object.assign(new Event('storage'), { key: null }));
     });
 
     expect(result.current.width).toBe('full');
