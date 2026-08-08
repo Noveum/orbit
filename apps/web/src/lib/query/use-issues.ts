@@ -209,12 +209,14 @@ export function seedBoardColumns(
   client: QueryClient,
   column: BoardColumnKey,
   page: BoardPage,
+  fetchedAt: number,
 ): void {
   for (const group of page.groups) {
     const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
     if (search.length === 0) continue;
     const key = queryKeys.issues(columnScopeKey(column.scope), search);
-    if (client.getQueryData(key) !== undefined) continue;
+    const held = client.getQueryState(key);
+    if (held !== undefined && held.data !== undefined && held.dataUpdatedAt > fetchedAt) continue;
     client.setQueryData<IssuePages>(key, {
       pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],
       pageParams: [null],
@@ -231,8 +233,9 @@ export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
     enabled: enabled && columnParamFor(column.groupBy) !== null,
     staleTime: BOARD_SEED_STALE_MS,
     queryFn: async ({ signal }): Promise<BoardPage> => {
+      const fetchedAt = Date.now();
       const page = await apiFetch(`/api/issues/board?${search}`, boardPageSchema, { signal });
-      seedBoardColumns(client, column, page);
+      seedBoardColumns(client, column, page, fetchedAt);
       return page;
     },
   });
@@ -288,6 +291,7 @@ export function useIssueCounts(teamId: string | null) {
 export function issueDetailQueryOptions(identifier: string) {
   return {
     queryKey: queryKeys.issue(identifier),
+    staleTime: PREFETCH_STALE_MS,
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueDetail> =>
       await apiFetch(`/api/issues/${encodeURIComponent(identifier)}`, issueDetailSchema, {
         signal,
@@ -322,9 +326,7 @@ export function usePrefetchIssueDetail() {
   const client = useQueryClient();
   return useCallback(
     (identifier: string) => {
-      client
-        .prefetchQuery({ ...issueDetailQueryOptions(identifier), staleTime: PREFETCH_STALE_MS })
-        .catch(() => undefined);
+      client.prefetchQuery(issueDetailQueryOptions(identifier)).catch(() => undefined);
     },
     [client],
   );
