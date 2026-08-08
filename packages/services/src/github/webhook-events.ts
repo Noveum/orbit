@@ -15,8 +15,18 @@ import {
 
 const GITHUB_INSTALLATION_EVENTS = ['installation', 'installation_repositories', 'repository'];
 
+export const GITHUB_PARSED_EVENTS: readonly string[] = [
+  'pull_request',
+  'pull_request_review',
+  'check_suite',
+];
+
 export function isGithubInstallationEvent(eventName: string): boolean {
   return GITHUB_INSTALLATION_EVENTS.includes(eventName);
+}
+
+export function handlesGithubEvent(eventName: string): boolean {
+  return isGithubInstallationEvent(eventName) || GITHUB_PARSED_EVENTS.includes(eventName);
 }
 
 const shortRepositorySchema = z.object({
