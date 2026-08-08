@@ -375,7 +375,10 @@ describe('a role without issue:delete', () => {
     renderList();
     await screen.findByTestId('issue-row-ENG-1');
 
-    expect(screen.queryByTestId('issue-actions-ENG-1')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('issue-actions-ENG-1'));
+    await screen.findByTestId('copy-branch-name-ENG-1');
+    expect(screen.queryByTestId('delete-issue-ENG-1')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
 
     await user.keyboard('x');
     await screen.findByTestId('bulk-edit-bar');
@@ -428,12 +431,15 @@ describe('the delete affordance on a board card', () => {
     expect(screen.queryByTestId('issue-actions-ENG-2')).not.toBeInTheDocument();
   });
 
-  it('hides the card menu from a role that cannot delete', async () => {
+  it('keeps delete out of the card menu for a role that cannot delete', async () => {
     role = 'guest';
     renderCard(false);
 
     await screen.findByTestId('issue-card-ENG-2');
-    expect(screen.queryByTestId('issue-actions-ENG-2')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('issue-actions-ENG-2'));
+
+    await screen.findByTestId('copy-branch-name-ENG-2');
+    expect(screen.queryByTestId('delete-issue-ENG-2')).not.toBeInTheDocument();
   });
 });
 

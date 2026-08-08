@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
+import { CopyBranchNameMenuItem } from './copy-branch-name.tsx';
 import { DeleteIssueMenuItem, useIssueDeletion } from './issue-deletion.tsx';
 
 export interface IssueActionsMenuProps {
@@ -19,7 +20,7 @@ export interface IssueActionsMenuProps {
 
 export function IssueActionsMenu({ issue, onDeleted, className }: IssueActionsMenuProps) {
   const deletion = useIssueDeletion();
-  if (deletion?.allowed !== true) return null;
+  const canDelete = deletion?.allowed === true;
 
   const swallow = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -41,7 +42,8 @@ export function IssueActionsMenu({ issue, onDeleted, className }: IssueActionsMe
         <MoreHorizontal className="size-3.5" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DeleteIssueMenuItem issue={issue} onDeleted={onDeleted} />
+        <CopyBranchNameMenuItem issue={issue} />
+        {canDelete ? <DeleteIssueMenuItem issue={issue} onDeleted={onDeleted} /> : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
