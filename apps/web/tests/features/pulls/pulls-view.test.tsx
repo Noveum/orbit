@@ -73,6 +73,13 @@ describe('the empty pull request page explaining itself', () => {
     expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
   });
 
+  it('says the installation is suspended rather than asking for repositories', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="suspended" canManageIntegrations />);
+
+    expect(screen.getByText('The GitHub installation is suspended')).toBeInTheDocument();
+    expect(screen.queryByText('No repository is being tracked')).not.toBeInTheDocument();
+  });
+
   it('says what makes a pull request link once a repository is tracked', () => {
     render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
 

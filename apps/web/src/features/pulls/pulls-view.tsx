@@ -56,6 +56,24 @@ export function PullsEmptyState({
     );
   }
 
+  if (reach === 'suspended') {
+    return (
+      <EmptyState
+        icon={icon}
+        title="The GitHub installation is suspended"
+        description={
+          canManageIntegrations
+            ? 'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then pull requests naming an issue show up here.'
+            : 'GitHub is refusing to send anything while the installation is suspended. A workspace admin has to lift it on GitHub.'
+        }
+        {...(settingsAction('Open integrations') === undefined
+          ? {}
+          : { action: settingsAction('Open integrations') })}
+        className="flex-1"
+      />
+    );
+  }
+
   if (reach === 'no_repositories') {
     return (
       <EmptyState
