@@ -89,7 +89,18 @@ export function resolutionsOf(lock: Record<string, unknown>, name: string): Reso
   return found;
 }
 
-const MANIFEST_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies'] as const;
+const MANIFEST_FIELDS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+] as const;
+
+const PACKAGE_FIELDS = ['dependencies', 'peerDependencies'] as const;
+
+function labelled(source: string, field: string): string {
+  return field === 'peerDependencies' ? `${source} (peer)` : source;
+}
 
 function workspaceRequirements(lock: Record<string, unknown>, name: string): Requirement[] {
   const workspaces = lock['workspaces'];
@@ -97,10 +108,11 @@ function workspaceRequirements(lock: Record<string, unknown>, name: string): Req
   const found: Requirement[] = [];
   for (const [directory, manifest] of Object.entries(workspaces)) {
     if (!isRecord(manifest)) continue;
+    const source = `${directory === '' ? '.' : directory}/package.json`;
     for (const field of MANIFEST_FIELDS) {
       const range = rangesIn(manifest[field], name);
       if (range === null) continue;
-      found.push({ source: `${directory === '' ? '.' : directory}/package.json`, range });
+      found.push({ source: labelled(source, field), range });
     }
   }
   return found;
@@ -112,9 +124,12 @@ function packageRequirements(lock: Record<string, unknown>, name: string): Requi
   const found: Requirement[] = [];
   for (const [holder, entry] of Object.entries(packages)) {
     if (!Array.isArray(entry)) continue;
-    const range = rangesIn(isRecord(entry[2]) ? entry[2]['dependencies'] : null, name);
-    if (range === null) continue;
-    found.push({ source: holder, range });
+    const meta = isRecord(entry[2]) ? entry[2] : null;
+    for (const field of PACKAGE_FIELDS) {
+      const range = rangesIn(meta === null ? null : meta[field], name);
+      if (range === null) continue;
+      found.push({ source: labelled(holder, field), range });
+    }
   }
   return found;
 }

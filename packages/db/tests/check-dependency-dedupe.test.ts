@@ -15,10 +15,11 @@ const splitLock = `{
   "lockfileVersion": 1,
   "workspaces": {
     "": { "name": "orbit", "devDependencies": { "typescript": "5.9.3", }, },
-    "apps/web": { "name": "@orbit/web", "dependencies": { "@codemirror/view": "^6.43.7", }, },
+    "apps/web": { "name": "@orbit/web", "dependencies": { "@codemirror/view": "^6.43.7", }, "peerDependencies": { "@codemirror/state": "^6.7.0", }, },
   },
   "packages": {
     "@codemirror/commands": ["@codemirror/commands@6.10.4", "", { "dependencies": { "@codemirror/view": "^6.27.0" } }, "sha512-a"],
+    "some-cm-plugin": ["some-cm-plugin@1.0.0", "", { "peerDependencies": { "@codemirror/view": "^6.40.0" }, "optionalPeers": [] }, "sha512-p"],
     "@codemirror/view": ["@codemirror/view@6.43.7", "", { "dependencies": { "@codemirror/state": "^6.7.0" } }, "sha512-b"],
     "@codemirror/commands/@codemirror/view": ["@codemirror/view@6.43.6", "", { "dependencies": { "@codemirror/state": "^6.7.0" } }, "sha512-c"],
     "@orbit/web": ["@orbit/web@workspace:apps/web"],
@@ -78,6 +79,15 @@ describe('requirementsOf', () => {
     expect(requirementsOf(parseLock(splitLock), '@codemirror/view')).toEqual([
       { source: 'apps/web/package.json', range: '^6.43.7' },
       { source: '@codemirror/commands', range: '^6.27.0' },
+      { source: 'some-cm-plugin (peer)', range: '^6.40.0' },
+    ]);
+  });
+
+  it('does not let a peer range escape the check', () => {
+    expect(requirementsOf(parseLock(splitLock), '@codemirror/state')).toEqual([
+      { source: 'apps/web/package.json (peer)', range: '^6.7.0' },
+      { source: '@codemirror/view', range: '^6.7.0' },
+      { source: '@codemirror/commands/@codemirror/view', range: '^6.7.0' },
     ]);
   });
 });
