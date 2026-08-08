@@ -37,7 +37,7 @@ import { DocGateway } from './doc-gateway.tsx';
 import { DocHeader } from './doc-header.tsx';
 import { DocHistory } from './doc-history.tsx';
 import { DocOutline } from './doc-outline.tsx';
-import { DocBacklinks, DocContextRow, DocReader } from './doc-reader.tsx';
+import { DocBacklinks, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import { breadcrumbOf } from './doc-tree-model.ts';
 import type { SaveStatus } from './use-autosave.ts';
@@ -270,8 +270,6 @@ function LoadedDoc({
           doc={detail.doc}
           save={update.mutateAsync}
           onStatusChange={setStatus}
-          collectionName={collectionName}
-          projectName={projectName}
           commenting={commenting}
           footer={
             <div className="mt-10 border-border border-t pt-6">
@@ -433,16 +431,12 @@ function EditSession({
   doc,
   save,
   onStatusChange,
-  collectionName,
-  projectName,
   commenting,
   footer,
 }: {
   readonly doc: Doc;
   readonly save: (patch: DocPatch) => Promise<unknown>;
   readonly onStatusChange: (status: SaveStatus) => void;
-  readonly collectionName: string | null;
-  readonly projectName: string | null;
   readonly commenting: DocCommenting;
   readonly footer?: React.ReactNode;
 }) {
@@ -475,14 +469,13 @@ function EditSession({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-1 px-6 pt-3 pb-1">
-        <DocContextRow doc={doc} collectionName={collectionName} projectName={projectName} />
+      <div className="flex flex-col px-6 pt-2 pb-0">
         <Input
           value={title}
           aria-label="Doc title"
           data-testid="doc-title-input"
           onChange={(event) => setTitle(event.target.value)}
-          className="h-auto border-0 bg-transparent px-0 py-0 font-semibold text-text text-xl focus-visible:border-0"
+          className="h-auto border-0 bg-transparent px-0 py-0 font-semibold text-text text-2xl focus-visible:border-0"
         />
       </div>
       <DocEditor

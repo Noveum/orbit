@@ -88,12 +88,14 @@ export interface EditorToolbarProps {
   readonly testId?: string;
   readonly leading?: ReactNode | undefined;
   readonly trailing?: ReactNode | undefined;
+  readonly collapsed?: boolean;
 }
 
 export function EditorToolbar({
   editor,
   onPickFile,
   compact = false,
+  collapsed = false,
   className,
   testId = 'editor-toolbar',
   leading,
@@ -147,7 +149,7 @@ export function EditorToolbar({
             <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
           </>
         )}
-        {compact ? null : (
+        {compact || collapsed ? null : (
           <>
             <ToolbarButton
               label="Undo"

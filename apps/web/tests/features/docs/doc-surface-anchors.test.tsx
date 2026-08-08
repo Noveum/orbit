@@ -8,6 +8,10 @@ import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { SessionProvider } from '@/lib/realtime/session.tsx';
+import {
+  DOC_PREFERENCES_STORAGE_KEY,
+  resetDocPreferences,
+} from '../../../src/features/docs/use-doc-preferences.ts';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: () => undefined, replace: () => undefined }),
@@ -144,6 +148,11 @@ async function open(canWrite: boolean, anchor: DocCommentAnchor | null) {
 }
 
 beforeEach(() => {
+  window.localStorage.setItem(
+    DOC_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ mode: 'rich', toolbar: true, width: 'wide' }),
+  );
+  resetDocPreferences();
   scrolled.length = 0;
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     writable: true,
