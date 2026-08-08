@@ -87,6 +87,7 @@ export type GithubUser = z.infer<typeof githubUserSchema>;
 const pullRequestSchema = z.object({
   number: z.number().int().positive(),
   title: z.string().max(1024).default(''),
+  body: z.string().max(65536).nullable().default(null),
   html_url: z.string().url().max(2048),
   draft: z.boolean().default(false),
   merged: z.boolean().default(false),
@@ -135,6 +136,7 @@ const checkSuiteEventSchema = z.object({
 export interface NormalizedPullRequest {
   readonly number: number;
   readonly title: string;
+  readonly body: string;
   readonly url: string;
   readonly headRef: string;
   readonly baseRef: string;
@@ -165,6 +167,7 @@ function normalizePullRequest(pr: z.infer<typeof pullRequestSchema>): Normalized
   return {
     number: pr.number,
     title: pr.title,
+    body: pr.body ?? '',
     url: pr.html_url,
     headRef: pr.head.ref,
     baseRef: pr.base.ref,

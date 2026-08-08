@@ -83,7 +83,9 @@ export async function applyGithubEvent(
   const textIdentifiers =
     event.pullRequest === null
       ? extractIssueIdentifiers(event.checks?.headBranch ?? '')
-      : extractIssueIdentifiers(`${event.pullRequest.headRef} ${event.pullRequest.title}`);
+      : extractIssueIdentifiers(
+          `${event.pullRequest.headRef} ${event.pullRequest.title} ${event.pullRequest.body}`,
+        );
   const linkedIdentifiers =
     event.pullRequest === null && event.checks !== null
       ? await identifiersFromGitLinks(
