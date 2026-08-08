@@ -53,7 +53,7 @@ An S3 upload URL remains writable until it expires. A prefix that was empty at d
 
 Inline uploads use the same organization lock around storage and attachment registration. A deletion that wins the lock removes the organization before a waiting upload can proceed. The waiting upload then fails closed instead of recreating the prefix.
 
-The upload URL lifetime is exported from the storage package so the registration, migration backfill, summary, deletion, and tests use one value. The migration conservatively gives every recently created existing attachment an expiration based on its creation time, closing the rollout window for targets minted by the previous application version.
+The upload URL lifetime is exported from the storage package so the registration, migration backfill, summary, deletion, and tests use one value. The migration conservatively gives every recently created existing attachment an expiration based on its creation time. The nullable column also has a 15-minute database default, so an older application instance that omits it during a rolling release remains protected. The new inline-upload path explicitly stores null.
 
 ## Storage cleanup
 

@@ -90,7 +90,7 @@ Expected: FAIL because `org:delete`, `organizationDeleteSchema`, and the organiz
 
 ```ts
 export const organizationDeleteSchema = z.object({
-  confirmation: z.string().trim().min(1).max(64),
+  confirmation: z.string().trim().min(1).max(80),
 });
 
 export const controlMessageSchema = z.discriminatedUnion('type', [
@@ -136,12 +136,14 @@ Expected: FAIL because the attachment field does not exist.
 - [x] **Step 3: Add the nullable timestamp and generate the migration**
 
 ```ts
-uploadExpiresAt: timestamp('upload_expires_at', { withTimezone: true }),
+uploadExpiresAt: timestamp('upload_expires_at', { withTimezone: true }).default(
+  sql`now() + interval '900 seconds'`,
+),
 ```
 
 Run: `bun run db:generate`
 
-Append a conservative backfill to the generated SQL:
+Give the column the same 900-second database default to protect inserts from older instances during a rolling release, then append a conservative backfill to the generated SQL:
 
 ```sql
 UPDATE "attachment"
@@ -290,7 +292,7 @@ Commit: `fix(storage): serialize workspace uploads`
 - Produces: `OrganizationDeletionSummary` with `organizationName`, `members`, `teams`, `projects`, `issues`, `documents`, `files`, `fileBytes`, `integrations`, `webhooks`, and `availableAt`.
 - Produces: `getOrganizationDeletionSummary(principal, driver?)` and `deleteOrganization(principal, input, driver?)`.
 
-- [ ] **Step 1: Write failing summary and policy tests**
+- [x] **Step 1: Write failing summary and policy tests**
 
 ```ts
 expect(summary).toMatchObject({
@@ -310,17 +312,17 @@ await expect(getOrganizationDeletionSummary(member, storage)).rejects.toMatchObj
 
 Seed a neighboring workspace and make its larger counts distinguishable, proving every query uses `principal.organizationId`.
 
-- [ ] **Step 2: Run the deletion service test and confirm it fails**
+- [x] **Step 2: Run the deletion service test and confirm it fails**
 
 Run: `bun --filter @orbit/core test tests/org/organization-deletion-service.test.ts`
 
 Expected: FAIL because the service does not exist.
 
-- [ ] **Step 3: Implement bounded aggregate summary queries**
+- [x] **Step 3: Implement bounded aggregate summary queries**
 
 Use one `count()` query per category with `eq(table.organizationId, principal.organizationId)`, a future `max(attachment.uploadExpiresAt)` query, and `driver.summarizePrefix(storagePrefixFor(principal.organizationId))`. Call `assertCan(principal, 'org:delete')` before database or storage access.
 
-- [ ] **Step 4: Write failing destructive service tests**
+- [x] **Step 4: Write failing destructive service tests**
 
 ```ts
 await expect(deleteOrganization(admin, { confirmation: 'nova' }, storage)).rejects.toMatchObject({
@@ -336,7 +338,7 @@ expect(await activeOrganization(sessionId)).toBeNull();
 
 Cover stale-name refusal, future upload refusal with `availableAt` details, exact expiry boundary, storage failure rollback, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
 
-- [ ] **Step 5: Implement locked cleanup and next-workspace selection**
+- [x] **Step 5: Implement locked cleanup and next-workspace selection**
 
 ```ts
 return await db.transaction(async (tx) => {
@@ -353,11 +355,11 @@ return await db.transaction(async (tx) => {
 
 Choose the next membership by organization name and id, excluding the deleting organization. Return only ids and the deleted name.
 
-- [ ] **Step 6: Add the live PostgreSQL cascade regression test**
+- [x] **Step 6: Add the live PostgreSQL cascade regression test**
 
 Query `pg_constraint`, `pg_class`, and `pg_attribute` for every foreign key whose referenced table is `organization`. Assert at least one result and assert every `confdeltype` is `c`. This automatically catches any future direct workspace foreign key that is not `ON DELETE CASCADE`.
 
-- [ ] **Step 7: Run core and database tests and commit**
+- [x] **Step 7: Run core and database tests and commit**
 
 Run: `bun --filter @orbit/core test tests/org/organization-deletion-service.test.ts tests/content/attachment-service.test.ts`
 

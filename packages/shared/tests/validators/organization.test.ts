@@ -8,9 +8,10 @@ describe('organizationDeleteSchema', () => {
     });
   });
 
-  it('rejects empty and oversized confirmations', () => {
+  it('accepts the longest creatable name and rejects anything larger', () => {
     expect(organizationDeleteSchema.safeParse({ confirmation: '   ' }).success).toBe(false);
-    expect(organizationDeleteSchema.safeParse({ confirmation: 'n'.repeat(65) }).success).toBe(
+    expect(organizationDeleteSchema.safeParse({ confirmation: 'n'.repeat(80) }).success).toBe(true);
+    expect(organizationDeleteSchema.safeParse({ confirmation: 'n'.repeat(81) }).success).toBe(
       false,
     );
   });

@@ -3805,7 +3805,8 @@
           "name": "upload_expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": false,
+          "default": "now() + interval '900 seconds'"
         },
         "uploaded_by_id": {
           "name": "uploaded_by_id",
