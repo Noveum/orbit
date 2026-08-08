@@ -15,6 +15,7 @@ import { tags } from '@lezer/highlight';
 import { type Ref, useEffect, useImperativeHandle, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 import type { EditResult, Selection } from '../markdown-input.ts';
+import { headingLineNumbers } from '../outline.ts';
 
 export type ModKey = 'b' | 'i' | 'k' | 's';
 
@@ -22,6 +23,7 @@ export interface MarkdownCodeEditorHandle {
   readonly getSelection: () => Selection;
   readonly applyEdit: (result: EditResult) => void;
   readonly focus: () => void;
+  readonly revealHeading: (index: number) => void;
 }
 
 export interface MarkdownCodeEditorProps {
@@ -120,6 +122,18 @@ export function MarkdownCodeEditor({
         view.focus();
       },
       focus: () => viewRef.current?.focus(),
+      revealHeading: (index) => {
+        const view = viewRef.current;
+        if (view === null) return;
+        const line = headingLineNumbers(view.state.doc.toString())[index];
+        if (line === undefined) return;
+        const at = view.state.doc.line(line + 1).from;
+        view.dispatch({
+          selection: { anchor: at },
+          effects: EditorView.scrollIntoView(at, { y: 'start' }),
+        });
+        view.focus();
+      },
     }),
     [value],
   );

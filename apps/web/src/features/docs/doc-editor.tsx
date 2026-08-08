@@ -20,6 +20,7 @@ import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useBootstrap } from '@/lib/query/use-issues.ts';
 import { DocBody } from './doc-body.tsx';
+import { DocOutline } from './doc-outline.tsx';
 import {
   MarkdownCodeEditor,
   type MarkdownCodeEditorHandle,
@@ -36,6 +37,7 @@ import {
   type SnippetName,
   wrapSelection,
 } from './markdown-input.ts';
+import type { DocHeading } from './outline.ts';
 import { type DocCommenting, useDocAnchors } from './use-doc-anchors.ts';
 import { type EditorMode, useDocPreferences } from './use-doc-preferences.ts';
 import { useDocUploads } from './use-doc-uploads.ts';
@@ -160,13 +162,104 @@ function EditorModeSwitch({
   );
 }
 
+function MarkdownToolbarRow({
+  modeSwitch,
+  toolbar,
+  uploadStatus,
+  preview,
+  onTogglePreview,
+  onWrap,
+  onLink,
+  onSnippet,
+}: {
+  readonly modeSwitch: React.ReactNode;
+  readonly toolbar: boolean;
+  readonly uploadStatus: React.ReactNode;
+  readonly preview: boolean;
+  readonly onTogglePreview: () => void;
+  readonly onWrap: (marker: string) => void;
+  readonly onLink: () => void;
+  readonly onSnippet: (name: SnippetName) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-border border-b px-3 py-1.5">
+      {modeSwitch}
+      {toolbar ? (
+        <MarkdownFormattingButtons onWrap={onWrap} onLink={onLink} onSnippet={onSnippet} />
+      ) : null}
+
+      <span className="ml-auto flex items-center gap-2">
+        {uploadStatus}
+        <Button
+          variant={preview ? 'primary' : 'secondary'}
+          size="sm"
+          data-testid="toggle-preview"
+          aria-pressed={preview}
+          onClick={onTogglePreview}
+        >
+          {preview ? 'Editing preview' : 'Preview'}
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+function MarkdownPane({
+  handleRef,
+  content,
+  onChange,
+  onModKey,
+  onFiles,
+  previewHtml,
+}: {
+  readonly handleRef: RefObject<MarkdownCodeEditorHandle | null>;
+  readonly content: string;
+  readonly onChange: (value: string) => void;
+  readonly onModKey: (key: ModKey) => void;
+  readonly onFiles: (files: readonly File[]) => void;
+  readonly previewHtml: string | null;
+}) {
+  return (
+    <div
+      className={cn(
+        'relative grid min-h-0 min-w-0 flex-1',
+        previewHtml === null ? 'grid-cols-1' : 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1',
+      )}
+    >
+      <div className="relative min-h-0">
+        <MarkdownCodeEditor
+          handleRef={handleRef}
+          value={content}
+          onChange={onChange}
+          onModKey={onModKey}
+          onFiles={onFiles}
+          ariaLabel="Doc markdown"
+          testId="doc-editor-input"
+        />
+      </div>
+
+      {previewHtml === null ? null : (
+        <div className="min-h-0 overflow-y-auto border-border border-t px-6 py-6 lg:border-t-0 lg:border-l">
+          <DocBody html={previewHtml} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface DocEditorOutline {
+  readonly headings: readonly DocHeading[];
+  readonly activeId: string | null;
+  readonly goTo: (index: number) => void;
+}
+
 export interface DocEditorProps {
   readonly docId: string;
   readonly content: string;
   readonly onChange: (value: string) => void;
   readonly onForceSave: () => void;
   readonly footer?: React.ReactNode;
-  readonly outline?: React.ReactNode;
+  readonly outline?: DocEditorOutline;
   readonly scrollRef?: RefObject<HTMLDivElement | null>;
   readonly commenting?: DocCommenting;
 }
@@ -224,6 +317,25 @@ export function DocEditor({
     [applyEdit, selection, onForceSave],
   );
 
+  const revealHeading = useCallback(
+    (index: number) => {
+      if (mode === 'markdown') cmRef.current?.revealHeading(index);
+      else outline?.goTo(index);
+    },
+    [mode, outline],
+  );
+
+  const outlinePane =
+    outline === undefined || outline.headings.length === 0 ? null : (
+      <div className="hidden shrink-0 pr-6 xl:block">
+        <DocOutline
+          headings={outline.headings}
+          activeId={mode === 'markdown' ? null : outline.activeId}
+          onSelect={revealHeading}
+        />
+      </div>
+    );
+
   const onFiles = useCallback(
     (files: readonly File[]) => {
       uploadEach(files, (uploaded) => {
@@ -256,29 +368,16 @@ export function DocEditor({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
       {mode === 'markdown' ? (
-        <div className="flex flex-wrap items-center gap-1 border-border border-b px-3 py-1.5">
-          {modeSwitch}
-          {toolbar ? (
-            <MarkdownFormattingButtons
-              onWrap={(marker) => applyEdit(wrapSelection(selection(), marker))}
-              onLink={() => applyEdit(linkSelection(selection()))}
-              onSnippet={insertSnippet}
-            />
-          ) : null}
-
-          <span className="ml-auto flex items-center gap-2">
-            {uploadStatus}
-            <Button
-              variant={preview ? 'primary' : 'secondary'}
-              size="sm"
-              data-testid="toggle-preview"
-              aria-pressed={preview}
-              onClick={() => setPreview((value) => !value)}
-            >
-              {preview ? 'Editing preview' : 'Preview'}
-            </Button>
-          </span>
-        </div>
+        <MarkdownToolbarRow
+          modeSwitch={modeSwitch}
+          toolbar={toolbar}
+          uploadStatus={uploadStatus}
+          preview={preview}
+          onTogglePreview={() => setPreview((value) => !value)}
+          onWrap={(marker) => applyEdit(wrapSelection(selection(), marker))}
+          onLink={() => applyEdit(linkSelection(selection()))}
+          onSnippet={insertSnippet}
+        />
       ) : null}
 
       {mode === 'rich' ? (
@@ -302,32 +401,19 @@ export function DocEditor({
               {...(commenting === undefined ? {} : { onComment: anchors.startComment })}
             />
           </div>
-          {outline}
+          {outlinePane}
         </div>
       ) : (
-        <div
-          className={cn(
-            'relative grid min-h-0 flex-1',
-            preview ? 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1' : 'grid-cols-1',
-          )}
-        >
-          <div className="relative min-h-0">
-            <MarkdownCodeEditor
-              handleRef={cmRef}
-              value={content}
-              onChange={onChange}
-              onModKey={onModKey}
-              onFiles={onFiles}
-              ariaLabel="Doc markdown"
-              testId="doc-editor-input"
-            />
-          </div>
-
-          {preview ? (
-            <div className="min-h-0 overflow-y-auto border-border border-t px-6 py-6 lg:border-t-0 lg:border-l">
-              <DocBody html={html} />
-            </div>
-          ) : null}
+        <div className="flex min-h-0 flex-1">
+          <MarkdownPane
+            handleRef={cmRef}
+            content={content}
+            onChange={onChange}
+            onModKey={onModKey}
+            onFiles={onFiles}
+            previewHtml={preview ? html : null}
+          />
+          {outlinePane}
         </div>
       )}
     </div>

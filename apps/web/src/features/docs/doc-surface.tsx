@@ -36,7 +36,6 @@ import { DocEditor } from './doc-editor.tsx';
 import { DocGateway } from './doc-gateway.tsx';
 import { DocHeader } from './doc-header.tsx';
 import { DocHistory } from './doc-history.tsx';
-import { DocOutline } from './doc-outline.tsx';
 import { DocBacklinks, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import { breadcrumbOf } from './doc-tree-model.ts';
@@ -486,15 +485,7 @@ function EditSession({
         commenting={commenting}
         footer={footer}
         scrollRef={scroller}
-        outline={
-          <div className="hidden shrink-0 pr-6 xl:block">
-            <DocOutline
-              headings={outline.headings}
-              activeId={outline.activeId}
-              onSelect={outline.goTo}
-            />
-          </div>
-        }
+        outline={outline}
       />
       {near ? (
         <p

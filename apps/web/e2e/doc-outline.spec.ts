@@ -16,7 +16,8 @@ test('an editable doc still has a table of contents that navigates it', async ({
 
   await page.goto(`${BASE}/docs`);
   await page.getByTestId('doc-tree').getByText('Realtime delta protocol').click();
-  await expect(page.getByTestId('doc-rich-editor')).toBeVisible();
+
+  await expect(page.getByTestId('doc-editor-input')).toBeVisible();
 
   const outline = page.getByTestId('doc-outline');
   await expect(outline).toBeVisible();
@@ -26,6 +27,17 @@ test('an editable doc still has a table of contents that navigates it', async ({
     'Rules',
   ]);
 
+  await outline.locator('a', { hasText: 'Rules' }).first().click();
+  await expect(page.getByTestId('doc-editor-input')).toBeFocused();
+
+  await page.getByTestId('editor-mode-rich').click();
+  await expect(page.getByTestId('doc-rich-editor')).toBeVisible();
+
+  await expect(outline.locator('a')).toHaveText([
+    'Realtime delta protocol',
+    'Action shape',
+    'Rules',
+  ]);
   await outline.locator('a', { hasText: 'Rules' }).first().click();
   await expect(outline.locator('[aria-current="location"]')).toHaveText('Rules');
 
