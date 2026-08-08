@@ -63,7 +63,7 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
