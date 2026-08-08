@@ -1,6 +1,7 @@
 'use client';
 
 import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { SmilePlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
@@ -15,6 +16,7 @@ import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { summarizeReactions } from '@/lib/query/sync.ts';
 import {
@@ -53,6 +55,15 @@ export interface CommentThreadProps {
   readonly members: readonly Member[];
 }
 
+function cachedCommentBody(
+  client: QueryClient,
+  issueId: string,
+  commentId: string,
+): string | undefined {
+  const cached = client.getQueryData<readonly Comment[]>(queryKeys.comments(issueId));
+  return cached?.find((entry) => entry.comment.id === commentId)?.comment.body;
+}
+
 interface NewCommentProps {
   readonly issueId: string;
   readonly members: readonly Member[];
@@ -74,6 +85,7 @@ function NewComment({
   autoFocus = false,
   onCancel,
 }: NewCommentProps) {
+  const client = useQueryClient();
   const create = useCreateComment(issueId);
   const update = useUpdateComment(issueId);
   const files = usePendingCommentFiles();
@@ -87,10 +99,14 @@ function NewComment({
       { body: draft.body, parentId },
       {
         onSuccess: (created) => {
+          const asCreated = created.comment.body;
           draft
             .settle(created.comment.id)
             .then((rewritten) => {
               if (rewritten === null) return;
+              const untouched =
+                cachedCommentBody(client, issueId, created.comment.id) === asCreated;
+              if (!untouched) return;
               update.mutate({ id: created.comment.id, body: rewritten });
             })
             .catch(() => undefined);
