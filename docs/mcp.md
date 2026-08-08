@@ -124,6 +124,7 @@ them.
 | `list_members` | read | Members with their roles |
 | `invite_member` | write | Invite someone |
 | `list_notifications` | read | Your inbox: mentions, assignments, replies and state changes |
+| `mark_notification_read` | write | Mark your own notifications read |
 
 ### Issues
 

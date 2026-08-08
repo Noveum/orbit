@@ -73,3 +73,45 @@ describe('list_notifications', () => {
     expect(rows.some((row) => row.type === 'mention')).toBe(false);
   });
 });
+
+describe('mark_notification_read', () => {
+  it('marks a notification read so it leaves the unread queue', async () => {
+    const before = await agent.result('list_notifications', { unreadOnly: true });
+    const rows = before['notifications'] as { id: string }[];
+    const target = rows[0];
+    expect(target).toBeDefined();
+
+    const marked = await agent.result('mark_notification_read', { ids: [target?.id ?? ''] });
+    expect(marked['markedIds']).toEqual([target?.id]);
+
+    const after = await agent.result('list_notifications', { unreadOnly: true });
+    const remaining = after['notifications'] as { id: string }[];
+    expect(remaining.some((row) => row.id === target?.id)).toBe(false);
+  });
+
+  it('cannot mark another user notification read', async () => {
+    const mine = await agent.result('list_notifications', {});
+    const rows = mine['notifications'] as { id: string }[];
+    const target = rows[0];
+    expect(target).toBeDefined();
+
+    const result = await admin.result('mark_notification_read', { ids: [target?.id ?? ''] });
+    expect(result['markedIds']).toEqual([]);
+  });
+
+  it('is withheld from a read-only token', async () => {
+    const readOnly = await connect(
+      await mintToken(
+        workspace.organizationId,
+        workspace.adminUser.id,
+        'Read only client',
+        'openid profile email orbit.read',
+      ),
+    );
+    const listed = await readOnly.client.listTools();
+    const names = listed.tools.map((tool) => tool.name);
+    expect(names).toContain('list_notifications');
+    expect(names).not.toContain('mark_notification_read');
+    await readOnly.close();
+  });
+});

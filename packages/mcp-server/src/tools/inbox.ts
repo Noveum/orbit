@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { db, eq, inArray, schema } from '@orbit/db';
-import { listInbox } from '@orbit/services/notifications';
+import { listInbox, markRead } from '@orbit/services/notifications';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
@@ -102,6 +102,33 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         nextCursor: page.nextCursor,
         unreadCount: page.unreadCount,
       };
+    },
+  );
+
+  defineTool(
+    server,
+    {
+      name: 'mark_notification_read',
+      title: 'Mark notifications read',
+      description:
+        'Mark your own notifications read once you have acted on them, so they leave your unread queue. Mark a notification read only after the work it describes is done or handed on, never on first sight.',
+      readOnly: false,
+      inputSchema: {
+        ids: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(100)
+          .describe('Notification ids from list_notifications.'),
+      },
+    },
+    async (args) => {
+      const updated = await markRead(db, {
+        userId: principal.userId,
+        organizationId: principal.organizationId,
+        notificationIds: args.ids,
+        read: true,
+      });
+      return { markedIds: updated.map((row) => row.id) };
     },
   );
 }
