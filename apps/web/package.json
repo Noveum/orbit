@@ -88,6 +88,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
+    "babel-plugin-react-compiler": "^1.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "5.9.3"
   }
