@@ -17,7 +17,7 @@ import {
   scopes,
   unique,
 } from '@orbit/shared';
-import { randomUUIDv7 } from '@orbit/shared/utils';
+import { declaredIssueIdentifiers, randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
 import {
@@ -83,9 +83,10 @@ export async function applyGithubEvent(
   const textIdentifiers =
     event.pullRequest === null
       ? extractIssueIdentifiers(event.checks?.headBranch ?? '')
-      : extractIssueIdentifiers(
-          `${event.pullRequest.headRef} ${event.pullRequest.title} ${event.pullRequest.body}`,
-        );
+      : unique([
+          ...extractIssueIdentifiers(`${event.pullRequest.headRef} ${event.pullRequest.title}`),
+          ...declaredIssueIdentifiers(event.pullRequest.body),
+        ]);
   const linkedIdentifiers =
     event.pullRequest === null && event.checks !== null
       ? await identifiersFromGitLinks(

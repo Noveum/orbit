@@ -168,6 +168,51 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('ignores an identifier that is only mentioned, not declared', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/tidy',
+          title: 'Tidy the dashboard',
+          body: 'This looks a lot like ENG-3 but is a separate piece of work.',
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(0);
+    });
+  });
+
+  it('ignores an identifier inside a code block, a comment or a quote', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'chore/tidy',
+          title: 'Tidy the dashboard',
+          body: [
+            '<!-- Template: write "Fixes ENG-3" here -->',
+            '```',
+            'git checkout -b fixes-eng-3',
+            '```',
+            'Inline `Fixes ENG-3` in backticks.',
+            '> Somebody quoted: Fixes ENG-3',
+          ].join('\n'),
+        }),
+      );
+
+      expect(result.handled).toBe(true);
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links).toHaveLength(0);
+    });
+  });
+
   it('links an issue named only in the pull request description', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
