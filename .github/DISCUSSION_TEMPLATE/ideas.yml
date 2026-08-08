@@ -1,0 +1,43 @@
+title: "[idea]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas is where a feature starts before anyone agrees on its shape. Nothing here
+        has to be finished. A half formed thought about a workflow that does not work is
+        more useful than a polished specification for the wrong thing.
+
+        Once an idea has a shape people agree on, it becomes an issue. Until then it
+        lives here, where it can change without anyone feeling committed to it.
+
+        Three things are permanently off the table: pricing or billing of any kind,
+        telemetry that phones home, and a second way to do something Orbit already does.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is painful today
+      description: The situation, not the solution. What are you trying to get done, and where does Orbit get in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead
+      description: Including "I keep a spreadsheet" or "I gave up". The workaround tells us what the gap actually costs, which is what moves an idea up.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Any thoughts on the shape
+      description: Optional. If you have a sense of how this could work, say so. If you do not, that is fine, and the discussion is for working it out.
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: If another tool solves this well, say which and what it gets right. Screenshots help. If another tool solves it badly, that is worth knowing too.

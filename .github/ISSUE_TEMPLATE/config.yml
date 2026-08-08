@@ -1,8 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question or idea
-    url: https://github.com/Noveum/orbit/discussions
-    about: Ask how something works, or float an idea before it becomes a feature request.
+  - name: Where to start contributing
+    url: https://github.com/Noveum/orbit/discussions/231
+    about: Every milestone, what is missing in each, and which issues are small enough for an hour.
+  - name: Ask a question
+    url: https://github.com/Noveum/orbit/discussions/new?category=q-a
+    about: How to run, self-host, configure or build on Orbit.
+  - name: Float an idea
+    url: https://github.com/Noveum/orbit/discussions/new?category=ideas
+    about: Describe a workflow that is painful, before it has a shape. Ideas become issues once we agree what to build.
   - name: Documentation
     url: https://github.com/Noveum/orbit/tree/main/docs
     about: Setup, self-hosting, architecture, keyboard shortcuts and the MCP server.

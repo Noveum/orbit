@@ -1,0 +1,57 @@
+title: "[question]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask anything about running, self-hosting, configuring or building on Orbit.
+
+        Before you post, the answer may already be in
+        [the documentation](https://github.com/Noveum/orbit/tree/main/docs). Setup is in
+        [getting-started.md](https://github.com/Noveum/orbit/blob/main/docs/getting-started.md),
+        environment variables are in
+        [configuration.md](https://github.com/Noveum/orbit/blob/main/docs/configuration.md),
+        and known failures are in
+        [troubleshooting.md](https://github.com/Noveum/orbit/blob/main/docs/troubleshooting.md).
+
+        If the documentation was wrong or missing, say so. That is a bug and we would
+        rather fix it than answer the same question twice.
+
+        Never post an unreported security problem here. Use
+        [SECURITY.md](https://github.com/Noveum/orbit/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What you are trying to do
+      description: The goal, not only the step you are stuck on. Knowing where you are heading often changes the answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+      description: Commands you ran, and what happened. Paste error output in full rather than describing it. Redact anything sensitive, including connection strings, API keys and anything out of your .env.
+
+  - type: dropdown
+    id: how
+    attributes:
+      label: How are you running Orbit
+      options:
+        - The hosted instance at orbit.noveum.ai
+        - Self-hosted
+        - Local development from a clone
+        - Not running it yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Bun version, and how you are deploying if self-hosted. Skip this if you are asking about the hosted instance.
+      placeholder: |
+        OS:
+        Bun:
+        Deployed on:
