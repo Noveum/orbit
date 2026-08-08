@@ -7,6 +7,12 @@ import { useToast } from '@/components/ui/toast.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
+type BranchCopySource = {
+  readonly ready: boolean;
+  readonly userId: string | null;
+  readonly memberById: ReadonlyMap<string, { readonly handle: string | null }>;
+};
+
 export function branchNameFor(
   issue: Pick<Issue, 'identifier' | 'title'>,
   handle: string | null,
@@ -18,12 +24,19 @@ export function branchNameFor(
   });
 }
 
+export function branchCopy(
+  workspace: BranchCopySource,
+  issue: Pick<Issue, 'identifier' | 'title'>,
+): { readonly branch: string; readonly ready: boolean } {
+  const handle =
+    workspace.userId === null ? null : (workspace.memberById.get(workspace.userId)?.handle ?? null);
+  return { branch: branchNameFor(issue, handle), ready: workspace.ready };
+}
+
 export function CopyBranchNameMenuItem({ issue }: { readonly issue: Issue }) {
   const workspace = useWorkspace();
   const { toast } = useToast();
-  const handle =
-    workspace.userId === null ? null : (workspace.memberById.get(workspace.userId)?.handle ?? null);
-  const branch = branchNameFor(issue, handle);
+  const { branch, ready } = branchCopy(workspace, issue);
 
   const copy = async () => {
     try {
@@ -37,6 +50,7 @@ export function CopyBranchNameMenuItem({ issue }: { readonly issue: Issue }) {
   return (
     <DropdownMenuItem
       data-testid={`copy-branch-name-${issue.identifier}`}
+      disabled={!ready}
       onSelect={() => {
         copy().catch(() => undefined);
       }}
