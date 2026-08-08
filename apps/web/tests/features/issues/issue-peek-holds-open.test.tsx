@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { Issue } from '@/lib/query/schemas.ts';
+
+const realDetail = { ...(await import('@/features/issues/issue-detail.tsx')) };
+const realLink = { ...(await import('@/features/issues/issue-link.tsx')) };
 
 mock.module('@/features/issues/issue-detail.tsx', () => ({
   IssueDetailView: ({ identifier }: { identifier: string }) => (
@@ -11,6 +14,11 @@ mock.module('@/features/issues/issue-detail.tsx', () => ({
 mock.module('@/features/issues/issue-link.tsx', () => ({
   IssueLink: () => null,
 }));
+
+afterAll(() => {
+  mock.module('@/features/issues/issue-detail.tsx', () => realDetail);
+  mock.module('@/features/issues/issue-link.tsx', () => realLink);
+});
 
 const { IssuePeek } = await import('../../../src/features/issues/issue-peek.tsx');
 
