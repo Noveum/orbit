@@ -1,4 +1,4 @@
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema, type Transaction } from '@orbit/db';
 import {
   assertUploadParent,
   fileUrlFor,
@@ -15,6 +15,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { inlineUploadSchema, uploadRequestSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
+import { lockOrganization } from '../org/organization-lock.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -111,49 +112,50 @@ interface AttachmentDraft {
   readonly size: number;
   readonly storageKey: string;
   readonly status: 'pending' | 'ready';
+  readonly uploadExpiresAt: Date | null;
 }
 
 async function insertAttachment(
+  tx: Transaction,
   principal: Principal,
   draft: AttachmentDraft,
 ): Promise<CompletedAttachment> {
-  return await db.transaction(async (tx) => {
-    const syncId = await nextSyncId(tx);
-    const [created] = await tx
-      .insert(schema.attachment)
-      .values({
-        id: newId(),
-        organizationId: principal.organizationId,
-        parentType: draft.parentType,
-        parentId: draft.parentId,
-        fileName: draft.fileName,
-        contentType: draft.contentType,
-        size: draft.size,
-        storageKey: draft.storageKey,
-        status: draft.status,
-        uploadedById: principal.userId,
-        syncId,
-      })
-      .returning();
-    const attachment = requireRow(created, 'That upload could not be registered.');
-    const actor = await principalActor(tx, principal);
+  const syncId = await nextSyncId(tx);
+  const [created] = await tx
+    .insert(schema.attachment)
+    .values({
+      id: newId(),
+      organizationId: principal.organizationId,
+      parentType: draft.parentType,
+      parentId: draft.parentId,
+      fileName: draft.fileName,
+      contentType: draft.contentType,
+      size: draft.size,
+      storageKey: draft.storageKey,
+      status: draft.status,
+      uploadExpiresAt: draft.uploadExpiresAt,
+      uploadedById: principal.userId,
+      syncId,
+    })
+    .returning();
+  const attachment = requireRow(created, 'That upload could not be registered.');
+  const actor = await principalActor(tx, principal);
 
-    return {
-      attachment,
-      actions: [
-        buildSyncAction({
-          syncId,
-          organizationId: attachment.organizationId,
-          scopes: await resolveAttachmentScopes(tx, attachment, attachment.organizationId),
-          action: 'insert',
-          model: 'attachment',
-          modelId: attachment.id,
-          data: attachment,
-          actor,
-        }),
-      ],
-    };
-  });
+  return {
+    attachment,
+    actions: [
+      buildSyncAction({
+        syncId,
+        organizationId: attachment.organizationId,
+        scopes: await resolveAttachmentScopes(tx, attachment, attachment.organizationId),
+        action: 'insert',
+        model: 'attachment',
+        modelId: attachment.id,
+        data: attachment,
+        actor,
+      }),
+    ],
+  };
 }
 
 export interface RegisteredUpload extends CompletedAttachment {
@@ -167,22 +169,24 @@ export async function registerUpload(
 ): Promise<RegisteredUpload> {
   const upload = validateUpload(input);
   const parsed = uploadRequestSchema.parse(input);
-  await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
-
   const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
-  const target = await store.createUploadTarget(key, upload.contentType, upload.size);
-  const registered = await insertAttachment(principal, {
-    parentType: parsed.parentType,
-    parentId: parsed.parentId,
-    fileName: upload.fileName,
-    contentType: upload.contentType,
-    size: upload.size,
-    storageKey: target.key,
-    status: 'pending',
+  return await db.transaction(async (tx) => {
+    await lockOrganization(tx, principal.organizationId);
+    await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
+    const target = await store.createUploadTarget(key, upload.contentType, upload.size);
+    const registered = await insertAttachment(tx, principal, {
+      parentType: parsed.parentType,
+      parentId: parsed.parentId,
+      fileName: upload.fileName,
+      contentType: upload.contentType,
+      size: upload.size,
+      storageKey: target.key,
+      status: 'pending',
+      uploadExpiresAt: new Date(target.expiresAt),
+    });
+    return { ...registered, upload: target };
   });
-
-  return { ...registered, upload: target };
 }
 
 export async function finishUpload(
@@ -218,24 +222,29 @@ export async function attachFile(
     contentType: parsed.contentType,
     size: bytes.byteLength,
   });
-  await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
-
   const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
-  await store.put(key, bytes, upload.contentType);
+  let objectStored = false;
   try {
-    const stored = await insertAttachment(principal, {
-      parentType: parsed.parentType,
-      parentId: parsed.parentId,
-      fileName: upload.fileName,
-      contentType: upload.contentType,
-      size: upload.size,
-      storageKey: key,
-      status: 'ready',
+    return await db.transaction(async (tx) => {
+      await lockOrganization(tx, principal.organizationId);
+      await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
+      await store.put(key, bytes, upload.contentType);
+      objectStored = true;
+      const stored = await insertAttachment(tx, principal, {
+        parentType: parsed.parentType,
+        parentId: parsed.parentId,
+        fileName: upload.fileName,
+        contentType: upload.contentType,
+        size: upload.size,
+        storageKey: key,
+        status: 'ready',
+        uploadExpiresAt: null,
+      });
+      return { ...stored, url: fileUrlFor(key) };
     });
-    return { ...stored, url: fileUrlFor(key) };
   } catch (error: unknown) {
-    await store.delete(key).catch(() => undefined);
+    if (objectStored) await store.delete(key).catch(() => undefined);
     throw error;
   }
 }

@@ -235,7 +235,7 @@ Commit: `feat(storage): clean organization prefixes`
 - Produces: `lockOrganization(executor: Transaction, organizationId: string): Promise<OrganizationRow>`.
 - Produces: presigned attachment rows with `uploadExpiresAt`; inline rows keep it null.
 
-- [ ] **Step 1: Write failing upload expiration tests**
+- [x] **Step 1: Write failing upload expiration tests**
 
 ```ts
 expect(registered.attachment.uploadExpiresAt?.toISOString()).toBe(registered.upload.expiresAt);
@@ -244,13 +244,13 @@ expect(attached.attachment.uploadExpiresAt).toBeNull();
 
 Also start a registration transaction behind a held organization row lock and assert the fake storage driver is not called until the lock is released.
 
-- [ ] **Step 2: Run the attachment tests and confirm they fail**
+- [x] **Step 2: Run the attachment tests and confirm they fail**
 
 Run: `bun --filter @orbit/core test tests/content/attachment-service.test.ts`
 
 Expected: FAIL because expiration is not stored and uploads do not lock the organization.
 
-- [ ] **Step 3: Implement one transaction per upload registration**
+- [x] **Step 3: Implement one transaction per upload registration**
 
 ```ts
 return await db.transaction(async (tx) => {
@@ -267,11 +267,11 @@ return await db.transaction(async (tx) => {
 
 Refactor `insertAttachment` to use the caller's transaction. Keep inline storage writes and row insertion under the same organization lock, retaining best-effort cleanup if insertion fails.
 
-- [ ] **Step 4: Run attachment and presign route tests and commit**
+- [x] **Step 4: Run attachment and presign route tests and commit**
 
 Run: `bun --filter @orbit/core test tests/content/attachment-service.test.ts`
 
-Run: `bun --filter @orbit/web test tests/app/api/attachments/presign/route.test.ts`
+Run from `apps/web`: `bun --env-file=../../.env test tests/app/api/attachments/presign/route.test.ts --timeout 20000`
 
 Expected: PASS.
 
