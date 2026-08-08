@@ -1,0 +1,91 @@
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { createIssue } from '@orbit/core';
+import { addMember } from '@orbit/core/test-support';
+import {
+  actorFor,
+  buildIssueRoutesWorld,
+  contextFor,
+  errorSchema,
+  ISSUES_BASE,
+  type IssueRoutesWorld,
+  installRouteMocks,
+  issueSchema,
+  signInAs,
+} from '../../../../../tests-support-issue-routes.ts';
+
+const issueRoute = await import('../../../../../src/app/api/issues/[id]/route.ts');
+
+let world: IssueRoutesWorld;
+
+beforeAll(async () => {
+  world = await buildIssueRoutesWorld();
+});
+
+beforeEach(() => {
+  installRouteMocks();
+  signInAs(world.admin);
+});
+
+describe('PATCH /api/issues/[id]', () => {
+  it('stores a due date the client sends', async () => {
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${world.second.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ dueDate: '2031-03-04' }),
+      }),
+      contextFor(world.second.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(issueSchema.parse(await response.json()).issue.dueDate).toBe('2031-03-04');
+  });
+
+  it('stores a parent the client sends', async () => {
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${world.second.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentId: world.first.id }),
+      }),
+      contextFor(world.second.id),
+    );
+
+    expect(issueSchema.parse(await response.json()).issue.parentId).toBe(world.first.id);
+  });
+
+  it('answers 422 for a due date the client made up, never 500', async () => {
+    for (const nonsense of [true, 0, 1_700_000_000_000, 'banana', '+275760-09-13', '10000-01-01']) {
+      const response = await issueRoute.PATCH(
+        new Request(`${ISSUES_BASE}/${world.second.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ dueDate: nonsense }),
+        }),
+        contextFor(world.second.id),
+      );
+
+      expect({ sent: nonsense, status: response.status }).toEqual({
+        sent: nonsense,
+        status: 422,
+      });
+      expect(errorSchema.parse(await response.json()).error.code).toBe('validation_failed');
+    }
+  });
+
+  it('refuses a parent in a team the caller cannot see', async () => {
+    const mine = await createIssue(world.workspace.admin, {
+      teamId: world.workspace.teamId,
+      title: 'Mine',
+    });
+    const { user } = await addMember(world.workspace, 'member', { name: 'Mel Member' });
+    signInAs(await actorFor(user));
+
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${mine.issue.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentId: world.hidden.id }),
+      }),
+      contextFor(mine.issue.id),
+    );
+
+    expect(response.status).toBe(404);
+  });
+});

@@ -95,3 +95,63 @@ describe('validator hardening from review', () => {
     );
   });
 });
+
+describe('calendar dates', () => {
+  const dayOf = (value: unknown): string | null => {
+    const parsed = issueUpdateSchema.safeParse({ dueDate: value });
+    if (!parsed.success) return null;
+    const day = parsed.data.dueDate;
+    return day === null || day === undefined ? null : day.toISOString().slice(0, 10);
+  };
+
+  it('reads a calendar day as that day in UTC, whatever the host timezone is', () => {
+    expect(dayOf('2031-03-04')).toBe('2031-03-04');
+    expect(dayOf('0001-01-01')).toBe('0001-01-01');
+    expect(dayOf('9999-12-31')).toBe('9999-12-31');
+  });
+
+  it('refuses a year a date column cannot hold, rather than truncating it', () => {
+    for (const extreme of ['+275760-09-13', '-000001-01-01', '0000-12-31', '10000-01-01']) {
+      expect({ sent: extreme, day: dayOf(extreme) }).toEqual({ sent: extreme, day: null });
+    }
+  });
+
+  it('fails the parse on such a year instead of quietly storing no date', () => {
+    for (const extreme of ['+275760-09-13', '-000001-01-01', '0000-12-31', '10000-01-01']) {
+      const parsed = issueUpdateSchema.safeParse({ dueDate: extreme });
+
+      expect({ sent: extreme, accepted: parsed.success }).toEqual({
+        sent: extreme,
+        accepted: false,
+      });
+    }
+  });
+
+  it('refuses anything that is not a calendar day', () => {
+    for (const nonsense of [
+      true,
+      false,
+      0,
+      1_700_000_000_000,
+      'banana',
+      '2026-02-30',
+      '2026-2-3',
+      '',
+      {},
+      [],
+    ]) {
+      expect(issueUpdateSchema.safeParse({ dueDate: nonsense }).success).toBe(false);
+    }
+  });
+
+  it('keeps null, which is how a due date is cleared', () => {
+    expect(issueUpdateSchema.parse({ dueDate: null }).dueDate).toBeNull();
+  });
+
+  it('holds project and milestone dates to the same shape', () => {
+    expect(projectUpdateSchema.safeParse({ targetDate: '+275760-09-13' }).success).toBe(false);
+    expect(projectUpdateSchema.safeParse({ startDate: true }).success).toBe(false);
+    expect(milestoneUpdateSchema.safeParse({ targetDate: '10000-01-01' }).success).toBe(false);
+    expect(milestoneUpdateSchema.safeParse({ targetDate: '2031-03-01' }).success).toBe(true);
+  });
+});

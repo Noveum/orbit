@@ -2,7 +2,7 @@ import { validationFailed } from '@orbit/shared';
 import { S3StorageDriver } from './s3.ts';
 import type { StorageDriver } from './types.ts';
 
-export { assertSafeKey, FILE_ROUTE } from './key.ts';
+export { assertSafeKey, FILE_ROUTE, fileUrlFor } from './key.ts';
 export {
   type AttachmentOwner,
   type AttachmentParentType,

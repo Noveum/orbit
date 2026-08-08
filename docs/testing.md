@@ -98,11 +98,21 @@ apart.
 Clean up when you are done:
 
 ```bash
-bun run db:test-lanes-drop
+ORBIT_TEST_LANE=my-branch bun run db:test-lanes-drop
 ```
 
-That drops every lane database and leaves the six base ones alone. Without the
-variable set, nothing changes.
+That drops the databases of that one lane and nothing else. With no
+`ORBIT_TEST_LANE` set it refuses and tells you why, because dropping every lane
+takes out the runs other worktrees have in flight and the failures that follow
+read exactly like broken tests. When you genuinely want a clean slate:
+
+```bash
+bun run db:test-lanes-drop --all
+```
+
+That takes every lane on that Postgres, live ones included. The six base
+databases survive either way. Without `ORBIT_TEST_LANE` set on a test run,
+nothing about the lane mechanism changes.
 
 ## DOM tests
 

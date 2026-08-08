@@ -125,6 +125,16 @@ domain verified in Resend, otherwise every send fails.
 - **Motion.** No layout animation on the critical path, ever: nothing that triggers reflow may animate. Entrance, exit and gesture motion is transform and opacity only. Hover and focus state changes may additionally transition colour, which is what the task managers we measured against do, but only through the shared tokens in `apps/web/src/lib/interaction.ts` so the set stays auditable, never hand-rolled at a call site. Micro-interactions such as row and item highlights may go as fast as 80ms; nothing exceeds 200ms; everything respects `prefers-reduced-motion`.
 - **Theming.** Light and dark both first class, driven by CSS custom properties and `next-themes`. Never hardcode a hex value in a component.
 - **Accessibility.** Keyboard operable everywhere, visible focus rings, real semantics from Radix primitives.
+- **Single instance dependencies.** A library whose types or runtime identity cross package boundaries,
+  CodeMirror above all, must resolve to exactly one version. Bun keeps a transitive resolution that still
+  satisfies its range, so bumping only the direct dependency leaves the old copy nested under every other
+  package that wanted it. Two copies of `@codemirror/view` fail typecheck under `exactOptionalPropertyTypes`
+  the moment a value crosses between them, and a facet or instance compared across the two copies is a
+  runtime bug waiting for the next refactor to expose it. The `overrides` block
+  in the root `package.json` is what collapses them, and `bun run check-deps` fails the build when an
+  overridden package resolves twice or when a bump left in a manifest is one the override silently swallows.
+  An override shadows a direct dependency too, so a real version move means editing both the manifest range
+  and the override, then running `bun install`.
 
 ## Testing
 
@@ -136,7 +146,7 @@ domain verified in Resend, otherwise every send fails.
 - A package that needs environment or a DOM configures it in its own `bunfig.toml` with a `tests-preload.ts`. DOM tests register happy-dom in that preload.
 - Database tests run against the real Postgres from docker compose, in a transaction that rolls back. `scripts/test-env.ts` refuses to run against a database whose name does not contain `test`.
 - Each package owns an isolated database (`orbit_test_core`, `orbit_test_svc`, `orbit_test_rt`, `orbit_test_rts`, `orbit_test_mcp`, `orbit_test_web`). Run `bun run db:test-setup` once after `bun run infra:up`, otherwise `bun run verify` fails on a clean checkout with connection errors rather than test failures.
-- Two test runs at once need two lanes. Set `ORBIT_TEST_LANE` to anything unique and the suite uses `orbit_test_core_<lane>` instead, where the lane is a readable stub plus a digest of the raw value so two lanes that normalise alike stay apart, cloned from the base database on first use, so a `resetDatabase` in one run cannot truncate tables out from under another. Without the variable nothing changes. This matters whenever several agents or worktrees run tests against the same Postgres: sharing one database shows up as deadlocks and foreign key violations that look like real failures. `bun run db:test-lanes-drop` removes every lane database and leaves the six base ones alone.
+- Two test runs at once need two lanes. Set `ORBIT_TEST_LANE` to anything unique and the suite uses `orbit_test_core_<lane>` instead, where the lane is a readable stub plus a digest of the raw value so two lanes that normalise alike stay apart, cloned from the base database on first use, so a `resetDatabase` in one run cannot truncate tables out from under another. Without the variable nothing changes. This matters whenever several agents or worktrees run tests against the same Postgres: sharing one database shows up as deadlocks and foreign key violations that look like real failures. `ORBIT_TEST_LANE=<lane> bun run db:test-lanes-drop` removes the databases of that one lane and nothing else. With no `ORBIT_TEST_LANE` set it refuses and says so rather than guessing, because the old behaviour of dropping every lane deleted lanes other worktrees were running against. `bun run db:test-lanes-drop --all` is the explicit way back to a clean slate, and it takes every lane on that Postgres with it, including live ones. The six base databases are never dropped in either mode.
 - End to end: Playwright in `apps/web/e2e`.
 - A feature is not done until it has tests that would fail if the feature broke.
 

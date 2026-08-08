@@ -1,8 +1,9 @@
 'use client';
 
 import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { SmilePlus } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -15,6 +16,7 @@ import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import { summarizeReactions } from '@/lib/query/sync.ts';
 import {
@@ -25,6 +27,7 @@ import {
 } from '@/lib/query/use-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
 import { CommentComposer } from './comment-composer.tsx';
+import { usePendingCommentFiles } from './comment-uploads.ts';
 
 const QUICK_EMOJI = ['👍', '🎉', '🚀', '👀', '❤️'] as const;
 
@@ -52,8 +55,84 @@ export interface CommentThreadProps {
   readonly members: readonly Member[];
 }
 
-export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
+function cachedCommentBody(
+  client: QueryClient,
+  issueId: string,
+  commentId: string,
+): string | undefined {
+  const cached = client.getQueryData<readonly Comment[]>(queryKeys.comments(issueId));
+  return cached?.find((entry) => entry.comment.id === commentId)?.comment.body;
+}
+
+interface NewCommentProps {
+  readonly issueId: string;
+  readonly members: readonly Member[];
+  readonly parentId: string | null;
+  readonly testId?: string;
+  readonly placeholder?: string;
+  readonly submitLabel?: string;
+  readonly autoFocus?: boolean;
+  readonly onCancel?: () => void;
+}
+
+function NewComment({
+  issueId,
+  members,
+  parentId,
+  testId,
+  placeholder,
+  submitLabel,
+  autoFocus = false,
+  onCancel,
+}: NewCommentProps) {
+  const client = useQueryClient();
   const create = useCreateComment(issueId);
+  const update = useUpdateComment(issueId);
+  const files = usePendingCommentFiles();
+  const { discard } = files;
+
+  useEffect(() => () => discard(), [discard]);
+
+  const submit = (body: string) => {
+    const draft = files.draft(body);
+    create.mutate(
+      { body: draft.body, parentId },
+      {
+        onSuccess: (created) => {
+          const asCreated = created.comment.body;
+          draft
+            .settle(created.comment.id)
+            .then((rewritten) => {
+              if (rewritten === null) return;
+              const untouched =
+                cachedCommentBody(client, issueId, created.comment.id) === asCreated;
+              if (!untouched) return;
+              update.mutate({ id: created.comment.id, body: rewritten });
+            })
+            .catch(() => undefined);
+        },
+        onError: () => draft.release(),
+      },
+    );
+    onCancel?.();
+  };
+
+  return (
+    <CommentComposer
+      members={members}
+      pending={create.isPending}
+      autoFocus={autoFocus}
+      onUpload={files.hold}
+      onSubmit={submit}
+      {...(testId === undefined ? {} : { testId })}
+      {...(placeholder === undefined ? {} : { placeholder })}
+      {...(submitLabel === undefined ? {} : { submitLabel })}
+      {...(onCancel === undefined ? {} : { onCancel })}
+    />
+  );
+}
+
+export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
   const memberById = new Map(members.map((member) => [member.id, member]));
   useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
 
@@ -92,11 +171,7 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
         )}
       </ul>
 
-      <CommentComposer
-        members={members}
-        pending={create.isPending}
-        onSubmit={(body) => create.mutate({ body, parentId: null })}
-      />
+      <NewComment issueId={issueId} members={members} parentId={null} />
     </section>
   );
 }
@@ -130,7 +205,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
   const react = useToggleReaction(issueId);
   const update = useUpdateComment(issueId);
   const remove = useDeleteComment(issueId);
-  const createReply = useCreateComment(issueId);
+  const files = usePendingCommentFiles();
   const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -161,6 +236,7 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
             submitLabel="Save"
             autoFocus
             onCancel={() => setEditing(false)}
+            onUpload={async (file) => await files.upload(entry.comment.id, file)}
             onSubmit={(body) => {
               update.mutate({ id: entry.comment.id, body });
               setEditing(false);
@@ -240,17 +316,15 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
         </div>
 
         {replying ? (
-          <CommentComposer
+          <NewComment
+            issueId={issueId}
             members={members}
+            parentId={entry.comment.id}
             testId={`comment-reply-${entry.comment.id}`}
             placeholder="Write a reply."
             submitLabel="Reply"
             autoFocus
             onCancel={() => setReplying(false)}
-            onSubmit={(body) => {
-              createReply.mutate({ body, parentId: entry.comment.id });
-              setReplying(false);
-            }}
           />
         ) : null}
       </div>
