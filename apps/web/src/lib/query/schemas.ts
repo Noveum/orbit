@@ -1,3 +1,4 @@
+import { ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
 import {
   defaultViewState,
   GROUP_BY_FIELDS,
@@ -269,10 +270,21 @@ export const issueDetailSchema = z.object({
   activity: z.array(activitySchema),
   activityCursor: z.string().nullable().default(null),
   subIssues: z.array(issueSchema),
+  parent: issueSchema.nullable().default(null),
   subscribed: z.boolean(),
 });
 
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
+
+export const issueRelationSchema = z.object({
+  id: z.string(),
+  type: z.enum(ISSUE_RELATION_TYPES),
+  issue: issueSchema,
+});
+
+export type IssueRelation = z.infer<typeof issueRelationSchema>;
+
+export const issueRelationListSchema = z.object({ relations: z.array(issueRelationSchema) });
 
 export const docSchema = z.object({
   id: z.string(),

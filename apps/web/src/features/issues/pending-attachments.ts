@@ -42,6 +42,17 @@ export function stripPlaceholder(markdown: string, placeholder: string, fileName
     .join('');
 }
 
+export function withoutPlaceholders(
+  markdown: string,
+  pending: readonly PendingAttachment[],
+): string {
+  let body = markdown;
+  for (const entry of pending) {
+    body = stripPlaceholder(body, entry.placeholder, entry.file.name);
+  }
+  return body;
+}
+
 export async function attachPending(
   description: string,
   pending: readonly PendingAttachment[],

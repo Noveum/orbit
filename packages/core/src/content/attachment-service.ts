@@ -1,9 +1,20 @@
 import { and, db, eq, schema } from '@orbit/db';
-import { notFound } from '@orbit/shared/errors';
+import {
+  assertUploadParent,
+  fileUrlFor,
+  type StorageDriver,
+  storageDriver,
+  storageKeyFor,
+  type UploadTarget,
+  validateUpload,
+} from '@orbit/services/storage';
+import { notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { inlineUploadSchema, uploadRequestSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
+import { type Executor, newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -14,7 +25,25 @@ export function attachmentScopes(
 ): string[] {
   if (row.parentType === 'doc') return [scopes.doc(row.parentId)];
   if (row.parentType === 'issue') return [scopes.issue(row.parentId)];
+  if (row.parentType === 'project') return [scopes.project(row.parentId)];
   return [scopes.user(row.uploadedById)];
+}
+
+export async function resolveAttachmentScopes(
+  executor: Executor,
+  row: Pick<AttachmentRecord, 'parentType' | 'parentId' | 'uploadedById'>,
+  organizationId: string,
+): Promise<string[]> {
+  if (row.parentType !== 'comment') return attachmentScopes(row);
+  const [comment] = await executor
+    .select({ issueId: schema.comment.issueId })
+    .from(schema.comment)
+    .where(
+      and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
+    )
+    .limit(1);
+  if (comment === undefined) return [scopes.user(row.uploadedById)];
+  return [scopes.issue(comment.issueId)];
 }
 
 export interface CompletedAttachment {
@@ -55,7 +84,6 @@ export async function markAttachmentReady(
     if (updated === undefined) throw notFound('That upload was not registered.');
 
     const actor = await principalActor(tx, principal);
-    const scope = attachmentScopes(updated);
 
     return {
       attachment: updated,
@@ -63,7 +91,7 @@ export async function markAttachmentReady(
         buildSyncAction({
           syncId,
           organizationId: updated.organizationId,
-          scopes: scope,
+          scopes: await resolveAttachmentScopes(tx, updated, updated.organizationId),
           action: 'update',
           model: 'attachment',
           modelId: updated.id,
@@ -73,4 +101,141 @@ export async function markAttachmentReady(
       ],
     };
   });
+}
+
+interface AttachmentDraft {
+  readonly parentType: string;
+  readonly parentId: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly size: number;
+  readonly storageKey: string;
+  readonly status: 'pending' | 'ready';
+}
+
+async function insertAttachment(
+  principal: Principal,
+  draft: AttachmentDraft,
+): Promise<CompletedAttachment> {
+  return await db.transaction(async (tx) => {
+    const syncId = await nextSyncId(tx);
+    const [created] = await tx
+      .insert(schema.attachment)
+      .values({
+        id: newId(),
+        organizationId: principal.organizationId,
+        parentType: draft.parentType,
+        parentId: draft.parentId,
+        fileName: draft.fileName,
+        contentType: draft.contentType,
+        size: draft.size,
+        storageKey: draft.storageKey,
+        status: draft.status,
+        uploadedById: principal.userId,
+        syncId,
+      })
+      .returning();
+    const attachment = requireRow(created, 'That upload could not be registered.');
+    const actor = await principalActor(tx, principal);
+
+    return {
+      attachment,
+      actions: [
+        buildSyncAction({
+          syncId,
+          organizationId: attachment.organizationId,
+          scopes: await resolveAttachmentScopes(tx, attachment, attachment.organizationId),
+          action: 'insert',
+          model: 'attachment',
+          modelId: attachment.id,
+          data: attachment,
+          actor,
+        }),
+      ],
+    };
+  });
+}
+
+export interface RegisteredUpload extends CompletedAttachment {
+  readonly upload: UploadTarget;
+}
+
+export async function registerUpload(
+  principal: Principal,
+  input: unknown,
+  driver?: StorageDriver,
+): Promise<RegisteredUpload> {
+  const upload = validateUpload(input);
+  const parsed = uploadRequestSchema.parse(input);
+  await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
+
+  const store = driver ?? storageDriver();
+  const key = storageKeyFor(principal.organizationId, upload.safeName);
+  const target = await store.createUploadTarget(key, upload.contentType, upload.size);
+  const registered = await insertAttachment(principal, {
+    parentType: parsed.parentType,
+    parentId: parsed.parentId,
+    fileName: upload.fileName,
+    contentType: upload.contentType,
+    size: upload.size,
+    storageKey: target.key,
+    status: 'pending',
+  });
+
+  return { ...registered, upload: target };
+}
+
+export async function finishUpload(
+  principal: Principal,
+  attachmentId: string,
+  driver?: StorageDriver,
+): Promise<CompletedAttachment> {
+  const record = await findAttachmentForOrganization(principal, attachmentId);
+  if (record.uploadedById !== principal.userId) {
+    throw notFound('That upload was not registered.');
+  }
+  const stored = await (driver ?? storageDriver()).stat(record.storageKey);
+  if (stored === null) throw notFound('That upload never reached storage.');
+  if (stored.size > record.size) {
+    throw validationFailed('That upload is larger than the registered size.');
+  }
+  return await markAttachmentReady(principal, record, stored.size);
+}
+
+export interface AttachedFile extends CompletedAttachment {
+  readonly url: string;
+}
+
+export async function attachFile(
+  principal: Principal,
+  input: unknown,
+  driver?: StorageDriver,
+): Promise<AttachedFile> {
+  const parsed = inlineUploadSchema.parse(input);
+  const bytes = new Uint8Array(Buffer.from(parsed.content, 'base64'));
+  const upload = validateUpload({
+    fileName: parsed.fileName,
+    contentType: parsed.contentType,
+    size: bytes.byteLength,
+  });
+  await assertUploadParent(db, principal, parsed.parentType, parsed.parentId);
+
+  const store = driver ?? storageDriver();
+  const key = storageKeyFor(principal.organizationId, upload.safeName);
+  await store.put(key, bytes, upload.contentType);
+  try {
+    const stored = await insertAttachment(principal, {
+      parentType: parsed.parentType,
+      parentId: parsed.parentId,
+      fileName: upload.fileName,
+      contentType: upload.contentType,
+      size: upload.size,
+      storageKey: key,
+      status: 'ready',
+    });
+    return { ...stored, url: fileUrlFor(key) };
+  } catch (error: unknown) {
+    await store.delete(key).catch(() => undefined);
+    throw error;
+  }
 }

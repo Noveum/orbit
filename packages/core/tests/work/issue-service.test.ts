@@ -3,6 +3,7 @@ import { db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { ZodError } from 'zod';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -23,6 +24,7 @@ import {
   getIssueFacets,
   getIssueSummary,
   listIssues,
+  listRelatedIssues,
   listRelations,
   listSubscribers,
   moveIssue,
@@ -808,6 +810,93 @@ describe('getIssue', () => {
   });
 });
 
+describe('parent and due date writes', () => {
+  it('stores a due date the caller sends and clears it again', async () => {
+    const issue = await newIssue('Ships friday');
+
+    const dated = await updateIssue(workspace.admin, issue.id, { dueDate: '2031-03-04' });
+    expect(dated.issue.dueDate).toBe('2031-03-04');
+    expect(dated.changes.map((change) => change.field)).toContain('dueDate');
+
+    const cleared = await updateIssue(workspace.admin, issue.id, { dueDate: null });
+    expect(cleared.issue.dueDate).toBeNull();
+  });
+
+  it('refuses a parent that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+    const mine = await newIssue('Out in the open');
+
+    await expect(updateIssue(principal, mine.id, { parentId: hidden.id })).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    await expect(
+      createIssue(principal, {
+        teamId: workspace.teamId,
+        title: 'Smuggled child',
+        parentId: hidden.id,
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('accepts a parent the caller shares a team with', async () => {
+    const { principal } = await addMember(workspace, 'member');
+    const parent = await newIssue('Epic');
+    const child = await newIssue('Task');
+
+    const updated = await updateIssue(principal, child.id, { parentId: parent.id });
+    expect(updated.issue.parentId).toBe(parent.id);
+  });
+
+  it('refuses a due date that is not a calendar day', async () => {
+    const issue = await newIssue('Ships never');
+
+    for (const nonsense of [true, false, 0, 1_700_000_000_000, 'banana', {}, []]) {
+      await expect(updateIssue(workspace.admin, issue.id, { dueDate: nonsense })).rejects.toThrow();
+    }
+
+    expect((await getIssue(workspace.admin, issue.id)).dueDate).toBeNull();
+  });
+
+  it('refuses a due date outside the years a date column can hold', async () => {
+    const issue = await newIssue('Ships eventually');
+
+    for (const extreme of ['+275760-09-13', '-000001-01-01', '0000-12-31', '10000-01-01']) {
+      await expect(
+        updateIssue(workspace.admin, issue.id, { dueDate: extreme }),
+      ).rejects.toBeInstanceOf(ZodError);
+      await expect(
+        createIssue(workspace.admin, {
+          teamId: workspace.teamId,
+          title: 'Far off',
+          dueDate: extreme,
+        }),
+      ).rejects.toBeInstanceOf(ZodError);
+    }
+
+    expect((await getIssue(workspace.admin, issue.id)).dueDate).toBeNull();
+  });
+
+  it('keeps a due date at either end of the range a date column can hold', async () => {
+    const issue = await newIssue('Ships at the edge');
+
+    expect(
+      (await updateIssue(workspace.admin, issue.id, { dueDate: '0001-01-01' })).issue.dueDate,
+    ).toBe('0001-01-01');
+    expect(
+      (await updateIssue(workspace.admin, issue.id, { dueDate: '9999-12-31' })).issue.dueDate,
+    ).toBe('9999-12-31');
+  });
+});
+
 describe('relations', () => {
   it('keeps the inverse relation consistent', async () => {
     const blocker = await newIssue('Blocker');
@@ -835,6 +924,94 @@ describe('relations', () => {
     await expect(
       setRelation(workspace.admin, issue.id, { relatedIssueId: issue.id, type: 'related' }),
     ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('returns the related issue rows alongside the link', async () => {
+    const blocker = await newIssue('Blocker');
+    const blocked = await newIssue('Blocked');
+    await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+
+    const related = await listRelatedIssues(workspace.admin, blocker.id);
+    expect(related).toHaveLength(1);
+    expect(related[0]?.type).toBe('blocks');
+    expect(related[0]?.issue.identifier).toBe(blocked.identifier);
+    expect(related[0]?.issue.title).toBe('Blocked');
+  });
+
+  it('refuses to list the relations of an issue the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(listRelations(principal, hidden.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(listRelatedIssues(principal, hidden.id)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('leaves out a related issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const mine = await newIssue('Out in the open');
+    await setRelation(workspace.admin, mine.id, { relatedIssueId: hidden.id, type: 'blocks' });
+    const { principal } = await addMember(workspace, 'member');
+
+    expect(await listRelatedIssues(workspace.admin, mine.id)).toHaveLength(1);
+    expect(await listRelatedIssues(principal, mine.id)).toEqual([]);
+  });
+
+  it('refuses to unlink an issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const mine = await newIssue('Out in the open');
+    await setRelation(workspace.admin, mine.id, { relatedIssueId: hidden.id, type: 'blocks' });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(
+      removeRelation(principal, mine.id, { relatedIssueId: hidden.id, type: 'blocks' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    expect(await listRelations(workspace.admin, hidden.id)).toHaveLength(1);
+    expect(await listRelations(workspace.admin, mine.id)).toHaveLength(1);
+  });
+
+  it('refuses to link an issue that sits in a team the caller cannot see', async () => {
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const firstState = states[0];
+    if (firstState === undefined) throw new Error('missing state');
+    const { issue: hidden } = await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Behind the wall',
+      stateId: firstState.id,
+    });
+    const { principal } = await addMember(workspace, 'member');
+    const mine = await createIssue(principal, { teamId: workspace.teamId, title: 'Mine' });
+
+    await expect(
+      setRelation(principal, mine.issue.id, { relatedIssueId: hidden.id, type: 'blocks' }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(await listRelations(workspace.admin, hidden.id)).toHaveLength(0);
   });
 });
 
