@@ -3,6 +3,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { registerAdminTools } from './admin.ts';
 import { registerDocTools } from './docs.ts';
 import { registerIdentityTools } from './identity.ts';
+import { registerInboxTools } from './inbox.ts';
 import { registerIssueTools } from './issues.ts';
 import { registerOrgTools } from './org.ts';
 import { registerPlanningTools } from './planning.ts';
@@ -12,6 +13,7 @@ import { registerWorkspaceTools } from './workspace.ts';
 
 export function registerTools(server: McpServer, principal: Principal): void {
   registerIdentityTools(server, principal);
+  registerInboxTools(server, principal);
   registerIssueTools(server, principal);
   registerPlanningTools(server, principal);
   registerScrumTools(server, principal);
