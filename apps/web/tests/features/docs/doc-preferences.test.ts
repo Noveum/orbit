@@ -10,8 +10,8 @@ import {
 } from '@/features/docs/use-doc-preferences.ts';
 
 describe('doc preferences', () => {
-  it('opens a document in markdown with the formatting bar out of the way', () => {
-    expect(DEFAULT_DOC_PREFERENCES.mode).toBe('markdown');
+  it('opens a document rendered, with the formatting bar out of the way', () => {
+    expect(DEFAULT_DOC_PREFERENCES.mode).toBe('rich');
     expect(DEFAULT_DOC_PREFERENCES.toolbar).toBe(false);
   });
 

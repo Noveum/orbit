@@ -16,7 +16,7 @@ export interface DocPreferences {
 }
 
 export const DEFAULT_DOC_PREFERENCES: DocPreferences = {
-  mode: 'markdown',
+  mode: 'rich',
   toolbar: false,
   width: 'wide',
 };
