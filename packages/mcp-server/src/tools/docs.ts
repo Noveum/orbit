@@ -18,7 +18,7 @@ import {
   updateDocComment,
 } from '@orbit/core';
 import { DOC_VISIBILITIES } from '@orbit/shared/constants';
-import { conflict, notFound } from '@orbit/shared/errors';
+import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveDocCollectionId, resolveProject } from '../resolve.ts';
@@ -161,7 +161,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       name: 'list_docs',
       title: 'List documents',
       description:
-        'List the documents this user can read, newest first. Filter by a search query, a project or a collection.',
+        'List the documents this user can read, in the order they sit in the sidebar, or by relevance when you pass a query. Filter by a project, by a collection, or to the documents in no collection at all.',
       readOnly: true,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe('Match against title and body.'),
@@ -174,6 +174,11 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       },
     },
     async (args) => {
+      if (args.collection !== undefined && args.unfiled === true) {
+        throw validationFailed(
+          'Ask for one collection or for the unfiled documents, not both: nothing is in a collection and in none.',
+        );
+      }
       const project =
         args.project === undefined ? undefined : (await resolveProject(principal, args.project)).id;
       const collectionId =

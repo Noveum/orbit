@@ -290,3 +290,13 @@ describe('unknown parameters', () => {
     expect(messageOf(result)).toContain('collections');
   });
 });
+
+describe('contradictory filters', () => {
+  it('refuses to be asked for one collection and for the unfiled at once', async () => {
+    await collectionId('Contradiction');
+    const error = errorPayload(
+      await admin.call('list_docs', { collection: 'Contradiction', unfiled: true }),
+    );
+    expect(error.code).toBe('validation_failed');
+  });
+});
