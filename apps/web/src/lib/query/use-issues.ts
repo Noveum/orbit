@@ -91,7 +91,7 @@ export function bootstrapQueryOptions(teamKey: string | null) {
         bootstrapSchema,
         { signal },
       ),
-    staleTime: 'static' as const,
+    staleTime: Number.POSITIVE_INFINITY,
   };
 }
 
