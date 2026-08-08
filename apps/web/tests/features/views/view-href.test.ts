@@ -12,6 +12,7 @@ const TEAMS: readonly Team[] = [
 const PROJECTS: readonly Project[] = [
   {
     id: 'project-atlas',
+    slug: 'atlas',
     name: 'Atlas',
     status: 'planned',
     color: '#5a63c8',

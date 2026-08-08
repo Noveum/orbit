@@ -2,14 +2,15 @@
 
 import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 import { sprintLabel } from '@orbit/shared/utils';
-import { Trash2, X } from 'lucide-react';
+import { ArrowUpRight, Trash2, X } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { cn } from '@/lib/cn.ts';
 import { dangerMenuAction, rowHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
-import type { Issue, Milestone } from '@/lib/query/schemas.ts';
+import type { Cycle, Issue, Milestone, Project } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useMilestones } from '@/lib/query/use-milestones.ts';
 import { DueDateField } from './due-date-field.tsx';
@@ -60,6 +61,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const teamLabels = workspace.labels.filter(
     (label) => label.teamId === null || label.teamId === issue.teamId,
   );
+  const teamKey = workspace.teams.find((entry) => entry.id === issue.teamId)?.key;
   const parentLabel =
     issue.parentId === null ? 'No parent' : (parent?.identifier ?? 'Parent issue');
 
@@ -241,23 +243,14 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
         </PropertyMenu>
       </PropertyRow>
 
-      <PropertyRow label="Project" shortcut="i">
-        <PropertyMenu
-          title="Project"
-          open={openMenu === 'project'}
-          onOpenChange={toggle('project')}
-          options={[
-            { id: 'none', label: 'No project' },
-            ...workspace.projects.map((entry) => ({ id: entry.id, label: entry.name })),
-          ]}
-          selected={issue.projectId === null ? ['none'] : [issue.projectId]}
-          onSelect={(value) => patch({ projectId: value === 'none' ? null : value })}
-        >
-          <button type="button" className={rowClassName} data-testid="property-project">
-            {project?.name ?? 'No project'}
-          </button>
-        </PropertyMenu>
-      </PropertyRow>
+      <ProjectProperty
+        issue={issue}
+        project={project}
+        projects={workspace.projects}
+        open={openMenu === 'project'}
+        onOpenChange={toggle('project')}
+        onSelect={(projectId) => patch({ projectId })}
+      />
 
       <MilestoneProperty
         issue={issue}
@@ -308,29 +301,131 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
         </div>
       </PropertyRow>
 
-      <PropertyRow label="Sprint">
+      <SprintProperty
+        cycle={cycle}
+        cycles={cycles}
+        teamKey={teamKey}
+        open={openMenu === 'cycle'}
+        onOpenChange={toggle('cycle')}
+        onSelect={(cycleId) => patch({ cycleId })}
+      />
+
+      <DeleteIssueRow issue={issue} onDeleted={onDeleted} />
+    </aside>
+  );
+}
+
+function ProjectProperty({
+  issue,
+  project,
+  projects,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  readonly issue: Issue;
+  readonly project: Project | undefined;
+  readonly projects: readonly Project[];
+  readonly open: boolean;
+  readonly onOpenChange: (next: boolean) => void;
+  readonly onSelect: (projectId: string | null) => void;
+}) {
+  return (
+    <PropertyRow label="Project" shortcut="i">
+      <div className="flex items-center gap-1">
+        <PropertyMenu
+          title="Project"
+          open={open}
+          onOpenChange={onOpenChange}
+          options={[
+            { id: 'none', label: 'No project' },
+            ...projects.map((entry) => ({ id: entry.id, label: entry.name })),
+          ]}
+          selected={issue.projectId === null ? ['none'] : [issue.projectId]}
+          onSelect={(value) => onSelect(value === 'none' ? null : value)}
+        >
+          <button type="button" className={rowClassName} data-testid="property-project">
+            {project?.name ?? 'No project'}
+          </button>
+        </PropertyMenu>
+        {project === undefined || project.slug === '' ? null : (
+          <OpenLink
+            href={`/projects/${project.slug}`}
+            label={`Open ${project.name}`}
+            testId="open-project"
+          />
+        )}
+      </div>
+    </PropertyRow>
+  );
+}
+
+function SprintProperty({
+  cycle,
+  cycles,
+  teamKey,
+  open,
+  onOpenChange,
+  onSelect,
+}: {
+  readonly cycle: Cycle | undefined;
+  readonly cycles: readonly Cycle[];
+  readonly teamKey: string | undefined;
+  readonly open: boolean;
+  readonly onOpenChange: (next: boolean) => void;
+  readonly onSelect: (cycleId: string | null) => void;
+}) {
+  return (
+    <PropertyRow label="Sprint">
+      <div className="flex items-center gap-1">
         <PropertyMenu
           title="Sprint"
-          open={openMenu === 'cycle'}
-          onOpenChange={toggle('cycle')}
+          open={open}
+          onOpenChange={onOpenChange}
           options={[
             { id: 'none', label: 'No sprint' },
-            ...cycles.map((entry) => ({
-              id: entry.id,
-              label: sprintLabel(entry),
-            })),
+            ...cycles.map((entry) => ({ id: entry.id, label: sprintLabel(entry) })),
           ]}
-          selected={issue.cycleId === null ? ['none'] : [issue.cycleId]}
-          onSelect={(value) => patch({ cycleId: value === 'none' ? null : value })}
+          selected={cycle === undefined ? ['none'] : [cycle.id]}
+          onSelect={(value) => onSelect(value === 'none' ? null : value)}
         >
           <button type="button" className={rowClassName} data-testid="property-cycle">
             {cycle === undefined ? 'No sprint' : sprintLabel(cycle)}
           </button>
         </PropertyMenu>
-      </PropertyRow>
+        {cycle === undefined || teamKey === undefined ? null : (
+          <OpenLink
+            href={`/team/${teamKey.toLowerCase()}/sprint/${cycle.number}`}
+            label={`Open ${sprintLabel(cycle)}`}
+            testId="open-sprint"
+          />
+        )}
+      </div>
+    </PropertyRow>
+  );
+}
 
-      <DeleteIssueRow issue={issue} onDeleted={onDeleted} />
-    </aside>
+function OpenLink({
+  href,
+  label,
+  testId,
+}: {
+  readonly href: string;
+  readonly label: string;
+  readonly testId: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-label={label}
+      data-testid={testId}
+      className={cn(
+        'flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:text-text',
+        rowHover,
+      )}
+    >
+      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+    </Link>
   );
 }
 
