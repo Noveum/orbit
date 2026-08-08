@@ -172,8 +172,12 @@ agents. Set `ORBIT_TEST_LANE` to something unique in each:
 
 ```bash
 ORBIT_TEST_LANE=my-branch bun run test
-bun run db:test-lanes-drop
+ORBIT_TEST_LANE=my-branch bun run db:test-lanes-drop
 ```
+
+The cleanup drops that lane alone, so it cannot delete a lane another run is
+using. Without `ORBIT_TEST_LANE` it refuses. `--all` drops every lane on that
+Postgres and is the only mode that can touch someone else's.
 
 ### The demo data is a mess
 
