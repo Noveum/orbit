@@ -300,6 +300,7 @@ export function previewDetail(issue: Issue): IssueDetail {
     activity: [],
     activityCursor: null,
     subIssues: [],
+    parent: null,
     subscribed: false,
   };
 }
@@ -336,6 +337,8 @@ export interface IssuePatch {
   readonly projectId?: string | null;
   readonly milestoneId?: string | null;
   readonly cycleId?: string | null;
+  readonly parentId?: string | null;
+  readonly dueDate?: string | null;
   readonly estimate?: number | null;
   readonly labelIds?: readonly string[];
 }
@@ -491,6 +494,10 @@ export function useUpdateIssue() {
         current === undefined ? current : { ...current, issue },
       );
     },
+    onSettled: (_issue, _error, input) => {
+      if (input.patch.parentId === undefined) return;
+      client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
+    },
   });
 }
 
@@ -565,6 +572,8 @@ export interface CreateIssueInput {
   readonly assigneeId: string | null;
   readonly projectId: string | null;
   readonly cycleId: string | null;
+  readonly parentId?: string | null;
+  readonly dueDate?: string | null;
   readonly estimate: number | null;
   readonly labelIds: readonly string[];
 }
@@ -588,9 +597,11 @@ export function useCreateIssue(_teamId: string) {
         tone: 'danger',
       });
     },
-    onSuccess: (issue) => {
+    onSuccess: (issue, input) => {
       addToLists(client, issue);
       refreshCounts(client);
+      if (input.parentId === undefined || input.parentId === null) return;
+      client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
     },
   });
 }

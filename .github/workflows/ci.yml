@@ -27,6 +27,8 @@ jobs:
         run: bun run lint
       - name: No-comment policy
         run: bun run check-comments
+      - name: One copy of every overridden dependency
+        run: bun run check-deps
       - name: Typecheck
         run: bun run typecheck
 

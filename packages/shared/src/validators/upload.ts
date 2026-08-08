@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { ALLOWED_UPLOAD_MIME_PREFIXES, MAX_UPLOAD_BYTES } from '../constants/index.ts';
+import {
+  ALLOWED_UPLOAD_MIME_PREFIXES,
+  base64LengthFor,
+  MAX_INLINE_UPLOAD_BYTES,
+  MAX_UPLOAD_BYTES,
+} from '../constants/index.ts';
 import { idSchema } from './common.ts';
 
 export const uploadRequestSchema = z.object({
@@ -18,3 +23,9 @@ export const uploadRequestSchema = z.object({
 });
 
 export type UploadRequestInput = z.infer<typeof uploadRequestSchema>;
+
+export const inlineUploadSchema = uploadRequestSchema.omit({ size: true }).extend({
+  content: z.base64().max(base64LengthFor(MAX_INLINE_UPLOAD_BYTES)),
+});
+
+export type InlineUploadInput = z.infer<typeof inlineUploadSchema>;

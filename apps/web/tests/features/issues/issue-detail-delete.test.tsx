@@ -112,6 +112,7 @@ const detail: IssueDetail = {
   activity: [],
   activityCursor: null,
   subIssues: [],
+  parent: null,
   subscribed: false,
 };
 

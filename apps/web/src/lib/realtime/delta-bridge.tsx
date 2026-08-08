@@ -22,6 +22,7 @@ import {
   DOCS_HOME_ROOT,
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
+  ISSUE_RELATIONS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
@@ -68,6 +69,7 @@ interface RootInvalidations {
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
+  relations: boolean;
   milestones: boolean;
   docIds: Set<string>;
 }
@@ -206,6 +208,10 @@ function routeAction(
     patchSubscription(client, action, currentUserId);
     return;
   }
+  if (action.model === 'issue_relation') {
+    roots.relations = true;
+    return;
+  }
   if (DOC_MODELS.has(action.model)) {
     roots.docs = true;
     if (action.model === 'doc') roots.docIds.add(action.modelId);
@@ -229,6 +235,9 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
   }
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
+  if (roots.relations) {
+    client.invalidateQueries({ queryKey: [ISSUE_RELATIONS_ROOT] }).catch(noop);
+  }
   if (roots.milestones) client.invalidateQueries({ queryKey: [MILESTONES_ROOT] }).catch(noop);
   if (roots.docs) {
     client.invalidateQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
@@ -267,6 +276,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         bootstrap: false,
         views: false,
         docs: false,
+        relations: false,
         milestones: false,
         docIds: new Set<string>(),
       };

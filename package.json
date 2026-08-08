@@ -35,8 +35,9 @@
     "format": "biome format --write .",
     "check-comments": "bun scripts/strip-comments.ts --check",
     "check-bytes": "bun scripts/check-source-bytes.ts",
+    "check-deps": "bun scripts/check-dependency-dedupe.ts",
     "strip-comments": "bun scripts/strip-comments.ts",
-    "verify": "bun run lint && bun run check-comments && bun run check-bytes && bun run typecheck && bun run test",
+    "verify": "bun run lint && bun run check-comments && bun run check-bytes && bun run check-deps && bun run typecheck && bun run test",
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
     "db:push": "bun run --filter '@orbit/db' push",
@@ -60,5 +61,12 @@
     "@types/bun": "1.3.14",
     "lefthook": "2.1.10",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "@lezer/highlight": "^1.2.3"
   }
 }
