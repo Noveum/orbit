@@ -1,4 +1,6 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
+import { createComment } from '@orbit/core';
+import { db, eq, schema, sql } from '@orbit/db';
 import {
   addMember,
   connect,
@@ -66,5 +68,42 @@ describe('list_issue_comments', () => {
   it('is available to a contributor token', async () => {
     const result = await contributor.result('list_issue_comments', { issue: issueIdentifier });
     expect((result['comments'] as unknown[]).length).toBe(2);
+  });
+
+  it('returns an empty thread and a null cursor for an issue with no comments', async () => {
+    const created = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Nobody has said anything yet',
+    });
+    const quiet = created['issue'] as { identifier: string };
+
+    const result = await admin.result('list_issue_comments', { issue: quiet.identifier });
+
+    expect(result['comments']).toEqual([]);
+    expect(result['nextCursor']).toBeNull();
+  });
+
+  it('falls back to Unknown once the comment author has no user row left', async () => {
+    const created = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Its commenter will be removed',
+    });
+    const issue = created['issue'] as { id: string; identifier: string };
+
+    const doomed = await addMember(workspace, 'contributor', 'Gone Already');
+    await createComment(doomed.principal, issue.id, { body: 'I will not be here long.' });
+
+    await db.execute(sql`alter table "user" disable trigger all`);
+    try {
+      await db.delete(schema.user).where(eq(schema.user.id, doomed.user.id));
+    } finally {
+      await db.execute(sql`alter table "user" enable trigger all`);
+    }
+
+    const result = await admin.result('list_issue_comments', { issue: issue.identifier });
+    const comments = result['comments'] as { authorName: string }[];
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.authorName).toBe('Unknown');
   });
 });
