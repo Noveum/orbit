@@ -1,10 +1,10 @@
 'use client';
 
-import { PRIORITIES } from '@orbit/shared/constants';
+import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { ChevronRight } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -17,7 +17,7 @@ import {
 } from '@/features/docs/editor/rich-text-editor.tsx';
 import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { Cycle, Issue, Project } from '@/lib/query/schemas.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import {
   attachPending,
@@ -44,6 +44,84 @@ function pendingLabel(count: number): string {
   return `${count} ${noun} will be attached once the issue is created.`;
 }
 
+function ScopePickers({
+  teamProjects,
+  teamCycles,
+  projectId,
+  estimate,
+  cycleId,
+  onProject,
+  onEstimate,
+  onCycle,
+}: {
+  readonly teamProjects: readonly Project[];
+  readonly teamCycles: readonly Cycle[];
+  readonly projectId: string | null;
+  readonly estimate: number | null;
+  readonly cycleId: string | null;
+  readonly onProject: (id: string | null) => void;
+  readonly onEstimate: (points: number | null) => void;
+  readonly onCycle: (id: string | null) => void;
+}) {
+  return (
+    <>
+      <PropertyMenu
+        title="Project"
+        options={[
+          {
+            id: 'none',
+            label: teamProjects.length === 0 ? 'No projects on this team' : 'No project',
+          },
+          ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
+        ]}
+        selected={projectId === null ? ['none'] : [projectId]}
+        onSelect={(value) => onProject(value === 'none' ? null : value)}
+      >
+        <button type="button" className={chipClassName} data-testid="quick-create-project">
+          {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
+        </button>
+      </PropertyMenu>
+
+      <PropertyMenu
+        title="Estimate"
+        options={[
+          { id: 'none', label: 'No estimate' },
+          ...DEFAULT_ESTIMATE_SCALE.map((points) => ({
+            id: String(points),
+            label: `${points} points`,
+          })),
+        ]}
+        selected={estimate === null ? ['none'] : [String(estimate)]}
+        onSelect={(value) => onEstimate(value === 'none' ? null : Number(value))}
+      >
+        <button type="button" className={chipClassName} data-testid="quick-create-estimate">
+          {estimate === null ? 'Estimate' : `${estimate} points`}
+        </button>
+      </PropertyMenu>
+
+      <PropertyMenu
+        title="Sprint"
+        options={[
+          {
+            id: 'none',
+            label: teamCycles.length === 0 ? 'No sprints on this team' : 'No sprint',
+          },
+          ...teamCycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
+        ]}
+        selected={cycleId === null ? ['none'] : [cycleId]}
+        onSelect={(value) => onCycle(value === 'none' ? null : value)}
+      >
+        <button type="button" className={chipClassName} data-testid="quick-create-cycle">
+          {(() => {
+            const found = teamCycles.find((cycle) => cycle.id === cycleId);
+            return found === undefined ? 'Sprint' : sprintLabel(found);
+          })()}
+        </button>
+      </PropertyMenu>
+    </>
+  );
+}
+
 export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
@@ -57,6 +135,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [labelIds, setLabelIds] = useState<readonly string[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cycleId, setCycleId] = useState<string | null>(null);
+  const [estimate, setEstimate] = useState<number | null>(null);
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
@@ -83,6 +162,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setAssigneeId(null);
     setLabelIds([]);
     setProjectId(null);
+    setEstimate(null);
     setCycleId(null);
     setPending([]);
   }, [open]);
@@ -134,9 +214,18 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
-  const teamProjects = projects.filter(
-    (project) =>
-      project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
+  const teamProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
+      ),
+    [projects, teamId],
+  );
+
+  const teamCycles = useMemo(
+    () => cycles.filter((cycle) => cycle.teamId === teamId),
+    [cycles, teamId],
   );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
@@ -156,7 +245,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         assigneeId,
         projectId,
         cycleId,
-        estimate: null,
+        estimate,
         labelIds,
       },
       {
@@ -233,6 +322,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 setTeamId(id);
                 setStateId(null);
                 setProjectId(null);
+                setEstimate(null);
                 setCycleId(null);
                 setLabelIds([]);
               }}
@@ -316,38 +406,16 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               </button>
             </PropertyMenu>
 
-            <PropertyMenu
-              title="Project"
-              options={[
-                { id: 'none', label: 'No project' },
-                ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
-              ]}
-              selected={projectId === null ? ['none'] : [projectId]}
-              onSelect={(value) => setProjectId(value === 'none' ? null : value)}
-            >
-              <button type="button" className={chipClassName} data-testid="quick-create-project">
-                {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
-              </button>
-            </PropertyMenu>
-
-            <PropertyMenu
-              title="Sprint"
-              options={[
-                { id: 'none', label: 'No sprint' },
-                ...cycles
-                  .filter((cycle) => cycle.teamId === teamId)
-                  .map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
-              ]}
-              selected={cycleId === null ? ['none'] : [cycleId]}
-              onSelect={(value) => setCycleId(value === 'none' ? null : value)}
-            >
-              <button type="button" className={chipClassName} data-testid="quick-create-cycle">
-                {(() => {
-                  const found = cycles.find((cycle) => cycle.id === cycleId);
-                  return found === undefined ? 'Sprint' : sprintLabel(found);
-                })()}
-              </button>
-            </PropertyMenu>
+            <ScopePickers
+              teamProjects={teamProjects}
+              teamCycles={teamCycles}
+              projectId={projectId}
+              estimate={estimate}
+              cycleId={cycleId}
+              onProject={setProjectId}
+              onEstimate={setEstimate}
+              onCycle={setCycleId}
+            />
           </div>
 
           <div className="flex items-center justify-end gap-2 border-border border-t pt-3">

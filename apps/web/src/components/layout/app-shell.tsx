@@ -127,6 +127,7 @@ export function AppShell({
         <TopBar
           breadcrumbs={breadcrumbs}
           onOpenDrawer={() => setDrawerOpen(true)}
+          onOpenSearch={() => setPaletteOpen(true)}
           panelOpen={panel === undefined ? null : panelOpen}
           onTogglePanel={togglePanel}
           {...(actions === undefined ? {} : { actions })}
