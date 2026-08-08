@@ -90,7 +90,7 @@ Expected: FAIL because `org:delete`, `organizationDeleteSchema`, and the organiz
 
 ```ts
 export const organizationDeleteSchema = z.object({
-  confirmation: z.string().trim().min(1).max(80),
+  confirmation: z.string().min(1).max(80).refine((value) => value === value.trim()),
 });
 
 export const controlMessageSchema = z.discriminatedUnion('type', [
@@ -211,7 +211,7 @@ async summarizePrefix(prefix: string): Promise<StoragePrefixSummary>
 async deletePrefix(prefix: string): Promise<void>
 ```
 
-Use `ListObjectsV2Command` with `Prefix` and `ContinuationToken`. Sum each returned object's `Size`. Use `ListObjectVersionsCommand` to count and permanently remove historical versions and delete markers. Send `DeleteObjectsCommand` requests of no more than 1,000 exact returned keys and version ids, reject any response containing `Errors`, and repeat listing until empty pages prove the prefix and its version history are empty. Treat only a provider's explicit `NotImplemented` response as a versionless fallback.
+Use `ListObjectsV2Command` with `Prefix` and `ContinuationToken`. Sum each returned object's `Size`. Use `ListObjectVersionsCommand` to count and permanently remove historical versions and delete markers. Require both continuation markers from every truncated version page. Send `DeleteObjectsCommand` requests of no more than 1,000 exact returned keys and version ids, reject any response containing `Errors`, and repeat listing until empty pages prove the prefix and its version history are empty. Treat only a provider's explicit `NotImplemented` response as a versionless fallback.
 
 - [x] **Step 4: Add deletion tests for all safety boundaries**
 
@@ -327,7 +327,7 @@ Expected: FAIL because the service does not exist.
 
 - [x] **Step 3: Implement bounded aggregate summary queries**
 
-Use one `count()` query per category with `eq(table.organizationId, principal.organizationId)`, a future `max(attachment.uploadExpiresAt)` query, and `driver.summarizePrefix(storagePrefixFor(principal.organizationId))`. Call `assertCan(principal, 'org:delete')` before database or storage access.
+Use one `count()` query per category with `eq(table.organizationId, principal.organizationId)`, a latest protected-upload query that adds the exported completion grace, and `driver.summarizePrefix(storagePrefixFor(principal.organizationId))`. Call `assertCan(principal, 'org:delete')` before database or storage access. Lock and recheck the current membership role inside the deletion transaction before touching storage.
 
 - [x] **Step 4: Write failing destructive service tests**
 
@@ -343,7 +343,7 @@ expect(await sessionExists(sessionId)).toBe(true);
 expect(await activeOrganization(sessionId)).toBeNull();
 ```
 
-Cover stale-name refusal, future upload refusal with `availableAt` details, exact expiry boundary, storage failure rollback, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
+Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, exact completion-grace boundary, storage failure rollback, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
 
 - [x] **Step 5: Implement locked cleanup and next-workspace selection**
 

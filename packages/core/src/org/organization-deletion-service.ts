@@ -1,5 +1,11 @@
-import { and, asc, count, db, desc, eq, gt, ne, schema } from '@orbit/db';
-import { type StorageDriver, storageDriver, storagePrefixFor } from '@orbit/services/storage';
+import { and, asc, count, db, desc, eq, gt, ne, schema, type Transaction } from '@orbit/db';
+import {
+  type StorageDriver,
+  storageDriver,
+  storagePrefixFor,
+  UPLOAD_COMPLETION_GRACE_SECONDS,
+} from '@orbit/services/storage';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -33,23 +39,49 @@ function totalOf(rows: readonly { readonly total: number }[]): number {
   return rows[0]?.total ?? 0;
 }
 
-async function latestLiveUploadExpiration(
+function organizationRole(value: string | undefined): OrgRole {
+  return ORG_ROLES.find((role) => role === value) ?? 'guest';
+}
+
+async function assertCurrentDeletionPermission(
+  tx: Transaction,
+  principal: Principal,
+): Promise<void> {
+  const [membership] = await tx
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, principal.organizationId),
+        eq(schema.member.userId, principal.userId),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  assertCan({ ...principal, role: organizationRole(membership?.role) }, 'org:delete');
+}
+
+async function latestUploadProtectionEnd(
   executor: Executor,
   organizationId: string,
   now: Date,
 ): Promise<Date | null> {
+  const graceMs = UPLOAD_COMPLETION_GRACE_SECONDS * 1000;
+  const protectedAfter = new Date(now.getTime() - graceMs);
   const [row] = await executor
     .select({ uploadExpiresAt: schema.attachment.uploadExpiresAt })
     .from(schema.attachment)
     .where(
       and(
         eq(schema.attachment.organizationId, organizationId),
-        gt(schema.attachment.uploadExpiresAt, now),
+        gt(schema.attachment.uploadExpiresAt, protectedAfter),
       ),
     )
     .orderBy(desc(schema.attachment.uploadExpiresAt))
     .limit(1);
-  return row?.uploadExpiresAt ?? null;
+  const expiration = row?.uploadExpiresAt;
+  if (expiration === undefined || expiration === null) return null;
+  return new Date(expiration.getTime() + graceMs);
 }
 
 export async function getOrganizationDeletionSummary(
@@ -94,7 +126,7 @@ export async function getOrganizationDeletionSummary(
         .select({ total: count() })
         .from(schema.webhook)
         .where(eq(schema.webhook.organizationId, principal.organizationId)),
-      latestLiveUploadExpiration(db, principal.organizationId, now),
+      latestUploadProtectionEnd(db, principal.organizationId, now),
       driver.summarizePrefix(storagePrefixFor(principal.organizationId)),
     ]);
   return {
@@ -124,10 +156,11 @@ export async function deleteOrganization(
   const parsed = organizationDeleteSchema.parse(input);
   return await db.transaction(async (tx) => {
     const organization = await lockOrganization(tx, principal.organizationId);
+    await assertCurrentDeletionPermission(tx, principal);
     if (parsed.confirmation !== organization.name) {
       throw conflict('Type the current workspace name exactly to confirm deletion.');
     }
-    const availableAt = await latestLiveUploadExpiration(tx, organization.id, now);
+    const availableAt = await latestUploadProtectionEnd(tx, organization.id, now);
     if (availableAt !== null) {
       throw conflict('Wait for pending upload links to expire before deleting this workspace.', {
         details: { availableAt: availableAt.toISOString() },

@@ -42,6 +42,7 @@ export const s3ConfigSchema = z.object({
 export type S3Config = z.input<typeof s3ConfigSchema>;
 
 export const UPLOAD_URL_TTL_SECONDS = 900;
+export const UPLOAD_COMPLETION_GRACE_SECONDS = UPLOAD_URL_TTL_SECONDS;
 const DEFAULT_CONTENT_TYPE = 'application/octet-stream';
 const MAX_DELETE_OBJECTS = 1000;
 
@@ -221,7 +222,7 @@ async function versionPrefixInventory(
       throw internal('The workspace file-version inventory is too large to summarize safely.');
     }
     if (page.IsTruncated !== true) return { objects, bytes };
-    if (page.NextKeyMarker === undefined) {
+    if (page.NextKeyMarker === undefined || page.NextVersionIdMarker === undefined) {
       throw internal('Object storage returned an incomplete workspace file-version listing.');
     }
     keyMarker = page.NextKeyMarker;

@@ -255,7 +255,8 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
 
               {blocked && availableAt !== null ? (
                 <p role="status" className="rounded-md bg-warning/10 p-3 text-warning text-xs">
-                  Deletion becomes available after pending upload links expire at{' '}
+                  Deletion becomes available after pending upload links and their completion window
+                  close at{' '}
                   {new Intl.DateTimeFormat(undefined, {
                     dateStyle: 'medium',
                     timeStyle: 'short',

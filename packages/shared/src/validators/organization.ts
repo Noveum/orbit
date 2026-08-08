@@ -29,7 +29,11 @@ export const organizationUpdateSchema = z
 
 export const organizationDeleteSchema = z
   .object({
-    confirmation: z.string().trim().min(1).max(80),
+    confirmation: z
+      .string()
+      .min(1)
+      .max(80)
+      .refine((value) => value === value.trim()),
   })
   .strict();
 

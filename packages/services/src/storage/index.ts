@@ -21,6 +21,7 @@ export {
   type S3Config,
   S3StorageDriver,
   s3ConfigSchema,
+  UPLOAD_COMPLETION_GRACE_SECONDS,
   UPLOAD_URL_TTL_SECONDS,
 } from './s3.ts';
 export {

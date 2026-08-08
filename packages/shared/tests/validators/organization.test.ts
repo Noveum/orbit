@@ -2,8 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import { organizationDeleteSchema } from '../../src/validators/organization.ts';
 
 describe('organizationDeleteSchema', () => {
-  it('trims the exact workspace-name confirmation', () => {
-    expect(organizationDeleteSchema.parse({ confirmation: '  Nova  ' })).toEqual({
+  it('rejects surrounding spaces instead of changing the exact confirmation', () => {
+    expect(organizationDeleteSchema.safeParse({ confirmation: '  Nova  ' }).success).toBe(false);
+    expect(organizationDeleteSchema.parse({ confirmation: 'Nova' })).toEqual({
       confirmation: 'Nova',
     });
   });

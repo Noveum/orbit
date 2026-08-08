@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { and, count, db, eq, schema } from '@orbit/db';
-import type { StorageDriver, StoragePrefixSummary } from '@orbit/services/storage';
+import {
+  type StorageDriver,
+  type StoragePrefixSummary,
+  UPLOAD_COMPLETION_GRACE_SECONDS,
+} from '@orbit/services/storage';
 import { internal } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import postgres from 'postgres';
@@ -190,7 +194,7 @@ describe('getOrganizationDeletionSummary', () => {
     expect(storage.summarized).toEqual([]);
   });
 
-  it('reports the latest live presigned upload expiration', async () => {
+  it('reports the latest upload expiration plus its completion grace', async () => {
     const earlier = new Date('2026-08-08T12:10:00.000Z');
     const later = new Date('2026-08-08T12:12:00.000Z');
     await db.insert(schema.attachment).values([
@@ -228,7 +232,9 @@ describe('getOrganizationDeletionSummary', () => {
       new Date('2026-08-08T12:00:00.000Z'),
     );
 
-    expect(summary.availableAt).toBe(later.toISOString());
+    expect(summary.availableAt).toBe(
+      new Date(later.getTime() + UPLOAD_COMPLETION_GRACE_SECONDS * 1000).toISOString(),
+    );
   });
 });
 
@@ -257,9 +263,31 @@ describe('deleteOrganization', () => {
     expect(storage.deleted).toEqual([]);
   });
 
+  it('refuses a stale administrator principal after the member was demoted', async () => {
+    await db
+      .update(schema.member)
+      .set({ role: 'member' })
+      .where(
+        and(
+          eq(schema.member.organizationId, nova.organizationId),
+          eq(schema.member.userId, nova.admin.userId),
+        ),
+      );
+    const storage = fakeStorage();
+
+    await expect(
+      deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await organizationCount(nova.organizationId)).toBe(1);
+    expect(storage.deleted).toEqual([]);
+  });
+
   it('blocks while a presigned target can still recreate the prefix', async () => {
     const now = new Date('2026-08-08T12:00:00.000Z');
-    const availableAt = new Date('2026-08-08T12:01:00.000Z');
+    const uploadExpiresAt = new Date('2026-08-08T12:01:00.000Z');
+    const availableAt = new Date(
+      uploadExpiresAt.getTime() + UPLOAD_COMPLETION_GRACE_SECONDS * 1000,
+    );
     await db.insert(schema.attachment).values({
       id: newId(),
       organizationId: nova.organizationId,
@@ -271,7 +299,7 @@ describe('deleteOrganization', () => {
       storageKey: `${nova.organizationId}/pending.txt`,
       status: 'pending',
       uploadedById: nova.adminUser.id,
-      uploadExpiresAt: availableAt,
+      uploadExpiresAt,
     });
     const storage = fakeStorage();
 
@@ -360,7 +388,7 @@ describe('deleteOrganization', () => {
     expect(session?.activeOrganizationId).toBe(nova.organizationId);
   });
 
-  it('allows deletion at the exact upload-expiry boundary and returns no fallback', async () => {
+  it('blocks at URL expiry while an upload may still be finishing', async () => {
     const now = new Date('2026-08-08T12:00:00.000Z');
     await db.insert(schema.attachment).values({
       id: newId(),
@@ -374,6 +402,34 @@ describe('deleteOrganization', () => {
       status: 'pending',
       uploadedById: nova.adminUser.id,
       uploadExpiresAt: now,
+    });
+
+    await expect(
+      deleteOrganization(nova.admin, { confirmation: 'Nova' }, fakeStorage().driver, now),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: {
+        availableAt: new Date(now.getTime() + UPLOAD_COMPLETION_GRACE_SECONDS * 1000).toISOString(),
+      },
+    });
+    expect(await organizationCount(nova.organizationId)).toBe(1);
+  });
+
+  it('allows deletion at the exact upload-completion boundary and returns no fallback', async () => {
+    const now = new Date('2026-08-08T12:15:00.000Z');
+    const uploadExpiresAt = new Date(now.getTime() - UPLOAD_COMPLETION_GRACE_SECONDS * 1000);
+    await db.insert(schema.attachment).values({
+      id: newId(),
+      organizationId: nova.organizationId,
+      parentType: 'issue',
+      parentId: 'issue_1',
+      fileName: 'expired.txt',
+      contentType: 'text/plain',
+      size: 1,
+      storageKey: `${nova.organizationId}/expired.txt`,
+      status: 'pending',
+      uploadedById: nova.adminUser.id,
+      uploadExpiresAt,
     });
 
     const result = await deleteOrganization(

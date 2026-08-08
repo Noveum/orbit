@@ -144,6 +144,24 @@ describe('S3StorageDriver prefix summary', () => {
         $metadata: {},
         Versions: [{ Key: 'org_1/a', VersionId: 'version_1', Size: 10 }],
         IsTruncated: true,
+        NextVersionIdMarker: 'version_1',
+      };
+    });
+    const driver = new S3StorageDriver(config, client);
+
+    await expect(driver.summarizePrefix('org_1/')).rejects.toMatchObject({ code: 'internal' });
+  });
+
+  it('rejects a truncated version response without its next version marker', async () => {
+    const { client } = controlledClient((command) => {
+      if (command instanceof ListObjectsV2Command) {
+        return { $metadata: {}, Contents: [], IsTruncated: false };
+      }
+      return {
+        $metadata: {},
+        Versions: [{ Key: 'org_1/a', VersionId: 'version_1', Size: 10 }],
+        IsTruncated: true,
+        NextKeyMarker: 'org_1/a',
       };
     });
     const driver = new S3StorageDriver(config, client);

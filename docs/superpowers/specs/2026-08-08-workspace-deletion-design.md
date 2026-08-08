@@ -31,29 +31,29 @@ The shared policy adds `org:delete`, granted only to the administrator role. The
 
 The API is rooted at `/api/organizations/current/deletion`. It never accepts an organization id, slug, or storage prefix. Both `GET` and `DELETE` resolve the workspace from the authenticated principal. The delete body contains only the workspace-name confirmation. This makes a cross-workspace request impossible even when the caller administers more than one workspace.
 
-The confirmation is trimmed and compared case-sensitively with the current database value while the organization row is locked. A stale dialog cannot delete a workspace after another administrator renames it.
+The confirmation is preserved exactly and compared case-sensitively with the current database value while the organization row is locked. Surrounding spaces are rejected instead of silently changed. A stale dialog cannot delete a workspace after another administrator renames it.
 
 ## Deletion summary
 
 `getOrganizationDeletionSummary` returns the organization name, categorized counts, actual stored object bytes, stored object-version bytes, and an optional `availableAt` timestamp. Database counts come from bounded aggregate queries over direct organization columns. File counts and bytes come from `StorageDriver.summarizePrefix`, so pending uploads, orphaned objects, and recoverable historical versions under the organization prefix are visible even when they do not have an attachment row. The summary does not fetch row bodies or enumerate names.
 
-`availableAt` protects outstanding presigned uploads. A nullable `attachment.uploadExpiresAt` records the expiration of each presigned target and remains null for inline uploads. The summary uses the latest future value. If present, the dialog names when deletion becomes available and the server refuses an early delete even if a client bypasses the UI.
+`availableAt` protects outstanding presigned uploads. A nullable `attachment.uploadExpiresAt` records the expiration of each presigned target and remains null for inline uploads. The summary uses the latest expiration plus a 15-minute upload-completion grace. If present, the dialog names when deletion becomes available and the server refuses an early delete even if a client bypasses the UI.
 
 ## Upload and deletion serialization
 
 Storage keys already begin with `<organizationId>/`. Deleting the whole prefix removes tracked attachments, pending uploads, and orphaned objects.
 
-An S3 upload URL remains writable until it expires. A prefix that was empty at deletion time could otherwise receive a late upload. The upload registration and deletion paths therefore serialize on the organization row:
+S3 checks a presigned URL when the HTTP request begins, so a request started before expiration can finish afterward. A prefix that was empty at deletion time could otherwise receive a late upload. The upload registration and deletion paths therefore serialize on the organization row, and deletion waits through a completion grace after the last URL expires:
 
 1. Upload registration locks the organization row before it creates a target and attachment record.
 2. The target expiration is stored on the attachment, and the transaction commits before the target is returned to the browser.
 3. Workspace deletion obtains the same lock.
-4. Deletion refuses while any attachment can still have an unexpired upload target.
-5. After the last target expires, no application path can mint another target while deletion holds the lock.
+4. Deletion refuses while any attachment can still have an unexpired upload target or a started upload inside the completion grace.
+5. After the last completion grace closes, no application path can mint another target while deletion holds the lock.
 
 Inline uploads use the same organization lock around storage and attachment registration. A deletion that wins the lock removes the organization before a waiting upload can proceed. The waiting upload then fails closed instead of recreating the prefix.
 
-The upload URL lifetime is exported from the storage package so the registration, migration backfill, summary, deletion, and tests use one value. The migration conservatively gives every recently created existing attachment an expiration based on its creation time. The nullable column also has a 15-minute database default, so an older application instance that omits it during a rolling release remains protected. The new inline-upload path explicitly stores null.
+The upload URL lifetime and completion grace are exported from the storage package so registration, migration backfill, summary, deletion, and tests use the same values. The migration conservatively gives every recently created existing attachment an expiration based on its creation time. The nullable column also has a 15-minute database default, so an older application instance that omits it during a rolling release remains protected. The new inline-upload path explicitly stores null.
 
 ## Storage cleanup
 
@@ -67,11 +67,11 @@ The upload URL lifetime is exported from the storage package so the registration
 6. reports any per-object deletion error as an internal domain error
 7. lists again until the prefix and its version history are empty
 
-The implementation sends exact keys and version ids returned by S3 and never broadens the requested prefix. Providers such as Cloudflare R2 that return `501 Not Implemented` for the version-listing API fall back to current-object cleanup because they do not expose S3 object versioning. Permission or partial-delete errors continue to fail closed. AWS S3 policies used by Orbit need `s3:ListBucketVersions` and `s3:DeleteObjectVersion` in addition to current-object list and delete permissions. Tests cover pagination, more than one deletion batch, version history, delete markers, unsupported version APIs, empty prefixes, malformed prefixes, and partial S3 errors.
+The implementation sends exact keys and version ids returned by S3 and never broadens the requested prefix. Truncated version pages must include both continuation markers required by S3 or cleanup fails closed. Providers such as Cloudflare R2 that return `501 Not Implemented` for the version-listing API fall back to current-object cleanup because they do not expose S3 object versioning. Permission or partial-delete errors continue to fail closed. AWS S3 policies used by Orbit need `s3:ListBucketVersions` and `s3:DeleteObjectVersion` in addition to current-object list and delete permissions. Tests cover pagination, more than one deletion batch, version history, delete markers, unsupported version APIs, empty prefixes, malformed prefixes, and partial S3 errors.
 
 ## Database cleanup
 
-The deletion service starts a database transaction, locks the active organization, rechecks the confirmation and recent-upload guard, and deletes the storage prefix while new uploads are excluded. If storage cleanup fails, the transaction rolls back and the endpoint returns an error. Retrying is safe because prefix deletion is idempotent.
+The deletion service starts a database transaction, locks the active organization, locks and rechecks the caller's current membership role, rechecks the confirmation and upload guard, and deletes the storage prefix while new uploads are excluded. A demoted or removed administrator cannot complete a request using a stale principal. If storage cleanup fails, the transaction rolls back and the endpoint returns an error. Retrying is safe because prefix deletion is idempotent.
 
 After storage is empty, the same transaction clears `session.active_organization_id` wherever it names the workspace and deletes the organization row. Existing foreign keys cascade through workspace-owned rows. User, account, passkey, and avatar records remain because they belong to the person rather than a workspace. The schema migration adds `attachment.upload_expires_at` and the conservative backfill used by the upload guard.
 
@@ -97,7 +97,7 @@ Expected failures are:
 
 - `401` when signed out
 - `403` when the role lacks `org:delete`
-- `409` when the confirmation does not match or an upload URL can still be used
+- `409` when the confirmation does not match or an upload URL or started upload remains protected
 - `500` when object storage cannot be fully cleaned
 
 The UI keeps the dialog open and displays the server message. It does not remove the workspace locally until the delete response succeeds.
@@ -126,7 +126,8 @@ Core integration tests cover:
 - preservation of the neighboring workspace and shared users
 - deletion of every direct organization table through cascades
 - clearing active session references without deleting user sessions
-- presigned expiration storage, conservative migration backfill, recent-upload blocking, and the expiry boundary
+- presigned expiration storage, conservative migration backfill, completion-grace blocking, and the grace boundary
+- stale administrator role refusal inside the deletion transaction
 - rollback when storage cleanup fails
 - upload and deletion lock ordering
 - selection of the next surviving workspace

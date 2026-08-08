@@ -113,7 +113,7 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps deletion blocked until a protected upload target expires', async () => {
+  it('keeps deletion blocked until a protected upload completion window closes', async () => {
     installFetch([
       response({
         summary: { ...summary, availableAt: new Date(Date.now() + 60_000).toISOString() },
@@ -125,7 +125,7 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     await openDialog(user);
     await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
 
-    expect(screen.getByText(/pending upload links expire/)).toBeVisible();
+    expect(screen.getByText(/pending upload links and their completion window/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Permanently delete workspace' })).toBeDisabled();
   });
 
