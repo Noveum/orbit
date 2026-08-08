@@ -77,8 +77,12 @@ real failures.
 
 ```bash
 ORBIT_TEST_LANE=my-branch bun run test
-bun run db:test-lanes-drop   # clean up the lane databases afterwards
+ORBIT_TEST_LANE=my-branch bun run db:test-lanes-drop   # clean up that lane afterwards
 ```
+
+The cleanup drops only the lane you name, so it cannot take out a run someone
+else has going. Without `ORBIT_TEST_LANE` it refuses instead of guessing. Pass
+`--all` when you really do want every lane on that Postgres gone.
 
 ## Find something to work on
 

@@ -380,7 +380,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
         <EmptyState
           icon={<Bell strokeWidth={1.75} aria-hidden="true" />}
           title="Inbox zero"
-          description="Assignments, mentions, reviews, and PR updates land here."
+          description="When somebody assigns you an issue, mentions you, replies to you, or changes something you follow, it lands here. Your own actions do not."
           className="flex-1"
         />
       ) : (

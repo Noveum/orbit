@@ -1,13 +1,19 @@
 import { describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Activity, Comment, Member } from '@/lib/query/schemas.ts';
 import {
   applyMention,
   CommentComposer,
   findMentionQuery,
 } from '../../../src/features/comments/comment-composer.tsx';
-import { buildTimeline, CommentBody } from '../../../src/features/comments/comment-thread.tsx';
+import {
+  buildTimeline,
+  CommentBody,
+  CommentThread,
+} from '../../../src/features/comments/comment-thread.tsx';
 
 const members: readonly Member[] = [
   {
@@ -174,5 +180,35 @@ describe('buildTimeline', () => {
       '2026-01-01T11:00:00.000Z',
       '2026-01-01T12:00:00.000Z',
     ]);
+  });
+});
+
+describe('comment attachments', () => {
+  it('offers a file input on the composer only when uploads are wired up', () => {
+    const { rerender } = render(<CommentComposer members={members} onSubmit={mock()} />);
+    expect(screen.queryByTestId('comment-composer-file')).toBeNull();
+
+    rerender(
+      <CommentComposer
+        members={members}
+        onSubmit={mock()}
+        onUpload={() =>
+          Promise.resolve({ url: '/api/files/x', fileName: 'x.txt', contentType: 'text/plain' })
+        }
+      />,
+    );
+    expect(screen.getByTestId('comment-composer-file')).toBeInTheDocument();
+  });
+
+  it('wires the thread composer for attachments so a comment can carry a file', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <CommentThread issueId="issue_1" comments={[]} activity={[]} members={members} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('comment-composer-file')).toBeInTheDocument();
   });
 });

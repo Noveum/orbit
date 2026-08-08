@@ -1,6 +1,10 @@
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { type IssueRelationType, SORT_ORDER_STEP } from '@orbit/shared/constants';
+import {
+  ISSUE_RELATION_TYPES,
+  type IssueRelationType,
+  SORT_ORDER_STEP,
+} from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -74,12 +78,16 @@ export const PARENT_CHAIN_LIMIT = 10;
 
 async function assertParentAllowed(
   executor: Executor,
-  organizationId: string,
+  principal: Principal,
   issueId: string,
   parentId: string,
 ): Promise<void> {
-  let cursor: string | null = parentId;
-  let depth = 0;
+  if (parentId === issueId) {
+    throw conflict('An issue cannot be its own parent, directly or through its parent chain.');
+  }
+  const parent = await loadIssue(executor, principal, parentId);
+  let cursor: string | null = parent.parentId;
+  let depth = 1;
   while (cursor !== null) {
     if (cursor === issueId) {
       throw conflict('An issue cannot be its own parent, directly or through its parent chain.');
@@ -89,10 +97,12 @@ async function assertParentAllowed(
     const rows: { parentId: string | null }[] = await executor
       .select({ parentId: schema.issue.parentId })
       .from(schema.issue)
-      .where(and(eq(schema.issue.id, cursor), eq(schema.issue.organizationId, organizationId)))
+      .where(
+        and(eq(schema.issue.id, cursor), eq(schema.issue.organizationId, principal.organizationId)),
+      )
       .limit(1);
-    const parent = requireRow(rows[0], 'That parent issue does not exist.');
-    cursor = parent.parentId;
+    const ancestor = requireRow(rows[0], 'That parent issue does not exist.');
+    cursor = ancestor.parentId;
   }
 }
 
@@ -727,7 +737,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const now = new Date();
     const id = newId();
     if (parsed.parentId !== null) {
-      await assertParentAllowed(tx, principal.organizationId, id, parsed.parentId);
+      await assertParentAllowed(tx, principal, id, parsed.parentId);
     }
 
     const [created] = await tx
@@ -838,7 +848,7 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
 
   const { values, changes } = collectIssueChanges(current, parsed);
   if (values.parentId !== undefined && values.parentId !== null) {
-    await assertParentAllowed(tx, principal.organizationId, current.id, values.parentId);
+    await assertParentAllowed(tx, principal, current.id, values.parentId);
   }
   if (values.stateId !== undefined) {
     if (state === null || state.teamId !== current.teamId) {
@@ -1911,6 +1921,7 @@ export async function removeRelation(
 
   return await db.transaction(async (tx) => {
     await loadIssue(tx, principal, issueId);
+    await loadIssue(tx, principal, parsed.relatedIssueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -1958,6 +1969,7 @@ export async function listRelations(
   issueId: string,
 ): Promise<IssueRelationRow[]> {
   assertCan(principal, 'issue:read');
+  await loadIssue(db, principal, issueId);
   return await db
     .select()
     .from(schema.issueRelation)
@@ -1967,6 +1979,65 @@ export async function listRelations(
         eq(schema.issueRelation.issueId, issueId),
       ),
     );
+}
+
+export async function getParentIssue(
+  principal: Principal,
+  issueId: string,
+): Promise<IssueRow | null> {
+  assertCan(principal, 'issue:read');
+  const issue = await loadIssue(db, principal, issueId);
+  if (issue.parentId === null) return null;
+  const [row] = await db
+    .select()
+    .from(schema.issue)
+    .where(
+      and(
+        eq(schema.issue.id, issue.parentId),
+        eq(schema.issue.organizationId, principal.organizationId),
+      ),
+    )
+    .limit(1);
+  if (row === undefined || !isInTeam(principal, teamScope(row))) return null;
+  return row;
+}
+
+export interface RelatedIssue {
+  readonly id: string;
+  readonly type: IssueRelationType;
+  readonly issue: IssueRow;
+}
+
+function relationTypeOf(value: string): IssueRelationType {
+  const found = ISSUE_RELATION_TYPES.find((entry) => entry === value);
+  return found ?? 'related';
+}
+
+export async function listRelatedIssues(
+  principal: Principal,
+  issueId: string,
+): Promise<RelatedIssue[]> {
+  assertCan(principal, 'issue:read');
+  await loadIssue(db, principal, issueId);
+  const rows = await db
+    .select({ relation: schema.issueRelation, related: schema.issue })
+    .from(schema.issueRelation)
+    .innerJoin(schema.issue, eq(schema.issue.id, schema.issueRelation.relatedIssueId))
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, principal.organizationId),
+        eq(schema.issueRelation.issueId, issueId),
+      ),
+    )
+    .orderBy(asc(schema.issueRelation.createdAt));
+
+  return rows
+    .filter((row) => isInTeam(principal, teamScope(row.related)))
+    .map((row) => ({
+      id: row.relation.id,
+      type: relationTypeOf(row.relation.type),
+      issue: row.related,
+    }));
 }
 
 export async function subscribe(

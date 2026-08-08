@@ -3,7 +3,10 @@
 import { useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
-import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
+import {
+  RichTextEditor,
+  type UploadedAttachment,
+} from '@/features/docs/editor/rich-text-editor.tsx';
 import type { Member } from '@/lib/query/schemas.ts';
 
 export interface MentionQuery {
@@ -36,6 +39,7 @@ export interface CommentComposerProps {
   readonly initialValue?: string;
   readonly onSubmit: (body: string) => void;
   readonly onCancel?: () => void;
+  readonly onUpload?: (file: File) => Promise<UploadedAttachment>;
   readonly testId?: string;
 }
 
@@ -48,6 +52,7 @@ export function CommentComposer({
   initialValue = '',
   onSubmit,
   onCancel,
+  onUpload,
   testId = 'comment-composer',
 }: CommentComposerProps) {
   const [value, setValue] = useState(initialValue);
@@ -83,6 +88,7 @@ export function CommentComposer({
           toolbar="compact"
           onSubmit={submit}
           {...(onCancel === undefined ? {} : { onCancel })}
+          {...(onUpload === undefined ? {} : { onUpload })}
         />
       </div>
 
