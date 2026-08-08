@@ -177,12 +177,12 @@ export async function registerUpload(
 ): Promise<RegisteredUpload> {
   const upload = validateUpload(input);
   const parsed = uploadRequestSchema.parse(input);
-  const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
   return await db.transaction(async (tx) => {
     const organization = await lockOrganization(tx, principal.organizationId);
     assertOrganizationAcceptsFiles(organization);
     await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
+    const store = driver ?? storageDriver();
     const target = await store.createUploadTarget(key, upload.contentType, upload.size);
     const registered = await insertAttachment(tx, principal, {
       parentType: parsed.parentType,
@@ -231,14 +231,15 @@ export async function attachFile(
     contentType: parsed.contentType,
     size: bytes.byteLength,
   });
-  const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
+  let store: StorageDriver | null = driver ?? null;
   let objectStored = false;
   try {
     return await db.transaction(async (tx) => {
       const organization = await lockOrganization(tx, principal.organizationId);
       assertOrganizationAcceptsFiles(organization);
       await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
+      store ??= storageDriver();
       await store.put(key, bytes, upload.contentType);
       objectStored = true;
       const stored = await insertAttachment(tx, principal, {
@@ -254,7 +255,7 @@ export async function attachFile(
       return { ...stored, url: fileUrlFor(key) };
     });
   } catch (error: unknown) {
-    if (objectStored) await store.delete(key).catch(() => undefined);
+    if (objectStored && store !== null) await store.delete(key).catch(() => undefined);
     throw error;
   }
 }
