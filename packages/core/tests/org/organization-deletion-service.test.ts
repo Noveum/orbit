@@ -153,22 +153,6 @@ function pause(ms: number): Promise<void> {
   });
 }
 
-async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const rows = await client<{ waiting: number }[]>`
-      select count(*)::int as waiting
-      from pg_stat_activity
-      where datname = current_database()
-        and pid <> pg_backend_pid()
-        and wait_event_type = 'Lock'
-    `;
-    if ((rows[0]?.waiting ?? 0) > 0) return;
-    await pause(10);
-  }
-  throw new Error('The upload did not wait for workspace deletion.');
-}
-
 describe('getOrganizationDeletionSummary', () => {
   it('reports categorized tenant counts and the actual storage prefix inventory', async () => {
     await seedDeletionInventory();
@@ -535,7 +519,7 @@ describe('deleteOrganization', () => {
     expect(await organizationCount(nova.organizationId)).toBe(0);
   });
 
-  it('finishes every fallible database mutation before deleting storage', async () => {
+  it('keeps a retry state when a final database statement fails after storage cleanup', async () => {
     const now = new Date('2026-08-08T14:00:00.000Z');
     await makeDeletionReady(nova.organizationId, now);
     await db.execute(sql`
@@ -554,13 +538,28 @@ describe('deleteOrganization', () => {
         deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, now),
       ).rejects.toBeDefined();
 
-      expect(storage.deleted).toEqual([]);
+      expect(storage.deleted).toEqual([`${nova.organizationId}/`]);
       expect(await organizationCount(nova.organizationId)).toBe(1);
       const [organization] = await db
         .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
         .from(schema.organization)
         .where(eq(schema.organization.id, nova.organizationId));
       expect(organization?.deletionRequestedAt).toBeInstanceOf(Date);
+
+      await db.execute(sql`
+        delete from organization_deletion_test_blocker
+        where organization_id = ${nova.organizationId}
+      `);
+
+      const retried = await deleteOrganization(
+        nova.admin,
+        { confirmation: 'Nova' },
+        storage.driver,
+        now,
+      );
+      expect(retried.deletedOrganizationId).toBe(nova.organizationId);
+      expect(storage.deleted).toEqual([`${nova.organizationId}/`, `${nova.organizationId}/`]);
+      expect(await organizationCount(nova.organizationId)).toBe(0);
     } finally {
       await db.execute(sql`drop table organization_deletion_test_blocker`);
     }
@@ -724,11 +723,6 @@ describe('deleteOrganization', () => {
       idle_timeout: 5,
       onnotice: () => undefined,
     });
-    const monitor = postgres(databaseUrl(), {
-      max: 1,
-      idle_timeout: 5,
-      onnotice: () => undefined,
-    });
     const deleting = deleteOrganization(
       nova.admin,
       { confirmation: 'Nova' },
@@ -749,17 +743,23 @@ describe('deleteOrganization', () => {
         parentId: issue.id,
       },
       uploadDriver,
+    ).then(
+      () => ({ status: 'fulfilled' as const }),
+      (error: unknown) => ({ error, status: 'rejected' as const }),
     );
     try {
       const first = await Promise.race([
         competingLock.then(() => 'acquired' as const),
-        waitForDatabaseLock(monitor).then(() => 'lock' as const),
+        pause(1_000).then(() => 'timeout' as const),
       ]);
-      expect(first).toBe('lock');
+      expect(first).toBe('acquired');
       releaseDeletion?.();
       await deleting;
       await competingLock;
-      await expect(uploading).rejects.toMatchObject({ code: 'not_found' });
+      expect(await uploading).toMatchObject({
+        error: { code: 'conflict' },
+        status: 'rejected',
+      });
       expect(targetCreated).toBe(false);
     } finally {
       releaseDeletion?.();
@@ -767,7 +767,6 @@ describe('deleteOrganization', () => {
       await uploading.catch(() => undefined);
       await competingLock.catch(() => undefined);
       await challenger.end();
-      await monitor.end();
     }
   });
 });

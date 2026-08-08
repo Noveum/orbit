@@ -76,9 +76,11 @@ PostgreSQL and object storage cannot share one atomic transaction. The deletion 
 
 The first transaction locks the active organization, locks and rechecks the caller's current membership role, rechecks the confirmation, and commits `organization.deletionRequestedAt`. A demoted or removed administrator cannot start or resume deletion using a stale principal. Once this state is present, normal API and page access is redirected or rejected, uploads cannot create new objects, ordinary organization lists omit the workspace, MCP and realtime authentication fail closed, and public docs and attachments stop resolving. The deletion summary and delete endpoint remain available. The app switcher includes pending workspaces only for their administrators, so an authorized retry remains discoverable after a sign-out or workspace switch.
 
-The second transaction repeats the lock, role, and confirmation checks, then calculates the later of the tracked-upload guard and deletion-request drain. An early retry returns that exact timestamp without touching storage. A ready retry clears `session.active_organization_id`, chooses a next organization that is not itself pending deletion, and executes the organization delete before it calls object storage. This means a failing database statement cannot run after irreversible storage work. Existing foreign keys cascade through workspace-owned rows. User, account, passkey, and avatar records remain because they belong to the person rather than a workspace.
+The readiness transaction repeats the lock, role, and confirmation checks, then calculates the later of the tracked-upload guard and deletion-request drain. An early retry returns that exact timestamp without touching storage. A ready retry releases the transaction before it deletes the exact storage prefix. Because the durable marker blocks uploads and every normal ingress, the prefix remains quiescent while paginated cleanup runs.
 
-Storage prefix deletion is the last operation inside the second transaction. If storage fails, the database mutations roll back but the deletion timestamp from the first transaction remains committed. If the final database commit fails after storage cleanup, that durable timestamp also remains. The dialog can retry the same endpoint, and prefix deletion is idempotent even after partial or complete cleanup. A successful commit removes the organization and its deletion state together.
+After storage cleanup, a short final transaction repeats the lock, role, confirmation, and readiness checks. It clears `session.active_organization_id`, chooses a next organization that is not itself pending deletion, and deletes the organization so existing foreign keys cascade through workspace-owned rows. User, account, passkey, and avatar records remain because they belong to the person rather than a workspace.
+
+If storage fails, the database graph remains intact and the deletion timestamp from the first transaction stays committed. If a final database statement or commit fails after storage cleanup, the graph and durable timestamp also remain. The dialog can retry the same endpoint, and prefix deletion is idempotent even after partial or complete cleanup. A successful final commit removes the organization and its deletion state together.
 
 The schema migration adds `attachment.upload_expires_at`, its conservative backfill, and `organization.deletion_requested_at`.
 
@@ -136,9 +138,9 @@ Core integration tests cover:
 - deletion of every direct organization table through cascades
 - clearing active session references without deleting user sessions
 - presigned expiration storage, conservative migration backfill, tracked completion-grace blocking, untracked capability draining, and both exact boundaries
-- stale administrator role refusal inside the deletion transaction
-- durable retry state and database rollback when storage cleanup fails
-- database failures before storage cleanup
+- stale administrator role refusal inside readiness and final transactions
+- durable retry state with no database transaction held during storage cleanup
+- final database statement and commit failures after storage cleanup
 - pending-deletion access locks for APIs, uploads, public docs, public attachments, MCP principals, and realtime principals
 - upload and deletion lock ordering
 - selection of the next surviving workspace

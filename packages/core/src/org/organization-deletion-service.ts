@@ -10,26 +10,14 @@ import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { organizationDeleteSchema } from '@orbit/shared/validators';
+import {
+  type OrganizationDeletionSummary,
+  organizationDeleteSchema,
+} from '@orbit/shared/validators';
 import { type Executor, requireRow } from '../internal.ts';
 import { lockOrganization } from './organization-lock.ts';
 
-export interface OrganizationDeletionSummary {
-  readonly organizationName: string;
-  readonly members: number;
-  readonly teams: number;
-  readonly projects: number;
-  readonly issues: number;
-  readonly documents: number;
-  readonly files: number;
-  readonly fileBytes: number;
-  readonly fileVersions: number;
-  readonly fileVersionBytes: number;
-  readonly integrations: number;
-  readonly webhooks: number;
-  readonly availableAt: string | null;
-  readonly deletionRequestedAt: string | null;
-}
+export type { OrganizationDeletionSummary } from '@orbit/shared/validators';
 
 export interface OrganizationDeletionResult {
   readonly deletedOrganizationId: string;
@@ -226,6 +214,12 @@ export async function deleteOrganization(
       .set({ deletionRequestedAt: now })
       .where(eq(schema.organization.id, organization.id));
   });
+  const organizationId = await db.transaction(async (tx) => {
+    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
+    await assertDeletionReady(tx, organization, now);
+    return organization.id;
+  });
+  await driver.deletePrefix(storagePrefixFor(organizationId));
   return await db.transaction(async (tx) => {
     const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
     await assertDeletionReady(tx, organization, now);
@@ -247,7 +241,6 @@ export async function deleteOrganization(
       .orderBy(asc(schema.organization.name), asc(schema.organization.id))
       .limit(1);
     await tx.delete(schema.organization).where(eq(schema.organization.id, organization.id));
-    await driver.deletePrefix(storagePrefixFor(organization.id));
     return {
       deletedOrganizationId: organization.id,
       deletedOrganizationName: organization.name,

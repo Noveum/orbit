@@ -161,7 +161,7 @@ async function currentPrefixInventory(
       throw internal('The workspace file inventory is too large to summarize safely.');
     }
     if (page.IsTruncated !== true) return { objects, bytes };
-    if (page.NextContinuationToken === undefined) {
+    if (page.NextContinuationToken === undefined || page.NextContinuationToken.length === 0) {
       throw internal('Object storage returned an incomplete workspace file listing.');
     }
     continuationToken = page.NextContinuationToken;
@@ -222,7 +222,12 @@ async function versionPrefixInventory(
       throw internal('The workspace file-version inventory is too large to summarize safely.');
     }
     if (page.IsTruncated !== true) return { objects, bytes };
-    if (page.NextKeyMarker === undefined || page.NextVersionIdMarker === undefined) {
+    if (
+      page.NextKeyMarker === undefined ||
+      page.NextKeyMarker.length === 0 ||
+      page.NextVersionIdMarker === undefined ||
+      page.NextVersionIdMarker.length === 0
+    ) {
       throw internal('Object storage returned an incomplete workspace file-version listing.');
     }
     keyMarker = page.NextKeyMarker;

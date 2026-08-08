@@ -114,6 +114,27 @@ describe('S3StorageDriver prefix summary', () => {
     await expect(driver.summarizePrefix('org_1/')).rejects.toMatchObject({ code: 'internal' });
   });
 
+  it('rejects a truncated response with an empty continuation token', async () => {
+    const { client, send } = controlledClient((command) => {
+      if (
+        command instanceof ListObjectsV2Command &&
+        command.input.ContinuationToken === undefined
+      ) {
+        return {
+          $metadata: {},
+          Contents: [{ Key: 'org_1/a', Size: 10 }],
+          IsTruncated: true,
+          NextContinuationToken: '',
+        };
+      }
+      throw new Error('The empty continuation token was reused.');
+    });
+    const driver = new S3StorageDriver(config, client);
+
+    await expect(driver.summarizePrefix('org_1/')).rejects.toMatchObject({ code: 'internal' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it('uses current objects as the version inventory when the provider has no version API', async () => {
     const { client } = controlledClient((command) => {
       if (command instanceof ListObjectsV2Command) {
@@ -167,6 +188,28 @@ describe('S3StorageDriver prefix summary', () => {
     const driver = new S3StorageDriver(config, client);
 
     await expect(driver.summarizePrefix('org_1/')).rejects.toMatchObject({ code: 'internal' });
+  });
+
+  it('rejects a truncated version response with an empty marker', async () => {
+    const { client, send } = controlledClient((command) => {
+      if (command instanceof ListObjectsV2Command) {
+        return { $metadata: {}, Contents: [], IsTruncated: false };
+      }
+      if (command instanceof ListObjectVersionsCommand && command.input.KeyMarker === undefined) {
+        return {
+          $metadata: {},
+          Versions: [{ Key: 'org_1/a', VersionId: 'version_1', Size: 10 }],
+          IsTruncated: true,
+          NextKeyMarker: '',
+          NextVersionIdMarker: 'version_1',
+        };
+      }
+      throw new Error('The empty version marker was reused.');
+    });
+    const driver = new S3StorageDriver(config, client);
+
+    await expect(driver.summarizePrefix('org_1/')).rejects.toMatchObject({ code: 'internal' });
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

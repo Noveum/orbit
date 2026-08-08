@@ -1,10 +1,8 @@
 # Workspace Deletion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Add an administrator-only, permanent workspace deletion flow that previews categorized impact, removes every tenant-owned database row and stored object, and safely recovers every open client.
 
-**Architecture:** A tenant-scoped core service owns preview and deletion. It serializes uploads against deletion with a PostgreSQL organization row lock, commits a durable deletion request that locks normal access, completes every fallible database mutation, and makes exact-prefix object cleanup the final operation before the database commit. A current-workspace API exposes the retryable service, a realtime control event closes affected sockets, and an accessible General settings danger-zone dialog requires the exact workspace name.
+**Architecture:** A tenant-scoped core service owns preview and deletion. It serializes uploads against deletion with a PostgreSQL organization row lock, commits a durable deletion request that locks normal access, performs exact-prefix object cleanup without holding a database transaction open, and finishes with a short cascaded-delete transaction. A current-workspace API exposes the retryable service, a realtime control event closes affected sockets, and an accessible General settings danger-zone dialog requires the exact workspace name.
 
 **Tech Stack:** Bun 1.3+, TypeScript 5.9, Next.js App Router, React 19, Drizzle ORM, PostgreSQL, AWS SDK v3 S3, Redis, Radix Dialog, Zod 4, Testing Library, `bun:test`.
 
@@ -28,7 +26,7 @@
 - `packages/shared/src/events/control.ts`: validate session and organization control messages.
 - `packages/db/src/schema/content.ts`: persist presigned upload expiration.
 - `packages/db/src/schema/org.ts`: persist the durable deletion request timestamp.
-- `packages/db/drizzle/0001_*.sql` and metadata: migrate and conservatively backfill upload expiration.
+- `packages/db/drizzle/0002_glossy_mister_sinister.sql` and metadata: migrate and conservatively backfill upload expiration.
 - `packages/db/tests/schema/index.test.ts`: assert the attachment field at the schema layer.
 - `packages/db/tests/schema/organization-cascade.test.ts`: inspect PostgreSQL foreign keys to prevent non-cascading workspace records.
 - `packages/services/src/storage/types.ts`: expose prefix summary and cleanup contracts.
@@ -114,9 +112,9 @@ Commit: `feat(workspace): define deletion contracts`
 **Files:**
 - Modify: `packages/db/src/schema/content.ts`
 - Modify: `packages/db/tests/schema/index.test.ts`
-- Create: `packages/db/drizzle/0001_*.sql`
+- Create: `packages/db/drizzle/0002_glossy_mister_sinister.sql`
 - Modify: `packages/db/drizzle/meta/_journal.json`
-- Create: `packages/db/drizzle/meta/0001_snapshot.json`
+- Create: `packages/db/drizzle/meta/0002_snapshot.json`
 
 **Interfaces:**
 - Produces: nullable `schema.attachment.uploadExpiresAt: Date | null` mapped to `upload_expires_at`.
@@ -343,7 +341,7 @@ expect(await sessionExists(sessionId)).toBe(true);
 expect(await activeOrganization(sessionId)).toBeNull();
 ```
 
-Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, tracked and untracked capability boundaries, durable retry after storage failure, database failure before storage cleanup, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
+Cover stale-name refusal, stale-administrator refusal, future upload refusal with `availableAt` details, tracked and untracked capability boundaries, durable retry after storage failure, final database statement and commit failures after storage cleanup, storage prefix selection, neighboring tenant preservation, shared-user preservation, and the null next-workspace result.
 
 - [x] **Step 5: Implement durable two-phase cleanup and next-workspace selection**
 
@@ -357,18 +355,25 @@ await db.transaction(async (tx) => {
   }
 });
 
+const organizationId = await db.transaction(async (tx) => {
+  const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
+  await assertDeletionReady(tx, organization, now);
+  return organization.id;
+});
+
+await driver.deletePrefix(storagePrefixFor(organizationId));
+
 return await db.transaction(async (tx) => {
   const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation);
   await assertDeletionReady(tx, organization, now);
   await tx.update(schema.session).set({ activeOrganizationId: null })
     .where(eq(schema.session.activeOrganizationId, organization.id));
   await tx.delete(schema.organization).where(eq(schema.organization.id, organization.id));
-  await driver.deletePrefix(storagePrefixFor(organization.id));
   return deletionResult;
 });
 ```
 
-Choose the next membership by organization name and id, excluding the deleting organization and any other pending deletion. The committed timestamp survives a failed second phase, normal access rejects the pending workspace, and an administrator can safely retry idempotent prefix cleanup. The second phase waits one full presigned URL lifetime plus completion grace after the timestamp, in addition to recorded attachment expiration guards. This covers a presigned target whose attachment insert or transaction commit failed. Return only ids and the deleted name.
+Choose the next membership by organization name and id, excluding the deleting organization and any other pending deletion. The committed timestamp survives storage and final-transaction failures, normal access rejects the pending workspace, and an administrator can safely retry idempotent prefix cleanup. The cleanup waits one full presigned URL lifetime plus completion grace after the timestamp, in addition to recorded attachment expiration guards. This covers a presigned target whose attachment insert or transaction commit failed. Return only ids and the deleted name.
 
 - [x] **Step 6: Add the live PostgreSQL cascade regression test**
 

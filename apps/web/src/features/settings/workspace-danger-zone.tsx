@@ -1,8 +1,14 @@
 'use client';
 
 import { formatBytes } from '@orbit/shared/utils';
+import {
+  type OrganizationDeletionResponse,
+  type OrganizationDeletionSummary,
+  organizationDeletionResponseSchema,
+  organizationDeletionSummaryResponseSchema,
+} from '@orbit/shared/validators';
 import { useEffect, useRef, useState } from 'react';
-import { z } from 'zod';
+import { ZodError } from 'zod';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Dialog,
@@ -16,35 +22,6 @@ import { Input } from '@/components/ui/input.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
 
-const deletionSummarySchema = z
-  .object({
-    organizationName: z.string(),
-    members: z.number().int().nonnegative(),
-    teams: z.number().int().nonnegative(),
-    projects: z.number().int().nonnegative(),
-    issues: z.number().int().nonnegative(),
-    documents: z.number().int().nonnegative(),
-    files: z.number().int().nonnegative(),
-    fileBytes: z.number().int().nonnegative(),
-    fileVersions: z.number().int().nonnegative(),
-    fileVersionBytes: z.number().int().nonnegative(),
-    integrations: z.number().int().nonnegative(),
-    webhooks: z.number().int().nonnegative(),
-    availableAt: z.string().datetime().nullable(),
-    deletionRequestedAt: z.string().datetime().nullable(),
-  })
-  .strict();
-
-const summaryResponseSchema = z.object({ summary: deletionSummarySchema }).strict();
-const deletionResponseSchema = z
-  .object({
-    deletedOrganizationId: z.string(),
-    nextOrganizationId: z.string().nullable(),
-  })
-  .strict();
-
-type DeletionSummary = z.infer<typeof deletionSummarySchema>;
-
 export function formatDeletionBytes(bytes: number): string {
   return formatBytes(bytes);
 }
@@ -54,7 +31,7 @@ function quantity(total: number, singular: string): string {
 }
 
 function payloadError(error: unknown): string {
-  if (error instanceof z.ZodError) return 'The deletion summary could not be read. Try again.';
+  if (error instanceof ZodError) return 'The deletion summary could not be read. Try again.';
   return messageOf(error);
 }
 
@@ -95,7 +72,7 @@ export function WorkspaceDangerZone({
   deletionRequestedAt = null,
 }: WorkspaceDangerZoneProps) {
   const [open, setOpen] = useState(false);
-  const [summary, setSummary] = useState<DeletionSummary | null>(null);
+  const [summary, setSummary] = useState<OrganizationDeletionSummary | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -135,7 +112,7 @@ export function WorkspaceDangerZone({
     try {
       const payload = await apiRequest<unknown>('/api/organizations/current/deletion');
       if (requestId.current !== activeRequest) return;
-      const parsed = summaryResponseSchema.parse(payload);
+      const parsed = organizationDeletionSummaryResponseSchema.parse(payload);
       setSummary(parsed.summary);
       setClock(Date.now());
     } catch (caught) {
@@ -167,13 +144,13 @@ export function WorkspaceDangerZone({
     deletingRef.current = true;
     setDeleting(true);
     setError(null);
-    let deleted: z.infer<typeof deletionResponseSchema>;
+    let deleted: OrganizationDeletionResponse;
     try {
       const payload = await apiRequest<unknown>('/api/organizations/current/deletion', {
         method: 'DELETE',
         body: { confirmation },
       });
-      deleted = deletionResponseSchema.parse(payload);
+      deleted = organizationDeletionResponseSchema.parse(payload);
     } catch (caught) {
       const nextError = payloadError(caught);
       deletingRef.current = false;
