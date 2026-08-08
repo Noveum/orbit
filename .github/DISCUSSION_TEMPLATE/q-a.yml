@@ -32,7 +32,7 @@ body:
     id: tried
     attributes:
       label: What you have tried
-      description: Commands you ran, and what happened. Paste error output in full rather than describing it.
+      description: Commands you ran, and what happened. Paste error output in full rather than describing it. Redact anything sensitive, including connection strings, API keys and anything out of your .env.
 
   - type: dropdown
     id: how
