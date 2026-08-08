@@ -6683,6 +6683,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "deletion_requested_at": {
+          "name": "deletion_requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
