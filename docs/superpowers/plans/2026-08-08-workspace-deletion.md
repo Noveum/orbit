@@ -385,7 +385,7 @@ Commit: `feat(workspace): delete tenant data safely`
 - Produces: `GET` response `{ summary }` with `cache-control: private, no-cache`.
 - Produces: `DELETE` response `{ deletedOrganizationId, nextOrganizationId }`.
 
-- [ ] **Step 1: Write failing publisher and hub tests**
+- [x] **Step 1: Write failing publisher and hub tests**
 
 ```ts
 await publishOrganizationDeleted(deletedId);
@@ -396,7 +396,7 @@ expect(deletedSocket.closures[0]).toEqual({
 expect(otherSocket.closures).toHaveLength(0);
 ```
 
-- [ ] **Step 2: Run realtime tests and confirm they fail**
+- [x] **Step 2: Run realtime tests and confirm they fail**
 
 Run: `bun --filter @orbit/core test tests/realtime/publisher.test.ts`
 
@@ -404,15 +404,15 @@ Run: `bun --filter @orbit/realtime-server test tests/hub.test.ts`
 
 Expected: FAIL because organization deletion controls are not published or delivered.
 
-- [ ] **Step 3: Implement control publication and targeted socket closure**
+- [x] **Step 3: Implement control publication and targeted socket closure**
 
 Branch `deliverControl` on the discriminated `type`. Keep session revalidation unchanged. For `organization_deleted`, remove and close every connection whose `organizationId` matches, using code `ORGANIZATION_FORBIDDEN_CLOSE_CODE` and reason `organization_deleted`.
 
-- [ ] **Step 4: Write failing route tests**
+- [x] **Step 4: Write failing route tests**
 
 Test GET authentication, administrator authorization, summary payload, and private no-cache header. Test DELETE body validation, exact service result, successful post-commit publication, and successful response when publication rejects after the service has committed.
 
-- [ ] **Step 5: Implement the current-workspace deletion route**
+- [x] **Step 5: Implement the current-workspace deletion route**
 
 ```ts
 export async function GET(): Promise<Response> {
@@ -428,7 +428,7 @@ export async function GET(): Promise<Response> {
 
 The DELETE handler reads only `{ confirmation }`, calls the core deletion service, catches only the post-commit publication failure for logging, and returns the two organization ids.
 
-- [ ] **Step 6: Run route and realtime tests and commit**
+- [x] **Step 6: Run route and realtime tests and commit**
 
 Run: `bun --filter @orbit/core test tests/realtime/publisher.test.ts`
 
