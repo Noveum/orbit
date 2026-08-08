@@ -1214,3 +1214,76 @@ describe('an issue milestone has to belong to the project the issue is on', () =
     expect(updated.issue.milestoneId).toBe(here.milestoneId);
   });
 });
+
+describe('allocating an issue number under concurrency', () => {
+  it('gives every concurrent create a distinct number', async () => {
+    const created = await Promise.all(
+      Array.from({ length: 8 }, (_, at) =>
+        createIssue(workspace.admin, { teamId: workspace.teamId, title: `Racing ${at}` }),
+      ),
+    );
+
+    const numbers = created.map((entry) => entry.issue.number);
+
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
+  it('gives every concurrent create a distinct identifier', async () => {
+    const created = await Promise.all(
+      Array.from({ length: 8 }, (_, at) =>
+        createIssue(workspace.admin, { teamId: workspace.teamId, title: `Identified ${at}` }),
+      ),
+    );
+
+    const identifiers = created.map((entry) => entry.issue.identifier);
+
+    expect(new Set(identifiers).size).toBe(identifiers.length);
+  });
+
+  it('commits the counter independently of the write that follows it', async () => {
+    const counter = async (): Promise<number> => {
+      const [row] = await db
+        .select({ value: schema.team.issueCounter })
+        .from(schema.team)
+        .where(eq(schema.team.id, workspace.teamId));
+      return row?.value ?? 0;
+    };
+
+    const before = await counter();
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Refused',
+        stateId: 'state_that_does_not_exist',
+      }),
+    ).rejects.toThrow();
+
+    expect(await counter()).toBe(before + 1);
+  });
+
+  it('refuses a team the principal may not write to', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Sealed', key: 'SEAL' });
+    const { principal } = await addMember(workspace, 'member');
+
+    await expect(createIssue(principal, { teamId: team.id, title: 'Not mine' })).rejects.toThrow(
+      DomainError,
+    );
+  });
+
+  it('leaves a gap rather than reusing a number when the write is refused', async () => {
+    const before = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Kept' });
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Refused',
+        stateId: 'state_that_does_not_exist',
+      }),
+    ).rejects.toThrow();
+
+    const after = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Next' });
+
+    expect(after.issue.number).toBeGreaterThan(before.issue.number + 1);
+  });
+});

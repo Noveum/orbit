@@ -715,6 +715,9 @@ export async function createIssue(principal: Principal, input: unknown): Promise
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
 
+  const allocationTeam = await requireTeam(principal, parsed.teamId);
+  const number = await allocateIssueNumber(db, allocationTeam);
+
   return await db.transaction(async (tx) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
     const syncId = await nextSyncId(tx);
@@ -734,7 +737,6 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     });
     await assertLabelsUsable(tx, principal.organizationId, team.id, parsed.labelIds);
 
-    const number = await allocateIssueNumber(tx, team);
     const now = new Date();
     const id = newId();
     if (parsed.parentId !== null) {
