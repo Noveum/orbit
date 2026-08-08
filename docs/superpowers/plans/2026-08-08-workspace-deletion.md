@@ -504,7 +504,7 @@ Commit: `feat(settings): add workspace danger zone`
 - Consumes: `ORGANIZATION_FORBIDDEN_CLOSE_CODE`, `GET /api/organizations`, and `authClient.organization.setActive`.
 - Produces: `recoverWorkspaceAfterForbidden(gate?)` and an updated `handleTerminalClose`.
 
-- [ ] **Step 1: Write failing terminal recovery tests**
+- [x] **Step 1: Write failing terminal recovery tests**
 
 ```ts
 await recoverWorkspaceAfterForbidden(gateWith([{ id: 'org_2' }]));
@@ -518,17 +518,17 @@ expect(location.href).toBe('/workspaces/new');
 
 Also assert ordinary transport closes and unauthorized closes do not start recovery, while session-revoked behavior stays unchanged.
 
-- [ ] **Step 2: Run provider tests and confirm they fail**
+- [x] **Step 2: Run provider tests and confirm they fail**
 
 Run: `bun --filter @orbit/web test tests/lib/realtime/provider.test.ts`
 
 Expected: FAIL because organization-forbidden recovery does not exist.
 
-- [ ] **Step 3: Implement fail-closed workspace recovery**
+- [x] **Step 3: Implement fail-closed workspace recovery**
 
 List workspaces through `apiRequest('/api/organizations')`. If a workspace exists, call `setActive` with the first returned id before full navigation to `/my-issues`. If the list is empty, navigate to `/workspaces/new`. If recovery itself fails, navigate to `/workspaces/new` so a deleted tenant cannot remain rendered.
 
-- [ ] **Step 4: Run provider tests and commit**
+- [x] **Step 4: Run provider tests and commit**
 
 Run: `bun --filter @orbit/web test tests/lib/realtime/provider.test.ts`
 
