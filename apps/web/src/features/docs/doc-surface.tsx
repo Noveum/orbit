@@ -452,7 +452,7 @@ function EditSession({
   const near = content.length > NEAR_LIMIT;
   const settled = autosave.status === 'saved';
   const server = useRef({ title: doc.title, content: doc.content });
-  const scroller = useRef<HTMLDivElement | null>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const outline = useEditorOutline(content, scroller);
 
   useEffect(() => onStatusChange(autosave.status), [autosave.status, onStatusChange]);
@@ -484,7 +484,7 @@ function EditSession({
         onForceSave={flush}
         commenting={commenting}
         footer={footer}
-        scrollRef={scroller}
+        scrollRef={setScroller}
         outline={outline}
       />
       {near ? (

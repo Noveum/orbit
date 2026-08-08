@@ -24,6 +24,7 @@ interface DocShape {
 interface CollectionShape {
   readonly id: string;
   readonly name: string;
+  readonly icon: string;
   readonly docCount: number;
 }
 
@@ -191,6 +192,7 @@ describe('collections', () => {
 
     const renamed = (await listCollections()).find((row) => row.id === id);
     expect(renamed?.name).toBe('After');
+    expect(renamed?.icon).toBe('rocket');
   });
 
   it('deletes a collection without deleting its documents', async () => {
@@ -320,5 +322,28 @@ describe('moving under a parent that lives somewhere else', () => {
     expect(nested).toEqual(['Tab one', 'Loose page', 'Tab two']);
     expect(filed.find((row) => row.id === stray.id)?.collectionId).toBe(shelf);
     expect(secondChild.parentId).toBe(parent.id);
+  });
+});
+
+describe('anchors', () => {
+  it('refuses a move that names a sibling to land after and one to land before', async () => {
+    const id = await collectionId('Anchored');
+    const first = await makeDoc({ title: 'Anchor one', collection: id });
+    const second = await makeDoc({ title: 'Anchor two', collection: id });
+    const moving = await makeDoc({ title: 'Anchor three', collection: id });
+
+    const error = errorPayload(
+      await admin.call('move_doc', { doc: moving.id, after: first.id, before: second.id }),
+    );
+    expect(error.code).toBe('validation_failed');
+  });
+
+  it('refuses an archived document as a parent', async () => {
+    const shelved = await makeDoc({ title: 'Shelved parent' });
+    await admin.result('archive_doc', { doc: shelved.id });
+    const child = await makeDoc({ title: 'Would nest' });
+
+    const error = errorPayload(await admin.call('move_doc', { doc: child.id, parent: shelved.id }));
+    expect(error.code).toBe('not_found');
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { act, render } from '@testing-library/react';
-import { useRef } from 'react';
+import { act, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { useEditorOutline } from '../../../src/features/docs/use-editor-outline.ts';
 
 const realRequestFrame = globalThis.requestAnimationFrame;
@@ -27,10 +27,10 @@ afterEach(() => {
 });
 
 function Harness() {
-  const scroller = useRef<HTMLDivElement | null>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const { activeId } = useEditorOutline('# One\n\n## Two\n', scroller);
   return (
-    <div data-testid="scroller" ref={scroller}>
+    <div data-testid="scroller" ref={setScroller}>
       <h1 id="one">One</h1>
       <h2 id="two">Two</h2>
       <p data-testid="active">{activeId ?? 'none'}</p>
@@ -107,5 +107,29 @@ describe('the scroll spy behind the editor outline', () => {
     view.unmount();
 
     expect(cancelled).toEqual([1]);
+  });
+});
+
+describe('an outline whose editor surface is swapped', () => {
+  it('measures the container that replaced the one it started with', async () => {
+    function Swapping({ surface }: { readonly surface: string }) {
+      const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+      const { activeId } = useEditorOutline('# One\n\n## Two\n', scroller);
+      return (
+        <div>
+          <span data-testid="active">{activeId ?? 'none'}</span>
+          <span data-testid="measuring">{scroller === null ? 'no' : 'yes'}</span>
+          <div key={surface} ref={setScroller} data-testid={`surface-${surface}`} />
+        </div>
+      );
+    }
+
+    const view = render(<Swapping surface="rich" />);
+    await screen.findByTestId('surface-rich');
+
+    view.rerender(<Swapping surface="markdown" />);
+
+    expect(await screen.findByTestId('surface-markdown')).toBeTruthy();
+    expect(screen.getByTestId('measuring').textContent).toBe('yes');
   });
 });

@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { act, renderHook } from '@testing-library/react';
 import {
   DEFAULT_DOC_PREFERENCES,
+  DOC_PREFERENCES_STORAGE_KEY,
   parsePreferences,
   READING_WIDTH_CLASS,
+  resetDocPreferences,
+  useDocPreferences,
 } from '@/features/docs/use-doc-preferences.ts';
 
 describe('doc preferences', () => {
@@ -40,5 +44,53 @@ describe('doc preferences', () => {
       toolbar: true,
       width: DEFAULT_DOC_PREFERENCES.width,
     });
+  });
+});
+
+describe('the preference store', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(DOC_PREFERENCES_STORAGE_KEY);
+    resetDocPreferences();
+  });
+
+  it('remembers a mode across a remount', () => {
+    const first = renderHook(() => useDocPreferences());
+    act(() => first.result.current.setMode('rich'));
+    first.unmount();
+
+    expect(renderHook(() => useDocPreferences()).result.current.mode).toBe('rich');
+  });
+
+  it('writes what it remembers to storage', () => {
+    const { result } = renderHook(() => useDocPreferences());
+    act(() => result.current.setWidth('full'));
+
+    const stored = window.localStorage.getItem(DOC_PREFERENCES_STORAGE_KEY);
+    expect(JSON.parse(stored ?? '{}')).toMatchObject({ width: 'full' });
+  });
+
+  it('toggles the formatting bar without disturbing the rest', () => {
+    const { result } = renderHook(() => useDocPreferences());
+    act(() => result.current.setWidth('comfortable'));
+    act(() => result.current.toggleToolbar());
+
+    expect(result.current.toolbar).toBe(true);
+    expect(result.current.width).toBe('comfortable');
+  });
+
+  it('follows a change made in another tab', () => {
+    const { result } = renderHook(() => useDocPreferences());
+    expect(result.current.width).toBe('wide');
+
+    act(() => {
+      window.localStorage.setItem(
+        DOC_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ mode: 'rich', toolbar: true, width: 'full' }),
+      );
+      window.dispatchEvent(new StorageEvent('storage', { key: DOC_PREFERENCES_STORAGE_KEY }));
+    });
+
+    expect(result.current.width).toBe('full');
+    expect(result.current.mode).toBe('rich');
   });
 });

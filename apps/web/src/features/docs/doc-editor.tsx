@@ -13,11 +13,12 @@ import {
   PanelTopOpen,
   Table2,
 } from 'lucide-react';
-import type { RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 import { useBootstrap } from '@/lib/query/use-issues.ts';
 import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
@@ -137,8 +138,9 @@ function EditorModeSwitch({
             aria-pressed={mode === option}
             onClick={() => onMode(option)}
             className={cn(
-              'rounded-sm px-2 py-1 text-2xs transition-colors duration-[var(--duration-fast)]',
-              mode === option ? 'bg-surface text-text shadow-sm' : 'text-faint hover:text-muted',
+              'rounded-sm px-2 py-1 text-2xs',
+              tabHover,
+              mode === option ? 'bg-surface text-text shadow-sm' : 'text-faint',
             )}
           >
             {option === 'rich' ? 'Rich text' : 'Markdown'}
@@ -260,7 +262,7 @@ export interface DocEditorProps {
   readonly onForceSave: () => void;
   readonly footer?: React.ReactNode;
   readonly outline?: DocEditorOutline;
-  readonly scrollRef?: RefObject<HTMLDivElement | null>;
+  readonly scrollRef?: Ref<HTMLDivElement>;
   readonly commenting?: DocCommenting;
 }
 

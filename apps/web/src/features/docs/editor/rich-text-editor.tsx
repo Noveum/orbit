@@ -3,7 +3,7 @@
 import type { Editor } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough } from 'lucide-react';
-import type { RefObject } from 'react';
+import type { Ref } from 'react';
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -60,7 +60,7 @@ export interface RichTextEditorProps {
   readonly toolbarLeading?: React.ReactNode | undefined;
   readonly toolbarTrailing?: React.ReactNode | undefined;
   readonly onBlur?: () => void;
-  readonly scrollRef?: RefObject<HTMLDivElement | null>;
+  readonly scrollRef?: Ref<HTMLDivElement>;
 }
 
 interface MenuPosition {

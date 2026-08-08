@@ -468,6 +468,51 @@ async function resolvePlacement(
   return { collectionId, projectId, parentId: stays ? parentId : null };
 }
 
+export interface DocRefMatch {
+  readonly id: string;
+  readonly title: string;
+}
+
+export async function findDocsByRef(
+  principal: Principal,
+  ref: string,
+  includeArchived: boolean,
+): Promise<DocRefMatch[]> {
+  assertCan(principal, 'doc:read');
+  const needle = ref.trim();
+  const lifecycle = includeArchived ? [] : [isNull(schema.doc.archivedAt)];
+  return await db
+    .select({ id: schema.doc.id, title: schema.doc.title })
+    .from(schema.doc)
+    .where(
+      and(
+        eq(schema.doc.organizationId, principal.organizationId),
+        docReadFilter(principal),
+        ...lifecycle,
+        or(eq(schema.doc.id, needle), sql`lower(btrim(${schema.doc.title})) = lower(${needle})`),
+      ),
+    );
+}
+
+export async function listDocSiblings(
+  principal: Principal,
+  placement: DocPlacement,
+): Promise<DocRefMatch[]> {
+  assertCan(principal, 'doc:read');
+  return await db
+    .select({ id: schema.doc.id, title: schema.doc.title })
+    .from(schema.doc)
+    .where(
+      and(
+        eq(schema.doc.organizationId, principal.organizationId),
+        docReadFilter(principal),
+        isNull(schema.doc.archivedAt),
+        ...siblingFilters(placement),
+      ),
+    )
+    .orderBy(asc(schema.doc.sortOrder), desc(schema.doc.updatedAt));
+}
+
 export async function plannedPlacement(
   principal: Principal,
   docId: string,

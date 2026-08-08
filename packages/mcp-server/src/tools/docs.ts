@@ -4,12 +4,15 @@ import {
   createDoc,
   createDocCollection,
   createDocComment,
+  type DocPlacement,
   deleteDoc,
   deleteDocCollection,
   deleteDocComment,
+  findDocsByRef,
   getDoc,
   listDocCollections,
   listDocComments,
+  listDocSiblings,
   listDocs,
   moveDoc,
   plannedPlacement,
@@ -66,28 +69,26 @@ function pickDoc(rows: readonly { id: string; title: string }[], ref: string): s
   const needle = ref.trim();
   const byId = rows.find((row) => row.id === needle);
   if (byId !== undefined) return byId.id;
-  const lowered = needle.toLowerCase();
-  const byTitle = rows.filter((row) => row.title.trim().toLowerCase() === lowered);
-  const first = byTitle[0];
+  const first = rows[0];
   if (first === undefined) return undefined;
-  if (byTitle.length > 1) {
+  if (rows.length > 1) {
     throw conflict(`More than one document is called "${ref}". Pass the document id instead.`);
   }
   return first.id;
 }
 
-async function resolveDoc(principal: Principal, ref: string): Promise<string> {
-  const live = pickDoc(await listDocs(principal, {}), ref);
-  if (live !== undefined) return live;
-  const archived = pickDoc(await listDocs(principal, { includeArchived: true }), ref);
-  if (archived === undefined) throw notFound(`No document matches "${ref}".`);
-  return archived;
+async function resolveLiveDoc(principal: Principal, ref: string): Promise<string> {
+  const found = pickDoc(await findDocsByRef(principal, ref, false), ref);
+  if (found === undefined) throw notFound(`No document matches "${ref}".`);
+  return found;
 }
 
-interface DocHome {
-  readonly collectionId: string | null;
-  readonly projectId: string | null;
-  readonly parentId: string | null;
+async function resolveDoc(principal: Principal, ref: string): Promise<string> {
+  const live = pickDoc(await findDocsByRef(principal, ref, false), ref);
+  if (live !== undefined) return live;
+  const archived = pickDoc(await findDocsByRef(principal, ref, true), ref);
+  if (archived === undefined) throw notFound(`No document matches "${ref}".`);
+  return archived;
 }
 
 async function resolveOptional(
@@ -109,8 +110,8 @@ async function neighbourOf(
   after: string | undefined,
   before: string | undefined,
 ): Promise<Neighbour | null> {
-  if (after !== undefined) return { id: await resolveDoc(principal, after), side: 'after' };
-  if (before !== undefined) return { id: await resolveDoc(principal, before), side: 'before' };
+  if (after !== undefined) return { id: await resolveLiveDoc(principal, after), side: 'after' };
+  if (before !== undefined) return { id: await resolveLiveDoc(principal, before), side: 'before' };
   return null;
 }
 
@@ -136,17 +137,11 @@ function anchorsAround(
 async function landingAnchors(
   principal: Principal,
   docId: string,
-  home: DocHome,
+  home: DocPlacement,
   neighbourId: string,
   side: 'after' | 'before',
 ): Promise<Anchors> {
-  const siblings = (await listDocs(principal, {})).filter(
-    (row) =>
-      row.id !== docId &&
-      row.collectionId === home.collectionId &&
-      row.projectId === home.projectId &&
-      row.parentId === home.parentId,
-  );
+  const siblings = (await listDocSiblings(principal, home)).filter((row) => row.id !== docId);
   return anchorsAround(siblings, neighbourId, side);
 }
 
@@ -236,7 +231,8 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         args.collection === undefined
           ? null
           : await resolveDocCollectionId(principal, args.collection);
-      const parentId = args.parent === undefined ? null : await resolveDoc(principal, args.parent);
+      const parentId =
+        args.parent === undefined ? null : await resolveLiveDoc(principal, args.parent);
       const saved = await createDoc(principal, {
         title: args.title,
         content: args.content ?? '',
@@ -288,7 +284,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const collectionId = await resolveOptional(args.collection, (ref) =>
         resolveDocCollectionId(principal, ref),
       );
-      const parentId = await resolveOptional(args.parent, (ref) => resolveDoc(principal, ref));
+      const parentId = await resolveOptional(args.parent, (ref) => resolveLiveDoc(principal, ref));
       const saved = await updateDoc(principal, id, {
         ...(args.title === undefined ? {} : { title: args.title }),
         ...(args.content === undefined ? {} : { content: args.content }),
@@ -531,7 +527,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const collectionId = await resolveOptional(args.collection, (ref) =>
         resolveDocCollectionId(principal, ref),
       );
-      const parentId = await resolveOptional(args.parent, (ref) => resolveDoc(principal, ref));
+      const parentId = await resolveOptional(args.parent, (ref) => resolveLiveDoc(principal, ref));
       const projectId = await resolveOptional(
         args.project,
         async (ref) => (await resolveProject(principal, ref)).id,
@@ -543,6 +539,11 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         ...(projectId === undefined ? {} : { projectId }),
       });
 
+      if (args.after !== undefined && args.before !== undefined) {
+        throw validationFailed(
+          'Name the sibling to land after, or the one to land before, not both.',
+        );
+      }
       const neighbour = await neighbourOf(principal, args.after, args.before);
       const anchors =
         neighbour === null

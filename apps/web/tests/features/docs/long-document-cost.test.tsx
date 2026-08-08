@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { act, render, waitFor } from '@testing-library/react';
 import type { Editor } from '@tiptap/core';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { editorHtmlFrom } from '../../../src/features/docs/editor/editor-content.ts';
 import { RichTextEditor } from '../../../src/features/docs/editor/rich-text-editor.tsx';
 import type { DocHeading } from '../../../src/features/docs/outline.ts';
@@ -19,9 +19,9 @@ function longDocument(tail: string): string {
 let headings: readonly DocHeading[] = [];
 
 function OutlineHarness({ content }: { readonly content: string }) {
-  const scroller = useRef<HTMLDivElement | null>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   headings = useEditorOutline(content, scroller).headings;
-  return <div ref={scroller} />;
+  return <div ref={setScroller} />;
 }
 
 describe('the outline of a long document', () => {

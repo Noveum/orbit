@@ -1,7 +1,7 @@
 'use client';
 
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
-import { type RefObject, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { prefersReducedMotion } from './doc-scroll.ts';
 import { activeHeadingId, headingAt, headingElementsIn } from './editor-outline.ts';
 import type { DocHeading, OutlineMemo } from './outline.ts';
@@ -17,10 +17,7 @@ function buildOutline(source: string): readonly DocHeading[] {
   return extractHeadings(renderMarkdownWithHeadingIds(source));
 }
 
-export function useEditorOutline(
-  content: string,
-  scroller: RefObject<HTMLElement | null>,
-): EditorOutline {
+export function useEditorOutline(content: string, container: HTMLElement | null): EditorOutline {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [memo, setMemo] = useState<OutlineMemo>(EMPTY_OUTLINE);
   const current = outlineFor(memo, content, buildOutline);
@@ -28,7 +25,6 @@ export function useEditorOutline(
   const headings = current.headings;
 
   useEffect(() => {
-    const container = scroller.current;
     if (container === null || headings.length === 0) {
       setActiveId(null);
       return;
@@ -51,18 +47,18 @@ export function useEditorOutline(
       if (frame !== null) cancelAnimationFrame(frame);
       container.removeEventListener('scroll', schedule);
     };
-  }, [headings, scroller]);
+  }, [headings, container]);
 
   const goTo = useCallback(
     (index: number) => {
-      const target = headingAt(scroller.current, index);
+      const target = headingAt(container, index);
       if (target === null) return;
       target.scrollIntoView({
         block: 'start',
         behavior: prefersReducedMotion() ? 'auto' : 'smooth',
       });
     },
-    [scroller],
+    [container],
   );
 
   return { headings, activeId, goTo };

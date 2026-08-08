@@ -1,5 +1,17 @@
 import { readFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import postgres from 'postgres';
+
+const CATCHUP_DIR = new URL('../catchup/', import.meta.url).pathname;
+
+export function catchupPath(named: string): string {
+  const file = basename(named);
+  if (file !== named.replace(/^.*\/catchup\//, '')) {
+    throw new Error(`Name a file in packages/db/catchup, not ${named}.`);
+  }
+  if (!file.endsWith('.sql')) throw new Error(`${file} is not a .sql file.`);
+  return resolve(join(CATCHUP_DIR, file));
+}
 
 export function targetName(url: string): string {
   try {
@@ -10,8 +22,8 @@ export function targetName(url: string): string {
   }
 }
 
-export async function applyCatchup(url: string, path: string): Promise<void> {
-  const body = await readFile(path, 'utf8');
+export async function applyCatchup(url: string, named: string): Promise<void> {
+  const body = await readFile(catchupPath(named), 'utf8');
   const sql = postgres(url, { max: 1, prepare: false, idle_timeout: 10 });
   try {
     await sql.unsafe(body).simple();

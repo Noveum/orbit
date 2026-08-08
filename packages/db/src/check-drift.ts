@@ -78,8 +78,14 @@ export function describeDrift(drift: Drift, target: string): string {
       'Apply the matching script in packages/db/catchup before shipping code that reads it.',
     );
   } else {
-    lines.push(`${target} has everything the schema declares.`);
+    lines.push(`${target} has every table and column the schema declares.`);
   }
+
+  lines.push(
+    '',
+    'This compares table and column names only. A column that exists but is not generated,',
+    'a missing index, constraint or enum value: none of those are reported here.',
+  );
 
   if (drift.undeclaredTables.length > 0) {
     lines.push(
