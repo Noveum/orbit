@@ -35,8 +35,16 @@ export type GithubDatabase = Database | Transaction;
 export type GitLinkRow = typeof gitLink.$inferSelect;
 type RepositorySync = typeof githubRepositorySync.$inferSelect;
 
+export type GithubIgnoredReason =
+  | 'unsupported_event'
+  | 'repository_not_connected'
+  | 'repository_disabled'
+  | 'no_issue_identifier'
+  | 'no_matching_issue';
+
 export interface GithubApplyResult {
   readonly handled: boolean;
+  readonly ignoredReason: GithubIgnoredReason | null;
   readonly organizationId: string | null;
   readonly actions: SyncAction[];
   readonly notificationEvents: NotificationEvent[];
@@ -58,6 +66,7 @@ interface LinkedIssue {
 
 const EMPTY: GithubApplyResult = {
   handled: false,
+  ignoredReason: null,
   organizationId: null,
   actions: [],
   notificationEvents: [],
@@ -70,14 +79,15 @@ export async function applyGithubEvent(
   input: { readonly eventName: string; readonly body: unknown; readonly now?: Date },
 ): Promise<GithubApplyResult> {
   const event = parseGithubEvent(input.eventName, input.body);
-  if (event === null) return EMPTY;
+  if (event === null) return { ...EMPTY, ignoredReason: 'unsupported_event' };
 
   const [repo] = await database
     .select()
     .from(githubRepositorySync)
     .where(eq(githubRepositorySync.repositoryId, event.repository.externalId))
     .limit(1);
-  if (repo === undefined || !repo.enabled) return EMPTY;
+  if (repo === undefined) return { ...EMPTY, ignoredReason: 'repository_not_connected' };
+  if (!repo.enabled) return { ...EMPTY, ignoredReason: 'repository_disabled' };
 
   const now = input.now ?? new Date();
   const textIdentifiers =
@@ -95,12 +105,22 @@ export async function applyGithubEvent(
       : [];
   const identifiers = unique([...textIdentifiers, ...linkedIdentifiers]);
   if (identifiers.length === 0) {
-    return { ...EMPTY, handled: true, organizationId: repo.organizationId };
+    return {
+      ...EMPTY,
+      handled: true,
+      ignoredReason: 'no_issue_identifier',
+      organizationId: repo.organizationId,
+    };
   }
 
   const issues = await loadLinkedIssues(database, repo.organizationId, identifiers);
   if (issues.length === 0) {
-    return { ...EMPTY, handled: true, organizationId: repo.organizationId };
+    return {
+      ...EMPTY,
+      handled: true,
+      ignoredReason: 'no_matching_issue',
+      organizationId: repo.organizationId,
+    };
   }
 
   const actor = await resolveActor(database, event);
@@ -129,6 +149,7 @@ export async function applyGithubEvent(
 
   return {
     handled: true,
+    ignoredReason: null,
     organizationId: repo.organizationId,
     actions,
     notificationEvents,

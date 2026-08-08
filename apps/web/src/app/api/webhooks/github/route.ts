@@ -80,6 +80,7 @@ export async function POST(request: Request): Promise<Response> {
         organizationId: applied.organizationId,
         teamIds: applied.teamIds,
         actions,
+        ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
       };
     });
@@ -96,9 +97,17 @@ export async function POST(request: Request): Promise<Response> {
 
     await db
       .update(schema.webhookDelivery)
-      .set({ status: 'processed' })
+      .set(
+        outcome.ignoredReason === null
+          ? { status: 'processed', error: null }
+          : { status: 'ignored', error: outcome.ignoredReason },
+      )
       .where(deliveryMatch(deliveryId));
-    return Response.json({ ok: true, actions: outcome.actions.length });
+    return Response.json({
+      ok: true,
+      actions: outcome.actions.length,
+      ...(outcome.ignoredReason === null ? {} : { ignored: outcome.ignoredReason }),
+    });
   } catch (error) {
     await db
       .update(schema.webhookDelivery)

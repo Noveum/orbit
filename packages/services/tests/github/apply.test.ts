@@ -305,3 +305,58 @@ describe('applyGithubEvent', () => {
     });
   });
 });
+
+describe('saying why a delivery changed nothing', () => {
+  it('names an unconnected repository, which is what a fresh install looks like', async () => {
+    await withRollback(async (tx) => {
+      const result = await applyGithubEvent(tx, {
+        eventName: 'pull_request',
+        body: {
+          action: 'opened',
+          pull_request: {
+            number: 1,
+            title: 'x',
+            html_url: 'https://x',
+            head: { ref: 'eng-3' },
+            base: { ref: 'main' },
+          },
+          repository: { id: 12345, full_name: 'nobody/repo' },
+          sender: { login: 'x', id: 1 },
+        },
+      });
+
+      expect(result.ignoredReason).toBe('repository_not_connected');
+    });
+  });
+
+  it('names an event the parser does not cover', async () => {
+    await withRollback(async (tx) => {
+      const result = await applyGithubEvent(tx, { eventName: 'star', body: {} });
+
+      expect(result.ignoredReason).toBe('unsupported_event');
+    });
+  });
+
+  it('names a branch that mentions no issue, so the delivery is not mistaken for a failure', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({ headRef: 'chore/tidy-up', title: 'Tidy up' }),
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.ignoredReason).toBe('no_issue_identifier');
+    });
+  });
+
+  it('reports nothing ignored when the event actually lands', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      const result = await applyGithubEvent(tx, prEvent({}));
+
+      expect(result.handled).toBe(true);
+      expect(result.ignoredReason).toBeNull();
+    });
+  });
+});

@@ -34,6 +34,7 @@ afterAll(() => {
 });
 
 const bodySchema = z.union([
+  z.object({ ok: z.literal(true), actions: z.number(), ignored: z.string() }),
   z.object({ ok: z.literal(true), actions: z.number() }),
   z.object({ ok: z.literal(true), handled: z.boolean() }),
   z.object({ status: z.literal('duplicate') }),
@@ -424,5 +425,51 @@ describe('POST /api/webhooks/github, installation events', () => {
     await POST(signed(installationEnvelope('suspend'), 'install-quiet', 'installation'));
 
     expect(published.flat()).toHaveLength(0);
+  });
+});
+
+describe('telling a delivery that landed from one that was dropped', () => {
+  it('records why a delivery for an unconnected repository changed nothing', async () => {
+    const raw = JSON.stringify({
+      action: 'opened',
+      pull_request: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/nobody/repo/pull/7',
+        draft: false,
+        merged: false,
+        state: 'open',
+        head: { ref: 'orb-3-dashboard' },
+        base: { ref: 'main' },
+        user: { login: 'octocat', id: 500 },
+      },
+      repository: { id: 424242, full_name: 'nobody/repo' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    const response = await POST(signed(raw, 'delivery-unconnected'));
+
+    expect(response.status).toBe(200);
+    const row = await deliveryRow('delivery-unconnected');
+    expect(row?.status).toBe('ignored');
+    expect(row?.error).toBe('repository_not_connected');
+  });
+
+  it('records a branch that names no issue separately from a failure', async () => {
+    const response = await POST(signed(pullRequestBody('chore/tidy-up'), 'delivery-nomatch'));
+
+    expect(response.status).toBe(200);
+    const row = await deliveryRow('delivery-nomatch');
+    expect(row?.status).toBe('ignored');
+    expect(row?.error).toBe('no_issue_identifier');
+  });
+
+  it('still marks a delivery that did the work as processed, with no reason', async () => {
+    const response = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-landed'));
+
+    expect(response.status).toBe(200);
+    const row = await deliveryRow('delivery-landed');
+    expect(row?.status).toBe('processed');
+    expect(row?.error).toBeNull();
   });
 });
