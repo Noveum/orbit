@@ -172,6 +172,12 @@ describe('matchAllowedDomain', () => {
     expect(matchAllowedDomain(organization, 'c@nope.dev')).toBeNull();
     expect(matchAllowedDomain(organization, 'not-an-email')).toBeNull();
   });
+
+  it('allows Yodu exactly without allowing its subdomains', () => {
+    const organization = { allowedEmailDomains: ['yodu.ai'] };
+    expect(matchAllowedDomain(organization, 'person@yodu.ai')).toBe('yodu.ai');
+    expect(matchAllowedDomain(organization, 'person@team.yodu.ai')).toBeNull();
+  });
 });
 
 describe('role escalation', () => {
