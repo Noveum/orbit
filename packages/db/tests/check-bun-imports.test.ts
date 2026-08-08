@@ -21,6 +21,10 @@ describe('deciding which files ship to the node runtime', () => {
     expect(isShippedSource('scripts/check-source-bytes.ts')).toBe(false);
   });
 
+  it('covers the database seed, which is under packages and exempted nowhere', () => {
+    expect(isShippedSource('packages/db/src/seed/index.ts')).toBe(true);
+  });
+
   it('leaves test trees alone, since they only ever run under Bun', () => {
     expect(isShippedSource('packages/core/tests/work/issue-service.test.ts')).toBe(false);
     expect(isShippedSource('apps/web/tests-support.ts')).toBe(false);
@@ -71,5 +75,39 @@ describe('finding a Bun built-in that would reach the node runtime', () => {
     expect(describeImport(found[0] ?? { file: '', specifier: '', line: 0 })).toBe(
       'packages/core/src/a.ts:2 imports "bun" at runtime.',
     );
+  });
+});
+
+describe('a type binding that the compiler erases', () => {
+  it('allows a type marked on each binding rather than on the declaration', () => {
+    expect(specifiers("import { type ServerWebSocket } from 'bun';\n")).toEqual([]);
+    expect(specifiers("import { type A, type B } from 'bun';\n")).toEqual([]);
+  });
+
+  it('still catches a value smuggled in beside a type binding', () => {
+    expect(specifiers("import { type A, serve } from 'bun';\n")).toEqual(['bun']);
+  });
+
+  it('allows an erased re-export', () => {
+    expect(specifiers("export type { ServerWebSocket } from 'bun';\n")).toEqual([]);
+    expect(specifiers("export { type ServerWebSocket } from 'bun';\n")).toEqual([]);
+  });
+});
+
+describe('a re-export that keeps the dependency at runtime', () => {
+  it('catches a named re-export', () => {
+    expect(specifiers("export { serve } from 'bun';\n")).toEqual(['bun']);
+  });
+
+  it('catches a star re-export', () => {
+    expect(specifiers("export * from 'bun:sqlite';\n")).toEqual(['bun:sqlite']);
+  });
+
+  it('catches a namespaced star re-export', () => {
+    expect(specifiers("export * as bun from 'bun';\n")).toEqual(['bun']);
+  });
+
+  it('reports one entry per offending line, not one per pattern that matched', () => {
+    expect(specifiers("import { serve } from 'bun';\n")).toHaveLength(1);
   });
 });

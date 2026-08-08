@@ -2,15 +2,27 @@ import { readFile } from 'node:fs/promises';
 
 const SHIPPED_ROOTS = ['packages/', 'apps/web/src/'] as const;
 
-const RUNS_ONLY_UNDER_BUN = ['apps/realtime/', 'packages/db/src/seed', 'scripts/'] as const;
+const RUNS_ONLY_UNDER_BUN = ['apps/realtime/', 'scripts/'] as const;
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts']);
 
-const IMPORT_FROM_BUN =
-  /(?:^|\n)\s*import\s+(?!type\b)(?:[\s\S]*?)\s+from\s+['"](bun(?::[\w/-]+)?)['"]/g;
-const BARE_IMPORT = /(?:^|\n)\s*import\s+['"](bun(?::[\w/-]+)?)['"]/g;
+const BINDING_FROM_BUN = /\b(import|export)\b([\s\S]*?)\bfrom\s*['"](bun(?::[\w/-]+)?)['"]/g;
+const BARE_IMPORT = /\bimport\s*['"](bun(?::[\w/-]+)?)['"]/g;
 const REQUIRE_BUN = /\brequire\(\s*['"](bun(?::[\w/-]+)?)['"]\s*\)/g;
 const DYNAMIC_IMPORT = /\bimport\(\s*['"](bun(?::[\w/-]+)?)['"]\s*\)/g;
+
+export function isErasedClause(clause: string): boolean {
+  const trimmed = clause.trim();
+  if (trimmed.startsWith('type ') || trimmed === 'type') return true;
+  const braced = /^\{([\s\S]*)\}$/.exec(trimmed);
+  if (braced === null) return false;
+  const bindings = (braced[1] ?? '')
+    .split(',')
+    .map((binding) => binding.trim())
+    .filter((binding) => binding.length > 0);
+  if (bindings.length === 0) return true;
+  return bindings.every((binding) => /^type\s/.test(binding));
+}
 
 export interface BunImport {
   readonly file: string;
@@ -42,19 +54,38 @@ function lineOf(text: string, index: number): number {
 
 export function bunImports(file: string, text: string): BunImport[] {
   const found: BunImport[] = [];
-  for (const pattern of [IMPORT_FROM_BUN, BARE_IMPORT, REQUIRE_BUN, DYNAMIC_IMPORT]) {
+
+  BINDING_FROM_BUN.lastIndex = 0;
+  let binding = BINDING_FROM_BUN.exec(text);
+  while (binding !== null) {
+    const specifier = binding[3];
+    if (specifier !== undefined && !isErasedClause(binding[2] ?? '')) {
+      found.push({ file, specifier, line: lineOf(text, binding.index) });
+    }
+    binding = BINDING_FROM_BUN.exec(text);
+  }
+
+  for (const pattern of [BARE_IMPORT, REQUIRE_BUN, DYNAMIC_IMPORT]) {
     pattern.lastIndex = 0;
     let match = pattern.exec(text);
     while (match !== null) {
       const specifier = match[1];
       if (specifier !== undefined) {
-        const leading = match[0].search(/\S/);
-        found.push({ file, specifier, line: lineOf(text, match.index + Math.max(leading, 0)) });
+        found.push({ file, specifier, line: lineOf(text, match.index) });
       }
       match = pattern.exec(text);
     }
   }
-  return found.sort((left, right) => left.line - right.line);
+
+  const seen = new Set<string>();
+  return found
+    .filter((entry) => {
+      const key = `${entry.line}:${entry.specifier}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => left.line - right.line);
 }
 
 export function describe(entry: BunImport): string {
