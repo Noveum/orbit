@@ -19,24 +19,27 @@ export interface PullRequestRow {
 export type GithubReach = 'not_installed' | 'suspended' | 'no_repositories' | 'connected';
 
 export async function githubReach(principal: Principal): Promise<GithubReach> {
-  const [repository] = await db
-    .select({ id: schema.githubRepositorySync.id })
-    .from(schema.githubRepositorySync)
-    .where(
-      and(
-        eq(schema.githubRepositorySync.organizationId, principal.organizationId),
-        eq(schema.githubRepositorySync.enabled, true),
-      ),
-    )
-    .limit(1);
-  if (repository !== undefined) return 'connected';
+  const [installations, [repository]] = await Promise.all([
+    db
+      .select({ status: schema.githubInstallation.status })
+      .from(schema.githubInstallation)
+      .where(eq(schema.githubInstallation.organizationId, principal.organizationId)),
+    db
+      .select({ id: schema.githubRepositorySync.id })
+      .from(schema.githubRepositorySync)
+      .where(
+        and(
+          eq(schema.githubRepositorySync.organizationId, principal.organizationId),
+          eq(schema.githubRepositorySync.enabled, true),
+        ),
+      )
+      .limit(1),
+  ]);
 
-  const installations = await db
-    .select({ status: schema.githubInstallation.status })
-    .from(schema.githubInstallation)
-    .where(eq(schema.githubInstallation.organizationId, principal.organizationId));
-  if (installations.length === 0) return 'not_installed';
-  return installations.some((row) => row.status === 'active') ? 'no_repositories' : 'suspended';
+  const tracking = repository !== undefined;
+  if (installations.length === 0) return tracking ? 'connected' : 'not_installed';
+  if (!installations.some((row) => row.status === 'active')) return 'suspended';
+  return tracking ? 'connected' : 'no_repositories';
 }
 
 export async function loadPullRequests(principal: Principal): Promise<PullRequestRow[]> {
