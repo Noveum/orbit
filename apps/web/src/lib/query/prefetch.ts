@@ -1,7 +1,7 @@
 import { listIssues } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
-import { bootstrapPayload } from '@/lib/api/bootstrap.ts';
+import { bootstrapPayloadFor, bootstrapTeams } from '@/lib/api/bootstrap.ts';
 import { attachLabels } from '@/lib/api/issues.ts';
 import {
   assignedSearch,
@@ -10,15 +10,11 @@ import {
   issueSearch,
 } from './issue-search.ts';
 import { queryKeys } from './keys.ts';
-import type { Bootstrap, IssuePage } from './schemas.ts';
+import type { IssuePage } from './schemas.ts';
 import { bootstrapSchema, issueListSchema } from './schemas.ts';
 
 function asWire<T>(schema: { parse: (value: unknown) => T }, payload: unknown): T {
   return schema.parse(JSON.parse(JSON.stringify(payload)));
-}
-
-async function serverBootstrap(principal: Principal): Promise<Bootstrap> {
-  return asWire(bootstrapSchema, await bootstrapPayload(principal, {}));
 }
 
 async function serverIssuePage(principal: Principal, teamId: string): Promise<IssuePage> {
@@ -53,16 +49,19 @@ export async function dehydratedAssignedIssues(principal: Principal) {
 
 export async function dehydratedWorkspace(principal: Principal) {
   const client = new QueryClient();
-  const bootstrap = await serverBootstrap(principal);
+  const resolved = await bootstrapTeams(principal, {});
+  const teamId = resolved.activeTeam?.id ?? null;
+
+  const [bootstrap, page] = await Promise.all([
+    bootstrapPayloadFor(principal, resolved).then((payload) => asWire(bootstrapSchema, payload)),
+    teamId === null ? null : serverIssuePage(principal, teamId),
+  ]);
+
   client.setQueryData(queryKeys.bootstrap(null), bootstrap);
 
-  const teamId = bootstrap.activeTeamId;
-  if (teamId !== null) {
+  if (teamId !== null && page !== null) {
     const search = issueSearch(teamId, DEFAULT_ISSUE_QUERY);
-    client.setQueryData(queryKeys.issues(teamId, search), {
-      pages: [await serverIssuePage(principal, teamId)],
-      pageParams: [null],
-    });
+    client.setQueryData(queryKeys.issues(teamId, search), { pages: [page], pageParams: [null] });
   }
 
   return dehydrate(client);

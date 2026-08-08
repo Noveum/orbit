@@ -82,10 +82,22 @@ export async function bootstrapVersion(principal: Principal): Promise<string> {
   return `${principal.userId}-${organizationId}-${row?.['version'] ?? '0'}`;
 }
 
-export async function bootstrapPayload(principal: Principal, query: BootstrapQuery) {
+export type BootstrapTeams = Readonly<{
+  teams: Awaited<ReturnType<typeof listTeams>>;
+  activeTeam: Awaited<ReturnType<typeof listTeams>>[number] | null;
+}>;
+
+export async function bootstrapTeams(
+  principal: Principal,
+  query: BootstrapQuery,
+): Promise<BootstrapTeams> {
   assertCan(principal, 'issue:read');
   const teams = await listTeams(principal);
-  const activeTeam = teams.find((team) => team.key === query.team) ?? teams[0] ?? null;
+  return { teams, activeTeam: teams.find((team) => team.key === query.team) ?? teams[0] ?? null };
+}
+
+export async function bootstrapPayloadFor(principal: Principal, resolved: BootstrapTeams) {
+  const { teams, activeTeam } = resolved;
   const teamIds = teams.map((team) => team.id);
 
   const [states, cycles, labels, members, projects, links] = await Promise.all([
@@ -142,4 +154,8 @@ export async function bootstrapPayload(principal: Principal, query: BootstrapQue
       role: row.member.role,
     })),
   };
+}
+
+export async function bootstrapPayload(principal: Principal, query: BootstrapQuery) {
+  return await bootstrapPayloadFor(principal, await bootstrapTeams(principal, query));
 }
