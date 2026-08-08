@@ -61,10 +61,28 @@ describe('list_notifications', () => {
     expect(rows.every((row) => !row.title.includes('Replying to myself'))).toBe(true);
   });
 
-  it('filters by type', async () => {
+  it('filters by type, returning that type and withholding the others', async () => {
+    const assigned = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Rotate the signing key',
+      assignee: agentHandle,
+    });
+    const assignedIdentifier = (assigned['issue'] as { identifier: string }).identifier;
+
     const result = await agent.result('list_notifications', { type: 'issue_assigned' });
-    const rows = result['notifications'] as { type: string }[];
+    const rows = result['notifications'] as {
+      type: string;
+      issue: { identifier: string } | null;
+    }[];
+
+    expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((row) => row.type === 'issue_assigned')).toBe(true);
+    expect(rows.some((row) => row.issue?.identifier === assignedIdentifier)).toBe(true);
+    expect(rows.some((row) => row.issue?.identifier === issueIdentifier)).toBe(false);
+
+    const unfiltered = await agent.result('list_notifications', {});
+    const everything = unfiltered['notifications'] as { type: string }[];
+    expect(everything.some((row) => row.type === 'mention')).toBe(true);
   });
 
   it('scopes to the caller, so one user never sees another inbox', async () => {
