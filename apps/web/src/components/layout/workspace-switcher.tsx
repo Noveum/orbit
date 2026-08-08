@@ -27,6 +27,7 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { authClient } from '@/lib/auth/client.ts';
 import { cn } from '@/lib/cn.ts';
 import type { ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
+import { forgetPersistedCache } from '@/lib/query/persist.ts';
 
 export const WORKSPACE_LANDING = '/my-issues';
 
@@ -53,7 +54,8 @@ export function WorkspaceSwitcher({
   const handleSignOut = () => {
     authClient
       .signOut()
-      .then(() => {
+      .then(async () => {
+        await forgetPersistedCache();
         router.push('/login');
         router.refresh();
       })
