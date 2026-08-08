@@ -91,7 +91,7 @@ export function bootstrapQueryOptions(teamKey: string | null) {
         bootstrapSchema,
         { signal },
       ),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 'static' as const,
   };
 }
 
@@ -288,6 +288,7 @@ export function useIssueCounts(teamId: string | null) {
 export function issueDetailQueryOptions(identifier: string) {
   return {
     queryKey: queryKeys.issue(identifier),
+    staleTime: PREFETCH_STALE_MS,
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueDetail> =>
       await apiFetch(`/api/issues/${encodeURIComponent(identifier)}`, issueDetailSchema, {
         signal,
@@ -322,9 +323,7 @@ export function usePrefetchIssueDetail() {
   const client = useQueryClient();
   return useCallback(
     (identifier: string) => {
-      client
-        .prefetchQuery({ ...issueDetailQueryOptions(identifier), staleTime: PREFETCH_STALE_MS })
-        .catch(() => undefined);
+      client.prefetchQuery(issueDetailQueryOptions(identifier)).catch(() => undefined);
     },
     [client],
   );

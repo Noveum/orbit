@@ -2,9 +2,10 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
+import { CACHE_MAX_AGE_MS } from './persist.ts';
 
 const STALE_TIME_MS = 30_000;
-const GC_TIME_MS = 30 * 60_000;
+const GC_TIME_MS = CACHE_MAX_AGE_MS;
 
 export function createQueryClient(): QueryClient {
   return new QueryClient({
