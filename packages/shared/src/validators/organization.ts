@@ -27,6 +27,12 @@ export const organizationUpdateSchema = z
   })
   .partial();
 
+export const organizationDeleteSchema = z
+  .object({
+    confirmation: z.string().trim().min(1).max(64),
+  })
+  .strict();
+
 export const inviteCreateSchema = z.object({
   email: emailSchema,
   role: z.enum(ORG_ROLES).default('member'),
@@ -42,4 +48,5 @@ export const memberUpdateSchema = z.object({
 });
 
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
+export type OrganizationDeleteInput = z.infer<typeof organizationDeleteSchema>;
 export type InviteCreateInput = z.infer<typeof inviteCreateSchema>;

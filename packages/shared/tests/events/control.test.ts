@@ -11,6 +11,17 @@ describe('control message', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts an organization_deleted message', () => {
+    const parsed = controlMessageSchema.safeParse({
+      type: 'organization_deleted',
+      organizationId: 'org_1',
+    });
+    expect(parsed).toMatchObject({
+      success: true,
+      data: { type: 'organization_deleted', organizationId: 'org_1' },
+    });
+  });
+
   it('rejects an unknown type', () => {
     const parsed = controlMessageSchema.safeParse({ type: 'nope', userId: 'user_1' });
     expect(parsed.success).toBe(false);
@@ -18,6 +29,14 @@ describe('control message', () => {
 
   it('rejects an empty userId', () => {
     const parsed = controlMessageSchema.safeParse({ type: 'session_revoked', userId: '' });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects an empty organizationId', () => {
+    const parsed = controlMessageSchema.safeParse({
+      type: 'organization_deleted',
+      organizationId: '',
+    });
     expect(parsed.success).toBe(false);
   });
 

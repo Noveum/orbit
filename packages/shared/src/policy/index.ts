@@ -26,6 +26,7 @@ export const PERMISSIONS = [
   'member:manage',
   'integration:manage',
   'org:manage',
+  'org:delete',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -67,6 +68,7 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   'member:manage',
   'integration:manage',
   'org:manage',
+  'org:delete',
 ];
 
 const PERMISSIONS_BY_ROLE: Record<OrgRole, readonly Permission[]> = {

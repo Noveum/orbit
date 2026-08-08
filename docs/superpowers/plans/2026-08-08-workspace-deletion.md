@@ -66,7 +66,7 @@
 **Interfaces:**
 - Produces: `organizationDeleteSchema`, `OrganizationDeleteInput`, and `ControlMessage` variants `{ type: 'session_revoked'; userId: string } | { type: 'organization_deleted'; organizationId: string }`.
 
-- [ ] **Step 1: Write failing shared contract tests**
+- [x] **Step 1: Write failing shared contract tests**
 
 ```ts
 expect(can(principal('admin'), 'org:delete')).toBe(true);
@@ -80,13 +80,13 @@ expect(controlMessageSchema.parse({
 })).toEqual({ type: 'organization_deleted', organizationId: 'org_1' });
 ```
 
-- [ ] **Step 2: Run the tests and confirm the new contracts fail**
+- [x] **Step 2: Run the tests and confirm the new contracts fail**
 
 Run: `bun --filter @orbit/shared test tests/policy/policy.test.ts tests/validators/organization.test.ts tests/events/control.test.ts`
 
 Expected: FAIL because `org:delete`, `organizationDeleteSchema`, and the organization control variant do not exist.
 
-- [ ] **Step 3: Implement the shared contracts**
+- [x] **Step 3: Implement the shared contracts**
 
 ```ts
 export const organizationDeleteSchema = z.object({
@@ -101,7 +101,7 @@ export const controlMessageSchema = z.discriminatedUnion('type', [
 
 Add `org:delete` to the permission tuple and the administrator permission set only.
 
-- [ ] **Step 4: Run the focused tests and commit**
+- [x] **Step 4: Run the focused tests and commit**
 
 Run: `bun --filter @orbit/shared test tests/policy/policy.test.ts tests/validators/organization.test.ts tests/events/control.test.ts`
 
