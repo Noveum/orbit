@@ -11,6 +11,7 @@ import { WorkspaceCachePersistence } from '@/lib/query/persistence.tsx';
 import { dehydratedWorkspace } from '@/lib/query/prefetch.ts';
 import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
 import { configuredRealtimeUrl } from '@/lib/realtime/url.ts';
+import { WebVitalsReporter } from '@/lib/vitals/provider.tsx';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
 function realtimeUrl(): string {
@@ -68,6 +69,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
         userId={membership.principal.userId}
         organizationId={membership.principal.organizationId}
       />
+      <WebVitalsReporter />
       <WorkspaceRealtime
         url={realtimeUrl()}
         userId={membership.principal.userId}
