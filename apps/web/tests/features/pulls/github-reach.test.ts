@@ -86,4 +86,12 @@ describe('githubReach', () => {
 
     expect(await githubReach(workspace.admin)).toBe('connected');
   });
+
+  it('does not credit an active installation with a repository the suspended one owns', async () => {
+    await installation('active');
+    const suspended = await installation('suspended');
+    await repository(suspended);
+
+    expect(await githubReach(workspace.admin)).toBe('no_repositories');
+  });
 });
