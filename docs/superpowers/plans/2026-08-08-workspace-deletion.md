@@ -170,7 +170,7 @@ Commit: `feat(storage): track presigned upload expiry`
 - Create: `packages/services/tests/storage/storage-prefix.test.ts`
 
 **Interfaces:**
-- Produces: `StoragePrefixSummary { objects: number; bytes: number }`.
+- Produces: `StoragePrefixSummary { objects: number; bytes: number; versions: number; versionBytes: number }`.
 - Produces: `StorageDriver.summarizePrefix(prefix: string): Promise<StoragePrefixSummary>`.
 - Produces: `StorageDriver.deletePrefix(prefix: string): Promise<void>`.
 - Produces: `storagePrefixFor(organizationId: string): string` and `assertSafePrefix(prefix: string): string`.
@@ -181,7 +181,12 @@ Commit: `feat(storage): track presigned upload expiry`
 expect(storagePrefixFor('org_1')).toBe('org_1/');
 expect(() => assertSafePrefix('')).toThrow(DomainError);
 expect(() => assertSafePrefix('../')).toThrow(DomainError);
-expect(await driver.summarizePrefix('org_1/')).toEqual({ objects: 3, bytes: 60 });
+expect(await driver.summarizePrefix('org_1/')).toEqual({
+  objects: 3,
+  bytes: 60,
+  versions: 5,
+  versionBytes: 90,
+});
 ```
 
 The controlled S3 client must return two `ListObjectsV2Command` pages so the test asserts the second request uses the first continuation token.
@@ -198,13 +203,15 @@ Expected: FAIL because prefix operations do not exist.
 export interface StoragePrefixSummary {
   readonly objects: number;
   readonly bytes: number;
+  readonly versions: number;
+  readonly versionBytes: number;
 }
 
 async summarizePrefix(prefix: string): Promise<StoragePrefixSummary>
 async deletePrefix(prefix: string): Promise<void>
 ```
 
-Use `ListObjectsV2Command` with `Prefix` and `ContinuationToken`. Sum each returned object's `Size`. Send `DeleteObjectsCommand` requests of no more than 1,000 exact returned keys, reject any response containing `Errors`, and repeat listing until an empty page proves the prefix is empty.
+Use `ListObjectsV2Command` with `Prefix` and `ContinuationToken`. Sum each returned object's `Size`. Use `ListObjectVersionsCommand` to count and permanently remove historical versions and delete markers. Send `DeleteObjectsCommand` requests of no more than 1,000 exact returned keys and version ids, reject any response containing `Errors`, and repeat listing until empty pages prove the prefix and its version history are empty. Treat only a provider's explicit `NotImplemented` response as a versionless fallback.
 
 - [x] **Step 4: Add deletion tests for all safety boundaries**
 
@@ -215,7 +222,7 @@ expect(deleteBatchSizes).toEqual([1000, 1]);
 await expect(partialFailure()).rejects.toMatchObject({ code: 'internal' });
 ```
 
-Cover empty prefixes, more than one list page, more than one delete batch, missing keys, malformed prefixes, and a per-object S3 error.
+Cover empty prefixes, more than one list page, more than one delete batch, missing keys, malformed prefixes, historical versions, delete markers, a provider without the version API, and a per-object S3 error.
 
 - [x] **Step 5: Run service tests and commit**
 
@@ -565,7 +572,7 @@ Run: `ORBIT_TEST_LANE=workspace-deletion bun run verify`
 
 Expected: lint, comment policy, byte limits, Bun import policy, dependency checks, types, and all tests pass.
 
-- [ ] **Step 3: Inspect the complete diff and commit the verification corrections**
+- [x] **Step 3: Inspect the complete diff and commit the verification corrections**
 
 Run: `git diff --check origin/main...HEAD`
 

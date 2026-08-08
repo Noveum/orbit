@@ -16,6 +16,8 @@ export interface OrganizationDeletionSummary {
   readonly documents: number;
   readonly files: number;
   readonly fileBytes: number;
+  readonly fileVersions: number;
+  readonly fileVersionBytes: number;
   readonly integrations: number;
   readonly webhooks: number;
   readonly availableAt: string | null;
@@ -104,6 +106,8 @@ export async function getOrganizationDeletionSummary(
     documents: totalOf(documents),
     files: stored.objects,
     fileBytes: stored.bytes,
+    fileVersions: stored.versions,
+    fileVersionBytes: stored.versionBytes,
     integrations: totalOf(integrations),
     webhooks: totalOf(webhooks),
     availableAt: availableAt?.toISOString() ?? null,

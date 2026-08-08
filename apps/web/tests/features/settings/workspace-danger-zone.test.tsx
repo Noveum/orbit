@@ -27,6 +27,8 @@ const summary = {
   documents: 6,
   files: 3,
   fileBytes: 1536,
+  fileVersions: 5,
+  fileVersionBytes: 2560,
   integrations: 1,
   webhooks: 2,
   availableAt: null,
@@ -84,6 +86,8 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     expect(screen.getByText('6 documents')).toBeVisible();
     expect(screen.getByText('3 files')).toBeVisible();
     expect(screen.getByText('1.5 KB')).toBeVisible();
+    expect(screen.getByText('5 stored file versions')).toBeVisible();
+    expect(screen.getByText('2.5 KB')).toBeVisible();
     expect(screen.getByText('1 integration')).toBeVisible();
     expect(screen.getByText('2 webhooks')).toBeVisible();
     expect(screen.getByText('Comments, attachments, activity and settings')).toBeVisible();

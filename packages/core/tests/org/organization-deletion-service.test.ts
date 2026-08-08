@@ -26,6 +26,8 @@ interface DeletionSummary {
   readonly documents: number;
   readonly files: number;
   readonly fileBytes: number;
+  readonly fileVersions: number;
+  readonly fileVersionBytes: number;
   readonly integrations: number;
   readonly webhooks: number;
   readonly availableAt: string | null;
@@ -59,7 +61,7 @@ interface FakeStorage {
 }
 
 function fakeStorage(
-  summary: StoragePrefixSummary = { objects: 0, bytes: 0 },
+  summary: StoragePrefixSummary = { objects: 0, bytes: 0, versions: 0, versionBytes: 0 },
   deleteError: Error | null = null,
 ): FakeStorage {
   const summarized: string[] = [];
@@ -156,7 +158,7 @@ async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise
 describe('getOrganizationDeletionSummary', () => {
   it('reports categorized tenant counts and the actual storage prefix inventory', async () => {
     await seedDeletionInventory();
-    const storage = fakeStorage({ objects: 3, bytes: 3_072 });
+    const storage = fakeStorage({ objects: 3, bytes: 3_072, versions: 5, versionBytes: 4_096 });
 
     const summary = await getOrganizationDeletionSummary(nova.admin, storage.driver);
 
@@ -169,6 +171,8 @@ describe('getOrganizationDeletionSummary', () => {
       documents: 1,
       files: 3,
       fileBytes: 3_072,
+      fileVersions: 5,
+      fileVersionBytes: 4_096,
       integrations: 1,
       webhooks: 1,
       availableAt: null,
@@ -178,7 +182,7 @@ describe('getOrganizationDeletionSummary', () => {
 
   it('refuses non-administrators before reading storage', async () => {
     const member = await addMember(nova, 'member');
-    const storage = fakeStorage({ objects: 9, bytes: 99 });
+    const storage = fakeStorage({ objects: 9, bytes: 99, versions: 9, versionBytes: 99 });
 
     await expect(
       getOrganizationDeletionSummary(member.principal, storage.driver),
@@ -296,7 +300,12 @@ describe('deleteOrganization', () => {
       activeOrganizationId: nova.organizationId,
       expiresAt: new Date(Date.now() + 60_000),
     });
-    const storage = fakeStorage({ objects: 4, bytes: 4_096 });
+    const storage = fakeStorage({
+      objects: 4,
+      bytes: 4_096,
+      versions: 4,
+      versionBytes: 4_096,
+    });
 
     const result = await deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver);
 
@@ -334,7 +343,10 @@ describe('deleteOrganization', () => {
       activeOrganizationId: nova.organizationId,
       expiresAt: new Date(Date.now() + 60_000),
     });
-    const storage = fakeStorage({ objects: 1, bytes: 12 }, internal('storage unavailable'));
+    const storage = fakeStorage(
+      { objects: 1, bytes: 12, versions: 1, versionBytes: 12 },
+      internal('storage unavailable'),
+    );
 
     await expect(
       deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver),

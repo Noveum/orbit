@@ -26,6 +26,8 @@ const deletionSummarySchema = z
     documents: z.number().int().nonnegative(),
     files: z.number().int().nonnegative(),
     fileBytes: z.number().int().nonnegative(),
+    fileVersions: z.number().int().nonnegative(),
+    fileVersionBytes: z.number().int().nonnegative(),
     integrations: z.number().int().nonnegative(),
     webhooks: z.number().int().nonnegative(),
     availableAt: z.string().datetime().nullable(),
@@ -227,6 +229,15 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
                   <span>{quantity(summary.files, 'file')}</span>
                   <span className="text-faint">{formatDeletionBytes(summary.fileBytes)}</span>
                 </li>
+                {summary.fileVersions > summary.files ||
+                summary.fileVersionBytes > summary.fileBytes ? (
+                  <li className="flex flex-wrap gap-1">
+                    <span>{quantity(summary.fileVersions, 'stored file version')}</span>
+                    <span className="text-faint">
+                      {formatDeletionBytes(summary.fileVersionBytes)}
+                    </span>
+                  </li>
+                ) : null}
                 <li>{quantity(summary.integrations, 'integration')}</li>
                 <li>{quantity(summary.webhooks, 'webhook')}</li>
               </ul>
@@ -236,9 +247,9 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
                   Comments, attachments, activity and settings
                 </summary>
                 <p className="pt-2 text-muted">
-                  Nested comments, issue relations, document history, notifications, saved views,
-                  cycles, labels, workflow states, credentials and other workspace-owned records are
-                  deleted with their parent data.
+                  Nested comments, issue relations, document history, stored file versions,
+                  notifications, saved views, cycles, labels, workflow states, credentials and other
+                  workspace-owned records are deleted with their parent data.
                 </p>
               </details>
 

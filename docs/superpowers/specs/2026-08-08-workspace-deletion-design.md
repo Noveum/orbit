@@ -15,7 +15,7 @@ The dialog shows counts for:
 - projects
 - issues
 - documents
-- files and total file size
+- files, total file size, and stored version history when present
 - integrations
 - webhooks
 
@@ -35,7 +35,7 @@ The confirmation is trimmed and compared case-sensitively with the current datab
 
 ## Deletion summary
 
-`getOrganizationDeletionSummary` returns the organization name, categorized counts, actual stored object bytes, and an optional `availableAt` timestamp. Database counts come from bounded aggregate queries over direct organization columns. File count and bytes come from `StorageDriver.summarizePrefix`, so pending uploads and orphaned objects under the organization prefix are visible even when they do not have an attachment row. The summary does not fetch row bodies or enumerate names.
+`getOrganizationDeletionSummary` returns the organization name, categorized counts, actual stored object bytes, stored object-version bytes, and an optional `availableAt` timestamp. Database counts come from bounded aggregate queries over direct organization columns. File counts and bytes come from `StorageDriver.summarizePrefix`, so pending uploads, orphaned objects, and recoverable historical versions under the organization prefix are visible even when they do not have an attachment row. The summary does not fetch row bodies or enumerate names.
 
 `availableAt` protects outstanding presigned uploads. A nullable `attachment.uploadExpiresAt` records the expiration of each presigned target and remains null for inline uploads. The summary uses the latest future value. If present, the dialog names when deletion becomes available and the server refuses an early delete even if a client bypasses the UI.
 
@@ -60,13 +60,14 @@ The upload URL lifetime is exported from the storage package so the registration
 `StorageDriver` gains `summarizePrefix(prefix)` and `deletePrefix(prefix)`. Both operations use the same strict prefix validation. The summary walks every page and totals the exact objects and bytes reported by S3. The deletion implementation:
 
 1. validates a non-empty safe prefix ending in `/`
-2. lists all objects under the prefix with pagination
+2. lists all current objects under the prefix with pagination
 3. deletes listed keys in S3 batch limits
-4. treats an empty prefix as success
-5. reports any per-object deletion error as an internal domain error
-6. lists again until the prefix is empty
+4. lists object versions and delete markers and permanently deletes each version id
+5. treats an empty prefix as success
+6. reports any per-object deletion error as an internal domain error
+7. lists again until the prefix and its version history are empty
 
-The implementation sends exact keys returned by S3 and never broadens the requested prefix. Tests cover pagination, more than one deletion batch, empty prefixes, malformed prefixes, and partial S3 errors.
+The implementation sends exact keys and version ids returned by S3 and never broadens the requested prefix. Providers such as Cloudflare R2 that return `501 Not Implemented` for the version-listing API fall back to current-object cleanup because they do not expose S3 object versioning. Permission or partial-delete errors continue to fail closed. AWS S3 policies used by Orbit need `s3:ListBucketVersions` and `s3:DeleteObjectVersion` in addition to current-object list and delete permissions. Tests cover pagination, more than one deletion batch, version history, delete markers, unsupported version APIs, empty prefixes, malformed prefixes, and partial S3 errors.
 
 ## Database cleanup
 
@@ -113,7 +114,7 @@ The dialog uses the shared Radix-based dialog, an explicit title and description
 
 Shared tests cover the validator and `org:delete` permission matrix.
 
-Storage tests cover safe prefix validation, summary pagination and byte totals, deletion pagination, batch deletion, idempotent empty cleanup, and partial errors.
+Storage tests cover safe prefix validation, current and version summary pagination, byte totals, deletion pagination, batch deletion, historical versions, delete markers, providers without a version API, idempotent empty cleanup, and partial errors.
 
 Core integration tests cover:
 
@@ -134,7 +135,7 @@ Realtime contract and hub tests cover closing only connections for the deleted o
 
 Web route tests cover authentication, authorization, validation, summary headers, successful deletion, publish behavior, and storage failure responses. Component tests cover summary loading, categorized counts, byte formatting, exact confirmation, recent-upload messaging, error retry, single submission, and both navigation outcomes.
 
-The completed branch must pass focused package tests and `ORBIT_TEST_LANE=workspace-deletion bun run verify`. The pull request includes a screenshot of the dialog in both themes when practical.
+The completed branch must pass focused package tests and `ORBIT_TEST_LANE=workspace_deletion bun run verify`. The pull request includes a screenshot of the dialog in both themes when practical.
 
 ## Out of scope
 

@@ -25,6 +25,8 @@ export interface DownloadOptions {
 export interface StoragePrefixSummary {
   readonly objects: number;
   readonly bytes: number;
+  readonly versions: number;
+  readonly versionBytes: number;
 }
 
 export interface StorageDriver {

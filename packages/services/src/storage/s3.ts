@@ -4,6 +4,8 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  ListObjectVersionsCommand,
+  type ListObjectVersionsCommandOutput,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -48,6 +50,16 @@ interface ListedObject {
   readonly size: number;
 }
 
+interface ListedVersion {
+  readonly Key: string;
+  readonly VersionId: string;
+}
+
+interface DeletionTarget {
+  readonly Key: string;
+  readonly VersionId?: string;
+}
+
 function listedObjects(
   contents: readonly {
     readonly Key?: string | undefined;
@@ -65,6 +77,44 @@ function listedObjects(
   });
 }
 
+function listedVersions(
+  entries: readonly {
+    readonly Key?: string | undefined;
+    readonly VersionId?: string | undefined;
+  }[],
+  prefix: string,
+): ListedVersion[] {
+  return entries.map((entry) => {
+    const key = entry.Key;
+    const versionId = entry.VersionId;
+    if (
+      key === undefined ||
+      !key.startsWith(prefix) ||
+      versionId === undefined ||
+      versionId.length === 0
+    ) {
+      throw internal('Object storage returned an invalid workspace file-version listing.');
+    }
+    return { Key: key, VersionId: versionId };
+  });
+}
+
+function versionListingUnavailable(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const candidate = error as {
+    readonly name?: unknown;
+    readonly Code?: unknown;
+    readonly $metadata?: { readonly httpStatusCode?: unknown };
+  };
+  return (
+    candidate.$metadata?.httpStatusCode === 501 ||
+    candidate.name === 'NotImplemented' ||
+    candidate.name === 'NotSupported' ||
+    candidate.Code === 'NotImplemented' ||
+    candidate.Code === 'NotSupported'
+  );
+}
+
 function throwStorageError(message: string, error: unknown): never {
   if (isDomainError(error)) throw error;
   throw internal(message, error);
@@ -78,6 +128,177 @@ function assertSignableLength(contentLength: number): void {
     throw payloadTooLarge(`Files must be ${formatBytes(MAX_UPLOAD_BYTES)} or smaller.`, {
       details: { size: contentLength, maxBytes: MAX_UPLOAD_BYTES },
     });
+  }
+}
+
+interface PrefixInventory {
+  readonly objects: number;
+  readonly bytes: number;
+}
+
+async function currentPrefixInventory(
+  client: S3Client,
+  bucket: string,
+  prefix: string,
+): Promise<PrefixInventory> {
+  let continuationToken: string | undefined;
+  let objects = 0;
+  let bytes = 0;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxKeys: MAX_DELETE_OBJECTS,
+        ...(continuationToken === undefined ? {} : { ContinuationToken: continuationToken }),
+      }),
+    );
+    const listed = listedObjects(page.Contents ?? [], prefix);
+    objects += listed.length;
+    bytes += listed.reduce((total, entry) => total + entry.size, 0);
+    if (!(Number.isSafeInteger(objects) && Number.isSafeInteger(bytes))) {
+      throw internal('The workspace file inventory is too large to summarize safely.');
+    }
+    if (page.IsTruncated !== true) return { objects, bytes };
+    if (page.NextContinuationToken === undefined) {
+      throw internal('Object storage returned an incomplete workspace file listing.');
+    }
+    continuationToken = page.NextContinuationToken;
+  } while (continuationToken !== undefined);
+  return { objects, bytes };
+}
+
+async function versionPage(
+  client: S3Client,
+  bucket: string,
+  prefix: string,
+  keyMarker?: string,
+  versionIdMarker?: string,
+): Promise<ListObjectVersionsCommandOutput | null> {
+  try {
+    return await client.send(
+      new ListObjectVersionsCommand({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxKeys: MAX_DELETE_OBJECTS,
+        ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
+        ...(versionIdMarker === undefined ? {} : { VersionIdMarker: versionIdMarker }),
+      }),
+    );
+  } catch (error: unknown) {
+    if (versionListingUnavailable(error)) return null;
+    throw error;
+  }
+}
+
+function totalVersionBytes(entries: readonly { readonly Size?: number | undefined }[]): number {
+  return entries.reduce((total, entry) => {
+    const size = entry.Size ?? 0;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw internal('Object storage returned an invalid workspace file-version listing.');
+    }
+    return total + size;
+  }, 0);
+}
+
+async function versionPrefixInventory(
+  client: S3Client,
+  bucket: string,
+  prefix: string,
+): Promise<PrefixInventory | null> {
+  let keyMarker: string | undefined;
+  let versionIdMarker: string | undefined;
+  let objects = 0;
+  let bytes = 0;
+  do {
+    const page = await versionPage(client, bucket, prefix, keyMarker, versionIdMarker);
+    if (page === null) return null;
+    const entries = page.Versions ?? [];
+    objects += listedVersions(entries, prefix).length;
+    bytes += totalVersionBytes(entries);
+    listedVersions(page.DeleteMarkers ?? [], prefix);
+    if (!(Number.isSafeInteger(objects) && Number.isSafeInteger(bytes))) {
+      throw internal('The workspace file-version inventory is too large to summarize safely.');
+    }
+    if (page.IsTruncated !== true) return { objects, bytes };
+    if (page.NextKeyMarker === undefined) {
+      throw internal('Object storage returned an incomplete workspace file-version listing.');
+    }
+    keyMarker = page.NextKeyMarker;
+    versionIdMarker = page.NextVersionIdMarker;
+  } while (keyMarker !== undefined);
+  return { objects, bytes };
+}
+
+async function deleteObjects(
+  client: S3Client,
+  bucket: string,
+  objects: readonly DeletionTarget[],
+  failureMessage: string,
+): Promise<void> {
+  for (let offset = 0; offset < objects.length; offset += MAX_DELETE_OBJECTS) {
+    const batch = objects.slice(offset, offset + MAX_DELETE_OBJECTS);
+    const deleted = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: { Objects: batch, Quiet: true },
+      }),
+    );
+    if ((deleted.Errors?.length ?? 0) > 0) throw internal(failureMessage);
+  }
+}
+
+async function deleteCurrentObjects(
+  client: S3Client,
+  bucket: string,
+  prefix: string,
+): Promise<void> {
+  while (true) {
+    const page = await client.send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: MAX_DELETE_OBJECTS }),
+    );
+    const listed = listedObjects(page.Contents ?? [], prefix);
+    if (listed.length > 0) {
+      await deleteObjects(
+        client,
+        bucket,
+        listed.map((entry) => ({ Key: entry.key })),
+        'Object storage could not delete every workspace file.',
+      );
+      continue;
+    }
+    if (page.IsTruncated === true) {
+      throw internal('Object storage returned an incomplete workspace file listing.');
+    }
+    return;
+  }
+}
+
+async function deleteVersionedObjects(
+  client: S3Client,
+  bucket: string,
+  prefix: string,
+): Promise<void> {
+  while (true) {
+    const page = await versionPage(client, bucket, prefix);
+    if (page === null) return;
+    const versions = [
+      ...listedVersions(page.Versions ?? [], prefix),
+      ...listedVersions(page.DeleteMarkers ?? [], prefix),
+    ];
+    if (versions.length > 0) {
+      await deleteObjects(
+        client,
+        bucket,
+        versions,
+        'Object storage could not delete every workspace file version.',
+      );
+      continue;
+    }
+    if (page.IsTruncated === true) {
+      throw internal('Object storage returned an incomplete workspace file-version listing.');
+    }
+    return;
   }
 }
 
@@ -203,35 +424,15 @@ export class S3StorageDriver implements StorageDriver {
   async summarizePrefix(prefix: string): Promise<StoragePrefixSummary> {
     const safePrefix = assertSafePrefix(prefix);
     const client = await this.client();
-    let continuationToken: string | undefined;
-    let objects = 0;
-    let bytes = 0;
     try {
-      do {
-        const page = await client.send(
-          new ListObjectsV2Command({
-            Bucket: this.bucket,
-            Prefix: safePrefix,
-            MaxKeys: MAX_DELETE_OBJECTS,
-            ...(continuationToken === undefined ? {} : { ContinuationToken: continuationToken }),
-          }),
-        );
-        const listed = listedObjects(page.Contents ?? [], safePrefix);
-        objects += listed.length;
-        bytes += listed.reduce((total, entry) => total + entry.size, 0);
-        if (!(Number.isSafeInteger(objects) && Number.isSafeInteger(bytes))) {
-          throw internal('The workspace file inventory is too large to summarize safely.');
-        }
-        if (page.IsTruncated !== true) {
-          continuationToken = undefined;
-          continue;
-        }
-        if (page.NextContinuationToken === undefined) {
-          throw internal('Object storage returned an incomplete workspace file listing.');
-        }
-        continuationToken = page.NextContinuationToken;
-      } while (continuationToken !== undefined);
-      return { objects, bytes };
+      const current = await currentPrefixInventory(client, this.bucket, safePrefix);
+      const versions = await versionPrefixInventory(client, this.bucket, safePrefix);
+      return {
+        objects: current.objects,
+        bytes: current.bytes,
+        versions: versions?.objects ?? current.objects,
+        versionBytes: versions?.bytes ?? current.bytes,
+      };
     } catch (error: unknown) {
       throwStorageError('Could not inspect workspace files in storage.', error);
     }
@@ -241,37 +442,8 @@ export class S3StorageDriver implements StorageDriver {
     const safePrefix = assertSafePrefix(prefix);
     const client = await this.client();
     try {
-      while (true) {
-        const page = await client.send(
-          new ListObjectsV2Command({
-            Bucket: this.bucket,
-            Prefix: safePrefix,
-            MaxKeys: MAX_DELETE_OBJECTS,
-          }),
-        );
-        const listed = listedObjects(page.Contents ?? [], safePrefix);
-        if (listed.length === 0) {
-          if (page.IsTruncated === true) {
-            throw internal('Object storage returned an incomplete workspace file listing.');
-          }
-          return;
-        }
-        for (let offset = 0; offset < listed.length; offset += MAX_DELETE_OBJECTS) {
-          const batch = listed.slice(offset, offset + MAX_DELETE_OBJECTS);
-          const deleted = await client.send(
-            new DeleteObjectsCommand({
-              Bucket: this.bucket,
-              Delete: {
-                Objects: batch.map((entry) => ({ Key: entry.key })),
-                Quiet: true,
-              },
-            }),
-          );
-          if ((deleted.Errors?.length ?? 0) > 0) {
-            throw internal('Object storage could not delete every workspace file.');
-          }
-        }
-      }
+      await deleteCurrentObjects(client, this.bucket, safePrefix);
+      await deleteVersionedObjects(client, this.bucket, safePrefix);
     } catch (error: unknown) {
       throwStorageError('Could not delete workspace files from storage.', error);
     }
