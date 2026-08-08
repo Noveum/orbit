@@ -1,5 +1,9 @@
 import { isDomainError } from '@orbit/shared/errors';
-import { githubCallbackSchema, githubInstallRequestSchema } from '@orbit/shared/validators';
+import {
+  githubCallbackSchema,
+  githubInstallRequestSchema,
+  githubInstallWithoutCodeSchema,
+} from '@orbit/shared/validators';
 import type { GithubConnectStatus } from '@/features/settings/github-view.ts';
 import { absoluteUrl, githubAppConfig } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
@@ -23,7 +27,11 @@ export async function GET(request: Request): Promise<Response> {
   if (githubInstallRequestSchema.safeParse(params).success) return settingsRedirect('denied');
 
   const parsed = githubCallbackSchema.safeParse(params);
-  if (!parsed.success) return settingsRedirect('error');
+  if (!parsed.success) {
+    const carriedNoCode =
+      !('code' in params) && githubInstallWithoutCodeSchema.safeParse(params).success;
+    return settingsRedirect(carriedNoCode ? 'unverified' : 'error');
+  }
 
   const state = await consumeOAuthState(parsed.data.state, integrationStateSecret(), 'github');
   if (state === null) return settingsRedirect('error');

@@ -3,6 +3,7 @@ import { can } from '@orbit/shared/policy';
 import {
   GithubConnectNotice,
   githubConnectStatusOf,
+  misroutedGithubInstall,
 } from '@/features/settings/github-connect-notice.tsx';
 import { loadIntegrationSettings } from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
@@ -15,7 +16,9 @@ export default async function IntegrationsSettingsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { principal } = await pageContext();
-  const githubStatus = githubConnectStatusOf((await searchParams)['github']);
+  const query = await searchParams;
+  const githubStatus =
+    githubConnectStatusOf(query['github']) ?? (misroutedGithubInstall(query) ? 'misrouted' : null);
   const [settings, grants] = await Promise.all([
     loadIntegrationSettings(principal),
     listMcpGrants(principal.userId),

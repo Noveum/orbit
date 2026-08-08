@@ -33,6 +33,12 @@ export const githubCallbackSchema = z.object({
 });
 export type GithubCallback = z.infer<typeof githubCallbackSchema>;
 
+export const githubInstallWithoutCodeSchema = z.object({
+  installation_id: githubInstallationIdSchema,
+  setup_action: z.enum(['install', 'update']),
+  state: z.string().trim().min(1).max(2048),
+});
+
 export const gitLinksQuerySchema = z.object({ issueId: idSchema });
 
 export const slackInstallSchema = z.object({

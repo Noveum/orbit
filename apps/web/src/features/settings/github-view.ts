@@ -1,4 +1,11 @@
-export const GITHUB_CONNECT_STATUSES = ['connected', 'error', 'denied', 'claimed'] as const;
+export const GITHUB_CONNECT_STATUSES = [
+  'connected',
+  'error',
+  'denied',
+  'claimed',
+  'unverified',
+  'misrouted',
+] as const;
 export type GithubConnectStatus = (typeof GITHUB_CONNECT_STATUSES)[number];
 
 export interface GithubInstallationSummary {
