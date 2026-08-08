@@ -19,6 +19,7 @@ class FakeRedis {
 }
 
 const previousRedisUrl = process.env['REDIS_URL'];
+const redisModule = await import('ioredis');
 process.env['REDIS_URL'] = 'redis://fake:6379';
 mock.module('ioredis', () => ({ Redis: FakeRedis }));
 
@@ -35,6 +36,7 @@ afterAll(async () => {
   await closeRealtime();
   if (previousRedisUrl === undefined) delete process.env['REDIS_URL'];
   else process.env['REDIS_URL'] = previousRedisUrl;
+  mock.module('ioredis', () => redisModule);
 });
 
 describe('buildSyncAction', () => {

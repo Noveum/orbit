@@ -545,7 +545,7 @@ Commit: `fix(realtime): recover deleted workspaces`
 **Interfaces:**
 - Produces: a ready GitHub pull request whose CI is green and whose complete diff has passed two separate review-and-fix loops.
 
-- [ ] **Step 1: Run focused cross-package verification**
+- [x] **Step 1: Run focused cross-package verification**
 
 Run: `bun run lint`
 
@@ -559,7 +559,7 @@ Run each focused test command from Tasks 1 through 8.
 
 Expected: every command exits zero.
 
-- [ ] **Step 2: Run the full repository verification**
+- [x] **Step 2: Run the full repository verification**
 
 Run: `ORBIT_TEST_LANE=workspace-deletion bun run verify`
 
