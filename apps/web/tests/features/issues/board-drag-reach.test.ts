@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { showsEmptyGroups } from '@orbit/shared/filters';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { planDrop } from '@/features/issues/board.tsx';
+import { columnsReadyFor, planDrop } from '@/features/issues/board.tsx';
 import { scrollStep } from '@/features/issues/use-board-autoscroll.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 
@@ -108,5 +108,13 @@ describe('auto scrolling while a card is in hand', () => {
 
   it('never scrolls past its own step limit', () => {
     expect(scrollStep(0, 72, 18)).toBe(18);
+  });
+});
+
+describe('what a board asks for on first paint', () => {
+  it('holds the column requests back until the one board request has answered', () => {
+    expect(columnsReadyFor(undefined, true)).toBe(true);
+    expect(columnsReadyFor({}, true)).toBe(false);
+    expect(columnsReadyFor({}, false)).toBe(true);
   });
 });

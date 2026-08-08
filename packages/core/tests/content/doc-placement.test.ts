@@ -187,3 +187,36 @@ describe('doc ordering', () => {
     expect(moved.map((row) => row.id)).toContain(child.id);
   });
 });
+
+describe('ordering anchors', () => {
+  it('ignores a before anchor that lives in another folder', async () => {
+    const here = await newCollection('Here');
+    const elsewhere = await newCollection('Elsewhere');
+    const first = await newDoc('First', { collectionId: here.id });
+    const stranger = await newDoc('Stranger', { collectionId: elsewhere.id });
+    const mover = await newDoc('Mover', { collectionId: here.id });
+
+    const { doc } = await moveDoc(workspace.admin, mover.id, {
+      collectionId: here.id,
+      beforeId: stranger.id,
+      afterId: null,
+    });
+
+    expect(doc.collectionId).toBe(here.id);
+    expect(doc.sortOrder).toBeGreaterThan(first.sortOrder);
+  });
+
+  it('ignores an anchor that belongs to another workspace', async () => {
+    const other = await createWorkspace('Other');
+    const { doc: theirs } = await createDoc(other.admin, { title: 'Theirs' });
+    const mine = await newDoc('Mine');
+
+    const { doc } = await moveDoc(workspace.admin, mine.id, {
+      beforeId: theirs.id,
+      afterId: null,
+    });
+
+    expect(doc.organizationId).toBe(workspace.organizationId);
+    expect(Number.isFinite(doc.sortOrder)).toBe(true);
+  });
+});

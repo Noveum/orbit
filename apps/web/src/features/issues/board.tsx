@@ -68,6 +68,10 @@ const EMPTY_COLUMN = {
   scope: {} as Readonly<Record<string, string>>,
 };
 
+export function columnsReadyFor(columnSource: object | undefined, boardPending: boolean): boolean {
+  return columnSource === undefined || !boardPending;
+}
+
 export const boardCollision: CollisionDetection = (args) => {
   const under = pointerWithin(args);
   return under.length > 0 ? under : rectIntersection(args);
@@ -275,7 +279,8 @@ export function Board({
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const move = useMoveIssue();
-  useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
@@ -362,6 +367,7 @@ export function Board({
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}
           columnSource={columnSource}
+          columnsReady={columnsReady}
           onCreate={() => openQuickCreate()}
           onOpen={setPeekId}
           onRows={publishRows}
@@ -411,6 +417,7 @@ interface BoardColumnProps {
   readonly loadingMore: boolean;
   readonly onLoadMore: (() => void) | undefined;
   readonly columnSource: BoardColumnSource | undefined;
+  readonly columnsReady: boolean;
   readonly onCreate: () => void;
   readonly onOpen: (id: string) => void;
   readonly onRows: (groupId: string, issues: readonly Issue[]) => void;
@@ -425,12 +432,17 @@ function BoardColumn({
   loadingMore,
   onLoadMore,
   columnSource,
+  columnsReady,
   onCreate,
   onOpen,
   onRows,
 }: BoardColumnProps) {
   const { stateById } = useWorkspace();
-  const owned = useColumnIssues(columnSource ?? EMPTY_COLUMN, group.id, columnSource !== undefined);
+  const owned = useColumnIssues(
+    columnSource ?? EMPTY_COLUMN,
+    group.id,
+    columnSource !== undefined && columnsReady,
+  );
   const ownsData = columnSource !== undefined;
   const fetched = owned.data ?? group.issues;
   const issues = useMemo(

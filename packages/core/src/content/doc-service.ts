@@ -508,12 +508,23 @@ function siblingFilters(placement: DocPlacement): SQL[] {
   ];
 }
 
-async function orderOf(executor: Executor, docId: string | null): Promise<number | null> {
+async function siblingOrderOf(
+  executor: Executor,
+  organizationId: string,
+  placement: DocPlacement,
+  docId: string | null,
+): Promise<number | null> {
   if (docId === null) return null;
   const [row] = await executor
     .select({ sortOrder: schema.doc.sortOrder })
     .from(schema.doc)
-    .where(eq(schema.doc.id, docId))
+    .where(
+      and(
+        eq(schema.doc.id, docId),
+        eq(schema.doc.organizationId, organizationId),
+        ...siblingFilters(placement),
+      ),
+    )
     .limit(1);
   return row?.sortOrder ?? null;
 }
@@ -564,20 +575,28 @@ export async function moveDoc(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
-    let before = await orderOf(tx, parsed.beforeId);
-    let after = await orderOf(tx, parsed.afterId);
+    const anchor = (docId: string | null) =>
+      siblingOrderOf(tx, principal.organizationId, placement, docId);
+
+    let before = await anchor(parsed.beforeId);
+    let after = await anchor(parsed.afterId);
     let rebalanced: DocRow[] = [];
     if (before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD) {
       rebalanced = await rebalanceSiblings(tx, principal.organizationId, placement, syncId);
-      before = await orderOf(tx, parsed.beforeId);
-      after = await orderOf(tx, parsed.afterId);
+      before = await anchor(parsed.beforeId);
+      after = await anchor(parsed.afterId);
     }
+
+    const landing =
+      before === null && after === null
+        ? await nextSiblingOrder(tx, principal.organizationId, placement)
+        : sortOrderBetween(before, after);
 
     const [saved] = await tx
       .update(schema.doc)
       .set({
         ...placement,
-        sortOrder: sortOrderBetween(before, after),
+        sortOrder: landing,
         updatedAt: new Date(),
         syncId,
       })
