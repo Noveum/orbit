@@ -19,6 +19,7 @@ import {
   ISSUE_ORDERINGS,
   isEmptyFilter,
   sanitizeViewConfig,
+  showsEmptyGroups,
   viewStateSchema,
 } from '@orbit/shared/filters';
 
@@ -83,7 +84,13 @@ export function parseViewConfig(
     orderBy: oneOf(params.get(ORDER_PARAM), ISSUE_ORDERINGS, base.orderBy),
     display: {
       showSubIssues: parseBoolean(params.get(SUB_ISSUES_PARAM), base.display.showSubIssues),
-      showEmptyGroups: parseBoolean(params.get(EMPTY_GROUPS_PARAM), base.display.showEmptyGroups),
+      showEmptyGroups:
+        params.get(EMPTY_GROUPS_PARAM) === null
+          ? base.display.showEmptyGroups
+          : parseBoolean(
+              params.get(EMPTY_GROUPS_PARAM),
+              showsEmptyGroups(base.display.showEmptyGroups, layout),
+            ),
       showCompleted: oneOf(
         params.get(COMPLETED_PARAM),
         COMPLETED_WINDOWS,
@@ -111,8 +118,9 @@ export function viewConfigToParams(config: ViewConfig, layout: ViewLayoutMode): 
   if (config.display.showSubIssues !== fallback.display.showSubIssues) {
     params.set(SUB_ISSUES_PARAM, config.display.showSubIssues ? '1' : '0');
   }
-  if (config.display.showEmptyGroups !== fallback.display.showEmptyGroups) {
-    params.set(EMPTY_GROUPS_PARAM, config.display.showEmptyGroups ? '1' : '0');
+  const empty = showsEmptyGroups(config.display.showEmptyGroups, layout);
+  if (empty !== showsEmptyGroups(fallback.display.showEmptyGroups, layout)) {
+    params.set(EMPTY_GROUPS_PARAM, empty ? '1' : '0');
   }
   if (config.display.showCompleted !== fallback.display.showCompleted) {
     params.set(COMPLETED_PARAM, config.display.showCompleted);
@@ -135,7 +143,8 @@ export function displayIsDefault(config: ViewConfig, layout: ViewLayoutMode): bo
     config.subGroupBy === fallback.subGroupBy &&
     config.orderBy === fallback.orderBy &&
     config.display.showSubIssues === fallback.display.showSubIssues &&
-    config.display.showEmptyGroups === fallback.display.showEmptyGroups &&
+    showsEmptyGroups(config.display.showEmptyGroups, layout) ===
+      showsEmptyGroups(fallback.display.showEmptyGroups, layout) &&
     config.display.showCompleted === fallback.display.showCompleted &&
     sameProperties(config.display.properties, fallback.display.properties)
   );

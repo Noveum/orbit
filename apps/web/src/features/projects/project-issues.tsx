@@ -1,21 +1,25 @@
 'use client';
 
-import type { DisplayProperty } from '@orbit/shared/filters';
+import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { conditionsOf, dropLastCondition } from '@orbit/shared/filters';
 import { Columns3, List, SearchX } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
+import { mergedStateResolver } from '@/features/filters/grouping.ts';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
-import { Board } from '@/features/issues/board.tsx';
+import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
+import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
+import { columnParamFor } from '@/lib/query/issue-search.ts';
 import { useProjectIssues } from '@/lib/query/use-issues.ts';
 
 export interface ProjectIssuesProps {
@@ -34,7 +38,22 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
   });
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
 
+  const workspace = useWorkspace();
+  const canDrag = canDragBoard(workspace.role, config.groupBy);
+  const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
   const scope = useMemo(() => ({ projectId }), [projectId]);
+  const columnSource = useMemo<BoardColumnSource | undefined>(
+    () =>
+      config.groupBy === 'state' || columnParamFor(config.groupBy) === null
+        ? undefined
+        : {
+            query: { filter: config.filter, orderBy: config.orderBy },
+            groupBy: config.groupBy,
+            scope,
+            display: config.display,
+          },
+    [config.groupBy, config.filter, config.orderBy, config.display, scope],
+  );
   const model = useIssueViewModel({
     teamId: null,
     config,
@@ -92,6 +111,11 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
       <ProjectIssueBody
         model={model}
         layout={layout}
+        groupBy={config.groupBy}
+        orderBy={config.orderBy}
+        resolveState={resolveState}
+        columnSource={columnSource}
+        canDrag={canDrag}
         loading={issues.isPending}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
@@ -108,6 +132,11 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
 
 interface BodyProps {
   readonly model: IssueViewModel;
+  readonly columnSource: BoardColumnSource | undefined;
+  readonly canDrag: boolean;
+  readonly groupBy: GroupByField;
+  readonly orderBy: IssueOrdering;
+  readonly resolveState: StateResolver;
   readonly layout: ViewLayoutMode;
   readonly loading: boolean;
   readonly hasMore: boolean;
@@ -120,6 +149,11 @@ interface BodyProps {
 
 function ProjectIssueBody({
   model,
+  columnSource,
+  canDrag,
+  groupBy,
+  orderBy,
+  resolveState,
   layout,
   loading,
   hasMore,
@@ -163,11 +197,15 @@ function ProjectIssueBody({
     return (
       <Board
         groups={model.groups}
-        draggable={false}
+        draggable={canDrag}
+        reorderable={orderBy === 'manual'}
+        resolveState={resolveState}
+        groupBy={groupBy}
         properties={properties}
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        columnSource={columnSource}
       />
     );
   }

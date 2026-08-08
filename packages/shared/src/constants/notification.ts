@@ -9,6 +9,8 @@ export const NOTIFICATION_TYPES = [
   'reaction',
   'subscription_activity',
   'document_changed',
+  'doc_access_requested',
+  'doc_access_granted',
   'project_update',
   'reminder_due',
   'triage_added',
@@ -49,6 +51,8 @@ export const NOTIFICATION_REASONS = [
   'review_approved',
   'pull_request_merged',
   'due_soon',
+  'access_requested',
+  'access_granted',
   'manual',
 ] as const;
 export type NotificationReason = (typeof NOTIFICATION_REASONS)[number];

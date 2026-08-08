@@ -17,7 +17,15 @@ mock.module('@/components/ui/toast.tsx', () => ({
   useToast: () => ({ toast: mock(), dismiss: mock() }),
 }));
 
-const { DocShareMenu, VISIBILITY_SEGMENTS, visibleSegments } = await import(
+mock.module('@/features/docs/doc-people-access.tsx', () => ({
+  DocPeopleAccess: () => null,
+}));
+
+mock.module('@/features/docs/doc-access-requests.tsx', () => ({
+  DocAccessRequests: () => null,
+}));
+
+const { DocShareMenu, shareTrigger, visibleChoices } = await import(
   '../../../src/features/docs/doc-share-menu.tsx'
 );
 
@@ -31,6 +39,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     title: 'Delta protocol',
     slug: 'delta-protocol',
     content: '',
+    sortOrder: 0,
     visibility,
     publishToken,
     authorId: 'user_1',
@@ -50,123 +59,147 @@ function menu(current: Doc, canPublish = true) {
   );
 }
 
-function segmentFor(value: string): HTMLElement {
-  return screen.getByTestId(`doc-visibility-segment-${value}`);
+async function openShare(current: Doc, canPublish = true) {
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
+  render(menu(current, canPublish));
+  await user.click(screen.getByTestId('doc-share'));
+  return user;
+}
+
+function choiceFor(value: string): HTMLElement {
+  return screen.getByTestId(`doc-visibility-${value}`);
+}
+
+function stubClipboard(): { value: string } {
+  const captured = { value: '' };
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: (value: string) => {
+        captured.value = value;
+        return Promise.resolve();
+      },
+    },
+  });
+  return captured;
 }
 
 beforeEach(() => {
   shareMutate.mockClear();
 });
 
-describe('the visibility control on a doc', () => {
-  it('shows private, workspace and a shareable link without opening a menu', () => {
-    render(menu(doc('workspace')));
+describe('the share dialog', () => {
+  it('says on the trigger what the doc is right now', () => {
+    render(menu(doc('public', 'token_1')));
 
-    expect(screen.getByTestId('doc-visibility-control')).toBeInTheDocument();
-    expect(VISIBILITY_SEGMENTS.map((segment) => segment.value)).toEqual([
-      'private',
-      'workspace',
-      'link',
-    ]);
-    for (const segment of VISIBILITY_SEGMENTS) {
-      expect(segmentFor(segment.value)).toBeInTheDocument();
+    expect(screen.getByTestId('doc-share')).toHaveTextContent('Public');
+  });
+
+  it('offers every visibility in one place, with no second menu', async () => {
+    await openShare(doc('public', 'token_1'));
+
+    for (const visibility of DOC_VISIBILITIES) {
+      expect(choiceFor(visibility)).toBeInTheDocument();
     }
   });
 
-  it('marks only the state the doc is actually in', () => {
-    render(menu(doc('workspace')));
+  it('marks only the state the doc is actually in', async () => {
+    await openShare(doc('workspace'));
 
-    expect(segmentFor('workspace')).toHaveAttribute('aria-pressed', 'true');
-    expect(segmentFor('private')).toHaveAttribute('aria-pressed', 'false');
-    expect(segmentFor('link')).toHaveAttribute('aria-pressed', 'false');
+    expect(choiceFor('workspace')).toHaveAttribute('aria-pressed', 'true');
+    expect(choiceFor('private')).toHaveAttribute('aria-pressed', 'false');
+    expect(choiceFor('link')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('switches visibility in one click', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(menu(doc('workspace')));
+    const user = await openShare(doc('workspace'));
 
-    await user.click(segmentFor('private'));
+    await user.click(choiceFor('private'));
 
     expect(shareMutate).toHaveBeenCalledWith({ visibility: 'private' });
   });
 
   it('never claims a public doc is the unlisted link, so public can still be narrowed', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(menu(doc('public', 'token_1')));
+    const user = await openShare(doc('public', 'token_1'));
 
-    expect(segmentFor('link')).toHaveAttribute('aria-pressed', 'false');
-
-    await user.click(segmentFor('link'));
+    expect(choiceFor('link')).toHaveAttribute('aria-pressed', 'false');
+    await user.click(choiceFor('link'));
 
     expect(shareMutate).toHaveBeenCalledWith({ visibility: 'link' });
   });
 
-  it('still moves when the segment already matches, so a click is never swallowed', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(menu(doc('link', 'token_1')));
+  it('still moves when the choice already matches, so a click is never swallowed', async () => {
+    const user = await openShare(doc('link', 'token_1'));
 
-    await user.click(segmentFor('link'));
+    await user.click(choiceFor('link'));
 
     expect(shareMutate).toHaveBeenCalledWith({ visibility: 'link' });
   });
 
-  it('hides the link segment from someone who cannot publish', () => {
-    render(menu(doc('workspace'), false));
+  it('hides the outside world from someone who cannot publish', async () => {
+    await openShare(doc('workspace'), false);
 
-    expect(screen.queryByTestId('doc-visibility-segment-link')).toBeNull();
-    expect(segmentFor('private')).toBeInTheDocument();
-    expect(segmentFor('workspace')).toBeInTheDocument();
-    expect(visibleSegments(false).map((segment) => segment.value)).toEqual([
+    expect(screen.queryByTestId('doc-visibility-link')).toBeNull();
+    expect(screen.queryByTestId('doc-visibility-public')).toBeNull();
+    expect(choiceFor('private')).toBeInTheDocument();
+    expect(visibleChoices(false).map((choice) => choice.value)).toEqual([
       'private',
+      'team',
       'workspace',
     ]);
   });
+});
 
-  it('offers a copy control beside the doc once a link exists', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(menu(doc('link', 'token_1')));
+describe('copying a link to a doc', () => {
+  it('copies the in app link for a private doc, so a colleague can be pointed at it', async () => {
+    const user = await openShare(doc('private'));
+    const clipboard = stubClipboard();
 
-    const copyButton = screen.getByTestId('doc-share-copy');
-    expect(copyButton).toBeInTheDocument();
+    await user.click(screen.getByTestId('doc-copy-link'));
 
-    let copiedValue = '';
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: (value: string) => {
-          copiedValue = value;
-          return Promise.resolve();
-        },
-      },
-    });
-
-    await user.click(copyButton);
-
-    expect(copiedValue).toContain('/d/delta-protocol-token_1');
+    expect(clipboard.value).toContain('/docs/doc_1');
   });
 
-  it('keeps no copy control while the doc has no link', () => {
-    render(menu(doc('workspace')));
+  it('copies the in app link for a workspace doc too', async () => {
+    const user = await openShare(doc('workspace'));
+    const clipboard = stubClipboard();
 
-    expect(screen.queryByTestId('doc-share-copy')).toBeNull();
+    await user.click(screen.getByTestId('doc-copy-link'));
+
+    expect(clipboard.value).toContain('/docs/doc_1');
+  });
+
+  it('offers the published link alongside the workspace one once a doc is shared out', async () => {
+    const user = await openShare(doc('link', 'token_1'));
+    const clipboard = stubClipboard();
+
+    await user.click(screen.getByTestId('doc-copy-public-link'));
+
+    expect(clipboard.value).toContain('/d/delta-protocol-token_1');
+  });
+
+  it('keeps the public link and its reset out of sight while the doc has none', async () => {
+    await openShare(doc('workspace'));
+
+    expect(screen.queryByTestId('doc-copy-public-link')).toBeNull();
+    expect(screen.queryByTestId('doc-rotate-link')).toBeNull();
+  });
+
+  it('resets the published link on request', async () => {
+    const user = await openShare(doc('link', 'token_1'));
+
+    await user.click(screen.getByTestId('doc-rotate-link'));
+
+    expect(shareMutate).toHaveBeenCalledWith({ visibility: 'link', rotateToken: true });
   });
 });
 
-describe('the full set of visibility choices', () => {
-  it('keeps every transition reachable from the doc header', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(menu(doc('public', 'token_1')));
-
-    await user.click(screen.getByTestId('doc-publish'));
-
-    for (const visibility of DOC_VISIBILITIES) {
-      expect(screen.getByTestId(`doc-visibility-${visibility}`)).toBeInTheDocument();
-    }
-  });
-
-  it('says what the doc is right now on the trigger', () => {
-    render(menu(doc('public', 'token_1')));
-
-    expect(screen.getByTestId('doc-publish')).toHaveTextContent('Public');
+describe('shareTrigger', () => {
+  it('names each visibility in the words a person would use', () => {
+    expect(shareTrigger('private')).toBe('Private');
+    expect(shareTrigger('team')).toBe('Private');
+    expect(shareTrigger('workspace')).toBe('Workspace');
+    expect(shareTrigger('link')).toBe('Unlisted');
+    expect(shareTrigger('public')).toBe('Public');
   });
 });

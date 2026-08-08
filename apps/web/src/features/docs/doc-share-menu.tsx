@@ -11,100 +11,126 @@ import {
   Lock,
   type LucideIcon,
   RefreshCw,
-  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu.tsx';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
-import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
-import { publicDocUrl } from '@/lib/docs/paths.ts';
+import { appDocUrl, publicDocUrl } from '@/lib/docs/paths.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { useShareDoc } from '@/lib/query/use-docs.ts';
+import { DocAccessRequests } from './doc-access-requests.tsx';
 import { DocPeopleAccess } from './doc-people-access.tsx';
 
-export const VISIBILITY_OPTIONS = [
-  {
-    value: 'private',
-    label: 'Only people you invite',
-    trigger: 'Private',
-    icon: Lock,
-    description: 'Nobody can open it unless you share it with them by name.',
-  },
-  {
-    value: 'team',
-    label: 'People you invite, and their team',
-    trigger: 'Restricted',
-    icon: Users,
-    description: 'Shared with the people and teams you name below, and nobody else.',
-  },
-  {
-    value: 'workspace',
-    label: 'Workspace only',
-    trigger: 'Publish',
-    icon: Lock,
-    description: 'Nobody outside this workspace can open it.',
-  },
-  {
-    value: 'link',
-    label: 'Anyone with the link',
-    trigger: 'Unlisted',
-    icon: Link2,
-    description: 'Unlisted: no search engines, no sitemap, and you can reset the link.',
-  },
-  {
-    value: 'public',
-    label: 'Public on the web',
-    trigger: 'Public',
-    icon: Globe,
-    description: 'Indexed by search engines, listed in the sitemap, with a link preview card.',
-  },
-] as const;
-
-export interface VisibilitySegment {
+export interface VisibilityChoice {
   readonly value: DocVisibility;
   readonly label: string;
   readonly description: string;
   readonly icon: LucideIcon;
 }
 
-export const VISIBILITY_SEGMENTS: readonly VisibilitySegment[] = [
+export const VISIBILITY_CHOICES: readonly VisibilityChoice[] = [
   {
     value: 'private',
-    label: 'Private',
-    description: 'Only you and the people you invite by name.',
+    label: 'Only people you invite',
+    description: 'Nobody can open it unless you share it with them by name.',
+    icon: Lock,
+  },
+  {
+    value: 'team',
+    label: 'People you invite, and their team',
+    description: 'Shared with the people and teams you name below, and nobody else.',
     icon: Lock,
   },
   {
     value: 'workspace',
-    label: 'Workspace',
-    description: 'Everyone in this workspace can read it.',
+    label: 'Everyone in this workspace',
+    description: 'Anyone signed in to this workspace can read it. Nobody outside can.',
     icon: Building2,
   },
   {
     value: 'link',
-    label: 'Link',
-    description: 'Anyone with the link, unlisted and resettable.',
+    label: 'Anyone with the link',
+    description: 'Unlisted: no search engines, no sitemap, and you can reset the link.',
     icon: Link2,
+  },
+  {
+    value: 'public',
+    label: 'Public on the web',
+    description: 'Indexed by search engines, listed in the sitemap, with a link preview card.',
+    icon: Globe,
   },
 ];
 
-export function visibilityOption(visibility: string) {
-  return VISIBILITY_OPTIONS.find((option) => option.value === visibility) ?? VISIBILITY_OPTIONS[0];
+export function visibilityChoice(visibility: string): VisibilityChoice {
+  return (
+    VISIBILITY_CHOICES.find((choice) => choice.value === visibility) ??
+    (VISIBILITY_CHOICES[0] as VisibilityChoice)
+  );
 }
 
-export function visibleSegments(canPublish: boolean): readonly VisibilitySegment[] {
-  return VISIBILITY_SEGMENTS.filter((segment) => canPublish || !isExternallyShared(segment.value));
+export function visibleChoices(canPublish: boolean): readonly VisibilityChoice[] {
+  return VISIBILITY_CHOICES.filter((choice) => canPublish || !isExternallyShared(choice.value));
+}
+
+export function shareTrigger(visibility: string): string {
+  if (visibility === 'public') return 'Public';
+  if (visibility === 'link') return 'Unlisted';
+  if (visibility === 'workspace') return 'Workspace';
+  return 'Private';
+}
+
+function CopyRow({
+  label,
+  url,
+  testId,
+}: {
+  readonly label: string;
+  readonly url: string;
+  readonly testId: string;
+}) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => toast({ title: 'Could not copy', description: url, tone: 'danger' }));
+  };
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2 py-1.5">
+      <span className="min-w-0 flex-1">
+        <span className="block text-2xs text-faint">{label}</span>
+        <span
+          data-testid={`${testId}-url`}
+          className="block truncate font-mono text-2xs text-muted"
+        >
+          {url}
+        </span>
+      </span>
+      <Button
+        variant="secondary"
+        size="sm"
+        aria-label={`Copy ${label.toLowerCase()}`}
+        data-testid={testId}
+        onClick={copy}
+      >
+        {copied ? (
+          <Check className="size-3.5 text-success" aria-hidden="true" />
+        ) : (
+          <Copy className="size-3.5" aria-hidden="true" />
+        )}
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  );
 }
 
 export interface DocShareMenuProps {
@@ -113,191 +139,101 @@ export interface DocShareMenuProps {
   readonly canPublish?: boolean;
 }
 
-function VisibilitySegments({
-  visibility,
-  canPublish,
-  disabled,
-  onSelect,
-}: {
-  readonly visibility: string;
-  readonly canPublish: boolean;
-  readonly disabled: boolean;
-  readonly onSelect: (value: DocVisibility) => void;
-}) {
-  return (
-    <fieldset
-      aria-label="Who can see this doc"
-      data-testid="doc-visibility-control"
-      className="flex items-center gap-0.5 rounded-md border border-border bg-surface-2 p-0.5"
-    >
-      {visibleSegments(canPublish).map((segment) => {
-        const active = visibility === segment.value;
-        return (
-          <Tooltip key={segment.value} label={segment.description} side="bottom">
-            <button
-              type="button"
-              aria-label={segment.label}
-              aria-pressed={active}
-              disabled={disabled}
-              data-testid={`doc-visibility-segment-${segment.value}`}
-              onClick={() => onSelect(segment.value)}
-              className={cn(
-                'flex h-6 cursor-pointer items-center gap-1.5 rounded-sm border px-2 font-medium text-2xs',
-                'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
-                'disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none',
-                active
-                  ? 'border-border bg-accent-soft text-accent'
-                  : 'border-transparent text-faint hover:text-text',
-              )}
-            >
-              <segment.icon className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="hidden sm:inline">{segment.label}</span>
-            </button>
-          </Tooltip>
-        );
-      })}
-    </fieldset>
-  );
-}
-
 export function DocShareMenu({
   doc,
   canManageAccess = false,
   canPublish = false,
 }: DocShareMenuProps) {
   const share = useShareDoc(doc.id);
-  const { toast } = useToast();
-  const [copied, setCopied] = useState(false);
-  const [peopleOpen, setPeopleOpen] = useState(false);
+  const [open, setOpen] = useState(false);
 
-  const current = visibilityOption(doc.visibility);
+  const current = visibilityChoice(doc.visibility);
   const origin = typeof window === 'undefined' ? publicAppUrl() : window.location.origin;
-  const url = publicDocUrl(doc, origin);
-
-  const copy = async () => {
-    if (url === null) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast({ title: 'Could not copy', description: url, tone: 'danger' });
-    }
-  };
+  const workspaceUrl = appDocUrl(doc.id, origin);
+  const publishedUrl = publicDocUrl(doc, origin);
 
   return (
-    <>
-      <Dialog open={peopleOpen} onOpenChange={setPeopleOpen}>
-        <DialogContent className="max-w-md">
-          <DialogTitle>Share this doc</DialogTitle>
-          <DocPeopleAccess docId={doc.id} canManage={canManageAccess} />
-        </DialogContent>
-      </Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm" data-testid="doc-share">
+          <current.icon className="size-3.5" aria-hidden="true" />
+          {shareTrigger(doc.visibility)}
+        </Button>
+      </DialogTrigger>
 
-      <VisibilitySegments
-        visibility={doc.visibility}
-        canPublish={canPublish}
-        disabled={share.isPending}
-        onSelect={(value) => share.mutate({ visibility: value })}
-      />
+      <DialogContent className="max-w-md">
+        <DialogTitle>Share this doc</DialogTitle>
 
-      {url === null ? null : (
-        <Tooltip label="Copy the share link" side="bottom">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Copy the share link"
-            data-testid="doc-share-copy"
-            className="size-7 px-0"
-            onClick={() => copy().catch(() => undefined)}
+        <div className="flex flex-col gap-4">
+          <fieldset
+            aria-label="Who can see this doc"
+            data-testid="doc-visibility-control"
+            className="flex flex-col gap-0.5"
           >
-            {copied ? (
-              <Check className="size-4 text-success" aria-hidden="true" />
-            ) : (
-              <Copy className="size-4" aria-hidden="true" />
-            )}
-          </Button>
-        </Tooltip>
-      )}
-
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={doc.visibility === 'workspace' ? 'secondary' : 'primary'}
-            size="sm"
-            data-testid="doc-publish"
-            disabled={share.isPending}
-          >
-            <current.icon className="size-3.5" aria-hidden="true" />
-            {current.trigger}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-80">
-          <DropdownMenuLabel>Who can see this doc</DropdownMenuLabel>
-          {VISIBILITY_OPTIONS.filter(
-            (option) => canPublish || !isExternallyShared(option.value),
-          ).map((option) => (
-            <DropdownMenuItem
-              key={option.value}
-              data-testid={`doc-visibility-${option.value}`}
-              className="items-start"
-              onSelect={() => share.mutate({ visibility: option.value })}
-            >
-              <option.icon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span>{option.label}</span>
-                <span className="text-2xs text-faint">{option.description}</span>
-              </span>
-              {doc.visibility === option.value ? (
-                <Check className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden="true" />
-              ) : null}
-            </DropdownMenuItem>
-          ))}
-
-          {isRestricted(doc.visibility) ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem data-testid="doc-open-people" onSelect={() => setPeopleOpen(true)}>
-                <Users className="size-3.5" aria-hidden="true" />
-                Share with people and teams
-              </DropdownMenuItem>
-            </>
-          ) : null}
-
-          {url === null ? null : (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={(event) => event.preventDefault()} asChild>
+            {visibleChoices(canPublish).map((choice) => {
+              const active = doc.visibility === choice.value;
+              return (
                 <button
+                  key={choice.value}
                   type="button"
-                  data-testid="doc-copy-link"
-                  onClick={() => copy().catch(() => undefined)}
-                  className="w-full"
-                >
-                  {copied ? (
-                    <Check className="size-3.5 text-success" aria-hidden="true" />
-                  ) : (
-                    <Copy className="size-3.5" aria-hidden="true" />
+                  aria-pressed={active}
+                  disabled={share.isPending}
+                  data-testid={`doc-visibility-${choice.value}`}
+                  onClick={() => share.mutate({ visibility: choice.value })}
+                  className={cn(
+                    'flex items-start gap-2 rounded-md px-2 py-1.5 text-left',
+                    'transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    active ? 'bg-accent-soft' : 'hover:bg-surface-2',
                   )}
-                  <span className="min-w-0 flex-1 truncate text-left font-mono text-2xs">
-                    {url}
+                >
+                  <choice.icon
+                    className={cn(
+                      'mt-0.5 size-3.5 shrink-0',
+                      active ? 'text-accent' : 'text-faint',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className={cn('text-dense', active ? 'text-accent' : 'text-text')}>
+                      {choice.label}
+                    </span>
+                    <span className="text-2xs text-faint">{choice.description}</span>
                   </span>
+                  {active ? (
+                    <Check className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden="true" />
+                  ) : null}
                 </button>
-              </DropdownMenuItem>
-              <DropdownMenuItem
+              );
+            })}
+          </fieldset>
+
+          <CopyRow label="Workspace link" url={workspaceUrl} testId="doc-copy-link" />
+
+          {publishedUrl === null ? null : (
+            <div className="flex flex-col gap-2">
+              <CopyRow label="Public link" url={publishedUrl} testId="doc-copy-public-link" />
+              <Button
+                variant="ghost"
+                size="sm"
                 data-testid="doc-rotate-link"
-                onSelect={() => share.mutate({ visibility: doc.visibility, rotateToken: true })}
+                className="self-start"
+                onClick={() => share.mutate({ visibility: doc.visibility, rotateToken: true })}
               >
                 <RefreshCw className="size-3.5" aria-hidden="true" />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span>Reset the link</span>
-                  <span className="text-2xs text-faint">The current link stops working.</span>
-                </span>
-              </DropdownMenuItem>
-            </>
+                Reset the public link
+              </Button>
+            </div>
           )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </>
+
+          {isRestricted(doc.visibility) ? (
+            <div className="flex flex-col gap-3 border-border border-t pt-3">
+              <DocPeopleAccess docId={doc.id} canManage={canManageAccess} />
+              {canManageAccess ? <DocAccessRequests docId={doc.id} /> : null}
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

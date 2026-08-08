@@ -15,6 +15,7 @@ const hit = {
   title: 'Deploy runbook',
   slug: 'deploy-runbook',
   content: '',
+  sortOrder: 0,
   visibility: 'workspace',
   publishToken: null,
   authorId: 'user_1',
@@ -26,6 +27,7 @@ const hit = {
   excerpt: '',
   snippet: 'a quorum of two',
   titleMatch: false,
+  rank: 0,
 };
 
 function stubFetch(docs: readonly unknown[] = [hit]): string[] {

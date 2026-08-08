@@ -189,6 +189,20 @@ export const issueListSchema = z.object({
 
 export type IssuePage = z.infer<typeof issueListSchema>;
 
+export const boardGroupSchema = z.object({
+  id: z.string(),
+  total: z.number(),
+  issues: z.array(issueSchema),
+  nextCursor: z.string().nullable().default(null),
+});
+
+export const boardPageSchema = z.object({
+  groups: z.array(boardGroupSchema),
+  truncated: z.boolean().default(false),
+});
+
+export type BoardPage = z.infer<typeof boardPageSchema>;
+
 export const issueCountsSchema = z.object({
   total: z.number(),
   byState: z.record(z.string(), z.number()),
@@ -295,6 +309,7 @@ export const docSchema = z.object({
   title: z.string(),
   slug: z.string(),
   content: z.string(),
+  sortOrder: z.number().default(0),
   visibility: z.string(),
   publishToken: z.string().nullable(),
   authorId: z.string(),
@@ -313,6 +328,7 @@ export const docSummarySchema = docSchema.extend({
   excerpt: z.string().default(''),
   snippet: z.string().default(''),
   titleMatch: z.boolean().default(false),
+  rank: z.number().default(0),
 });
 export type DocSummary = z.infer<typeof docSummarySchema>;
 

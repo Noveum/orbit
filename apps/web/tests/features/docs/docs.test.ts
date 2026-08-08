@@ -208,6 +208,7 @@ describe('doc nesting', () => {
       title: id,
       slug: id,
       content: '',
+      sortOrder: 0,
       visibility: 'workspace',
       publishToken: null,
       authorId: 'u',
@@ -219,6 +220,7 @@ describe('doc nesting', () => {
       excerpt: '',
       snippet: '',
       titleMatch: false,
+      rank: 0,
     };
   }
 

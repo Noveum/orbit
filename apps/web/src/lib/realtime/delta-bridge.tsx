@@ -15,6 +15,7 @@ import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
   ALL_SCOPE,
   ASSIGNED_SCOPE,
+  BOARD_ROOT,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
   DOC_COMMENTS_ROOT,
@@ -66,6 +67,7 @@ function noop(): undefined {
 
 interface RootInvalidations {
   counts: boolean;
+  boards: boolean;
   bootstrap: boolean;
   views: boolean;
   docs: boolean;
@@ -190,6 +192,7 @@ function routeAction(
     patchIssueCaches(client, action);
     roots.counts = true;
     roots.milestones = true;
+    roots.boards = true;
     return;
   }
   if (action.model === 'comment') {
@@ -233,6 +236,9 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
   }
+  if (roots.boards) {
+    client.invalidateQueries({ queryKey: [BOARD_ROOT], refetchType: 'none' }).catch(noop);
+  }
   if (roots.bootstrap) client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
   if (roots.views) client.invalidateQueries({ queryKey: [VIEWS_ROOT] }).catch(noop);
   if (roots.relations) {
@@ -273,6 +279,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const tabClientId = clientId();
       const roots: RootInvalidations = {
         counts: false,
+        boards: false,
         bootstrap: false,
         views: false,
         docs: false,

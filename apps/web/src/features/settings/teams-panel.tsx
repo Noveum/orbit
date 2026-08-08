@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
@@ -168,6 +169,14 @@ export function TeamsPanel({ teams, members, canManage }: TeamsPanelProps) {
                     Rename
                   </Button>
                 )}
+                <Button size="sm" variant="ghost" asChild>
+                  <Link
+                    href={`/team/${team.key.toLowerCase()}/settings`}
+                    data-testid={`team-settings-link-${team.key}`}
+                  >
+                    Settings
+                  </Link>
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"

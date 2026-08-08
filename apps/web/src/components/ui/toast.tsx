@@ -10,11 +10,17 @@ export const MAX_TOASTS = 3;
 
 export type ToastTone = 'neutral' | 'success' | 'danger';
 
+export interface ToastAction {
+  readonly label: string;
+  readonly onSelect: () => void;
+}
+
 export interface ToastOptions {
   readonly title: string;
   readonly description?: string;
   readonly tone?: ToastTone;
   readonly durationMs?: number;
+  readonly action?: ToastAction;
 }
 
 interface ToastRecord extends ToastOptions {
@@ -83,6 +89,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 </ToastPrimitive.Description>
               ) : null}
             </div>
+            {item.action === undefined ? null : (
+              <ToastPrimitive.Action
+                altText={item.action.label}
+                data-testid="toast-action"
+                onClick={item.action.onSelect}
+                className="shrink-0 rounded-sm px-1.5 py-0.5 font-medium text-accent text-dense transition-colors duration-[var(--duration-fast)] hover:bg-accent-soft motion-reduce:transition-none"
+              >
+                {item.action.label}
+              </ToastPrimitive.Action>
+            )}
             <ToastPrimitive.Close
               aria-label="Dismiss"
               className="rounded-sm p-0.5 text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"

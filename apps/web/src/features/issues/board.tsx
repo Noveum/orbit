@@ -1,13 +1,15 @@
 'use client';
 
 import {
-  closestCorners,
+  type CollisionDetection,
   DndContext,
   type DragEndEvent,
   DragOverlay,
   type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
@@ -19,8 +21,10 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
@@ -29,15 +33,17 @@ import { UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import { cn } from '@/lib/cn.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import type { IssueQuery, IssueRegrouping, MoveInput } from '@/lib/query/use-issues.ts';
-import { useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
+import { useBoardPage, useColumnIssues, useMoveIssue } from '@/lib/query/use-issues.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
+import { useBoardAutoScroll } from './use-board-autoscroll.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardColumnSource {
-  readonly teamId: string;
   readonly query: IssueQuery;
+  readonly groupBy: string;
+  readonly scope: Readonly<Record<string, string>>;
   readonly display: DisplayOptions;
 }
 
@@ -46,6 +52,7 @@ export type StateResolver = (groupId: string, issue: Issue) => string | null;
 export interface BoardProps {
   readonly groups: readonly IssueGroup[];
   readonly draggable?: boolean;
+  readonly reorderable?: boolean;
   readonly resolveState?: StateResolver | undefined;
   readonly properties?: readonly DisplayProperty[];
   readonly hasMore?: boolean;
@@ -56,6 +63,21 @@ export interface BoardProps {
 }
 
 const EMPTY_QUERY: IssueQuery = { filter: emptyFilterGroup(), orderBy: 'manual' };
+
+const EMPTY_COLUMN = {
+  query: EMPTY_QUERY,
+  groupBy: 'state',
+  scope: {} as Readonly<Record<string, string>>,
+};
+
+export function columnsReadyFor(columnSource: object | undefined, boardPending: boolean): boolean {
+  return columnSource === undefined || !boardPending;
+}
+
+export const boardCollision: CollisionDetection = (args) => {
+  const under = pointerWithin(args);
+  return under.length > 0 ? under : rectIntersection(args);
+};
 
 const INITIAL_VISIBLE = 15;
 const VISIBLE_STEP = 15;
@@ -81,6 +103,10 @@ export function canRegroup(groupBy: GroupByField): boolean {
   return REGROUPABLE_FIELDS.includes(groupBy);
 }
 
+export function canDragBoard(role: OrgRole, groupBy: GroupByField): boolean {
+  return canRegroup(groupBy) && permissionsFor(role).includes('issue:update');
+}
+
 export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegrouping | null {
   const id = groupId === UNGROUPED_ID ? null : groupId;
   switch (groupBy) {
@@ -101,6 +127,27 @@ export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegro
   }
 }
 
+function targetGroupFor(groups: readonly IssueGroup[], overId: string): IssueGroup | undefined {
+  return (
+    groups.find((group) => group.id === overId) ??
+    groups.find((group) => group.issues.some((issue) => issue.id === overId))
+  );
+}
+
+function neighboursIn(
+  group: IssueGroup,
+  dragged: Issue,
+  overId: string,
+): { before: Issue | null; after: Issue | null } {
+  const siblings = group.issues.filter((issue) => issue.id !== dragged.id);
+  const overIndex = siblings.findIndex((issue) => issue.id === overId);
+  const insertAt = overIndex === -1 ? siblings.length : overIndex;
+  return {
+    before: insertAt === 0 ? null : (siblings[insertAt - 1] ?? null),
+    after: siblings[insertAt] ?? null,
+  };
+}
+
 export function planDrop(
   groups: readonly IssueGroup[],
   issues: readonly Issue[],
@@ -108,13 +155,12 @@ export function planDrop(
   overId: string,
   groupBy: GroupByField,
   resolveState?: StateResolver | undefined,
+  reorderable = true,
 ): MoveInput | null {
   const dragged = issues.find((issue) => issue.id === activeId);
   if (dragged === undefined || overId === activeId) return null;
 
-  const targetGroup =
-    groups.find((group) => group.id === overId) ??
-    groups.find((group) => group.issues.some((issue) => issue.id === overId));
+  const targetGroup = targetGroupFor(groups, overId);
   if (targetGroup === undefined) return null;
 
   const groupId =
@@ -126,11 +172,19 @@ export function planDrop(
   const regrouping = regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
 
-  const siblings = targetGroup.issues.filter((issue) => issue.id !== dragged.id);
-  const overIndex = siblings.findIndex((issue) => issue.id === overId);
-  const insertAt = overIndex === -1 ? siblings.length : overIndex;
-  const before = insertAt === 0 ? null : (siblings[insertAt - 1] ?? null);
-  const after = siblings[insertAt] ?? null;
+  if (!reorderable) {
+    if (regroupingLeavesIssue(regrouping, dragged)) return null;
+    return {
+      issue: dragged,
+      ...regrouping,
+      beforeId: null,
+      afterId: null,
+      beforeOrder: null,
+      afterOrder: null,
+    };
+  }
+
+  const { before, after } = neighboursIn(targetGroup, dragged, overId);
 
   return {
     issue: dragged,
@@ -140,6 +194,11 @@ export function planDrop(
     beforeOrder: before?.sortOrder ?? null,
     afterOrder: after?.sortOrder ?? null,
   };
+}
+
+export function regroupingLeavesIssue(regrouping: IssueRegrouping, issue: Issue): boolean {
+  const entries = Object.entries(regrouping) as [keyof IssueRegrouping, unknown][];
+  return entries.every(([field, value]) => issue[field as keyof Issue] === value);
 }
 
 function IssueCardView({
@@ -200,7 +259,9 @@ function SortableCard({
       }}
       className={cn(
         'list-none',
-        isDragging ? 'cursor-grabbing opacity-40' : 'cursor-grab active:cursor-grabbing',
+        isDragging
+          ? 'cursor-grabbing rounded-lg border border-accent border-dashed bg-accent-soft/40 opacity-100 [&>*]:invisible'
+          : 'cursor-grab active:cursor-grabbing',
       )}
       {...attributes}
       {...listeners}
@@ -213,6 +274,7 @@ function SortableCard({
 export function Board({
   groups,
   draggable = true,
+  reorderable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
   hasMore = false,
   loadingMore = false,
@@ -223,26 +285,31 @@ export function Board({
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const move = useMoveIssue();
+  const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<string | null>(null);
 
-  const [columnRows, setColumnRows] = useState<ReadonlyMap<string, readonly Issue[]>>(new Map());
+  const columnRows = useRef<Map<string, readonly Issue[]>>(new Map());
   const publishRows = useCallback((groupId: string, rows: readonly Issue[]) => {
-    setColumnRows((current) =>
-      current.get(groupId) === rows ? current : new Map(current).set(groupId, rows),
-    );
+    columnRows.current.set(groupId, rows);
   }, []);
 
-  const loadedGroups = useMemo(
+  const loadedGroups = useCallback(
     () =>
       groups.map((group) => {
-        const rows = columnRows.get(group.id);
+        const rows = columnRows.current.get(group.id);
         return rows === undefined || rows === group.issues ? group : { ...group, issues: rows };
       }),
-    [groups, columnRows],
+    [groups],
   );
 
-  const issues = useMemo(() => loadedGroups.flatMap((group) => [...group.issues]), [loadedGroups]);
+  const issuesInPlay = useCallback(
+    () => loadedGroups().flatMap((group) => [...group.issues]),
+    [loadedGroups],
+  );
+
+  const issues = useMemo(() => groups.flatMap((group) => [...group.issues]), [groups]);
   const projectById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
     [projects],
@@ -261,28 +328,35 @@ export function Board({
     [labelById, memberById, stateById, projectById, cycleById, childCounts],
   );
 
+  useBoardAutoScroll(activeId !== null);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const activeIssue = issues.find((issue) => issue.id === activeId);
-  const peekIssue = issues.find((issue) => issue.id === peekId);
+  const dragged = useRef<Issue | undefined>(undefined);
+  const peekIssue =
+    peekId === null ? undefined : issuesInPlay().find((issue) => issue.id === peekId);
+  const activeIssue = activeId === null ? undefined : dragged.current;
 
   const onDragStart = (event: DragStartEvent) => {
-    setActiveId(String(event.active.id));
+    const id = String(event.active.id);
+    dragged.current = issuesInPlay().find((issue) => issue.id === id);
+    setActiveId(id);
   };
 
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
     if (event.over === null) return;
     const placement = planDrop(
-      loadedGroups,
-      issues,
+      loadedGroups(),
+      issuesInPlay(),
       String(event.active.id),
       String(event.over.id),
       groupBy,
       resolveState,
+      reorderable,
     );
     if (placement !== null) move.mutate(placement);
   };
@@ -300,6 +374,7 @@ export function Board({
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}
           columnSource={columnSource}
+          columnsReady={columnsReady}
           onCreate={() => openQuickCreate()}
           onOpen={setPeekId}
           onRows={publishRows}
@@ -322,14 +397,14 @@ export function Board({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={boardCollision}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
       {columns}
 
-      <DragOverlay dropAnimation={{ duration: 140, easing: 'cubic-bezier(0.22,0.61,0.36,1)' }}>
+      <DragOverlay dropAnimation={null}>
         {activeIssue === undefined ? null : (
           <IssueCardView issue={activeIssue} lookups={lookups} properties={properties} dragging />
         )}
@@ -349,6 +424,7 @@ interface BoardColumnProps {
   readonly loadingMore: boolean;
   readonly onLoadMore: (() => void) | undefined;
   readonly columnSource: BoardColumnSource | undefined;
+  readonly columnsReady: boolean;
   readonly onCreate: () => void;
   readonly onOpen: (id: string) => void;
   readonly onRows: (groupId: string, issues: readonly Issue[]) => void;
@@ -363,16 +439,16 @@ function BoardColumn({
   loadingMore,
   onLoadMore,
   columnSource,
+  columnsReady,
   onCreate,
   onOpen,
   onRows,
 }: BoardColumnProps) {
   const { stateById } = useWorkspace();
   const owned = useColumnIssues(
-    columnSource?.teamId ?? null,
-    columnSource?.query ?? EMPTY_QUERY,
+    columnSource ?? EMPTY_COLUMN,
     group.id,
-    columnSource !== undefined,
+    columnSource !== undefined && columnsReady,
   );
   const ownsData = columnSource !== undefined;
   const fetched = owned.data ?? group.issues;

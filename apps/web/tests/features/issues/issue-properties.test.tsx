@@ -92,8 +92,11 @@ const requested: string[] = [];
 const originalFetch = globalThis.fetch;
 
 function stubFetch(): void {
-  globalThis.fetch = mock((input: string | URL | Request) => {
+  globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     requested.push(String(input));
+    if ((init?.method ?? 'GET') === 'DELETE') {
+      return Promise.resolve(Response.json({ deleted: { id: 'issue_1', identifier: 'ENG-1' } }));
+    }
     return Promise.resolve(Response.json({ milestones }));
   }) as unknown as typeof fetch;
 }
@@ -253,6 +256,23 @@ describe('the delete affordance on the properties panel', () => {
     await user.click(screen.getByTestId('property-delete-issue'));
 
     expect(await screen.findByTestId('delete-issue-dialog')).toBeInTheDocument();
+  });
+
+  it('closes the surface the issue was open on once the delete goes through', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const left = mock();
+    render(
+      <Providers>
+        <IssueDeletionProvider>
+          <IssueProperties issue={issue()} onDeleted={left} />
+        </IssueDeletionProvider>
+      </Providers>,
+    );
+
+    await user.click(screen.getByTestId('property-delete-issue'));
+    await user.click(await screen.findByTestId('confirm-delete-issue'));
+
+    await waitFor(() => expect(left).toHaveBeenCalled());
   });
 
   it('stays hidden from a role that cannot delete', () => {

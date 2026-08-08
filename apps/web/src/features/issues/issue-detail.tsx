@@ -326,7 +326,7 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
         </div>
       </div>
 
-      <IssueProperties issue={issue} parent={detail.data.parent} />
+      <IssueProperties issue={issue} parent={detail.data.parent} onDeleted={leave} />
     </div>
   );
 }

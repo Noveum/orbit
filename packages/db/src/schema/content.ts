@@ -1,4 +1,5 @@
 import type { DocCommentAnchor } from '@orbit/shared/validators';
+import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
   bigint,
@@ -14,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
 import { organization } from './org.ts';
+import { tsvector } from './types.ts';
 import { issue, project } from './work.ts';
 
 export const comment = pgTable(
@@ -75,10 +77,11 @@ export const docCollection = pgTable(
       .references(() => organization.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     icon: text('icon').notNull().default('book'),
+    position: doublePrecision('position').notNull().default(0),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('doc_collection_org_idx').on(table.organizationId)],
+  (table) => [index('doc_collection_org_idx').on(table.organizationId, table.position)],
 );
 
 export const docAccess = pgTable(
@@ -119,6 +122,10 @@ export const doc = pgTable(
     title: text('title').notNull(),
     slug: text('slug').notNull().default(''),
     content: text('content').notNull().default(''),
+    sortOrder: doublePrecision('sort_order').notNull().default(0),
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')`,
+    ),
     visibility: text('visibility').notNull().default('workspace'),
     publishToken: text('publish_token').unique(),
     authorId: text('author_id')
@@ -139,8 +146,39 @@ export const doc = pgTable(
     index('doc_org_idx').on(table.organizationId),
     index('doc_project_idx').on(table.projectId),
     index('doc_parent_idx').on(table.parentId),
+    index('doc_collection_order_idx').on(table.collectionId, table.sortOrder),
     index('doc_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
     index('doc_content_trgm_idx').using('gin', table.content.op('gin_trgm_ops')),
+    index('doc_search_idx').using('gin', table.searchVector),
+  ],
+);
+
+export const docAccessRequest = pgTable(
+  'doc_access_request',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    docId: text('doc_id')
+      .notNull()
+      .references((): AnyPgColumn => doc.id, { onDelete: 'cascade' }),
+    requesterId: text('requester_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    message: text('message'),
+    status: text('status').notNull().default('pending'),
+    decidedById: text('decided_by_id').references(() => user.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('doc_access_request_pending_unique')
+      .on(table.docId, table.requesterId)
+      .where(sql`status = 'pending'`),
+    index('doc_access_request_doc_idx').on(table.docId, table.createdAt),
+    index('doc_access_request_requester_idx').on(table.requesterId),
   ],
 );
 

@@ -107,3 +107,30 @@ export async function descriptionOf(page: Page, identifier: string): Promise<str
   const body = await json(page, `/api/issues/${identifier}`);
   return z.object({ issue: z.object({ description: z.string() }) }).parse(body).issue.description;
 }
+
+const viewEnvelopeSchema = z.object({ view: z.object({ id: z.string().min(1) }) });
+
+export async function createBoardView(
+  page: Page,
+  teamId: string,
+  name: string,
+): Promise<{ id: string }> {
+  const body = await json(page, '/api/views', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      layout: 'board',
+      groupBy: 'state',
+      shared: true,
+      filter: {
+        teamId,
+        layout: 'board',
+        groupBy: 'state',
+        orderBy: 'manual',
+        filter: { kind: 'group', combinator: 'and', children: [] },
+      },
+    }),
+  });
+  return viewEnvelopeSchema.parse(body).view;
+}

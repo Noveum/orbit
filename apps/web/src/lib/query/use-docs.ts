@@ -186,6 +186,44 @@ export function useUpdateDoc(docId: string) {
   });
 }
 
+export function useUpdateDocTitle() {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (input: { docId: string; title: string }): Promise<Doc> => {
+      const result = await apiFetch(`/api/docs/${input.docId}`, docSaveResultSchema, {
+        method: 'PATCH',
+        body: { title: input.title },
+      });
+      return result.doc;
+    },
+    onMutate: async (input) => {
+      await client.cancelQueries({ queryKey: [DOCS_ROOT] });
+      const previous = new Map<readonly unknown[], DocList>();
+      for (const [key, value] of client.getQueriesData<DocList>({ queryKey: [DOCS_ROOT] })) {
+        if (value === undefined) continue;
+        previous.set(key, value);
+        client.setQueryData<DocList>(key, {
+          ...value,
+          docs: value.docs.map((doc) =>
+            doc.id === input.docId ? { ...doc, title: input.title } : doc,
+          ),
+        });
+      }
+      return { previous };
+    },
+    onError: (error, _input, context) => {
+      for (const [key, value] of context?.previous ?? []) client.setQueryData(key, value);
+      toast({ title: 'Could not rename', description: messageOf(error), tone: 'danger' });
+    },
+    onSettled: (_doc, _error, input) => {
+      client.invalidateQueries({ queryKey: queryKeys.doc(input.docId) }).catch(() => undefined);
+      invalidateDocs(client);
+    },
+  });
+}
+
 export function useShareDoc(docId: string) {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -218,6 +256,110 @@ export function useArchiveDoc() {
     onSuccess: () => invalidateDocs(client),
     onError: (error) =>
       toast({ title: 'Could not archive', description: messageOf(error), tone: 'danger' }),
+  });
+}
+
+export interface DocMoveInput {
+  readonly docId: string;
+  readonly collectionId: string | null;
+  readonly projectId: string | null;
+  readonly parentId: string | null;
+  readonly beforeId: string | null;
+  readonly afterId: string | null;
+}
+
+function placeMovedDoc(
+  client: ReturnType<typeof useQueryClient>,
+  input: DocMoveInput,
+): Map<readonly unknown[], DocList> {
+  const previous = new Map<readonly unknown[], DocList>();
+  for (const [key, value] of client.getQueriesData<DocList>({ queryKey: [DOCS_ROOT] })) {
+    if (value === undefined) continue;
+    previous.set(key, value);
+    client.setQueryData<DocList>(key, {
+      ...value,
+      docs: value.docs.map((doc) =>
+        doc.id === input.docId
+          ? {
+              ...doc,
+              collectionId: input.collectionId,
+              projectId: input.projectId,
+              parentId: input.parentId,
+            }
+          : doc,
+      ),
+    });
+  }
+  return previous;
+}
+
+export function useMoveDoc() {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (input: DocMoveInput): Promise<Doc> => {
+      const result = await apiFetch(`/api/docs/${input.docId}/move`, docEnvelopeSchema, {
+        method: 'POST',
+        body: {
+          collectionId: input.collectionId,
+          projectId: input.projectId,
+          parentId: input.parentId,
+          beforeId: input.beforeId,
+          afterId: input.afterId,
+        },
+      });
+      return result.doc;
+    },
+    onMutate: async (input) => {
+      await client.cancelQueries({ queryKey: [DOCS_ROOT] });
+      return { previous: placeMovedDoc(client, input) };
+    },
+    onError: (error, _input, context) => {
+      for (const [key, value] of context?.previous ?? []) client.setQueryData(key, value);
+      toast({ title: 'Could not move that doc', description: messageOf(error), tone: 'danger' });
+    },
+    onSettled: () => invalidateDocs(client),
+  });
+}
+
+export function useRestoreDoc() {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (docId: string): Promise<void> => {
+      await apiFetch(`/api/docs/${docId}/restore`, docArchiveResultSchema, {
+        method: 'POST',
+        body: {},
+      });
+    },
+    onSuccess: () => invalidateDocs(client),
+    onError: (error) =>
+      toast({ title: 'Could not restore', description: messageOf(error), tone: 'danger' }),
+  });
+}
+
+export function useDeleteDoc() {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (docId: string): Promise<void> => {
+      await apiFetch(`/api/docs/${docId}?permanent=1`, deletedSchema, { method: 'DELETE' });
+    },
+    onSuccess: () => invalidateDocs(client),
+    onError: (error) =>
+      toast({ title: 'Could not delete', description: messageOf(error), tone: 'danger' }),
+  });
+}
+
+export function useArchivedDocs(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.docs('archived'),
+    enabled,
+    queryFn: async ({ signal }): Promise<DocList> =>
+      await apiFetch('/api/docs?includeArchived=true', docListSchema, { signal }),
   });
 }
 

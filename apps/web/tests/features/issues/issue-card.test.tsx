@@ -76,15 +76,18 @@ describe('IssueCard', () => {
     expect(await screen.findByText('AR')).toBeInTheDocument();
   });
 
-  it('links to the issue and lifts while dragging', () => {
+  it('links to the issue and marks itself while being dragged, without moving the layout', () => {
     const { rerender } = render(<IssueCard issue={issue()} labels={[]} assignee={undefined} />);
     expect(screen.getByRole('link')).toHaveAttribute('href', '/issue/ENG-4');
 
     const card = screen.getByTestId('issue-card-ENG-4');
-    expect(card.className).not.toContain('-translate-y-0.5');
+    expect(card.className).not.toContain('shadow-pop');
 
     rerender(<IssueCard issue={issue()} labels={[]} assignee={undefined} dragging />);
-    expect(screen.getByTestId('issue-card-ENG-4').className).toContain('-translate-y-0.5');
+    const dragged = screen.getByTestId('issue-card-ENG-4');
+    expect(dragged.className).toContain('shadow-pop');
+    expect(dragged.className).toContain('cursor-grabbing');
+    expect(dragged.className).not.toContain('rotate-');
   });
 });
 

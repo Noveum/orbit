@@ -33,6 +33,48 @@ export function columnSearch(teamId: string, query: IssueQuery, stateId: string)
   return params.toString();
 }
 
+export const UNGROUPED_COLUMN = 'none';
+
+const GROUP_PARAM_OF: Readonly<Record<string, string>> = {
+  state: 'stateId',
+  assignee: 'assigneeId',
+  project: 'projectId',
+  cycle: 'cycleId',
+};
+
+export function columnParamFor(groupBy: string): string | null {
+  return GROUP_PARAM_OF[groupBy] ?? null;
+}
+
+export function boardSearch(
+  query: IssueQuery,
+  groupBy: string,
+  scope: Readonly<Record<string, string>> = {},
+  perGroup?: number,
+): string {
+  const params = searchParams(query);
+  params.delete('limit');
+  for (const [key, value] of Object.entries(scope)) params.set(key, value);
+  params.set('groupBy', groupBy);
+  if (perGroup !== undefined) params.set('perGroup', String(perGroup));
+  return params.toString();
+}
+
+export function groupColumnSearch(
+  query: IssueQuery,
+  groupBy: string,
+  groupId: string,
+  scope: Readonly<Record<string, string>> = {},
+): string {
+  const param = columnParamFor(groupBy);
+  if (param === null || groupId === UNGROUPED_COLUMN) return '';
+  if (Object.hasOwn(scope, param)) return '';
+  const params = searchParams(query);
+  for (const [key, value] of Object.entries(scope)) params.set(key, value);
+  params.set(param, groupId);
+  return params.toString();
+}
+
 export function summarySearch(
   teamId: string | null,
   query: IssueQuery,

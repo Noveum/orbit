@@ -69,6 +69,7 @@ function docPayload(access: 'read' | 'write', archivedAt: string | null) {
       title: 'Delta protocol',
       slug: 'delta-protocol',
       content: MARKDOWN,
+      sortOrder: 0,
       visibility: 'private',
       publishToken: null,
       authorId: 'user_author',
@@ -127,7 +128,7 @@ async function renderSurface(options: {
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  await screen.findByLabelText('Export doc');
+  await screen.findByTestId('doc-overflow');
 }
 
 describe('the doc surface follows the per doc access level, not the workspace role', () => {
@@ -158,11 +159,14 @@ describe('the doc surface follows the per doc access level, not the workspace ro
   });
 
   it('hides the archive and nest controls from a reader but keeps export', async () => {
+    const user = userEvent.setup();
     await renderSurface({ access: 'read' });
 
+    await user.click(screen.getByTestId('doc-overflow'));
+
     expect(screen.queryByTestId('doc-archive')).toBeNull();
-    expect(screen.queryByTestId('doc-parent')).toBeNull();
-    expect(screen.getByLabelText('Export doc')).toBeInTheDocument();
+    expect(screen.queryByTestId('doc-nest')).toBeNull();
+    expect(await screen.findByTestId('doc-export')).toBeInTheDocument();
   });
 });
 
@@ -171,6 +175,7 @@ describe('duplicating a doc from the header', () => {
     const user = userEvent.setup();
     await renderSurface({ access: 'read' });
 
+    await user.click(await screen.findByTestId('doc-overflow'));
     await user.click(await screen.findByTestId('doc-duplicate'));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith('/docs/doc_copy'));
@@ -178,9 +183,12 @@ describe('duplicating a doc from the header', () => {
   });
 
   it('never offers the copy to someone who cannot write docs at all', async () => {
+    const user = userEvent.setup();
     await renderSurface({ access: 'read', canWriteDocs: false });
 
     expect(await screen.findByTestId('doc-reader')).toBeInTheDocument();
+    await user.click(screen.getByTestId('doc-overflow'));
+
     expect(screen.queryByTestId('doc-duplicate')).toBeNull();
     expect(screen.queryByTestId('doc-read-only')).toBeNull();
   });

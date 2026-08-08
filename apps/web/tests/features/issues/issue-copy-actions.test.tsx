@@ -61,7 +61,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => workspace,
 }));
 
-const { IssueCopyActions, issueUrl } = await import(
+const { IssueCopyActions, absoluteIssueUrl } = await import(
   '../../../src/features/issues/issue-copy-actions.tsx'
 );
 
@@ -117,15 +117,15 @@ beforeEach(() => {
   workspace = workspaceValue();
 });
 
-describe('issueUrl', () => {
+describe('absoluteIssueUrl', () => {
   it('builds an absolute link anybody can paste', () => {
-    expect(issueUrl('ENG-42', 'https://orbit.noveum.ai')).toBe(
+    expect(absoluteIssueUrl('ENG-42', 'https://orbit.noveum.ai')).toBe(
       'https://orbit.noveum.ai/issue/ENG-42',
     );
   });
 
   it('does not double the slash when the origin carries one', () => {
-    expect(issueUrl('ENG-42', 'https://orbit.noveum.ai/')).toBe(
+    expect(absoluteIssueUrl('ENG-42', 'https://orbit.noveum.ai/')).toBe(
       'https://orbit.noveum.ai/issue/ENG-42',
     );
   });

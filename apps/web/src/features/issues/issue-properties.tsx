@@ -40,9 +40,10 @@ const rowClassName = cn(
 export interface IssuePropertiesProps {
   readonly issue: Issue;
   readonly parent?: Issue | null;
+  readonly onDeleted?: (() => void) | undefined;
 }
 
-export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) {
+export function IssueProperties({ issue, parent = null, onDeleted }: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
@@ -328,12 +329,18 @@ export function IssueProperties({ issue, parent = null }: IssuePropertiesProps) 
         </PropertyMenu>
       </PropertyRow>
 
-      <DeleteIssueRow issue={issue} />
+      <DeleteIssueRow issue={issue} onDeleted={onDeleted} />
     </aside>
   );
 }
 
-function DeleteIssueRow({ issue }: { readonly issue: Issue }) {
+function DeleteIssueRow({
+  issue,
+  onDeleted,
+}: {
+  readonly issue: Issue;
+  readonly onDeleted?: (() => void) | undefined;
+}) {
   const deletion = useIssueDeletion();
   if (deletion?.allowed !== true) return null;
 
@@ -342,7 +349,7 @@ function DeleteIssueRow({ issue }: { readonly issue: Issue }) {
       <button
         type="button"
         data-testid="property-delete-issue"
-        onClick={() => deletion.request({ issues: [issue] })}
+        onClick={() => deletion.request({ issues: [issue], onDeleted })}
         className={cn(
           'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-dense',
           dangerMenuAction,

@@ -2,7 +2,8 @@ import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
-import { docReadFilter } from '../content/doc-service.ts';
+import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
+import type { Executor } from '../internal.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
@@ -21,7 +22,12 @@ interface BackfilledRow {
   readonly data: Record<string, unknown>;
 }
 
-type Loader = (principal: Principal, since: number, limit: number) => Promise<BackfilledRow[]>;
+type Loader = (
+  executor: Executor,
+  principal: Principal,
+  since: number,
+  limit: number,
+) => Promise<BackfilledRow[]>;
 
 const CATCHUP_ACTOR = { type: 'system', id: 'sync', name: 'Catch up' } as const;
 
@@ -37,32 +43,39 @@ function withoutBody<T extends { content: string }>(row: T): Omit<T, 'content'> 
 }
 
 async function readableDocIds(
+  executor: Executor,
   principal: Principal,
   docIds: readonly string[],
 ): Promise<Set<string>> {
   const ids = [...new Set(docIds)];
   if (ids.length === 0) return new Set();
-  const rows = await db
+  const rows = await executor
     .select({ id: schema.doc.id })
     .from(schema.doc)
     .where(and(inArray(schema.doc.id, ids), docReadFilter(principal)));
   return new Set(rows.map((row) => row.id));
 }
 
-async function issueTeamsById(issueIds: readonly string[]): Promise<Map<string, string>> {
+async function issueTeamsById(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<Map<string, string>> {
   const ids = [...new Set(issueIds)];
   if (ids.length === 0) return new Map();
-  const rows = await db
+  const rows = await executor
     .select({ id: schema.issue.id, teamId: schema.issue.teamId })
     .from(schema.issue)
     .where(inArray(schema.issue.id, ids));
   return new Map(rows.map((row) => [row.id, row.teamId]));
 }
 
-async function commentTeamsById(commentIds: readonly string[]): Promise<Map<string, string>> {
+async function commentTeamsById(
+  executor: Executor,
+  commentIds: readonly string[],
+): Promise<Map<string, string>> {
   const ids = [...new Set(commentIds)];
   if (ids.length === 0) return new Map();
-  const rows = await db
+  const rows = await executor
     .select({ id: schema.comment.id, teamId: schema.issue.teamId })
     .from(schema.comment)
     .innerJoin(schema.issue, eq(schema.issue.id, schema.comment.issueId))
@@ -71,6 +84,7 @@ async function commentTeamsById(commentIds: readonly string[]): Promise<Map<stri
 }
 
 async function teamsByAttachmentParent(
+  executor: Executor,
   rows: readonly AttachmentParent[],
 ): Promise<Map<string, string[]>> {
   const of = (type: string) => rows.filter((row) => row.parentType === type);
@@ -79,9 +93,18 @@ async function teamsByAttachmentParent(
   const projectParents = of('project');
 
   const [issueTeams, commentTeams, projectTeams] = await Promise.all([
-    issueTeamsById(issueParents.map((row) => row.parentId)),
-    commentTeamsById(commentParents.map((row) => row.parentId)),
-    teamsByProject(projectParents.map((row) => row.parentId)),
+    issueTeamsById(
+      executor,
+      issueParents.map((row) => row.parentId),
+    ),
+    commentTeamsById(
+      executor,
+      commentParents.map((row) => row.parentId),
+    ),
+    teamsByProject(
+      executor,
+      projectParents.map((row) => row.parentId),
+    ),
   ]);
 
   const byAttachment = new Map<string, string[]>();
@@ -101,12 +124,13 @@ async function teamsByAttachmentParent(
 }
 
 async function teamsByProject(
+  executor: Executor,
   projectIds: readonly (string | null)[],
 ): Promise<Map<string, string[]>> {
   const ids = [...new Set(projectIds.filter((id): id is string => id !== null))];
   const byProject = new Map<string, string[]>();
   if (ids.length === 0) return byProject;
-  const rows = await db
+  const rows = await executor
     .select({ projectId: schema.projectTeam.projectId, teamId: schema.projectTeam.teamId })
     .from(schema.projectTeam)
     .where(inArray(schema.projectTeam.projectId, ids));
@@ -119,9 +143,9 @@ async function teamsByProject(
 }
 
 const LOADERS: Record<SyncModel, Loader> = {
-  organization: async (principal, since, limit) =>
+  organization: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.organization)
         .where(
@@ -139,9 +163,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  member: async (principal, since, limit) =>
+  member: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.member)
         .where(
@@ -159,10 +183,10 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  invitation: async (principal, since, limit) =>
+  invitation: async (executor, principal, since, limit) =>
     can(principal, 'member:invite')
       ? (
-          await db
+          await executor
             .select()
             .from(schema.invitation)
             .where(
@@ -181,9 +205,9 @@ const LOADERS: Record<SyncModel, Loader> = {
         }))
       : [],
 
-  team: async (principal, since, limit) =>
+  team: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.team)
         .where(
@@ -201,9 +225,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  team_member: async (principal, since, limit) =>
+  team_member: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({ row: schema.teamMember })
         .from(schema.teamMember)
         .innerJoin(schema.team, eq(schema.team.id, schema.teamMember.teamId))
@@ -222,9 +246,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  workflow_state: async (principal, since, limit) =>
+  workflow_state: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.workflowState)
         .where(
@@ -242,9 +266,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  label: async (principal, since, limit) =>
+  label: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.label)
         .where(
@@ -265,8 +289,8 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  project: async (principal, since, limit) => {
-    const rows = await db
+  project: async (executor, principal, since, limit) => {
+    const rows = await executor
       .select()
       .from(schema.project)
       .where(
@@ -277,7 +301,10 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.project.syncId))
       .limit(limit);
-    const teams = await teamsByProject(rows.map((row) => row.id));
+    const teams = await teamsByProject(
+      executor,
+      rows.map((row) => row.id),
+    );
     return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
@@ -290,8 +317,8 @@ const LOADERS: Record<SyncModel, Loader> = {
     }));
   },
 
-  milestone: async (principal, since, limit) => {
-    const rows = await db
+  milestone: async (executor, principal, since, limit) => {
+    const rows = await executor
       .select()
       .from(schema.milestone)
       .where(
@@ -302,7 +329,10 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.milestone.syncId))
       .limit(limit);
-    const teams = await teamsByProject(rows.map((row) => row.projectId));
+    const teams = await teamsByProject(
+      executor,
+      rows.map((row) => row.projectId),
+    );
     return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
@@ -315,9 +345,9 @@ const LOADERS: Record<SyncModel, Loader> = {
     }));
   },
 
-  cycle: async (principal, since, limit) =>
+  cycle: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.cycle)
         .where(
@@ -335,8 +365,8 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  issue: async (principal, since, limit) => {
-    const rows = await db
+  issue: async (executor, principal, since, limit) => {
+    const rows = await executor
       .select()
       .from(schema.issue)
       .where(
@@ -348,7 +378,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       .orderBy(asc(schema.issue.syncId))
       .limit(limit);
     const labels = await labelIdsByIssue(
-      db,
+      executor,
       rows.map((row) => row.id),
     );
     return rows.map((row) => ({
@@ -367,9 +397,9 @@ const LOADERS: Record<SyncModel, Loader> = {
     }));
   },
 
-  issue_relation: async (principal, since, limit) =>
+  issue_relation: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({ row: schema.issueRelation, teamId: schema.issue.teamId })
         .from(schema.issueRelation)
         .innerJoin(schema.issue, eq(schema.issue.id, schema.issueRelation.issueId))
@@ -393,9 +423,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  issue_subscription: async (principal, since, limit) =>
+  issue_subscription: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({ row: schema.issueSubscription })
         .from(schema.issueSubscription)
         .innerJoin(schema.issue, eq(schema.issue.id, schema.issueSubscription.issueId))
@@ -415,9 +445,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  comment: async (principal, since, limit) =>
+  comment: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({ row: schema.comment, teamId: schema.issue.teamId })
         .from(schema.comment)
         .innerJoin(schema.issue, eq(schema.issue.id, schema.comment.issueId))
@@ -440,9 +470,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  doc_comment: async (principal, since, limit) =>
+  doc_comment: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({ row: schema.docComment })
         .from(schema.docComment)
         .innerJoin(schema.doc, eq(schema.doc.id, schema.docComment.docId))
@@ -462,9 +492,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  reaction: async (principal, since, limit) =>
+  reaction: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({
           row: schema.reaction,
           teamId: schema.issue.teamId,
@@ -491,8 +521,8 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  attachment: async (principal, since, limit) => {
-    const rows = await db
+  attachment: async (executor, principal, since, limit) => {
+    const rows = await executor
       .select()
       .from(schema.attachment)
       .where(
@@ -503,8 +533,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.attachment.syncId))
       .limit(limit);
-    const teams = await teamsByAttachmentParent(rows);
+    const teams = await teamsByAttachmentParent(executor, rows);
     const readableDocs = await readableDocIds(
+      executor,
       principal,
       rows.filter((row) => row.parentType === 'doc').map((row) => row.parentId),
     );
@@ -525,10 +556,10 @@ const LOADERS: Record<SyncModel, Loader> = {
       }));
   },
 
-  doc: async (principal, since, limit) =>
+  doc: async (executor, principal, since, limit) =>
     (
-      await db
-        .select()
+      await executor
+        .select(DOC_COLUMNS)
         .from(schema.doc)
         .where(
           and(
@@ -553,9 +584,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: { ...withoutBody(row), publishToken: row.publishToken === null ? null : 'redacted' },
     })),
 
-  doc_collection: async (principal, since, limit) =>
+  doc_collection: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.docCollection)
         .where(
@@ -573,9 +604,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  notification: async (principal, since, limit) =>
+  notification: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.notification)
         .where(
@@ -594,9 +625,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  view: async (principal, since, limit) =>
+  view: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select()
         .from(schema.view)
         .where(
@@ -615,9 +646,9 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
-  git_link: async (principal, since, limit) =>
+  git_link: async (executor, principal, since, limit) =>
     (
-      await db
+      await executor
         .select({
           row: schema.gitLink,
           teamId: schema.issue.teamId,
@@ -667,10 +698,16 @@ export async function catchUp(
 ): Promise<SyncCatchupResult> {
   assertCan(principal, 'issue:read');
   const perModel = Math.max(1, limit);
-  const loaded: { model: SyncModel; rows: BackfilledRow[] }[] = [];
-  for (const model of SYNC_CATCHUP_MODELS) {
-    loaded.push({ model, rows: await LOADERS[model](principal, since, perModel + 1) });
-  }
+  const loaded = await db.transaction(
+    async (tx) => {
+      const seen: { model: SyncModel; rows: BackfilledRow[] }[] = [];
+      for (const model of SYNC_CATCHUP_MODELS) {
+        seen.push({ model, rows: await LOADERS[model](tx, principal, since, perModel + 1) });
+      }
+      return seen;
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 
   const all: SyncAction[] = [];
   let saturated = false;

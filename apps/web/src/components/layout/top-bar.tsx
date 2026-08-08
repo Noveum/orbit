@@ -1,10 +1,11 @@
 'use client';
 
-import { Menu, PanelRight } from 'lucide-react';
+import { Menu, PanelRight, Search } from 'lucide-react';
 import Link from 'next/link';
 import { Fragment, type ReactNode } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle.tsx';
 import { Button } from '@/components/ui/button.tsx';
+import { Kbd } from '@/components/ui/kbd.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import { tabHover } from '@/lib/interaction.ts';
@@ -20,14 +21,49 @@ export interface TopBarProps {
   readonly breadcrumbs: readonly Breadcrumb[];
   readonly actions?: ReactNode;
   readonly onOpenDrawer: () => void;
+  readonly onOpenSearch: () => void;
   readonly panelOpen: boolean | null;
   readonly onTogglePanel: () => void;
+}
+
+function SearchBox({ onOpen }: { readonly onOpen: () => void }) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Search"
+        aria-keyshortcuts="Meta+K Control+K"
+        data-testid="top-bar-search"
+        onClick={onOpen}
+        className={cn(
+          'hidden h-7 min-w-56 shrink-0 items-center gap-2 rounded-md border border-border bg-surface px-2 text-left',
+          'text-dense text-faint transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none',
+          'hover:border-border-strong hover:text-muted md:flex',
+        )}
+      >
+        <Search className="size-3.5 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">Search</span>
+        <Kbd keys={['mod', 'k']} className="opacity-70" />
+      </button>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label="Search"
+        data-testid="top-bar-search-compact"
+        onClick={onOpen}
+        className="size-7 shrink-0 px-0 md:hidden"
+      >
+        <Search className="size-4" aria-hidden="true" />
+      </Button>
+    </>
+  );
 }
 
 export function TopBar({
   breadcrumbs,
   actions,
   onOpenDrawer,
+  onOpenSearch,
   panelOpen,
   onTogglePanel,
 }: TopBarProps) {
@@ -82,6 +118,7 @@ export function TopBar({
         </nav>
 
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+          <SearchBox onOpen={onOpenSearch} />
           {actions}
           {panelOpen === null ? null : (
             <Tooltip label="Toggle right panel" shortcut={[']']} side="bottom">

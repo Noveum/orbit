@@ -6,6 +6,7 @@ import {
   archiveDoc,
   createDoc,
   createDocCollection,
+  deleteDoc,
   deleteDocCollection,
   docSlug,
   duplicateDoc,
@@ -867,11 +868,14 @@ describe('the access level a doc reports is the level the write path enforces', 
 describe('duplicateDoc', () => {
   it('copies the body and placement under a copy title owned by the duplicator', async () => {
     const { collection } = await createDocCollection(workspace.admin, { name: 'Playbooks' });
-    const { doc: parent } = await createDoc(workspace.admin, { title: 'Parent', content: 'Top.' });
+    const { doc: parent } = await createDoc(workspace.admin, {
+      title: 'Parent',
+      content: 'Top.',
+      collectionId: collection.id,
+    });
     const { doc: source } = await createDoc(workspace.admin, {
       title: 'Incident runbook',
       content: '# Incident runbook\n\nPage the on call.',
-      collectionId: collection.id,
       parentId: parent.id,
     });
     const other = await addMember(workspace, 'member', { name: 'Mo Member' });
@@ -971,5 +975,76 @@ describe('duplicateDoc', () => {
 
     expect(copy.title).toBe('Notes for the fourth');
     expect(copy.slug).toBe('notes-for-the-fourth');
+  });
+});
+
+describe('a folder that goes away leaves its pages somewhere real', () => {
+  it('lifts every page to the top level, renumbered and announced', async () => {
+    const collection = await createDocCollection(workspace.admin, { name: 'Handbook' });
+    const loose = await newDoc('Loose');
+    const first = await createDoc(workspace.admin, {
+      title: 'First',
+      collectionId: collection.collection.id,
+    });
+    const nested = await createDoc(workspace.admin, {
+      title: 'Nested',
+      collectionId: collection.collection.id,
+      parentId: first.doc.id,
+    });
+
+    const actions = await deleteDocCollection(workspace.admin, collection.collection.id);
+
+    const lifted = (await getDoc(workspace.admin, first.doc.id)).doc;
+    const child = (await getDoc(workspace.admin, nested.doc.id)).doc;
+    expect(lifted.collectionId).toBeNull();
+    expect(child.collectionId).toBeNull();
+    expect(child.parentId).toBe(first.doc.id);
+    expect(lifted.sortOrder).toBeGreaterThan(loose.sortOrder);
+    expect(actions.filter((action) => action.modelId === first.doc.id)).toHaveLength(1);
+    expect(actions.filter((action) => action.modelId === nested.doc.id)).toHaveLength(1);
+  });
+});
+
+describe('deleting a page for good', () => {
+  it('gives every orphan a place of its own after its new siblings', async () => {
+    const parent = await newDoc('Parent');
+    const neighbour = await newDoc('Neighbour');
+    const one = await createDoc(workspace.admin, { title: 'One', parentId: parent.id });
+    const two = await createDoc(workspace.admin, { title: 'Two', parentId: parent.id });
+
+    const { promoted } = await deleteDoc(workspace.admin, parent.id);
+
+    expect(promoted).toHaveLength(2);
+    const orders = promoted.map((row) => row.sortOrder).sort((a, b) => a - b);
+    expect(new Set(orders).size).toBe(2);
+    expect(orders[0]).toBeGreaterThan(neighbour.sortOrder);
+    expect(promoted.every((row) => row.parentId === null)).toBe(true);
+    expect(promoted.map((row) => row.id).sort()).toEqual([one.doc.id, two.doc.id].sort());
+  });
+});
+
+describe('duplicating a page twice', () => {
+  it('gives each copy its own place instead of stacking them', async () => {
+    const source = await newDoc('Source');
+    await newDoc('After');
+
+    const one = await duplicateDoc(workspace.admin, source.id);
+    const two = await duplicateDoc(workspace.admin, source.id);
+
+    expect(one.doc.sortOrder).not.toBe(two.doc.sortOrder);
+    expect(one.doc.sortOrder).toBeGreaterThan(source.sortOrder);
+    expect(two.doc.sortOrder).toBeGreaterThan(source.sortOrder);
+  });
+});
+
+describe('nesting under a page you cannot read', () => {
+  it('refuses, so a private page never gains a child from an outsider', async () => {
+    const secret = await createDoc(workspace.admin, { title: 'Secret', visibility: 'private' });
+    const outsider = await addMember(workspace, 'member', { name: 'Mo Member' });
+    const { doc: mine } = await createDoc(outsider.principal, { title: 'Mine' });
+
+    await expect(
+      updateDoc(outsider.principal, mine.id, { parentId: secret.doc.id }),
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });

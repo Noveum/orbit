@@ -27,6 +27,8 @@ export const notificationReason = pgEnum('notification_reason', [
   'review_approved',
   'pull_request_merged',
   'due_soon',
+  'access_requested',
+  'access_granted',
   'manual',
 ]);
 

@@ -1,6 +1,6 @@
-import { archiveDoc, getDoc, isFavoriteDoc, updateDoc } from '@orbit/core';
+import { archiveDoc, deleteDoc, getDoc, isFavoriteDoc, updateDoc } from '@orbit/core';
 import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
-import { handle, publish, readJson } from '@/lib/api/handler.ts';
+import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
@@ -28,9 +28,15 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   });
 }
 
-export async function DELETE(_request: Request, context: RouteContext): Promise<Response> {
+export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params;
+  const permanent = searchParamsOf(request)['permanent'] === '1';
   return await handle(async (principal) => {
+    if (permanent) {
+      const removed = await deleteDoc(principal, id);
+      await publish(removed.actions);
+      return { id, deleted: true };
+    }
     const saved = await archiveDoc(principal, id);
     await publish(saved.actions);
     return { doc: saved.doc, archived: true };

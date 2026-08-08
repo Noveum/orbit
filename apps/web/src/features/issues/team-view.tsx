@@ -21,6 +21,7 @@ import { viewConfigToState } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
+import { columnParamFor } from '@/lib/query/issue-search.ts';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
@@ -220,20 +221,22 @@ function TeamContent({
     return (
       <Board
         groups={groups}
-        draggable={canRegroup(config.groupBy) && config.orderBy === 'manual'}
+        draggable={canRegroup(config.groupBy)}
+        reorderable={config.orderBy === 'manual'}
         groupBy={config.groupBy}
         properties={config.display.properties}
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
         columnSource={
-          config.groupBy === 'state'
-            ? {
-                teamId,
+          columnParamFor(config.groupBy) === null
+            ? undefined
+            : {
                 query: { filter: config.filter, orderBy: config.orderBy },
+                groupBy: config.groupBy,
+                scope: { teamId },
                 display: config.display,
               }
-            : undefined
         }
       />
     );

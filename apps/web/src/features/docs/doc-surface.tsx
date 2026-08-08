@@ -4,18 +4,7 @@ import { useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
-import {
-  Archive,
-  Check,
-  Copy,
-  FolderInput,
-  Indent,
-  Lock,
-  PanelLeft,
-  Pencil,
-  Search,
-  Star,
-} from 'lucide-react';
+import { Check, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -24,18 +13,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Button } from '@/components/ui/button.tsx';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu.tsx';
-import { EmptyState } from '@/components/ui/empty-state.tsx';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
-import { Kbd } from '@/components/ui/kbd.tsx';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -54,11 +33,13 @@ import {
 import { DocAttachments } from './doc-attachments.tsx';
 import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
-import { DocExportMenu } from './doc-export-menu.tsx';
+import { DocGateway } from './doc-gateway.tsx';
+import { DocHeader } from './doc-header.tsx';
 import { DocHistory } from './doc-history.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import { DocBacklinks, DocContextRow, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
+import { breadcrumbOf } from './doc-tree-model.ts';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
 import type { DocAnchorTarget, DocCommenting } from './use-doc-anchors.ts';
@@ -165,15 +146,7 @@ export function DocSurface(props: DocSurfaceProps) {
     );
   }
 
-  if (detail.data === undefined) {
-    return (
-      <EmptyState
-        icon={<Pencil strokeWidth={1.75} aria-hidden="true" />}
-        title="Doc not found"
-        description="It may have been archived or it belongs to another workspace."
-      />
-    );
-  }
+  if (detail.data === undefined) return <DocGateway docId={props.docId} />;
 
   return <LoadedDoc key={detail.data.doc.id} detail={detail.data} {...props} />;
 }
@@ -197,6 +170,8 @@ function LoadedDoc({
   const favorite = useToggleDocFavorite(detail.doc.id);
   const recordVisit = useRecordDocVisit().mutate;
   const [status, setStatus] = useState<SaveStatus>('saved');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [nesting, setNesting] = useState(false);
   const canWrite = docWriteAccess(canWriteDocs, detail);
 
   useEffect(() => recordVisit(detail.doc.id), [recordVisit, detail.doc.id]);
@@ -228,153 +203,67 @@ function LoadedDoc({
   const collectionName =
     collections.find((entry) => entry.id === detail.doc.collectionId)?.name ?? null;
   const projectName = projects.find((entry) => entry.id === detail.doc.projectId)?.name ?? null;
+  const trail = useMemo(
+    () => breadcrumbOf(docs, collections, detail.doc.id),
+    [docs, collections, detail.doc.id],
+  );
   const blocked = useMemo(() => descendantIds(docs, detail.doc.id), [docs, detail.doc.id]);
   const parents = useMemo(() => docs.filter((entry) => !blocked.has(entry.id)), [docs, blocked]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Toggle doc tree"
-          data-testid="toggle-doc-tree"
-          className="size-7 px-0 lg:hidden"
-          onClick={toggle}
-        >
-          <PanelLeft className="size-4" aria-hidden="true" />
-        </Button>
-
-        <p className="min-w-0 flex-1 truncate text-dense text-muted">{detail.doc.title}</p>
-
-        {canWrite ? (
-          <span
-            data-testid="doc-save-status"
-            className={status === 'error' ? 'text-2xs text-danger' : 'text-2xs text-faint'}
-          >
-            {STATUS_LABEL[status]}
-          </span>
-        ) : null}
-
-        {canWrite || !canWriteDocs ? null : (
-          <span
-            data-testid="doc-read-only"
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5 text-2xs text-muted"
-          >
-            <Lock className="size-3" aria-hidden="true" />
-            {detail.doc.archivedAt === null ? 'Read only' : 'Archived'}
-          </span>
-        )}
-
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={detail.favorite ? `Unstar ${detail.doc.title}` : `Star ${detail.doc.title}`}
-          aria-pressed={detail.favorite}
-          data-testid="doc-favorite"
-          className="size-7 px-0"
-          onClick={() => favorite.mutate(!detail.favorite)}
-        >
-          <Star
-            className={cn('size-4', detail.favorite ? 'fill-current text-accent' : '')}
-            aria-hidden="true"
-          />
-        </Button>
-
-        <DocExportMenu title={detail.doc.title} content={detail.doc.content} />
-
-        {canWriteDocs ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Duplicate doc"
-            data-testid="doc-duplicate"
-            className="size-7 px-0"
-            disabled={duplicate.isPending}
-            onClick={() => {
-              duplicate.mutate(detail.doc.id, {
-                onSuccess: (copy) => router.push(`/docs/${copy.id}`),
-              });
-            }}
-          >
-            <Copy className="size-4" aria-hidden="true" />
-          </Button>
-        ) : null}
-
-        <DocHistory docId={detail.doc.id} canWrite={canWrite} />
-
-        {canWrite ? (
-          <DocShareMenu
-            doc={detail.doc}
-            canPublish={canPublish}
-            canManageAccess={canPublish || detail.doc.authorId === workspace.userId}
-          />
-        ) : null}
-
-        {canWrite ? (
-          <>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" aria-label="Move doc" className="size-7 px-0">
-                  <FolderInput className="size-4" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Move to collection</DropdownMenuLabel>
-                <DropdownMenuItem onSelect={() => update.mutate({ collectionId: null })}>
-                  <span className="flex-1">Private</span>
-                  {detail.doc.collectionId === null ? (
-                    <Check className="size-3.5 text-accent" aria-hidden="true" />
-                  ) : null}
-                </DropdownMenuItem>
-                {collections.map((collection) => (
-                  <DropdownMenuItem
-                    key={collection.id}
-                    data-testid={`move-to-${collection.id}`}
-                    onSelect={() => update.mutate({ collectionId: collection.id })}
-                  >
-                    <span className="flex-1">{collection.name}</span>
-                    {detail.doc.collectionId === collection.id ? (
-                      <Check className="size-3.5 text-accent" aria-hidden="true" />
-                    ) : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <NestPicker
-              parents={parents}
-              currentParentId={detail.doc.parentId}
-              onSelect={(parentId) => update.mutate({ parentId })}
+      <DocHeader
+        doc={detail.doc}
+        trail={trail}
+        collections={collections}
+        favorite={detail.favorite}
+        canWrite={canWrite}
+        canWriteDocs={canWriteDocs}
+        saveStatus={canWrite ? STATUS_LABEL[status] : null}
+        saveFailed={status === 'error'}
+        onToggleTree={toggle}
+        onToggleFavorite={() => favorite.mutate(!detail.favorite)}
+        onMoveToCollection={(collectionId) => update.mutate({ collectionId })}
+        onDuplicate={() => {
+          duplicate.mutate(detail.doc.id, {
+            onSuccess: (copy) => router.push(`/docs/${copy.id}`),
+          });
+        }}
+        onOpenNestPicker={() => setNesting(true)}
+        onOpenHistory={() => setHistoryOpen(true)}
+        onArchive={() => {
+          archive.mutate(detail.doc.id);
+          router.push('/docs');
+        }}
+        onNewDoc={() => router.push('/docs/new')}
+        share={
+          canWrite ? (
+            <DocShareMenu
+              doc={detail.doc}
+              canPublish={canPublish}
+              canManageAccess={canPublish || detail.doc.authorId === workspace.userId}
             />
+          ) : null
+        }
+      />
 
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label="Archive doc"
-              data-testid="doc-archive"
-              className="size-7 px-0"
-              onClick={() => {
-                archive.mutate(detail.doc.id);
-                router.push('/docs');
-              }}
-            >
-              <Archive className="size-4" aria-hidden="true" />
-            </Button>
+      <DocHistory
+        docId={detail.doc.id}
+        canWrite={canWrite}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+      />
 
-            <Button
-              variant="primary"
-              size="sm"
-              data-testid="new-doc"
-              className="hidden sm:inline-flex"
-              onClick={() => router.push('/docs/new')}
-            >
-              New doc
-              <Kbd keys={['c']} className="ml-1 opacity-70" />
-            </Button>
-          </>
-        ) : null}
-      </div>
+      <NestPickerDialog
+        open={nesting}
+        onOpenChange={setNesting}
+        parents={parents}
+        currentParentId={detail.doc.parentId}
+        onSelect={(parentId) => {
+          update.mutate({ parentId });
+          setNesting(false);
+        }}
+      />
 
       {canWrite ? (
         <EditSession
@@ -419,10 +308,33 @@ function LoadedDoc({
   );
 }
 
+export function NestPickerDialog({
+  open,
+  onOpenChange,
+  parents,
+  currentParentId,
+  onSelect,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly parents: readonly DocSummary[];
+  readonly currentParentId: string | null;
+  readonly onSelect: (parentId: string | null) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm gap-2 p-0">
+        <DialogTitle className="px-3 pt-3 text-dense">Nest under a page</DialogTitle>
+        <NestPickerList parents={parents} currentParentId={currentParentId} onSelect={onSelect} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const nestItemClassName =
   'flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-md px-2 text-left text-dense text-muted outline-none transition-colors duration-[var(--duration-instant)] ease-[var(--ease-standard)] data-[selected=true]:bg-surface-2 data-[selected=true]:text-text';
 
-export function NestPicker({
+export function NestPickerList({
   parents,
   currentParentId,
   onSelect,
@@ -431,7 +343,6 @@ export function NestPicker({
   readonly currentParentId: string | null;
   readonly onSelect: (parentId: string | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -448,7 +359,6 @@ export function NestPicker({
     onSelect(parentId);
     setSearch('');
     setActive(0);
-    setOpen(false);
   };
 
   const optionId = (id: string | null) => (id === null ? 'nest-under-none' : `nest-under-${id}`);
@@ -468,83 +378,54 @@ export function NestPicker({
   };
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          setSearch('');
-          setActive(0);
-        }
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Nest doc"
-          data-testid="doc-parent"
-          className="size-7 px-0"
-        >
-          <Indent className="size-4" aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="w-64 p-0"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          inputRef.current?.focus();
-        }}
-      >
-        <div className="flex items-center gap-2 border-border border-b px-2.5">
-          <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
-          <input
-            ref={inputRef}
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setActive(event.target.value.trim().length > 0 ? 1 : 0);
-            }}
-            onKeyDown={onKeyDown}
-            data-testid="doc-parent-search"
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={listId}
-            aria-activedescendant={optionId(options[activeIndex]?.id ?? null)}
-            aria-label="Search docs to nest under"
-            placeholder="Search docs..."
-            className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
-          />
-        </div>
-        <div id={listId} role="listbox" className="max-h-72 overflow-y-auto p-1.5">
-          {options.map((option, index) => (
-            <button
-              key={option.id ?? '__top_level__'}
-              type="button"
-              id={optionId(option.id)}
-              role="option"
-              aria-selected={index === activeIndex}
-              data-selected={index === activeIndex}
-              data-testid={optionId(option.id)}
-              className={nestItemClassName}
-              onMouseMove={() => setActive(index)}
-              onClick={() => choose(option.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {currentParentId === option.id ? (
-                <Check className="size-3.5 text-accent" aria-hidden="true" />
-              ) : null}
-            </button>
-          ))}
-          {hiddenCount > 0 ? (
-            <p className="px-2 py-1.5 text-2xs text-faint">
-              Showing the first {NEST_PICKER_LIMIT}. Refine your search to see more.
-            </p>
-          ) : null}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <div className="w-full">
+      <div className="flex items-center gap-2 border-border border-b px-2.5">
+        <Search className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
+        <input
+          ref={inputRef}
+          value={search}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setActive(event.target.value.trim().length > 0 ? 1 : 0);
+          }}
+          onKeyDown={onKeyDown}
+          data-testid="doc-parent-search"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls={listId}
+          aria-activedescendant={optionId(options[activeIndex]?.id ?? null)}
+          aria-label="Search docs to nest under"
+          placeholder="Search docs..."
+          className="h-9 w-full bg-transparent text-dense text-text outline-none placeholder:text-faint"
+        />
+      </div>
+      <div id={listId} role="listbox" className="max-h-72 overflow-y-auto p-1.5">
+        {options.map((option, index) => (
+          <button
+            key={option.id ?? '__top_level__'}
+            type="button"
+            id={optionId(option.id)}
+            role="option"
+            aria-selected={index === activeIndex}
+            data-selected={index === activeIndex}
+            data-testid={optionId(option.id)}
+            className={nestItemClassName}
+            onMouseMove={() => setActive(index)}
+            onClick={() => choose(option.id)}
+          >
+            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+            {currentParentId === option.id ? (
+              <Check className="size-3.5 text-accent" aria-hidden="true" />
+            ) : null}
+          </button>
+        ))}
+        {hiddenCount > 0 ? (
+          <p className="px-2 py-1.5 text-2xs text-faint">
+            Showing the first {NEST_PICKER_LIMIT}. Refine your search to see more.
+          </p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

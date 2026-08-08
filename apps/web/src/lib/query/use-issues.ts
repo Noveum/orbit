@@ -16,15 +16,19 @@ import {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
   assignedSearch,
+  boardSearch,
+  columnParamFor,
   columnSearch,
   DEFAULT_ISSUE_QUERY,
   EMPTY_ISSUE_SCOPE,
+  groupColumnSearch,
   ISSUE_PAGE_SIZE,
   type IssueQuery,
   issueSearch,
   projectIssuesSearch,
 } from './issue-search.ts';
 import {
+  BOARD_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
@@ -32,6 +36,7 @@ import {
   queryKeys,
 } from './keys.ts';
 import type {
+  BoardPage,
   Bootstrap,
   Issue,
   IssueCounts,
@@ -41,6 +46,7 @@ import type {
   IssueSummary,
 } from './schemas.ts';
 import {
+  boardPageSchema,
   bootstrapSchema,
   issueCountsSchema,
   issueDeletedSchema,
@@ -56,6 +62,7 @@ import {
   admitsNewRows,
   belongsInList,
   flattenIssuePages,
+  isGroupColumn,
   mapIssuePages,
   searchOf,
   sortForSearch,
@@ -175,18 +182,59 @@ export function useIssues(
   });
 }
 
-export function useColumnIssues(
-  teamId: string | null,
-  query: IssueQuery,
-  stateId: string,
-  enabled: boolean,
-) {
-  const search = teamId === null ? '' : columnSearch(teamId, query, stateId);
+export const BOARD_SEED_STALE_MS = 15_000;
+
+export interface BoardColumnKey {
+  readonly query: IssueQuery;
+  readonly groupBy: string;
+  readonly scope: Readonly<Record<string, string>>;
+}
+
+export function columnScopeKey(scope: Readonly<Record<string, string>>): string {
+  return scope['teamId'] ?? scope['projectId'] ?? 'workspace';
+}
+
+export function useColumnIssues(column: BoardColumnKey, groupId: string, enabled: boolean) {
+  const search = groupColumnSearch(column.query, column.groupBy, groupId, column.scope);
   return useInfiniteQuery({
-    ...pagedIssueOptions(queryKeys.issues(teamId ?? 'none', search), search),
-    enabled: enabled && teamId !== null,
+    ...pagedIssueOptions(queryKeys.issues(columnScopeKey(column.scope), search), search),
+    enabled: enabled && search.length > 0,
     select: flattenIssuePages,
+    staleTime: BOARD_SEED_STALE_MS,
     placeholderData: keepPreviousData,
+  });
+}
+
+export function seedBoardColumns(
+  client: QueryClient,
+  column: BoardColumnKey,
+  page: BoardPage,
+): void {
+  for (const group of page.groups) {
+    const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
+    if (search.length === 0) continue;
+    const key = queryKeys.issues(columnScopeKey(column.scope), search);
+    if (client.getQueryData(key) !== undefined) continue;
+    client.setQueryData<IssuePages>(key, {
+      pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],
+      pageParams: [null],
+    });
+  }
+}
+
+export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
+  const client = useQueryClient();
+  const search = boardSearch(column.query, column.groupBy, column.scope);
+
+  return useQuery({
+    queryKey: queryKeys.boardPage(search),
+    enabled: enabled && columnParamFor(column.groupBy) !== null,
+    staleTime: BOARD_SEED_STALE_MS,
+    queryFn: async ({ signal }): Promise<BoardPage> => {
+      const page = await apiFetch(`/api/issues/board?${search}`, boardPageSchema, { signal });
+      seedBoardColumns(client, column, page);
+      return page;
+    },
   });
 }
 
@@ -297,7 +345,12 @@ export interface IssuePatch {
   readonly labelIds?: readonly string[];
 }
 
-function reconcile(search: string, issues: readonly Issue[], next: Issue): readonly Issue[] {
+function reconcile(
+  search: string,
+  issues: readonly Issue[],
+  next: Issue,
+  admitNew = false,
+): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
@@ -307,7 +360,7 @@ function reconcile(search: string, issues: readonly Issue[], next: Issue): reado
     copy[index] = next;
     return sortForSearch(search, copy);
   }
-  if (!admitsNewRows(search)) return issues;
+  if (!(admitNew || admitsNewRows(search))) return issues;
   return sortForSearch(search, [...issues, next]);
 }
 
@@ -338,6 +391,10 @@ function settleFilteredLists(
   }
 }
 
+export function staleBoardPages(client: QueryClient): void {
+  client.invalidateQueries({ queryKey: [BOARD_ROOT], refetchType: 'none' }).catch(() => undefined);
+}
+
 function eachIssueList(
   client: QueryClient,
   filters: { queryKey: QueryKey },
@@ -357,6 +414,12 @@ function placeIssue(client: QueryClient, next: Issue, settle = true): void {
     reconcile(search, issues, next),
   );
   if (settle) settleFilteredLists(client, [next], before);
+}
+
+function placeMovedIssue(client: QueryClient, next: Issue): void {
+  eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) =>
+    reconcile(search, issues, next, isGroupColumn(search, next)),
+  );
 }
 
 function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
@@ -379,6 +442,7 @@ function addToLists(client: QueryClient, next: Issue): void {
 
 function refreshCounts(client: QueryClient): void {
   client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
+  staleBoardPages(client);
 }
 
 function resortTeamIssueLists(client: QueryClient, teamId: string): void {
@@ -489,7 +553,7 @@ export function useMoveIssue() {
         ...regroupingOf(input),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
-      placeIssue(client, optimistic, false);
+      placeMovedIssue(client, optimistic);
       return {};
     },
     onError: (error, input) => {

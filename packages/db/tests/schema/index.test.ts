@@ -71,17 +71,39 @@ describe('list and search indexes', () => {
     );
   });
 
-  it('searches issues and docs through trigram indexes', () => {
-    const trigramIndexes = [
+  it('searches issues and docs through gin indexes, never a scan', () => {
+    const ginIndexes = [
       ...getTableConfig(schema.issue).indexes,
       ...getTableConfig(schema.doc).indexes,
     ].filter((entry) => entry.config.method === 'gin');
-    expect(trigramIndexes.map((entry) => entry.config.name)).toEqual([
+    expect(ginIndexes.map((entry) => entry.config.name)).toEqual([
       'issue_title_trgm_idx',
       'issue_description_trgm_idx',
       'doc_title_trgm_idx',
       'doc_content_trgm_idx',
+      'doc_search_idx',
     ]);
+  });
+
+  it('ranks doc search from a stored vector that weighs the title above the body', () => {
+    const vector = getTableConfig(schema.doc).columns.find(
+      (column) => column.name === 'search_vector',
+    );
+    const generated = JSON.stringify(vector?.generated?.as ?? '');
+
+    expect(vector).toBeDefined();
+    expect(generated).toContain("setweight(to_tsvector('english', coalesce(title, '')), 'A')");
+    expect(generated).toContain(
+      "setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')",
+    );
+  });
+
+  it('bounds the body it indexes, so a long doc never outgrows a tsvector and becomes unsavable', () => {
+    const vector = getTableConfig(schema.doc).columns.find(
+      (column) => column.name === 'search_vector',
+    );
+
+    expect(JSON.stringify(vector?.generated?.as ?? '')).toContain("left(coalesce(content, ''),");
   });
 
   it('replays sprint scope changes from a partial index over cycle moves', () => {

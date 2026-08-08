@@ -382,6 +382,28 @@ describe('save changes gating', () => {
     expect(viewStateDirty(saved, saved)).toBe(false);
   });
 
+  it('is clean when a view that never chose empty groups opens on a board', () => {
+    const saved = defaultViewState('board');
+    const opened = { ...saved, display: { ...saved.display, showEmptyGroups: true } };
+
+    expect(saved.display.showEmptyGroups).toBeNull();
+    expect(viewStateDirty(opened, saved)).toBe(false);
+  });
+
+  it('is clean when that same view opens on a list, where empty groups stay hidden', () => {
+    const saved = defaultViewState('list');
+    const opened = { ...saved, display: { ...saved.display, showEmptyGroups: false } };
+
+    expect(viewStateDirty(opened, saved)).toBe(false);
+  });
+
+  it('still notices a choice that differs from what the layout would have shown', () => {
+    const saved = defaultViewState('board');
+    const opened = { ...saved, display: { ...saved.display, showEmptyGroups: false } };
+
+    expect(viewStateDirty(opened, saved)).toBe(true);
+  });
+
   it('notices a changed filter, grouping, ordering or display option', () => {
     const saved = viewStateSchema.parse({ filter: tree, groupBy: 'assignee' });
     expect(viewStateDirty({ ...saved, groupBy: 'label' }, saved)).toBe(true);

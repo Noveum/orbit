@@ -11,7 +11,7 @@ import { branchCopy } from './copy-branch-name.tsx';
 import { priorityLabel } from './priority-glyph.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
-export function issueUrl(identifier: string, origin: string): string {
+export function absoluteIssueUrl(identifier: string, origin: string): string {
   return `${origin.replace(/\/+$/, '')}/issue/${identifier}`;
 }
 
@@ -57,7 +57,7 @@ export function IssueCopyActions({ issue }: IssueCopyActionsProps) {
       project,
       labels,
       description: issue.description,
-      url: issueUrl(issue.identifier, window.location.origin),
+      url: absoluteIssueUrl(issue.identifier, window.location.origin),
     });
   };
 
@@ -67,7 +67,7 @@ export function IssueCopyActions({ issue }: IssueCopyActionsProps) {
       label: 'Copy link',
       toastLabel: 'Link copied',
       icon: Link2,
-      value: () => issueUrl(issue.identifier, window.location.origin),
+      value: () => absoluteIssueUrl(issue.identifier, window.location.origin),
       enabled: true,
     },
     {

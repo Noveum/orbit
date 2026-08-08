@@ -1,13 +1,14 @@
+import { listMembers, listTeams } from '@orbit/core';
+import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { findProjectDetail } from '@/features/projects/data.ts';
-import { formatDay } from '@/features/projects/dates.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
+import { ProjectFields } from '@/features/projects/project-fields.tsx';
 import { ProjectTabs } from '@/features/projects/project-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 
@@ -21,15 +22,13 @@ export async function generateMetadata({ params }: LayoutProps): Promise<Metadat
   return { title: slug };
 }
 
-function formatDate(value: string | null): string {
-  return formatDay(value, { withYear: true, missing: 'Not set' });
-}
-
 export default async function ProjectLayout({ params, children }: LayoutProps) {
   const { slug } = await params;
   const { principal } = await pageContext();
   const detail = await findProjectDetail(principal, slug);
   if (detail === null) notFound();
+
+  const [teams, members] = await Promise.all([listTeams(principal), listMembers(principal)]);
 
   const { summary, progress, series } = detail;
   const chartMax = Math.max(1, ...series.map((point) => point.scope));
@@ -45,49 +44,22 @@ export default async function ProjectLayout({ params, children }: LayoutProps) {
         {summary.summary.length === 0 ? null : (
           <p className="max-w-2xl text-muted text-sm">{summary.summary}</p>
         )}
-        <dl className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
-          <div className="flex items-center gap-2">
-            <dt className="text-faint">Lead</dt>
-            <dd className="flex items-center gap-1.5 text-muted">
-              {summary.lead === null ? (
-                'Unassigned'
-              ) : (
-                <>
-                  <Avatar name={summary.lead.name} src={summary.lead.image} size="xs" />
-                  {summary.lead.name}
-                </>
-              )}
-            </dd>
-          </div>
-          <div className="flex items-center gap-2">
-            <dt className="text-faint">Start</dt>
-            <dd className="text-muted tabular">{formatDate(detail.startDate)}</dd>
-          </div>
-          <div className="flex items-center gap-2">
-            <dt className="text-faint">Target</dt>
-            <dd className="text-muted tabular">{formatDate(summary.targetDate)}</dd>
-          </div>
-          <div className="flex items-center gap-2">
-            <dt className="text-faint">Teams</dt>
-            <dd className="flex gap-1">
-              {detail.teams.length === 0 ? (
-                <span className="text-muted">None</span>
-              ) : (
-                detail.teams.map((team) => (
-                  <Badge key={team.id} tone="outline">
-                    {team.key}
-                  </Badge>
-                ))
-              )}
-            </dd>
-          </div>
-          <div className="flex items-center gap-2">
-            <dt className="text-faint">Progress</dt>
-            <dd>
-              <Donut completed={progress.completed} scope={progress.scope} />
-            </dd>
-          </div>
-        </dl>
+        <ProjectFields
+          projectId={summary.id}
+          lead={summary.lead}
+          startDate={detail.startDate}
+          targetDate={summary.targetDate}
+          status={summary.status}
+          teamIds={detail.teams.map((team) => team.id)}
+          members={members.map((entry) => ({
+            id: entry.user.id,
+            name: entry.user.name,
+            image: entry.user.image,
+          }))}
+          teams={teams.map((team) => ({ id: team.id, key: team.key, name: team.name }))}
+          canManage={can(principal, 'project:manage')}
+          progress={<Donut completed={progress.completed} scope={progress.scope} />}
+        />
         <ProjectTabs slug={slug} />
       </header>
 

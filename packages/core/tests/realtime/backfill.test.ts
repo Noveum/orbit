@@ -372,3 +372,21 @@ describe('catch up respects who a saved view was shared with', () => {
     expect(result.actions.some((action) => action.modelId === view.id)).toBe(true);
   });
 });
+
+describe('a catch up reads one consistent picture', () => {
+  it('takes every model from the same snapshot, so nothing slips between queries', async () => {
+    const before = await catchUp(workspace.admin, 0);
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Written mid flight',
+    });
+    const { doc } = await createDoc(workspace.admin, { title: 'Also written' });
+
+    const after = await catchUp(workspace.admin, before.syncId);
+    const ids = after.actions.map((action) => action.modelId);
+
+    expect(ids).toContain(issue.id);
+    expect(ids).toContain(doc.id);
+    expect(after.syncId).toBeGreaterThanOrEqual(Math.max(issue.syncId, doc.syncId));
+  });
+});

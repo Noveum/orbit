@@ -14,3 +14,11 @@ export function publicDocUrl(doc: PublishedDocRef, origin: string | URL): string
   const path = publicDocPath(doc);
   return path === null ? null : new URL(path, origin).toString();
 }
+
+export function appDocPath(docId: string): string {
+  return `/docs/${encodeURIComponent(docId)}`;
+}
+
+export function appDocUrl(docId: string, origin: string | URL): string {
+  return new URL(appDocPath(docId), origin).toString();
+}

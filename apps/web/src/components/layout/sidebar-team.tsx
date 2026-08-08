@@ -160,7 +160,10 @@ export function SidebarTeam({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem asChild>
-              <Link href={`/team/${team.key.toLowerCase()}/settings`}>
+              <Link
+                href={`/team/${team.key.toLowerCase()}/settings`}
+                {...(onNavigate === null ? {} : { onClick: onNavigate })}
+              >
                 <Settings2 className="size-3.5" aria-hidden="true" />
                 Team settings
               </Link>

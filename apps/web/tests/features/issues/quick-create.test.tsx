@@ -366,34 +366,6 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create-cycle')).toBeTruthy();
   });
 
-  it('offers an estimate, so effort does not have to be set after the fact', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    workspace = buildWorkspace();
-    open();
-
-    const chip = screen.getByTestId('quick-create-estimate');
-    expect(chip).toHaveTextContent('Estimate');
-
-    await user.click(chip);
-    await user.click(await screen.findByText('3 points'));
-
-    expect(screen.getByTestId('quick-create-estimate')).toHaveTextContent('3 points');
-  });
-
-  it('creates the issue with the estimate that was picked', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    workspace = buildWorkspace();
-    open();
-
-    await user.type(screen.getByTestId('quick-create-title'), 'Ship the thing');
-    await user.click(screen.getByTestId('quick-create-estimate'));
-    await user.click(await screen.findByText('3 points'));
-    await user.click(screen.getByTestId('quick-create-submit'));
-
-    await waitFor(() => expect(created).toHaveBeenCalled());
-    expect(created.mock.calls[0]?.[0]?.['estimate']).toBe(3);
-  });
-
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
     workspace = buildWorkspace();
     open();
@@ -462,5 +434,53 @@ describe('the new issue dialog', () => {
 
     expect(created.mock.calls[0]?.[0]?.['cycleId']).toBeNull();
     expect(created.mock.calls[0]?.[0]?.['projectId']).toBeNull();
+  });
+});
+
+describe('the pickers when a team owns nothing yet', () => {
+  it('says the team has no projects rather than showing an empty menu', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = { ...buildWorkspace(), projects: [] };
+    open();
+
+    await user.click(screen.getByTestId('quick-create-project'));
+
+    expect(await screen.findByText('No projects on this team')).toBeTruthy();
+  });
+
+  it('says the team has no sprints rather than showing an empty menu', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = { ...buildWorkspace(), cycles: [] };
+    open();
+
+    await user.click(screen.getByTestId('quick-create-cycle'));
+
+    expect(await screen.findByText('No sprints on this team')).toBeTruthy();
+  });
+});
+
+describe('story points on a new issue', () => {
+  it('sends the points that were chosen', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Sized work');
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('5 points'));
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['estimate']).toBe(5);
+  });
+
+  it('sends no estimate when none was chosen', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Unsized work');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['estimate']).toBeNull();
   });
 });

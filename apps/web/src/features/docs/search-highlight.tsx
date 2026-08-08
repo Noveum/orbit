@@ -1,3 +1,5 @@
+import { HIGHLIGHT_START, highlightSegments } from '@orbit/shared/utils';
+
 export interface HighlightPart {
   readonly text: string;
   readonly match: boolean;
@@ -22,6 +24,34 @@ export function splitOnTerm(text: string, term: string): HighlightPart[] {
 
   if (cursor < text.length) parts.push({ text: text.slice(cursor), match: false, start: cursor });
   return parts.length === 0 ? [{ text, match: false, start: 0 }] : parts;
+}
+
+export function MarkedPassage({
+  passage,
+  term,
+}: {
+  readonly passage: string;
+  readonly term: string;
+}) {
+  if (!passage.includes(HIGHLIGHT_START)) return <MatchedText text={passage} term={term} />;
+
+  return (
+    <>
+      {highlightSegments(passage).map((segment) =>
+        segment.match ? (
+          <mark
+            key={segment.start}
+            data-match="true"
+            className="bg-transparent font-medium text-accent"
+          >
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={segment.start}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 export function MatchedText({ text, term }: { readonly text: string; readonly term: string }) {

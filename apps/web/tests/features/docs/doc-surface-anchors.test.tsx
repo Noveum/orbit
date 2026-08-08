@@ -51,6 +51,7 @@ const doc = {
   title: 'Launch plan',
   slug: 'launch-plan',
   content: MARKDOWN,
+  sortOrder: 0,
   visibility: 'workspace',
   publishToken: null,
   authorId: 'user_1',

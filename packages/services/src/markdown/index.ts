@@ -13,12 +13,29 @@ const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
 const HEADING_TAG = /<h([1-3])((?:[^>"]|"[^"]*")*)>([\s\S]*?)<\/h\1>/gi;
 const EXISTING_ID = /\sid="[^"]*"/gi;
 
+function alignment(align: 'center' | 'left' | 'right' | null): string {
+  return align === null ? '' : ` align="${align}"`;
+}
+
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false }).use({
   renderer: {
     code({ text, lang }): string {
       const alias = languageAlias(lang ?? '');
       const classes = alias.length === 0 ? 'hljs' : `hljs language-${escapeHtml(alias)}`;
-      return `<pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre>\n`;
+      const language = alias.length === 0 ? '' : ` data-code-language="${escapeHtml(alias)}"`;
+      return `<div data-code-block${language}><pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre></div>\n`;
+    },
+    table(token): string {
+      const header = token.header
+        .map((cell) => `<th${alignment(cell.align)}>${this.parser.parseInline(cell.tokens)}</th>`)
+        .join('');
+      const body = token.rows
+        .map(
+          (row) =>
+            `<tr>${row.map((cell) => `<td${alignment(cell.align)}>${this.parser.parseInline(cell.tokens)}</td>`).join('')}</tr>`,
+        )
+        .join('');
+      return `<div data-table-scroll><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
     },
   },
 });

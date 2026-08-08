@@ -71,6 +71,7 @@ function docPayload(favorite: boolean) {
       title: 'Delta protocol',
       slug: 'delta-protocol',
       content: MARKDOWN,
+      sortOrder: 0,
       visibility: 'workspace',
       publishToken: null,
       authorId: 'user_author',
@@ -129,7 +130,7 @@ async function renderSurface(favorite = false) {
       </TooltipProvider>
     </QueryClientProvider>,
   );
-  await screen.findByLabelText('Export doc');
+  await screen.findByTestId('doc-overflow');
 }
 
 beforeEach(() => {

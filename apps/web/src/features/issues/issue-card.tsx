@@ -59,7 +59,7 @@ export function IssueCard({
         'transition-[transform,box-shadow,opacity,background-color,border-color] ease-[var(--ease-standard)] motion-reduce:transition-none',
         'duration-[var(--duration-instant)] hover:duration-[var(--duration-base)]',
         'hover:border-border-strong hover:bg-surface-2',
-        dragging && '-translate-y-0.5 rotate-[0.4deg] opacity-95 shadow-pop',
+        dragging && 'cursor-grabbing border-border-strong shadow-pop',
         className,
       )}
     >

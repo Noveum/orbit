@@ -435,7 +435,7 @@ export const COMPLETED_WINDOW_LABELS: Record<CompletedWindow, string> = {
 
 export const displayOptionsSchema = z.object({
   showSubIssues: z.boolean().default(true),
-  showEmptyGroups: z.boolean().default(false),
+  showEmptyGroups: z.boolean().nullable().default(null),
   showCompleted: z.enum(COMPLETED_WINDOWS).default('all'),
   properties: z.array(z.enum(DISPLAY_PROPERTIES)).default([...DISPLAY_PROPERTIES]),
 });
@@ -453,10 +453,17 @@ export const DEFAULT_DISPLAY_PROPERTIES: readonly DisplayProperty[] = [
   'assignee',
 ];
 
-export function defaultDisplayOptions(layout: ViewLayout): DisplayOptions {
+export function showsEmptyGroups(
+  chosen: boolean | null,
+  layout: ViewLayout | ViewLayoutMode,
+): boolean {
+  return chosen ?? layout === 'board';
+}
+
+export function defaultDisplayOptions(_layout: ViewLayout): DisplayOptions {
   return {
     showSubIssues: true,
-    showEmptyGroups: layout === 'board',
+    showEmptyGroups: null,
     showCompleted: 'all',
     properties: [...DEFAULT_DISPLAY_PROPERTIES],
   };
@@ -624,7 +631,9 @@ export function sanitizeViewConfig(
     orderBy: pick(config.orderBy, capability.orderBy, 'manual'),
     display: {
       ...config.display,
-      showEmptyGroups: capability.showEmptyGroups ? config.display.showEmptyGroups : false,
+      showEmptyGroups: capability.showEmptyGroups
+        ? showsEmptyGroups(config.display.showEmptyGroups, layout)
+        : false,
       properties: config.display.properties.filter((entry) =>
         capability.properties.includes(entry),
       ),
@@ -836,7 +845,11 @@ function comparableViewState(state: ViewState) {
     groupBy: state.groupBy,
     subGroupBy: state.subGroupBy,
     orderBy: state.orderBy,
-    display: { ...state.display, properties: [...state.display.properties].sort() },
+    display: {
+      ...state.display,
+      showEmptyGroups: showsEmptyGroups(state.display.showEmptyGroups, state.layout),
+      properties: [...state.display.properties].sort(),
+    },
     layout: state.layout,
   };
 }

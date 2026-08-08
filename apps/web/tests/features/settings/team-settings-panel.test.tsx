@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { MemberView, TeamDetail } from '@/features/settings/data.ts';
 import { TeamSettingsPanel } from '../../../src/features/settings/team-settings-panel.tsx';
+import { TeamsPanel } from '../../../src/features/settings/teams-panel.tsx';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
@@ -100,5 +101,34 @@ describe('TeamSettingsPanel', () => {
     expect(screen.getByTestId('archive-team')).toBeDisabled();
     expect(screen.getByLabelText('Name')).toBeDisabled();
     expect(screen.getByLabelText('Pulkit on Engineering')).toBeDisabled();
+  });
+});
+
+describe('reaching an archived team again', () => {
+  it('keeps a settings link on every team in the workspace list, archived ones included', () => {
+    render(
+      <TeamsPanel
+        teams={[
+          team(),
+          team({
+            id: 'team_2',
+            key: 'DES',
+            name: 'Design',
+            archivedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        ]}
+        members={members}
+        canManage
+      />,
+    );
+
+    expect(screen.getByTestId('team-settings-link-ENG')).toHaveAttribute(
+      'href',
+      '/team/eng/settings',
+    );
+    expect(screen.getByTestId('team-settings-link-DES')).toHaveAttribute(
+      'href',
+      '/team/des/settings',
+    );
   });
 });
