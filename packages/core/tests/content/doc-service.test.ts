@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { DOC_CONTENT_LIMIT, DOC_TITLE_LIMIT } from '@orbit/shared/validators';
@@ -293,6 +294,20 @@ describe('published doc urls', () => {
 });
 
 describe('visibility modes', () => {
+  it('hides public pages and sitemap entries while workspace deletion is pending', async () => {
+    const open = await newDoc('Open notes');
+    const published = await shareDoc(workspace.admin, open.id, { visibility: 'public' });
+    const token = published.publishToken;
+    if (token === null) throw new Error('expected a token');
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    expect(await getPublishedDoc(token)).toBeNull();
+    expect((await listPublicDocs()).some((row) => row.id === open.id)).toBe(false);
+  });
+
   it('lists a public doc in the sitemap feed and never an unlisted one', async () => {
     const open = await newDoc('Open notes');
     const unlisted = await newDoc('Quiet notes');

@@ -249,6 +249,30 @@ describe('markAttachmentReady', () => {
 });
 
 describe('registerUpload', () => {
+  it('does not mint a storage target after workspace deletion enters its retry state', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, nova.organizationId));
+    let targetCreated = false;
+    const storage = fakeStorage({ onCreateTarget: () => (targetCreated = true) });
+
+    await expect(
+      registerUpload(
+        nova.admin,
+        {
+          fileName: 'trace.log',
+          contentType: 'text/plain',
+          size: 12,
+          parentType: 'comment',
+          parentId: commentId,
+        },
+        storage.driver,
+      ),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(targetCreated).toBe(false);
+  });
+
   it('registers a comment upload and publishes it on the issue of that comment', async () => {
     const storage = fakeStorage();
 
@@ -383,6 +407,29 @@ describe('finishUpload', () => {
 });
 
 describe('attachFile', () => {
+  it('does not store inline bytes after workspace deletion enters its retry state', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, nova.organizationId));
+    const storage = fakeStorage();
+
+    await expect(
+      attachFile(
+        nova.admin,
+        {
+          parentType: 'comment',
+          parentId: commentId,
+          fileName: 'notes.txt',
+          contentType: 'text/plain',
+          content: Buffer.from('hello orbit').toString('base64'),
+        },
+        storage.driver,
+      ),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(storage.puts).toHaveLength(0);
+  });
+
   it('stores the decoded bytes and returns a url that serves them back', async () => {
     const storage = fakeStorage();
 

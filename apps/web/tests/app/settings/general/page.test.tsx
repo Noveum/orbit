@@ -6,6 +6,7 @@ const coreModule = await import('@orbit/core');
 const handlerModule = await import('@/lib/api/handler.ts');
 
 let principal: Principal;
+let deletionRequestedAt: Date | null;
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ refresh: mock(), push: mock(), back: mock() }),
@@ -34,6 +35,7 @@ mock.module('@/lib/api/handler.ts', () => ({
       memberId: 'member_1',
       organizationName: 'Nova',
       organizationSlug: 'nova',
+      deletionRequestedAt,
       userName: 'Person',
       userEmail: 'person@orbit.test',
     }),
@@ -49,6 +51,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  deletionRequestedAt = null;
   principal = {
     userId: 'user_1',
     organizationId: 'org_nova',
@@ -70,5 +73,14 @@ describe('GeneralSettingsPage workspace deletion permission', () => {
     render(await GeneralSettingsPage());
 
     expect(screen.queryByRole('button', { name: 'Delete workspace' })).toBeNull();
+  });
+
+  it('limits a pending workspace to resuming its deletion', async () => {
+    deletionRequestedAt = new Date('2026-08-08T13:00:00.000Z');
+
+    render(await GeneralSettingsPage());
+
+    expect(screen.getByRole('button', { name: 'Retry workspace deletion' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 });

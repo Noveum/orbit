@@ -47,6 +47,17 @@ describe('resolvePrincipal', () => {
       resolvePrincipal(outsider.user.id, workspace.organizationId),
     ).rejects.toMatchObject({ code: 'forbidden' });
   });
+
+  it('refuses normal access while workspace deletion is pending', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    await expect(
+      resolvePrincipal(workspace.admin.userId, workspace.organizationId),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+  });
 });
 
 describe('listMembers', () => {

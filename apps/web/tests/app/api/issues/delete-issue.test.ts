@@ -40,6 +40,7 @@ mockMembership(() => ({
   memberId: 'member_1',
   organizationName: 'Nova',
   organizationSlug: 'nova',
+  deletionRequestedAt: null,
 }));
 
 const { DELETE } = await import('@/app/api/issues/[id]/route.ts');

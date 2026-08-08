@@ -1,4 +1,4 @@
-import { and, asc, count, db, desc, eq, gt, ne, schema, type Transaction } from '@orbit/db';
+import { and, asc, count, db, desc, eq, gt, isNull, ne, schema, type Transaction } from '@orbit/db';
 import {
   type StorageDriver,
   storageDriver,
@@ -27,6 +27,7 @@ export interface OrganizationDeletionSummary {
   readonly integrations: number;
   readonly webhooks: number;
   readonly availableAt: string | null;
+  readonly deletionRequestedAt: string | null;
 }
 
 export interface OrganizationDeletionResult {
@@ -91,7 +92,10 @@ export async function getOrganizationDeletionSummary(
 ): Promise<OrganizationDeletionSummary> {
   assertCan(principal, 'org:delete');
   const [organization] = await db
-    .select({ name: schema.organization.name })
+    .select({
+      name: schema.organization.name,
+      deletionRequestedAt: schema.organization.deletionRequestedAt,
+    })
     .from(schema.organization)
     .where(eq(schema.organization.id, principal.organizationId))
     .limit(1);
@@ -143,7 +147,28 @@ export async function getOrganizationDeletionSummary(
     integrations: totalOf(integrations),
     webhooks: totalOf(webhooks),
     availableAt: availableAt?.toISOString() ?? null,
+    deletionRequestedAt: current.deletionRequestedAt?.toISOString() ?? null,
   };
+}
+
+async function validatedDeletionTarget(
+  tx: Transaction,
+  principal: Principal,
+  confirmation: string,
+  now: Date,
+): Promise<typeof schema.organization.$inferSelect> {
+  const organization = await lockOrganization(tx, principal.organizationId);
+  await assertCurrentDeletionPermission(tx, principal);
+  if (confirmation !== organization.name) {
+    throw conflict('Type the current workspace name exactly to confirm deletion.');
+  }
+  const availableAt = await latestUploadProtectionEnd(tx, organization.id, now);
+  if (availableAt !== null) {
+    throw conflict('Wait for pending upload links to expire before deleting this workspace.', {
+      details: { availableAt: availableAt.toISOString() },
+    });
+  }
+  return organization;
 }
 
 export async function deleteOrganization(
@@ -154,19 +179,16 @@ export async function deleteOrganization(
 ): Promise<OrganizationDeletionResult> {
   assertCan(principal, 'org:delete');
   const parsed = organizationDeleteSchema.parse(input);
+  await db.transaction(async (tx) => {
+    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
+    if (organization.deletionRequestedAt !== null) return;
+    await tx
+      .update(schema.organization)
+      .set({ deletionRequestedAt: now })
+      .where(eq(schema.organization.id, organization.id));
+  });
   return await db.transaction(async (tx) => {
-    const organization = await lockOrganization(tx, principal.organizationId);
-    await assertCurrentDeletionPermission(tx, principal);
-    if (parsed.confirmation !== organization.name) {
-      throw conflict('Type the current workspace name exactly to confirm deletion.');
-    }
-    const availableAt = await latestUploadProtectionEnd(tx, organization.id, now);
-    if (availableAt !== null) {
-      throw conflict('Wait for pending upload links to expire before deleting this workspace.', {
-        details: { availableAt: availableAt.toISOString() },
-      });
-    }
-    await driver.deletePrefix(storagePrefixFor(organization.id));
+    const organization = await validatedDeletionTarget(tx, principal, parsed.confirmation, now);
     await tx
       .update(schema.session)
       .set({ activeOrganizationId: null })
@@ -179,11 +201,13 @@ export async function deleteOrganization(
         and(
           eq(schema.member.userId, principal.userId),
           ne(schema.member.organizationId, organization.id),
+          isNull(schema.organization.deletionRequestedAt),
         ),
       )
       .orderBy(asc(schema.organization.name), asc(schema.organization.id))
       .limit(1);
     await tx.delete(schema.organization).where(eq(schema.organization.id, organization.id));
+    await driver.deletePrefix(storagePrefixFor(organization.id));
     return {
       deletedOrganizationId: organization.id,
       deletedOrganizationName: organization.name,

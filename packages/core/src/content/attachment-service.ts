@@ -8,7 +8,7 @@ import {
   type UploadTarget,
   validateUpload,
 } from '@orbit/services/storage';
-import { notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -162,6 +162,14 @@ export interface RegisteredUpload extends CompletedAttachment {
   readonly upload: UploadTarget;
 }
 
+function assertOrganizationAcceptsFiles(
+  organization: typeof schema.organization.$inferSelect,
+): void {
+  if (organization.deletionRequestedAt !== null) {
+    throw conflict('Workspace deletion is in progress.');
+  }
+}
+
 export async function registerUpload(
   principal: Principal,
   input: unknown,
@@ -172,7 +180,8 @@ export async function registerUpload(
   const store = driver ?? storageDriver();
   const key = storageKeyFor(principal.organizationId, upload.safeName);
   return await db.transaction(async (tx) => {
-    await lockOrganization(tx, principal.organizationId);
+    const organization = await lockOrganization(tx, principal.organizationId);
+    assertOrganizationAcceptsFiles(organization);
     await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
     const target = await store.createUploadTarget(key, upload.contentType, upload.size);
     const registered = await insertAttachment(tx, principal, {
@@ -227,7 +236,8 @@ export async function attachFile(
   let objectStored = false;
   try {
     return await db.transaction(async (tx) => {
-      await lockOrganization(tx, principal.organizationId);
+      const organization = await lockOrganization(tx, principal.organizationId);
+      assertOrganizationAcceptsFiles(organization);
       await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
       await store.put(key, bytes, upload.contentType);
       objectStored = true;

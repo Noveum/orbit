@@ -32,6 +32,7 @@ const summary = {
   integrations: 1,
   webhooks: 2,
   availableAt: null,
+  deletionRequestedAt: null,
 };
 
 function response(body: unknown, status = 200): Response {
@@ -144,6 +145,20 @@ describe('WorkspaceDangerZone summary and confirmation', () => {
     expect(await screen.findByText('2 members')).toBeVisible();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('explains and resumes a durable deletion attempt', async () => {
+    const requestedAt = '2026-08-08T13:00:00.000Z';
+    installFetch([response({ summary: { ...summary, deletionRequestedAt: requestedAt } })]);
+    const user = userEvent.setup();
+    render(<WorkspaceDangerZone organizationName="Nova" deletionRequestedAt={requestedAt} />);
+
+    expect(screen.getByText(/Deletion is in progress/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry workspace deletion' }));
+    await screen.findByText(/locked for normal use/);
+    await user.type(screen.getByLabelText('Type Nova to confirm'), 'Nova');
+
+    expect(screen.getByRole('button', { name: 'Retry permanent deletion' })).toBeEnabled();
+  });
 });
 
 describe('WorkspaceDangerZone deletion', () => {
@@ -220,6 +235,7 @@ describe('WorkspaceDangerZone deletion', () => {
         },
         409,
       ),
+      response({ summary }),
     ]);
     const user = userEvent.setup();
     render(<WorkspaceDangerZone organizationName="Nova" />);

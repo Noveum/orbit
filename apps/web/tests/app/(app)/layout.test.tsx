@@ -20,6 +20,7 @@ const membership: MembershipContext = {
   memberId: 'member-1',
   organizationName: 'Noveum',
   organizationSlug: 'noveum',
+  deletionRequestedAt: null,
   principal: {
     userId: 'user-1',
     organizationId: 'org-1',

@@ -319,6 +319,28 @@ describe('authenticateTicket', () => {
     expect(result).toEqual({ ok: false, reason: 'organization_forbidden' });
   });
 
+  it('rejects a new connection while workspace deletion is pending', async () => {
+    const { sessionId } = await insertSession(home.readerUserId, new Date(Date.now() + 60_000));
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, home.organizationId));
+    try {
+      const result = await authenticateTicket({
+        userId: home.readerUserId,
+        organizationId: home.organizationId,
+        sessionId,
+        exp: Date.now() + 60_000,
+      });
+      expect(result).toEqual({ ok: false, reason: 'organization_forbidden' });
+    } finally {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: null })
+        .where(eq(schema.organization.id, home.organizationId));
+    }
+  });
+
   it('falls back to guest for a role nobody recognises', async () => {
     await db
       .update(schema.member)
@@ -362,6 +384,22 @@ describe('sessionStillValid and membershipStillValid', () => {
         reader({ userId: home.strangerUserId, organizationId: away.organizationId }),
       ),
     ).toBe(false);
+  });
+
+  it('reports a pending workspace deletion as terminal membership loss', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, home.organizationId));
+    try {
+      expect(await membershipStillValid(reader())).toBe(false);
+      expect(await refreshedPrincipal(reader())).toBeNull();
+    } finally {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: null })
+        .where(eq(schema.organization.id, home.organizationId));
+    }
   });
 });
 

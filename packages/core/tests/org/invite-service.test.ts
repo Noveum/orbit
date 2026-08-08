@@ -7,6 +7,7 @@ import {
   createInvites,
   listPendingInvites,
   matchAllowedDomain,
+  pendingInvitesForEmail,
   resendInvite,
   revokeInvite,
 } from '../../src/org/invite-service.ts';
@@ -87,6 +88,23 @@ describe('acceptInvite', () => {
       .from(schema.invitation)
       .where(eq(schema.invitation.id, token));
     expect(invitation?.status).toBe('accepted');
+  });
+
+  it('rejects acceptance and hides pending invites while deletion is pending', async () => {
+    const invited = await createUser('Ivy Invitee');
+    const { token } = await createInvite(workspace.admin, { email: invited.email });
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    expect(await pendingInvitesForEmail(invited.email)).toEqual([]);
+    await expect(acceptInvite(token, invited.id)).rejects.toMatchObject({ code: 'conflict' });
+    const memberships = await db
+      .select()
+      .from(schema.member)
+      .where(eq(schema.member.userId, invited.id));
+    expect(memberships).toEqual([]);
   });
 
   it('is idempotent when the token is used twice', async () => {

@@ -31,6 +31,7 @@ const deletionSummarySchema = z
     integrations: z.number().int().nonnegative(),
     webhooks: z.number().int().nonnegative(),
     availableAt: z.string().datetime().nullable(),
+    deletionRequestedAt: z.string().datetime().nullable(),
   })
   .strict();
 
@@ -57,7 +58,42 @@ function payloadError(error: unknown): string {
   return messageOf(error);
 }
 
-export function WorkspaceDangerZone({ organizationName }: { readonly organizationName: string }) {
+function dangerDescription(pending: boolean): string {
+  if (pending) {
+    return 'Deletion is in progress. Retry the permanent cleanup until every workspace record and file is removed.';
+  }
+  return 'Permanently delete this workspace and everything stored inside it. This cannot be undone.';
+}
+
+function permanentDeletionLabel(pending: boolean, deleting: boolean): string {
+  if (deleting) return 'Deleting workspace';
+  if (pending) return 'Retry permanent deletion';
+  return 'Permanently delete workspace';
+}
+
+function dangerActionLabel(pending: boolean): string {
+  return pending ? 'Retry workspace deletion' : 'Delete workspace';
+}
+
+function PendingDeletionNotice({ pending }: { readonly pending: boolean }) {
+  if (!pending) return null;
+  return (
+    <p role="status" className="rounded-md bg-warning/10 p-3 text-warning text-xs">
+      This workspace is locked for normal use while permanent deletion is pending. A retry safely
+      resumes the idempotent cleanup.
+    </p>
+  );
+}
+
+interface WorkspaceDangerZoneProps {
+  readonly organizationName: string;
+  readonly deletionRequestedAt?: string | null;
+}
+
+export function WorkspaceDangerZone({
+  organizationName,
+  deletionRequestedAt = null,
+}: WorkspaceDangerZoneProps) {
   const [open, setOpen] = useState(false);
   const [summary, setSummary] = useState<DeletionSummary | null>(null);
   const [confirmation, setConfirmation] = useState('');
@@ -72,6 +108,7 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
   const availableAt = summary?.availableAt ?? null;
   const blocked = availableAt !== null && Date.parse(availableAt) > clock;
   const currentName = summary?.organizationName ?? organizationName;
+  const pending = (summary?.deletionRequestedAt ?? deletionRequestedAt) !== null;
   const canDelete =
     summary !== null && !loading && !blocked && !deleting && confirmation === currentName;
 
@@ -138,9 +175,11 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
       });
       deleted = deletionResponseSchema.parse(payload);
     } catch (caught) {
-      setError(payloadError(caught));
+      const nextError = payloadError(caught);
       deletingRef.current = false;
       setDeleting(false);
+      await loadSummary();
+      setError(nextError);
       return;
     }
     if (deleted.nextOrganizationId === null) {
@@ -165,13 +204,11 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
     <section className="flex flex-col gap-3 rounded-lg border border-danger/40 p-4">
       <div className="flex flex-col gap-1">
         <h3 className="font-medium text-danger text-dense">Danger zone</h3>
-        <p className="text-muted text-xs">
-          Permanently delete this workspace and everything stored inside it. This cannot be undone.
-        </p>
+        <p className="text-muted text-xs">{dangerDescription(pending)}</p>
       </div>
       <div>
         <Button variant="danger" onClick={showDialog}>
-          Delete workspace
+          {dangerActionLabel(pending)}
         </Button>
       </div>
 
@@ -216,6 +253,7 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
 
           {summary === null ? null : (
             <div className="flex flex-col gap-4">
+              <PendingDeletionNotice pending={pending} />
               <ul
                 aria-label="Workspace contents that will be deleted"
                 className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-surface-2 p-3 text-dense text-text"
@@ -300,7 +338,7 @@ export function WorkspaceDangerZone({ organizationName }: { readonly organizatio
               Cancel
             </Button>
             <Button variant="danger" disabled={!canDelete} onClick={confirmDeletion}>
-              {deleting ? 'Deleting workspace' : 'Permanently delete workspace'}
+              {permanentDeletionLabel(pending, deleting)}
             </Button>
           </DialogFooter>
         </DialogContent>

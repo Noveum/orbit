@@ -20,7 +20,7 @@ async function publishDeletion(organizationId: string): Promise<void> {
 
 export async function GET(): Promise<Response> {
   return await handleRoute(async () => {
-    const { principal } = await apiContext();
+    const { principal } = await apiContext({ allowDeleting: true });
     const summary = await getOrganizationDeletionSummary(principal);
     return Response.json({ summary }, { headers: NO_CACHE_HEADERS });
   });
@@ -28,7 +28,7 @@ export async function GET(): Promise<Response> {
 
 export async function DELETE(request: Request): Promise<Response> {
   return await handleRoute(async () => {
-    const { principal } = await apiContext();
+    const { principal } = await apiContext({ allowDeleting: true });
     const deleted = await deleteOrganization(principal, await readJson(request));
     await publishDeletion(deleted.deletedOrganizationId);
     return {

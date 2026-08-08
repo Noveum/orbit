@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { eq } from '@orbit/db';
 import {
   comment,
   doc,
@@ -254,6 +255,24 @@ describe('isPubliclyReadable', () => {
       expect(await isPubliclyReadable(tx, { ...owner, parentId: fixture.archivedDocId })).toBe(
         false,
       );
+    });
+  });
+
+  it('is false while permanent workspace deletion is pending', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(organization.id, fixture.organizationId));
+
+      expect(
+        await isPubliclyReadable(tx, {
+          organizationId: fixture.organizationId,
+          parentType: 'doc',
+          parentId: fixture.publishedDocId,
+        }),
+      ).toBe(false);
     });
   });
 

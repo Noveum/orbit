@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { OrganizationDeletionResult, OrganizationDeletionSummary } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import { db, eq, schema } from '@orbit/db';
 import { forbidden, internal } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
@@ -29,6 +30,7 @@ const summary: OrganizationDeletionSummary = {
   integrations: 1,
   webhooks: 2,
   availableAt: null,
+  deletionRequestedAt: null,
 };
 
 const deletion: OrganizationDeletionResult = {
@@ -73,6 +75,7 @@ mockSession(() =>
 const { DELETE, GET } = await import(
   '../../../../../../src/app/api/organizations/current/deletion/route.ts'
 );
+const { apiContext } = await import('../../../../../../src/lib/api/handler.ts');
 
 afterAll(() => {
   mock.module('@orbit/core', () => coreModule);
@@ -128,6 +131,19 @@ describe('GET /api/organizations/current/deletion', () => {
 });
 
 describe('DELETE /api/organizations/current/deletion', () => {
+  it('remains available for a durable deletion retry while normal APIs are locked', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    await expect(apiContext()).rejects.toMatchObject({ code: 'conflict' });
+    const response = await DELETE(request({ confirmation: 'Nova' }));
+
+    expect(response.status).toBe(200);
+    expect(deletions).toHaveLength(1);
+  });
+
   it('deletes the active workspace and publishes its invalidation', async () => {
     const response = await DELETE(request({ confirmation: 'Nova' }));
     const payload = z

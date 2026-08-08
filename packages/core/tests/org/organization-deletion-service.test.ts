@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { and, count, db, eq, schema } from '@orbit/db';
+import { and, count, db, eq, schema, sql } from '@orbit/db';
 import {
   type StorageDriver,
   type StoragePrefixSummary,
@@ -35,6 +35,7 @@ interface DeletionSummary {
   readonly integrations: number;
   readonly webhooks: number;
   readonly availableAt: string | null;
+  readonly deletionRequestedAt: string | null;
 }
 
 interface DeletionResult {
@@ -180,6 +181,7 @@ describe('getOrganizationDeletionSummary', () => {
       integrations: 1,
       webhooks: 1,
       availableAt: null,
+      deletionRequestedAt: null,
     });
     expect(storage.summarized).toEqual([`${nova.organizationId}/`]);
   });
@@ -362,7 +364,8 @@ describe('deleteOrganization', () => {
     expect(neighborIssues?.total).toBe(3);
   });
 
-  it('rolls the database transaction back when storage cleanup fails', async () => {
+  it('keeps a durable retry state when storage cleanup fails', async () => {
+    const now = new Date('2026-08-08T13:00:00.000Z');
     const sessionId = newId();
     await db.insert(schema.session).values({
       id: sessionId,
@@ -377,7 +380,7 @@ describe('deleteOrganization', () => {
     );
 
     await expect(
-      deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver),
+      deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver, now),
     ).rejects.toMatchObject({ code: 'internal' });
 
     expect(await organizationCount(nova.organizationId)).toBe(1);
@@ -386,6 +389,51 @@ describe('deleteOrganization', () => {
       .from(schema.session)
       .where(eq(schema.session.id, sessionId));
     expect(session?.activeOrganizationId).toBe(nova.organizationId);
+    const [organization] = await db
+      .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, nova.organizationId));
+    expect(organization?.deletionRequestedAt).toEqual(now);
+
+    const retryStorage = fakeStorage();
+    const retried = await deleteOrganization(
+      nova.admin,
+      { confirmation: 'Nova' },
+      retryStorage.driver,
+      now,
+    );
+    expect(retried.deletedOrganizationId).toBe(nova.organizationId);
+    expect(retryStorage.deleted).toEqual([`${nova.organizationId}/`]);
+    expect(await organizationCount(nova.organizationId)).toBe(0);
+  });
+
+  it('finishes every fallible database mutation before deleting storage', async () => {
+    await db.execute(sql`
+      create table organization_deletion_test_blocker (
+        organization_id text primary key references organization(id)
+      )
+    `);
+    try {
+      await db.execute(sql`
+        insert into organization_deletion_test_blocker (organization_id)
+        values (${nova.organizationId})
+      `);
+      const storage = fakeStorage();
+
+      await expect(
+        deleteOrganization(nova.admin, { confirmation: 'Nova' }, storage.driver),
+      ).rejects.toBeDefined();
+
+      expect(storage.deleted).toEqual([]);
+      expect(await organizationCount(nova.organizationId)).toBe(1);
+      const [organization] = await db
+        .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
+        .from(schema.organization)
+        .where(eq(schema.organization.id, nova.organizationId));
+      expect(organization?.deletionRequestedAt).toBeInstanceOf(Date);
+    } finally {
+      await db.execute(sql`drop table organization_deletion_test_blocker`);
+    }
   });
 
   it('blocks at URL expiry while an upload may still be finishing', async () => {

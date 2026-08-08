@@ -137,6 +137,12 @@ describe('list and search indexes', () => {
 });
 
 describe('domain invariants', () => {
+  it('records a durable workspace deletion request', () => {
+    const deletionRequestedAt = getTableColumns(schema.organization).deletionRequestedAt;
+    expect(deletionRequestedAt?.name).toBe('deletion_requested_at');
+    expect(deletionRequestedAt?.notNull).toBe(false);
+  });
+
   it('tracks the expiration of presigned attachment targets', () => {
     const uploadExpiresAt = getTableColumns(schema.attachment).uploadExpiresAt;
     expect(uploadExpiresAt?.name).toBe('upload_expires_at');

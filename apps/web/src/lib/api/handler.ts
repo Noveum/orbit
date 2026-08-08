@@ -1,5 +1,6 @@
 import { publishDeltas } from '@orbit/core';
 import {
+  conflict,
   internal,
   isDomainError,
   notFound,
@@ -23,6 +24,16 @@ export interface ApiContext extends MembershipContext {
   readonly userEmail: string;
 }
 
+interface ContextOptions {
+  readonly allowDeleting?: boolean;
+}
+
+function assertWorkspaceAvailable(context: ApiContext, options: ContextOptions): void {
+  if (context.deletionRequestedAt !== null && options.allowDeleting !== true) {
+    throw conflict('Workspace deletion is in progress.');
+  }
+}
+
 async function contextFor(session: ActiveSession): Promise<ApiContext | null> {
   const membership = await resolveMembership(
     session.user.id,
@@ -36,18 +47,22 @@ async function contextFor(session: ActiveSession): Promise<ApiContext | null> {
   };
 }
 
-export async function apiContext(): Promise<ApiContext> {
+export async function apiContext(options: ContextOptions = {}): Promise<ApiContext> {
   const session = await getSession();
   if (session === null) throw unauthorized();
   const context = await contextFor(session);
   if (context === null) throw unauthorized('You are not a member of any workspace.');
+  assertWorkspaceAvailable(context, options);
   return context;
 }
 
-export async function pageContext(): Promise<ApiContext> {
+export async function pageContext(options: ContextOptions = {}): Promise<ApiContext> {
   const session = await requireSession();
   const context = await contextFor(session);
   if (context === null) redirect('/login');
+  if (context.deletionRequestedAt !== null && options.allowDeleting !== true) {
+    redirect('/settings/general');
+  }
   return context;
 }
 

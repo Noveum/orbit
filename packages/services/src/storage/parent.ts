@@ -1,4 +1,14 @@
-import { and, type Database, eq, inArray, or, schema, sql, type Transaction } from '@orbit/db';
+import {
+  and,
+  type Database,
+  eq,
+  inArray,
+  isNull,
+  or,
+  schema,
+  sql,
+  type Transaction,
+} from '@orbit/db';
 import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import { assertCan, isInTeam, type Principal } from '@orbit/shared/policy';
@@ -27,7 +37,14 @@ async function docFor(
   const [row] = await executor
     .select({ visibility: schema.doc.visibility, archivedAt: schema.doc.archivedAt })
     .from(schema.doc)
-    .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, organizationId)))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
+    .where(
+      and(
+        eq(schema.doc.id, docId),
+        eq(schema.doc.organizationId, organizationId),
+        isNull(schema.organization.deletionRequestedAt),
+      ),
+    )
     .limit(1);
   return row;
 }
