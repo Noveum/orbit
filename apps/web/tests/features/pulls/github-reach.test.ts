@@ -87,6 +87,20 @@ describe('githubReach', () => {
     expect(await githubReach(workspace.admin)).toBe('connected');
   });
 
+  it('still reports connected for a tracked repository predating the installation rows', async () => {
+    const integrationId = `int_${randomUUIDv7()}`;
+    await db.insert(schema.integration).values({
+      id: integrationId,
+      organizationId: workspace.organizationId,
+      provider: 'github',
+      externalId: `install-${randomUUIDv7()}`,
+      connectedById: workspace.adminUser.id,
+    });
+    await repository(integrationId);
+
+    expect(await githubReach(workspace.admin)).toBe('connected');
+  });
+
   it('does not credit an active installation with a repository the suspended one owns', async () => {
     await installation('active');
     const suspended = await installation('suspended');
