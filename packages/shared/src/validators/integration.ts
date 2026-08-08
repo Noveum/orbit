@@ -39,6 +39,11 @@ export const githubInstallWithoutCodeSchema = z.object({
   state: z.string().trim().min(1).max(2048),
 });
 
+export const githubMisroutedInstallSchema = z.object({
+  installation_id: githubInstallationIdSchema,
+  setup_action: z.enum(['install', 'update']),
+});
+
 export const gitLinksQuerySchema = z.object({ issueId: idSchema });
 
 export const slackInstallSchema = z.object({

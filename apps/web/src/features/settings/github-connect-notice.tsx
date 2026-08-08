@@ -1,3 +1,4 @@
+import { githubMisroutedInstallSchema } from '@orbit/shared/validators';
 import { GITHUB_CONNECT_STATUSES, type GithubConnectStatus } from './github-view.ts';
 
 export function githubConnectStatusOf(value: unknown): GithubConnectStatus | null {
@@ -9,7 +10,7 @@ export function githubConnectStatusOf(value: unknown): GithubConnectStatus | nul
 export function misroutedGithubInstall(
   query: Readonly<Record<string, string | readonly string[] | undefined>>,
 ): boolean {
-  return typeof query['installation_id'] === 'string' && typeof query['setup_action'] === 'string';
+  return githubMisroutedInstallSchema.safeParse(query).success;
 }
 
 const MESSAGES: Record<GithubConnectStatus, string> = {

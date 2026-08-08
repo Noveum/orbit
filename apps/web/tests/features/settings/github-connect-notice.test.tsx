@@ -62,6 +62,24 @@ describe('misroutedGithubInstall', () => {
       false,
     );
   });
+
+  it('holds the installation id to the digits GitHub actually sends', () => {
+    expect(misroutedGithubInstall({ installation_id: 'abc', setup_action: 'install' })).toBe(false);
+    expect(misroutedGithubInstall({ installation_id: '', setup_action: 'install' })).toBe(false);
+    expect(
+      misroutedGithubInstall({ installation_id: '1'.repeat(33), setup_action: 'install' }),
+    ).toBe(false);
+  });
+
+  it('holds the action to the two GitHub uses for a finished install', () => {
+    expect(misroutedGithubInstall({ installation_id: '152125342', setup_action: 'update' })).toBe(
+      true,
+    );
+    expect(misroutedGithubInstall({ installation_id: '152125342', setup_action: 'request' })).toBe(
+      false,
+    );
+    expect(misroutedGithubInstall({ installation_id: '152125342' })).toBe(false);
+  });
 });
 
 describe('GithubConnectNotice for a misconfigured app', () => {
