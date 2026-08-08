@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
 import { clientId } from '@/lib/query/client-id.ts';
 import {
+  BOARD_ROOT,
   BOOTSTRAP_ROOT,
   DOC_ROOT,
   DOCS_HOME_ROOT,
@@ -216,7 +217,12 @@ describe('DeltaBridge root invalidation', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
+    expect(seen).toEqual([
+      [ISSUE_SUMMARY_ROOT],
+      [ISSUE_FACETS_ROOT],
+      [BOARD_ROOT],
+      [MILESTONES_ROOT],
+    ]);
   });
 });
 
@@ -286,7 +292,12 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(requested).toEqual(['/api/sync?since=17']);
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
-    expect(seen).toEqual([[ISSUE_SUMMARY_ROOT], [ISSUE_FACETS_ROOT], [MILESTONES_ROOT]]);
+    expect(seen).toEqual([
+      [ISSUE_SUMMARY_ROOT],
+      [ISSUE_FACETS_ROOT],
+      [BOARD_ROOT],
+      [MILESTONES_ROOT],
+    ]);
   });
 });
 

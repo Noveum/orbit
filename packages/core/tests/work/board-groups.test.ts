@@ -3,9 +3,11 @@ import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-s
 import type { BoardGroup, BoardPage } from '../../src/work/issue-service.ts';
 import {
   BOARD_COLUMN_LIMIT,
+  BOARD_GROUP_LIMIT,
   createIssue,
   listBoardGroups,
   listIssues,
+  moveIssue,
   updateIssue,
 } from '../../src/work/issue-service.ts';
 
@@ -104,5 +106,62 @@ describe('listBoardGroups', () => {
     expect(
       page.groups.every((group) => group.issues.every((issue) => issue.teamId === teamId)),
     ).toBe(true);
+  });
+});
+
+describe('moving a card without naming neighbours', () => {
+  it('changes the group and leaves the manual order alone', async () => {
+    const second = states[1]?.id ?? '';
+    const issue = await newIssue('Regrouped');
+    const before = issue.sortOrder;
+
+    const { issue: moved } = await moveIssue(workspace.admin, issue.id, {
+      stateId: second,
+      beforeId: null,
+      afterId: null,
+    });
+
+    expect(moved.stateId).toBe(second);
+    expect(moved.sortOrder).toBe(before);
+  });
+
+  it('still repositions when a neighbour is named', async () => {
+    const first = await newIssue('First');
+    const second = await newIssue('Second');
+
+    const { issue: moved } = await moveIssue(workspace.admin, second.id, {
+      stateId: first.stateId,
+      beforeId: null,
+      afterId: first.id,
+    });
+
+    expect(moved.sortOrder).toBeLessThan(first.sortOrder);
+  });
+});
+
+describe('a grouping with more columns than a board can carry', () => {
+  it('answers with the largest columns and says it left some out', async () => {
+    const many = BOARD_GROUP_LIMIT + 3;
+    for (let index = 0; index < many; index += 1) {
+      const { issue } = await createIssue(workspace.admin, {
+        teamId,
+        title: `Estimate ${index}`,
+      });
+      await updateIssue(workspace.admin, issue.id, { estimate: index + 1 });
+    }
+
+    const page = await listBoardGroups(workspace.admin, { teamId, groupBy: 'estimate' });
+
+    expect(page.groups.length).toBe(BOARD_GROUP_LIMIT);
+    expect(page.truncated).toBe(true);
+    expect(page.groups.every((group) => group.issues.length > 0)).toBe(true);
+  });
+
+  it('says nothing was left out when every column fits', async () => {
+    await newIssue('Only one');
+
+    const page = await listBoardGroups(workspace.admin, { teamId });
+
+    expect(page.truncated).toBe(false);
   });
 });

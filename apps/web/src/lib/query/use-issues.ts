@@ -9,7 +9,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
@@ -28,6 +28,7 @@ import {
   projectIssuesSearch,
 } from './issue-search.ts';
 import {
+  BOARD_ROOT,
   ISSUE_FACETS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
@@ -204,35 +205,37 @@ export function useColumnIssues(column: BoardColumnKey, groupId: string, enabled
   });
 }
 
+export function seedBoardColumns(
+  client: QueryClient,
+  column: BoardColumnKey,
+  page: BoardPage,
+): void {
+  for (const group of page.groups) {
+    const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
+    if (search.length === 0) continue;
+    const key = queryKeys.issues(columnScopeKey(column.scope), search);
+    if (client.getQueryData(key) !== undefined) continue;
+    client.setQueryData<IssuePages>(key, {
+      pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],
+      pageParams: [null],
+    });
+  }
+}
+
 export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
   const client = useQueryClient();
   const search = boardSearch(column.query, column.groupBy, column.scope);
 
-  const page = useQuery({
+  return useQuery({
     queryKey: queryKeys.boardPage(search),
     enabled: enabled && columnParamFor(column.groupBy) !== null,
     staleTime: BOARD_SEED_STALE_MS,
-    queryFn: async ({ signal }): Promise<BoardPage> =>
-      await apiFetch(`/api/issues/board?${search}`, boardPageSchema, { signal }),
+    queryFn: async ({ signal }): Promise<BoardPage> => {
+      const page = await apiFetch(`/api/issues/board?${search}`, boardPageSchema, { signal });
+      seedBoardColumns(client, column, page);
+      return page;
+    },
   });
-
-  const groups = page.data?.groups;
-
-  useEffect(() => {
-    if (groups === undefined) return;
-    for (const group of groups) {
-      const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
-      if (search.length === 0) continue;
-      const key = queryKeys.issues(columnScopeKey(column.scope), search);
-      if (client.getQueryData(key) !== undefined) continue;
-      client.setQueryData<IssuePages>(key, {
-        pages: [{ issues: [...group.issues], nextCursor: group.nextCursor }],
-        pageParams: [null],
-      });
-    }
-  }, [groups, client, column.query, column.groupBy, column.scope]);
-
-  return page;
 }
 
 export function useProjectIssues(
@@ -388,6 +391,10 @@ function settleFilteredLists(
   }
 }
 
+export function staleBoardPages(client: QueryClient): void {
+  client.invalidateQueries({ queryKey: [BOARD_ROOT], refetchType: 'none' }).catch(() => undefined);
+}
+
 function eachIssueList(
   client: QueryClient,
   filters: { queryKey: QueryKey },
@@ -435,6 +442,7 @@ function addToLists(client: QueryClient, next: Issue): void {
 
 function refreshCounts(client: QueryClient): void {
   client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
+  staleBoardPages(client);
 }
 
 function resortTeamIssueLists(client: QueryClient, teamId: string): void {

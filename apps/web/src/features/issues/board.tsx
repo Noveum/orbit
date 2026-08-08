@@ -336,7 +336,8 @@ export function Board({
   );
 
   const dragged = useRef<Issue | undefined>(undefined);
-  const peekIssue = issues.find((issue) => issue.id === peekId);
+  const peekIssue =
+    peekId === null ? undefined : issuesInPlay().find((issue) => issue.id === peekId);
   const activeIssue = activeId === null ? undefined : dragged.current;
 
   const onDragStart = (event: DragStartEvent) => {

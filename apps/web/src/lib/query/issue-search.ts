@@ -68,6 +68,7 @@ export function groupColumnSearch(
 ): string {
   const param = columnParamFor(groupBy);
   if (param === null || groupId === UNGROUPED_COLUMN) return '';
+  if (Object.hasOwn(scope, param)) return '';
   const params = searchParams(query);
   for (const [key, value] of Object.entries(scope)) params.set(key, value);
   params.set(param, groupId);

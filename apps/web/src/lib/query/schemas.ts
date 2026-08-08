@@ -196,7 +196,10 @@ export const boardGroupSchema = z.object({
   nextCursor: z.string().nullable().default(null),
 });
 
-export const boardPageSchema = z.object({ groups: z.array(boardGroupSchema) });
+export const boardPageSchema = z.object({
+  groups: z.array(boardGroupSchema),
+  truncated: z.boolean().default(false),
+});
 
 export type BoardPage = z.infer<typeof boardPageSchema>;
 

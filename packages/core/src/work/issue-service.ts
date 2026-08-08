@@ -1133,6 +1133,33 @@ async function carryToTeam(
   values.milestoneId = null;
 }
 
+interface Landing {
+  readonly sortOrder: number | null;
+  readonly rebalanced: IssueRow[];
+}
+
+async function landingOrder(
+  executor: Executor,
+  parsed: { beforeId: string | null; afterId: string | null },
+  teamId: string,
+  stateId: string,
+  syncId: number,
+): Promise<Landing> {
+  if (parsed.beforeId === null && parsed.afterId === null) {
+    return { sortOrder: null, rebalanced: [] };
+  }
+
+  let before = await orderOf(executor, parsed.beforeId);
+  let after = await orderOf(executor, parsed.afterId);
+  let rebalanced: IssueRow[] = [];
+  if (before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD) {
+    rebalanced = await rebalanceColumn(executor, teamId, stateId, syncId);
+    before = await orderOf(executor, parsed.beforeId);
+    after = await orderOf(executor, parsed.afterId);
+  }
+  return { sortOrder: sortOrderBetween(before, after), rebalanced };
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -1155,18 +1182,12 @@ export async function moveIssue(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
-    let before = await orderOf(tx, parsed.beforeId);
-    let after = await orderOf(tx, parsed.afterId);
-    let rebalanced: IssueRow[] = [];
-    if (before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD) {
-      rebalanced = await rebalanceColumn(tx, teamId, state.id, syncId);
-      before = await orderOf(tx, parsed.beforeId);
-      after = await orderOf(tx, parsed.afterId);
-    }
+    const landing = await landingOrder(tx, parsed, teamId, state.id, syncId);
+    const rebalanced = landing.rebalanced;
 
     const now = new Date();
     const changingTeam = teamId !== current.teamId;
-    const values: IssueValues = { sortOrder: sortOrderBetween(before, after) };
+    const values: IssueValues = landing.sortOrder === null ? {} : { sortOrder: landing.sortOrder };
     if (changingTeam) await carryToTeam(tx, current, team, values);
     if (state.id !== current.stateId) {
       values.stateId = state.id;
@@ -1781,6 +1802,7 @@ export const BOARD_GROUP_PROPERTIES = [
 export type BoardGroupProperty = (typeof BOARD_GROUP_PROPERTIES)[number];
 
 export const BOARD_COLUMN_LIMIT = 25;
+export const BOARD_GROUP_LIMIT = 60;
 
 const boardSchema = issueListSchema.extend({
   groupBy: z.enum(BOARD_GROUP_PROPERTIES).default('state'),
@@ -1796,9 +1818,19 @@ export interface BoardGroup {
 
 export interface BoardPage {
   readonly groups: BoardGroup[];
+  readonly truncated: boolean;
 }
 
 const UNGROUPED_KEY = 'none';
+
+function shownGroups(column: SQL.Aliased<string | null>, keys: readonly (string | null)[]): SQL {
+  const named = keys.filter((key): key is string => key !== null);
+  const ungrouped = keys.length > named.length;
+  if (named.length === 0) return ungrouped ? isNull(column) : sql`false`;
+  const inNamed = inArray(column, named);
+  if (!ungrouped) return inNamed;
+  return or(inNamed, isNull(column)) ?? inNamed;
+}
 
 export async function listBoardGroups(
   principal: Principal,
@@ -1824,18 +1856,31 @@ export async function listBoardGroups(
     .where(matching)
     .as('ranked');
 
-  const [rows, totals] = await Promise.all([
-    db
-      .select()
-      .from(ranked)
-      .where(sql`${ranked.seat} <= ${filter.perGroup}`)
-      .orderBy(asc(ranked.seat)),
-    db
-      .select({ groupKey: sql<string | null>`${column}::text`, total: count() })
-      .from(schema.issue)
-      .where(matching)
-      .groupBy(column),
-  ]);
+  const counted = await db
+    .select({ groupKey: sql<string | null>`${column}::text`, total: count() })
+    .from(schema.issue)
+    .where(matching)
+    .groupBy(column)
+    .orderBy(desc(count()))
+    .limit(BOARD_GROUP_LIMIT + 1);
+
+  const totals = counted.slice(0, BOARD_GROUP_LIMIT);
+  const rows =
+    totals.length === 0
+      ? []
+      : await db
+          .select()
+          .from(ranked)
+          .where(
+            and(
+              sql`${ranked.seat} <= ${filter.perGroup}`,
+              shownGroups(
+                ranked.groupKey,
+                totals.map((row) => row.groupKey),
+              ),
+            ),
+          )
+          .orderBy(asc(ranked.seat));
 
   const byGroup = new Map<string, IssueListRow[]>();
   for (const row of rows) {
@@ -1860,7 +1905,7 @@ export async function listBoardGroups(
     });
   }
 
-  return { groups };
+  return { groups, truncated: counted.length > totals.length };
 }
 
 export async function getIssueSummary(
