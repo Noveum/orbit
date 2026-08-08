@@ -4,6 +4,7 @@ import {
   createComment,
   createIssue,
   getIssue,
+  listComments,
   listIssueLabels,
   listIssues,
   listLabels,
@@ -13,7 +14,7 @@ import {
   setRelation,
   updateIssue,
 } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import { db, eq, inArray, schema } from '@orbit/db';
 import {
   base64LengthFor,
   ISSUE_RELATION_TYPES,
@@ -493,6 +494,54 @@ function registerAddComment(server: McpServer, principal: Principal): void {
   );
 }
 
+async function authorNames(ids: readonly string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const rows = await db
+    .select({ id: schema.user.id, name: schema.user.name })
+    .from(schema.user)
+    .where(inArray(schema.user.id, unique));
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+function registerListIssueComments(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'list_issue_comments',
+      title: 'List comments on an issue',
+      description:
+        'Return the comment thread on an issue, oldest first. Read this before replying, so you answer what was actually asked and do not repeat a reply you already posted.',
+      readOnly: true,
+      inputSchema: {
+        issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
+        limit: z.number().int().min(1).max(200).optional().describe('Comments per page.'),
+        cursor: z.string().min(1).optional().describe('Cursor returned by a previous call.'),
+      },
+    },
+    async (args) => {
+      const issue = await getIssue(principal, args.issue);
+      const page = await listComments(principal, issue.id, {
+        ...(args.limit === undefined ? {} : { limit: args.limit }),
+        ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
+      });
+      const names = await authorNames(page.comments.map((row) => row.comment.authorId));
+      return {
+        comments: page.comments.map(({ comment }) => ({
+          id: comment.id,
+          parentId: comment.parentId,
+          authorId: comment.authorId,
+          authorName: names.get(comment.authorId) ?? 'Unknown',
+          body: comment.body,
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString(),
+        })),
+        nextCursor: page.nextCursor,
+      };
+    },
+  );
+}
+
 function registerSetRelation(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -645,6 +694,7 @@ export function registerIssueTools(server: McpServer, principal: Principal): voi
   registerListMyIssues(server, principal);
   registerMoveIssue(server, principal);
   registerAddComment(server, principal);
+  registerListIssueComments(server, principal);
   registerSetRelation(server, principal);
   registerRemoveRelation(server, principal);
   registerAttachFile(server, principal);
