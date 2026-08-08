@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -553,4 +554,29 @@ export const apiKey = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('api_key_org_idx').on(table.organizationId)],
+);
+
+export const webVital = pgTable(
+  'web_vital',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    route: text('route').notNull(),
+    metric: text('metric').notNull(),
+    value: doublePrecision('value').notNull(),
+    rating: text('rating').notNull(),
+    navigationType: text('navigation_type').notNull().default(''),
+    interactionType: text('interaction_type'),
+    target: text('target'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('web_vital_org_metric_idx').on(table.organizationId, table.metric, table.createdAt),
+    index('web_vital_route_idx').on(table.organizationId, table.route, table.metric),
+  ],
 );
