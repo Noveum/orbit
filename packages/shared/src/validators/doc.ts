@@ -34,13 +34,18 @@ export const docDuplicateSchema = z.object({
   title: z.string().trim().min(1).max(DOC_TITLE_LIMIT).optional(),
 });
 
-export const docMoveSchema = z.object({
-  collectionId: idSchema.nullable().optional(),
-  projectId: idSchema.nullable().optional(),
-  parentId: idSchema.nullable().optional(),
-  beforeId: idSchema.nullable().default(null),
-  afterId: idSchema.nullable().default(null),
-});
+export const docMoveSchema = z
+  .object({
+    collectionId: idSchema.nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    parentId: idSchema.nullable().optional(),
+    beforeId: idSchema.nullable().default(null),
+    afterId: idSchema.nullable().default(null),
+  })
+  .refine((move) => move.collectionId == null || move.projectId == null, {
+    message: 'A doc lives in a folder or in a project, never both.',
+    path: ['collectionId'],
+  });
 
 export const docShareSchema = z.object({
   visibility: z.enum(DOC_VISIBILITIES),

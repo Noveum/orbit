@@ -93,7 +93,17 @@ describe('list and search indexes', () => {
 
     expect(vector).toBeDefined();
     expect(generated).toContain("setweight(to_tsvector('english', coalesce(title, '')), 'A')");
-    expect(generated).toContain("setweight(to_tsvector('english', coalesce(content, '')), 'B')");
+    expect(generated).toContain(
+      "setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')",
+    );
+  });
+
+  it('bounds the body it indexes, so a long doc never outgrows a tsvector and becomes unsavable', () => {
+    const vector = getTableConfig(schema.doc).columns.find(
+      (column) => column.name === 'search_vector',
+    );
+
+    expect(JSON.stringify(vector?.generated?.as ?? '')).toContain("left(coalesce(content, ''),");
   });
 
   it('replays sprint scope changes from a partial index over cycle moves', () => {

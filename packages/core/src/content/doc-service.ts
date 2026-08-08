@@ -5,6 +5,7 @@ import {
   db,
   desc,
   eq,
+  gt,
   ilike,
   inArray,
   isNull,
@@ -298,8 +299,13 @@ async function assertParent(
   parentId: string,
 ): Promise<void> {
   if (docId !== null && parentId === docId) throw validationFailed('A doc cannot nest in itself.');
+  await loadReadableDoc(executor, principal, parentId);
 
-  const rows = await executor.execute<{ found: number | string; cycle: number | string }>(sql`
+  const rows = await executor.execute<{
+    found: number | string;
+    cycle: number | string;
+    deepest: number | string;
+  }>(sql`
     with recursive ancestors as (
       select id, parent_id, 1 as depth
       from doc
@@ -312,7 +318,8 @@ async function assertParent(
     )
     select
       count(*)::int as found,
-      (count(*) filter (where id = ${docId}))::int as cycle
+      (count(*) filter (where id = ${docId}))::int as cycle,
+      coalesce(max(depth), 0)::int as deepest
     from ancestors
   `);
 
@@ -322,6 +329,9 @@ async function assertParent(
   }
   if (Number(summary['cycle']) > 0) {
     throw validationFailed('A doc cannot nest inside its own child.');
+  }
+  if (Number(summary['deepest']) >= MAX_DEPTH) {
+    throw validationFailed('That page is nested too deeply to hold another page.');
   }
 }
 
@@ -468,12 +478,12 @@ async function adoptDescendants(
         eq(schema.doc.organizationId, organizationId),
         sql`${schema.doc.id} in (
           with recursive subtree as (
-            select id from doc
+            select id, 1 as depth from doc
             where parent_id = ${docId} and organization_id = ${organizationId}
             union all
-            select child.id from doc child
+            select child.id, subtree.depth + 1 from doc child
             join subtree on child.parent_id = subtree.id
-            where child.organization_id = ${organizationId}
+            where child.organization_id = ${organizationId} and subtree.depth < ${MAX_DEPTH}
           )
           select id from subtree
         )`,
@@ -508,6 +518,31 @@ function siblingFilters(placement: DocPlacement): SQL[] {
   ];
 }
 
+async function orderAfterSibling(
+  executor: Executor,
+  organizationId: string,
+  source: DocRow,
+): Promise<number> {
+  const [row] = await executor
+    .select({ next: sql<number | null>`min(${schema.doc.sortOrder})` })
+    .from(schema.doc)
+    .where(
+      and(
+        eq(schema.doc.organizationId, organizationId),
+        gt(schema.doc.sortOrder, source.sortOrder),
+        ...siblingFilters({
+          collectionId: source.collectionId,
+          projectId: source.projectId,
+          parentId: source.parentId,
+        }),
+      ),
+    );
+  const next = row?.next ?? null;
+  return next === null
+    ? source.sortOrder + SORT_ORDER_STEP
+    : sortOrderBetween(source.sortOrder, next);
+}
+
 async function siblingOrderOf(
   executor: Executor,
   organizationId: string,
@@ -529,28 +564,38 @@ async function siblingOrderOf(
   return row?.sortOrder ?? null;
 }
 
+async function renumber(
+  executor: Executor,
+  scope: SQL,
+  base: number,
+  syncId: number,
+): Promise<DocRow[]> {
+  await executor.execute(sql`
+    update ${schema.doc} as target
+    set sort_order = ${base} + seat.rank * ${SORT_ORDER_STEP}, sync_id = ${syncId}
+    from (
+      select id, row_number() over (order by sort_order, created_at) as rank
+      from ${schema.doc}
+      where ${scope}
+    ) as seat
+    where target.id = seat.id
+  `);
+  return await executor
+    .select(DOC_COLUMNS)
+    .from(schema.doc)
+    .where(scope)
+    .orderBy(asc(schema.doc.sortOrder));
+}
+
 async function rebalanceSiblings(
   executor: Executor,
   organizationId: string,
   placement: DocPlacement,
   syncId: number,
 ): Promise<DocRow[]> {
-  const rows = await executor
-    .select({ id: schema.doc.id })
-    .from(schema.doc)
-    .where(and(eq(schema.doc.organizationId, organizationId), ...siblingFilters(placement)))
-    .orderBy(asc(schema.doc.sortOrder), asc(schema.doc.createdAt));
-
-  const updated: DocRow[] = [];
-  for (const [index, row] of rows.entries()) {
-    const [next] = await executor
-      .update(schema.doc)
-      .set({ sortOrder: (index + 1) * SORT_ORDER_STEP, syncId })
-      .where(eq(schema.doc.id, row.id))
-      .returning(DOC_COLUMNS);
-    if (next !== undefined) updated.push(next);
-  }
-  return updated;
+  const scope = and(eq(schema.doc.organizationId, organizationId), ...siblingFilters(placement));
+  if (scope === undefined) return [];
+  return await renumber(executor, scope, 0, syncId);
 }
 
 export interface MovedPlacement {
@@ -675,7 +720,7 @@ function rankExpression(term: string | null): SQL<number> {
 }
 
 function bodyMatchExpression(term: string): SQL<boolean> {
-  return sql<boolean>`(to_tsvector('english', ${schema.doc.content}) @@ ${tsQuery(term)})`;
+  return sql<boolean>`(ts_filter(${schema.doc.searchVector}, '{b}') @@ ${tsQuery(term)})`;
 }
 
 function titleMatchExpression(term: string | null): SQL<boolean> {
@@ -683,7 +728,7 @@ function titleMatchExpression(term: string | null): SQL<boolean> {
   return sql<boolean>`(${schema.doc.title} ilike ${docLikePattern(term)})`;
 }
 
-const HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START},StopSel=${HIGHLIGHT_END},MaxWords=34,MinWords=16,ShortWord=0,MaxFragments=2,FragmentDelimiter= … `;
+const HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START},StopSel=${HIGHLIGHT_END},MaxWords=34,MinWords=16,ShortWord=0,MaxFragments=2,FragmentDelimiter=" … "`;
 
 function snippetExpression(term: string | null): SQL<string> {
   if (term === null) return sql<string>`''`;
@@ -956,7 +1001,7 @@ export async function duplicateDoc(
         title,
         slug: docSlug(title),
         content: source.content,
-        sortOrder: source.sortOrder + SORT_ORDER_STEP / 2,
+        sortOrder: await orderAfterSibling(tx, principal.organizationId, source),
         visibility: copyVisibility(source.visibility),
         publishToken: null,
         authorId: principal.userId,
@@ -1165,6 +1210,36 @@ export interface DeletedDoc {
   readonly actions: SyncAction[];
 }
 
+async function promoteChildren(
+  executor: Executor,
+  parent: DocRow,
+  syncId: number,
+): Promise<DocRow[]> {
+  const placement: DocPlacement = {
+    collectionId: parent.collectionId,
+    projectId: parent.projectId,
+    parentId: parent.parentId,
+  };
+  const base = await nextSiblingOrder(executor, parent.organizationId, placement);
+  const lifted = await executor
+    .update(schema.doc)
+    .set({ parentId: parent.parentId, updatedAt: new Date(), syncId })
+    .where(
+      and(eq(schema.doc.organizationId, parent.organizationId), eq(schema.doc.parentId, parent.id)),
+    )
+    .returning({ id: schema.doc.id });
+  if (lifted.length === 0) return [];
+  return await renumber(
+    executor,
+    inArray(
+      schema.doc.id,
+      lifted.map((row) => row.id),
+    ),
+    base - SORT_ORDER_STEP,
+    syncId,
+  );
+}
+
 export async function deleteDoc(principal: Principal, docId: string): Promise<DeletedDoc> {
   assertCan(principal, 'doc:write');
 
@@ -1176,11 +1251,7 @@ export async function deleteDoc(principal: Principal, docId: string): Promise<De
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    const promoted = await tx
-      .update(schema.doc)
-      .set({ parentId: current.parentId, updatedAt: new Date(), syncId })
-      .where(eq(schema.doc.parentId, docId))
-      .returning(DOC_COLUMNS);
+    const promoted = await promoteChildren(tx, current, syncId);
 
     await tx
       .delete(schema.attachment)
@@ -1328,6 +1399,41 @@ export async function updateDocCollection(
   });
 }
 
+async function emptyCollection(
+  executor: Executor,
+  organizationId: string,
+  collectionId: string,
+  syncId: number,
+): Promise<DocRow[]> {
+  const base = await nextSiblingOrder(executor, organizationId, {
+    collectionId: null,
+    projectId: null,
+    parentId: null,
+  });
+  const orphaned = await executor
+    .update(schema.doc)
+    .set({ collectionId: null, updatedAt: new Date(), syncId })
+    .where(
+      and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
+    )
+    .returning({ id: schema.doc.id, parentId: schema.doc.parentId });
+  if (orphaned.length === 0) return [];
+
+  const roots = orphaned.filter((row) => row.parentId === null).map((row) => row.id);
+  if (roots.length > 0) {
+    await renumber(executor, inArray(schema.doc.id, roots), base - SORT_ORDER_STEP, syncId);
+  }
+  return await executor
+    .select(DOC_COLUMNS)
+    .from(schema.doc)
+    .where(
+      inArray(
+        schema.doc.id,
+        orphaned.map((row) => row.id),
+      ),
+    );
+}
+
 export async function deleteDocCollection(
   principal: Principal,
   collectionId: string,
@@ -1337,6 +1443,7 @@ export async function deleteDocCollection(
   return await db.transaction(async (tx) => {
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const homeless = await emptyCollection(tx, principal.organizationId, collectionId, syncId);
     const [removed] = await tx
       .delete(schema.docCollection)
       .where(
@@ -1348,7 +1455,10 @@ export async function deleteDocCollection(
       .returning();
     const collection = requireRow(removed, 'That collection does not exist.');
 
-    return [collectionAction(collection, syncId, actor, 'delete')];
+    return [
+      collectionAction(collection, syncId, actor, 'delete'),
+      ...homeless.map((row) => docAction(row, syncId, actor, 'update')),
+    ];
   });
 }
 

@@ -12,7 +12,8 @@ import { type Executor, newId, requireRow } from '../internal.ts';
 import { notifyRecipients } from '../notifications/notify.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { docReadableBy } from './doc-service.ts';
+import type { DocRow } from './doc-service.ts';
+import { DOC_COLUMNS, docReadableBy } from './doc-service.ts';
 
 export type DocAccessRequestRow = typeof schema.docAccessRequest.$inferSelect;
 
@@ -32,9 +33,9 @@ async function loadDocForRequest(
   executor: Executor,
   principal: Principal,
   docId: string,
-): Promise<typeof schema.doc.$inferSelect> {
+): Promise<DocRow> {
   const [row] = await executor
-    .select()
+    .select(DOC_COLUMNS)
     .from(schema.doc)
     .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
     .limit(1);
@@ -182,7 +183,14 @@ export async function decideDocAccessRequest(
           grantedById: principal.userId,
           syncId,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: [
+            schema.docAccess.docId,
+            schema.docAccess.subjectType,
+            schema.docAccess.subjectId,
+          ],
+          set: { level, grantedById: principal.userId, syncId },
+        });
     }
 
     const [saved] = await tx

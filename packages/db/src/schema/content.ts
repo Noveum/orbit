@@ -124,7 +124,7 @@ export const doc = pgTable(
     content: text('content').notNull().default(''),
     sortOrder: doublePrecision('sort_order').notNull().default(0),
     searchVector: tsvector('search_vector').generatedAlwaysAs(
-      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(content, '')), 'B')`,
+      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')`,
     ),
     visibility: text('visibility').notNull().default('workspace'),
     publishToken: text('publish_token').unique(),
