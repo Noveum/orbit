@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { renderMarkdown } from '@orbit/services/markdown';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { COPIED_LABEL, COPY_LABEL, DocBody } from '@/features/docs/doc-body.tsx';
+import { COPIED_LABEL, COPY_LABEL, DocBody, docProseClassName } from '@/features/docs/doc-body.tsx';
 
 afterEach(cleanup);
 
@@ -61,5 +61,16 @@ describe('a code block in a doc', () => {
     view.rerender(<DocBody html={html} />);
 
     expect(screen.getAllByLabelText('Copy the code')).toHaveLength(1);
+  });
+});
+
+describe('reading a document', () => {
+  it('puts body text at the strong colour, not the muted one', () => {
+    expect(docProseClassName).toContain('text-text');
+    expect(docProseClassName).not.toContain('text-base text-muted');
+  });
+
+  it('gives body copy room to breathe', () => {
+    expect(docProseClassName).toContain('leading-[1.75]');
   });
 });
