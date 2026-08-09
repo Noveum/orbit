@@ -30,6 +30,7 @@ interface MetricLike {
   readonly value: number;
   readonly rating: string;
   readonly navigationType?: string;
+  readonly navigationURL?: string;
   readonly attribution?: unknown;
 }
 
@@ -37,6 +38,15 @@ function textField(source: unknown, field: string): string | undefined {
   if (typeof source !== 'object' || source === null) return undefined;
   const held = (source as Record<string, unknown>)[field];
   return typeof held === 'string' && held.length > 0 ? held : undefined;
+}
+
+export function pathnameFor(metric: MetricLike, fallback: string): string {
+  if (metric.navigationURL === undefined) return fallback;
+  try {
+    return new URL(metric.navigationURL, 'http://orbit.invalid').pathname;
+  } catch {
+    return fallback;
+  }
 }
 
 const PART_FIELDS = [
@@ -81,7 +91,7 @@ export function toReport(metric: MetricLike, pathname: string): WebVitalInput | 
   const parts = partsOf(metric.attribution);
 
   return {
-    route: routePattern(pathname),
+    route: routePattern(pathnameFor(metric, pathname)),
     metric: metric.name as WebVitalInput['metric'],
     value: Math.round(metric.value * 1000) / 1000,
     rating: metric.rating as WebVitalInput['rating'],

@@ -166,3 +166,42 @@ describe('the subparts that say where the time went', () => {
     expect(() => webVitalSchema.parse(report)).not.toThrow();
   });
 });
+
+describe('which route a soft navigation metric belongs to', () => {
+  it('uses the URL the metric happened on, not wherever the person is now', () => {
+    const report = toReport(
+      {
+        name: 'LCP',
+        value: 2200,
+        rating: 'needs-improvement',
+        navigationURL: 'https://orbit.noveum.ai/team/eng/board',
+      },
+      '/my-issues',
+    );
+
+    expect(report?.route).toBe('/team/[key]/board');
+  });
+
+  it('still reduces that URL to a pattern', () => {
+    const report = toReport(
+      { name: 'LCP', value: 900, rating: 'good', navigationURL: '/issue/ORB-3' },
+      '/inbox',
+    );
+
+    expect(report?.route).toBe('/issue/[identifier]');
+  });
+
+  it('falls back to where the person is when the metric names no URL', () => {
+    const report = toReport({ name: 'LCP', value: 900, rating: 'good' }, '/inbox');
+    expect(report?.route).toBe('/inbox');
+  });
+
+  it('falls back rather than throwing on a URL it cannot read', () => {
+    const report = toReport(
+      { name: 'LCP', value: 900, rating: 'good', navigationURL: 'http://[' },
+      '/inbox',
+    );
+
+    expect(report?.route).toBe('/inbox');
+  });
+});
