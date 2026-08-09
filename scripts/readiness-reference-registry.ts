@@ -1,3 +1,5 @@
+import registryData from './readiness-reference-registry.json';
+
 export const IMPLEMENTATION_BASELINE_COMMIT = '808d7148478889437f42369a54e0553924352eaa';
 
 export type MaintainerRole =
@@ -19,6 +21,7 @@ export type EvidenceKind =
   | 'gate'
   | 'docs'
   | 'decision'
+  | 'closure'
   | 'mitigation'
   | 'non-behavioral'
   | 'justification';
@@ -27,6 +30,12 @@ export interface CandidateIdentity {
   readonly kind: 'git-commit';
   readonly commitSha: string;
   readonly commitUrl: string;
+}
+
+export interface PullRequestIdentity {
+  readonly kind: 'github-pull-request';
+  readonly number: number;
+  readonly url: string;
 }
 
 interface LinkedEvidenceRecord {
@@ -45,18 +54,42 @@ export interface RiskEvidenceRecord extends LinkedEvidenceRecord {
 export interface ImplementationEvidenceRecord extends LinkedEvidenceRecord {
   readonly kind: 'implementation';
   readonly observedAt: string;
+  readonly commit: CandidateIdentity;
+  readonly pullRequest: PullRequestIdentity;
 }
 
 export interface FailingTestEvidenceRecord extends LinkedEvidenceRecord {
   readonly kind: 'failing-test';
   readonly observedAt: string;
+  readonly commit: CandidateIdentity;
+  readonly pullRequest: PullRequestIdentity;
+  readonly artifactDigest: string;
 }
 
-export interface CandidateEvidenceRecord extends LinkedEvidenceRecord {
-  readonly kind: 'test' | 'gate' | 'decision' | 'non-behavioral';
+interface CandidateEvidenceBase extends LinkedEvidenceRecord {
   readonly observedAt: string;
   readonly candidate: CandidateIdentity;
 }
+
+export interface WorkflowEvidenceRecord extends CandidateEvidenceBase {
+  readonly kind: 'test' | 'gate';
+  readonly artifactDigest: string;
+}
+
+export interface CandidateAttestationRecord extends CandidateEvidenceBase {
+  readonly kind: 'decision' | 'non-behavioral';
+}
+
+export interface ClosureEvidenceRecord extends LinkedEvidenceRecord {
+  readonly kind: 'closure';
+  readonly findingId: string;
+  readonly observedAt: string;
+  readonly candidate: CandidateIdentity;
+  readonly evidenceCommit: CandidateIdentity;
+  readonly evidenceDigest: string;
+}
+
+export type CandidateEvidenceRecord = WorkflowEvidenceRecord | CandidateAttestationRecord;
 
 export interface SupportingEvidenceRecord extends LinkedEvidenceRecord {
   readonly kind: 'docs' | 'mitigation' | 'justification';
@@ -68,6 +101,7 @@ export type EvidenceRecord =
   | ImplementationEvidenceRecord
   | FailingTestEvidenceRecord
   | CandidateEvidenceRecord
+  | ClosureEvidenceRecord
   | SupportingEvidenceRecord;
 
 export interface RoleAliasPrincipal {
@@ -126,6 +160,7 @@ const EVIDENCE_KINDS = new Set<EvidenceKind>([
   'gate',
   'docs',
   'decision',
+  'closure',
   'mitigation',
   'non-behavioral',
   'justification',
@@ -133,6 +168,7 @@ const EVIDENCE_KINDS = new Set<EvidenceKind>([
 const RECORD_KEY = /^record:[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9._/-]*$/;
 const PRINCIPAL_KEY = /^principal:[a-z0-9][a-z0-9._/-]*$/;
 const SUBJECT_ID = /^subject:[a-z0-9][a-z0-9._/-]*$/;
+const FINDING_ID = /^[A-Z][A-Z0-9]*-\d{3}$/;
 const FULL_COMMIT = /^[a-f0-9]{40}$/;
 
 function objectValue(value: unknown): Readonly<Record<string, unknown>> | undefined {
@@ -183,15 +219,61 @@ function candidateErrors(record: Readonly<Record<string, unknown>>, label: strin
   const expectedCommitUrl = `https://github.com/Noveum/orbit/commit/${commitSha}`;
   if (candidate['commitUrl'] !== expectedCommitUrl)
     errors.push(`${label} has candidate URL metadata mismatch.`);
-  if (
-    typeof record['url'] === 'string' &&
-    /^https:\/\/github\.com\/Noveum\/orbit\/commit\/[^/?#]+$/.test(record['url']) &&
-    record['url'] !== expectedCommitUrl
-  )
-    errors.push(`${label} has evidence URL candidate mismatch.`);
+  if (typeof record['url'] === 'string') {
+    try {
+      const evidenceUrl = new URL(record['url']);
+      if (
+        evidenceUrl.hostname.toLowerCase() === 'github.com' &&
+        evidenceUrl.pathname.toLowerCase().startsWith('/noveum/orbit/commit') &&
+        record['url'] !== expectedCommitUrl
+      )
+        errors.push(`${label} has evidence URL candidate mismatch.`);
+    } catch {
+      errors.push(`${label} has invalid evidence link.`);
+    }
+  }
   return errors;
 }
 
+function immutableCommitErrors(value: unknown, label: string): string[] {
+  const commit = objectValue(value);
+  const commitSha = commit?.['commitSha'];
+  if (
+    commit?.['kind'] !== 'git-commit' ||
+    typeof commitSha !== 'string' ||
+    !FULL_COMMIT.test(commitSha) ||
+    commit['commitUrl'] !== `https://github.com/Noveum/orbit/commit/${commitSha}`
+  )
+    return [`${label} has an invalid immutable commit identity.`];
+  return [];
+}
+
+function pullRequestIdentityErrors(value: unknown, label: string): string[] {
+  const pullRequest = objectValue(value);
+  const number = pullRequest?.['number'];
+  if (
+    pullRequest?.['kind'] !== 'github-pull-request' ||
+    typeof number !== 'number' ||
+    !Number.isSafeInteger(number) ||
+    number < 1 ||
+    pullRequest['url'] !== `https://github.com/Noveum/orbit/pull/${number}`
+  )
+    return [`${label} has invalid pull request identity.`];
+  return [];
+}
+
+function immutableCiErrors(record: Readonly<Record<string, unknown>>, label: string): string[] {
+  if (
+    /^https:\/\/github\.com\/Noveum\/orbit\/actions\/runs\/[1-9]\d*\/attempts\/[1-9]\d*$/.test(
+      String(record['url']),
+    ) &&
+    /^sha256:[a-f0-9]{64}$/.test(String(record['artifactDigest']))
+  )
+    return [];
+  return [`${label} has invalid immutable CI evidence.`];
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Registry entries keep structural evidence rules in one contract.
 function recordEntryErrors(
   entry: readonly [string, unknown],
   index: number,
@@ -220,14 +302,48 @@ function recordEntryErrors(
       errors.push(`${label} has an invalid audit source identity.`);
   }
   if (
-    ['implementation', 'failing-test', 'test', 'gate', 'decision', 'non-behavioral'].includes(
-      kind,
-    ) &&
+    [
+      'implementation',
+      'failing-test',
+      'test',
+      'gate',
+      'decision',
+      'closure',
+      'non-behavioral',
+    ].includes(kind) &&
     !validTimestamp(record['observedAt'])
   )
     errors.push(`${label} has an invalid evidence timestamp.`);
+  if (kind === 'implementation' || kind === 'failing-test') {
+    errors.push(...immutableCommitErrors(record['commit'], label));
+    errors.push(...pullRequestIdentityErrors(record['pullRequest'], label));
+  }
+  if (kind === 'implementation') {
+    const pullRequest = objectValue(record['pullRequest']);
+    if (typeof pullRequest?.['url'] === 'string' && record['url'] !== pullRequest['url'])
+      errors.push(`${label} has implementation link mismatch.`);
+  }
   if (['test', 'gate', 'decision', 'non-behavioral'].includes(kind))
     errors.push(...candidateErrors(record, label));
+  if (kind === 'closure') {
+    const candidate = objectValue(record['candidate']);
+    const candidateCommit = candidate?.['commitSha'];
+    errors.push(...immutableCommitErrors(candidate, label));
+    errors.push(...immutableCommitErrors(record['evidenceCommit'], label));
+    if (candidateCommit === IMPLEMENTATION_BASELINE_COMMIT)
+      errors.push(`${label} uses the implementation baseline as a release candidate.`);
+    const evidenceCommit = objectValue(record['evidenceCommit']);
+    if (
+      !(
+        FINDING_ID.test(String(record['findingId'])) &&
+        /^sha256:[a-f0-9]{64}$/.test(String(record['evidenceDigest']))
+      ) ||
+      record['url'] !== evidenceCommit?.['commitUrl']
+    )
+      errors.push(`${label} has invalid durable closure evidence.`);
+  }
+  if (kind === 'failing-test' || kind === 'test' || kind === 'gate')
+    errors.push(...immutableCiErrors(record, label));
   return errors;
 }
 
@@ -338,97 +454,5 @@ export function buildReadinessReferenceRegistry(
   return { errors: [], registry: { records, principals: principalMap } };
 }
 
-export const readinessReferenceRegistrySource = {
-  recordEntries: [
-    [
-      'record:audit/f1bfdc3',
-      {
-        kind: 'audit-risk',
-        url: 'https://github.com/Noveum/orbit/commit/f1bfdc312f0d37f6e9076b1da002cc4bd87e190c',
-        sourceCommit: 'f1bfdc312f0d37f6e9076b1da002cc4bd87e190c',
-      },
-    ],
-    [
-      'record:audit/9f961a1',
-      {
-        kind: 'audit-risk',
-        url: 'https://github.com/Noveum/orbit/commit/9f961a1fe3dab605d5d5de3087fd6520f0940c36',
-        sourceCommit: '9f961a1fe3dab605d5d5de3087fd6520f0940c36',
-      },
-    ],
-  ],
-  principalEntries: [
-    [
-      'principal:security-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Security maintainer',
-      },
-    ],
-    [
-      'principal:data-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Data maintainer',
-      },
-    ],
-    [
-      'principal:platform-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Platform maintainer',
-      },
-    ],
-    [
-      'principal:realtime-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Realtime maintainer',
-      },
-    ],
-    [
-      'principal:integrations-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Integrations maintainer',
-      },
-    ],
-    [
-      'principal:release-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Release maintainer',
-      },
-    ],
-    [
-      'principal:documentation-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Documentation maintainer',
-      },
-    ],
-    [
-      'principal:repository-owner',
-      {
-        kind: 'role-alias',
-        assignmentUrl:
-          'https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md',
-        role: 'Repository maintainer',
-      },
-    ],
-  ],
-} as const satisfies ReadinessReferenceRegistrySource;
+export const readinessReferenceRegistrySource =
+  registryData as unknown as ReadinessReferenceRegistrySource;

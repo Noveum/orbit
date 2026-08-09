@@ -1,37 +1,38 @@
 # Readiness scope governance
 
-The audited open source readiness scope is an independently pinned release-governance artifact. The current manifest is [`scripts/readiness-scope-manifest.ts`](../../scripts/readiness-scope-manifest.ts). The implementation plan and execution ledger are consumers of that manifest and cannot redefine its scope by changing together.
+The audited open source readiness scope is an independently pinned release-governance artifact. The canonical machine-readable manifest is [`scripts/readiness-scope-manifest.json`](../../scripts/readiness-scope-manifest.json). The TypeScript module beside it is trusted checker code and is not a scope-change input. The implementation plan and execution ledger are consumers of the manifest and cannot redefine its scope by changing together.
 
-## Ownership
+## Ownership and enforcement boundary
 
-The manifest, stable plan, readiness ledger, checker, registry, and this procedure require review from both `@imshashank` and `@pulkitxm` through `CODEOWNERS`. Both approvals are required for a scope change. A finding owner may propose a change, but cannot approve a scope change alone.
+`CODEOWNERS` routes the governed files to `@imshashank` and `@pulkitxm`, but GitHub accepts approval from any one owner listed on a rule. `CODEOWNERS` does not enforce two approvals.
 
-## Current artifact
+The tracked `Readiness scope policy` workflow uses `pull_request_target`, checks out only the exact base commit, fetches the pull request head as Git objects, reads the hard-coded governed artifacts and inert registry JSON as bounded data, and runs only trusted base code. It queries the GitHub review API and requires the latest opinionated review from both named maintainers to be `APPROVED` on the exact head SHA for semantic scope changes. It never checks out, imports, installs, or executes pull request code. It authenticates hosted evidence while a finding is `Ready for closure`, validates durable closure seals from committed Git artifacts, and writes the explicit `Trusted readiness policy` commit status to the captured pull request head.
 
-- Version: `readiness-scope/2026-08-09-v1`
-- Findings: 41
-- Priority distribution: 18 P0 and 23 P1
-- Digest: `sha256:2795b5e40961a7607fc0d34cad098fd77a41cf38e457a3a2f1cf8fd99f50a74c`
+The workflow job named `Trusted readiness scope policy` runs against the base commit, so that job name is not the pull request head gate. Tracked code cannot configure or prove the repository ruleset. Repository administrators must configure an active ruleset that requires the explicit head status `Trusted readiness policy`, requires the branch to be current, dismisses stale approvals, and applies the required reviewer controls. `pull_request_target` does not run when a review is submitted or dismissed, so maintainers must rerun the trusted policy job after both final approvals unless a separately trusted GitHub App refreshes it. Until that external ruleset and rerun procedure are configured, the workflow is an auditable check rather than a guaranteed merge block.
 
-The digest input is the version followed by the lexically sorted `ID:priority` pairs, one item per line, with a final newline. The checker recomputes this SHA-256 digest and rejects an invalid version, empty manifest, malformed pair, duplicate ID, or mismatch.
+## Manifest contract
+
+The current version, finding set, priority distribution, and digest live in the manifest and changing execution ledger rather than being copied into this stable procedure. Each manifest entry pins the finding ID, priority, SHA-256 hash of the canonical public finding, and SHA-256 hash of the canonical required outcome. The manifest digest hashes the JSON serialization of `schema`, `version`, and the lexically ID-sorted entries. The checker independently verifies the plan text, ledger text, semantic hashes, manifest digest, IDs, priorities, and exact plan-to-ledger wording.
 
 ## Required change procedure
 
-Any finding addition, removal, merge, split, rename, or priority change requires a dedicated scope pull request. It must not be bundled into a finding implementation or closure pull request.
+Any governed finding addition, removal, merge, split, rename, reprioritization, finding-wording change, or required-outcome change requires a dedicated scope pull request. It must not be bundled with implementation, closure, product, policy, checker, workflow, or registry changes.
 
-The scope pull request must:
+The scope pull request changes exactly these four files:
 
-1. Link the approved audit or independent review that justifies the change without publishing undisclosed vulnerability detail.
-2. Explain every old-to-new finding and priority mapping, including why no risk disappears from the governed inventory.
-3. Update the stable plan, scope manifest, and ledger in the same change.
-4. Increment the manifest version and replace its digest with the canonical digest for the new entries.
-5. Keep every newly introduced or materially changed finding `Open` until its own closure evidence passes.
-6. Add or update checker tests proving the old and new multisets and the intended transition.
-7. Obtain both required CODEOWNER approvals after the final scope diff and digest are present.
-8. Record the review decision and exact merged commit in the readiness implementation report.
+- `docs/superpowers/plans/2026-08-09-open-source-readiness.md`
+- `docs/maintainers/readiness-ledger.md`
+- `scripts/readiness-scope-manifest.json`
+- `docs/maintainers/readiness-scope-audit.json`
 
-The checker continues to validate raw plan rows, the plan multiset, and the ledger multiset independently. Removing or reprioritizing the same row in the plan and ledger therefore remains a failure until this governed manifest procedure is completed.
+The audit record must link a canonical `Noveum/orbit` audit or independent review, identify every changed finding ID, bind the old and new versions and digests, explain why no risk disappears, and contain only public outcome-level detail. The manifest revision must increase by exactly one. Every added or materially changed finding that remains in the head manifest must be `Open` with pending evidence. Both named maintainers must approve the final head.
+
+Changes to the checker, policy workflow, manifest wrapper, or policy tests use a separate pull request. This prevents a scope change from weakening the trusted validator that judges it.
+
+Finding implementation and closure do not change audited scope. After an implementation pull request is squash-merged and direct `main` CI produces passing candidate evidence, an evidence pull request changes exactly the ledger and inert registry JSON and moves the finding to `Ready for closure`. The trusted-base workflow validates its hosted evidence before posting the explicit head status. After that pull request merges as evidence commit M, a separate seal pull request changes exactly the same two files, moves the finding to `Closed` or `Accepted P1 exception`, and adds the durable closure record for M. The trusted checker compares the staged snapshot at M with the seal digest. Both pull requests leave the plan, manifest, audit record, trusted validator, and workflow unchanged.
+
+Any ledger state change involving `Ready for closure`, `Closed`, or `Accepted P1 exception` must use the exact ledger-and-registry file shape. A later pull request may change product files when terminal ledger rows remain byte-for-byte unchanged. A valid durable seal remains authoritative after hosted artifacts expire and after later product commits because it binds the reviewed evidence snapshot at M.
 
 ## Public and private detail
 
-The manifest and ledger contain public outcome-level wording only. Reproduction steps, exploit material, secrets, personal data, and private object values belong in a private GitHub Security Advisory. A private record may justify a public scope change, but the public pull request must expose only the safe finding identifier, priority, outcome, and approval trail.
+The manifest and ledger contain public outcome-level wording only. Reproduction steps, exploit material, secrets, personal data, and private object values belong in a private GitHub Security Advisory. A private record may justify a public scope change, but the public pull request exposes only the safe identifier, priority, outcome, mapping, and approval trail.

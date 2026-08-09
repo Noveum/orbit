@@ -1,31 +1,74 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  computeReadinessClosureDigest,
   currentUtcDate,
   parseExceptionRows,
   parseFindingRows,
   parsePlanFindings,
+  readinessEvidenceTargets,
   validateReadinessLedger,
 } from '../../../scripts/check-readiness-ledger.ts';
+import type {
+  HostedEvidence,
+  PullRequestEvidence,
+  ReadinessEvidenceVerifier,
+} from '../../../scripts/readiness-evidence-verifier.ts';
 import {
+  type CandidateAttestationRecord,
   type EvidenceRecord,
   type ReadinessReferenceRegistry,
   type ReadinessReferenceRegistrySource,
   readinessReferenceRegistrySource,
+  type WorkflowEvidenceRecord,
 } from '../../../scripts/readiness-reference-registry.ts';
-import type { ReadinessScopeManifest } from '../../../scripts/readiness-scope-manifest.ts';
+import {
+  computeReadinessScopeDigest,
+  computeReadinessTextDigest,
+  type ReadinessScopeManifest,
+} from '../../../scripts/readiness-scope-manifest.ts';
 
 const verificationDate = '2026-08-09';
 const implementationBaselineCommit = '808d7148478889437f42369a54e0553924352eaa';
 const candidateCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const otherCandidateCommit = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const failingCommit = 'dddddddddddddddddddddddddddddddddddddddd';
+const implementationCommit = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const checkerCommit = 'ffffffffffffffffffffffffffffffffffffffff';
+const evidenceCommit = '9999999999999999999999999999999999999999';
+const laterCommit = '7777777777777777777777777777777777777777';
+const artifactDigest = `sha256:${'1'.repeat(64)}`;
+const implementationPullRequest = 123;
+const testScopeSemantics = [
+  {
+    id: 'CI-002',
+    priority: 'P1',
+    finding: 'Supply chain finding',
+    requiredOutcome: 'Outcome',
+  },
+  {
+    id: 'DOC-001',
+    priority: 'P1',
+    finding: 'Documentation finding',
+    requiredOutcome: 'Outcome',
+  },
+  {
+    id: 'SEC-001',
+    priority: 'P0',
+    finding: 'Security finding with | an escaped pipe',
+    requiredOutcome: 'Outcome',
+  },
+] as const;
+const testScopeFindings = testScopeSemantics.map((finding) => ({
+  id: finding.id,
+  priority: finding.priority,
+  findingHash: computeReadinessTextDigest(finding.finding),
+  requiredOutcomeHash: computeReadinessTextDigest(finding.requiredOutcome),
+}));
+const testScopeVersion = 'readiness-scope/2026-08-09-v1';
 const testScopeManifest = {
-  version: 'readiness-scope/2026-08-09-v1',
-  digest: 'sha256:6259a22b5bbd33ac7d4dc3f6a65ac66c932a8f6fa3068ffc63c80c1a59d6b2c4',
-  findings: [
-    { id: 'CI-002', priority: 'P1' },
-    { id: 'DOC-001', priority: 'P1' },
-    { id: 'SEC-001', priority: 'P0' },
-  ],
+  version: testScopeVersion,
+  digest: computeReadinessScopeDigest(testScopeVersion, testScopeFindings),
+  findings: testScopeFindings,
 } as const;
 
 const plan = `
@@ -60,8 +103,10 @@ const resolvedRegistry: ReadinessReferenceRegistry = {
       'record:implementation/doc-001',
       {
         kind: 'implementation',
-        url: 'https://example.test/implementation/doc-001',
+        url: `https://github.com/Noveum/orbit/pull/${implementationPullRequest}`,
         observedAt: '2026-08-09T11:00:00.000Z',
+        commit: candidateIdentity(),
+        pullRequest: pullRequestIdentity(),
       },
     ],
     ['record:test/doc-001', candidateEvidence('test')],
@@ -81,8 +126,11 @@ const resolvedRegistry: ReadinessReferenceRegistry = {
       'record:failing-test/doc-001',
       {
         kind: 'failing-test',
-        url: 'https://example.test/failing-test/doc-001',
+        url: 'https://github.com/Noveum/orbit/actions/runs/1000/attempts/1',
         observedAt: '2026-08-09T10:00:00.000Z',
+        commit: candidateIdentity(failingCommit),
+        pullRequest: pullRequestIdentity(),
+        artifactDigest,
       },
     ],
   ]),
@@ -177,23 +225,149 @@ function candidateIdentity(commitSha = candidateCommit) {
   } as const;
 }
 
+function pullRequestIdentity(number = implementationPullRequest) {
+  return {
+    kind: 'github-pull-request',
+    number,
+    url: `https://github.com/Noveum/orbit/pull/${number}`,
+  } as const;
+}
+
+function candidateEvidence(
+  kind: 'test' | 'gate',
+  commitSha?: string,
+  commitUrl?: string,
+): WorkflowEvidenceRecord;
+function candidateEvidence(
+  kind: 'decision' | 'non-behavioral',
+  commitSha?: string,
+  commitUrl?: string,
+): CandidateAttestationRecord;
 function candidateEvidence(
   kind: 'test' | 'gate' | 'decision' | 'non-behavioral',
   commitSha = candidateCommit,
   commitUrl = `https://github.com/Noveum/orbit/commit/${commitSha}`,
-) {
+): WorkflowEvidenceRecord | CandidateAttestationRecord {
   const observedAt = {
     test: '2026-08-09T12:00:00.000Z',
     'non-behavioral': '2026-08-09T12:00:00.000Z',
     gate: '2026-08-09T13:00:00.000Z',
     decision: '2026-08-09T14:00:00.000Z',
   }[kind];
+  if (kind === 'test' || kind === 'gate')
+    return {
+      kind,
+      url: `https://github.com/Noveum/orbit/actions/runs/${kind === 'test' ? '1001' : '1002'}/attempts/1`,
+      observedAt,
+      candidate: { ...candidateIdentity(commitSha), commitUrl },
+      artifactDigest,
+    };
   return {
     kind,
     url: `https://evidence.example.test/${kind}/doc-001`,
     observedAt,
     candidate: { ...candidateIdentity(commitSha), commitUrl },
-  } as const;
+  };
+}
+
+function evidenceVerifier(
+  overrides: Partial<ReadinessEvidenceVerifier> = {},
+): ReadinessEvidenceVerifier {
+  const order = new Map([
+    [implementationBaselineCommit, 0],
+    [candidateCommit, 1],
+    [implementationCommit, 1],
+    [otherCandidateCommit, 1],
+    [evidenceCommit, 2],
+    [checkerCommit, 3],
+    [laterCommit, 4],
+  ]);
+  const hosted = (url: string): HostedEvidence | undefined => {
+    let kind: 'failing-test' | 'test' | 'gate' = 'gate';
+    if (url.includes('/1000/')) kind = 'failing-test';
+    else if (url.includes('/1001/')) kind = 'test';
+    const headSha = kind === 'failing-test' ? failingCommit : candidateCommit;
+    const conclusion = kind === 'failing-test' ? 'failure' : 'success';
+    const artifactName =
+      kind === 'gate' ? `readiness-gate-${headSha}-1` : `readiness-test-${headSha}-1`;
+    const jobs =
+      kind === 'gate'
+        ? [
+            'Lint, comments, types',
+            'Unit and integration tests',
+            'Migrations match the schema',
+            'Build',
+            'End-to-end (Playwright)',
+            'Readiness release gate',
+          ].map((name) => ({
+            name,
+            conclusion: 'success',
+            headSha,
+            steps:
+              name === 'Unit and integration tests'
+                ? [{ name: 'Run tests', conclusion: 'success' }]
+                : [],
+          }))
+        : [
+            {
+              name: 'Unit and integration tests',
+              conclusion,
+              headSha,
+              steps: [{ name: 'Run tests', conclusion }],
+            },
+          ];
+    return {
+      headSha,
+      conclusion,
+      runAttempt: 1,
+      event: kind === 'failing-test' ? 'pull_request' : 'push',
+      workflowPath: '.github/workflows/ci.yml',
+      runStartedAt: '2026-08-09T09:00:00.000Z',
+      updatedAt: '2026-08-09T09:30:00.000Z',
+      pullRequestNumbers: kind === 'failing-test' ? [implementationPullRequest] : [],
+      jobs,
+      artifacts: [
+        {
+          name: artifactName,
+          digest: artifactDigest,
+          expired: false,
+          createdAt: '2026-08-09T09:20:00.000Z',
+          headSha,
+        },
+      ],
+    };
+  };
+  return {
+    verificationInstant: '2026-08-09T23:59:59.999Z',
+    currentCommit: checkerCommit,
+    hostedEvidenceAvailable: true,
+    commitExists: (commit) => order.has(commit),
+    isAncestor: (ancestor, descendant) => {
+      const ancestorOrder = order.get(ancestor);
+      const descendantOrder = order.get(descendant);
+      return (
+        ancestorOrder !== undefined &&
+        descendantOrder !== undefined &&
+        ancestorOrder <= descendantOrder
+      );
+    },
+    changedFilesBetween: () => [
+      'docs/maintainers/readiness-ledger.md',
+      'scripts/readiness-reference-registry.json',
+    ],
+    artifactAtCommit: () => undefined,
+    hostedEvidence: hosted,
+    pullRequestEvidence: (number): PullRequestEvidence | undefined =>
+      number === implementationPullRequest
+        ? {
+            number,
+            mergedAt: '2026-08-09T10:30:00.000Z',
+            mergeCommitSha: candidateCommit,
+            headSha: otherCandidateCommit,
+          }
+        : undefined,
+    ...overrides,
+  };
 }
 
 function uncheckedRegistry(
@@ -248,10 +422,15 @@ function sourceBackedRegistry(
 }
 
 function findingRow(overrides: Readonly<Record<string, string>> = {}): string {
-  const values = {
-    id: 'DOC-001',
-    priority: 'P1',
+  const id = overrides['id'] ?? 'DOC-001';
+  const semantics = testScopeSemantics.find((finding) => finding.id === id) ?? {
     finding: 'Documentation finding',
+    requiredOutcome: 'Outcome',
+  };
+  const values = {
+    id,
+    priority: 'P1',
+    finding: semantics.finding,
     ownerRole: 'Documentation maintainer',
     ownerReference: 'principal:documentation-owner',
     securityRequired: 'No',
@@ -260,14 +439,16 @@ function findingRow(overrides: Readonly<Record<string, string>> = {}): string {
     change: 'pending:open',
     releaseGate: 'pending:open',
     documentation: 'pending:open',
-    closeCondition: 'A tested operator outcome is published.',
+    closeCondition: semantics.requiredOutcome,
     residualRisk: 'risk:record:audit/doc-001',
     decision: 'pending:open',
     approver: 'pending:open',
     authority: 'not-required',
     ...overrides,
   };
-  return `| ${values.id} | ${values.priority} | ${values.finding} | ${values.ownerRole} | ${values.ownerReference} | ${values.securityRequired} | ${values.status} | ${values.implementation} | ${values.change} | ${values.releaseGate} | ${values.documentation} | ${values.closeCondition} | ${values.residualRisk} | ${values.decision} | ${values.approver} | ${values.authority} |`;
+  const finding = values.finding.replaceAll('|', '\\|');
+  const closeCondition = values.closeCondition.replaceAll('|', '\\|');
+  return `| ${values.id} | ${values.priority} | ${finding} | ${values.ownerRole} | ${values.ownerReference} | ${values.securityRequired} | ${values.status} | ${values.implementation} | ${values.change} | ${values.releaseGate} | ${values.documentation} | ${closeCondition} | ${values.residualRisk} | ${values.decision} | ${values.approver} | ${values.authority} |`;
 }
 
 function ledger(rows: readonly string[], exceptions: readonly string[] = []): string {
@@ -332,13 +513,14 @@ function resolvedErrors(rows: readonly string[], exceptions: readonly string[] =
     verificationDate,
     sourceBackedRegistry(),
     testScopeManifest,
+    evidenceVerifier(),
   );
 }
 
 function resolvedClosedRow(overrides: Readonly<Record<string, string>> = {}): string {
   return findingRow({
     ownerReference: 'principal:documentation-person',
-    status: 'Closed',
+    status: 'Ready for closure',
     implementation: 'implementation:record:implementation/doc-001',
     change: 'test:first=record:failing-test/doc-001;passing=record:test/doc-001',
     releaseGate: 'gate:record:gate/doc-001',
@@ -373,6 +555,103 @@ function scopedOpenRows(docPriority = 'P1'): string[] {
   ];
 }
 
+function sealedClosureErrors(
+  overrides: {
+    readonly accepted?: boolean;
+    readonly evidenceDigest?: string;
+    readonly historicalStatus?: string;
+  } = {},
+): string[] {
+  const closureRows = (documentationRow: string) => [
+    findingRow({
+      id: 'SEC-001',
+      priority: 'P0',
+      ownerRole: 'Security maintainer',
+      ownerReference: 'principal:security-owner',
+      securityRequired: 'Yes',
+      authority: 'pending:open',
+      residualRisk: 'risk:record:audit/doc-001',
+    }),
+    documentationRow,
+    findingRow({
+      id: 'CI-002',
+      ownerRole: 'Release maintainer',
+      ownerReference: 'principal:release-owner',
+      securityRequired: 'Yes',
+      authority: 'pending:open',
+      residualRisk: 'risk:record:audit/doc-001',
+    }),
+  ];
+  const acceptedException = exceptionRow({
+    ownerReference: 'principal:documentation-person',
+    mitigation: 'mitigation:record:mitigation/doc-001',
+    residualRisk: 'risk:record:audit/doc-001',
+    decision:
+      'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+    approver: 'approver:principal:release-person',
+  });
+  const exceptions = overrides.accepted ? [acceptedException] : [];
+  const current = parsedLedger(
+    closureRows(
+      resolvedClosedRow({
+        status: overrides.accepted ? 'Accepted P1 exception' : 'Closed',
+      }),
+    ),
+    exceptions,
+  );
+  const finding = current.findings.find((row) => row.id === 'DOC-001');
+  if (finding === undefined) throw new Error('Missing closure fixture finding.');
+  const exception = current.exceptions.find((row) => row.findingId === 'DOC-001');
+  const records = new Map<string, EvidenceRecord>(resolvedRegistry.records);
+  const registry: ReadinessReferenceRegistry = {
+    records,
+    principals: resolvedRegistry.principals,
+  };
+  const evidenceDigest = computeReadinessClosureDigest(finding, exception, registry);
+  records.set('record:closure/doc-001', {
+    kind: 'closure',
+    findingId: 'DOC-001',
+    observedAt: '2026-08-09T15:00:00.000Z',
+    candidate: candidateIdentity(),
+    evidenceCommit: candidateIdentity(evidenceCommit),
+    evidenceDigest: overrides.evidenceDigest ?? evidenceDigest,
+    url: `https://github.com/Noveum/orbit/commit/${evidenceCommit}`,
+  });
+  const historicalSource = sourceBackedRegistry();
+  const historicalLedger = ledger(
+    closureRows(resolvedClosedRow({ status: overrides.historicalStatus ?? 'Ready for closure' })),
+    exceptions,
+  );
+  return validateReadinessLedger(
+    parsePlanFindings(plan),
+    current.findings,
+    current.exceptions,
+    verificationDate,
+    sourceBackedRegistry([...records.entries()]),
+    testScopeManifest,
+    evidenceVerifier({
+      currentCommit: laterCommit,
+      changedFilesBetween: (ancestor, descendant) =>
+        ancestor === candidateCommit && descendant === evidenceCommit
+          ? ['docs/maintainers/readiness-ledger.md', 'scripts/readiness-reference-registry.json']
+          : ['apps/web/src/app/page.tsx'],
+      artifactAtCommit: (commit, path) => {
+        if (commit !== evidenceCommit) return undefined;
+        if (path === 'docs/maintainers/readiness-ledger.md') return historicalLedger;
+        if (path === 'scripts/readiness-reference-registry.json')
+          return JSON.stringify(historicalSource);
+        return undefined;
+      },
+      hostedEvidence: () => {
+        throw new Error('Sealed closure must not fetch hosted evidence.');
+      },
+      pullRequestEvidence: () => {
+        throw new Error('Sealed closure must not fetch pull request evidence.');
+      },
+    }),
+  );
+}
+
 describe('readiness ledger checker', () => {
   it('rejects correlated plan and ledger scope removal against the audited manifest', () => {
     const parsed = parsedLedger(scopedOpenRows().filter((row) => !row.includes('| DOC-001 |')));
@@ -401,6 +680,62 @@ describe('readiness ledger checker', () => {
     );
     expect(result).toContain('Audited scope priority mismatch for plan ID DOC-001.');
     expect(result).toContain('Audited scope priority mismatch for ledger ID DOC-001.');
+  });
+
+  it('rejects weakened plan and ledger semantics against the audited manifest', () => {
+    const weakenedPlan = plan.replace(
+      '| DOC-001 | P1 | Documentation finding | Audit | Outcome |',
+      '| DOC-001 | P1 | No remaining risk | Audit | No remediation is required |',
+    );
+    const parsed = parsedLedger(
+      scopedOpenRows().map((row) =>
+        row.startsWith('| DOC-001 |')
+          ? findingRow({
+              finding: 'No remaining risk',
+              closeCondition: 'No remediation is required',
+              residualRisk: 'risk:record:audit/f1bfdc3',
+            })
+          : row,
+      ),
+    );
+    const result = validateReadinessLedger(
+      parsePlanFindings(weakenedPlan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      readinessReferenceRegistrySource,
+      testScopeManifest,
+    );
+    expect(result).toEqual(
+      expect.arrayContaining([
+        'Audited scope finding mismatch for plan ID DOC-001.',
+        'Audited scope required outcome mismatch for plan ID DOC-001.',
+        'Audited scope finding mismatch for ledger ID DOC-001.',
+        'Audited scope required outcome mismatch for ledger ID DOC-001.',
+      ]),
+    );
+  });
+
+  it('binds the audited manifest digest to canonical semantics', () => {
+    const changedManifest = {
+      ...testScopeManifest,
+      findings: testScopeManifest.findings.map((finding) =>
+        finding.id === 'DOC-001'
+          ? { ...finding, findingHash: computeReadinessTextDigest('No remaining risk') }
+          : finding,
+      ),
+    };
+    const parsed = parsedLedger(scopedOpenRows());
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        readinessReferenceRegistrySource,
+        changedManifest,
+      ),
+    ).toContain('Audited scope manifest digest does not match its entries.');
   });
 
   it('rejects empty plan and ledger inputs against a nonempty audited manifest', () => {
@@ -459,6 +794,17 @@ describe('readiness ledger checker', () => {
     expect(result).not.toContain('Plan finding ID REPO-002 has an invalid priority.');
     expect(result).not.toContain('Missing ledger finding ID: REPO-002.');
     expect(result).not.toContain('Missing ledger finding ID: EXP-999.');
+  });
+
+  it('retains canonical finding and required-outcome semantics from the plan', () => {
+    expect(parsePlanFindings(plan)[0]).toEqual({
+      row: 3,
+      id: 'SEC-001',
+      priority: 'P0',
+      finding: 'Security finding with | an escaped pipe',
+      verifiedEvidence: 'Audit',
+      requiredOutcome: 'Outcome',
+    });
   });
 
   it('validates the audited manifest version, digest, entries, uniqueness, and nonempty scope', () => {
@@ -701,7 +1047,7 @@ describe('readiness ledger checker', () => {
       ),
     ).toContain('Registry record entry 3 has an invalid evidence link.');
 
-    const mislabeledRecords = new Map(resolvedRegistry.records);
+    const mislabeledRecords = new Map<string, unknown>(resolvedRegistry.records);
     mislabeledRecords.set('record:audit/mislabeled', {
       kind: 'implementation',
       url: 'https://example.test/implementation/mislabeled',
@@ -822,13 +1168,18 @@ describe('readiness ledger checker', () => {
     const records = new Map<string, unknown>(resolvedRegistry.records);
     records.set('record:implementation/doc-001', {
       kind: 'implementation',
-      url: 'https://evidence.example.test/implementation/doc-001',
+      url: `https://github.com/Noveum/orbit/pull/${implementationPullRequest}`,
       observedAt: '2026-08-09T11:00:00.000Z',
+      commit: candidateIdentity(),
+      pullRequest: pullRequestIdentity(),
     });
     records.set('record:failing-test/doc-001', {
       kind: 'failing-test',
-      url: 'https://evidence.example.test/failing-test/doc-001',
+      url: 'https://github.com/Noveum/orbit/actions/runs/1000/attempts/1',
       observedAt: '2026-08-09T11:30:00.000Z',
+      commit: candidateIdentity(failingCommit),
+      pullRequest: pullRequestIdentity(),
+      artifactDigest,
     });
     records.set('record:test/doc-001', candidateEvidence('test'));
     records.set('record:gate/doc-001', candidateEvidence('gate'));
@@ -847,6 +1198,421 @@ describe('readiness ledger checker', () => {
       testScopeManifest,
     );
     expect(result).toContain('Finding ID DOC-001 does not prove failing-first test chronology.');
+  });
+
+  it('requires immutable commit identities on failing-test and implementation records', () => {
+    for (const key of ['record:failing-test/doc-001', 'record:implementation/doc-001']) {
+      const records = new Map<string, unknown>(resolvedRegistry.records);
+      const record = records.get(key) as Readonly<Record<string, unknown>>;
+      const { commit: _commit, ...withoutCommit } = record;
+      records.set(key, withoutCommit);
+      const parsed = parsedLedger([resolvedClosedRow()]);
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier(),
+      );
+      expect(
+        result.some((error) => error.endsWith('has an invalid immutable commit identity.')),
+      ).toBe(true);
+    }
+  });
+
+  it('requires canonical pull request identity on implementation and failing evidence', () => {
+    for (const key of ['record:failing-test/doc-001', 'record:implementation/doc-001']) {
+      const records = new Map<string, unknown>(resolvedRegistry.records);
+      const record = records.get(key) as Readonly<Record<string, unknown>>;
+      records.set(key, {
+        ...record,
+        pullRequest: {
+          kind: 'github-pull-request',
+          number: implementationPullRequest,
+          url: `https://github.com/Noveum/orbit/pull/${implementationPullRequest}/files`,
+        },
+      });
+      const parsed = parsedLedger([resolvedClosedRow()]);
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier(),
+      );
+      expect(result.some((error) => error.endsWith('has invalid pull request identity.'))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('requires immutable Actions evidence for the failing test', () => {
+    const records = new Map<string, unknown>(resolvedRegistry.records);
+    const failingRecord = records.get('record:failing-test/doc-001');
+    records.set('record:failing-test/doc-001', {
+      ...(typeof failingRecord === 'object' && failingRecord !== null ? failingRecord : {}),
+      url: 'https://github.com/Noveum/orbit/actions/runs/1000',
+      artifactDigest: 'sha256:abc',
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      uncheckedRegistry(records),
+      testScopeManifest,
+      evidenceVerifier(),
+    );
+    expect(result.some((error) => error.endsWith('has invalid immutable CI evidence.'))).toBe(true);
+  });
+
+  it('rejects nonexistent and historical candidate commits through the injected verifier', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        sourceBackedRegistry(),
+        testScopeManifest,
+        evidenceVerifier({ commitExists: (commit) => commit !== candidateCommit }),
+      ),
+    ).toContain(
+      'Finding ID DOC-001 has a release candidate that does not exist in this repository.',
+    );
+
+    const historicalCommit = 'f1bfdc312f0d37f6e9076b1da002cc4bd87e190c';
+    const records = new Map<string, unknown>(resolvedRegistry.records);
+    records.set('record:test/doc-001', candidateEvidence('test', historicalCommit));
+    records.set('record:gate/doc-001', candidateEvidence('gate', historicalCommit));
+    records.set('record:decision/doc-001', candidateEvidence('decision', historicalCommit));
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier({
+          commitExists: () => true,
+          isAncestor: (ancestor, descendant) =>
+            !(ancestor === historicalCommit && descendant === checkerCommit),
+        }),
+      ),
+    ).toContain('Finding ID DOC-001 has a release candidate outside the checker head ancestry.');
+  });
+
+  it('requires the squash commit as both implementation and candidate evidence', () => {
+    const records = new Map<string, EvidenceRecord>(resolvedRegistry.records);
+    records.set('record:implementation/doc-001', {
+      kind: 'implementation',
+      url: `https://github.com/Noveum/orbit/pull/${implementationPullRequest}`,
+      observedAt: '2026-08-09T11:00:00.000Z',
+      commit: candidateIdentity(implementationCommit),
+      pullRequest: pullRequestIdentity(),
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry([...records.entries()]),
+      testScopeManifest,
+      evidenceVerifier(),
+    );
+    expect(result).toContain(
+      'Finding ID DOC-001 has implementation evidence for a different release candidate.',
+    );
+  });
+
+  it('requires distinct failing and squash commits without local PR-head ancestry', () => {
+    const records = new Map<string, EvidenceRecord>(resolvedRegistry.records);
+    records.set('record:failing-test/doc-001', {
+      kind: 'failing-test',
+      url: 'https://github.com/Noveum/orbit/actions/runs/1000/attempts/1',
+      observedAt: '2026-08-09T10:00:00.000Z',
+      commit: candidateIdentity(),
+      pullRequest: pullRequestIdentity(),
+      artifactDigest,
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry([...records.entries()]),
+      testScopeManifest,
+      evidenceVerifier(),
+    );
+    expect(result).toContain('Finding ID DOC-001 has identical failing and candidate commits.');
+  });
+
+  it('rejects post-candidate changes outside the approved evidence files', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    for (const changedFile of [
+      'scripts/check-readiness-ledger.ts',
+      'scripts/readiness-reference-registry.ts',
+    ]) {
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        sourceBackedRegistry(),
+        testScopeManifest,
+        evidenceVerifier({
+          changedFilesBetween: () => ['docs/maintainers/readiness-ledger.md', changedFile],
+        }),
+      );
+      expect(result).toContain(
+        'Finding ID DOC-001 has unapproved changes after its release candidate.',
+      );
+    }
+  });
+
+  it('requires a durable closure record before a finding becomes Closed', () => {
+    expect(resolvedErrors([resolvedClosedRow({ status: 'Closed' })])).toContain(
+      'Finding ID DOC-001 requires exactly one durable closure record.',
+    );
+  });
+
+  it('keeps Ready for closure evidence subject to live hosted verification', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry(),
+      testScopeManifest,
+      evidenceVerifier({ hostedEvidence: () => undefined }),
+    );
+    expect(result).toContain('Finding ID DOC-001 has hosted evidence that could not be verified.');
+  });
+
+  it('loads hosted API targets only for Ready for closure rows', () => {
+    const ready = parsedLedger([resolvedClosedRow()]);
+    expect(readinessEvidenceTargets(ready.findings, sourceBackedRegistry())).toEqual({
+      hostedEvidenceUrls: [
+        'https://github.com/Noveum/orbit/actions/runs/1000/attempts/1',
+        'https://github.com/Noveum/orbit/actions/runs/1001/attempts/1',
+        'https://github.com/Noveum/orbit/actions/runs/1002/attempts/1',
+      ],
+      pullRequestNumbers: [implementationPullRequest],
+    });
+    const sealed = parsedLedger([resolvedClosedRow({ status: 'Closed' })]);
+    expect(readinessEvidenceTargets(sealed.findings, sourceBackedRegistry())).toEqual({
+      hostedEvidenceUrls: [],
+      pullRequestNumbers: [],
+    });
+  });
+
+  it('accepts a sealed closure after later product commits without refetching hosted evidence', () => {
+    expect(sealedClosureErrors()).toEqual([]);
+    expect(sealedClosureErrors({ accepted: true })).toEqual([]);
+  });
+
+  it('rejects a tampered seal digest and a seal over a non-staged evidence commit', () => {
+    expect(sealedClosureErrors({ evidenceDigest: `sha256:${'0'.repeat(64)}` })).toContain(
+      'Finding ID DOC-001 has a durable evidence snapshot digest mismatch.',
+    );
+    expect(sealedClosureErrors({ historicalStatus: 'Closed' })).toContain(
+      'Finding ID DOC-001 has an invalid durable evidence snapshot.',
+    );
+  });
+
+  it('requires exact immutable Actions attempt URLs and artifact digests for tests and gates', () => {
+    const invalidValues: readonly Readonly<Record<string, unknown>>[] = [
+      { url: 'https://github.com/Noveum/orbit/actions' },
+      { url: 'https://github.com/Noveum/orbit/actions/runs/1001' },
+      { url: 'https://github.com/Noveum/orbit/actions/runs/1001/attempts/1?check=1' },
+      { artifactDigest: undefined },
+      { artifactDigest: 'sha256:abc' },
+    ];
+    for (const invalid of invalidValues) {
+      const records = new Map<string, unknown>(resolvedRegistry.records);
+      records.set('record:test/doc-001', { ...candidateEvidence('test'), ...invalid });
+      const parsed = parsedLedger([resolvedClosedRow()]);
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier(),
+      );
+      expect(result.some((error) => error.endsWith('has invalid immutable CI evidence.'))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('rejects canonical commit URL variants and contradictory GitHub metadata', () => {
+    for (const suffix of ['/', '?view=1', '#details']) {
+      const records = new Map<string, unknown>(resolvedRegistry.records);
+      records.set(
+        'record:decision/doc-001',
+        candidateEvidence(
+          'decision',
+          candidateCommit,
+          `https://github.com/Noveum/orbit/commit/${candidateCommit}${suffix}`,
+        ),
+      );
+      const parsed = parsedLedger([resolvedClosedRow()]);
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier(),
+      );
+      expect(result.some((error) => error.endsWith('has candidate URL metadata mismatch.'))).toBe(
+        true,
+      );
+    }
+    const records = new Map<string, unknown>(resolvedRegistry.records);
+    records.set('record:decision/doc-001', {
+      ...candidateEvidence('decision'),
+      url: `https://github.com/Noveum/orbit/commit/${candidateCommit}?view=1`,
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      uncheckedRegistry(records),
+      testScopeManifest,
+      evidenceVerifier(),
+    );
+    expect(result.some((error) => error.endsWith('has evidence URL candidate mismatch.'))).toBe(
+      true,
+    );
+  });
+
+  it('rejects observations after the injected verification instant', () => {
+    const records = new Map<string, unknown>(resolvedRegistry.records);
+    const implementationRecord = records.get('record:implementation/doc-001');
+    records.set('record:implementation/doc-001', {
+      ...(typeof implementationRecord === 'object' && implementationRecord !== null
+        ? implementationRecord
+        : {}),
+      observedAt: '2099-01-01T00:00:00.000Z',
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        uncheckedRegistry(records),
+        testScopeManifest,
+        evidenceVerifier(),
+      ),
+    ).toContain('Registry record entry 2 has a future evidence timestamp.');
+  });
+
+  it('validates hosted workflow, event, job, step, and artifact provenance', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry(),
+      testScopeManifest,
+      evidenceVerifier({
+        hostedEvidence: (): HostedEvidence => ({
+          headSha: otherCandidateCommit,
+          conclusion: 'failure',
+          runAttempt: 2,
+          event: 'workflow_dispatch',
+          workflowPath: '.github/workflows/untrusted.yml',
+          runStartedAt: '2026-08-09T09:30:00.000Z',
+          updatedAt: '2026-08-09T09:00:00.000Z',
+          pullRequestNumbers: [],
+          jobs: [],
+          artifacts: [
+            {
+              name: 'wrong',
+              digest: `sha256:${'2'.repeat(64)}`,
+              expired: true,
+              createdAt: '2026-08-09T10:00:00.000Z',
+              headSha: otherCandidateCommit,
+            },
+          ],
+        }),
+      }),
+    );
+    expect(result).toEqual(
+      expect.arrayContaining([
+        'Finding ID DOC-001 has hosted evidence for a different candidate.',
+        'Finding ID DOC-001 has hosted evidence with invalid workflow provenance.',
+        'Finding ID DOC-001 has hosted evidence with invalid job provenance.',
+        'Finding ID DOC-001 has hosted evidence with invalid artifact provenance.',
+      ]),
+    );
+  });
+
+  it('binds failing evidence and the squash candidate to one merged pull request', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry(),
+      testScopeManifest,
+      evidenceVerifier({
+        pullRequestEvidence: (): PullRequestEvidence => ({
+          number: implementationPullRequest,
+          mergedAt: '2026-08-09T10:30:00.000Z',
+          mergeCommitSha: otherCandidateCommit,
+          headSha: otherCandidateCommit,
+        }),
+      }),
+    );
+    expect(result).toContain(
+      'Finding ID DOC-001 has pull request evidence for a different release candidate.',
+    );
+  });
+
+  it('rejects failing evidence from a different implementation pull request', () => {
+    const records = new Map<string, EvidenceRecord>(resolvedRegistry.records);
+    records.set('record:failing-test/doc-001', {
+      kind: 'failing-test',
+      url: 'https://github.com/Noveum/orbit/actions/runs/1000/attempts/1',
+      observedAt: '2026-08-09T10:00:00.000Z',
+      commit: candidateIdentity(failingCommit),
+      pullRequest: pullRequestIdentity(124),
+      artifactDigest,
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      sourceBackedRegistry([...records.entries()]),
+      testScopeManifest,
+      evidenceVerifier(),
+    );
+    expect(result).toContain(
+      'Finding ID DOC-001 has failing-test evidence for a different pull request.',
+    );
   });
 
   it('validates the embedded non-behavioral approver through principal validation', () => {
@@ -1088,6 +1854,15 @@ describe('readiness ledger checker', () => {
       'This placeholder statement describes no concrete constraint.',
       'The compatibility impact is not applicable to this release.',
       'The affected deployment modes are to / be / determined later.',
+      'T.B.D. after release review',
+      'T B D details remain',
+      'The impact is not yet determined',
+      'Operator impact is to be decided later',
+      'The release decision is deferred until later',
+      '.'.repeat(16),
+      '?'.repeat(16),
+      '\u200b'.repeat(16),
+      '&nbsp;'.repeat(16),
     ]) {
       expect(
         resolvedErrors(
@@ -1108,8 +1883,8 @@ describe('readiness ledger checker', () => {
     }
   });
 
-  it('accepts a complete resolvable closure and future exception fixture', () => {
-    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+  it('accepts a complete resolvable staged exception fixture', () => {
+    const finding = resolvedClosedRow();
     const rows = [
       findingRow({
         id: 'SEC-001',
@@ -1223,19 +1998,177 @@ describe('readiness ledger checker', () => {
     );
   });
 
-  it('ignores tilde and long backtick fences and double-backtick code spans', () => {
+  it('ignores tilde and long backtick fences and accepts escaped pipes in code spans', () => {
     const fenced = `${plan}\n~~~~\n| ROGUE-999 | P0 | Example | Audit | Outcome |\n~~~~\n\`\`a|b\`\``;
     expect(() => parsePlanFindings(fenced)).not.toThrow();
     expect(() =>
       parseFindingRows(ledger([findingRow({ finding: 'A ``a|b`` value' })])),
     ).not.toThrow();
   });
+
+  it('treats every unescaped pipe in code spans as a GFM cell delimiter', () => {
+    const adversarialPlan = plan.replace(
+      '| DOC-001 | P1 | Documentation finding | Audit | Outcome |',
+      '| DOC-001 | P1 | `Documentation | Audit` | Outcome | Published |',
+    );
+    expect(() => parsePlanFindings(adversarialPlan)).toThrow('invalid row shape');
+    const adversarialFinding = findingRow().replace(
+      'Documentation finding',
+      'A ``rendered|Closed`` value',
+    );
+    expect(() => parseFindingRows(ledger([adversarialFinding]))).toThrow('invalid row shape');
+  });
+
+  it('parses GFM tables with optional outer pipes', () => {
+    const variants = [
+      [
+        '| ID | Priority | Finding | Verified evidence | Required outcome |',
+        '| --- | --- | --- | --- | --- |',
+        '| SEC-001 | P0 | Finding | Evidence | Outcome |',
+      ],
+      [
+        'ID | Priority | Finding | Verified evidence | Required outcome |',
+        '--- | --- | --- | --- | --- |',
+        'SEC-001 | P0 | Finding | Evidence | Outcome |',
+      ],
+      [
+        '| ID | Priority | Finding | Verified evidence | Required outcome',
+        '| --- | --- | --- | --- | ---',
+        '| SEC-001 | P0 | Finding | Evidence | Outcome',
+      ],
+      [
+        'ID | Priority | Finding | Verified evidence | Required outcome',
+        '--- | --- | --- | --- | ---',
+        'SEC-001 | P0 | Finding | Evidence | Outcome',
+      ],
+    ];
+    for (const rows of variants) {
+      const document = ['## Findings register', '', ...rows].join('\n');
+      expect(parsePlanFindings(document).map((finding) => finding.id)).toEqual(['SEC-001']);
+    }
+  });
+
+  it('rejects visible GFM table alternatives without outer pipes', () => {
+    const alternative = [
+      'ID | Priority | Finding | Verified evidence | Required outcome',
+      '--- | --- | --- | --- | ---',
+      'ROGUE-999 | P0 | Visible alternative | Audit | Outcome',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}`)).toThrow();
+  });
+
+  it('uses ASCII whitespace when identifying HTML blocks', () => {
+    const alternative = [
+      '<div\u00a0data-kind>',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible alternative | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('does not let type-seven HTML blocks interrupt paragraphs', () => {
+    const alternative = [
+      'Paragraph content',
+      '<custom-element>',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible alternative | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects visible raw HTML table alternatives', () => {
+    const table = [
+      '<table>',
+      '<tr><th>ID</th><th>Priority</th><th>Finding</th></tr>',
+      '<tr><td>ROGUE-999</td><td>P0</td><td>Visible alternative</td></tr>',
+      '</table>',
+    ].join('\n');
+    const nestedTable = [
+      '- Alternative register',
+      '',
+      ...table.split('\n').map((line) => `    ${line}`),
+    ].join('\n');
+    for (const alternative of [table, `<div>${table}</div>`, nestedTable])
+      expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow(
+        'Visible HTML table alternatives are not allowed.',
+      );
+  });
+
+  it('rejects physical-width stray rows with matched or unmatched backticks', () => {
+    const secret = 'private-rendered-width';
+    const matched = `${plan}\n## Notes\n\n| ${secret} | P0 | \`Visible | Audit\` | Outcome |`;
+    const unmatched = `${plan}\n## Notes\n\n| ${secret} | P0 | \`Visible | Audit | Outcome |`;
+    for (const document of [matched, unmatched]) {
+      expect(() => parsePlanFindings(document)).toThrow(
+        'Plan-shaped row is outside the selected plan findings table.',
+      );
+      try {
+        parsePlanFindings(document);
+      } catch (error) {
+        expect(String(error)).not.toContain(secret);
+      }
+    }
+  });
+
+  it('does not select tables concealed by GFM block contexts', () => {
+    const concealedPlans = [
+      `<!--\n${plan}\n-->`,
+      `<pre>\n${plan}\n</pre>`,
+      plan
+        .split('\n')
+        .map((line) => `    ${line}`)
+        .join('\n'),
+    ];
+    for (const document of concealedPlans)
+      expect(() => parsePlanFindings(document)).toThrow('Expected one Findings register section.');
+    expect(() => parseFindingRows(`<!--\n${ledger([findingRow()])}\n-->`)).toThrow(
+      'Expected one Readiness findings register section.',
+    );
+  });
+
+  it('rejects blockquoted table alternatives outside canonical registers', () => {
+    const planAlternative = [
+      plan,
+      '## Notes',
+      '',
+      '> | ROGUE-999 | P0 | Visible alternative | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(planAlternative)).toThrow(
+      'Plan-shaped row is outside the selected plan findings table.',
+    );
+    const findingAlternative = [
+      ledger([findingRow()]),
+      '## Notes',
+      '',
+      `> ${findingRow({ id: 'ROGUE-999' })}`,
+    ].join('\n');
+    expect(() => parseFindingRows(findingAlternative)).toThrow(
+      'Finding-shaped row is outside the selected findings table.',
+    );
+  });
+
+  it('does not treat GFM autolinks as HTML block openers', () => {
+    for (const prefix of ['<https://example.com>', '</foo bar>']) {
+      const document = [
+        prefix,
+        '## Findings register',
+        '| ID | Priority | Finding | Verified evidence | Required outcome |',
+        '| --- | --- | --- | --- | --- |',
+        '| BAD-001 | P0 | Visible rogue scope | Audit | Outcome |',
+        '',
+        plan,
+      ].join('\n');
+      expect(() => parsePlanFindings(document)).toThrow('Expected one Findings register section.');
+    }
+  });
+
   it('accepts exact section-scoped plan findings and structured open controls', () => {
     const rows = [
       findingRow({
         id: 'SEC-001',
         priority: 'P0',
-        finding: 'Security finding with `a|b`',
         ownerRole: 'Security maintainer',
         ownerReference: 'principal:security-owner',
         securityRequired: 'Yes',

@@ -21,11 +21,13 @@ Closes #
 - Finding ID:
 - Accountable owner role:
 - Accountable owner reference (`principal:<key>`):
-- Registry entries added or updated, including HTTPS links, exact evidence kinds, canonical human aliases, and immutable candidate identities:
-- Implementation evidence (`implementation:record:<key>`):
-- Failing-first evidence and final passing evidence (`test:first=record:<failing-key>;passing=record:<passing-key>`), or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
-- Candidate full 40-character SHA and exact `https://github.com/Noveum/orbit/commit/<sha>` URL:
-- Final test, gate, decision, and non-behavioral run or attestation URLs and timestamps:
+- Registry entries added or updated, including HTTPS links, exact evidence kinds, canonical human aliases, and full immutable commit identities:
+- Merged implementation pull request identity, its squash commit C, and implementation evidence (`implementation:record:<key>`):
+- Failing-first pull request attempt with distinct full head commit F, exact Actions attempt URL, artifact digest, and final passing evidence (`test:first=record:<failing-key>;passing=record:<passing-key>`), or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
+- Candidate C full 40-character SHA and exact `https://github.com/Noveum/orbit/commit/<sha>` URL:
+- Direct `main` test and gate Actions attempt URLs, SHA-256 artifact digests, plus decision and non-behavioral attestation URLs and timestamps:
+- Lifecycle stage for this pull request (`Ready for closure` evidence or terminal seal):
+- Evidence commit M, durable closure record, and canonical snapshot digest for a seal pull request:
 - Release-gate evidence (`gate:record:<key>`):
 - Documentation evidence (`docs:record:<key>`):
 - Residual-risk record (`risk:record:<key>`):
@@ -33,7 +35,7 @@ Closes #
 - Independent Release approver (`approver:principal:<key>`):
 - Security authority (`authority:principal:<key>`) or `not-required`:
 - P1 exception expiry, mitigation evidence, and substantive public limitation:
-- Audited scope change, if any, with dedicated scope pull request, manifest version, digest, and both approvals:
+- Audited scope change, if any, with exact four-file scope pull request, structured audit record, manifest version and digest, and both exact-head approvals:
 
 ## Screenshots
 
@@ -44,9 +46,13 @@ Closes #
 - [ ] `bun run verify` is green
 - [ ] Tests added or updated, and they fail without the change
 - [ ] Every closure field uses its ledger structured reference format and resolves through the registry.
-- [ ] A behavior-change closure links separate failing-first and final-passing records, with failure before implementation and passing afterward. Non-behavioral work has the approved structured `test-na` record.
-- [ ] Final test, release gate, decision, and any non-behavioral attestation agree on one full immutable candidate SHA and exact commit URL. The implementation baseline is not used as a candidate.
-- [ ] Evidence timestamps order failing test, implementation, final pass or non-behavioral attestation, release gate, and decision coherently.
+- [ ] A behavior-change closure links separate failing-first and final-passing records with immutable commits. Non-behavioral work has the approved structured `test-na` record.
+- [ ] The implementation pull request was squash-merged first as candidate C. Direct `main` CI at C succeeded before the evidence pull request changed only the ledger and inert registry JSON and moved the row to `Ready for closure`.
+- [ ] A `Closed` or `Accepted P1 exception` transition is a later seal pull request that changes only the ledger and inert registry JSON and adds exactly one durable closure record binding C, evidence commit M, and the staged snapshot digest.
+- [ ] Final test, release gate, decision, implementation, and any non-behavioral attestation agree on C and its exact commit URL. The implementation baseline is not used as a candidate.
+- [ ] Git proves the baseline precedes C. For staged evidence, only the approved evidence files changed from C to the head. For a seal, C properly precedes M, M properly precedes the seal head, and C through M has the exact evidence-file shape.
+- [ ] The failing record binds distinct PR-head commit F to the implementation pull request. The GitHub API proves that pull request merged as C and that its failing test attempt used F.
+- [ ] Before M merges, final test and gate records use direct `main` CI, exact immutable Actions attempt URLs, exact workflow, job and step provenance, and unexpired candidate-bound artifact digests. A later seal validates the committed M snapshot without requiring those artifacts to remain available forever.
 - [ ] Every authored registry entry is valid, duplicate source keys are absent, and intentional human aliases point to one canonical human assignment.
 - [ ] Historical audit records appear only as residual-risk evidence.
 - [ ] Terminal owner, decision, approval, and authority principals resolve to HTTPS human assignment records with stable subject identifiers.
@@ -54,7 +60,8 @@ Closes #
 - [ ] Security-required findings use an independent subject with the exact `Security maintainer` role without publishing private details.
 - [ ] A P1 exception has a future expiry and matches its finding's owner, risk, decision, approver, and authority records.
 - [ ] A human reviewer confirmed that every public limitation is semantically substantive, concrete, and free of placeholder wording.
-- [ ] Any scope change follows `docs/maintainers/readiness-scope-governance.md`, updates the plan, manifest version and digest, and ledger in a dedicated pull request, and has both required approvals.
+- [ ] Any scope change follows `docs/maintainers/readiness-scope-governance.md`, uses the exact four-file shape, increments the semantic manifest, updates the audit record, and has both exact-head approvals verified by the trusted policy workflow.
+- [ ] The pull request head has the explicit `Trusted readiness policy` status required by the repository ruleset. The base-bound workflow job name is not a substitute.
 - [ ] No comments added to code, and no em-dash characters anywhere
 - [ ] No `any`, no non-null assertions
 - [ ] External input is parsed with a Zod schema from `@orbit/shared`

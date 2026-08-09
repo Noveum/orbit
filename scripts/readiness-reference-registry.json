@@ -1,0 +1,86 @@
+{
+  "recordEntries": [
+    [
+      "record:audit/f1bfdc3",
+      {
+        "kind": "audit-risk",
+        "url": "https://github.com/Noveum/orbit/commit/f1bfdc312f0d37f6e9076b1da002cc4bd87e190c",
+        "sourceCommit": "f1bfdc312f0d37f6e9076b1da002cc4bd87e190c"
+      }
+    ],
+    [
+      "record:audit/9f961a1",
+      {
+        "kind": "audit-risk",
+        "url": "https://github.com/Noveum/orbit/commit/9f961a1fe3dab605d5d5de3087fd6520f0940c36",
+        "sourceCommit": "9f961a1fe3dab605d5d5de3087fd6520f0940c36"
+      }
+    ]
+  ],
+  "principalEntries": [
+    [
+      "principal:security-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Security maintainer"
+      }
+    ],
+    [
+      "principal:data-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Data maintainer"
+      }
+    ],
+    [
+      "principal:platform-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Platform maintainer"
+      }
+    ],
+    [
+      "principal:realtime-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Realtime maintainer"
+      }
+    ],
+    [
+      "principal:integrations-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Integrations maintainer"
+      }
+    ],
+    [
+      "principal:release-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Release maintainer"
+      }
+    ],
+    [
+      "principal:documentation-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Documentation maintainer"
+      }
+    ],
+    [
+      "principal:repository-owner",
+      {
+        "kind": "role-alias",
+        "assignmentUrl": "https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md",
+        "role": "Repository maintainer"
+      }
+    ]
+  ]
+}

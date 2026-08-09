@@ -1,0 +1,252 @@
+{
+  "version": "readiness-scope/2026-08-09-v1",
+  "digest": "sha256:4a629c9fa4e894e241cb623ee98256ac806724a4b317c19ca0d7111db24519f8",
+  "findings": [
+    {
+      "id": "CFG-001",
+      "priority": "P1",
+      "findingHash": "sha256:5b34d8a532761d3232a0b6a74957cf551ba05d26d2f86093a7147d99fab17bdd",
+      "requiredOutcomeHash": "sha256:48793a4566e786a22158f24e0809138ad2869a32ce427adbff54a67b618dd683"
+    },
+    {
+      "id": "CI-001",
+      "priority": "P0",
+      "findingHash": "sha256:0884d6ae1ad805252f804265d0e5a244aa6b3686fd897c801e3d5f270e5dffc9",
+      "requiredOutcomeHash": "sha256:a4da83ac8b3e89a671a460c897382b192e1a0c798540c966811c3353be566811"
+    },
+    {
+      "id": "CI-002",
+      "priority": "P1",
+      "findingHash": "sha256:6b5d5815d7e24a15f4d714acee01d097e8a79415bb7f9c6bde13c83ae2af9b48",
+      "requiredOutcomeHash": "sha256:fd5b8a925da9a20743d184b59ca65a310601c7728afff5ca5e4dc97c0af65759"
+    },
+    {
+      "id": "DB-001",
+      "priority": "P0",
+      "findingHash": "sha256:85f902481539aa64d8065d799641ba8e63b32b73f67c64db827475bf617a537f",
+      "requiredOutcomeHash": "sha256:7313bdeb35ed188ef48ca09b904b80ada7f65b23d8d6499b208cf185dd490e3d"
+    },
+    {
+      "id": "DB-002",
+      "priority": "P0",
+      "findingHash": "sha256:9786486256e26fafa011ca23bac24d4606c5455f6ed25cc07637fe4620e1940a",
+      "requiredOutcomeHash": "sha256:8c441735515056bd4ecd4cd3787f4b7e427093b7fbeb393c2b02e5053ea65c58"
+    },
+    {
+      "id": "DEP-001",
+      "priority": "P0",
+      "findingHash": "sha256:9c3791b5e59515df2bd326ac8f6a0187a9b177f18a60f374da85ffa52f4915c5",
+      "requiredOutcomeHash": "sha256:ec650de5990161b792523fe8489ff7912438f5691aee3033b6f6ca94bb723711"
+    },
+    {
+      "id": "DEP-002",
+      "priority": "P0",
+      "findingHash": "sha256:1a97474d516af64c53cdfdc79ea26ae48e51e25d345f73d1ef0b8786ced898f5",
+      "requiredOutcomeHash": "sha256:feb531430189ac53a9a340272483dc781f89da1cf7489c70de32aefd8e91b3ce"
+    },
+    {
+      "id": "DEP-003",
+      "priority": "P0",
+      "findingHash": "sha256:c1a4a6b93374715de1b9d9005446e846d2b67217ce865c74a72e3fb7e93f79bf",
+      "requiredOutcomeHash": "sha256:aeab5ebc0c8bb506814def9e6bdf61ea44a24466d13ea27d9f4b3942ca007d0e"
+    },
+    {
+      "id": "DEP-004",
+      "priority": "P0",
+      "findingHash": "sha256:7b9149257d46addea7d73e6367fb118998bd29a6d10946b38159f94f75342065",
+      "requiredOutcomeHash": "sha256:fd135ca1ffa7b12fb9f097af68501a9e49480a385bdabc7578bbdb580435eeb5"
+    },
+    {
+      "id": "DEP-005",
+      "priority": "P1",
+      "findingHash": "sha256:4f1c7defebd22187e7df7723cfcbf56647988e843caa57603f44131d3fd94d1a",
+      "requiredOutcomeHash": "sha256:71804a98b423b82d49c7007fc4d38c371ad6b8aecdacec0e35bf3f959b5b94c0"
+    },
+    {
+      "id": "DEP-006",
+      "priority": "P1",
+      "findingHash": "sha256:8619dd629a4aef698c61722dcffbaceb1c719daed2f82bac7a646dc8fc78296d",
+      "requiredOutcomeHash": "sha256:51ebe9add2569f3198769704d6f4887c1084ce5a16398947ee7ad2bcee9654b1"
+    },
+    {
+      "id": "DEP-007",
+      "priority": "P1",
+      "findingHash": "sha256:12cc182fc32b21ae6d1c9bedf9799506b4c51fa37339a5f76d4d8a700683b544",
+      "requiredOutcomeHash": "sha256:b11c90bbcad7fdf7ab63a836c03e1396a2fe7e6b8e495404bb24a970aec33242"
+    },
+    {
+      "id": "DOC-001",
+      "priority": "P1",
+      "findingHash": "sha256:82b8c287d90fbcfd3b34043ee511a0d8d9d3702e775a00592aac59d381d7fb11",
+      "requiredOutcomeHash": "sha256:e594ad423b242630aa32c61f09221435f4795948ac67d5199c4594eb6d183adb"
+    },
+    {
+      "id": "EXP-001",
+      "priority": "P1",
+      "findingHash": "sha256:d26f5d8083144f714e7a0723c6efec86ff4a81de7028a3232d89c4b8f4b6da1c",
+      "requiredOutcomeHash": "sha256:0c77c20ce54a2425a152144ca3ca616a83aa4366b6dff86b6e307bf38b5c5846"
+    },
+    {
+      "id": "INT-001",
+      "priority": "P0",
+      "findingHash": "sha256:9a008ef754ea6a3ca01264055b47393bb627c135a8150bdedf6a41f9802ed380",
+      "requiredOutcomeHash": "sha256:f9adca94010fe6f9a6ecfc7ed721fce5f9f7a7ebd0a4ce31f2401f97a211445b"
+    },
+    {
+      "id": "MCP-001",
+      "priority": "P1",
+      "findingHash": "sha256:502e4e73e868266b4f80e13ccf2acfd08b71dd0a77b2c60328c751dddc311f21",
+      "requiredOutcomeHash": "sha256:908caadba40216a59d43be9fe3e51dadce243c7fe85876c9155a5666ccbf74f3"
+    },
+    {
+      "id": "PORT-001",
+      "priority": "P0",
+      "findingHash": "sha256:eb12f42fc1b4a2c2fdf3c3b5c5b9c01a370e75985364158b7acc65e28f6ba4f9",
+      "requiredOutcomeHash": "sha256:77c1bd43971e4dc84a1ebbb754568858eb47688c034b589dc952c5786aac5edb"
+    },
+    {
+      "id": "PRIV-001",
+      "priority": "P0",
+      "findingHash": "sha256:0a170b1f82d2a3dbcca53a524d7a563e13e0b7dc98aa7fa0449ff69b2b0cef33",
+      "requiredOutcomeHash": "sha256:d513649b4d75684cf11bac8f42257bdb6827bc99a434858ac06b53393c7990fa"
+    },
+    {
+      "id": "PRIV-002",
+      "priority": "P1",
+      "findingHash": "sha256:e6a3386234b8b31270e1f8c1f59ddc9f2c3e07bf06cd5f974a115d6f4fab69cb",
+      "requiredOutcomeHash": "sha256:72bdf70bca3bf021915f7e1cb2cc26ff8b31c64e8ed5596c6327b7f6d5588ba9"
+    },
+    {
+      "id": "REL-001",
+      "priority": "P1",
+      "findingHash": "sha256:801ec9c2b74b6919d40510a81cd2a54943de6f0697ad5a48b861fba890c0818a",
+      "requiredOutcomeHash": "sha256:5376a88a5cf13b0b407b4c7f63709734bad3a690f4487e67b116fa8a55808149"
+    },
+    {
+      "id": "REL-002",
+      "priority": "P1",
+      "findingHash": "sha256:74fc63444950bf206df4438b5e64ca5fca174565dc45ba4a7edccd65939239ec",
+      "requiredOutcomeHash": "sha256:74700fa1f5449b8f43b5238405b3e4b47c446bd3ebbf0ff2054507ff04c84100"
+    },
+    {
+      "id": "REPO-001",
+      "priority": "P1",
+      "findingHash": "sha256:8a0410e0f131045c64908911147f05160388b9ff2cb61afefdebf805ac9e029e",
+      "requiredOutcomeHash": "sha256:25b8da2c66275393a6dec87436a4bbbb04b2479ca6f0830ac72636fd7ac9af15"
+    },
+    {
+      "id": "RT-001",
+      "priority": "P0",
+      "findingHash": "sha256:fd4b12cfe131d3ce3959d5bda68d673af320d9fc49d32fb791cb7fa8aa98bb86",
+      "requiredOutcomeHash": "sha256:ccf0cc50ecd5fe8f9a70348fb7f3660a498ec7e1cf625e86e520eb0d2700af53"
+    },
+    {
+      "id": "SEC-001",
+      "priority": "P0",
+      "findingHash": "sha256:afd0cd9709040046ecd144146d7456209d17412f8a639e3f62c5b12f95aae9cb",
+      "requiredOutcomeHash": "sha256:ac9c02f1a42db9ba7b4a373823ae35adbd0cda29af7a70dc926ecfab44c7d240"
+    },
+    {
+      "id": "SEC-002",
+      "priority": "P0",
+      "findingHash": "sha256:bda64778fee52bdb0e3076bae05c893012e5e6c9d1ed8b3def89fad517ddad92",
+      "requiredOutcomeHash": "sha256:3b3476c8cb21ea7760570aff43c7a97a98dcd08f1e9733a123a90d12ce7055bc"
+    },
+    {
+      "id": "SEC-003",
+      "priority": "P0",
+      "findingHash": "sha256:c4930696058d1af8f6361ed652c0d5c7edb8ec417b056163bffd420b59b698af",
+      "requiredOutcomeHash": "sha256:104b776bba6f6a22344348892200fa5d2edaf1423b885e6f122fee30826573c8"
+    },
+    {
+      "id": "SEC-004",
+      "priority": "P0",
+      "findingHash": "sha256:90ff1e86687f2c0d33051c183c04e1470b35a4edb6dca3bff84aa611cb12500e",
+      "requiredOutcomeHash": "sha256:be92af07051b24fd0af72eb2c042255917010992e7d31e7ddbbbbece9511f266"
+    },
+    {
+      "id": "SEC-005",
+      "priority": "P0",
+      "findingHash": "sha256:7ab4cba8c5687a8cdb95da4f0db20c560296e47f5cfab4becd8369f3198f26e9",
+      "requiredOutcomeHash": "sha256:0ff2cfa43f0f7eae5f0148c691bb9e8955f2288d3f6420fce1a7d07574bd3c8f"
+    },
+    {
+      "id": "SEC-006",
+      "priority": "P0",
+      "findingHash": "sha256:a1f23ec94cb5508622a0f6e77871416f652a462f3aeb3ba84d165e036de078d2",
+      "requiredOutcomeHash": "sha256:f27508420fc24e0d37ebb5eea56371d362d4751ebbf56863d05a231ab3f1dead"
+    },
+    {
+      "id": "SEC-007",
+      "priority": "P1",
+      "findingHash": "sha256:9cb9026377a2e5b94b61651729ecfb7d312c3ce502a39efb37238487f10dfd75",
+      "requiredOutcomeHash": "sha256:e97a254fc1b9cc0d72e57b233c5d468bc544933d0a7e31a4ac9f0c669e913abc"
+    },
+    {
+      "id": "SEC-008",
+      "priority": "P1",
+      "findingHash": "sha256:111114bb783d3b996a3a5b08ae0e7a0035368911f490ece443bac593d9dd91a4",
+      "requiredOutcomeHash": "sha256:ba454d4272905d892a501cc9f5bab238e2dec97c61b7f3eb20ea0d7daca0f0f6"
+    },
+    {
+      "id": "SEC-009",
+      "priority": "P1",
+      "findingHash": "sha256:1aee53af8236e3ddd40248ac67dabdf0065af7bccc3a8278943e159d9a63693f",
+      "requiredOutcomeHash": "sha256:252df46e796f28371e5749c0944c15ba508f8d379f2779a1caeba73decaf2277"
+    },
+    {
+      "id": "SEC-010",
+      "priority": "P1",
+      "findingHash": "sha256:5a154ead08b4df593b056cd6f63f75901ede3dd15a1293a9f8f9e10624e958d2",
+      "requiredOutcomeHash": "sha256:3880310f93085749bd5a3e8c9557dd117bcad351f14181c1fd7d551097cf3d46"
+    },
+    {
+      "id": "SEC-011",
+      "priority": "P1",
+      "findingHash": "sha256:aa43cb02f03e202f2b704a47c53ec0e7fca2ed0451405369e2b0d78d021c77f0",
+      "requiredOutcomeHash": "sha256:1d7381fd9f6574f71abc65bf052584feb87717c9650fa3309732a5c437367f2d"
+    },
+    {
+      "id": "SEC-012",
+      "priority": "P1",
+      "findingHash": "sha256:6dc5faab76c85bc7812a24523bdb576dd27e27b38332afaa3578da15880b6b4e",
+      "requiredOutcomeHash": "sha256:4a47a22c22cd76e54163fdf2f169f486d9c81fba42078bf06130f1ff61b8d631"
+    },
+    {
+      "id": "SEC-013",
+      "priority": "P1",
+      "findingHash": "sha256:a1f11dd3ee8c609963c75cfa82fdd32389ac67777efeefcd6dcba9afb30da07a",
+      "requiredOutcomeHash": "sha256:0982e91c4979b93f1a5472a83bf9877ce2910d9531717dedcc4fb75561416ad8"
+    },
+    {
+      "id": "SEC-014",
+      "priority": "P1",
+      "findingHash": "sha256:f3eb88d35f250693c591ec496601a146411f08ff92fa8fe0891af5f3562f05f2",
+      "requiredOutcomeHash": "sha256:b7be361dcc25558383878ec0afa89d9353cc19b514f0167e8e3b4defedc66031"
+    },
+    {
+      "id": "SEC-015",
+      "priority": "P1",
+      "findingHash": "sha256:ece52283448148d4247de0e31a6d1b3caf701b54b82d68eed521fe8e5ad41321",
+      "requiredOutcomeHash": "sha256:da280ded4c33a9928255fedcedf2423848027afd2c1ec580239c1dd85f0325f8"
+    },
+    {
+      "id": "SEC-016",
+      "priority": "P1",
+      "findingHash": "sha256:f10b5df6363dadbfd102f1d4487c34b3894addca7158cb70ecba20b7f175075d",
+      "requiredOutcomeHash": "sha256:571022b7887fc893559a5932cf6a13ced5fe03ee4ff3dd4e113f77c48e3d309f"
+    },
+    {
+      "id": "SEC-017",
+      "priority": "P1",
+      "findingHash": "sha256:9a3ef242cb1dada7c28d6ad419796a870d1cc71e9596b87649416ea50bf27b6e",
+      "requiredOutcomeHash": "sha256:c1c406d65d69eb3921363e746f9d4a454e8d4d587b8086cbfad5eaee56392249"
+    },
+    {
+      "id": "TEN-001",
+      "priority": "P0",
+      "findingHash": "sha256:5a20f491c5303fe25f649aca6b88d61c77c85b7c1e8e46c0b2f8c09fe9a51e93",
+      "requiredOutcomeHash": "sha256:a94843e874433590dfd8e8cc8cef054e5ba7aa435e2ce0ef9f8dc7df9da4ed41"
+    }
+  ]
+}

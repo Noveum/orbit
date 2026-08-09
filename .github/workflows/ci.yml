@@ -13,12 +13,18 @@ concurrency:
 env:
   BUN_VERSION: "1.3.14"
 
+permissions:
+  contents: read
+
 jobs:
   static:
     name: Lint, comments, types
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -31,6 +37,30 @@ jobs:
         run: bun run check-deps
       - name: Typecheck
         run: bun run typecheck
+      - name: Validate production readiness artifacts
+        run: bun run check-readiness-ledger
+
+  readiness-hosted:
+    name: Hosted readiness evidence
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: static
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - name: Validate hosted readiness evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun run check-readiness-ledger
 
   test:
     name: Unit and integration tests
@@ -95,6 +125,21 @@ jobs:
           done
       - name: Run tests
         run: bun run test
+      - name: Create readiness test attestation
+        if: always()
+        env:
+          READINESS_EVIDENCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          READINESS_RUN_ATTEMPT: ${{ github.run_attempt }}
+          READINESS_TEST_CONCLUSION: ${{ job.status }}
+        run: >-
+          bun -e 'await Bun.write("readiness-test-attestation.json", JSON.stringify({commit: process.env.READINESS_EVIDENCE_SHA, attempt: process.env.READINESS_RUN_ATTEMPT, conclusion: process.env.READINESS_TEST_CONCLUSION}))'
+      - name: Upload readiness test attestation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: readiness-test-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: readiness-test-attestation.json
+          if-no-files-found: error
 
   schema:
     name: Migrations match the schema
@@ -268,6 +313,7 @@ jobs:
           exit 1
       - name: Run the end-to-end suite
         run: bun run test:e2e
+
       - name: Show what the servers logged
         if: failure()
         run: |
@@ -289,3 +335,27 @@ jobs:
         run: |
           echo "=== web ==="; cat "$RUNNER_TEMP/web.log" || true
           echo "=== realtime ==="; cat "$RUNNER_TEMP/realtime.log" || true
+
+  readiness-gate:
+    name: Readiness release gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [static, test, schema, build, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Create readiness gate attestation
+        env:
+          READINESS_EVIDENCE_SHA: ${{ github.sha }}
+          READINESS_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: >-
+          bun -e 'await Bun.write("readiness-gate-attestation.json", JSON.stringify({commit: process.env.READINESS_EVIDENCE_SHA, attempt: process.env.READINESS_RUN_ATTEMPT, conclusion: "success"}))'
+      - name: Upload readiness gate attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: readiness-gate-${{ github.sha }}-${{ github.run_attempt }}
+          path: readiness-gate-attestation.json
+          if-no-files-found: error

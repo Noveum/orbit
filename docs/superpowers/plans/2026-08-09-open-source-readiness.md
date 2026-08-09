@@ -328,23 +328,36 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Create: `docs/maintainers/readiness-ledger.md`
 - Create: `docs/maintainers/readiness-scope-governance.md`
+- Create: `docs/maintainers/readiness-scope-audit.json`
 - Create: `scripts/readiness-scope-manifest.ts`
+- Create: `scripts/readiness-scope-manifest.json`
 - Create: `scripts/readiness-reference-registry.ts`
+- Create: `scripts/readiness-reference-registry.json`
+- Create: `scripts/readiness-evidence-verifier.ts`
 - Create: `scripts/check-readiness-ledger.ts`
+- Create: `scripts/check-readiness-scope-pr.ts`
+- Create: `packages/shared/src/validators/readiness.ts`
+- Modify: `packages/shared/src/validators/index.ts`
+- Modify: `packages/db/tests/check-readiness-ledger.test.ts`
+- Create: `packages/db/tests/check-readiness-scope-pr.test.ts`
+- Create: `packages/db/tests/readiness-production-artifacts.test.ts`
+- Create: `.github/workflows/readiness-scope.yml`
+- Modify: `.github/workflows/ci.yml`
 - Modify: `.github/PULL_REQUEST_TEMPLATE.md`
 - Modify: `.github/ISSUE_TEMPLATE/config.yml`
 - Modify: `.github/CODEOWNERS`
 
 - [ ] Copy every P0 and P1 finding ID into a ledger with owner, status, pull request, evidence, and residual risk.
-- [ ] Pin every audited ID and priority in an independently versioned and digested manifest. Validate the raw plan rows, plan multiset, and ledger multiset against it.
-- [ ] Govern any scope addition, removal, rename, split, merge, or priority change through a dedicated pull request with both required owner approvals.
+- [ ] Pin every audited ID, priority, canonical finding, and required outcome in an independently versioned and digested manifest. Validate the raw plan rows and ledger semantics against it.
+- [ ] Govern any scope addition, removal, rename, split, merge, reprioritization, or semantic change through a dedicated trusted-base pull request policy with both named exact-head approvals.
 - [ ] Require pull requests closing a finding to link the failing test added first and the passing release gate.
-- [ ] Bind terminal evidence to one full immutable post-fix candidate identity and enforce failing-test, implementation, final-pass, gate, and decision chronology.
+- [ ] Bind staged evidence to the squash-merged implementation pull request, its distinct failing PR-head run, direct candidate CI attempts and digests, and verified baseline, candidate, and evidence-commit ancestry.
+- [ ] Seal `Closed` and `Accepted P1 exception` rows with a durable record that binds candidate C, the reviewed `Ready for closure` evidence commit M, and the canonical evidence snapshot digest without depending on finite-retention hosted artifacts forever.
 - [ ] Validate every authored evidence and principal registry entry before constructing lookup maps, including duplicate keys and explicit canonical human aliases.
 - [ ] Use GitHub security advisories for vulnerability details that should not be public before a fix.
 - [ ] Keep this implementation plan as the stable scope document and the ledger as changing execution state.
 
-**Verification:** the checker accepts exactly the 41 pinned P0 and P1 finding pairs, every finding has an owner and an objective close condition, terminal records agree on an immutable candidate, and every accepted P1 exception also has the documented owner, expiry, mitigation, substantive public limitation, decision, and independent approval required by the release policy.
+**Verification:** The initial v1 fixture proves exactly 41 pinned P0 and P1 rows while ongoing CI derives current counts from the governed manifest. Semantic scope changes pass only through the trusted-base workflow. `Ready for closure` records agree on a squash-merged candidate and authenticated workflow, job, step, pull request, and artifact evidence. Durable seals bind the reviewed evidence commit and remain valid after artifact expiry or later product commits. Automated limitation checks are supplemented by documented human semantic review. Repository administrators must separately require the explicit `Trusted readiness policy` head status and configure the post-review rerun procedure.
 
 **Suggested commit:** `docs: add the open source readiness ledger`
 

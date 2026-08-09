@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "kind": "baseline",
+  "version": "readiness-scope/2026-08-09-v1",
+  "digest": "sha256:4a629c9fa4e894e241cb623ee98256ac806724a4b317c19ca0d7111db24519f8",
+  "reviewUrl": "https://github.com/Noveum/orbit/blob/main/docs/superpowers/plans/2026-08-09-open-source-readiness.md",
+  "summary": "Initial audited P0 and P1 readiness scope with canonical semantic hashes."
+}

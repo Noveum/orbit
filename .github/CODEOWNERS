@@ -14,9 +14,18 @@
 /packages/mcp-server/        @imshashank @pulkitxm
 
 /scripts/readiness-scope-manifest.ts                                  @imshashank @pulkitxm
+/scripts/readiness-scope-manifest.json                                @imshashank @pulkitxm
 /scripts/readiness-reference-registry.ts                              @imshashank @pulkitxm
+/scripts/readiness-reference-registry.json                            @imshashank @pulkitxm
 /scripts/check-readiness-ledger.ts                                    @imshashank @pulkitxm
+/scripts/check-readiness-scope-pr.ts                                  @imshashank @pulkitxm
+/scripts/readiness-evidence-verifier.ts                               @imshashank @pulkitxm
+/packages/shared/src/validators/readiness.ts                          @imshashank @pulkitxm
+/packages/db/tests/check-readiness-ledger.test.ts                     @imshashank @pulkitxm
+/packages/db/tests/check-readiness-scope-pr.test.ts                   @imshashank @pulkitxm
+/packages/db/tests/readiness-production-artifacts.test.ts             @imshashank @pulkitxm
 /docs/superpowers/plans/2026-08-09-open-source-readiness.md           @imshashank @pulkitxm
 /docs/maintainers/readiness-ledger.md                                 @imshashank @pulkitxm
+/docs/maintainers/readiness-scope-audit.json                          @imshashank @pulkitxm
 /docs/maintainers/readiness-scope-governance.md                       @imshashank @pulkitxm
 /.github/PULL_REQUEST_TEMPLATE.md                                     @imshashank @pulkitxm
