@@ -48,6 +48,15 @@ export const syncActionSchema = z.object({
   originClientId: originClientIdSchema.optional(),
 });
 
+export const deliveredSyncActionSchema = z.union([
+  syncActionSchema,
+  z
+    .object({ syncId: z.number().int().nonnegative() })
+    .transform((row) => ({ syncId: row.syncId, unsupported: true as const })),
+]);
+
+export type DeliveredSyncAction = z.infer<typeof deliveredSyncActionSchema>;
+
 export type SyncAction = z.infer<typeof syncActionSchema>;
 
 export const syncCursorSchema = z.number().int().nonnegative();
