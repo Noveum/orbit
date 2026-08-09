@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { HOTKEY_PRIORITY, ownsKeyboardLayer, useHotkey } from '@/lib/keyboard/index.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { BulkEditBar } from './bulk-edit-bar.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
@@ -16,6 +17,8 @@ import { IssueRow, ROW_HEIGHT } from './issue-row.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export const HEADER_HEIGHT = 32;
+
+export const SELECTION_PREFETCH_MS = 120;
 
 export type Row =
   | { readonly kind: 'header'; readonly group: IssueGroup }
@@ -150,6 +153,14 @@ export function IssueList({
   useEffect(() => {
     if (activeIssue === undefined && issueIndexes[0] !== undefined) setActiveIndex(issueIndexes[0]);
   }, [activeIssue, issueIndexes]);
+
+  const prefetchDetail = usePrefetchIssueDetail();
+  const activeIdentifier = activeIssue?.identifier;
+  useEffect(() => {
+    if (activeIdentifier === undefined) return;
+    const settle = setTimeout(() => prefetchDetail(activeIdentifier), SELECTION_PREFETCH_MS);
+    return () => clearTimeout(settle);
+  }, [activeIdentifier, prefetchDetail]);
 
   const deletion = useIssueDeletion();
   const deletionTargets = useMemo(() => {

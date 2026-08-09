@@ -1,6 +1,7 @@
 'use client';
 
-import { Download, FileDown, Printer } from 'lucide-react';
+import { Download, FileDown, FileText } from 'lucide-react';
+import { useState } from 'react';
 import {
   DropdownMenuItem,
   DropdownMenuSub,
@@ -8,6 +9,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
+import { downloadPdf } from './doc-pdf.ts';
 import { exportedMarkdown, fileNameFor } from './doc-transfer.ts';
 
 export interface DocExportMenuProps {
@@ -29,6 +31,7 @@ function download(name: string, body: string): void {
 
 export function DocExportItems({ title, content }: DocExportMenuProps) {
   const { toast } = useToast();
+  const [building, setBuilding] = useState(false);
 
   return (
     <DropdownMenuSub>
@@ -51,9 +54,25 @@ export function DocExportItems({ title, content }: DocExportMenuProps) {
           <FileDown className="size-3.5" aria-hidden="true" />
           Markdown file
         </DropdownMenuItem>
-        <DropdownMenuItem data-testid="doc-export-pdf" onSelect={() => window.print()}>
-          <Printer className="size-3.5" aria-hidden="true" />
-          PDF, through print
+        <DropdownMenuItem
+          data-testid="doc-export-pdf"
+          disabled={building}
+          onSelect={(event) => {
+            event.preventDefault();
+            setBuilding(true);
+            downloadPdf({ title, markdown: content, origin: window.location.origin })
+              .catch(() =>
+                toast({
+                  title: 'Could not build the PDF',
+                  description: 'Try again, or export the Markdown instead.',
+                  tone: 'danger',
+                }),
+              )
+              .finally(() => setBuilding(false));
+          }}
+        >
+          <FileText className="size-3.5" aria-hidden="true" />
+          {building ? 'Building PDF…' : 'PDF'}
         </DropdownMenuItem>
       </DropdownMenuSubContent>
     </DropdownMenuSub>
