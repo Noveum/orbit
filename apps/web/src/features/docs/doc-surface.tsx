@@ -474,7 +474,7 @@ function EditSession({
           aria-label="Doc title"
           data-testid="doc-title-input"
           onChange={(event) => setTitle(event.target.value)}
-          className="h-auto border-0 bg-transparent px-0 py-0 font-semibold text-text text-2xl focus-visible:border-0"
+          className="h-auto rounded-sm border-0 bg-transparent px-0 py-0 font-semibold text-text text-2xl outline-none focus-visible:border-0 focus-visible:bg-surface-2/60"
         />
       </div>
       <DocEditor
