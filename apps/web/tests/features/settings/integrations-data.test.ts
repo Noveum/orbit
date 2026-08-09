@@ -5,7 +5,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { bindGithubInstallation, replaceGithubRepositories } from '@orbit/services';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -127,6 +127,7 @@ describe('loadGithubDeliveries', () => {
     readonly status?: string;
     readonly error?: string | null;
     readonly createdAt?: Date;
+    readonly organizationId?: string;
   }): Promise<void> {
     await db.insert(schema.webhookDelivery).values({
       id: overrides.id,
@@ -135,9 +136,34 @@ describe('loadGithubDeliveries', () => {
       event: overrides.event ?? 'pull_request',
       status: overrides.status ?? 'processed',
       error: overrides.error ?? null,
+      organizationId: overrides.organizationId ?? workspace.organizationId,
       createdAt: overrides.createdAt ?? new Date('2026-01-01T00:00:00.000Z'),
     });
   }
+
+  it('never hands one workspace the delivery log of another', async () => {
+    const neighbour = await createWorkspace('somebody-else');
+    await recordDelivery({ id: 'mine' });
+    await recordDelivery({ id: 'theirs', organizationId: neighbour.organizationId });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['mine']);
+    expect(await loadGithubDeliveries(neighbour.admin)).toHaveLength(1);
+  });
+
+  it('leaves a delivery nobody could attribute out of every workspace', async () => {
+    await recordDelivery({ id: 'mine' });
+    await recordDelivery({ id: 'unattributed', organizationId: undefined });
+    await db
+      .update(schema.webhookDelivery)
+      .set({ organizationId: null })
+      .where(eq(schema.webhookDelivery.id, 'unattributed'));
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['mine']);
+  });
 
   it('gives an admin the deliveries that arrived', async () => {
     await recordDelivery({ id: 'del_1', status: 'ignored', error: 'no_issue_identifier' });

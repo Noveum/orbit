@@ -1,4 +1,4 @@
-import { db, desc, eq, schema } from '@orbit/db';
+import { and, db, desc, eq, schema } from '@orbit/db';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
@@ -110,7 +110,12 @@ export async function loadGithubDeliveries(
       createdAt: schema.webhookDelivery.createdAt,
     })
     .from(schema.webhookDelivery)
-    .where(eq(schema.webhookDelivery.provider, 'github'))
+    .where(
+      and(
+        eq(schema.webhookDelivery.provider, 'github'),
+        eq(schema.webhookDelivery.organizationId, principal.organizationId),
+      ),
+    )
     .orderBy(desc(schema.webhookDelivery.createdAt))
     .limit(DELIVERY_LIMIT);
 
