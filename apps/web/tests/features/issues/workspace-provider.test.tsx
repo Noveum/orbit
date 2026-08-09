@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Bootstrap } from '@/lib/query/schemas.ts';
 
 mock.module('next/navigation', () => ({
@@ -55,8 +56,9 @@ function Probe() {
   return <span data-testid="probe">{deletion === null ? 'no provider' : 'provided'}</span>;
 }
 
-function mountShell() {
+function mountShell(seedBootstrap = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (seedBootstrap) client.setQueryData(queryKeys.bootstrap(null), bootstrap('member'));
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
@@ -85,12 +87,13 @@ describe('the issue workspace shell', () => {
     expect((await screen.findByTestId('probe')).textContent).toBe('provided');
   });
 
-  it('opens quick create with C', async () => {
-    mountShell();
+  it('opens quick create with C without fetching cached workspace metadata again', async () => {
+    mountShell(true);
 
     await userEvent.setup().keyboard('c');
 
     expect(screen.getByTestId('quick-create-probe')).toBeInTheDocument();
+    expect(fetchBootstrap).not.toHaveBeenCalled();
   });
 });
 

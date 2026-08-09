@@ -464,6 +464,7 @@ describe('the new issue dialog', () => {
 
     await user.click(editor);
     await user.keyboard('{Enter}');
+    await waitFor(() => expect(editor.querySelectorAll('p')).toHaveLength(2));
     expect(created).not.toHaveBeenCalled();
 
     await user.keyboard('{Control>}{Enter}{/Control}');

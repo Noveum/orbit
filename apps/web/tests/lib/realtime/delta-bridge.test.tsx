@@ -20,10 +20,11 @@ import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
 let capturedResume: ((since: number) => void) | null = null;
+let realtimeStatus: 'connecting' | 'open' | 'reconnecting' | 'closed' = 'open';
 const observed: number[] = [];
 
 mock.module('@orbit/realtime-client/react', () => ({
-  useRealtimeStatus: () => 'open',
+  useRealtimeStatus: () => realtimeStatus,
   useScopeSubscription: () => undefined,
   useDeltaHandler: (handler: (actions: SyncAction[]) => void) => {
     capturedHandler = handler;
@@ -103,6 +104,34 @@ function mount(): QueryClient {
   );
   return client;
 }
+
+describe('DeltaBridge first connection', () => {
+  it('refreshes bootstrap once when the initial connection becomes ready', () => {
+    realtimeStatus = 'connecting';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const seen = trackInvalidations(client);
+    const mounted = render(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+
+    realtimeStatus = 'open';
+    mounted.rerender(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+    mounted.rerender(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+
+    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+    realtimeStatus = 'open';
+  });
+});
 
 function titleIn(client: QueryClient): string | undefined {
   return client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.title;

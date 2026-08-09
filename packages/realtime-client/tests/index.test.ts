@@ -205,7 +205,7 @@ describe('realtime client lifecycle', () => {
     client.subscribe(['team:team_1']);
     first.deliver({ type: 'delta', actions: [delta(70), delta(64)] });
     expect(client.seen()).toBe(70);
-    expect(resumes).toEqual([0]);
+    expect(resumes).toHaveLength(0);
 
     first.close(1006);
     await wait(60);
@@ -216,7 +216,7 @@ describe('realtime client lifecycle', () => {
     second?.deliver(readyMessage());
 
     expect(subscribesOf(second)).toEqual([{ scopes: ['team:team_1'], since: 70 }]);
-    expect(resumes).toEqual([0, 70]);
+    expect(resumes).toEqual([70]);
     client.close();
   });
 

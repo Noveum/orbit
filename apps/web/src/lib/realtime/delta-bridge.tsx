@@ -3,13 +3,14 @@
 import {
   useDeltaHandler,
   useObserveSyncId,
+  useRealtimeStatus,
   useResumeHandler,
   useScopeSubscription,
 } from '@orbit/realtime-client/react';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { scopes, syncCatchupSchema } from '@orbit/shared/events';
 import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
@@ -263,6 +264,14 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const client = useQueryClient();
   const currentUserId = useCurrentUserId();
   const observeSyncId = useObserveSyncId();
+  const realtimeStatus = useRealtimeStatus();
+  const reconciledOrganization = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (realtimeStatus !== 'open' || reconciledOrganization.current === organizationId) return;
+    reconciledOrganization.current = organizationId;
+    client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
+  }, [client, organizationId, realtimeStatus]);
 
   const subscribed = useMemo(
     () => [
