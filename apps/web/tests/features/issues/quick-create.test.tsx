@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
@@ -33,9 +33,7 @@ mock.module('@/lib/query/use-issues.ts', () => ({
         options?.onSuccess?.(newIssue);
       };
     },
-    get isPending() {
-      return inFlight.pending;
-    },
+    isPending: false,
   }),
   useUpdateIssue: () => ({
     mutateAsync: async (input: Record<string, unknown>) => {
@@ -122,20 +120,29 @@ afterEach(() => {
   cleanup();
   created.mockClear();
   patched.mockClear();
+  inFlight.defer = false;
+  inFlight.resume = null;
+  inFlight.pending = false;
   globalThis.fetch = realFetch;
   globalThis.XMLHttpRequest = realXhr;
 });
 
-function dialog(onOpenChange: (next: boolean) => void = () => undefined) {
+function dialog(
+  onOpenChange: (next: boolean) => void = () => undefined,
+  defaultTeamId: string | null = 'team_eng',
+) {
   return (
     <ToastProvider>
-      <QuickCreateDialog open onOpenChange={onOpenChange} defaultTeamId="team_eng" />
+      <QuickCreateDialog open onOpenChange={onOpenChange} defaultTeamId={defaultTeamId} />
     </ToastProvider>
   );
 }
 
-function open(onOpenChange: (next: boolean) => void = () => undefined) {
-  return render(dialog(onOpenChange));
+function open(
+  onOpenChange: (next: boolean) => void = () => undefined,
+  defaultTeamId: string | null = 'team_eng',
+) {
+  return render(dialog(onOpenChange, defaultTeamId));
 }
 
 const STORAGE_KEY = 'org_1/2026/08/notes-1.txt';
@@ -313,7 +320,7 @@ describe('attaching a file from the create dialog', () => {
 
     expect(created.mock.calls).toHaveLength(1);
 
-    inFlight.resume?.();
+    act(() => inFlight.resume?.());
     inFlight.defer = false;
     await settle();
   });
@@ -450,6 +457,31 @@ describe('the new issue dialog', () => {
         isComposing: true,
       }),
     ).toBe(true);
+  });
+
+  it('does not submit a title while an IME composition is active', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+    const title = screen.getByTestId('quick-create-title');
+
+    await user.type(title, 'Composing');
+    fireEvent.keyDown(title, { key: 'Enter', metaKey: true, isComposing: true });
+
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('adopts the first available team when workspace data arrives after opening', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = { ...buildWorkspace(), ready: false, teams: [] };
+    const mounted = open(() => undefined, null);
+
+    workspace = buildWorkspace();
+    mounted.rerender(dialog(() => undefined, null));
+    await user.type(screen.getByTestId('quick-create-title'), 'Loaded later');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['teamId']).toBe('team_eng');
   });
 
   it('does not submit plain Enter in the description and submits there with Ctrl+Enter', async () => {

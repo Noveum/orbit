@@ -131,7 +131,10 @@ function ScopePickers({
 export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
-  const firstTeamId = defaultTeamId ?? teams[0]?.id ?? null;
+  const firstTeamId =
+    defaultTeamId !== null && teams.some((team) => team.id === defaultTeamId)
+      ? defaultTeamId
+      : (teams[0]?.id ?? null);
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -146,6 +149,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
   const titleRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
 
   const create = useCreateIssue(teamId ?? 'none');
   const update = useUpdateIssue();
@@ -173,6 +177,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setCycleId(null);
     setPending([]);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedTeamExists = teamId !== null && teams.some((team) => team.id === teamId);
+    if (!selectedTeamExists && teamId !== firstTeamId) setTeamId(firstTeamId);
+  }, [firstTeamId, open, teamId, teams]);
 
   const hold = useCallback(
     (file: File): Promise<UploadedAttachment> => {
@@ -244,10 +254,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const submit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
-    if (create.isPending) return;
+    if (submittingRef.current || create.isPending) return;
     if (teamId === null || title.trim().length === 0) return;
     const body = description;
     const held = pending;
+    submittingRef.current = true;
     create.mutate(
       {
         teamId,
@@ -262,7 +273,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         labelIds,
       },
       {
+        onError: () => {
+          submittingRef.current = false;
+        },
         onSuccess: (issue) => {
+          submittingRef.current = false;
           setPending((current) => current.filter((entry) => !held.includes(entry)));
           finalize(issue, body, held);
           if (!createMore) {
@@ -296,6 +311,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         <form
           onSubmit={submit}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               submit();
