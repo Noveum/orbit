@@ -35,6 +35,7 @@ import type { DocRowActions } from './doc-row-menu.tsx';
 import { DocSearchResults } from './doc-search-results.tsx';
 import {
   ancestorsOf,
+  collapsibleKeys,
   type DocGroup,
   docDisclosureKey,
   docTreeOf,
@@ -146,10 +147,11 @@ export function DocTree({
   );
 
   const disclosureKeys = useMemo(
-    () => [
-      ...groups.map((group) => groupDisclosureKey(group.id)),
-      ...docs.filter((doc) => doc.parentId === null).map((doc) => docDisclosureKey(doc.id)),
-    ],
+    () =>
+      collapsibleKeys(
+        groups.map((group) => group.id),
+        docs,
+      ),
     [groups, docs],
   );
   const anyOpen = disclosureKeys.some((key) => isOpen(key, true));

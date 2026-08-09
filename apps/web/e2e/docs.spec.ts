@@ -143,7 +143,8 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await author.keyboard.type('written in the rich editor');
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
-  await author.getByTestId('editor-mode-markdown').click();
+  await author.getByTestId('doc-overflow').click();
+  await author.getByTestId('doc-mode-markdown').click();
   await expect(author.getByTestId('doc-editor-input')).toContainText(
     '- [ ] written in the rich editor',
   );
