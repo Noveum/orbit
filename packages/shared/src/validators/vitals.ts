@@ -42,6 +42,23 @@ export function routePattern(pathname: string): string {
   return `/${patterned.join('/')}`;
 }
 
+const duration = z.number().finite().nonnegative().max(3_600_000);
+
+export const webVitalPartsSchema = z
+  .object({
+    timeToFirstByte: duration,
+    resourceLoadDelay: duration,
+    resourceLoadDuration: duration,
+    elementRenderDelay: duration,
+    inputDelay: duration,
+    processingDuration: duration,
+    presentationDelay: duration,
+    loadState: z.string().max(64),
+  })
+  .partial();
+
+export type WebVitalParts = z.infer<typeof webVitalPartsSchema>;
+
 export const webVitalSchema = z.object({
   route: z.string().min(1).max(256),
   metric: z.enum(WEB_VITAL_METRICS),
@@ -50,6 +67,7 @@ export const webVitalSchema = z.object({
   navigationType: z.string().max(32).default(''),
   interactionType: z.enum(['pointer', 'keyboard']).nullish(),
   target: z.string().max(256).nullish(),
+  parts: webVitalPartsSchema.nullish(),
 });
 
 export type WebVitalInput = z.infer<typeof webVitalSchema>;

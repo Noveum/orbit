@@ -573,6 +573,7 @@ export const webVital = pgTable(
     navigationType: text('navigation_type').notNull().default(''),
     interactionType: text('interaction_type'),
     target: text('target'),
+    parts: jsonb('parts'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
