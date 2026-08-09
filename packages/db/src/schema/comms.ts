@@ -507,11 +507,17 @@ export const webhookDelivery = pgTable(
     provider: text('provider').notNull(),
     deliveryId: text('delivery_id').notNull(),
     event: text('event').notNull(),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
     status: text('status').notNull().default('received'),
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex('webhook_delivery_unique').on(table.provider, table.deliveryId)],
+  (table) => [
+    uniqueIndex('webhook_delivery_unique').on(table.provider, table.deliveryId),
+    index('webhook_delivery_org_idx').on(table.organizationId, table.createdAt),
+  ],
 );
 
 export const auditLog = pgTable(

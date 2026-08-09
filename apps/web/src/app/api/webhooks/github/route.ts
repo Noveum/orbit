@@ -3,6 +3,7 @@ import {
   applyGithubEvent,
   applyGithubInstallationEvent,
   dispatchSlackMessage,
+  findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
   verifyGithubSignature,
@@ -10,6 +11,7 @@ import {
 import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
+import { z } from 'zod';
 import { publish } from '@/lib/api/handler.ts';
 import { absoluteUrl } from '@/lib/env.ts';
 
@@ -69,6 +71,14 @@ export async function POST(request: Request): Promise<Response> {
       .set({ status: 'failed' })
       .where(deliveryMatch(deliveryId));
     return Response.json({ error: 'invalid json' }, { status: 400 });
+  }
+
+  const organizationId = await workspaceBehind(body);
+  if (organizationId !== null) {
+    await db
+      .update(schema.webhookDelivery)
+      .set({ organizationId })
+      .where(deliveryMatch(deliveryId));
   }
 
   if (isGithubInstallationEvent(eventName)) {
@@ -144,6 +154,20 @@ async function handleInstallationEvent(input: {
     console.error('[orbit] github installation webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
+}
+
+const installationRefSchema = z.object({
+  installation: z.object({ id: z.union([z.number(), z.string()]) }),
+});
+
+async function workspaceBehind(body: unknown): Promise<string | null> {
+  const parsed = installationRefSchema.safeParse(body);
+  if (!parsed.success) return null;
+  const installation = await findGithubInstallationAnywhere(
+    db,
+    String(parsed.data.installation.id),
+  );
+  return installation?.organizationId ?? null;
 }
 
 function deliveryMatch(deliveryId: string) {
