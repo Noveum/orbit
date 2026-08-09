@@ -96,14 +96,13 @@ describe('the empty pull request page explaining itself', () => {
     );
   });
 
-  it('blames the untracked repository rather than branch naming when one exists', () => {
+  it('names the untracked repository as well as naming, never one instead of the other', () => {
     render(
       <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
     );
 
-    expect(screen.getByText('Some repositories are not tracked yet')).toBeInTheDocument();
-    expect(screen.getByText(/GitHub reports the delivery as accepted/)).toBeInTheDocument();
-    expect(screen.queryByText(/branch or title names an issue/)).not.toBeInTheDocument();
+    expect(screen.getByText(/has to name an issue/)).toBeInTheDocument();
+    expect(screen.getByText(/reports the delivery as accepted/)).toBeInTheDocument();
     expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
   });
 
@@ -119,6 +118,16 @@ describe('the empty pull request page explaining itself', () => {
 
     expect(screen.getByText(/workspace admin picks which ones to track/)).toBeInTheDocument();
     expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
+  });
+
+  it('never asserts naming is the only remaining cause while a repository is untracked', () => {
+    render(
+      <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
+    );
+
+    expect(
+      screen.queryByText(/Copy branch name on an issue gives you one that matches/),
+    ).toBeNull();
   });
 
   it('sends a member who cannot manage integrations to an admin rather than a dead end', () => {

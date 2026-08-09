@@ -53,12 +53,12 @@ const REACH_COPY: Record<GithubReach, ReachCopy> = {
     action: 'Pick repositories',
   },
   repositories_untracked: {
-    title: 'Some repositories are not tracked yet',
+    title: 'No pull requests linked to your issues',
     admin:
-      'GitHub can see repositories this workspace never switched on. A pull request from one of them is dropped on arrival, and GitHub reports the delivery as accepted, so nothing looks wrong on either side. Switch the ones you work in on.',
+      'Two things have to be true. The branch or title has to name an issue, like ENG-42, and the repository has to be tracked here. GitHub can see repositories this workspace has not switched on, and a pull request from one of those is dropped on arrival while GitHub still reports the delivery as accepted, so nothing looks wrong on either side.',
     member:
-      'GitHub can see repositories this workspace never switched on, and pull requests from them are dropped on arrival. A workspace admin picks which ones to track.',
-    action: 'Track repositories',
+      'Two things have to be true. The branch or title has to name an issue, like ENG-42, and the repository has to be tracked here. GitHub can see repositories this workspace has not switched on, and pull requests from those are dropped on arrival. A workspace admin picks which ones to track.',
+    action: 'Check tracked repositories',
   },
   connected: {
     title: 'No pull requests linked to your issues',
