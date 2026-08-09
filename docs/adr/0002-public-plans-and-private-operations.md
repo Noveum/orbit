@@ -1,4 +1,4 @@
-# ADR 0001: Public plans and private operations
+# ADR 0002: Public plans and private operations
 
 ## Status
 

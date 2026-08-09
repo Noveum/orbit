@@ -31,7 +31,7 @@ function assertLocalServer(url: string): void {
   if (LOCAL_HOSTS.has(host)) return;
   if (process.env['ORBIT_ALLOW_REMOTE_TEST_SETUP'] === '1') return;
   throw new Error(
-    `Refusing to create test databases on ${host}:${port}. This creates six databases and pushes the whole schema into each, which must never happen on a deployed server. Point DATABASE_URL at the local stack from bun run infra:up, or set ORBIT_ALLOW_REMOTE_TEST_SETUP=1 if you are certain.`,
+    `Refusing to create test databases on ${host}:${port}. This creates seven databases and pushes the whole schema into each, which must never happen on a deployed server. Point DATABASE_URL at the local stack from bun run infra:up, or set ORBIT_ALLOW_REMOTE_TEST_SETUP=1 if you are certain.`,
   );
 }
 

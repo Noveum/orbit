@@ -149,8 +149,6 @@ Realtime contract and hub tests cover closing only connections for the deleted o
 
 Web route tests cover authentication, authorization, validation, summary headers, successful deletion, publish behavior, and storage failure responses. Component tests cover summary loading, categorized counts, byte formatting, exact confirmation, recent-upload messaging, error retry, single submission, and both navigation outcomes.
 
-The completed branch must pass focused package tests and `ORBIT_TEST_LANE=workspace_deletion bun run verify`. The pull request includes a screenshot of the dialog in both themes when practical.
-
 ## Out of scope
 
 This change does not delete a user's account, data in another workspace, or third-party accounts. Removing an Orbit integration deletes its stored credentials, grants, repository associations, channel associations, and webhook configuration. It does not uninstall an app from the administrator's GitHub, Slack, or other provider account.

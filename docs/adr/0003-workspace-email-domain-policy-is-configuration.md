@@ -1,4 +1,4 @@
-# ADR 0002: Workspace email-domain policy is configuration
+# ADR 0003: Workspace email-domain policy is configuration
 
 ## Status
 

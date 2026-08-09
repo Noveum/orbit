@@ -1,9 +1,5 @@
 # Docs area rework, board drag and drop, and board load speed
 
-Date: 2026-08-07
-Branch: `claude/docs-area-redesign-2a2395`
-Delivery: one pull request, small scoped commits in the order below.
-
 ## Why
 
 Three complaints, all reproducible in the current code.
@@ -24,7 +20,7 @@ Three complaints, all reproducible in the current code.
 
 ## Scope
 
-Six workstreams, one pull request.
+Six workstreams:
 
 - A. Docs: collections become real folders, with drag and drop.
 - B. Docs: reading and editing polish.
@@ -313,8 +309,8 @@ the bottom so the next page is in flight before it is needed.
 ### Evidence
 
 Timings are measured against a seeded workspace of roughly five hundred issues,
-before and after, and the numbers go in the pull request description. The claim
-is not "it feels faster".
+before and after, and retained with the implementation evidence. The claim is
+not "it feels faster".
 
 ## Testing
 
@@ -365,8 +361,8 @@ on them ships, never by a job in the platform.
 
 ## Risks
 
-The pull request is large. Commits are scoped one workstream at a time, in the
-order A through F, so the review reads in sequence.
+The workstreams are implemented in the order A through F so behavior changes
+remain independently understandable.
 
 Moving docs search to `tsvector` changes result ordering for existing content.
 The trigram path stays as the fallback, so no query becomes unanswerable, but

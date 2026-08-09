@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import postgres from 'postgres';
-import { resolveTestDatabaseUrl } from '../../../scripts/test-env.ts';
+import { resolveExactTestDatabaseUrl } from '../../../scripts/test-env.ts';
 import { applyCatchup, catchupPath, targetName } from '../src/apply-catchup.ts';
 import { ensureLaneDatabase } from '../src/test-lane.ts';
 
@@ -39,7 +39,7 @@ describe('targetName', () => {
   });
 });
 
-const SCRATCH_URL = resolveTestDatabaseUrl('orbit_test_catchup');
+const SCRATCH_URL = resolveExactTestDatabaseUrl('orbit_test_catchup');
 
 async function run<T>(url: string, work: (sql: postgres.Sql) => Promise<T>): Promise<T> {
   const sql = postgres(url, { max: 1, prepare: false, onnotice: () => undefined });

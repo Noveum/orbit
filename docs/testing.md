@@ -62,6 +62,7 @@ truncate tables another package is mid-test on.
 
 | Package | Database |
 | --- | --- |
+| Catch-up integration tests | `orbit_test_catchup` |
 | `packages/core` | `orbit_test_core` |
 | `packages/services` | `orbit_test_svc` |
 | `apps/realtime` | `orbit_test_rt` |
@@ -110,7 +111,7 @@ read exactly like broken tests. When you genuinely want a clean slate:
 bun run db:test-lanes-drop --all
 ```
 
-That takes every lane on that Postgres, live ones included. The six base
+That takes every lane on that Postgres, live ones included. The seven base
 databases survive either way. Without `ORBIT_TEST_LANE` set on a test run,
 nothing about the lane mechanism changes.
 

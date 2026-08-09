@@ -50,7 +50,7 @@ bun install
 cp .env.example .env
 bun run infra:up        # postgres, redis and minio in docker
 bun run db:push         # create the schema
-bun run db:test-setup   # create the six test databases
+bun run db:test-setup   # create the seven test databases
 bun run db:seed         # load a demo workspace you can click around in
 bun run dev             # web on :3000, realtime on :3100
 ```

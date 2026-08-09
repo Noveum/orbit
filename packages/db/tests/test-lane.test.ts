@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { laneDatabase, laneSuffix, resolveTestDatabaseUrl } from '../../../scripts/test-env.ts';
+import {
+  laneDatabase,
+  laneSuffix,
+  resolveExactTestDatabaseUrl,
+  resolveTestDatabaseUrl,
+} from '../../../scripts/test-env.ts';
 
 const saved = {
   lane: process.env['ORBIT_TEST_LANE'],
@@ -122,5 +127,45 @@ describe('resolveTestDatabaseUrl', () => {
     process.env['TEST_DATABASE_URL'] = 'postgres://orbit:orbit@localhost:5434/orbit';
 
     expect(() => resolveTestDatabaseUrl('orbit_test_core')).toThrow();
+  });
+});
+
+describe('resolveExactTestDatabaseUrl', () => {
+  it('derives the requested base database when no lane or override is set', () => {
+    clear('ORBIT_TEST_LANE');
+    clear('TEST_DATABASE_URL');
+    process.env['DATABASE_URL'] = 'postgres://orbit:orbit@localhost:5434/orbit';
+
+    expect(resolveExactTestDatabaseUrl('orbit_test_catchup')).toContain('/orbit_test_catchup');
+  });
+
+  it('accepts an override for the exact current lane database', () => {
+    process.env['ORBIT_TEST_LANE'] = 'alpha';
+    const database = laneDatabase('orbit_test_catchup', laneSuffix('alpha'));
+    process.env['TEST_DATABASE_URL'] = `postgres://orbit:orbit@localhost:5434/${database}`;
+
+    expect(resolveExactTestDatabaseUrl('orbit_test_catchup')).toContain(`/${database}`);
+  });
+
+  it('rejects an override for another package before any database work starts', () => {
+    clear('ORBIT_TEST_LANE');
+    process.env['TEST_DATABASE_URL'] = 'postgres://orbit:orbit@localhost:5434/orbit_test_web';
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('orbit_test_catchup');
+  });
+
+  it('rejects an override for another lane before any database work starts', () => {
+    process.env['ORBIT_TEST_LANE'] = 'alpha';
+    process.env['TEST_DATABASE_URL'] =
+      'postgres://orbit:orbit@localhost:5434/orbit_test_catchup_beta';
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('exact current lane');
+  });
+
+  it('rejects a remote test-looking override for another package before any database work starts', () => {
+    clear('ORBIT_TEST_LANE');
+    process.env['TEST_DATABASE_URL'] = 'postgres://orbit:orbit@example.test:5432/orbit_test_svc';
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('orbit_test_catchup');
   });
 });

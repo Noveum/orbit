@@ -54,3 +54,30 @@ export function resolveTestDatabaseUrl(fallbackDatabase: string): string {
   url.pathname = `/${database}`;
   return url.toString();
 }
+
+export function resolveExactTestDatabaseUrl(fallbackDatabase: string): string {
+  assertTestDatabase(fallbackDatabase, 'the requested fallback database');
+  const lane = currentLane();
+  const database = laneDatabase(fallbackDatabase, lane);
+  assertTestDatabase(database, 'the resolved lane database');
+
+  const explicit = process.env['TEST_DATABASE_URL'];
+  if (explicit !== undefined && explicit.length > 0) {
+    const configured = databaseNameOf(explicit);
+    if (configured !== database) {
+      throw new Error(
+        `TEST_DATABASE_URL must name exactly "${database}" for the exact current lane, not "${configured}".`,
+      );
+    }
+    return explicit;
+  }
+
+  const ambient = process.env['DATABASE_URL'];
+  if (ambient === undefined || ambient.length === 0) {
+    return `postgres://orbit:orbit@localhost:5434/${database}`;
+  }
+  if (lane.length === 0 && databaseNameOf(ambient) === database) return ambient;
+  const url = new URL(ambient);
+  url.pathname = `/${database}`;
+  return url.toString();
+}
