@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { readinessReferenceRegistry } from './readiness-reference-registry.ts';
 
 const OWNER_ROLES = new Set([
   'Security maintainer',
@@ -87,25 +88,36 @@ export interface ExceptionRow {
   readonly authority: string;
 }
 
+export function currentUtcDate(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
 function activeLines(text: string): string[] {
-  let fenced = false;
+  let fence: { readonly character: string; readonly length: number } | undefined;
   return text.split('\n').map((line) => {
-    if (line.trimStart().startsWith('```')) {
-      fenced = !fenced;
+    const marker = /^(?: {0,3})(`{3,}|~{3,})/.exec(line);
+    if (marker !== null) {
+      const value = marker[1] ?? '';
+      const character = value[0] ?? '';
+      if (fence === undefined) fence = { character, length: value.length };
+      else if (fence.character === character && value.length >= fence.length) fence = undefined;
       return '';
     }
-    return fenced ? '' : line;
+    return fence === undefined ? line : '';
   });
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Markdown cell parsing keeps escape and code-span state local.
 function cells(line: string): string[] | undefined {
   const trimmed = line.trim();
   if (!(trimmed.startsWith('|') && trimmed.endsWith('|'))) return undefined;
   const values: string[] = [];
   let value = '';
   let escaped = false;
-  let inlineCode = false;
-  for (const character of trimmed.slice(1, -1)) {
+  let codeDelimiter = 0;
+  const content = trimmed.slice(1, -1);
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index] ?? '';
     if (escaped) {
       value += character;
       escaped = false;
@@ -117,11 +129,14 @@ function cells(line: string): string[] | undefined {
       continue;
     }
     if (character === '`') {
-      inlineCode = !inlineCode;
-      value += character;
+      const run = /^`+/.exec(content.slice(index))?.[0].length ?? 1;
+      if (codeDelimiter === 0) codeDelimiter = run;
+      else if (codeDelimiter === run) codeDelimiter = 0;
+      value += content.slice(index, index + run);
+      index += run - 1;
       continue;
     }
-    if (character === '|' && !inlineCode) {
+    if (character === '|' && codeDelimiter === 0) {
       values.push(value.trim());
       value = '';
       continue;
@@ -401,6 +416,7 @@ function validateTransition(row: FindingRow, security: boolean): string[] {
   return errors;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Finding validation keeps the status contract in one place.
 function validateFinding(row: FindingRow): string[] {
   const id = safeId(row.id, row.row, 'Finding');
   const errors: string[] = [];
@@ -417,7 +433,16 @@ function validateFinding(row: FindingRow): string[] {
     errors.push(`${id} has invalid residual-risk record.`);
   if (row.priority === 'P0' && row.status === 'Accepted P1 exception')
     errors.push(`${id} is P0 and cannot use Accepted P1 exception.`);
-  if (security !== undefined)
+  if (security !== undefined && row.status === 'In progress') {
+    if (!prefixedReference(row.implementation, 'implementation'))
+      errors.push(`${id} has invalid implementation evidence for In progress status.`);
+    if (
+      ![row.change, row.releaseGate, row.documentation, row.decision, row.approver].every(pending)
+    )
+      errors.push(`${id} has invalid unfinished evidence for In progress status.`);
+    if (security ? !pending(row.authority) : row.authority !== 'not-required')
+      errors.push(`${id} has invalid security authority record for In progress status.`);
+  } else if (security !== undefined)
     errors.push(
       ...(row.status === 'Open' ? validateOpen(row, security) : validateTransition(row, security)),
     );
@@ -481,12 +506,63 @@ function validateException(
   return errors;
 }
 
+type ReferenceRegistry = typeof readinessReferenceRegistry;
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Resolution validates references and role authority together.
+function registryErrors(
+  findings: readonly FindingRow[],
+  exceptions: readonly ExceptionRow[],
+  registry: ReferenceRegistry,
+): string[] {
+  const errors: string[] = [];
+  for (const row of [...findings, ...exceptions]) {
+    const id = 'id' in row ? row.id : row.findingId;
+    const values = Object.values(row).filter((value): value is string => typeof value === 'string');
+    for (const value of values.flatMap(
+      (entry) => entry.match(/(?:record|principal):[a-z0-9][a-z0-9._/-]*/g) ?? [],
+    )) {
+      const known = value.startsWith('record:')
+        ? registry.records.has(value)
+        : registry.principals.has(value);
+      if (!known) errors.push(`${safeId(id, row.row, 'Ledger')} has an unresolved reference.`);
+    }
+  }
+  for (const finding of findings) {
+    if (finding.status === 'Open' || finding.status === 'In progress') continue;
+    const identity = approver(finding.approver);
+    if (identity !== undefined && registry.principals.get(identity)?.role !== 'Release maintainer')
+      errors.push(
+        `${safeId(finding.id, finding.row, 'Finding')} has an approver without Release maintainer authority.`,
+      );
+    const nonBehavioral =
+      /^test-na:record:[a-z0-9][a-z0-9._/-]*;justification=record:[a-z0-9][a-z0-9._/-]*;approver=(principal:[a-z0-9][a-z0-9._/-]*)$/.exec(
+        finding.change,
+      );
+    if (nonBehavioral !== null) {
+      const approval = nonBehavioral[1] ?? '';
+      const parsed = decision(finding.decision);
+      if (
+        registry.principals.get(approval)?.role !== 'Release maintainer' ||
+        parsed === undefined ||
+        approval !== parsed.approver ||
+        approval === parsed.implementation ||
+        approval === parsed.finding
+      )
+        errors.push(
+          `${safeId(finding.id, finding.row, 'Finding')} has an invalid non-behavioral approval.`,
+        );
+    }
+  }
+  return errors;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The inventory gate evaluates all independent controls deterministically.
 export function validateReadinessLedger(
   plan: readonly PlanFinding[],
   findings: readonly FindingRow[],
   exceptions: readonly ExceptionRow[],
   verificationDate: string,
+  registry?: ReferenceRegistry,
 ): string[] {
   const errors: string[] = [];
   if (!calendarDate(verificationDate)) return ['Verification date is invalid.'];
@@ -522,6 +598,7 @@ export function validateReadinessLedger(
   for (const finding of findings)
     if (finding.status === 'Accepted P1 exception' && !exceptionIds.has(finding.id))
       errors.push(`${safeId(finding.id, finding.row, 'Finding')} has no P1 exception record.`);
+  if (registry !== undefined) errors.push(...registryErrors(findings, exceptions, registry));
   return errors;
 }
 
@@ -536,7 +613,8 @@ async function main(): Promise<void> {
     parsePlanFindings(plan),
     findings,
     parseExceptionRows(ledger),
-    '2026-08-09',
+    currentUtcDate(),
+    readinessReferenceRegistry,
   );
   if (errors.length > 0) {
     for (const error of errors) console.log(error);

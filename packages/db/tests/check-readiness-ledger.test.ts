@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  currentUtcDate,
   parseExceptionRows,
   parseFindingRows,
   parsePlanFindings,
   validateReadinessLedger,
 } from '../../../scripts/check-readiness-ledger.ts';
+import { readinessReferenceRegistry } from '../../../scripts/readiness-reference-registry.ts';
 
 const verificationDate = '2026-08-09';
 
@@ -101,6 +103,79 @@ function errors(rows: readonly string[], exceptions: readonly string[] = []): st
 }
 
 describe('readiness ledger checker', () => {
+  it('derives the production verification date from the current UTC calendar day', () => {
+    expect(currentUtcDate(new Date('2026-08-11T00:30:00+05:30'))).toBe('2026-08-10');
+  });
+
+  it('rejects an exception after its formerly future expiry using an injected production date', () => {
+    const finding = findingRow({
+      status: 'Accepted P1 exception',
+      implementation: 'implementation:record:pull/123',
+      change: 'test:record:test/doc-001',
+      releaseGate: 'gate:record:ci/doc-001',
+      documentation: 'docs:record:docs/doc-001',
+      decision:
+        'decision:record:release/doc-001;implementation=principal:writer-a;finding=principal:documentation-owner;approver=principal:release-a',
+      approver: 'approver:principal:release-a',
+    });
+    const parsed = parsedLedger([finding], [exceptionRow({ expiry: '2026-08-10' })]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        '2026-08-11',
+      ),
+    ).toContain('P1 exception row 3 has an expiry date that is not after the verification date.');
+  });
+
+  it('accepts an in-progress row only with linked implementation evidence', () => {
+    const row = findingRow({
+      status: 'In progress',
+      implementation: 'implementation:record:pull/123',
+    });
+    const result = errors([row]);
+    expect(result).not.toContain('Finding ID DOC-001 has invalid implementation evidence.');
+    expect(result).not.toContain('Finding ID DOC-001 has invalid decision record.');
+    expect(errors([findingRow({ status: 'In progress' })])).toContain(
+      'Finding ID DOC-001 has invalid implementation evidence for In progress status.',
+    );
+  });
+
+  it('rejects unresolved evidence, wrong-role approvers, and self-approved non-behavioral evidence', () => {
+    const row = findingRow({
+      status: 'Closed',
+      implementation: 'implementation:record:missing/pull',
+      change:
+        'test-na:record:missing/test;justification=record:missing/why;approver=principal:documentation-owner',
+      releaseGate: 'gate:record:missing/gate',
+      documentation: 'docs:record:missing/docs',
+      decision:
+        'decision:record:missing/decision;implementation=principal:writer-a;finding=principal:documentation-owner;approver=principal:documentation-owner',
+      approver: 'approver:principal:documentation-owner',
+    });
+    const parsed = parsedLedger([row]);
+    const result = validateReadinessLedger(
+      parsePlanFindings(plan),
+      parsed.findings,
+      parsed.exceptions,
+      verificationDate,
+      readinessReferenceRegistry,
+    );
+    expect(result).toContain('Ledger ID DOC-001 has an unresolved reference.');
+    expect(result).toContain(
+      'Finding ID DOC-001 has an approver without Release maintainer authority.',
+    );
+    expect(result).toContain('Finding ID DOC-001 has an invalid non-behavioral approval.');
+  });
+
+  it('ignores tilde and long backtick fences and double-backtick code spans', () => {
+    const fenced = `${plan}\n~~~~\n| ROGUE-999 | P0 | Example | Audit | Outcome |\n~~~~\n\`\`a|b\`\``;
+    expect(() => parsePlanFindings(fenced)).not.toThrow();
+    expect(() =>
+      parseFindingRows(ledger([findingRow({ finding: 'A ``a|b`` value' })])),
+    ).not.toThrow();
+  });
   it('accepts exact section-scoped plan findings and structured open controls', () => {
     const rows = [
       findingRow({
