@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Noveum/orbit/security/advisories/new
+    about: Report privately through a GitHub Security Advisory. Never open a public issue for a security problem.
   - name: Where to start contributing
     url: https://github.com/Noveum/orbit/discussions/231
     about: Every milestone, what is missing in each, and which issues are small enough for an hour.
@@ -12,6 +15,6 @@ contact_links:
   - name: Documentation
     url: https://github.com/Noveum/orbit/tree/main/docs
     about: Setup, self-hosting, architecture, keyboard shortcuts and the MCP server.
-  - name: Report a security vulnerability
-    url: https://github.com/Noveum/orbit/security/advisories/new
-    about: Please report privately. Never open a public issue for a security problem.
+  - name: Open source readiness ledger
+    url: https://github.com/Noveum/orbit/blob/main/docs/maintainers/readiness-ledger.md
+    about: Check public readiness findings, release gates, and support limits before opening a duplicate issue.
