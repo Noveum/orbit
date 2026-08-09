@@ -114,6 +114,16 @@ function buildWorkspace(): WorkspaceData {
   };
 }
 
+function buildWorkspaceWithDesign(): WorkspaceData {
+  return {
+    ...buildWorkspace(),
+    teams: [
+      { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#fff' },
+      { id: 'team_des', name: 'Design', key: 'DES', icon: 'd', color: '#eee' },
+    ],
+  };
+}
+
 const realFetch = globalThis.fetch;
 const realXhr = globalThis.XMLHttpRequest;
 
@@ -378,16 +388,47 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
-  it('offers every team and workspace project the chosen team can use', async () => {
+  it('offers every accessible project from every team', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
-    workspace = buildWorkspace();
+    workspace = buildWorkspaceWithDesign();
     open();
 
     await user.click(screen.getByTestId('quick-create-project'));
 
     expect(await screen.findByText('API market')).toBeTruthy();
     expect(screen.getByText('Company launch')).toBeTruthy();
-    expect(screen.queryByText('Brand refresh')).toBeNull();
+    expect(screen.getByText('Brand refresh')).toBeTruthy();
+  });
+
+  it('moves the issue to a compatible team when another team project is chosen', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspaceWithDesign();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Refresh the brand');
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(await screen.findByText('Todo'));
+    await user.click(screen.getByRole('button', { name: 'Labels' }));
+    await user.click(await screen.findByText('Bug'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('5 points'));
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
+    const projectTrigger = screen.getByTestId('quick-create-project');
+    projectTrigger.focus();
+    await user.keyboard('{Enter}Brand{Enter}');
+
+    expect(screen.getByTestId('quick-create-crumb')).toHaveTextContent('DES');
+    await user.click(screen.getByTestId('quick-create-submit'));
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      teamId: 'team_des',
+      projectId: 'proj_2',
+      cycleId: null,
+      estimate: null,
+      labelIds: [],
+    });
+    expect(created.mock.calls[0]?.[0]?.['stateId']).toBeUndefined();
   });
 
   it('focuses the title when it opens', () => {
@@ -689,14 +730,14 @@ describe('the new issue dialog', () => {
 });
 
 describe('the pickers when a team owns nothing yet', () => {
-  it('says the team has no projects rather than showing an empty menu', async () => {
+  it('says the workspace has no projects rather than showing an empty menu', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = { ...buildWorkspace(), projects: [] };
     open();
 
     await user.click(screen.getByTestId('quick-create-project'));
 
-    expect(await screen.findByText('No projects on this team')).toBeTruthy();
+    expect(await screen.findByText('No projects in this workspace')).toBeTruthy();
   });
 
   it('says the team has no sprints rather than showing an empty menu', async () => {
