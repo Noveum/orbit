@@ -125,12 +125,28 @@ function tableOf(node: JSONContent): string {
   return lines.join('\n');
 }
 
+const NESTED_LIST = new Set(['bulletList', 'orderedList', 'taskList']);
+
+function itemBody(item: JSONContent): string {
+  let out = '';
+  for (const child of item.content ?? []) {
+    const block = blockOf(child);
+    if (block.length === 0) continue;
+    if (out.length === 0) {
+      out = block;
+      continue;
+    }
+    out += NESTED_LIST.has(child.type ?? '') ? `\n${block}` : `\n\n${block}`;
+  }
+  return out;
+}
+
 function listOf(node: JSONContent, kind: 'bullet' | 'ordered' | 'task'): string {
   const items = node.content ?? [];
   const start = numberAttr(node, 'start', 1);
   return items
     .map((item, index) => {
-      const body = blocksOf(item.content, '\n\n');
+      const body = itemBody(item);
       if (kind === 'ordered') return prefixLines(body, `${start + index}. `, '   ');
       if (kind === 'task') {
         const checked = attr(item, 'checked') === true;

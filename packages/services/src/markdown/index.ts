@@ -1,5 +1,5 @@
 import { slugify, truncate } from '@orbit/shared/utils';
-import { Marked } from 'marked';
+import { Marked, type Tokens } from 'marked';
 import { escapeHtml, highlightCode, languageAlias } from './highlight.ts';
 import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
@@ -17,6 +17,14 @@ function alignment(align: 'center' | 'left' | 'right' | null): string {
   return align === null ? '' : ` align="${align}"`;
 }
 
+function isTaskList(token: Tokens.List): boolean {
+  return token.items.length > 0 && token.items.every((item) => item.task);
+}
+
+function listStart(token: Tokens.List): string {
+  return token.ordered && token.start !== 1 ? ` start="${token.start}"` : '';
+}
+
 const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: false }).use({
   renderer: {
     code({ text, lang }): string {
@@ -24,6 +32,19 @@ const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: fa
       const classes = alias.length === 0 ? 'hljs' : `hljs language-${escapeHtml(alias)}`;
       const language = alias.length === 0 ? '' : ` data-code-language="${escapeHtml(alias)}"`;
       return `<div data-code-block${language}><pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre></div>\n`;
+    },
+    list(token): string {
+      const tag = token.ordered ? 'ol' : 'ul';
+      const laysOutTasks = !token.ordered;
+      const listAttrs = laysOutTasks && isTaskList(token) ? ' data-type="taskList"' : '';
+      const items = token.items
+        .map((item) => {
+          const checked =
+            laysOutTasks && item.task ? ` data-checked="${item.checked === true}"` : '';
+          return `<li${checked}>${this.parser.parse(item.tokens)}</li>\n`;
+        })
+        .join('');
+      return `<${tag}${listStart(token)}${listAttrs}>\n${items}</${tag}>\n`;
     },
     table(token): string {
       const header = token.header
