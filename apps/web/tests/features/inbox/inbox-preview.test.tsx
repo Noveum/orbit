@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { InboxItem } from '@/features/inbox/data.ts';
 import { issueIdentifierFromUrl } from '@/features/inbox/inbox-preview.tsx';
 import { InboxView } from '@/features/inbox/inbox-view.tsx';
@@ -133,6 +134,7 @@ describe('reading the issue behind a notification', () => {
   });
 
   it('follows the selection when another notification is opened', async () => {
+    const user = userEvent.setup();
     renderInbox([
       item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
       item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
@@ -141,6 +143,26 @@ describe('reading the issue behind a notification', () => {
     await waitFor(() => {
       expect(detailRequests.some((path) => path.includes('ENG-1'))).toBe(true);
     });
+    expect(detailRequests.some((path) => path.includes('ENG-2'))).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: /Second/ }));
+
+    await waitFor(() => {
+      expect(detailRequests.some((path) => path.includes('ENG-2'))).toBe(true);
+    });
+  });
+
+  it('keeps a body the issue title does not already say, as a pull request one carries', async () => {
+    renderInbox([
+      item({
+        type: 'pr_review_requested',
+        title: 'Review requested on ENG-3',
+        body: 'Noveum/orbit#412',
+      }),
+    ]);
+
+    await screen.findByTestId('inbox-preview');
+    expect(screen.getByTestId('inbox-preview-body')).toHaveTextContent('Noveum/orbit#412');
   });
 
   it('keeps the plain notification body when there is no issue to show', () => {

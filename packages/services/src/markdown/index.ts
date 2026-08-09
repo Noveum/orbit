@@ -35,13 +35,16 @@ const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: fa
     },
     list(token): string {
       const tag = token.ordered ? 'ol' : 'ul';
-      const listAttrs = isTaskList(token) ? ' data-type="taskList"' : '';
-      const items = token.items.map((item) => this.listitem(item)).join('');
+      const laysOutTasks = !token.ordered;
+      const listAttrs = laysOutTasks && isTaskList(token) ? ' data-type="taskList"' : '';
+      const items = token.items
+        .map((item) => {
+          const checked =
+            laysOutTasks && item.task ? ` data-checked="${item.checked === true}"` : '';
+          return `<li${checked}>${this.parser.parse(item.tokens)}</li>\n`;
+        })
+        .join('');
       return `<${tag}${listStart(token)}${listAttrs}>\n${items}</${tag}>\n`;
-    },
-    listitem(item): string {
-      const checked = item.task ? ` data-checked="${item.checked === true}"` : '';
-      return `<li${checked}>${this.parser.parse(item.tokens)}</li>\n`;
     },
     table(token): string {
       const header = token.header

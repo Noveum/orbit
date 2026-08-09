@@ -266,6 +266,15 @@ describe('task lists', () => {
     expect(renderMarkdown('1. one')).toContain('<ol>');
   });
 
+  it('leaves a numbered list its numbers even when its items carry a box', () => {
+    const html = renderMarkdown('1. [ ] first\n2. [x] second');
+
+    expect(html).toContain('<ol>');
+    expect(html).not.toContain('data-type="taskList"');
+    expect(html).not.toContain('data-checked');
+    expect(html).toContain('type="checkbox"');
+  });
+
   it('survives the second sanitize pass a published doc goes through', () => {
     const html = renderMarkdownWithHeadingIds('# Title\n\n- [x] done\n- [ ] todo');
 

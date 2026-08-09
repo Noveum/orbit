@@ -13,7 +13,12 @@ export function issueIdentifierFromUrl(url: string): string | null {
   return identifier === undefined ? null : identifier.toUpperCase();
 }
 
-export function InboxIssuePreview({ identifier }: { readonly identifier: string }) {
+export interface InboxIssuePreviewProps {
+  readonly identifier: string;
+  readonly body: string;
+}
+
+export function InboxIssuePreview({ identifier, body }: InboxIssuePreviewProps) {
   const workspace = useWorkspace();
   const detail = useIssueDetail(identifier);
   const loaded = detail.data;
@@ -49,6 +54,12 @@ export function InboxIssuePreview({ identifier }: { readonly identifier: string 
       </div>
 
       <h3 className="font-medium text-base text-text leading-snug">{issue.title}</h3>
+
+      {body.length === 0 || body === issue.title ? null : (
+        <p className="whitespace-pre-wrap text-muted text-sm" data-testid="inbox-preview-body">
+          {body}
+        </p>
+      )}
 
       {descriptionHtml.length === 0 ? (
         <p className="text-faint text-xs">No description on this issue.</p>

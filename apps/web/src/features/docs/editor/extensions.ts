@@ -131,6 +131,7 @@ const BLOCK_TAGS = new Set([
   'PRE',
   'TABLE',
   'DETAILS',
+  'FIGURE',
   'HR',
   'H1',
   'H2',

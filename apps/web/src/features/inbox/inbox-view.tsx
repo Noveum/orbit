@@ -80,10 +80,6 @@ function matchesTab(item: InboxItem, tab: TabId): boolean {
 
 const SNOOZE_HOURS = 24;
 
-function repeatsTheIssueTitle(item: InboxItem): boolean {
-  return item.entityType === 'issue' && issueIdentifierFromUrl(item.url) !== null;
-}
-
 const notificationDeltaSchema = z.object({
   id: z.string(),
   type: z.string(),
@@ -448,7 +444,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                   {current.actorName} · {relativeTime(new Date(current.createdAt))}
                   {current.snoozedUntil === null ? '' : ' · snoozed'}
                 </p>
-                {current.body.length === 0 || repeatsTheIssueTitle(current) ? null : (
+                {current.body.length === 0 || previewIdentifier !== null ? null : (
                   <p className="whitespace-pre-wrap text-muted text-sm">{current.body}</p>
                 )}
                 <Link
@@ -463,7 +459,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                 </Link>
                 {previewIdentifier === null ? null : (
                   <div className="mt-1 border-border border-t pt-4">
-                    <InboxIssuePreview identifier={previewIdentifier} />
+                    <InboxIssuePreview identifier={previewIdentifier} body={current.body} />
                   </div>
                 )}
               </>
