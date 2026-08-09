@@ -21,6 +21,55 @@ export interface PullsViewProps {
   readonly canManageIntegrations: boolean;
 }
 
+interface ReachCopy {
+  readonly title: string;
+  readonly admin: string;
+  readonly member: string;
+  readonly action: string;
+}
+
+const REACH_COPY: Record<GithubReach, ReachCopy> = {
+  not_installed: {
+    title: 'GitHub is not connected yet',
+    admin:
+      'Connect GitHub, pick the repositories to track, and pull requests naming an issue show up here.',
+    member: 'A workspace admin needs to connect GitHub before pull requests can appear here.',
+    action: 'Connect GitHub',
+  },
+  suspended: {
+    title: 'The GitHub installation is suspended',
+    admin:
+      'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then pull requests naming an issue show up here.',
+    member:
+      'GitHub is refusing to send anything while the installation is suspended. A workspace admin has to lift it on GitHub.',
+    action: 'Open integrations',
+  },
+  no_repositories: {
+    title: 'No repository is being tracked',
+    admin:
+      'GitHub is connected but no repository is switched on yet. Pick the ones this workspace should track.',
+    member:
+      'GitHub is connected but no repository is switched on yet. A workspace admin picks which ones to track.',
+    action: 'Pick repositories',
+  },
+  repositories_untracked: {
+    title: 'Some repositories are not tracked yet',
+    admin:
+      'GitHub can see repositories this workspace never switched on. A pull request from one of them is dropped on arrival, and GitHub reports the delivery as accepted, so nothing looks wrong on either side. Switch the ones you work in on.',
+    member:
+      'GitHub can see repositories this workspace never switched on, and pull requests from them are dropped on arrival. A workspace admin picks which ones to track.',
+    action: 'Track repositories',
+  },
+  connected: {
+    title: 'No pull requests linked to your issues',
+    admin:
+      'Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches.',
+    member:
+      'Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches.',
+    action: 'Open integrations',
+  },
+};
+
 export function PullsEmptyState({
   reach,
   canManageIntegrations,
@@ -28,75 +77,21 @@ export function PullsEmptyState({
   readonly reach: GithubReach;
   readonly canManageIntegrations: boolean;
 }) {
-  const icon = <GitPullRequest strokeWidth={1.75} aria-hidden="true" />;
-  const settingsAction = (label: string) =>
-    canManageIntegrations ? (
-      <Button asChild variant="primary">
-        <Link href="/settings/integrations" data-testid="pulls-connect-github">
-          {label}
-        </Link>
-      </Button>
-    ) : undefined;
-
-  if (reach === 'not_installed') {
-    return (
-      <EmptyState
-        icon={icon}
-        title="GitHub is not connected yet"
-        description={
-          canManageIntegrations
-            ? 'Connect GitHub, pick the repositories to track, and pull requests naming an issue show up here.'
-            : 'A workspace admin needs to connect GitHub before pull requests can appear here.'
-        }
-        {...(settingsAction('Connect GitHub') === undefined
-          ? {}
-          : { action: settingsAction('Connect GitHub') })}
-        className="flex-1"
-      />
-    );
-  }
-
-  if (reach === 'suspended') {
-    return (
-      <EmptyState
-        icon={icon}
-        title="The GitHub installation is suspended"
-        description={
-          canManageIntegrations
-            ? 'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then pull requests naming an issue show up here.'
-            : 'GitHub is refusing to send anything while the installation is suspended. A workspace admin has to lift it on GitHub.'
-        }
-        {...(settingsAction('Open integrations') === undefined
-          ? {}
-          : { action: settingsAction('Open integrations') })}
-        className="flex-1"
-      />
-    );
-  }
-
-  if (reach === 'no_repositories') {
-    return (
-      <EmptyState
-        icon={icon}
-        title="No repository is being tracked"
-        description={
-          canManageIntegrations
-            ? 'GitHub is connected but no repository is switched on yet. Pick the ones this workspace should track.'
-            : 'GitHub is connected but no repository is switched on yet. A workspace admin picks which ones to track.'
-        }
-        {...(settingsAction('Pick repositories') === undefined
-          ? {}
-          : { action: settingsAction('Pick repositories') })}
-        className="flex-1"
-      />
-    );
-  }
+  const copy = REACH_COPY[reach];
+  const action = canManageIntegrations ? (
+    <Button asChild variant="primary">
+      <Link href="/settings/integrations" data-testid="pulls-connect-github">
+        {copy.action}
+      </Link>
+    </Button>
+  ) : undefined;
 
   return (
     <EmptyState
-      icon={icon}
-      title="No pull requests linked to your issues"
-      description="Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches."
+      icon={<GitPullRequest strokeWidth={1.75} aria-hidden="true" />}
+      title={copy.title}
+      description={canManageIntegrations ? copy.admin : copy.member}
+      {...(action === undefined ? {} : { action })}
       className="flex-1"
     />
   );

@@ -16,7 +16,33 @@ export interface PullRequestRow {
   readonly updatedAt: string;
 }
 
-export type GithubReach = 'not_installed' | 'suspended' | 'no_repositories' | 'connected';
+export type GithubReach =
+  | 'not_installed'
+  | 'suspended'
+  | 'no_repositories'
+  | 'repositories_untracked'
+  | 'connected';
+
+async function reachableButUntracked(
+  organizationId: string,
+  watched: ReadonlySet<string>,
+): Promise<boolean> {
+  const visible = await db
+    .select({ repositoryId: schema.githubRepository.repositoryId })
+    .from(schema.githubRepository)
+    .innerJoin(
+      schema.githubInstallation,
+      eq(schema.githubInstallation.id, schema.githubRepository.installationRowId),
+    )
+    .where(
+      and(
+        eq(schema.githubRepository.organizationId, organizationId),
+        eq(schema.githubRepository.archived, false),
+        eq(schema.githubInstallation.status, 'active'),
+      ),
+    );
+  return visible.some((row) => !watched.has(row.repositoryId));
+}
 
 export async function githubReach(principal: Principal): Promise<GithubReach> {
   const [installations, tracked] = await Promise.all([
@@ -28,7 +54,10 @@ export async function githubReach(principal: Principal): Promise<GithubReach> {
       .from(schema.githubInstallation)
       .where(eq(schema.githubInstallation.organizationId, principal.organizationId)),
     db
-      .select({ integrationId: schema.githubRepositorySync.integrationId })
+      .select({
+        integrationId: schema.githubRepositorySync.integrationId,
+        repositoryId: schema.githubRepositorySync.repositoryId,
+      })
       .from(schema.githubRepositorySync)
       .where(
         and(
@@ -44,7 +73,14 @@ export async function githubReach(principal: Principal): Promise<GithubReach> {
     installations.filter((row) => row.status === 'active').map((row) => row.integrationId),
   );
   if (active.size === 0) return 'suspended';
-  return tracked.some((row) => active.has(row.integrationId)) ? 'connected' : 'no_repositories';
+
+  const reachable = tracked.filter((row) => active.has(row.integrationId));
+  if (reachable.length === 0) return 'no_repositories';
+
+  const watched = new Set(reachable.map((row) => row.repositoryId));
+  return (await reachableButUntracked(principal.organizationId, watched))
+    ? 'repositories_untracked'
+    : 'connected';
 }
 
 export async function loadPullRequests(principal: Principal): Promise<PullRequestRow[]> {

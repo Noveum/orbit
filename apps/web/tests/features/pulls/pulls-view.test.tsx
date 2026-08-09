@@ -80,11 +80,44 @@ describe('the empty pull request page explaining itself', () => {
     expect(screen.queryByText('No repository is being tracked')).not.toBeInTheDocument();
   });
 
-  it('says what makes a pull request link once a repository is tracked', () => {
+  it('says what makes a pull request link once every repository is tracked', () => {
     render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
 
     expect(screen.getByText('No pull requests linked to your issues')).toBeInTheDocument();
     expect(screen.getByText(/branch or title names an issue/)).toBeInTheDocument();
+  });
+
+  it('offers the route to integrations even when naming is the only thing left to fix', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    expect(screen.getByTestId('pulls-connect-github')).toHaveAttribute(
+      'href',
+      '/settings/integrations',
+    );
+  });
+
+  it('blames the untracked repository rather than branch naming when one exists', () => {
+    render(
+      <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
+    );
+
+    expect(screen.getByText('Some repositories are not tracked yet')).toBeInTheDocument();
+    expect(screen.getByText(/GitHub reports the delivery as accepted/)).toBeInTheDocument();
+    expect(screen.queryByText(/branch or title names an issue/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
+  });
+
+  it('tells a member who cannot track repositories to ask an admin', () => {
+    render(
+      <PullsView
+        pulls={[]}
+        userId="user_1"
+        reach="repositories_untracked"
+        canManageIntegrations={false}
+      />,
+    );
+
+    expect(screen.getByText(/workspace admin picks which ones to track/)).toBeInTheDocument();
     expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
   });
 
