@@ -297,6 +297,7 @@ describe('DeltaBridge reconnect backfill', () => {
       [ISSUE_FACETS_ROOT],
       [BOARD_ROOT],
       [MILESTONES_ROOT],
+      [BOOTSTRAP_ROOT],
     ]);
   });
 });

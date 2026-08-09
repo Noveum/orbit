@@ -44,6 +44,12 @@ function pendingLabel(count: number): string {
   return `${count} ${noun} will be attached once the issue is created.`;
 }
 
+function projectSupportsTeam(project: Project | undefined, teamId: string): boolean {
+  return (
+    project !== undefined && (project.teamIds.length === 0 || project.teamIds.includes(teamId))
+  );
+}
+
 function ScopePickers({
   teamProjects,
   teamCycles,
@@ -139,6 +145,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
+  const titleRef = useRef<HTMLInputElement>(null);
 
   const create = useCreateIssue(teamId ?? 'none');
   const update = useUpdateIssue();
@@ -260,6 +267,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
           setDescription('');
           setLabelIds([]);
           setComposerKey((value) => value + 1);
+          titleRef.current?.focus();
         },
       },
     );
@@ -290,11 +298,15 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
           className="flex flex-col gap-3"
         >
           <Input
+            ref={titleRef}
             autoFocus
             data-testid="quick-create-title"
             placeholder="Issue title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) event.preventDefault();
+            }}
             className="h-9 border-0 px-0 font-medium text-base shadow-none"
           />
           <RichTextEditor
@@ -319,9 +331,10 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               options={teams.map((team) => ({ id: team.id, label: team.name }))}
               selected={teamId === null ? [] : [teamId]}
               onSelect={(id) => {
+                const selectedProject = projects.find((project) => project.id === projectId);
                 setTeamId(id);
                 setStateId(null);
-                setProjectId(null);
+                if (!projectSupportsTeam(selectedProject, id)) setProjectId(null);
                 setEstimate(null);
                 setCycleId(null);
                 setLabelIds([]);

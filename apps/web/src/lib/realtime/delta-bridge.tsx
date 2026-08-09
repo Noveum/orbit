@@ -307,7 +307,11 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
           .then((catchup) => {
             applyActions(catchup.actions);
             observeSyncId(catchup.syncId);
-            if (catchup.truncated) client.invalidateQueries().catch(noop);
+            if (catchup.truncated) {
+              client.invalidateQueries().catch(noop);
+            } else if (!catchup.actions.some((action) => BOOTSTRAP_MODELS.has(action.model))) {
+              client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
+            }
           })
           .catch(noop);
       },
