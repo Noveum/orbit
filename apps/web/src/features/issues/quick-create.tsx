@@ -181,8 +181,16 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   useEffect(() => {
     if (!open) return;
     const selectedTeamExists = teamId !== null && teams.some((team) => team.id === teamId);
-    if (!selectedTeamExists && teamId !== firstTeamId) setTeamId(firstTeamId);
-  }, [firstTeamId, open, teamId, teams]);
+    if (selectedTeamExists || teamId === firstTeamId) return;
+    const selectedProject = projects.find((project) => project.id === projectId);
+    setTeamId(firstTeamId);
+    setStateId(null);
+    if (firstTeamId === null || !projectSupportsTeam(selectedProject, firstTeamId))
+      setProjectId(null);
+    setEstimate(null);
+    setCycleId(null);
+    setLabelIds([]);
+  }, [firstTeamId, open, projectId, projects, teamId, teams]);
 
   const hold = useCallback(
     (file: File): Promise<UploadedAttachment> => {

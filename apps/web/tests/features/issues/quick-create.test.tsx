@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
@@ -127,21 +128,35 @@ afterEach(() => {
   globalThis.XMLHttpRequest = realXhr;
 });
 
-function dialog(
-  onOpenChange: (next: boolean) => void = () => undefined,
-  defaultTeamId: string | null = 'team_eng',
-) {
+function DialogHarness({
+  onOpenChange,
+  defaultTeamId,
+}: {
+  readonly onOpenChange: ((next: boolean) => void) | undefined;
+  readonly defaultTeamId: string | null;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <QuickCreateDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        onOpenChange?.(next);
+      }}
+      defaultTeamId={defaultTeamId}
+    />
+  );
+}
+
+function dialog(onOpenChange?: (next: boolean) => void, defaultTeamId: string | null = 'team_eng') {
   return (
     <ToastProvider>
-      <QuickCreateDialog open onOpenChange={onOpenChange} defaultTeamId={defaultTeamId} />
+      <DialogHarness onOpenChange={onOpenChange} defaultTeamId={defaultTeamId} />
     </ToastProvider>
   );
 }
 
-function open(
-  onOpenChange: (next: boolean) => void = () => undefined,
-  defaultTeamId: string | null = 'team_eng',
-) {
+function open(onOpenChange?: (next: boolean) => void, defaultTeamId: string | null = 'team_eng') {
   return render(dialog(onOpenChange, defaultTeamId));
 }
 
@@ -482,6 +497,50 @@ describe('the new issue dialog', () => {
     await user.click(screen.getByTestId('quick-create-submit'));
 
     expect(created.mock.calls[0]?.[0]?.['teamId']).toBe('team_eng');
+  });
+
+  it('clears team-scoped choices when the selected team disappears', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      teams: [
+        { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#fff' },
+        { id: 'team_des', name: 'Design', key: 'DES', icon: 'd', color: '#eee' },
+      ],
+    };
+    const mounted = open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Recovered team');
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(await screen.findByText('Todo'));
+    await user.click(screen.getByRole('button', { name: 'Labels' }));
+    await user.click(await screen.findByText('Bug'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('5 points'));
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
+
+    workspace = {
+      ...workspace,
+      teams: workspace.teams.filter((team) => team.id === 'team_des'),
+    };
+    await act(async () => {
+      mounted.rerender(dialog());
+      await Promise.resolve();
+    });
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      teamId: 'team_des',
+      projectId: null,
+      cycleId: null,
+      estimate: null,
+      labelIds: [],
+    });
+    expect(created.mock.calls[0]?.[0]?.['stateId']).toBeUndefined();
   });
 
   it('does not submit plain Enter in the description and submits there with Ctrl+Enter', async () => {
