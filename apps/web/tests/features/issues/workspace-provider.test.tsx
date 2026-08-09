@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -87,12 +87,13 @@ describe('the issue workspace shell', () => {
 
   it('opens quick create with C without fetching workspace metadata again', async () => {
     mountShell();
-    await screen.findByTestId('probe');
+    await waitFor(() => expect(fetchBootstrap).toHaveBeenCalledTimes(1));
+    const fetchesBeforeOpening = fetchBootstrap.mock.calls.length;
 
     await userEvent.setup().keyboard('c');
 
     expect(screen.getByTestId('quick-create-probe')).toBeInTheDocument();
-    expect(fetchBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchBootstrap).toHaveBeenCalledTimes(fetchesBeforeOpening);
   });
 });
 
