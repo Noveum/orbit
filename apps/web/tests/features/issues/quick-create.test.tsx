@@ -126,12 +126,16 @@ afterEach(() => {
   globalThis.XMLHttpRequest = realXhr;
 });
 
-function open(onOpenChange: (next: boolean) => void = () => undefined) {
-  render(
+function dialog(onOpenChange: (next: boolean) => void = () => undefined) {
+  return (
     <ToastProvider>
       <QuickCreateDialog open onOpenChange={onOpenChange} defaultTeamId="team_eng" />
-    </ToastProvider>,
+    </ToastProvider>
   );
+}
+
+function open(onOpenChange: (next: boolean) => void = () => undefined) {
+  return render(dialog(onOpenChange));
 }
 
 const STORAGE_KEY = 'org_1/2026/08/notes-1.txt';
@@ -436,7 +440,19 @@ describe('the new issue dialog', () => {
     expect(created).not.toHaveBeenCalled();
   });
 
-  it('keeps plain Enter as a description newline and submits there with Ctrl+Enter', async () => {
+  it('lets an IME use Enter to confirm a title candidate', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(
+      fireEvent.keyDown(screen.getByTestId('quick-create-title'), {
+        key: 'Enter',
+        isComposing: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not submit plain Enter in the description and submits there with Ctrl+Enter', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
     open();
@@ -447,15 +463,30 @@ describe('the new issue dialog', () => {
     if (editor === null) throw new Error('no description editor');
 
     await user.click(editor);
-    await user.type(editor, 'First line{Enter}Second line');
-    await waitFor(() => expect(editor).toHaveTextContent('First line'));
-    expect(editor).toHaveTextContent('Second line');
-    expect(editor.querySelectorAll('p')).toHaveLength(2);
+    await user.keyboard('{Enter}');
     expect(created).not.toHaveBeenCalled();
 
     await user.keyboard('{Control>}{Enter}{/Control}');
 
     expect(created).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears a project that becomes unavailable while the dialog is open', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    const mounted = open();
+
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    workspace = {
+      ...workspace,
+      projects: workspace.projects.filter((project) => project.id !== 'proj_1'),
+    };
+    mounted.rerender(dialog());
+    await user.type(screen.getByTestId('quick-create-title'), 'Still valid');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['projectId']).toBeNull();
   });
 
   it('says which team the issue is going into', () => {

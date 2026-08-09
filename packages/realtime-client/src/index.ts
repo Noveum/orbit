@@ -59,7 +59,6 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
   let status: RealtimeStatus = 'connecting';
   let attempt = 0;
   let disposed = false;
-  let resumed = false;
   let maxSeenSyncId = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -86,11 +85,9 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
 
   function handleReady(): void {
     attempt = 0;
-    const reconnected = resumed;
-    resumed = true;
     setStatus('open');
     sendSubscribe([...scopes]);
-    if (reconnected) options.onResume?.(maxSeenSyncId);
+    options.onResume?.(maxSeenSyncId);
   }
 
   function handleDelta(actions: SyncAction[]): void {

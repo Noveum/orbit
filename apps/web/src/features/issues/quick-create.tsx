@@ -236,6 +236,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
+  useEffect(() => {
+    if (projectId === null || teamId === null) return;
+    const selectedProject = projects.find((project) => project.id === projectId);
+    if (!projectSupportsTeam(selectedProject, teamId)) setProjectId(null);
+  }, [projectId, projects, teamId]);
+
   const submit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
     if (create.isPending) return;
@@ -305,6 +311,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
               if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) event.preventDefault();
             }}
             className="h-9 border-0 px-0 font-medium text-base shadow-none"
