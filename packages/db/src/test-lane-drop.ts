@@ -1,6 +1,7 @@
 import { laneSuffix } from '../../../scripts/test-env.ts';
 
 export const BASE_TEST_DATABASES = [
+  'orbit_test_catchup',
   'orbit_test_core',
   'orbit_test_svc',
   'orbit_test_rt',

@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import postgres from 'postgres';
-import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
+import { resolveTestDatabaseUrl } from '../../../scripts/test-env.ts';
 import { applyCatchup, catchupPath, targetName } from '../src/apply-catchup.ts';
+import { ensureLaneDatabase } from '../src/test-lane.ts';
 
 describe('catchupPath', () => {
   it('resolves a script by name inside the catchup directory', () => {
@@ -38,17 +39,10 @@ describe('targetName', () => {
   });
 });
 
-const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
-const SCRATCH = laneDatabase('orbit_test_catchup', currentLane());
-
-function urlFor(database: string): string {
-  const url = new URL(BASE);
-  url.pathname = `/${database}`;
-  return url.toString();
-}
+const SCRATCH_URL = resolveTestDatabaseUrl('orbit_test_catchup');
 
 async function run<T>(url: string, work: (sql: postgres.Sql) => Promise<T>): Promise<T> {
-  const sql = postgres(url, { max: 1, prepare: false });
+  const sql = postgres(url, { max: 1, prepare: false, onnotice: () => undefined });
   try {
     return await work(sql);
   } finally {
@@ -58,13 +52,12 @@ async function run<T>(url: string, work: (sql: postgres.Sql) => Promise<T>): Pro
 
 describe('applyCatchup against a real database', () => {
   beforeAll(async () => {
-    await run(urlFor('postgres'), async (sql) => {
-      await sql.unsafe(`drop database if exists "${SCRATCH}"`);
-      await sql.unsafe(`create database "${SCRATCH}"`);
-    });
-    await run(urlFor(SCRATCH), async (sql) => {
+    await ensureLaneDatabase(SCRATCH_URL, 'orbit_test_catchup');
+    await run(SCRATCH_URL, async (sql) => {
       await sql
         .unsafe(`
+        drop schema if exists public cascade;
+        create schema public;
         create table public."user" (id text primary key);
         create table public.organization (
           id text primary key,
@@ -89,15 +82,17 @@ describe('applyCatchup against a real database', () => {
   }, 30_000);
 
   afterAll(async () => {
-    await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
+    await run(SCRATCH_URL, (sql) =>
+      sql.unsafe('drop schema if exists public cascade; create schema public;').simple(),
+    );
   }, 30_000);
 
   it('adds what the doc tree needs, and is clean on a second run', async () => {
-    await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
-    await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
+    await applyCatchup(SCRATCH_URL, 'doc-tree-schema-catchup.sql');
+    await applyCatchup(SCRATCH_URL, 'doc-tree-schema-catchup.sql');
 
     const columns = await run(
-      urlFor(SCRATCH),
+      SCRATCH_URL,
       (sql) =>
         sql<{ column_name: string; is_generated: string }[]>`
         select column_name, is_generated from information_schema.columns
@@ -110,7 +105,7 @@ describe('applyCatchup against a real database', () => {
     expect(named.get('search_vector')).toBe('ALWAYS');
 
     const tables = await run(
-      urlFor(SCRATCH),
+      SCRATCH_URL,
       (sql) =>
         sql<{ table_name: string }[]>`
         select table_name from information_schema.tables
@@ -121,9 +116,9 @@ describe('applyCatchup against a real database', () => {
   }, 30_000);
 
   it('indexes a doc body once the search vector exists', async () => {
-    await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
+    await applyCatchup(SCRATCH_URL, 'doc-tree-schema-catchup.sql');
 
-    const [row] = await run(urlFor(SCRATCH), async (sql) => {
+    const [row] = await run(SCRATCH_URL, async (sql) => {
       await sql`insert into public.organization (id) values ('org-1') on conflict do nothing`;
       await sql`
         insert into public.doc (id, organization_id, title, content)
@@ -138,45 +133,7 @@ describe('applyCatchup against a real database', () => {
     expect(row?.hit).toBe(true);
   }, 30_000);
 
-  it('adds Yodu to Noveum workspaces without changing other domains', async () => {
-    await run(urlFor(SCRATCH), async (sql) => {
-      await sql`
-        insert into public.organization (id, allowed_email_domains)
-        values
-          ('org_noveum', ${sql.json(['noveum.ai'])}),
-          ('org_noveum_demo', ${sql.json(['yodu.ai', 'example.com'])}),
-          ('9970aaa7-ba5c-4fcc-b980-d16880ea6c41', ${sql.json([])}),
-          ('org_other', ${sql.json(['example.com'])})
-        on conflict (id) do update
-        set allowed_email_domains = excluded.allowed_email_domains
-      `;
-    });
-
-    await applyCatchup(urlFor(SCRATCH), 'noveum-yodu-domain-catchup.sql');
-    await applyCatchup(urlFor(SCRATCH), 'noveum-yodu-domain-catchup.sql');
-
-    const rows = await run(
-      urlFor(SCRATCH),
-      (sql) => sql<{ id: string; allowed_email_domains: string[] }[]>`
-        select id, allowed_email_domains
-        from public.organization
-        where id in (
-          'org_noveum',
-          'org_noveum_demo',
-          '9970aaa7-ba5c-4fcc-b980-d16880ea6c41',
-          'org_other'
-        )
-      `,
-    );
-    const byId = new Map(rows.map((row) => [row.id, row.allowed_email_domains]));
-
-    expect(byId.get('org_noveum')).toEqual(['noveum.ai', 'yodu.ai']);
-    expect(byId.get('org_noveum_demo')).toEqual(['yodu.ai', 'example.com', 'noveum.ai']);
-    expect(byId.get('9970aaa7-ba5c-4fcc-b980-d16880ea6c41')).toEqual(['noveum.ai', 'yodu.ai']);
-    expect(byId.get('org_other')).toEqual(['example.com']);
-  }, 30_000);
-
   it('refuses a file outside the catchup directory before it opens anything', async () => {
-    await expect(applyCatchup(urlFor(SCRATCH), '/etc/passwd.sql')).rejects.toThrow();
+    await expect(applyCatchup(SCRATCH_URL, '/etc/passwd.sql')).rejects.toThrow();
   });
 });

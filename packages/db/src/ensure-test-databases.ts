@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 
 const TEST_DATABASES = [
+  'orbit_test_catchup',
   'orbit_test_core',
   'orbit_test_svc',
   'orbit_test_rt',

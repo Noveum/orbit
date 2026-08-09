@@ -23,6 +23,7 @@ blob-report/
 .artifacts/
 
 extras/
+/private-operations/
 
 .claude/worktrees/
 

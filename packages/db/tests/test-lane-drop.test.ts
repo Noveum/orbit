@@ -22,7 +22,7 @@ describe('laneOfDatabase', () => {
     expect(laneOfDatabase(`orbit_test_rts_${mine}`)).toBe(mine);
   });
 
-  it('never reads a lane out of one of the six base databases', () => {
+  it('never reads a lane out of a base database', () => {
     for (const base of BASE_TEST_DATABASES) {
       expect(laneOfDatabase(base)).toBeUndefined();
     }
@@ -85,7 +85,7 @@ describe('databasesToDrop', () => {
     expect([...doomed].sort()).toEqual([...databasesOf(mine)].sort());
   });
 
-  it('never selects one of the six base databases', () => {
+  it('never selects a base database', () => {
     const lane = databasesToDrop(laneDropTarget([], 'wf-mine'), existing);
     const all = databasesToDrop(laneDropTarget(['--all'], undefined), existing);
     for (const base of BASE_TEST_DATABASES) {
