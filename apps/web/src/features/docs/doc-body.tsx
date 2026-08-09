@@ -6,6 +6,16 @@ import { codeHighlightClassName } from './code-theme.ts';
 import type { DocHeading } from './outline.ts';
 import { extractHeadings, sameHeadings } from './outline.ts';
 
+export const taskListClassName = cn(
+  '[&_ul[data-type=taskList]]:list-none [&_ul[data-type=taskList]]:pl-0',
+  '[&_li[data-checked]]:relative [&_li[data-checked]]:list-none [&_li[data-checked]]:pl-6',
+  '[&_li[data-checked]>label]:absolute [&_li[data-checked]>label]:top-0 [&_li[data-checked]>label]:left-0',
+  '[&_li[data-checked]>label]:flex [&_li[data-checked]>label]:h-[1.75em] [&_li[data-checked]>label]:items-center',
+  '[&_li[data-checked]>input[type=checkbox]]:absolute [&_li[data-checked]>input[type=checkbox]]:top-[0.4375em] [&_li[data-checked]>input[type=checkbox]]:left-0',
+  '[&_li[data-checked]>p>input[type=checkbox]]:absolute [&_li[data-checked]>p>input[type=checkbox]]:top-[0.4375em] [&_li[data-checked]>p>input[type=checkbox]]:left-0',
+  '[&_input[type=checkbox]]:size-3.5 [&_input[type=checkbox]]:accent-[var(--color-accent)]',
+);
+
 export const docProseClassName = cn(
   'prose-orbit max-w-none break-words text-base text-text leading-[1.75]',
   '[&_h1]:mt-10 [&_h1]:mb-3 [&_h1]:scroll-mt-24 [&_h1]:font-semibold [&_h1]:text-text [&_h1]:text-xl [&_h1]:tracking-tight',
@@ -30,12 +40,12 @@ export const docProseClassName = cn(
   '[&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_li]:pl-1',
   '[&_li>ul]:my-1 [&_li>ol]:my-1',
   '[&_li::marker]:text-faint',
-  '[&_ul:has(input)]:list-none [&_ul:has(input)]:pl-0',
-  '[&_li:has(input)]:flex [&_li:has(input)]:items-start [&_li:has(input)]:gap-2 [&_li:has(input)]:pl-0',
-  '[&_input[type=checkbox]]:mt-1.5 [&_input[type=checkbox]]:size-3.5 [&_input[type=checkbox]]:accent-[var(--color-accent)]',
+  '[&_li>p]:my-0 [&_li>div>p]:my-0 [&_li>p+p]:mt-4 [&_li>div>p+p]:mt-4',
+  taskListClassName,
   '[&_table]:my-0 [&_table]:w-full [&_table]:border-collapse [&_table]:text-dense',
   '[&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-medium [&_th]:text-text',
   '[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_td]:align-top',
+  '[&_th_p]:my-0 [&_td_p]:my-0 [&_th_p+p]:mt-2 [&_td_p+p]:mt-2',
   '[&_th[align=center]]:text-center [&_th[align=right]]:text-right',
   '[&_td[align=center]]:text-center [&_td[align=right]]:text-right',
   '[&_[data-table-scroll]]:my-5 [&_[data-table-scroll]]:overflow-x-auto [&_[data-table-scroll]]:rounded-lg [&_[data-table-scroll]]:border [&_[data-table-scroll]]:border-border',

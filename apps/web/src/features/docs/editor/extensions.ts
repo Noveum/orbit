@@ -122,10 +122,58 @@ function markCallout(root: ParentNode): void {
   }
 }
 
+const BLOCK_TAGS = new Set([
+  'P',
+  'UL',
+  'OL',
+  'DIV',
+  'BLOCKQUOTE',
+  'PRE',
+  'TABLE',
+  'DETAILS',
+  'FIGURE',
+  'HR',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+]);
+
+function isCheckbox(node: Element | null): boolean {
+  return node !== null && node.tagName === 'INPUT' && node.getAttribute('type') === 'checkbox';
+}
+
+function ownBox(item: Element): Element | null {
+  const lead = item.firstElementChild;
+  if (isCheckbox(lead)) return lead;
+  if (lead?.tagName === 'P' && isCheckbox(lead.firstElementChild)) return lead.firstElementChild;
+  return null;
+}
+
+const ELEMENT_NODE = 1;
+
+function startsABlock(node: ChildNode): boolean {
+  return node.nodeType === ELEMENT_NODE && BLOCK_TAGS.has((node as Element).tagName);
+}
+
+function wrapLeadingText(item: Element): void {
+  const paragraph = item.ownerDocument.createElement('p');
+  while (item.firstChild !== null && !startsABlock(item.firstChild)) {
+    paragraph.append(item.firstChild);
+  }
+  if ((paragraph.textContent ?? '').trim().length === 0 && item.firstElementChild !== null) {
+    item.prepend(...paragraph.childNodes);
+    return;
+  }
+  item.prepend(paragraph);
+}
+
 function markTaskLists(root: ParentNode): void {
   for (const list of root.querySelectorAll('ul')) {
     const items = [...list.children].filter((child) => child.tagName === 'LI');
-    const boxes = items.map((item) => item.querySelector('input[type=checkbox]'));
+    const boxes = items.map(ownBox);
     if (items.length === 0 || boxes.some((box) => box === null)) continue;
 
     list.setAttribute('data-type', 'taskList');
@@ -134,11 +182,7 @@ function markTaskLists(root: ParentNode): void {
       item.setAttribute('data-type', 'taskItem');
       item.setAttribute('data-checked', box?.hasAttribute('checked') === true ? 'true' : 'false');
       box?.remove();
-      if (item.firstElementChild?.tagName !== 'P') {
-        const paragraph = item.ownerDocument.createElement('p');
-        paragraph.append(...item.childNodes);
-        item.append(paragraph);
-      }
+      wrapLeadingText(item);
     });
   }
 }
