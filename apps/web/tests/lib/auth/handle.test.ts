@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { handleBaseFor, uniqueHandleFor } from '../../../src/lib/auth/handle.ts';
+import {
+  candidatesFor,
+  HANDLE_CANDIDATES,
+  handleBaseFor,
+  uniqueHandleFor,
+} from '../../../src/lib/auth/handle.ts';
 
 function nothingTaken(): Promise<Set<string>> {
   return Promise.resolve(new Set<string>());
@@ -66,5 +71,26 @@ describe('uniqueHandleFor', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[0]).toBe('ada-lovelace');
     expect(calls[0]?.[1]).toBe('ada-lovelace-2');
+  });
+});
+
+describe('candidate set', () => {
+  it('is HANDLE_CANDIDATES entries: the base plus numbered variants', () => {
+    const candidates = candidatesFor('ada-lovelace');
+    expect(candidates).toHaveLength(HANDLE_CANDIDATES);
+    expect(candidates[0]).toBe('ada-lovelace');
+    expect(candidates[1]).toBe('ada-lovelace-2');
+    expect(candidates.at(-1)).toBe(`ada-lovelace-${HANDLE_CANDIDATES}`);
+  });
+
+  it('falls back to a random suffix only once every candidate is taken', async () => {
+    const candidates = candidatesFor('ada-lovelace');
+    const handle = await uniqueHandleFor(
+      'ada@example.com',
+      'Ada Lovelace',
+      async () => new Set(candidates),
+    );
+    expect(candidates).not.toContain(handle);
+    expect(handle).toMatch(/^ada-lovelace-[0-9a-f]{10}$/);
   });
 });

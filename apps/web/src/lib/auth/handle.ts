@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { slugify } from '@orbit/shared/utils';
 
-const NUMBERED_CANDIDATES = 20;
+export const HANDLE_CANDIDATES = 20;
 
 export function handleBaseFor(email: string, name: string): string {
   return slugify(name) || slugify(email.split('@')[0] ?? '') || 'member';
 }
 
-function candidatesFor(base: string): string[] {
+export function candidatesFor(base: string): string[] {
   const numbered = Array.from(
-    { length: NUMBERED_CANDIDATES - 1 },
+    { length: HANDLE_CANDIDATES - 1 },
     (_unused, index) => `${base}-${index + 2}`,
   );
   return [base, ...numbered];
