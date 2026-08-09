@@ -1,4 +1,4 @@
-import { routePattern, type WebVitalInput } from '@orbit/shared/validators';
+import { routePattern, type WebVitalInput, type WebVitalParts } from '@orbit/shared/validators';
 
 const ENDPOINT = '/api/vitals';
 
@@ -39,6 +39,33 @@ function textField(source: unknown, field: string): string | undefined {
   return typeof held === 'string' && held.length > 0 ? held : undefined;
 }
 
+const PART_FIELDS = [
+  'timeToFirstByte',
+  'resourceLoadDelay',
+  'resourceLoadDuration',
+  'elementRenderDelay',
+  'inputDelay',
+  'processingDuration',
+  'presentationDelay',
+] as const;
+
+function partsOf(attribution: unknown): WebVitalParts | undefined {
+  if (typeof attribution !== 'object' || attribution === null) return undefined;
+  const held = attribution as Record<string, unknown>;
+  const parts: Record<string, number | string> = {};
+
+  for (const field of PART_FIELDS) {
+    const value = held[field];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      parts[field] = Math.round(value * 100) / 100;
+    }
+  }
+  const loadState = textField(attribution, 'loadState');
+  if (loadState !== undefined) parts['loadState'] = loadState.slice(0, 64);
+
+  return Object.keys(parts).length === 0 ? undefined : (parts as WebVitalParts);
+}
+
 const TRACKED = new Set(['CLS', 'INP', 'LCP', 'TTFB']);
 const RATINGS = new Set(['good', 'needs-improvement', 'poor']);
 const INTERACTIONS = new Set(['pointer', 'keyboard']);
@@ -49,7 +76,9 @@ export function toReport(metric: MetricLike, pathname: string): WebVitalInput | 
   if (!Number.isFinite(metric.value) || metric.value < 0) return null;
 
   const interaction = textField(metric.attribution, 'interactionType');
-  const target = textField(metric.attribution, 'interactionTarget');
+  const target =
+    textField(metric.attribution, 'interactionTarget') ?? textField(metric.attribution, 'target');
+  const parts = partsOf(metric.attribution);
 
   return {
     route: routePattern(pathname),
@@ -61,5 +90,6 @@ export function toReport(metric: MetricLike, pathname: string): WebVitalInput | 
       ? { interactionType: interaction as 'pointer' | 'keyboard' }
       : {}),
     ...(target !== undefined && target.length > 0 ? { target: target.slice(0, 256) } : {}),
+    ...(parts === undefined ? {} : { parts }),
   };
 }

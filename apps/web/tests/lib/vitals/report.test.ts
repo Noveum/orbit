@@ -84,3 +84,85 @@ describe('toReport', () => {
     expect(() => webVitalSchema.parse(report)).not.toThrow();
   });
 });
+
+describe('the subparts that say where the time went', () => {
+  it('carries the LCP breakdown, so a slow load can be attributed', () => {
+    const report = toReport(
+      {
+        name: 'LCP',
+        value: 7088,
+        rating: 'poor',
+        attribution: {
+          timeToFirstByte: 1874,
+          resourceLoadDelay: 120.4,
+          resourceLoadDuration: 3200,
+          elementRenderDelay: 1893.6,
+          target: 'main > div.issue-row',
+        },
+      },
+      '/my-issues',
+    );
+
+    expect(report?.parts).toEqual({
+      timeToFirstByte: 1874,
+      resourceLoadDelay: 120.4,
+      resourceLoadDuration: 3200,
+      elementRenderDelay: 1893.6,
+    });
+    expect(report?.target).toBe('main > div.issue-row');
+  });
+
+  it('carries the INP breakdown, which separates React work from paint', () => {
+    const report = toReport(
+      {
+        name: 'INP',
+        value: 1128,
+        rating: 'poor',
+        attribution: {
+          interactionType: 'pointer',
+          inputDelay: 40,
+          processingDuration: 1020,
+          presentationDelay: 68,
+        },
+      },
+      '/standup',
+    );
+
+    expect(report?.parts).toEqual({
+      inputDelay: 40,
+      processingDuration: 1020,
+      presentationDelay: 68,
+    });
+  });
+
+  it('leaves parts off entirely when the browser reported none', () => {
+    const report = toReport({ name: 'CLS', value: 0.02, rating: 'good' }, '/inbox');
+    expect(report?.parts).toBeUndefined();
+  });
+
+  it('ignores a subpart that is not a real duration', () => {
+    const report = toReport(
+      {
+        name: 'LCP',
+        value: 900,
+        rating: 'good',
+        attribution: {
+          timeToFirstByte: 200,
+          resourceLoadDelay: -5,
+          elementRenderDelay: Number.NaN,
+        },
+      },
+      '/inbox',
+    );
+
+    expect(report?.parts).toEqual({ timeToFirstByte: 200 });
+  });
+
+  it('still passes the ingest schema with parts attached', () => {
+    const report = toReport(
+      { name: 'LCP', value: 900, rating: 'good', attribution: { timeToFirstByte: 200 } },
+      '/inbox',
+    );
+    expect(() => webVitalSchema.parse(report)).not.toThrow();
+  });
+});

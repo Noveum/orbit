@@ -1,0 +1,1 @@
+ALTER TABLE "web_vital" ADD COLUMN "parts" jsonb;

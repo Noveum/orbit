@@ -35,10 +35,11 @@ export function WebVitalsReporter() {
     const started = import('web-vitals/attribution')
       .then(({ onCLS, onINP, onLCP, onTTFB }) => {
         if (stopped) return;
-        onCLS(collect);
-        onINP(collect, { durationThreshold: INP_DURATION_THRESHOLD });
-        onLCP(collect);
-        onTTFB(collect);
+        const softNavs = { reportSoftNavs: true } as const;
+        onCLS(collect, softNavs);
+        onINP(collect, { ...softNavs, durationThreshold: INP_DURATION_THRESHOLD });
+        onLCP(collect, softNavs);
+        onTTFB(collect, softNavs);
         document.addEventListener('visibilitychange', onHidden);
       })
       .catch(() => undefined);
