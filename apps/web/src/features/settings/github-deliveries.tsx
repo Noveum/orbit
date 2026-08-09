@@ -29,7 +29,7 @@ export function GithubDeliveries({
 }) {
   if (deliveries.length === 0) return null;
 
-  const ignored = deliveries.filter((entry) => entry.status === 'ignored').length;
+  const unchanged = deliveries.filter((entry) => entry.status !== 'processed').length;
 
   return (
     <section
@@ -39,9 +39,9 @@ export function GithubDeliveries({
       <div className="flex flex-col gap-1">
         <span className="font-medium text-dense text-text">Recent GitHub deliveries</span>
         <p className="text-muted text-xs">
-          {ignored === 0
+          {unchanged === 0
             ? 'Every recent delivery changed something in Orbit.'
-            : `${ignored} of the last ${deliveries.length} deliveries arrived and changed nothing. The reason is next to each one.`}
+            : `${unchanged} of the last ${deliveries.length} deliveries arrived and changed nothing. The status and reason are next to each one.`}
         </p>
       </div>
       <ul className="flex flex-col gap-1">

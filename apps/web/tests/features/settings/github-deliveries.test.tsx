@@ -58,6 +58,21 @@ describe('GithubDeliveries', () => {
     expect(screen.getAllByText('Its branch and title name no issue')).toHaveLength(2);
   });
 
+  it('counts a failed delivery among the ones that changed nothing', () => {
+    render(
+      <GithubDeliveries
+        deliveries={[delivery({ id: 'a', status: 'failed' }), delivery({ id: 'b' })]}
+      />,
+    );
+
+    expect(
+      screen.getByText(/1 of the last 2 deliveries arrived and changed nothing/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Every recent delivery changed something in Orbit.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('says so plainly when every delivery landed', () => {
     render(<GithubDeliveries deliveries={[delivery()]} />);
 
