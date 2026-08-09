@@ -168,4 +168,70 @@ describe('resolveExactTestDatabaseUrl', () => {
 
     expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('orbit_test_catchup');
   });
+
+  it('rejects an exact remote override before any database work starts', () => {
+    clear('ORBIT_TEST_LANE');
+    process.env['TEST_DATABASE_URL'] =
+      'postgres://orbit:orbit@example.test:5432/orbit_test_catchup';
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('loopback');
+  });
+
+  it('rejects an exact remote lane override before any database work starts', () => {
+    process.env['ORBIT_TEST_LANE'] = 'alpha';
+    const database = laneDatabase('orbit_test_catchup', laneSuffix('alpha'));
+    process.env['TEST_DATABASE_URL'] = `postgres://orbit:orbit@example.test:5432/${database}`;
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('loopback');
+  });
+
+  it('rejects a remote ambient URL before it can be rewritten to the exact database', () => {
+    clear('ORBIT_TEST_LANE');
+    clear('TEST_DATABASE_URL');
+    process.env['DATABASE_URL'] = 'postgres://orbit:orbit@example.test:5432/orbit';
+
+    expect(() => resolveExactTestDatabaseUrl('orbit_test_catchup')).toThrow('loopback');
+  });
+
+  it('accepts every supported loopback host', () => {
+    clear('ORBIT_TEST_LANE');
+    clear('TEST_DATABASE_URL');
+
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      process.env['DATABASE_URL'] = `postgres://orbit:orbit@${host}:5434/orbit`;
+      expect(resolveExactTestDatabaseUrl('orbit_test_catchup')).toContain('/orbit_test_catchup');
+    }
+  });
+
+  it('does not expose credentials when an explicit exact URL is malformed', () => {
+    clear('ORBIT_TEST_LANE');
+    process.env['TEST_DATABASE_URL'] =
+      'postgres://orbit:secret-marker@[invalid-host/orbit_test_catchup';
+
+    let message = '';
+    try {
+      resolveExactTestDatabaseUrl('orbit_test_catchup');
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('valid connection string');
+    expect(message).not.toContain('secret-marker');
+  });
+
+  it('does not expose credentials when a lane-derived ambient URL is malformed', () => {
+    process.env['ORBIT_TEST_LANE'] = 'alpha';
+    clear('TEST_DATABASE_URL');
+    process.env['DATABASE_URL'] = 'postgres://orbit:secret-marker@[invalid-host/orbit';
+
+    let message = '';
+    try {
+      resolveExactTestDatabaseUrl('orbit_test_catchup');
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('valid connection string');
+    expect(message).not.toContain('secret-marker');
+  });
 });

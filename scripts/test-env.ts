@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
+const LOCAL_EXACT_TEST_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 const LANE_CHARACTERS = /[^a-z0-9]+/g;
 const LANE_READABLE = 12;
@@ -17,6 +18,21 @@ function assertTestDatabase(name: string, source: string): string {
     );
   }
   return name;
+}
+
+function assertLocalExactTestUrl(candidate: string): string {
+  if (!LOCAL_EXACT_TEST_HOSTS.has(exactTestUrl(candidate).hostname)) {
+    throw new Error('The exact test database URL must use a loopback host.');
+  }
+  return candidate;
+}
+
+function exactTestUrl(candidate: string): URL {
+  try {
+    return new URL(candidate);
+  } catch {
+    throw new Error('The exact test database URL must be a valid connection string.');
+  }
 }
 
 export function laneSuffix(raw: string | undefined): string {
@@ -63,21 +79,23 @@ export function resolveExactTestDatabaseUrl(fallbackDatabase: string): string {
 
   const explicit = process.env['TEST_DATABASE_URL'];
   if (explicit !== undefined && explicit.length > 0) {
-    const configured = databaseNameOf(explicit);
+    const configured = exactTestUrl(explicit).pathname.replace(/^\//, '');
     if (configured !== database) {
       throw new Error(
         `TEST_DATABASE_URL must name exactly "${database}" for the exact current lane, not "${configured}".`,
       );
     }
-    return explicit;
+    return assertLocalExactTestUrl(explicit);
   }
 
   const ambient = process.env['DATABASE_URL'];
   if (ambient === undefined || ambient.length === 0) {
-    return `postgres://orbit:orbit@localhost:5434/${database}`;
+    return assertLocalExactTestUrl(`postgres://orbit:orbit@localhost:5434/${database}`);
   }
-  if (lane.length === 0 && databaseNameOf(ambient) === database) return ambient;
-  const url = new URL(ambient);
+  const url = exactTestUrl(ambient);
+  if (lane.length === 0 && url.pathname.replace(/^\//, '') === database) {
+    return assertLocalExactTestUrl(ambient);
+  }
   url.pathname = `/${database}`;
-  return url.toString();
+  return assertLocalExactTestUrl(url.toString());
 }
