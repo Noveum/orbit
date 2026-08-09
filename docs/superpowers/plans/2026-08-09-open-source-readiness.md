@@ -2,6 +2,8 @@
 
 > Status: proposed. This document records an audit of commit `f1bfdc3` on 2026-08-09 and a task-by-task implementation sequence. It does not claim that the remediation work is complete.
 
+> Moving-branch note: the shared working branch advanced to `9f961a1` while this audit was in progress. A targeted delta review of that exact commit was added for migration lineage, GitHub delivery diagnostics, document export, and Web Vitals. The primary inventory and full verification baseline remain pinned to `f1bfdc3` so evidence from different trees is not silently combined.
+
 **Goal:** Make Orbit safe, organization-neutral, reproducible, and supportable so a new organization can clone, configure, run, upgrade, back up, and operate it without Noveum or Yodu data, undocumented infrastructure, or vendor-specific assumptions.
 
 **Architecture:** Keep the existing Next.js application and acyclic workspace package graph. Preserve Vercel as one supported deployment profile, add a provider-neutral container profile with the existing realtime service behind the same origin, move realtime recovery to a durable PostgreSQL event log and outbox, and make committed migrations the only production schema upgrade path.
@@ -32,6 +34,7 @@ It is not ready to be advertised as a turnkey, provider-neutral self-hosted prod
 6. MCP grants, integration OAuth callbacks, uploaded avatar content, Markdown rendering, and response headers need security hardening.
 7. The current dependency audit is red, and the main CI workflow does not run every local verification gate or pin every action and image immutably.
 8. A one-click deployment can start without any usable first-login method, retention scheduler, or complete health check.
+9. The later `9f961a1` delta exposes GitHub delivery diagnostics without a tenant predicate and reuses migration index `0003` for a different schema change.
 
 No likely live credential was found in the tracked tree or Git history. Gitleaks reported only reviewed CI placeholders and published test vectors. This is a useful result, not proof that externally managed credentials have been rotated or that personal data is approved for public redistribution.
 
@@ -50,9 +53,9 @@ The first supported public release must have zero accepted P0 findings. Any acce
 
 ### Repository scope
 
-- 1,253 tracked files at audited commit `f1bfdc3`
+- 1,255 tracked files at audited commit `f1bfdc3`
 - 795 files under `apps/`
-- 364 files under `packages/`
+- 366 files under `packages/`
 - 344 tracked unit or integration test files
 - 13 Playwright specification files
 - 117 Next.js route handlers
@@ -60,6 +63,13 @@ The first supported public release must have zero accepted P0 findings. Any acce
 - Approximately 152,000 lines of TypeScript, TSX, and CSS
 
 The audit covered source, package manifests, schema and migrations, catchup SQL, scripts, tests, screenshots, documentation, GitHub workflows, Docker Compose, ignored-file behavior, the current dependency graph, and 628 Git commits for secret patterns.
+
+### Moving-branch delta
+
+- The complete file inventory, build, verification, and history scan are pinned to `f1bfdc3`.
+- The targeted `9f961a1` review covers every changed file relative to its merge base and specifically rechecks tenant isolation, migrations, new dependencies, new persistence, export behavior, and organization-specific material.
+- Findings `DB-002`, `TEN-001`, `DEP-007`, `EXP-001`, and `PRIV-002` come from that delta and are release gates even though they are not part of the primary snapshot counts.
+- Before implementation starts, choose one immutable target commit and rerun the inventory, scan, audit, build, and verification ledger. Do not use a moving branch name as release evidence.
 
 ### Validation performed
 
@@ -113,16 +123,17 @@ flowchart LR
 
 ### Workspace dependency direction
 
-```text
-shared
-  -> db
-      -> services
-          -> core
-  -> realtime-client
-  -> realtime-server
-  -> mcp-server, which also depends on core and db
-  -> web, which composes all packages
-```
+| Workspace | Direct workspace dependencies |
+| --- | --- |
+| `@orbit/shared` | None |
+| `@orbit/db` | `shared` |
+| `@orbit/services` | `db`, `shared` |
+| `@orbit/core` | `db`, `services`, `shared` |
+| `@orbit/realtime-client` | `shared` |
+| `@orbit/realtime-server` | `db`, `shared` |
+| `@orbit/mcp-server` | `core`, `db`, `shared` |
+| `@orbit/realtime` | `core`, `db`, `realtime-server`, `shared` |
+| `@orbit/web` | All workspace packages |
 
 This graph is acyclic, and no package was found importing another workspace through an internal `src` path. A large repository restructuring is not warranted. Remediation should reinforce the existing boundaries and split only the oversized modules that currently concentrate risk.
 
@@ -150,7 +161,7 @@ This graph is acyclic, and no package was found importing another workspace thro
 | Seed users, emails, workspace names, domains, assignments, and screenshots | Replace | They use Noveum identities and personal-looking data |
 | Noveum/Yodu fixed organization IDs and domain lists | Remove from public setup path | They make generic seed and import commands tenant-specific |
 | API.market, NovaSynth, team, project, timezone, and fallback-user import mappings | Move to ignored external configuration | They are source-organization policy, not Orbit behavior |
-| Tenant-specific Yodu catchup SQL | Remove from public operational commands | It targets two fixed organization IDs |
+| Tenant-specific Yodu catchup SQL | Remove from public operational commands | It targets fixed organization IDs, including a live-looking UUID |
 | Slack avatar manifest with personal names and object URLs | Remove and review history | It is a private operations artifact with uncertain redistribution rights |
 | Internal execution plans and branch/review-bot notes | Remove or distill into sanitized ADRs | Durable design belongs in public docs; internal operations do not |
 | Real-looking GitHub installations, private repository names, and personal email fixtures | Replace | Tests need synthetic values, not production-shaped identifiers |
@@ -161,17 +172,21 @@ This graph is acyclic, and no package was found importing another workspace thro
 | --- | --- | --- | --- | --- |
 | RT-001 | P0 | Realtime catch-up cannot replay hard deletes, and publish failures are swallowed after commit | `packages/core/src/work/issue-service.ts`, `packages/core/src/realtime/backfill.ts`, `apps/web/src/lib/api/handler.ts`, `apps/web/src/lib/realtime/delta-bridge.tsx` | Durable event log or tombstones, transactional outbox, retry, gap/reset semantics, failure tests |
 | DB-001 | P0 | Production docs use `db:push`, while CI tests committed migrations; catchups have no ledger | `packages/db/package.json`, `packages/db/src/apply-catchup.ts`, `packages/db/src/check-drift.ts`, `docs/self-hosting.md` | Production uses ordered migrations only, existing installs can baseline safely, drift fails closed |
+| DB-002 | P0 | Divergent branches used different `0003` migration identities, allowing a tenant-column migration to disappear during branch integration | Drizzle journal and `0003` migration history across audited branches | Collision detection, rebase policy, full catalog comparison, and upgrade tests at merge time |
 | DEP-001 | P0 | `@orbit/web` starts `bun server.js`, but that file does not exist | `apps/web/package.json`; build emits `.next/standalone/apps/web/server.js` | A tested production start command and artifact smoke test |
 | DEP-002 | P0 | The standalone Node server cannot use the Vercel-only WebSocket upgrade adapter | `apps/web/src/app/api/ws/route.ts`, installed `@vercel/functions/websocket/index.js`, `docs/self-hosting.md` | Same-origin proxy to a separately deployed realtime service for provider-neutral installs |
 | DEP-003 | P0 | No production Dockerfile or full application Compose exists | `docker-compose.yml`, `docs/self-hosting.md` | Reproducible images and a production-oriented Compose profile |
 | DEP-004 | P0 | The deploy button can create an instance with no usable first-login mechanism | `README.md`, `apps/web/src/lib/auth/server.ts`, email transport | Production validation requires at least one complete auth path |
 | DEP-005 | P1 | Development Compose binds default-credential services broadly, uses mutable MinIO tags, and implicitly parses the application `.env` | `docker-compose.yml`, `.env.example` | Loopback-only development services, separate Compose environment, immutable image pins |
+| DEP-006 | P1 | Email is Resend-only even though email is required for the default magic-link and invitation flows | `packages/services/src/email/transports.ts`, `docs/configuration.md` | Retain Resend and add a tested generic SMTP transport with local mail capture |
+| DEP-007 | P1 | The Vercel profile hardcodes the `hnd1` compute region in source | `apps/web/vercel.json` | Operator-controlled region and data-affinity choice with multi-region deployment tests |
 | PORT-001 | P0 | Seed and import tooling fixes Noveum IDs, names, domains, people, timezone, fallback user, and source mappings | `packages/db/src/noveum-workspace.ts`, `packages/db/src/seed`, `packages/db/src/import` | Fictional demo profile and argument-driven, dry-run-first importers |
 | PRIV-001 | P0 | A tracked script contains personal identities and Slack avatar object URLs; screenshots contain Noveum people and branding | `scripts/import-avatars.ts`, `docs/assets/screenshots` | Remove private manifest, replace media, complete owner and history review |
 | SEC-001 | P0 | Contributors can repeatedly register 100 MiB uploads without quota, rate, concurrency, or abandoned-object cleanup | upload constants, attachment service, `packages/db/src/prune.ts` | Durable quotas, lifecycle cleanup, reconciliation, abuse tests |
 | SEC-002 | P0 | Members can send batches of 100 invites and resend without a cooldown or durable limiter | invite validators, routes, and service | User, tenant, IP, recipient, and provider limits with safe retries |
 | SEC-003 | P0 | Existing MCP tokens can move to a newly consented tenant and retain old scopes | `packages/db/src/schema/oauth.ts`, `packages/core/src/auth/mcp-token.ts` | Immutable token-to-grant binding and revocation on re-consent or scope change |
 | SEC-004 | P0 | Integration callbacks use stored OAuth state without rechecking the user's current admin role | Slack and GitHub start/callback/connect modules | Permission recheck before exchange and again at the transactional write |
+| TEN-001 | P0 | Current GitHub delivery settings read the latest 20 delivery rows globally because delivery rows have no tenant key | `apps/web/src/features/settings/integrations-data.ts`, `packages/db/src/schema/comms.ts` | Attribute deliveries to a tenant, hide unattributed rows, and add two-tenant disclosure tests |
 | SEC-005 | P0 | Avatar uploads can spoof content type and serve active content from storage; provider avatars are fetched without SSRF or streamed-size controls | avatar routes, storage S3 driver, avatar service | Decode and transcode images, fixed MIME, isolated serving, safe outbound fetch |
 | SEC-006 | P0 | Current dependency audit includes high and moderate advisories | `bun.lock`, MCP SDK dependency graph | Upgrade or override to patched versions and make audit policy a CI gate |
 | SEC-007 | P1 | Markdown permits arbitrary CSS classes and remote images | Markdown sanitizer and document renderer | Narrow class policy and privacy-safe remote-image policy |
@@ -185,6 +200,8 @@ This graph is acyclic, and no package was found importing another workspace thro
 | SEC-015 | P1 | OAuth and integration bearer credentials and webhook secrets are stored as plaintext database fields | auth, OAuth, and comms schemas | Framework token encryption plus versioned envelope encryption and rotation for application-managed secrets |
 | SEC-016 | P1 | Cookie-authenticated custom routes have no shared Origin or fetch-metadata gate, and distributed rate limiting is limited to selected paths | API handler and auth configuration | Central unsafe-method request policy and shared abuse-control service |
 | SEC-017 | P1 | Runtime and migration database authority is not separated in the documented deployment model | database configuration and self-host docs | Least-privilege runtime roles, separate migration authority, encrypted service connections |
+| EXP-001 | P1 | PDF export does not normalize authenticated attachment URLs, ignores pdfmake's download promise, and has no bounded remote-image policy | `apps/web/src/features/docs/doc-pdf.ts`, `apps/web/src/features/docs/doc-transfer.ts`, document export tests | Faithful attachment rendering, awaited generation and save dispatch, bounded image acquisition, and end-to-end PDF verification |
+| PRIV-002 | P1 | Web Vitals records per-user soft-navigation samples, interaction targets, and detailed attribution for 90 days without an operator disable or sampling control | Web Vitals provider, report, route, schema, and prune policy | Data minimization, explicit modes and sampling, documented fields and retention, deletion and abuse controls |
 | REL-001 | P1 | `/api/health` is static, Redis may silently disable realtime, and pruning requires undocumented `CRON_SECRET` | health, publisher, cron, env docs | Liveness/readiness split, required capability validation, scheduled jobs |
 | INT-001 | P0 | GitHub setup docs request write access and a Push event that current code does not need or handle | `docs/integrations.md`, `docs/github-app.md`, GitHub services | One least-privilege permission manifest and generated/tested docs |
 | MCP-001 | P1 | Every MCP tool declares `destructiveHint: false`, including permanent deletes | MCP tool support and workspace tools | Accurate destructive, read-only, idempotent, and open-world annotations |
@@ -281,7 +298,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Define who can close each P0 finding and where evidence is recorded.
 - [ ] Test every README and docs command in a clean checkout.
 
-**Verification:** `bun run verify` and a documentation link check.
+**Verification:** `bun run verify`, documentation link check, and a stored clean-checkout command transcript produced by the executable docs-command gate.
 
 **Suggested commit:** `docs: state the current self-hosting support boundary`
 
@@ -318,7 +335,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Use GitHub security advisories for vulnerability details that should not be public before a fix.
 - [ ] Keep this implementation plan as the stable scope document and the ledger as changing execution state.
 
-**Verification:** every P0 finding has an owner and an objective close condition.
+**Verification:** every P0 and P1 finding has an owner and an objective close condition; every accepted P1 exception also has the documented owner, expiry, mitigation, and public limitation required by the release policy.
 
 **Suggested commit:** `docs: add the open source readiness ledger`
 
@@ -334,7 +351,8 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Create: `packages/db/src/seed/demo-profile.ts`
 - Modify: `packages/db/src/seed/index.ts`
 - Modify: `packages/db/src/seed/data.ts`
-- Modify: `packages/db/tests/seed/*`
+- Delete or rename: `packages/db/tests/noveum-workspace.test.ts`
+- Create: `packages/db/tests/seed/demo-profile.test.ts`
 - Modify: `docs/getting-started.md`
 - Modify: `README.md`
 - Modify: `CONTRIBUTING.md`
@@ -643,6 +661,30 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Suggested commit:** `build: separate artifact creation from deployment checks`
 
+### Task 2.9: Prevent migration identity collisions across branches
+
+**Files:**
+
+- Modify: migration generation scripts and `packages/db/package.json`
+- Create: `scripts/check-migration-lineage.ts`
+- Create: `scripts/tests/check-migration-lineage.test.ts`
+- Modify: `.github/workflows/ci.yml`
+- Modify: `CONTRIBUTING.md`
+- Modify: `docs/upgrading.md`
+
+- [ ] Add a failing fixture with two different migrations and snapshots claiming the same journal index.
+- [ ] Validate journal indexes, filenames, parent snapshot hashes, checksums, and expected schema lineage as one graph.
+- [ ] Require migration-bearing branches to regenerate on the current target branch before merge when the next index was claimed elsewhere.
+- [ ] Compare the merged full catalog against the union of intended schema changes so a clean textual merge cannot silently drop a column, constraint, or data step.
+- [ ] Treat every migration recorded by any supported installation as immutable. Never replace, rename, delete, reuse, or edit its journal slot, filename, snapshot, checksum, or SQL in place.
+- [ ] Resolve the observed `0003` collision with a later forward migration that preserves both intended changes and safely detects whether either historical change is already present.
+- [ ] Run upgrade tests from an `f1bfdc3`-migrated fixture, a `9f961a1`-migrated fixture, a catchup-applied fixture, a fresh database, and the target branch before and after every migration pull request.
+- [ ] Document how to resolve a collision without changing a migration that may already have been applied, even if no public release tag existed at the time.
+
+**Verification:** duplicate-index, divergent-snapshot, missing-migration, reordered-journal, fresh database, `f1bfdc3`, `9f961a1`, catchup-applied, and already-applied migration fixtures all converge on one complete catalog without rerunning or losing either schema change.
+
+**Suggested commit:** `ci(db): reject divergent migration lineages`
+
 ---
 
 ## Phase 3: Deliver a provider-neutral production package
@@ -710,10 +752,10 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Use multi-stage builds with an immutable Bun builder and supported Node runtime for the web and jobs artifacts.
 - [ ] Run production services as an unprivileged user with a read-only root filesystem where practical.
 - [ ] Copy only production runtime files, public assets, standalone output, migrations needed by explicit migration jobs, and licenses.
-- [ ] Add OCI source, revision, version, license, and created-time labels without embedding secrets.
+- [ ] Add OCI source, revision, version, license, and created-time labels without embedding secrets. Derive the created time from `SOURCE_DATE_EPOCH` or equivalent immutable release metadata.
 - [ ] Pin base images by supported version and release-resolved digest. Document the update process instead of leaving `latest`.
 - [ ] Add container-native health checks and graceful stop behavior.
-- [ ] Measure and record image contents and size; scan the final images rather than only the build stage.
+- [ ] Measure and record image contents and size; scan the final images rather than only the build stage. Define whether reproducibility means identical manifest and layer digests or a narrower normalized-content comparison.
 
 **Verification:** reproducible rebuild comparison where supported, container structure test, non-root assertion, health check, vulnerability scan, and license presence.
 
@@ -784,9 +826,10 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Configure `CRON_SECRET` and every shared job schedule.
 - [ ] Keep the Vercel WebSocket adapter and set an explicit maximum payload.
 - [ ] Add a staging smoke that proves `/api/ws` upgrades on the actual Vercel runtime, because local mocks cannot prove platform integration.
+- [ ] Remove the source-level `hnd1` default. Make compute region and data affinity operator-controlled, validate supported values, and document latency and residency implications.
 - [ ] Document regions, maximum connection duration, Redis dependency, and reconnect behavior using current Vercel guidance.
 
-**Verification:** a fresh disposable Vercel project passes doctor, migration, first login, upload, MCP discovery, same-origin realtime, and scheduled-job checks.
+**Verification:** fresh disposable Vercel projects in at least two configured regions pass doctor, migration, first login, upload, MCP discovery, same-origin realtime, and scheduled-job checks; repository defaults contain no deployment-specific region.
 
 **Suggested commit:** `fix(deploy): make the Vercel profile complete`
 
@@ -832,6 +875,31 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 **Verification:** restore drill creates a usable isolated instance with users, issues, docs, attachments, and realtime recovery intact.
 
 **Suggested commit:** `docs: add tested backup and recovery procedures`
+
+### Task 3.9: Add a provider-neutral email transport
+
+**Files:**
+
+- Modify: `packages/services/src/email/transports.ts`
+- Create: `packages/services/src/email/smtp.ts`
+- Modify: email tests under `packages/services/tests/email/`
+- Modify: typed capability configuration and environment examples
+- Modify: development and production Compose profiles
+- Modify: `docs/configuration.md`
+- Modify: deployment and troubleshooting guides
+
+- [ ] Keep the existing `EmailTransport` boundary and select a transport through an explicit `EMAIL_TRANSPORT=resend|smtp` configuration.
+- [ ] Add SMTP host, port, TLS mode, certificate verification, optional authentication, connection timeout, send timeout, and from-address validation as one complete capability group.
+- [ ] Require verified TLS for remote production SMTP and make insecure local mail capture an explicit development-only mode.
+- [ ] Add a local mail-capture service to the development profile so magic links and invitations work without an external account.
+- [ ] Define the transport capability and delivery state machine explicitly. SMTP has an ambiguous crash window after server acceptance but before Orbit commits `sent`, so do not promise exactly-once delivery or call the current queued-row check idempotent.
+- [ ] Choose and document at-least-once or at-most-once SMTP semantics. For the recommended at-least-once policy, use a deterministic non-sensitive HMAC-derived `Message-ID`, durable attempt records and leases, stale-claim recovery, and a clear warning that a duplicate remains possible at the acceptance boundary unless the configured provider offers reconciliation or idempotency.
+- [ ] Keep Resend as a supported adapter and hide provider-specific errors behind the shared typed transport result.
+- [ ] Document SPF, DKIM, DMARC, bounce handling, provider rate limits, and production deliverability as operator responsibilities.
+
+**Verification:** Resend contract tests; SMTP success, authentication, TLS, timeout, rejection, concurrent claim, crash-before-send, and crash-after-acceptance tests; local magic-link and invitation E2E; and production doctor checks for both transport profiles. The crash-after-acceptance assertion must match the documented duplicate-or-loss tradeoff.
+
+**Suggested commit:** `feat(email): add a generic SMTP transport`
 
 ---
 
@@ -979,7 +1047,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `apps/web/src/features/docs/doc-body.tsx`
 - Modify: Markdown tests
 - Create: remote-media policy or proxy modules only if approved
-- Modify: `docs/security/user-content.md`
+- Create: `docs/security/user-content.md`
 
 - [ ] Add failing tests for fixed full-screen overlays, high z-index content, hidden controls, pointer interception, copied application utility classes, remote tracking pixels, referrer leakage, and authenticated document viewing.
 - [ ] Remove arbitrary `class` attributes from user HTML. Allow only renderer-generated code-highlight classes through a strict token validator.
@@ -1203,6 +1271,86 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Suggested commit:** `feat(security): separate runtime infrastructure privileges`
 
+### Task 4.18: Tenant-scope GitHub delivery diagnostics
+
+**Files:**
+
+- Modify: `packages/db/src/schema/comms.ts` and add the next non-colliding ordered migration
+- Modify: `apps/web/src/app/api/webhooks/github/route.ts`
+- Modify: `apps/web/src/features/settings/integrations-data.ts`
+- Modify: GitHub delivery route and settings tests
+- Modify: tenant deletion and retention tests
+
+- [ ] Add a failing two-tenant test proving an administrator sees no delivery ID, event, status, reason, or timestamp belonging to another workspace.
+- [ ] Add a nullable tenant foreign key for deliveries that arrive before Orbit can attribute an installation. Delete or anonymize attributed diagnostics with the tenant according to the retention policy.
+- [ ] Resolve the tenant from the bound GitHub installation for every handled event and persist it atomically with delivery state changes where possible.
+- [ ] Query settings with an exact `organizationId` predicate and never show unattributed rows to a tenant.
+- [ ] Backfill only rows whose installation ownership can be proven. Leave ambiguous historical rows unattributed and subject to short retention.
+- [ ] Add a composite tenant-and-created-time index for the settings query and keep provider delivery uniqueness global.
+
+**Verification:** two tenants, unknown installation, installation reassignment prevention, tenant deletion, retention, concurrent retry, and query-plan tests.
+
+**Suggested commit:** `fix(github): isolate delivery diagnostics by workspace`
+
+### Task 4.19: Make document PDF export faithful and privacy-safe
+
+**Files:**
+
+- Modify: `apps/web/src/features/docs/doc-pdf.ts`
+- Modify: `apps/web/src/features/docs/doc-transfer.ts`
+- Modify: `apps/web/src/features/docs/doc-export-menu.tsx`
+- Create: a document-export media resolver under `apps/web/src/features/docs/`
+- Modify: `apps/web/tests/features/docs/doc-pdf.test.ts`
+- Modify: `apps/web/tests/features/docs/doc-transfer.test.ts`
+- Modify: `apps/web/tests/features/docs/doc-pdf-pipeline.test.ts`
+- Create or modify: document export Playwright coverage
+- Modify: `docs/security/user-content.md`
+
+- [ ] Add a failing export fixture containing an authorized `/api/files/...` attachment, headings, tables, code, links, Unicode, and a blocked remote image.
+- [ ] Normalize attachment references before Markdown rendering. Resolve same-tenant protected files through an authenticated, bounded fetch and convert only verified safe image types into renderer input.
+- [ ] Reuse the user-content remote-media policy. Block remote images by default; if an operator enables proxying, enforce destination validation, redirect checks, timeouts, count, total-byte, per-image, decoded-dimension, and MIME limits.
+- [ ] Do not let PDF generation send cookies, authorization headers, referrers, document contents, or tenant identifiers to an arbitrary image host.
+- [ ] Use the installed pdfmake types and `await createPdf(...).download(...)`, which already returns `Promise<void>`. Resolve after PDF generation and browser save dispatch, reject the library failure, and do not claim that application code can observe completion of the browser or operating-system download.
+- [ ] Keep the export control disabled for the entire operation, prevent duplicate downloads, make cancellation and navigation safe, and surface a useful failure without exposing internals.
+- [ ] Test the generated bytes, PDF signature, extracted title and text, page creation, embedded authorized image, blocked remote image, cleanup, and failure path instead of testing only the definition object.
+- [ ] Run the browser export under the enforced CSP and verify that it requires no unsafe external connection.
+- [ ] Preserve lazy client-only loading for the PDF libraries and fonts. Measure the export chunk separately and add a budget proving it does not enter the initial browser bundle or any shipped server bundle.
+
+**Verification:** unit tests for URL and media policy, an integration test over real generated PDF bytes, and a browser download test covering success, attachment rendering, blocked remote content, and asynchronous failure.
+
+**Suggested commit:** `fix(docs): make pdf exports complete and bounded`
+
+### Task 4.20: Make Web Vitals explicit, minimized, and bounded
+
+**Files:**
+
+- Modify: `apps/web/src/lib/vitals/provider.tsx`
+- Modify: `apps/web/src/lib/vitals/report.ts`
+- Modify: `apps/web/src/app/api/vitals/route.ts`
+- Modify: the Web Vitals validator in `packages/shared/src/validators/`
+- Modify: `packages/db/src/schema/comms.ts` and add the next non-colliding ordered migration
+- Modify: `packages/db/src/prune.ts`
+- Modify: typed configuration and `scripts/doctor.ts`
+- Modify: Web Vitals route, report, configuration, prune, and tenant-deletion tests
+- Create: `docs/operations/web-vitals.md`
+- Modify: `docs/configuration.md`
+- Modify: the public privacy and no-hidden-telemetry statement
+
+- [ ] Document every stored field, its source, collection cadence, tenant and user linkage, query audience, retention period, deletion path, and whether it can contain a selector or user-derived text.
+- [ ] Add explicit `off`, `sampled`, and `on` modes. Default a generic self-hosted install to `off` until the operator knowingly enables local collection.
+- [ ] Use a stable per-session sample decision and cap samples per page lifecycle and soft navigation. Do not record every browser callback merely because it is available.
+- [ ] Remove the user foreign key unless a reviewed operational need requires it. If retained, define the narrow purpose, access, deletion, and a shorter retention period.
+- [ ] Drop interaction target selectors by default. If diagnostic labels are retained, derive them from a fixed application-owned allowlist and never store DOM selectors, attributes, input values, document text, or arbitrary path parameters.
+- [ ] Keep route normalization strict, enumerate the numeric attribution fields that remain, and reject unknown or oversized attribution keys.
+- [ ] Add request-byte, authenticated-user, tenant, session, and storage-growth limits. A beacon that exceeds a limit must fail cheaply without retry amplification.
+- [ ] Make retention operator-configurable within safe bounds, run pruning as a required scheduled job when collection is enabled, and prove user and tenant deletion remove all linked samples.
+- [ ] Expose aggregate results only to the existing management permission, require a minimum sample count where a small cohort could identify one user, and never return raw rows through the management endpoint.
+- [ ] State plainly that metrics remain in the operator's database and are not sent to the upstream project or a third-party analytics service.
+
+**Verification:** mode and sampling tests, no-beacon test for `off`, field-minimization corpus, soft-navigation cap, oversized and rate-limit tests, two-tenant isolation, small-cohort suppression, retention, user deletion, tenant deletion, and an operator documentation review.
+
+**Suggested commit:** `feat(vitals): add explicit privacy and collection controls`
+
 ---
 
 ## Phase 5: Make CI, testing, and the supply chain release-grade
@@ -1238,15 +1386,18 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `CLAUDE.md`
 - Modify: `AGENTS.md`
 - Modify: `CONTRIBUTING.md`
+- Create: `scripts/check-test-output.ts`
+- Create: `scripts/tests/check-test-output.test.ts`
 
 - [ ] Add `verify:static` containing format/lint, comment policy, control-byte policy, Node-runtime policy, dependency checks, generated-file checks, and typechecking.
 - [ ] Define `verify` as `verify:static` plus the complete package test matrix.
 - [ ] Make CI invoke those scripts rather than maintain a handwritten subset.
 - [ ] Fail on Biome warnings and align the Biome schema version with the installed CLI.
 - [ ] Fix the current `noTemplateCurlyInString` warning in the source-byte test.
+- [ ] Fail local and CI test runs on known framework diagnostics such as React updates not wrapped in `act(...)`, unhandled rejections, and leaked handles while allowing only narrow, documented expected-error assertions.
 - [ ] Update every document to list the actual gates and jobs. Do not describe control-byte checking as file-size checking.
 
-**Verification:** intentionally break each gate in a temporary test fixture and prove both local verification and CI call the same failing command.
+**Verification:** intentionally break each static gate and emit an `act(...)` diagnostic, unhandled rejection, and leaked-resource diagnostic in temporary test fixtures; prove local verification and CI invoke the same gate and fail for each fixture.
 
 **Suggested commit:** `ci: align local and hosted verification`
 
@@ -1324,6 +1475,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - [ ] Add Gitleaks pull-request and history scans with narrow path, rule, and reason allowlists for known test vectors and CI placeholders.
 - [ ] Scan dependencies for license compatibility and generate a third-party notices report.
+- [ ] Include transitive package license files and bundled assets in the scan. Explicitly inventory `png-js`, pdfmake's embedded Roboto fonts, their licenses, and their required redistribution notices.
 - [ ] Generate CycloneDX or SPDX SBOMs for source dependencies and each release image.
 - [ ] Scan final container images for operating-system and application vulnerabilities.
 - [ ] Sign image digests and release checksums through keyless or documented protected signing.
@@ -1391,7 +1543,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Test object storage unavailable during registration, upload, completion, download, cleanup, and restore.
 - [ ] Test jobs crash after claim and after side effect but before acknowledgment.
 
-**Verification:** scheduled reliability workflow publishes a redacted result and pages an owner only on actionable failure.
+**Verification:** every migration fixture reaches the expected catalog and representative data; the restored database and object inventory reconcile; Redis, storage, and worker-crash scenarios recover as specified; the scheduled workflow records those passing drills and pages an owner only on actionable failure.
 
 **Suggested commit:** `test: automate upgrade and recovery drills`
 
@@ -1554,7 +1706,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Decide whether the blanket code-comment ban remains. Recommended policy is to permit public API documentation, security rationale, legal directives, and non-obvious invariant explanations while rejecting narration and stale commented-out code.
 - [ ] Decide whether the em-dash text rule has product value. Either enforce it with documented generated-file exceptions or remove it as a claimed build rule.
 - [ ] Document test-only `any` and non-null assertion exceptions if retained, or enforce the strict rule in test overrides.
-- [ ] Remove contradictory claims about AI tooling while preserving the repository's no-attribution rule for generated commits and content.
+- [ ] Resolve contradictory automation guidance and keep commit and content authorship requirements tool-neutral.
 - [ ] Regenerate or replace nested framework instruction files so they satisfy the same policy.
 
 **Verification:** policy contradiction test, Biome clean with zero warnings, comment-policy fixtures, and contributor review.
@@ -1731,6 +1883,7 @@ flowchart TD
   P2A --> P4
   P2B --> P5
   P3 --> P5
+  P3 --> P4
   P4 --> P5
   P3 --> P6
   P4 --> P6
@@ -1786,6 +1939,8 @@ These are relative sizes, not delivery dates.
 | Integrations | State, signature, event schemas | Tenant-bound credentials and delivery rows | GitHub and Slack happy paths | Demotion during callback, replay, concurrent webhook retry |
 | Uploads | Name, MIME, bytes, image decoder | Quota reservation and attachment ownership | Presign, complete, view, delete | Oversubscription, orphan, spoofed type, storage loss, SSRF |
 | Markdown | Sanitizer and URL policy corpus | Stored private document rendering | Keyboard and screen-reader document use | UI overlay, remote pixel, CSP violation, malicious HTML |
+| Document export | URL normalization and renderer contracts | Authorized attachment resolution | Download and inspect a real PDF | Remote image, oversized media, renderer failure, duplicate click |
+| Web Vitals | Mode, sampling, minimization, schemas | Tenant isolation, retention, deletion | Off and sampled browser sessions | Beacon flood, oversized fields, small cohort, job failure |
 | Email and invites | Template and idempotency | Durable limiter and retention | Invite, accept, recovery | Spam burst, recipient repeat, provider failure, token retention |
 | Deployment | Config and generated manifest | Migration and readiness probes | Vercel staging and container profile | Missing dependency, bad secret, restart, job crash |
 | Backup | Manifest and checksum parsing | Database and object reconciliation | Restored instance smoke | Missing object, extra object, old release, interrupted restore |
@@ -1804,6 +1959,7 @@ The supported release is not complete until these documents are accurate and tes
 - Monitoring, maintenance, capacity, and incident-response runbooks
 - System context, container, component, package, data, auth, realtime, storage, integration, MCP, and jobs architecture documents
 - Threat model, browser policy, user-content policy, retention policy, supply-chain policy, and dependency policy
+- Web Vitals field inventory, sampling, local-storage, retention, deletion, and disablement guide
 - GitHub App and Slack least-privilege setup generated from manifests
 - MCP user and operator guide
 - Branding and fork checklist
@@ -1859,6 +2015,7 @@ Release automation must additionally run Gitleaks, workflow validation, license 
 - [ ] Redis loss and missed hard deletes recover without manual refresh or stale persisted cache.
 - [ ] Production uses committed migrations only.
 - [ ] Empty and every supported prior-release database migrate to one full catalog fingerprint.
+- [ ] Migration history is immutable, duplicate slots fail CI, and fresh, `f1bfdc3`, `9f961a1`, and catchup-applied fixtures converge without losing either `0003` schema change.
 - [ ] Existing push-created installations have a safe, tested baseline path.
 - [ ] Backup and object-storage restore drills pass against a released artifact.
 
@@ -1871,6 +2028,9 @@ Release automation must additionally run Gitleaks, workflow validation, license 
 - [ ] Avatars are decoded, transcoded, size-bounded, metadata-stripped, and safely served.
 - [ ] Outbound fetches resist private-network targets, redirects, resolver ambiguity, and unbounded bodies.
 - [ ] Markdown cannot apply arbitrary layout classes or silently load remote tracking media under the default policy.
+- [ ] PDF export renders authorized attachments, awaits completion, blocks unapproved remote media, and passes a real-byte browser test.
+- [ ] Web Vitals are off by default, explicitly operator-controlled, field-minimized, sampled, bounded, tenant-isolated, and covered by retention and deletion.
+- [ ] GitHub delivery diagnostics cannot expose identifiers, statuses, reasons, or timestamps across tenants.
 - [ ] Request bodies and WebSocket frames have explicit consistent caps.
 - [ ] Browser security headers and enforced CSP pass the critical flows.
 - [ ] Account linking and credential removal cannot silently cross identities or lock out the user.
@@ -1926,6 +2086,18 @@ Release automation must additionally run Gitleaks, workflow validation, license 
 - No release tags, changelog, signed artifact workflow, SBOM, or versioned self-host image exists in the audited checkout.
 - No automated coverage threshold, accessibility scan, production-runtime E2E, migration-from-release matrix, or restore drill exists.
 
+## Targeted delta verification on the working tree based at `9f961a1`
+
+- `ORBIT_TEST_LANE=open_source_readiness_final bun run verify` exited successfully in a dedicated PostgreSQL test lane.
+- All static policies, all workspace typechecks, and all nine workspace test commands passed. The run reported 1,734 passing web tests alone and zero web failures.
+- The isolated run did not reproduce the two prune count mismatches seen when the default test database was shared with concurrent work. This confirms test-lane interference, not a product fix.
+- The current static run checked 1,232 tracked source files for control bytes and 714 shipped source files for Bun built-ins.
+- Biome still reported the one source-byte-test warning and the configuration schema version notice. Several React tests also print `act(...)` diagnostics without failing, which Task 5.2 must convert into clean, enforceable output.
+- `apps/web/tests/features/docs/doc-pdf.test.ts` contains a prohibited em-dash character even though verification passed, which is direct evidence for the policy and enforcement reconciliation in Task 6.7.
+- Two unrelated GitHub delivery presentation files were edited concurrently before the run finished. Treat this as working-tree confidence only, not immutable release evidence; rerun on the final clean commit as required above.
+- Passing verification does not close the delta findings. No existing test catches the global GitHub delivery query, the divergent `0003` histories, protected-image PDF export, or the default Web Vitals collection policy.
+- `bun audit --json` remains red at this commit. The new PDF packages did not add a newly reported advisory, but all affected transitive paths still require the Task 5.1 upgrade and reachability review.
+
 ## Final release decision
 
 Do not describe the audited commit as a turnkey supported self-hosted release. It is a strong application and contributor codebase with good tenant-policy testing, but the P0 consistency, migration, packaging, organization-neutrality, abuse-control, authorization, content-isolation, dependency, and CI gaps must be closed first.
@@ -1934,9 +2106,9 @@ The recommended release sequence is:
 
 1. Publish a clearly labeled preview boundary.
 2. Remove private and organization-specific material.
-3. land durable realtime recovery and migration-only upgrades.
-4. land the complete container and Vercel profiles.
-5. close the security and dependency gates.
-6. prove the production shape, restore, and upgrade paths in CI.
-7. independently rehearse a clean install and upgrade.
-8. publish the first signed supported release only after the readiness ledger is clear.
+3. Land durable realtime recovery and migration-only upgrades.
+4. Land the complete container and Vercel profiles.
+5. Close the security and dependency gates.
+6. Prove the production shape, restore, and upgrade paths in CI.
+7. Independently rehearse a clean install and upgrade.
+8. Publish the first signed supported release only after the readiness ledger is clear.
