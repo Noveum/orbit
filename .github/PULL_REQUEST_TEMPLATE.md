@@ -19,16 +19,16 @@ Closes #
 <!-- Complete this section only when the pull request claims to close a finding in docs/maintainers/readiness-ledger.md. Do not include undisclosed vulnerability details. Use a private GitHub Security Advisory for those details. Terminal closure and P1 exception decisions require a linked access-controlled decision record and an independent Release maintainer approver. -->
 
 - Finding ID:
-- Failing test added first for each behavior change:
-- Pre-change evidence, if applicable:
-- Passing release gate on the selected release commit:
-- Ledger update:
-- Residual risk:
-- Decision record:
-- Independent Release maintainer approver:
-- Security authority record for a security-sensitive finding, if applicable:
-- Non-behavioral `N/A` justification and independent Release maintainer approval, if applicable:
-- P1 exception owner, expiry, mitigation, public limitation, residual risk, decision record, independent approver, and security authority record where required:
+- Accountable owner reference (`principal:<key>`):
+- Implementation evidence (`implementation:record:<key>`):
+- Failing test (`test:record:<key>`) or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
+- Release-gate evidence (`gate:record:<key>`):
+- Documentation evidence (`docs:record:<key>`):
+- Residual-risk record (`risk:record:<key>`):
+- Decision record (`decision:record:<key>;implementation=principal:<key>;finding=principal:<key>;approver=principal:<key>`):
+- Independent Release approver (`approver:principal:<key>`):
+- Security authority (`authority:principal:<key>`) or `not-required`:
+- P1 exception expiry, mitigation evidence, and public limitation:
 
 ## Screenshots
 
@@ -38,10 +38,11 @@ Closes #
 
 - [ ] `bun run verify` is green
 - [ ] Tests added or updated, and they fail without the change
-- [ ] A behavior-change closure links a failing test added first. `N/A` is used only for demonstrably non-behavioral work with written justification and independent Release maintainer approval.
-- [ ] A finding-closure claim links the finding ID, passing release gate, ledger update, residual risk, decision record, and an independent Release maintainer approver distinct from the implementation and finding owner.
-- [ ] A security-sensitive finding closure links the appropriate security authority record without publishing private details.
-- [ ] Any P1 exception names its owner, expiry, mitigation, public limitation, residual risk, decision record, independent approver, and security authority record where required.
+- [ ] Every closure field uses its ledger structured reference format, not plain text.
+- [ ] A behavior-change closure links a failing test added first. Non-behavioral work has the approved structured `test-na` record.
+- [ ] The decision attests distinct implementation, finding-owner, and independent Release-approver principal references.
+- [ ] Security-required findings use the appropriate authority reference without publishing private details.
+- [ ] A P1 exception has a future expiry and matches its finding's owner, risk, decision, approver, and authority records.
 - [ ] No comments added to code, and no em-dash characters anywhere
 - [ ] No `any`, no non-null assertions
 - [ ] External input is parsed with a Zod schema from `@orbit/shared`
