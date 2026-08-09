@@ -5,12 +5,15 @@ import {
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
-import { db } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { bindGithubInstallation, replaceGithubRepositories } from '@orbit/services';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { loadGithubSettings } from '../../../src/features/settings/github-data.ts';
-import { loadIntegrationSettings } from '../../../src/features/settings/integrations-data.ts';
+import {
+  loadGithubDeliveries,
+  loadIntegrationSettings,
+} from '../../../src/features/settings/integrations-data.ts';
 
 const INSTALLATION_ID = '151887625';
 const SECRET_REPOSITORY = 'Noveum/unannounced-acquisition';
@@ -114,5 +117,115 @@ describe('loadGithubSettings', () => {
     const settings = await loadGithubSettings(workspace.admin);
 
     expect(settings.repositories.map((entry) => entry.fullName)).toEqual([SECRET_REPOSITORY]);
+  });
+});
+describe('loadGithubDeliveries', () => {
+  async function recordDelivery(overrides: {
+    readonly id: string;
+    readonly provider?: string;
+    readonly event?: string;
+    readonly status?: string;
+    readonly error?: string | null;
+    readonly createdAt?: Date;
+    readonly organizationId?: string;
+  }): Promise<void> {
+    await db.insert(schema.webhookDelivery).values({
+      id: overrides.id,
+      provider: overrides.provider ?? 'github',
+      deliveryId: `delivery-${overrides.id}`,
+      event: overrides.event ?? 'pull_request',
+      status: overrides.status ?? 'processed',
+      error: overrides.error ?? null,
+      organizationId: overrides.organizationId ?? workspace.organizationId,
+      createdAt: overrides.createdAt ?? new Date('2026-01-01T00:00:00.000Z'),
+    });
+  }
+
+  it('never hands one workspace the delivery log of another', async () => {
+    const neighbour = await createWorkspace('somebody-else');
+    await recordDelivery({ id: 'mine' });
+    await recordDelivery({ id: 'theirs', organizationId: neighbour.organizationId });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['mine']);
+    expect(await loadGithubDeliveries(neighbour.admin)).toHaveLength(1);
+  });
+
+  it('leaves a delivery nobody could attribute out of every workspace', async () => {
+    await recordDelivery({ id: 'mine' });
+    await recordDelivery({ id: 'unattributed' });
+    await db
+      .update(schema.webhookDelivery)
+      .set({ organizationId: null })
+      .where(eq(schema.webhookDelivery.id, 'unattributed'));
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['mine']);
+  });
+
+  it('gives an admin the deliveries that arrived', async () => {
+    await recordDelivery({ id: 'del_1', status: 'ignored', error: 'no_issue_identifier' });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.status).toBe('ignored');
+    expect(deliveries[0]?.reason).toBe('no_issue_identifier');
+    expect(deliveries[0]?.event).toBe('pull_request');
+  });
+
+  for (const role of ['member', 'guest'] as const) {
+    it(`tells a ${role} nothing, because a delivery log is not theirs to read`, async () => {
+      await recordDelivery({ id: 'del_1' });
+      const principal = await principalWithRole(role);
+
+      expect(await loadGithubDeliveries(principal)).toEqual([]);
+    });
+  }
+
+  it('leaves another provider out rather than calling its delivery a GitHub one', async () => {
+    await recordDelivery({ id: 'del_github' });
+    await recordDelivery({ id: 'del_slack', provider: 'slack', event: 'message' });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['del_github']);
+  });
+
+  it('puts the newest delivery first, because that is the one being diagnosed', async () => {
+    await recordDelivery({ id: 'older', createdAt: new Date('2026-01-01T00:00:00.000Z') });
+    await recordDelivery({ id: 'newest', createdAt: new Date('2026-03-01T00:00:00.000Z') });
+    await recordDelivery({ id: 'middle', createdAt: new Date('2026-02-01T00:00:00.000Z') });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries.map((entry) => entry.id)).toEqual(['newest', 'middle', 'older']);
+  });
+
+  it('stops at twenty, so one busy hour cannot bury the panel', async () => {
+    for (let index = 0; index < 25; index += 1) {
+      await recordDelivery({
+        id: `del_${index}`,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)),
+      });
+    }
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries).toHaveLength(20);
+    expect(deliveries[0]?.id).toBe('del_24');
+  });
+
+  it('hands the arrival time over as an ISO string the client can parse', async () => {
+    await recordDelivery({ id: 'del_1', createdAt: new Date('2026-05-04T09:30:00.000Z') });
+
+    const deliveries = await loadGithubDeliveries(workspace.admin);
+
+    expect(deliveries[0]?.receivedAt).toBe('2026-05-04T09:30:00.000Z');
+    expect(new Date(deliveries[0]?.receivedAt ?? '').toISOString()).toBe(
+      '2026-05-04T09:30:00.000Z',
+    );
   });
 });
