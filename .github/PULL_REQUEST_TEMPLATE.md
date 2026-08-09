@@ -21,9 +21,11 @@ Closes #
 - Finding ID:
 - Accountable owner role:
 - Accountable owner reference (`principal:<key>`):
-- Registry entries added or updated, including HTTPS links, exact evidence kinds, and release identities:
+- Registry entries added or updated, including HTTPS links, exact evidence kinds, canonical human aliases, and immutable candidate identities:
 - Implementation evidence (`implementation:record:<key>`):
-- Failing test (`test:record:<key>`) or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
+- Failing-first evidence and final passing evidence (`test:first=record:<failing-key>;passing=record:<passing-key>`), or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
+- Candidate full 40-character SHA and exact `https://github.com/Noveum/orbit/commit/<sha>` URL:
+- Final test, gate, decision, and non-behavioral run or attestation URLs and timestamps:
 - Release-gate evidence (`gate:record:<key>`):
 - Documentation evidence (`docs:record:<key>`):
 - Residual-risk record (`risk:record:<key>`):
@@ -31,6 +33,7 @@ Closes #
 - Independent Release approver (`approver:principal:<key>`):
 - Security authority (`authority:principal:<key>`) or `not-required`:
 - P1 exception expiry, mitigation evidence, and substantive public limitation:
+- Audited scope change, if any, with dedicated scope pull request, manifest version, digest, and both approvals:
 
 ## Screenshots
 
@@ -41,12 +44,17 @@ Closes #
 - [ ] `bun run verify` is green
 - [ ] Tests added or updated, and they fail without the change
 - [ ] Every closure field uses its ledger structured reference format and resolves through the registry.
-- [ ] A behavior-change closure links a failing test added first. Non-behavioral work has the approved structured `test-na` record.
-- [ ] Test and release-gate records attest selected release commit `808d714`; historical audit records appear only as risk evidence.
+- [ ] A behavior-change closure links separate failing-first and final-passing records, with failure before implementation and passing afterward. Non-behavioral work has the approved structured `test-na` record.
+- [ ] Final test, release gate, decision, and any non-behavioral attestation agree on one full immutable candidate SHA and exact commit URL. The implementation baseline is not used as a candidate.
+- [ ] Evidence timestamps order failing test, implementation, final pass or non-behavioral attestation, release gate, and decision coherently.
+- [ ] Every authored registry entry is valid, duplicate source keys are absent, and intentional human aliases point to one canonical human assignment.
+- [ ] Historical audit records appear only as residual-risk evidence.
 - [ ] Terminal owner, decision, approval, and authority principals resolve to HTTPS human assignment records with stable subject identifiers.
 - [ ] The registered owner role matches the ledger, and the implementation, finding-owner, and Release-approver subjects are distinct.
 - [ ] Security-required findings use an independent subject with the exact `Security maintainer` role without publishing private details.
 - [ ] A P1 exception has a future expiry and matches its finding's owner, risk, decision, approver, and authority records.
+- [ ] A human reviewer confirmed that every public limitation is semantically substantive, concrete, and free of placeholder wording.
+- [ ] Any scope change follows `docs/maintainers/readiness-scope-governance.md`, updates the plan, manifest version and digest, and ledger in a dedicated pull request, and has both required approvals.
 - [ ] No comments added to code, and no em-dash characters anywhere
 - [ ] No `any`, no non-null assertions
 - [ ] External input is parsed with a Zod schema from `@orbit/shared`

@@ -4,20 +4,30 @@ This is the changing execution record for the [open source readiness plan](../su
 
 ## Evidence baseline
 
-- `f1bfdc3` is the historical full-audit snapshot.
-- `9f961a1` is a targeted delta audit, not a replacement full audit.
-- `808d714`, merged at `cf0e19a`, is the selected implementation baseline.
-- Historical audit counts are not release evidence. Closure requires fresh evidence on the selected release commit.
+- `f1bfdc312f0d37f6e9076b1da002cc4bd87e190c` is the historical full-audit snapshot.
+- `9f961a1fe3dab605d5d5de3087fd6520f0940c36` is a targeted delta audit, not a replacement full audit.
+- `808d7148478889437f42369a54e0553924352eaa`, merged at `cf0e19aba629eadca9d25aa767dc0e1911bf5329`, is the implementation baseline for this readiness program. It is not a release candidate.
+- Historical audits and the implementation baseline are not terminal release evidence. Each closure requires fresh evidence for the later immutable candidate that contains the finding fix.
+
+## Audited scope
+
+The independent manifest at [`scripts/readiness-scope-manifest.ts`](../../scripts/readiness-scope-manifest.ts) pins 41 finding and priority pairs, comprising 18 P0 and 23 P1 findings. Its current version is `readiness-scope/2026-08-09-v1` and its canonical digest is `sha256:2795b5e40961a7607fc0d34cad098fd77a41cf38e457a3a2f1cf8fd99f50a74c`. The checker validates the raw plan rows, plan multiset, and ledger multiset independently against that manifest.
+
+The [readiness scope governance procedure](readiness-scope-governance.md) controls any addition, removal, or priority change. A plan and ledger edit cannot change audited scope by agreement with each other. The manifest must be revised through the dedicated review procedure, with its version and digest updated in the same change.
 
 ## Accountability and status rules
 
 Current `Open` rows use public role aliases. These aliases identify an accountable maintainer role, not an assigned person. Before a row enters a terminal status, its owner, decision principals, Release approver, and any security authority must resolve through the committed [reference registry](../../scripts/readiness-reference-registry.ts) to human assignments with stable opaque subject identifiers and HTTPS assignment-record links. The registered owner role must equal the ledger role. Release approval requires the exact `Release maintainer` role, and security authority requires the exact `Security maintainer` role. Independence is checked with subject identifiers, so alternate aliases for one person do not count as independent approval.
 
-Each evidence registry entry declares an HTTPS URL and an evidence kind matching its `record:` namespace. Terminal test, release-gate, decision, and approved non-behavioral evidence must identify selected release commit `808d714`; historical audit records can satisfy only residual-risk fields. The structured fields use `implementation:record:<key>`, `test:record:<key>`, `gate:record:<key>`, `docs:record:<key>`, `risk:record:<key>`, `approver:principal:<key>`, and `authority:principal:<key>`. A demonstrably non-behavioral change may use `test-na:record:<key>;justification=record:<key>;approver=principal:<key>` instead of a failing test.
+The registry is authored as readonly entries so duplicate source keys remain reviewable. Every record and principal, including unused entries, is validated before lookup maps are built. Human aliases point to one canonical human assignment; copied subject identifiers are not an alias model. Evidence entries declare an HTTPS URL and an evidence kind matching the `record:` namespace.
+
+An implementation record identifies when the fix was produced. A behavioral closure uses `test:first=record:<failing-test-key>;passing=record:<final-test-key>`. The failing record must predate implementation, while the final passing test, release gate, and decision must follow implementation in that order. Final test, gate, decision, and approved non-behavioral records each carry the same full 40-character candidate SHA, its exact `https://github.com/Noveum/orbit/commit/<sha>` URL, an HTTPS run or attestation URL, and a canonical observation timestamp. The baseline SHA is rejected as a candidate. A candidate is the already-created implementation and test commit, never the later registry or ledger commit that records its attestation, which avoids self-referential evidence.
+
+The other structured fields use `implementation:record:<key>`, `gate:record:<key>`, `docs:record:<key>`, `risk:record:<key>`, `approver:principal:<key>`, and `authority:principal:<key>`. A demonstrably non-behavioral change may use `test-na:record:<key>;justification=record:<key>;approver=principal:<key>` instead of a failing test. Its non-behavioral attestation, release gate, and decision must agree on the same later candidate and appear in chronological order after implementation.
 
 `Open` rows use the explicit placeholders `pending:open` and, only when security authority is not required, `not-required`. `In progress` requires linked implementation evidence while all unfinished test, gate, documentation, decision, and approver fields remain `pending:open`. No other placeholder is valid. `Ready for closure`, `Closed`, and `Accepted P1 exception` require implementation, change, release-gate, documentation, residual-risk, decision, and independent-approver records. A decision is `decision:record:<key>;implementation=principal:<key>;finding=principal:<key>;approver=principal:<key>`. Its three human subjects must differ, the finding subject must equal the accountable owner subject, and the approver subject must equal the independent approver subject.
 
-Every P0 is currently `Open` and cannot use `Accepted P1 exception`. `Security authority required` is reviewed explicitly for every finding. A security-required transition needs an independent human Security-maintainer authority; a non-security transition must use `not-required`. An accepted P1 exception needs an expiry after the checker's current UTC verification date, substantive trimmed public-limitation text, and records matching its finding's owner, residual risk, decision, approver, and authority.
+Every P0 is currently `Open` and cannot use `Accepted P1 exception`. `Security authority required` is reviewed explicitly for every finding. A security-required transition needs an independent human Security-maintainer authority; a non-security transition must use `not-required`. An accepted P1 exception needs an expiry after the checker's current UTC verification date, substantive trimmed public-limitation text, and records matching its finding's owner, residual risk, decision, approver, and authority. The checker normalizes punctuation, whitespace, and case and rejects placeholder tokens or phrases anywhere in that limitation. Human reviewers still decide whether the surviving text describes a concrete public impact and constraint; automated length and token checks cannot establish semantic substance.
 
 ## Readiness findings register
 

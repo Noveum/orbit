@@ -327,15 +327,24 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 **Files:**
 
 - Create: `docs/maintainers/readiness-ledger.md`
+- Create: `docs/maintainers/readiness-scope-governance.md`
+- Create: `scripts/readiness-scope-manifest.ts`
+- Create: `scripts/readiness-reference-registry.ts`
+- Create: `scripts/check-readiness-ledger.ts`
 - Modify: `.github/PULL_REQUEST_TEMPLATE.md`
 - Modify: `.github/ISSUE_TEMPLATE/config.yml`
+- Modify: `.github/CODEOWNERS`
 
 - [ ] Copy every P0 and P1 finding ID into a ledger with owner, status, pull request, evidence, and residual risk.
+- [ ] Pin every audited ID and priority in an independently versioned and digested manifest. Validate the raw plan rows, plan multiset, and ledger multiset against it.
+- [ ] Govern any scope addition, removal, rename, split, merge, or priority change through a dedicated pull request with both required owner approvals.
 - [ ] Require pull requests closing a finding to link the failing test added first and the passing release gate.
+- [ ] Bind terminal evidence to one full immutable post-fix candidate identity and enforce failing-test, implementation, final-pass, gate, and decision chronology.
+- [ ] Validate every authored evidence and principal registry entry before constructing lookup maps, including duplicate keys and explicit canonical human aliases.
 - [ ] Use GitHub security advisories for vulnerability details that should not be public before a fix.
 - [ ] Keep this implementation plan as the stable scope document and the ledger as changing execution state.
 
-**Verification:** every P0 and P1 finding has an owner and an objective close condition; every accepted P1 exception also has the documented owner, expiry, mitigation, and public limitation required by the release policy.
+**Verification:** the checker accepts exactly the 41 pinned P0 and P1 finding pairs, every finding has an owner and an objective close condition, terminal records agree on an immutable candidate, and every accepted P1 exception also has the documented owner, expiry, mitigation, substantive public limitation, decision, and independent approval required by the release policy.
 
 **Suggested commit:** `docs: add the open source readiness ledger`
 

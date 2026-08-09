@@ -12,3 +12,11 @@
 /apps/web/src/app/api/ws/    @imshashank @pulkitxm
 /packages/realtime-server/   @imshashank @pulkitxm
 /packages/mcp-server/        @imshashank @pulkitxm
+
+/scripts/readiness-scope-manifest.ts                                  @imshashank @pulkitxm
+/scripts/readiness-reference-registry.ts                              @imshashank @pulkitxm
+/scripts/check-readiness-ledger.ts                                    @imshashank @pulkitxm
+/docs/superpowers/plans/2026-08-09-open-source-readiness.md           @imshashank @pulkitxm
+/docs/maintainers/readiness-ledger.md                                 @imshashank @pulkitxm
+/docs/maintainers/readiness-scope-governance.md                       @imshashank @pulkitxm
+/.github/PULL_REQUEST_TEMPLATE.md                                     @imshashank @pulkitxm
