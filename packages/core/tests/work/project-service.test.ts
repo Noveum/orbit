@@ -409,6 +409,10 @@ describe('a project delta reaches only the teams that own the project', () => {
 
   it('follows the project when its teams change', async () => {
     const stranger = await outsider();
+    const { principal: formerOwner } = await addMember(workspace, 'member', {
+      name: 'Former owner',
+      teamIds: [workspace.teamId],
+    });
     const { project } = await createProject(workspace.admin, {
       name: 'Handover',
       teamIds: [workspace.teamId],
@@ -421,6 +425,30 @@ describe('a project delta reaches only the teams that own the project', () => {
     const action = actions[0];
     expect(action?.scopes).not.toContain(scopes.organization(workspace.organizationId));
     expect(action === undefined ? false : reaches(stranger, action)).toBe(true);
+    expect(action === undefined ? true : reaches(formerOwner, action)).toBe(false);
+    expect(actions.some((entry) => reaches(formerOwner, entry))).toBe(true);
+    expect(actions[1]?.data).toEqual({ id: project.id });
+  });
+
+  it('notifies the whole former workspace audience when a project gains a team', async () => {
+    const stranger = await outsider();
+    const { principal: formerViewer } = await addMember(workspace, 'member', {
+      name: 'Former viewer',
+      teamIds: [workspace.teamId],
+    });
+    const { project } = await createProject(workspace.admin, { name: 'Lockdown' });
+
+    const { actions } = await updateProject(workspace.admin, project.id, {
+      teamIds: [...stranger.teamIds],
+    });
+
+    const action = actions[0];
+    expect(action?.scopes).not.toContain(scopes.organization(workspace.organizationId));
+    expect(action === undefined ? false : reaches(stranger, action)).toBe(true);
+    expect(action === undefined ? true : reaches(formerViewer, action)).toBe(false);
+    expect(actions.some((entry) => reaches(formerViewer, entry))).toBe(true);
+    expect(actions[1]?.scopes).toContain(scopes.organization(workspace.organizationId));
+    expect(actions[1]?.data).toEqual({ id: project.id });
   });
 
   it('still reaches a member of another team when the project has no teams', async () => {

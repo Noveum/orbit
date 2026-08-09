@@ -1,10 +1,13 @@
-import { afterAll, afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
-import { ProjectSettingsForm } from '../../../src/features/projects/project-settings-form.tsx';
+import { ProjectSettingsForm } from '@/features/projects/project-settings-form.tsx';
+import { queryKeys } from '@/lib/query/keys.ts';
 
 const calls: { url: string; init: unknown }[] = [];
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -28,28 +31,33 @@ const TEAMS = [
 
 function renderForm(canManage = true) {
   render(
-    <ToastProvider>
-      <ProjectSettingsForm
-        projectId="project_1"
-        slug="atlas"
-        name="Atlas"
-        summary="The rebuild"
-        status="in_progress"
-        health="on_track"
-        startDate="2026-01-01T00:00:00.000Z"
-        targetDate={null}
-        teams={TEAMS}
-        selectedTeamIds={['team_eng']}
-        canManage={canManage}
-      />
-    </ToastProvider>,
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <ProjectSettingsForm
+          projectId="project_1"
+          slug="atlas"
+          name="Atlas"
+          summary="The rebuild"
+          status="in_progress"
+          health="on_track"
+          startDate="2026-01-01T00:00:00.000Z"
+          targetDate={null}
+          teams={TEAMS}
+          selectedTeamIds={['team_eng']}
+          canManage={canManage}
+        />
+      </ToastProvider>
+    </QueryClientProvider>,
   );
 }
 
-afterEach(() => {
-  cleanup();
+beforeEach(() => {
   calls.length = 0;
+  queryClient.clear();
+  queryClient.setQueryData(queryKeys.bootstrap(null), { projects: [] });
 });
+
+afterEach(cleanup);
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
@@ -121,6 +129,7 @@ describe('ProjectSettingsForm', () => {
     const archiveCall = calls[0];
     if (archiveCall === undefined) throw new Error('no request captured');
     expect((archiveCall.init as RequestInit).method).toBe('DELETE');
+    expect(queryClient.getQueryState(queryKeys.bootstrap(null))?.isInvalidated).toBe(true);
   });
 
   it('offers no way to save when the user cannot manage projects', () => {

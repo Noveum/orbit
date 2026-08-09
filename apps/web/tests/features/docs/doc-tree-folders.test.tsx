@@ -4,6 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { DocRowActions } from '@/features/docs/doc-row-menu.tsx';
 import { DocTree } from '@/features/docs/doc-tree.tsx';
+import {
+  collapsibleKeys,
+  docDisclosureKey,
+  groupDisclosureKey,
+} from '@/features/docs/doc-tree-model.ts';
 import type { DocCollection, DocSummary } from '@/lib/query/schemas.ts';
 import { resetSidebarDisclosure } from '@/lib/use-sidebar-disclosure.ts';
 
@@ -196,5 +201,31 @@ describe('the row menu', () => {
     render(tree([summary('a', 'Loose page')], []));
 
     expect(screen.queryByTestId('doc-row-menu-a')).toBeNull();
+  });
+});
+
+describe('collapsibleKeys', () => {
+  const docs = [
+    { id: 'parent', parentId: null },
+    { id: 'child', parentId: 'parent' },
+    { id: 'grandchild', parentId: 'child' },
+    { id: 'leaf', parentId: null },
+  ];
+
+  it('includes a nested page that itself holds pages', () => {
+    const keys = collapsibleKeys(['engineering'], docs);
+    expect(keys).toContain(docDisclosureKey('child'));
+  });
+
+  it('includes every folder', () => {
+    expect(collapsibleKeys(['engineering', 'private'], docs)).toContain(
+      groupDisclosureKey('private'),
+    );
+  });
+
+  it('leaves out pages that hold nothing, since they cannot be collapsed', () => {
+    const keys = collapsibleKeys([], docs);
+    expect(keys).not.toContain(docDisclosureKey('leaf'));
+    expect(keys).not.toContain(docDisclosureKey('grandchild'));
   });
 });

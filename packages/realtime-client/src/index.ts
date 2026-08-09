@@ -1,6 +1,7 @@
 import type {
   AuthMessage,
   ClientMessage,
+  DeliveredSyncAction,
   PresenceKind,
   PresenceMessage,
   SyncAction,
@@ -9,6 +10,7 @@ import {
   ORGANIZATION_FORBIDDEN_CLOSE_CODE,
   SESSION_REVOKED_CLOSE_CODE,
   serverMessageSchema,
+  tolerantDeltaMessageSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
 
@@ -93,8 +95,14 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     if (reconnected) options.onResume?.(maxSeenSyncId);
   }
 
-  function handleDelta(actions: SyncAction[]): void {
-    for (const action of actions) observe(action.syncId);
+  function handleDelta(delivered: DeliveredSyncAction[]): void {
+    const actions: SyncAction[] = [];
+    for (const entry of delivered) {
+      observe(entry.syncId);
+      if ('unsupported' in entry) continue;
+      actions.push(entry);
+    }
+    if (actions.length === 0) return;
     options.onDelta?.(actions);
   }
 
@@ -111,7 +119,11 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       return;
     }
     const parsed = serverMessageSchema.safeParse(parsedJson);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      const tolerated = tolerantDeltaMessageSchema.safeParse(parsedJson);
+      if (tolerated.success) handleDelta(tolerated.data.actions);
+      return;
+    }
     const message = parsed.data;
     if (message.type === 'ready') {
       handleReady();

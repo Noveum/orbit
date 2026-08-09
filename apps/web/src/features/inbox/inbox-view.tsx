@@ -35,6 +35,7 @@ import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
+import { InboxIssuePreview, issueIdentifierFromUrl } from './inbox-preview.tsx';
 
 const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
   issue_assigned: CircleDot,
@@ -211,6 +212,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   );
   const selectedIndex = visible.findIndex((row) => row.id === selectedId);
   const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
+  const previewIdentifier = current === undefined ? null : issueIdentifierFromUrl(current.url);
 
   const move = useCallback(
     (delta: number) => {
@@ -432,7 +434,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
             })}
           </ul>
 
-          <section className="flex flex-col gap-3 p-5">
+          <section className="flex min-h-0 flex-col gap-3 overflow-y-auto p-5">
             {current === undefined ? (
               <p className="text-faint text-xs">Pick a notification.</p>
             ) : (
@@ -442,7 +444,7 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                   {current.actorName} · {relativeTime(new Date(current.createdAt))}
                   {current.snoozedUntil === null ? '' : ' · snoozed'}
                 </p>
-                {current.body.length === 0 ? null : (
+                {current.body.length === 0 || previewIdentifier !== null ? null : (
                   <p className="whitespace-pre-wrap text-muted text-sm">{current.body}</p>
                 )}
                 <Link
@@ -455,6 +457,11 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
                 >
                   Open in Orbit
                 </Link>
+                {previewIdentifier === null ? null : (
+                  <div className="mt-1 border-border border-t pt-4">
+                    <InboxIssuePreview identifier={previewIdentifier} body={current.body} />
+                  </div>
+                )}
               </>
             )}
           </section>

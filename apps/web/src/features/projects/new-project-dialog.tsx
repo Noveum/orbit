@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
@@ -17,6 +18,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { invalidateBootstrap } from '@/lib/query/bootstrap-cache.ts';
 import type { ProjectTeamOption } from './project-settings-form.tsx';
 
 const createdSchema = z.object({
@@ -37,6 +39,7 @@ export function NewProjectDialog({
   label = 'New project',
 }: NewProjectDialogProps) {
   const router = useRouter();
+  const client = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
@@ -74,6 +77,7 @@ export function NewProjectDialog({
         },
       });
       const { project } = createdSchema.parse(created);
+      invalidateBootstrap(client);
       toast({ title: `Created "${project.name}"`, tone: 'success' });
       setOpen(false);
       reset();

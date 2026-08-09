@@ -131,3 +131,14 @@ export function breadcrumbOf(
     .reverse();
   return folder === undefined ? parents : [folder, ...parents];
 }
+
+export function collapsibleKeys(
+  groupIds: readonly string[],
+  docs: readonly { readonly id: string; readonly parentId: string | null }[],
+): string[] {
+  const parents = new Set(docs.flatMap((doc) => (doc.parentId === null ? [] : [doc.parentId])));
+  return [
+    ...groupIds.map(groupDisclosureKey),
+    ...docs.filter((doc) => parents.has(doc.id)).map((doc) => docDisclosureKey(doc.id)),
+  ];
+}

@@ -20,10 +20,11 @@ import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
 let capturedResume: ((since: number) => void) | null = null;
+let realtimeStatus: 'connecting' | 'open' | 'reconnecting' | 'closed' = 'open';
 const observed: number[] = [];
 
 mock.module('@orbit/realtime-client/react', () => ({
-  useRealtimeStatus: () => 'open',
+  useRealtimeStatus: () => realtimeStatus,
   useScopeSubscription: () => undefined,
   useDeltaHandler: (handler: (actions: SyncAction[]) => void) => {
     capturedHandler = handler;
@@ -103,6 +104,34 @@ function mount(): QueryClient {
   );
   return client;
 }
+
+describe('DeltaBridge first connection', () => {
+  it('refreshes bootstrap once when the initial connection becomes ready', () => {
+    realtimeStatus = 'connecting';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const seen = trackInvalidations(client);
+    const mounted = render(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+
+    realtimeStatus = 'open';
+    mounted.rerender(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+    mounted.rerender(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+
+    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+    realtimeStatus = 'open';
+  });
+});
 
 function titleIn(client: QueryClient): string | undefined {
   return client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.title;
@@ -258,6 +287,34 @@ describe('DeltaBridge doc comments', () => {
 });
 
 describe('DeltaBridge reconnect backfill', () => {
+  it('refetches caches instead of replaying current rows when no watermark exists', async () => {
+    const client = mount();
+    const invalidations: (unknown[] | null)[] = [];
+    const originalInvalidate = client.invalidateQueries.bind(client);
+    client.invalidateQueries = (filters?: Parameters<typeof originalInvalidate>[0]) => {
+      invalidations.push(filters?.queryKey === undefined ? null : [...filters.queryKey]);
+      return Promise.resolve();
+    };
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(Response.json({ syncId: 0, truncated: false, actions: [] }));
+    }) as typeof fetch;
+
+    try {
+      await act(async () => {
+        capturedResume?.(0);
+        await Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requested).toEqual([]);
+    expect(invalidations).toEqual([null]);
+  });
+
   it('replays the catch up endpoint instead of refetching the visible list', async () => {
     const client = mount();
     const seen = trackInvalidations(client);
@@ -297,7 +354,44 @@ describe('DeltaBridge reconnect backfill', () => {
       [ISSUE_FACETS_ROOT],
       [BOARD_ROOT],
       [MILESTONES_ROOT],
+      [BOOTSTRAP_ROOT],
     ]);
+  });
+
+  it('refreshes bootstrap when catch up only contains this tab own echo', async () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL) =>
+      Promise.resolve(
+        Response.json({
+          syncId: 42,
+          truncated: false,
+          actions: [
+            action({
+              syncId: 42,
+              model: 'project',
+              modelId: 'project_1',
+              originClientId: clientId(),
+              data: { id: 'project_1' },
+            }),
+          ],
+        }),
+      )) as typeof fetch;
+
+    try {
+      await act(async () => {
+        capturedResume?.(17);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
   });
 });
 

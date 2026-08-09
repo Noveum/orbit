@@ -22,6 +22,7 @@ export interface IssuePickerProps {
   readonly excludedIds: readonly string[];
   readonly placeholder?: string;
   readonly testId?: string;
+  readonly header?: ReactNode;
   readonly children: ReactNode;
 }
 
@@ -32,6 +33,7 @@ export function IssuePicker({
   excludedIds,
   placeholder = 'Search issues by title or identifier',
   testId = 'issue-picker',
+  header,
   children,
 }: IssuePickerProps) {
   const [term, setTerm] = useState('');
@@ -48,6 +50,7 @@ export function IssuePicker({
     >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="flex w-72 flex-col gap-1 p-2" data-testid={testId}>
+        {header}
         <Input
           autoFocus
           value={term}

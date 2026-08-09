@@ -87,13 +87,16 @@ describe('exporting a doc', () => {
     expect(used?.href).toBe(createdUrl);
   });
 
-  it('hands PDF to the browser print dialog rather than rendering one', async () => {
+  it('offers a PDF download rather than a print dialog', async () => {
     const print = mock(() => undefined);
     window.print = print as unknown as typeof window.print;
-    render(exportMenu('Deploy runbook', 'How we ship.'));
-    await openMenu();
 
-    await user.click(screen.getByTestId('doc-export-pdf'));
-    await waitFor(() => expect(print).toHaveBeenCalled());
+    render(exportMenu('Realtime delta protocol', '# Title'));
+    await openMenu();
+    const item = screen.getByTestId('doc-export-pdf');
+
+    expect(item.textContent).toBe('PDF');
+    expect(item.textContent?.toLowerCase()).not.toContain('print');
+    expect(print).not.toHaveBeenCalled();
   });
 });

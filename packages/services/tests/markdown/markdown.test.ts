@@ -227,3 +227,59 @@ describe('toggle blocks', () => {
     expect(html).not.toContain('<div');
   });
 });
+
+describe('task lists', () => {
+  it('labels the list and every box so one rule can lay all of them out', () => {
+    const html = renderMarkdown('- [x] done\n- [ ] todo');
+
+    expect(html).toContain('<ul data-type="taskList">');
+    expect(html).toContain('<li data-checked="true">');
+    expect(html).toContain('<li data-checked="false">');
+    expect(html).toContain('type="checkbox"');
+  });
+
+  it('leaves a plain list plain even when a task list hangs off one of its items', () => {
+    const html = renderMarkdown('- outer\n  - [ ] nested');
+
+    expect(html).toContain('<ul>\n<li>');
+    expect(html.indexOf('<ul data-type="taskList">')).toBeGreaterThan(html.indexOf('<ul>'));
+    expect(html).not.toContain('<li data-checked="false"><p>outer');
+  });
+
+  it('labels a task list nested under another task', () => {
+    const html = renderMarkdown('- [ ] top\n  - [x] child');
+
+    expect(html.match(/data-type="taskList"/g)).toHaveLength(2);
+    expect(html).toContain('data-checked="true"');
+  });
+
+  it('marks only the boxed item when a list mixes tasks with plain bullets', () => {
+    const html = renderMarkdown('- [ ] boxed\n- plain');
+
+    expect(html).not.toContain('data-type="taskList"');
+    expect(html).toContain('<li data-checked="false">');
+    expect(html).toContain('<li>plain</li>');
+  });
+
+  it('keeps an ordered list ordered and its start intact', () => {
+    expect(renderMarkdown('3. three\n4. four')).toContain('<ol start="3">');
+    expect(renderMarkdown('1. one')).toContain('<ol>');
+  });
+
+  it('leaves a numbered list its numbers even when its items carry a box', () => {
+    const html = renderMarkdown('1. [ ] first\n2. [x] second');
+
+    expect(html).toContain('<ol>');
+    expect(html).not.toContain('data-type="taskList"');
+    expect(html).not.toContain('data-checked');
+    expect(html).toContain('type="checkbox"');
+  });
+
+  it('survives the second sanitize pass a published doc goes through', () => {
+    const html = renderMarkdownWithHeadingIds('# Title\n\n- [x] done\n- [ ] todo');
+
+    expect(html).toContain('<ul data-type="taskList">');
+    expect(html).toContain('<li data-checked="true">');
+    expect(html).toContain('<li data-checked="false">');
+  });
+});

@@ -144,7 +144,8 @@ describe('applyCatchup against a real database', () => {
         insert into public.organization (id, allowed_email_domains)
         values
           ('org_noveum', ${sql.json(['noveum.ai'])}),
-          ('org_noveum_demo', ${sql.json(['noveum.ai', 'example.com'])}),
+          ('org_noveum_demo', ${sql.json(['yodu.ai', 'example.com'])}),
+          ('9970aaa7-ba5c-4fcc-b980-d16880ea6c41', ${sql.json([])}),
           ('org_other', ${sql.json(['example.com'])})
         on conflict (id) do update
         set allowed_email_domains = excluded.allowed_email_domains
@@ -159,13 +160,19 @@ describe('applyCatchup against a real database', () => {
       (sql) => sql<{ id: string; allowed_email_domains: string[] }[]>`
         select id, allowed_email_domains
         from public.organization
-        where id in ('org_noveum', 'org_noveum_demo', 'org_other')
+        where id in (
+          'org_noveum',
+          'org_noveum_demo',
+          '9970aaa7-ba5c-4fcc-b980-d16880ea6c41',
+          'org_other'
+        )
       `,
     );
     const byId = new Map(rows.map((row) => [row.id, row.allowed_email_domains]));
 
     expect(byId.get('org_noveum')).toEqual(['noveum.ai', 'yodu.ai']);
-    expect(byId.get('org_noveum_demo')).toEqual(['noveum.ai', 'example.com', 'yodu.ai']);
+    expect(byId.get('org_noveum_demo')).toEqual(['yodu.ai', 'example.com', 'noveum.ai']);
+    expect(byId.get('9970aaa7-ba5c-4fcc-b980-d16880ea6c41')).toEqual(['noveum.ai', 'yodu.ai']);
     expect(byId.get('org_other')).toEqual(['example.com']);
   }, 30_000);
 

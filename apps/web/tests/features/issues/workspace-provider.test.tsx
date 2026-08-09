@@ -1,8 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Bootstrap } from '@/lib/query/schemas.ts';
 
 mock.module('next/navigation', () => ({
@@ -11,7 +13,10 @@ mock.module('next/navigation', () => ({
 }));
 
 const realQuickCreate = { ...(await import('@/features/issues/quick-create.tsx')) };
-mock.module('@/features/issues/quick-create.tsx', () => ({ QuickCreateDialog: () => null }));
+mock.module('@/features/issues/quick-create.tsx', () => ({
+  QuickCreateDialog: ({ open }: { readonly open: boolean }) =>
+    open ? <span data-testid="quick-create-probe">Create issue</span> : null,
+}));
 
 afterAll(() => {
   mock.module('@/features/issues/quick-create.tsx', () => realQuickCreate);
@@ -23,6 +28,7 @@ const { IssueWorkspaceProvider, toOrgRole, workspaceFrom } = await import(
 const { canDeleteIssues, useIssueDeletion } = await import('@/features/issues/issue-deletion.tsx');
 
 const originalFetch = globalThis.fetch;
+const fetchBootstrap = mock(() => Promise.resolve(Response.json(bootstrap('member'))));
 
 function bootstrap(role: string): Bootstrap {
   return {
@@ -41,9 +47,8 @@ function bootstrap(role: string): Bootstrap {
 }
 
 function stubBootstrap(): void {
-  globalThis.fetch = mock(() =>
-    Promise.resolve(Response.json(bootstrap('member'))),
-  ) as unknown as typeof fetch;
+  fetchBootstrap.mockClear();
+  globalThis.fetch = fetchBootstrap as unknown as typeof fetch;
 }
 
 function Probe() {
@@ -51,8 +56,9 @@ function Probe() {
   return <span data-testid="probe">{deletion === null ? 'no provider' : 'provided'}</span>;
 }
 
-function mountShell() {
+function mountShell(seedBootstrap = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (seedBootstrap) client.setQueryData(queryKeys.bootstrap(null), bootstrap('member'));
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
@@ -79,6 +85,15 @@ describe('the issue workspace shell', () => {
     mountShell();
 
     expect((await screen.findByTestId('probe')).textContent).toBe('provided');
+  });
+
+  it('opens quick create with C without fetching cached workspace metadata again', async () => {
+    mountShell(true);
+
+    await userEvent.setup().keyboard('c');
+
+    expect(screen.getByTestId('quick-create-probe')).toBeInTheDocument();
+    expect(fetchBootstrap).not.toHaveBeenCalled();
   });
 });
 

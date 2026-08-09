@@ -230,6 +230,16 @@ function projectUpdateValues(
   return values;
 }
 
+function retiredProjectScopes(
+  organizationId: string,
+  previous: readonly string[],
+  current: readonly string[],
+): string[] {
+  if (current.includes(scopes.organization(organizationId))) return [];
+  const retained = new Set(current);
+  return previous.filter((scope) => !(scope.startsWith('project:') || retained.has(scope)));
+}
+
 export async function updateProject(
   principal: Principal,
   projectId: string,
@@ -240,6 +250,14 @@ export async function updateProject(
 
   return await db.transaction(async (tx) => {
     await assertProjectVisible(tx, principal, projectId);
+    const previousReach =
+      parsed.teamIds === undefined
+        ? null
+        : projectReachScopes(
+            principal.organizationId,
+            projectId,
+            await projectTeamIds(tx, projectId),
+          );
     const values = projectUpdateValues(parsed);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -258,21 +276,40 @@ export async function updateProject(
       await assertTeamsInOrganization(tx, principal.organizationId, parsed.teamIds);
       await replaceProjectTeams(tx, projectId, parsed.teamIds);
     }
+    const currentReach = await projectScopes(tx, project);
+    const retiredReach =
+      previousReach === null
+        ? []
+        : retiredProjectScopes(principal.organizationId, previousReach, currentReach);
+    const action = buildSyncAction({
+      syncId,
+      organizationId: principal.organizationId,
+      scopes: currentReach,
+      action: 'update',
+      model: 'project',
+      modelId: project.id,
+      data: project,
+      actor,
+    });
 
     return {
       project,
-      actions: [
-        buildSyncAction({
-          syncId,
-          organizationId: principal.organizationId,
-          scopes: await projectScopes(tx, project),
-          action: 'update',
-          model: 'project',
-          modelId: project.id,
-          data: project,
-          actor,
-        }),
-      ],
+      actions:
+        retiredReach.length === 0
+          ? [action]
+          : [
+              action,
+              buildSyncAction({
+                syncId,
+                organizationId: principal.organizationId,
+                scopes: retiredReach,
+                action: 'update',
+                model: 'project',
+                modelId: project.id,
+                data: { id: project.id },
+                actor,
+              }),
+            ],
     };
   });
 }

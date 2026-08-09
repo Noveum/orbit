@@ -3,13 +3,14 @@
 import {
   useDeltaHandler,
   useObserveSyncId,
+  useRealtimeStatus,
   useResumeHandler,
   useScopeSubscription,
 } from '@orbit/realtime-client/react';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { scopes, syncCatchupSchema } from '@orbit/shared/events';
 import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
@@ -263,6 +264,14 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const client = useQueryClient();
   const currentUserId = useCurrentUserId();
   const observeSyncId = useObserveSyncId();
+  const realtimeStatus = useRealtimeStatus();
+  const reconciledOrganization = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (realtimeStatus !== 'open' || reconciledOrganization.current === organizationId) return;
+    reconciledOrganization.current = organizationId;
+    client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
+  }, [client, organizationId, realtimeStatus]);
 
   const subscribed = useMemo(
     () => [
@@ -294,6 +303,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       }
 
       flushRoots(client, roots);
+      return roots.bootstrap;
     },
     [client, currentUserId],
   );
@@ -303,11 +313,19 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   useResumeHandler(
     useCallback(
       (since: number) => {
+        if (since === 0) {
+          client.invalidateQueries().catch(noop);
+          return;
+        }
         apiFetch(`/api/sync?since=${since}`, syncCatchupSchema)
           .then((catchup) => {
-            applyActions(catchup.actions);
+            const appliedBootstrap = applyActions(catchup.actions);
             observeSyncId(catchup.syncId);
-            if (catchup.truncated) client.invalidateQueries().catch(noop);
+            if (catchup.truncated) {
+              client.invalidateQueries().catch(noop);
+            } else if (!appliedBootstrap) {
+              client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
+            }
           })
           .catch(noop);
       },

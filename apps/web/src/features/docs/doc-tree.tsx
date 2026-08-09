@@ -9,7 +9,14 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { FileText, FolderPlus, MoreHorizontal, Search } from 'lucide-react';
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FileText,
+  FolderPlus,
+  MoreHorizontal,
+  Search,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -28,6 +35,7 @@ import type { DocRowActions } from './doc-row-menu.tsx';
 import { DocSearchResults } from './doc-search-results.tsx';
 import {
   ancestorsOf,
+  collapsibleKeys,
   type DocGroup,
   docDisclosureKey,
   docTreeOf,
@@ -130,13 +138,23 @@ export function DocTree({
     () => (showingResults ? [] : groupDocs(docs, collections)),
     [docs, collections, showingResults],
   );
-  const { isOpen, toggle, openAll } = useSidebarDisclosure();
+  const { isOpen, toggle, openAll, setAll } = useSidebarDisclosure();
 
   const collapsed = useMemo(
     () =>
       new Set(docs.filter((doc) => !isOpen(docDisclosureKey(doc.id), true)).map((doc) => doc.id)),
     [docs, isOpen],
   );
+
+  const disclosureKeys = useMemo(
+    () =>
+      collapsibleKeys(
+        groups.map((group) => group.id),
+        docs,
+      ),
+    [groups, docs],
+  );
+  const anyOpen = disclosureKeys.some((key) => isOpen(key, true));
 
   const revealed = useRef<string | null>(null);
 
@@ -200,6 +218,23 @@ export function DocTree({
             className="h-8 pl-7 text-dense"
           />
         </div>
+        <Tooltip label={anyOpen ? 'Collapse everything' : 'Expand everything'} side="bottom">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={anyOpen ? 'Collapse everything' : 'Expand everything'}
+            aria-expanded={anyOpen}
+            data-testid="toggle-all-folders"
+            onClick={() => setAll(disclosureKeys, !anyOpen)}
+            className="size-8 shrink-0 px-0"
+          >
+            {anyOpen ? (
+              <ChevronsDownUp className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronsUpDown className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        </Tooltip>
         {canWrite ? (
           <Tooltip label="New folder" side="bottom">
             <Button
