@@ -48,6 +48,7 @@ export interface RichTextEditorProps {
   readonly autoFocus?: boolean;
   readonly toolbar?: 'full' | 'compact';
   readonly toolbarCollapsed?: boolean;
+  readonly toolbarHidden?: boolean;
   readonly editable?: boolean;
   readonly ariaLabel: string;
   readonly onSubmit?: () => void;
@@ -113,6 +114,7 @@ export function RichTextEditor({
   autoFocus = false,
   toolbar,
   toolbarCollapsed = false,
+  toolbarHidden = false,
   editable = true,
   ariaLabel,
   onSubmit,
@@ -411,7 +413,7 @@ export function RichTextEditor({
         if (onUpload !== undefined) event.preventDefault();
       }}
     >
-      {toolbar !== undefined && editable && editor !== null ? (
+      {toolbar !== undefined && !toolbarHidden && editable && editor !== null ? (
         <EditorToolbar
           editor={editor}
           compact={toolbar === 'compact'}

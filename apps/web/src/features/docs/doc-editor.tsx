@@ -369,7 +369,7 @@ export function DocEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
-      {mode === 'markdown' ? (
+      {mode === 'markdown' && toolbar ? (
         <MarkdownToolbarRow
           modeSwitch={modeSwitch}
           toolbar={toolbar}
@@ -393,7 +393,7 @@ export function DocEditor({
               onForceSave={onForceSave}
               onReady={setEditor}
               toolbar="full"
-              toolbarCollapsed={!toolbar}
+              toolbarHidden={!toolbar}
               ariaLabel="Doc body"
               testId="doc-rich-editor"
               footer={footer}
