@@ -98,6 +98,29 @@ describe('GithubDeliveries', () => {
     expect(summary.textContent).toContain('1 recorded no outcome');
   });
 
+  it('shows the status, the event and when it arrived on the row itself', () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    render(
+      <GithubDeliveries
+        deliveries={[
+          delivery({
+            id: 'del_1',
+            status: 'ignored',
+            event: 'pull_request_review',
+            reason: 'no_matching_issue',
+            receivedAt: twoHoursAgo,
+          }),
+        ]}
+      />,
+    );
+
+    const row = screen.getByTestId('github-delivery-del_1');
+    expect(row.textContent).toContain('ignored');
+    expect(row.textContent).toContain('pull_request_review');
+    expect(row.textContent).toContain('2h');
+    expect(row.textContent).toContain('It names an issue this workspace does not have');
+  });
+
   it('does not call a failed delivery one that landed', () => {
     render(
       <GithubDeliveries
