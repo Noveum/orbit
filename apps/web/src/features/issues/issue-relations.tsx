@@ -21,6 +21,8 @@ export const RELATION_LABELS: Record<IssueRelationType, string> = {
   duplicated_by: 'Duplicated by',
 };
 
+const LAST_TYPE_FILLS_ITS_ROW = ISSUE_RELATION_TYPES.length % 2 === 1;
+
 export function groupRelations(
   relations: readonly IssueRelation[],
 ): { type: IssueRelationType; entries: readonly IssueRelation[] }[] {
@@ -69,9 +71,9 @@ export function IssueRelations({ issue }: IssueRelationsProps) {
             placeholder="Search for an issue to link"
             onPick={(picked) => link.mutate({ relatedIssueId: picked.id, type: linkType })}
             header={
-              <fieldset className="flex flex-wrap gap-1">
+              <fieldset className="grid grid-cols-2 gap-1">
                 <legend className="sr-only">Link type</legend>
-                {ISSUE_RELATION_TYPES.map((type) => (
+                {ISSUE_RELATION_TYPES.map((type, index) => (
                   <Button
                     key={type}
                     size="sm"
@@ -79,6 +81,11 @@ export function IssueRelations({ issue }: IssueRelationsProps) {
                     aria-pressed={type === linkType}
                     data-testid={`relation-type-${type}`}
                     onClick={() => setLinkType(type)}
+                    className={cn(
+                      LAST_TYPE_FILLS_ITS_ROW &&
+                        index === ISSUE_RELATION_TYPES.length - 1 &&
+                        'col-span-2',
+                    )}
                   >
                     {RELATION_LABELS[type]}
                   </Button>
