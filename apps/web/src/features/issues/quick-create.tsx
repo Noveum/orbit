@@ -50,8 +50,18 @@ function projectSupportsTeam(project: Project | undefined, teamId: string): bool
   );
 }
 
+function compatibleTeamId(
+  project: Project,
+  currentTeamId: string | null,
+  availableTeamIds: readonly string[],
+): string | null {
+  if (project.teamIds.length === 0) return currentTeamId;
+  if (currentTeamId !== null && project.teamIds.includes(currentTeamId)) return currentTeamId;
+  return availableTeamIds.find((teamId) => project.teamIds.includes(teamId)) ?? null;
+}
+
 function ScopePickers({
-  teamProjects,
+  projects,
   teamCycles,
   projectId,
   estimate,
@@ -60,7 +70,7 @@ function ScopePickers({
   onEstimate,
   onCycle,
 }: {
-  readonly teamProjects: readonly Project[];
+  readonly projects: readonly Project[];
   readonly teamCycles: readonly Cycle[];
   readonly projectId: string | null;
   readonly estimate: number | null;
@@ -76,15 +86,15 @@ function ScopePickers({
         options={[
           {
             id: 'none',
-            label: teamProjects.length === 0 ? 'No projects on this team' : 'No project',
+            label: projects.length === 0 ? 'No projects in this workspace' : 'No project',
           },
-          ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
+          ...projects.map((project) => ({ id: project.id, label: project.name })),
         ]}
         selected={projectId === null ? ['none'] : [projectId]}
         onSelect={(value) => onProject(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-project">
-          {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
+          {projects.find((project) => project.id === projectId)?.name ?? 'Project'}
         </button>
       </PropertyMenu>
 
@@ -239,15 +249,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
-  const teamProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) =>
-          project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
-      ),
-    [projects, teamId],
-  );
-
   const teamCycles = useMemo(
     () => cycles.filter((cycle) => cycle.teamId === teamId),
     [cycles, teamId],
@@ -259,6 +260,29 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     const selectedProject = projects.find((project) => project.id === projectId);
     if (!projectSupportsTeam(selectedProject, teamId)) setProjectId(null);
   }, [projectId, projects, teamId]);
+
+  const selectProject = (nextProjectId: string | null) => {
+    if (nextProjectId === null) {
+      setProjectId(null);
+      return;
+    }
+    const project = projects.find((entry) => entry.id === nextProjectId);
+    if (project === undefined) return;
+    const nextTeamId = compatibleTeamId(
+      project,
+      teamId,
+      teams.map((team) => team.id),
+    );
+    if (nextTeamId === null) return;
+    if (nextTeamId !== teamId) {
+      setTeamId(nextTeamId);
+      setStateId(null);
+      setEstimate(null);
+      setCycleId(null);
+      setLabelIds([]);
+    }
+    setProjectId(nextProjectId);
+  };
 
   const submit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
@@ -451,12 +475,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             </PropertyMenu>
 
             <ScopePickers
-              teamProjects={teamProjects}
+              projects={projects}
               teamCycles={teamCycles}
               projectId={projectId}
               estimate={estimate}
               cycleId={cycleId}
-              onProject={setProjectId}
+              onProject={selectProject}
               onEstimate={setEstimate}
               onCycle={setCycleId}
             />
