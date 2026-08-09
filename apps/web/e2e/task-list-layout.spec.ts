@@ -62,7 +62,7 @@ test('a task box shares its line with the task it belongs to', async ({ browser 
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await signIn(context, 'pulkit@noveum.ai');
 
-  const teamId = await teamIdByKey(page, 'eng');
+  const teamId = await teamIdByKey(page, 'ENG');
   const issue = await createIssue(page, teamId, `E2E checklist ${Date.now() % 100000}`);
   await setDescription(page, issue.id, CHECKLIST);
 
