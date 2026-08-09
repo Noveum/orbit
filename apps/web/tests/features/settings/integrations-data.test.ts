@@ -154,7 +154,7 @@ describe('loadGithubDeliveries', () => {
 
   it('leaves a delivery nobody could attribute out of every workspace', async () => {
     await recordDelivery({ id: 'mine' });
-    await recordDelivery({ id: 'unattributed', organizationId: undefined });
+    await recordDelivery({ id: 'unattributed' });
     await db
       .update(schema.webhookDelivery)
       .set({ organizationId: null })
