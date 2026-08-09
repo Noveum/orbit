@@ -5,7 +5,11 @@ import {
   githubConnectStatusOf,
   misroutedGithubInstall,
 } from '@/features/settings/github-connect-notice.tsx';
-import { loadIntegrationSettings } from '@/features/settings/integrations-data.ts';
+import { GithubDeliveries } from '@/features/settings/github-deliveries.tsx';
+import {
+  loadGithubDeliveries,
+  loadIntegrationSettings,
+} from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { mcpServerUrl } from '@/lib/env.ts';
@@ -19,9 +23,10 @@ export default async function IntegrationsSettingsPage({
   const query = await searchParams;
   const githubStatus =
     githubConnectStatusOf(query['github']) ?? (misroutedGithubInstall(query) ? 'misrouted' : null);
-  const [settings, grants] = await Promise.all([
+  const [settings, grants, deliveries] = await Promise.all([
     loadIntegrationSettings(principal),
     listMcpGrants(principal.userId),
+    loadGithubDeliveries(principal),
   ]);
   const mcpConnections = grants.map((grant) => ({
     id: grant.id,
@@ -46,6 +51,7 @@ export default async function IntegrationsSettingsPage({
         mcpUrl={mcpServerUrl()}
         mcpConnections={mcpConnections}
       />
+      <GithubDeliveries deliveries={deliveries} />
     </section>
   );
 }

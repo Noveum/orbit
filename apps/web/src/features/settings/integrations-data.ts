@@ -86,3 +86,39 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
     teams,
   };
 }
+
+export interface GithubDeliveryView {
+  readonly id: string;
+  readonly event: string;
+  readonly status: string;
+  readonly reason: string | null;
+  readonly receivedAt: string;
+}
+
+const DELIVERY_LIMIT = 20;
+
+export async function loadGithubDeliveries(
+  principal: Principal,
+): Promise<readonly GithubDeliveryView[]> {
+  if (!can(principal, 'integration:manage')) return [];
+  const rows = await db
+    .select({
+      id: schema.webhookDelivery.id,
+      event: schema.webhookDelivery.event,
+      status: schema.webhookDelivery.status,
+      error: schema.webhookDelivery.error,
+      createdAt: schema.webhookDelivery.createdAt,
+    })
+    .from(schema.webhookDelivery)
+    .where(eq(schema.webhookDelivery.provider, 'github'))
+    .orderBy(desc(schema.webhookDelivery.createdAt))
+    .limit(DELIVERY_LIMIT);
+
+  return rows.map((row) => ({
+    id: row.id,
+    event: row.event,
+    status: row.status,
+    reason: row.error,
+    receivedAt: row.createdAt.toISOString(),
+  }));
+}
