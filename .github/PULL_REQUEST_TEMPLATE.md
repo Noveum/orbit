@@ -16,14 +16,19 @@ Closes #
 
 ## Readiness finding closure
 
-<!-- Complete this section only when the pull request claims to close a finding in docs/maintainers/readiness-ledger.md. Do not include undisclosed vulnerability details. Use a private GitHub Security Advisory for those details. -->
+<!-- Complete this section only when the pull request claims to close a finding in docs/maintainers/readiness-ledger.md. Do not include undisclosed vulnerability details. Use a private GitHub Security Advisory for those details. Terminal closure and P1 exception decisions require a linked access-controlled decision record and an independent Release maintainer approver. -->
 
 - Finding ID:
-- Failing test or pre-change evidence:
+- Failing test added first for each behavior change:
+- Pre-change evidence, if applicable:
 - Passing release gate on the selected release commit:
 - Ledger update:
 - Residual risk:
-- P1 exception owner, expiry, mitigation, and public limitation, if applicable:
+- Decision record:
+- Independent Release maintainer approver:
+- Security authority record for a security-sensitive finding, if applicable:
+- Non-behavioral `N/A` justification and independent Release maintainer approval, if applicable:
+- P1 exception owner, expiry, mitigation, public limitation, residual risk, decision record, independent approver, and security authority record where required:
 
 ## Screenshots
 
@@ -33,8 +38,10 @@ Closes #
 
 - [ ] `bun run verify` is green
 - [ ] Tests added or updated, and they fail without the change
-- [ ] A finding-closure claim links the finding ID, failing test or pre-change evidence, passing release gate, ledger update, and residual risk
-- [ ] Any P1 exception names its owner, expiry, mitigation, public limitation, and residual risk
+- [ ] A behavior-change closure links a failing test added first. `N/A` is used only for demonstrably non-behavioral work with written justification and independent Release maintainer approval.
+- [ ] A finding-closure claim links the finding ID, passing release gate, ledger update, residual risk, decision record, and an independent Release maintainer approver distinct from the implementation and finding owner.
+- [ ] A security-sensitive finding closure links the appropriate security authority record without publishing private details.
+- [ ] Any P1 exception names its owner, expiry, mitigation, public limitation, residual risk, decision record, independent approver, and security authority record where required.
 - [ ] No comments added to code, and no em-dash characters anywhere
 - [ ] No `any`, no non-null assertions
 - [ ] External input is parsed with a Zod schema from `@orbit/shared`
