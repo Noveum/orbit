@@ -67,6 +67,7 @@ export interface SidebarDisclosure {
   readonly isOpen: (id: string, fallback: boolean) => boolean;
   readonly toggle: (id: string, fallback: boolean) => void;
   readonly openAll: (ids: readonly string[]) => void;
+  readonly setAll: (ids: readonly string[], open: boolean) => void;
 }
 
 export function useSidebarDisclosure(): SidebarDisclosure {
@@ -87,5 +88,13 @@ export function useSidebarDisclosure(): SidebarDisclosure {
     publish(next);
   }, []);
 
-  return { isOpen, toggle, openAll };
+  const setAll = useCallback((ids: readonly string[], open: boolean) => {
+    const now = current();
+    if (ids.every((id) => (now[id] ?? true) === open)) return;
+    const next: OpenMap = { ...now };
+    for (const id of ids) next[id] = open;
+    publish(next);
+  }, []);
+
+  return { isOpen, toggle, openAll, setAll };
 }

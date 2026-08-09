@@ -30,7 +30,8 @@ test('an editable doc still has a table of contents that navigates it', async ({
   await outline.locator('a', { hasText: 'Rules' }).first().click();
   await expect(outline.locator('[aria-current="location"]')).toHaveText('Rules');
 
-  await page.getByTestId('editor-mode-markdown').click();
+  await page.getByTestId('doc-overflow').click();
+  await page.getByTestId('doc-mode-markdown').click();
   await expect(page.getByTestId('doc-editor-input')).toBeVisible();
 
   await expect(outline.locator('a')).toHaveText([

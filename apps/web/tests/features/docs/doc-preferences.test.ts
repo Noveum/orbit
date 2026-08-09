@@ -94,3 +94,23 @@ describe('the preference store', () => {
     expect(result.current.mode).toBe('rich');
   });
 });
+
+describe('chrome above a document', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(DOC_PREFERENCES_STORAGE_KEY);
+    resetDocPreferences();
+  });
+
+  it('starts with no formatting bar, so the title sits on the text', () => {
+    expect(DEFAULT_DOC_PREFERENCES.toolbar).toBe(false);
+  });
+
+  it('remembers the bar once somebody asks for it', () => {
+    const { result } = renderHook(() => useDocPreferences());
+    act(() => result.current.toggleToolbar());
+    expect(result.current.toolbar).toBe(true);
+
+    act(() => result.current.toggleToolbar());
+    expect(result.current.toolbar).toBe(false);
+  });
+});

@@ -28,7 +28,7 @@ import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Doc, DocCollection } from '@/lib/query/schemas.ts';
 import { DocExportItems } from './doc-export-menu.tsx';
-import { type ReadingWidth, useDocPreferences } from './use-doc-preferences.ts';
+import { type EditorMode, type ReadingWidth, useDocPreferences } from './use-doc-preferences.ts';
 
 export interface DocHeaderProps {
   readonly doc: Doc;
@@ -116,6 +116,39 @@ const READING_WIDTHS: readonly { value: ReadingWidth; label: string }[] = [
   { value: 'wide', label: 'Wide' },
   { value: 'full', label: 'Full width' },
 ];
+
+const EDITOR_MODES: readonly { value: EditorMode; label: string }[] = [
+  { value: 'rich', label: 'Rendered' },
+  { value: 'markdown', label: 'Markdown source' },
+];
+
+function EditorViewItems() {
+  const { mode, setMode, toolbar, toggleToolbar } = useDocPreferences();
+  return (
+    <>
+      {EDITOR_MODES.map((option) => (
+        <DropdownMenuItem
+          key={option.value}
+          data-testid={`doc-mode-${option.value}`}
+          onSelect={() => setMode(option.value)}
+        >
+          <Check
+            className={cn('size-3.5', mode === option.value ? 'opacity-100' : 'opacity-0')}
+            aria-hidden="true"
+          />
+          {option.label}
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuItem data-testid="doc-toolbar-toggle" onSelect={toggleToolbar}>
+        <Check
+          className={cn('size-3.5', toolbar ? 'opacity-100' : 'opacity-0')}
+          aria-hidden="true"
+        />
+        Formatting bar
+      </DropdownMenuItem>
+    </>
+  );
+}
 
 function ReadingWidthItems() {
   const { width, setWidth } = useDocPreferences();
@@ -244,6 +277,8 @@ export function DocHeader({
             </>
           ) : null}
 
+          <DropdownMenuSeparator />
+          <EditorViewItems />
           <DropdownMenuSeparator />
           <ReadingWidthItems />
           <DropdownMenuSeparator />
