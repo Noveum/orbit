@@ -287,6 +287,34 @@ describe('DeltaBridge doc comments', () => {
 });
 
 describe('DeltaBridge reconnect backfill', () => {
+  it('refetches caches instead of replaying current rows when no watermark exists', async () => {
+    const client = mount();
+    const invalidations: (unknown[] | null)[] = [];
+    const originalInvalidate = client.invalidateQueries.bind(client);
+    client.invalidateQueries = (filters?: Parameters<typeof originalInvalidate>[0]) => {
+      invalidations.push(filters?.queryKey === undefined ? null : [...filters.queryKey]);
+      return Promise.resolve();
+    };
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(Response.json({ syncId: 0, truncated: false, actions: [] }));
+    }) as typeof fetch;
+
+    try {
+      await act(async () => {
+        capturedResume?.(0);
+        await Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requested).toEqual([]);
+    expect(invalidations).toEqual([null]);
+  });
+
   it('replays the catch up endpoint instead of refetching the visible list', async () => {
     const client = mount();
     const seen = trackInvalidations(client);

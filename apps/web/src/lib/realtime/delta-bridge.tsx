@@ -312,6 +312,10 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   useResumeHandler(
     useCallback(
       (since: number) => {
+        if (since === 0) {
+          client.invalidateQueries().catch(noop);
+          return;
+        }
         apiFetch(`/api/sync?since=${since}`, syncCatchupSchema)
           .then((catchup) => {
             applyActions(catchup.actions);
