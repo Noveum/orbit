@@ -303,6 +303,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       }
 
       flushRoots(client, roots);
+      return roots.bootstrap;
     },
     [client, currentUserId],
   );
@@ -318,11 +319,11 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         }
         apiFetch(`/api/sync?since=${since}`, syncCatchupSchema)
           .then((catchup) => {
-            applyActions(catchup.actions);
+            const appliedBootstrap = applyActions(catchup.actions);
             observeSyncId(catchup.syncId);
             if (catchup.truncated) {
               client.invalidateQueries().catch(noop);
-            } else if (!catchup.actions.some((action) => BOOTSTRAP_MODELS.has(action.model))) {
+            } else if (!appliedBootstrap) {
               client.invalidateQueries({ queryKey: [BOOTSTRAP_ROOT] }).catch(noop);
             }
           })

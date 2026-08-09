@@ -3,8 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { ProjectSettingsForm } from '@/features/projects/project-settings-form.tsx';
 import { queryKeys } from '@/lib/query/keys.ts';
-import { ProjectSettingsForm } from '../../../src/features/projects/project-settings-form.tsx';
 
 const calls: { url: string; init: unknown }[] = [];
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

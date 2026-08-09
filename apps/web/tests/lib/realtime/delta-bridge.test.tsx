@@ -357,6 +357,42 @@ describe('DeltaBridge reconnect backfill', () => {
       [BOOTSTRAP_ROOT],
     ]);
   });
+
+  it('refreshes bootstrap when catch up only contains this tab own echo', async () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL) =>
+      Promise.resolve(
+        Response.json({
+          syncId: 42,
+          truncated: false,
+          actions: [
+            action({
+              syncId: 42,
+              model: 'project',
+              modelId: 'project_1',
+              originClientId: clientId(),
+              data: { id: 'project_1' },
+            }),
+          ],
+        }),
+      )) as typeof fetch;
+
+    try {
+      await act(async () => {
+        capturedResume?.(17);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+  });
 });
 
 function deleteAction(id: string, identifier: string): SyncAction {

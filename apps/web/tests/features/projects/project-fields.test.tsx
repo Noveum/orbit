@@ -4,8 +4,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
+import { ProjectFields } from '@/features/projects/project-fields.tsx';
 import { queryKeys } from '@/lib/query/keys.ts';
-import { ProjectFields } from '../../../src/features/projects/project-fields.tsx';
 
 const requests: { url: string; body: unknown }[] = [];
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
