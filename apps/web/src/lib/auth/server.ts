@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
@@ -6,10 +5,9 @@ import {
   isExternalImageUrl,
   publishSessionRevoked,
 } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import { db, eq, inArray, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
-import { slugify } from '@orbit/shared/utils';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
@@ -18,6 +16,7 @@ import { magicLink, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
+import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 
 export const MCP_SCOPES = [
@@ -83,9 +82,16 @@ export const passwordAuthEnabled: boolean = serverEnv().ORBIT_PASSWORD_AUTH;
 const SIGN_IN_ATTEMPTS_PER_MINUTE = 5;
 const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
 
-function handleFor(email: string, name: string): string {
-  const base = slugify(name) || slugify(email.split('@')[0] ?? '') || 'member';
-  return `${base}-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+async function takenHandles(candidates: readonly string[]): Promise<Set<string>> {
+  const rows = await db
+    .select({ handle: schema.user.handle })
+    .from(schema.user)
+    .where(inArray(schema.user.handle, [...candidates]));
+  return new Set(rows.map((row) => row.handle));
+}
+
+function handleFor(email: string, name: string): Promise<string> {
+  return uniqueHandleFor(email, name, takenHandles);
 }
 
 function emailAndPassword() {
@@ -178,11 +184,9 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: (user) => {
+        before: async (user) => {
           assertSignUpAllowed(user.email);
-          return Promise.resolve({
-            data: { ...user, handle: handleFor(user.email, user.name) },
-          });
+          return { data: { ...user, handle: await handleFor(user.email, user.name) } };
         },
         after: async (user) => {
           const image = user.image ?? null;
