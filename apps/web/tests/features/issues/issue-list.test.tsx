@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
@@ -8,7 +8,7 @@ import { groupIssues } from '@/features/filters/grouping.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
-import { IssueList } from '../../../src/features/issues/issue-list.tsx';
+import { IssueList, SELECTION_PREFETCH_MS } from '../../../src/features/issues/issue-list.tsx';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
@@ -188,5 +188,57 @@ describe('escape on the issue list', () => {
 
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('bulk-edit-bar')).not.toBeInTheDocument());
+  });
+});
+
+describe('warming the issue the keyboard is sitting on', () => {
+  const realFetch = globalThis.fetch;
+  let asked: string[] = [];
+
+  function detailsAsked(): string[] {
+    return asked
+      .filter((url) => /\/api\/issues\/ENG-\d+$/.test(url))
+      .map((url) => url.split('/').at(-1) ?? '');
+  }
+
+  beforeEach(() => {
+    asked = [];
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      asked.push(typeof input === 'string' ? input : input.toString());
+      return Promise.resolve(
+        new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' } }),
+      );
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.fetch = realFetch;
+  });
+
+  it('fetches the detail of the row selected on arrival', async () => {
+    renderList();
+
+    await waitFor(() => {
+      expect(detailsAsked()).toContain('ENG-1');
+    });
+  });
+
+  it('fetches the next one when the selection moves', async () => {
+    const user = userEvent.setup();
+    renderList();
+    await waitFor(() => {
+      expect(detailsAsked()).toContain('ENG-1');
+    });
+
+    await user.keyboard('j');
+
+    await waitFor(() => {
+      expect(detailsAsked()).toContain('ENG-2');
+    });
+  });
+
+  it('settles fast enough to be worth doing', () => {
+    expect(SELECTION_PREFETCH_MS).toBeLessThanOrEqual(150);
   });
 });
