@@ -28,7 +28,7 @@ export function DocsShell({ canWrite, children }: DocsShellProps) {
     <DocsTreeProvider value={control}>
       <div className="relative flex h-full min-h-0" data-testid="docs-workspace">
         <DocsSidebar canWrite={canWrite} />
-        <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+        <div className="flex min-w-0 flex-1 flex-col bg-surface">{children}</div>
       </div>
     </DocsTreeProvider>
   );
