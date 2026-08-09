@@ -128,7 +128,7 @@ function targetName(url: string): string {
   }
 }
 
-export const GUARD_FLAG = '--guard-deploy';
+const GUARD_FLAG = '--guard-deploy';
 
 if (import.meta.main) {
   const guarding = process.argv.includes(GUARD_FLAG);
