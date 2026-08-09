@@ -35,6 +35,10 @@ class FakeWebSocket {
   deliver(message: ServerMessage): void {
     this.onmessage?.({ data: JSON.stringify(message) });
   }
+
+  deliverRaw(message: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(message) });
+  }
 }
 
 function wait(ms: number): Promise<void> {
@@ -64,6 +68,10 @@ function delta(syncId: number): SyncAction {
     actor: { type: 'user', id: 'user_1' },
     at: '2026-01-01T00:00:00.000Z',
   };
+}
+
+function actionOfUnknownModel(syncId: number): Record<string, unknown> {
+  return { ...delta(syncId), model: 'pull_request', modelId: 'pull_request_1' };
 }
 
 const TICKET = 'ticket_1';
@@ -274,6 +282,74 @@ describe('realtime client lifecycle', () => {
 
     expect(presence).toHaveLength(1);
     expect(client.seen()).toBe(0);
+    client.close();
+  });
+});
+
+describe('a delta carrying a model this build does not know', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    FakeWebSocket.instances = [];
+  });
+
+  it('keeps the actions it does understand instead of dropping the batch', async () => {
+    const batches: SyncAction[][] = [];
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+      maxBackoffMs: 10,
+      onDelta: (actions) => batches.push([...actions]),
+    });
+
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+    socket.deliverRaw({
+      type: 'delta',
+      actions: [delta(70), actionOfUnknownModel(71), delta(72)],
+    });
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.map((action) => action.syncId)).toEqual([70, 72]);
+    client.close();
+  });
+
+  it('advances the watermark past what it dropped, so resume does not replay it forever', async () => {
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+      maxBackoffMs: 10,
+    });
+
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+    socket.deliverRaw({ type: 'delta', actions: [delta(70), actionOfUnknownModel(71)] });
+
+    expect(client.seen()).toBe(71);
+    client.close();
+  });
+
+  it('reports nothing rather than an empty batch when it understands none of them', async () => {
+    const batches: SyncAction[][] = [];
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+      maxBackoffMs: 10,
+      onDelta: (actions) => batches.push([...actions]),
+    });
+
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+    socket.deliverRaw({ type: 'delta', actions: [actionOfUnknownModel(71)] });
+
+    expect(batches).toHaveLength(0);
+    expect(client.seen()).toBe(71);
     client.close();
   });
 });

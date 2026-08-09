@@ -162,9 +162,16 @@ const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
 const LAYOUT_DATA_ATTR = new Set(['data-table-scroll', 'data-code-block', 'data-code-language']);
 
-function attributeAllowed(tag: string, key: string): boolean {
+const TASK_DATA_ATTR = new Map([
+  ['data-type', { tag: 'ul', values: new Set(['taskList']) }],
+  ['data-checked', { tag: 'li', values: new Set(['true', 'false']) }],
+]);
+
+function attributeAllowed(tag: string, key: string, value: string): boolean {
   if (key === 'id') return HEADING_TAGS.has(tag);
   if (LAYOUT_DATA_ATTR.has(key)) return tag === 'div' || tag === 'span';
+  const task = TASK_DATA_ATTR.get(key);
+  if (task !== undefined) return tag === task.tag && task.values.has(value);
   return ALLOWED_ATTR.has(key);
 }
 
@@ -176,7 +183,7 @@ function keptAttributes(
   for (const [name, value] of present) {
     const key = name.toLowerCase();
     if (keep.has(key)) continue;
-    if (!attributeAllowed(tag, key)) continue;
+    if (!attributeAllowed(tag, key, value)) continue;
     if (URL_ATTR.has(key) && !isSafeUrl(value)) continue;
     keep.set(key, value);
   }

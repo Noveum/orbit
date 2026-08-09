@@ -80,12 +80,54 @@ describe('the empty pull request page explaining itself', () => {
     expect(screen.queryByText('No repository is being tracked')).not.toBeInTheDocument();
   });
 
-  it('says what makes a pull request link once a repository is tracked', () => {
+  it('says what makes a pull request link once every repository is tracked', () => {
     render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
 
     expect(screen.getByText('No pull requests linked to your issues')).toBeInTheDocument();
     expect(screen.getByText(/branch or title names an issue/)).toBeInTheDocument();
+  });
+
+  it('offers the route to integrations even when naming is the only thing left to fix', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    expect(screen.getByTestId('pulls-connect-github')).toHaveAttribute(
+      'href',
+      '/settings/integrations',
+    );
+  });
+
+  it('names the untracked repository as well as naming, never one instead of the other', () => {
+    render(
+      <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
+    );
+
+    expect(screen.getByText(/has to name an issue/)).toBeInTheDocument();
+    expect(screen.getByText(/reports the delivery as accepted/)).toBeInTheDocument();
+    expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
+  });
+
+  it('tells a member who cannot track repositories to ask an admin', () => {
+    render(
+      <PullsView
+        pulls={[]}
+        userId="user_1"
+        reach="repositories_untracked"
+        canManageIntegrations={false}
+      />,
+    );
+
+    expect(screen.getByText(/workspace admin picks which ones to track/)).toBeInTheDocument();
     expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
+  });
+
+  it('never asserts naming is the only remaining cause while a repository is untracked', () => {
+    render(
+      <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
+    );
+
+    expect(
+      screen.queryByText(/Copy branch name on an issue gives you one that matches/),
+    ).toBeNull();
   });
 
   it('sends a member who cannot manage integrations to an admin rather than a dead end', () => {

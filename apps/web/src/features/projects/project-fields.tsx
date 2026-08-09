@@ -2,6 +2,7 @@
 
 import type { ProjectStatus } from '@orbit/shared/constants';
 import { PROJECT_STATUSES } from '@orbit/shared/constants';
+import { useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
@@ -18,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
+import { invalidateBootstrap } from '@/lib/query/bootstrap-cache.ts';
 import { formatDay } from './dates.ts';
 import { STATUS_LABELS } from './health-chip.tsx';
 
@@ -91,13 +93,17 @@ function Field({ label, children }: { readonly label: string; readonly children:
 
 export function useProjectPatch(projectId: string) {
   const router = useRouter();
+  const client = useQueryClient();
   const { toast } = useToast();
   const [pending, setPending] = useState(false);
 
   const patch = (body: Record<string, unknown>) => {
     setPending(true);
     apiRequest(`/api/projects/${projectId}`, { method: 'PATCH', body })
-      .then(() => router.refresh())
+      .then(() => {
+        invalidateBootstrap(client);
+        router.refresh();
+      })
       .catch((error: unknown) =>
         toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' }),
       )

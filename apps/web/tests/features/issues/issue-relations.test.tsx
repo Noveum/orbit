@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
 import { render } from '@/test/render.tsx';
 
@@ -67,17 +68,22 @@ interface Call {
 
 const originalFetch = globalThis.fetch;
 const calls: Call[] = [];
+const bodies: unknown[] = [];
 let served: readonly IssueRelation[] = [];
+let searchable: readonly Issue[] = [];
 
 function stubFetch(): void {
   calls.length = 0;
+  bodies.length = 0;
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     calls.push({ url, method });
+    if (typeof init?.body === 'string') bodies.push(JSON.parse(init.body));
     if (method === 'DELETE') served = [];
+    const payload = url.includes('/relations') ? { relations: served } : { issues: searchable };
     return Promise.resolve(
-      new Response(JSON.stringify({ relations: served }), {
+      new Response(JSON.stringify(payload), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),
@@ -131,6 +137,35 @@ describe('IssueRelations', () => {
     const removal = calls.find((call) => call.method === 'DELETE');
     expect(removal?.url).toContain('relatedIssueId=issue_2');
     expect(removal?.url).toContain('type=blocks');
+  });
+
+  it('holds the search open after a link type is chosen', async () => {
+    served = [];
+    stubFetch();
+    const user = userEvent.setup();
+
+    render(<IssueRelations issue={issue()} />);
+    await user.click(await screen.findByTestId('add-relation'));
+    await user.click(await screen.findByTestId('relation-type-blocked_by'));
+
+    expect(await screen.findByTestId('relation-picker-search')).toBeInTheDocument();
+  });
+
+  it('links the picked issue under the chosen type', async () => {
+    served = [];
+    searchable = [issue({ id: 'issue_2', identifier: 'ENG-2', title: 'Downstream work' })];
+    stubFetch();
+    const user = userEvent.setup();
+
+    render(<IssueRelations issue={issue()} />);
+    await user.click(await screen.findByTestId('add-relation'));
+    await user.click(await screen.findByTestId('relation-type-duplicate_of'));
+    await user.type(await screen.findByTestId('relation-picker-search'), 'downstream');
+    const options = await screen.findAllByTestId(/^relation-picker-option-/);
+    await user.click(options[0] as HTMLElement);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(bodies.at(-1)).toMatchObject({ type: 'duplicate_of' });
   });
 
   it('never renders a link the server did not send', async () => {
