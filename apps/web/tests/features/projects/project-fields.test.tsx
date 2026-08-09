@@ -1,11 +1,14 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
-import { ProjectFields } from '../../../src/features/projects/project-fields.tsx';
+import { ProjectFields } from '@/features/projects/project-fields.tsx';
+import { queryKeys } from '@/lib/query/keys.ts';
 
 const requests: { url: string; body: unknown }[] = [];
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -38,28 +41,32 @@ const teams = [
 
 function fields(overrides: Record<string, unknown> = {}) {
   return (
-    <ToastProvider>
-      <TooltipProvider>
-        <ProjectFields
-          projectId="project_1"
-          lead={null}
-          startDate={null}
-          targetDate="2026-10-10"
-          status="planned"
-          teamIds={['team_1']}
-          members={members}
-          teams={teams}
-          canManage
-          progress={<span>progress</span>}
-          {...overrides}
-        />
-      </TooltipProvider>
-    </ToastProvider>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <TooltipProvider>
+          <ProjectFields
+            projectId="project_1"
+            lead={null}
+            startDate={null}
+            targetDate="2026-10-10"
+            status="planned"
+            teamIds={['team_1']}
+            members={members}
+            teams={teams}
+            canManage
+            progress={<span>progress</span>}
+            {...overrides}
+          />
+        </TooltipProvider>
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }
 
 beforeEach(() => {
   requests.length = 0;
+  queryClient.clear();
+  queryClient.setQueryData(queryKeys.bootstrap(null), { projects: [] });
 });
 
 afterEach(cleanup);
@@ -126,6 +133,7 @@ describe('the fields across the top of a project', () => {
     await user.click(await screen.findByTestId('project-team-team_1'));
 
     await waitFor(() => expect(requests[0]?.body).toEqual({ teamIds: [] }));
+    expect(queryClient.getQueryState(queryKeys.bootstrap(null))?.isInvalidated).toBe(true);
   });
 
   it('shows plain text, and no controls, to somebody who may not manage the project', () => {

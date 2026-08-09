@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
@@ -33,9 +34,7 @@ mock.module('@/lib/query/use-issues.ts', () => ({
         options?.onSuccess?.(newIssue);
       };
     },
-    get isPending() {
-      return inFlight.pending;
-    },
+    isPending: false,
   }),
   useUpdateIssue: () => ({
     mutateAsync: async (input: Record<string, unknown>) => {
@@ -91,6 +90,15 @@ function buildWorkspace(): WorkspaceData {
         icon: 'box',
         teamIds: ['team_des'],
       },
+      {
+        id: 'proj_3',
+        slug: 'proj-3',
+        name: 'Company launch',
+        status: 'started',
+        color: '#f0f',
+        icon: 'box',
+        teamIds: [],
+      },
     ],
     cycles: [
       {
@@ -113,16 +121,43 @@ afterEach(() => {
   cleanup();
   created.mockClear();
   patched.mockClear();
+  inFlight.defer = false;
+  inFlight.resume = null;
+  inFlight.pending = false;
   globalThis.fetch = realFetch;
   globalThis.XMLHttpRequest = realXhr;
 });
 
-function open() {
-  render(
-    <ToastProvider>
-      <QuickCreateDialog open onOpenChange={() => undefined} defaultTeamId="team_eng" />
-    </ToastProvider>,
+function DialogHarness({
+  onOpenChange,
+  defaultTeamId,
+}: {
+  readonly onOpenChange: ((next: boolean) => void) | undefined;
+  readonly defaultTeamId: string | null;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <QuickCreateDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        onOpenChange?.(next);
+      }}
+      defaultTeamId={defaultTeamId}
+    />
   );
+}
+
+function dialog(onOpenChange?: (next: boolean) => void, defaultTeamId: string | null = 'team_eng') {
+  return (
+    <ToastProvider>
+      <DialogHarness onOpenChange={onOpenChange} defaultTeamId={defaultTeamId} />
+    </ToastProvider>
+  );
+}
+
+function open(onOpenChange?: (next: boolean) => void, defaultTeamId: string | null = 'team_eng') {
+  return render(dialog(onOpenChange, defaultTeamId));
 }
 
 const STORAGE_KEY = 'org_1/2026/08/notes-1.txt';
@@ -284,7 +319,7 @@ describe('attaching a file from the create dialog', () => {
     expect(saved).not.toContain('blob:');
   });
 
-  it('does not start a second create while the first is still in flight', async () => {
+  it('does not start a second create from repeated Meta+Enter while the first is in flight', async () => {
     workspace = buildWorkspace();
     open();
     inFlight.defer = true;
@@ -300,7 +335,7 @@ describe('attaching a file from the create dialog', () => {
 
     expect(created.mock.calls).toHaveLength(1);
 
-    inFlight.resume?.();
+    act(() => inFlight.resume?.());
     inFlight.defer = false;
     await settle();
   });
@@ -343,7 +378,7 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
-  it('offers only the projects the chosen team can actually use', async () => {
+  it('offers every team and workspace project the chosen team can use', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
     open();
@@ -351,7 +386,199 @@ describe('the new issue dialog', () => {
     await user.click(screen.getByTestId('quick-create-project'));
 
     expect(await screen.findByText('API market')).toBeTruthy();
+    expect(screen.getByText('Company launch')).toBeTruthy();
     expect(screen.queryByText('Brand refresh')).toBeNull();
+  });
+
+  it('focuses the title when it opens', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(screen.getByTestId('quick-create-title')).toHaveFocus();
+  });
+
+  it('chooses a project using only the keyboard', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+    const trigger = screen.getByTestId('quick-create-project');
+
+    trigger.focus();
+    await user.keyboard('{Enter}{ArrowDown}{Enter}');
+
+    expect(trigger).toHaveTextContent('API market');
+  });
+
+  it('jumps to a project by typing its name', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+    const trigger = screen.getByTestId('quick-create-project');
+
+    trigger.focus();
+    await user.keyboard('{Enter}Company{Enter}');
+
+    expect(trigger).toHaveTextContent('Company launch');
+  });
+
+  it('closes the project menu before it closes the dialog', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const changed = mock((_next: boolean) => undefined);
+    workspace = buildWorkspace();
+    open(changed);
+    const trigger = screen.getByTestId('quick-create-project');
+
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(changed).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    expect(changed).toHaveBeenCalledWith(false);
+  });
+
+  it('creates with Ctrl+Enter on Windows and Linux', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Keyboard issue');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(created.mock.calls[0]?.[0]?.['title']).toBe('Keyboard issue');
+  });
+
+  it('does not create from an unmodified Enter in the title', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Still drafting{Enter}');
+
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('lets an IME use Enter to confirm a title candidate', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(
+      fireEvent.keyDown(screen.getByTestId('quick-create-title'), {
+        key: 'Enter',
+        isComposing: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not submit a title while an IME composition is active', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+    const title = screen.getByTestId('quick-create-title');
+
+    await user.type(title, 'Composing');
+    fireEvent.keyDown(title, { key: 'Enter', metaKey: true, isComposing: true });
+
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('adopts the first available team when workspace data arrives after opening', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = { ...buildWorkspace(), ready: false, teams: [] };
+    const mounted = open(() => undefined, null);
+
+    workspace = buildWorkspace();
+    mounted.rerender(dialog(() => undefined, null));
+    await user.type(screen.getByTestId('quick-create-title'), 'Loaded later');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['teamId']).toBe('team_eng');
+  });
+
+  it('clears team-scoped choices when the selected team disappears', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      teams: [
+        { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#fff' },
+        { id: 'team_des', name: 'Design', key: 'DES', icon: 'd', color: '#eee' },
+      ],
+    };
+    const mounted = open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Recovered team');
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(await screen.findByText('Todo'));
+    await user.click(screen.getByRole('button', { name: 'Labels' }));
+    await user.click(await screen.findByText('Bug'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('5 points'));
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
+
+    workspace = {
+      ...workspace,
+      teams: workspace.teams.filter((team) => team.id === 'team_des'),
+    };
+    await act(async () => {
+      mounted.rerender(dialog());
+      await Promise.resolve();
+    });
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      teamId: 'team_des',
+      projectId: null,
+      cycleId: null,
+      estimate: null,
+      labelIds: [],
+    });
+    expect(created.mock.calls[0]?.[0]?.['stateId']).toBeUndefined();
+  });
+
+  it('does not submit plain Enter in the description and submits there with Ctrl+Enter', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+    await user.type(screen.getByTestId('quick-create-title'), 'Documented issue');
+    const editor = screen
+      .getByTestId('quick-create-description')
+      .querySelector<HTMLElement>('[contenteditable="true"]');
+    if (editor === null) throw new Error('no description editor');
+
+    await user.click(editor);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(editor.querySelectorAll('p')).toHaveLength(2));
+    expect(created).not.toHaveBeenCalled();
+
+    await user.keyboard('{Control>}{Enter}{/Control}');
+
+    expect(created).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears a project that becomes unavailable while the dialog is open', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    const mounted = open();
+
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    workspace = {
+      ...workspace,
+      projects: workspace.projects.filter((project) => project.id !== 'proj_1'),
+    };
+    mounted.rerender(dialog());
+    await user.type(screen.getByTestId('quick-create-title'), 'Still valid');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['projectId']).toBeNull();
   });
 
   it('says which team the issue is going into', () => {
@@ -411,7 +638,29 @@ describe('the new issue dialog', () => {
 
     expect(created).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('quick-create-title')).toHaveValue('');
+    expect(screen.getByTestId('quick-create-title')).toHaveFocus();
     expect(screen.getByTestId('quick-create')).toBeTruthy();
+  });
+
+  it('keeps a workspace project when the team changes', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      teams: [
+        { id: 'team_eng', name: 'Engineering', key: 'ENG', icon: 'e', color: '#fff' },
+        { id: 'team_des', name: 'Design', key: 'DES', icon: 'd', color: '#eee' },
+      ],
+    };
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Company work');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('Company launch'));
+    await user.click(screen.getByTestId('quick-create-team'));
+    await user.click(await screen.findByText('Design'));
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]?.['projectId']).toBe('proj_3');
   });
 
   it('drops the sprint and the project from the team that was left behind', async () => {
