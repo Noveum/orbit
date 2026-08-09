@@ -1,5 +1,11 @@
 import { readFile } from 'node:fs/promises';
-import { readinessReferenceRegistry } from './readiness-reference-registry.ts';
+import {
+  type EvidenceKind,
+  type HumanPrincipal,
+  type ReadinessReferenceRegistry,
+  readinessReferenceRegistry,
+  SELECTED_RELEASE_COMMIT,
+} from './readiness-reference-registry.ts';
 
 const OWNER_ROLES = new Set([
   'Security maintainer',
@@ -21,6 +27,7 @@ const STATUSES = new Set([
 const FINDING_ID = /^[A-Z][A-Z0-9]*-\d{3}$/;
 const RECORD = /^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._/-]*$/;
 const PRINCIPAL = /^principal:[a-z0-9][a-z0-9._/-]*$/;
+const SUBJECT = /^subject:[a-z0-9][a-z0-9._/-]*$/;
 const PLAN_HEADER = ['ID', 'Priority', 'Finding', 'Verified evidence', 'Required outcome'];
 const FINDING_HEADER = [
   'ID',
@@ -95,15 +102,19 @@ export function currentUtcDate(now: Date = new Date()): string {
 function activeLines(text: string): string[] {
   let fence: { readonly character: string; readonly length: number } | undefined;
   return text.split('\n').map((line) => {
-    const marker = /^(?: {0,3})(`{3,}|~{3,})/.exec(line);
-    if (marker !== null) {
-      const value = marker[1] ?? '';
-      const character = value[0] ?? '';
-      if (fence === undefined) fence = { character, length: value.length };
-      else if (fence.character === character && value.length >= fence.length) fence = undefined;
+    if (fence !== undefined) {
+      const closing = /^(?: {0,3})(`{3,}|~{3,})[ \t]*$/.exec(line);
+      const value = closing?.[1] ?? '';
+      if (value[0] === fence.character && value.length >= fence.length) fence = undefined;
       return '';
     }
-    return fence === undefined ? line : '';
+    const opening = /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+    if (opening === null) return line;
+    const value = opening[1] ?? '';
+    const info = opening[2] ?? '';
+    if (value.startsWith('`') && info.includes('`')) return line;
+    fence = { character: value[0] ?? '', length: value.length };
+    return '';
   });
 }
 
@@ -181,6 +192,12 @@ function idPriorityShape(line: string): boolean {
   );
 }
 
+function exceptionShape(line: string): boolean {
+  const value = cells(line);
+  if (value === undefined || value.length !== EXCEPTION_HEADER.length) return false;
+  return FINDING_ID.test(value[0] ?? '');
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The table boundary checks are one parser contract.
 function scopedTable(
   lines: readonly string[],
@@ -188,6 +205,7 @@ function scopedTable(
   header: readonly string[],
   kind: string,
   rejectFindingShapes: boolean,
+  rejectExceptionShapes = false,
 ): Array<{ readonly row: number; readonly cells: string[] }> {
   const [start, end] = section(lines, heading);
   const headers = lines.flatMap((line, index) => (matchesHeader(line, header) ? [index] : []));
@@ -214,6 +232,13 @@ function scopedTable(
       if (lineIndex >= headerIndex && lineIndex < index) continue;
       if (idPriorityShape(line))
         throw new Error(`Finding-shaped row is outside the selected ${kind} table.`);
+    }
+  }
+  if (rejectExceptionShapes) {
+    for (const [lineIndex, line] of lines.entries()) {
+      if (lineIndex >= headerIndex && lineIndex < index) continue;
+      if (exceptionShape(line))
+        throw new Error(`Exception-shaped row is outside the selected ${kind} table.`);
     }
   }
   if (lines.slice(index, end).some((line) => line.trimStart().startsWith('|')))
@@ -269,6 +294,7 @@ export function parseExceptionRows(text: string): ExceptionRow[] {
     EXCEPTION_HEADER,
     'P1 exceptions',
     false,
+    true,
   ).map((row) => ({
     row: row.row,
     findingId: row.cells[0] ?? '',
@@ -294,6 +320,11 @@ function reference(value: string): boolean {
 }
 function prefixedReference(value: string, prefix: string): boolean {
   return value.startsWith(`${prefix}:`) && reference(value.slice(prefix.length + 1));
+}
+function prefixedRecord(value: string, prefix: string): string | undefined {
+  if (!value.startsWith(`${prefix}:`)) return undefined;
+  const record = value.slice(prefix.length + 1);
+  return reference(record) ? record : undefined;
 }
 function pending(value: string): boolean {
   return value === 'pending:open';
@@ -337,6 +368,34 @@ function approver(value: string): string | undefined {
 }
 function authority(value: string): boolean {
   return prefixedReference(value, 'authority') && PRINCIPAL.test(value.slice('authority:'.length));
+}
+function authorityPrincipal(value: string): string | undefined {
+  if (!value.startsWith('authority:')) return undefined;
+  const principal = value.slice('authority:'.length);
+  return PRINCIPAL.test(principal) ? principal : undefined;
+}
+interface NonBehavioralEvidence {
+  readonly record: string;
+  readonly justification: string;
+  readonly approver: string;
+}
+function nonBehavioralEvidence(value: string): NonBehavioralEvidence | undefined {
+  const parts = value.split(';');
+  if (parts.length !== 3) return undefined;
+  const record = parts[0]?.slice('test-na:'.length) ?? '';
+  const justification = parts[1]?.slice('justification='.length) ?? '';
+  const approval = parts[2]?.slice('approver='.length) ?? '';
+  if (
+    !(
+      parts[0]?.startsWith('test-na:') &&
+      parts[1]?.startsWith('justification=') &&
+      parts[2]?.startsWith('approver=')
+    )
+  )
+    return undefined;
+  if (!(reference(record) && reference(justification) && PRINCIPAL.test(approval)))
+    return undefined;
+  return { record, justification, approver: approval };
 }
 function calendarDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -391,10 +450,7 @@ function validateTransition(row: FindingRow, security: boolean): string[] {
   for (const [field, value, prefix] of evidence)
     if (!prefixedReference(value, prefix)) errors.push(`${id} has invalid ${field}.`);
   const changeValid =
-    prefixedReference(row.change, 'test') ||
-    /^test-na:record:[a-z0-9][a-z0-9._/-]*;justification=record:[a-z0-9][a-z0-9._/-]*;approver=principal:[a-z0-9][a-z0-9._/-]*$/.test(
-      row.change,
-    );
+    prefixedReference(row.change, 'test') || nonBehavioralEvidence(row.change) !== undefined;
   if (!changeValid) errors.push(`${id} has invalid change evidence.`);
   const parsedDecision = decision(row.decision);
   const parsedApprover = approver(row.approver);
@@ -465,10 +521,14 @@ function validateException(
     errors.push(
       `P1 exception row ${exception.row} has an expiry date that is not after the verification date.`,
     );
+  const limitation = exception.limitation.trim();
+  const reservedLimitations = new Set(['pending:open', 'not-required', 'not applicable', 'n/a']);
+  if (limitation.length < 16 || reservedLimitations.has(limitation.toLowerCase()))
+    errors.push(`${id} has an invalid public limitation.`);
   const validFields = [
     PRINCIPAL.test(exception.ownerReference),
     prefixedReference(exception.mitigation, 'mitigation'),
-    exception.limitation.length > 0,
+    limitation.length >= 16,
     prefixedReference(exception.residualRisk, 'risk'),
     decision(exception.decision) !== undefined,
     approver(exception.approver) !== undefined,
@@ -506,54 +566,260 @@ function validateException(
   return errors;
 }
 
-type ReferenceRegistry = typeof readinessReferenceRegistry;
+function validHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Resolution validates references and role authority together.
+function recordKeyMatchesKind(recordKey: string, kind: EvidenceKind): boolean {
+  const namespace = /^record:([^/]+)\//.exec(recordKey)?.[1];
+  return namespace === (kind === 'audit-risk' ? 'audit' : kind);
+}
+
+function recordErrors(
+  id: string,
+  recordKey: string | undefined,
+  expectedKinds: ReadonlySet<EvidenceKind>,
+  registry: ReadinessReferenceRegistry,
+  requireSelectedRelease: boolean,
+): string[] {
+  if (recordKey === undefined) return [];
+  const record = registry.records.get(recordKey);
+  if (record === undefined) return [`${id} has an unresolved reference.`];
+  const errors: string[] = [];
+  if (!validHttpsUrl(record.url)) errors.push(`${id} has an invalid evidence link.`);
+  if (!(expectedKinds.has(record.kind) && recordKeyMatchesKind(recordKey, record.kind)))
+    errors.push(`${id} has an evidence type mismatch.`);
+  if (requireSelectedRelease && record.releaseCommit !== SELECTED_RELEASE_COMMIT)
+    errors.push(`${id} has release evidence for the wrong commit.`);
+  return errors;
+}
+
+function principalErrors(
+  id: string,
+  principalKey: string,
+  registry: ReadinessReferenceRegistry,
+): string[] {
+  const principal = registry.principals.get(principalKey);
+  if (principal === undefined) return [`${id} has an unresolved reference.`];
+  const errors: string[] = [];
+  if (!validHttpsUrl(principal.assignmentUrl))
+    errors.push(`${id} has an invalid principal assignment link.`);
+  if (principal.kind === 'human' && !SUBJECT.test(principal.subjectId))
+    errors.push(`${id} has an invalid principal subject identity.`);
+  return errors;
+}
+
+function humanPrincipal(
+  principalKey: string | undefined,
+  registry: ReadinessReferenceRegistry,
+): HumanPrincipal | undefined {
+  if (principalKey === undefined) return undefined;
+  const principal = registry.principals.get(principalKey);
+  return principal?.kind === 'human' ? principal : undefined;
+}
+
+function ownerRegistryErrors(finding: FindingRow, registry: ReadinessReferenceRegistry): string[] {
+  const id = safeId(finding.id, finding.row, 'Finding');
+  const errors = principalErrors(id, finding.ownerReference, registry);
+  const owner = registry.principals.get(finding.ownerReference);
+  if (owner !== undefined && owner.role !== finding.ownerRole)
+    errors.push(`${id} has an accountable owner role mismatch.`);
+  if (
+    finding.status !== 'Open' &&
+    finding.status !== 'In progress' &&
+    owner !== undefined &&
+    owner.kind !== 'human'
+  )
+    errors.push(`${id} requires a human accountable owner assignment.`);
+  return errors;
+}
+
+function findingEvidenceRegistryErrors(
+  finding: FindingRow,
+  registry: ReadinessReferenceRegistry,
+): string[] {
+  const id = safeId(finding.id, finding.row, 'Finding');
+  const errors = recordErrors(
+    id,
+    prefixedRecord(finding.residualRisk, 'risk'),
+    new Set(['audit-risk', 'risk']),
+    registry,
+    false,
+  );
+  if (finding.status === 'Open') return errors;
+  errors.push(
+    ...recordErrors(
+      id,
+      prefixedRecord(finding.implementation, 'implementation'),
+      new Set(['implementation']),
+      registry,
+      false,
+    ),
+  );
+  if (finding.status === 'In progress') return errors;
+  const testRecord = prefixedRecord(finding.change, 'test');
+  const nonBehavioral = nonBehavioralEvidence(finding.change);
+  if (testRecord !== undefined)
+    errors.push(...recordErrors(id, testRecord, new Set(['test']), registry, true));
+  if (nonBehavioral !== undefined) {
+    errors.push(
+      ...recordErrors(id, nonBehavioral.record, new Set(['non-behavioral']), registry, true),
+      ...recordErrors(id, nonBehavioral.justification, new Set(['justification']), registry, false),
+    );
+  }
+  errors.push(
+    ...recordErrors(
+      id,
+      prefixedRecord(finding.releaseGate, 'gate'),
+      new Set(['gate']),
+      registry,
+      true,
+    ),
+    ...recordErrors(
+      id,
+      prefixedRecord(finding.documentation, 'docs'),
+      new Set(['docs']),
+      registry,
+      false,
+    ),
+    ...recordErrors(id, decision(finding.decision)?.record, new Set(['decision']), registry, true),
+  );
+  return errors;
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Subject resolution enforces one terminal-attestation contract.
+function terminalPrincipalRegistryErrors(
+  finding: FindingRow,
+  registry: ReadinessReferenceRegistry,
+): string[] {
+  if (finding.status === 'Open' || finding.status === 'In progress') return [];
+  const id = safeId(finding.id, finding.row, 'Finding');
+  const parsedDecision = decision(finding.decision);
+  const approverKey = approver(finding.approver);
+  const authorityKey = authorityPrincipal(finding.authority);
+  const keys = [
+    finding.ownerReference,
+    parsedDecision?.implementation,
+    parsedDecision?.finding,
+    parsedDecision?.approver,
+    approverKey,
+  ].filter((value): value is string => value !== undefined);
+  if (authorityKey !== undefined) keys.push(authorityKey);
+  const errors = keys.flatMap((key) => principalErrors(id, key, registry));
+  const owner = humanPrincipal(finding.ownerReference, registry);
+  const implementationOwner = humanPrincipal(parsedDecision?.implementation, registry);
+  const findingOwner = humanPrincipal(parsedDecision?.finding, registry);
+  const releaseApprover = humanPrincipal(approverKey, registry);
+  if (releaseApprover === undefined || releaseApprover.role !== 'Release maintainer')
+    errors.push(`${id} has an approver without Release maintainer authority.`);
+  const decisionApprover = humanPrincipal(parsedDecision?.approver, registry);
+  if (
+    parsedDecision !== undefined &&
+    [implementationOwner, findingOwner, decisionApprover].some(
+      (principal) => principal === undefined,
+    )
+  )
+    errors.push(`${id} requires human decision principal assignments.`);
+  const subjects = [implementationOwner, findingOwner, decisionApprover].flatMap((principal) =>
+    principal === undefined ? [] : [principal.subjectId],
+  );
+  if (subjects.length === 3 && new Set(subjects).size !== 3)
+    errors.push(`${id} has a decision with non-independent subjects.`);
+  if (
+    owner !== undefined &&
+    findingOwner !== undefined &&
+    owner.subjectId !== findingOwner.subjectId
+  )
+    errors.push(`${id} has a finding-owner subject mismatch.`);
+  if (
+    releaseApprover !== undefined &&
+    decisionApprover !== undefined &&
+    releaseApprover.subjectId !== decisionApprover.subjectId
+  )
+    errors.push(`${id} has an independent approver subject mismatch.`);
+  const nonBehavioral = nonBehavioralEvidence(finding.change);
+  if (nonBehavioral !== undefined) {
+    const approval = humanPrincipal(nonBehavioral.approver, registry);
+    if (
+      approval === undefined ||
+      approval.role !== 'Release maintainer' ||
+      decisionApprover === undefined ||
+      approval.subjectId !== decisionApprover.subjectId ||
+      implementationOwner?.subjectId === approval.subjectId ||
+      findingOwner?.subjectId === approval.subjectId
+    )
+      errors.push(`${id} has an invalid non-behavioral approval.`);
+  }
+  if (securityRequired(finding.securityRequired)) {
+    const securityAuthority = humanPrincipal(authorityKey, registry);
+    if (securityAuthority === undefined || securityAuthority.role !== 'Security maintainer')
+      errors.push(`${id} has security authority without Security maintainer authority.`);
+    if (securityAuthority !== undefined && subjects.includes(securityAuthority.subjectId))
+      errors.push(`${id} has non-independent security authority.`);
+  }
+  return errors;
+}
+
+function exceptionRegistryErrors(
+  exception: ExceptionRow,
+  finding: FindingRow | undefined,
+  registry: ReadinessReferenceRegistry,
+): string[] {
+  const id = safeId(exception.findingId, exception.row, 'P1 exception finding');
+  const errors = [
+    ...principalErrors(id, exception.ownerReference, registry),
+    ...recordErrors(
+      id,
+      prefixedRecord(exception.mitigation, 'mitigation'),
+      new Set(['mitigation']),
+      registry,
+      false,
+    ),
+    ...recordErrors(
+      id,
+      prefixedRecord(exception.residualRisk, 'risk'),
+      new Set(['audit-risk', 'risk']),
+      registry,
+      false,
+    ),
+    ...recordErrors(
+      id,
+      decision(exception.decision)?.record,
+      new Set(['decision']),
+      registry,
+      true,
+    ),
+  ];
+  const parsedApprover = humanPrincipal(approver(exception.approver), registry);
+  if (parsedApprover === undefined || parsedApprover.role !== 'Release maintainer')
+    errors.push(`${id} has an approver without Release maintainer authority.`);
+  if (securityRequired(finding?.securityRequired ?? 'No')) {
+    const securityAuthority = humanPrincipal(authorityPrincipal(exception.authority), registry);
+    if (securityAuthority === undefined || securityAuthority.role !== 'Security maintainer')
+      errors.push(`${id} has security authority without Security maintainer authority.`);
+  }
+  return errors;
+}
+
 function registryErrors(
   findings: readonly FindingRow[],
   exceptions: readonly ExceptionRow[],
-  registry: ReferenceRegistry,
+  registry: ReadinessReferenceRegistry,
 ): string[] {
-  const errors: string[] = [];
-  for (const row of [...findings, ...exceptions]) {
-    const id = 'id' in row ? row.id : row.findingId;
-    const values = Object.values(row).filter((value): value is string => typeof value === 'string');
-    for (const value of values.flatMap(
-      (entry) => entry.match(/(?:record|principal):[a-z0-9][a-z0-9._/-]*/g) ?? [],
-    )) {
-      const known = value.startsWith('record:')
-        ? registry.records.has(value)
-        : registry.principals.has(value);
-      if (!known) errors.push(`${safeId(id, row.row, 'Ledger')} has an unresolved reference.`);
-    }
-  }
-  for (const finding of findings) {
-    if (finding.status === 'Open' || finding.status === 'In progress') continue;
-    const identity = approver(finding.approver);
-    if (identity !== undefined && registry.principals.get(identity)?.role !== 'Release maintainer')
-      errors.push(
-        `${safeId(finding.id, finding.row, 'Finding')} has an approver without Release maintainer authority.`,
-      );
-    const nonBehavioral =
-      /^test-na:record:[a-z0-9][a-z0-9._/-]*;justification=record:[a-z0-9][a-z0-9._/-]*;approver=(principal:[a-z0-9][a-z0-9._/-]*)$/.exec(
-        finding.change,
-      );
-    if (nonBehavioral !== null) {
-      const approval = nonBehavioral[1] ?? '';
-      const parsed = decision(finding.decision);
-      if (
-        registry.principals.get(approval)?.role !== 'Release maintainer' ||
-        parsed === undefined ||
-        approval !== parsed.approver ||
-        approval === parsed.implementation ||
-        approval === parsed.finding
-      )
-        errors.push(
-          `${safeId(finding.id, finding.row, 'Finding')} has an invalid non-behavioral approval.`,
-        );
-    }
-  }
-  return errors;
+  const findingById = new Map(findings.map((finding) => [finding.id, finding]));
+  return [
+    ...findings.flatMap((finding) => ownerRegistryErrors(finding, registry)),
+    ...findings.flatMap((finding) => findingEvidenceRegistryErrors(finding, registry)),
+    ...findings.flatMap((finding) => terminalPrincipalRegistryErrors(finding, registry)),
+    ...exceptions.flatMap((exception) =>
+      exceptionRegistryErrors(exception, findingById.get(exception.findingId), registry),
+    ),
+  ];
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The inventory gate evaluates all independent controls deterministically.
@@ -562,7 +828,7 @@ export function validateReadinessLedger(
   findings: readonly FindingRow[],
   exceptions: readonly ExceptionRow[],
   verificationDate: string,
-  registry?: ReferenceRegistry,
+  registry: ReadinessReferenceRegistry,
 ): string[] {
   const errors: string[] = [];
   if (!calendarDate(verificationDate)) return ['Verification date is invalid.'];
@@ -598,7 +864,7 @@ export function validateReadinessLedger(
   for (const finding of findings)
     if (finding.status === 'Accepted P1 exception' && !exceptionIds.has(finding.id))
       errors.push(`${safeId(finding.id, finding.row, 'Finding')} has no P1 exception record.`);
-  if (registry !== undefined) errors.push(...registryErrors(findings, exceptions, registry));
+  errors.push(...registryErrors(findings, exceptions, registry));
   return errors;
 }
 

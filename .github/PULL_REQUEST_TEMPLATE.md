@@ -16,10 +16,12 @@ Closes #
 
 ## Readiness finding closure
 
-<!-- Complete this section only when the pull request claims to close a finding in docs/maintainers/readiness-ledger.md. Do not include undisclosed vulnerability details. Use a private GitHub Security Advisory for those details. Terminal closure and P1 exception decisions require a linked access-controlled decision record and an independent Release maintainer approver. -->
+<!-- Complete this section only when the pull request claims to close a finding in docs/maintainers/readiness-ledger.md. Do not include undisclosed vulnerability details. Use a private GitHub Security Advisory for those details. Terminal closure and P1 exception decisions require human assignment records and subject-level independence. -->
 
 - Finding ID:
+- Accountable owner role:
 - Accountable owner reference (`principal:<key>`):
+- Registry entries added or updated, including HTTPS links, exact evidence kinds, and release identities:
 - Implementation evidence (`implementation:record:<key>`):
 - Failing test (`test:record:<key>`) or approved non-behavioral evidence (`test-na:record:<key>;justification=record:<key>;approver=principal:<key>`):
 - Release-gate evidence (`gate:record:<key>`):
@@ -28,7 +30,7 @@ Closes #
 - Decision record (`decision:record:<key>;implementation=principal:<key>;finding=principal:<key>;approver=principal:<key>`):
 - Independent Release approver (`approver:principal:<key>`):
 - Security authority (`authority:principal:<key>`) or `not-required`:
-- P1 exception expiry, mitigation evidence, and public limitation:
+- P1 exception expiry, mitigation evidence, and substantive public limitation:
 
 ## Screenshots
 
@@ -38,10 +40,12 @@ Closes #
 
 - [ ] `bun run verify` is green
 - [ ] Tests added or updated, and they fail without the change
-- [ ] Every closure field uses its ledger structured reference format, not plain text.
+- [ ] Every closure field uses its ledger structured reference format and resolves through the registry.
 - [ ] A behavior-change closure links a failing test added first. Non-behavioral work has the approved structured `test-na` record.
-- [ ] The decision attests distinct implementation, finding-owner, and independent Release-approver principal references.
-- [ ] Security-required findings use the appropriate authority reference without publishing private details.
+- [ ] Test and release-gate records attest selected release commit `808d714`; historical audit records appear only as risk evidence.
+- [ ] Terminal owner, decision, approval, and authority principals resolve to HTTPS human assignment records with stable subject identifiers.
+- [ ] The registered owner role matches the ledger, and the implementation, finding-owner, and Release-approver subjects are distinct.
+- [ ] Security-required findings use an independent subject with the exact `Security maintainer` role without publishing private details.
 - [ ] A P1 exception has a future expiry and matches its finding's owner, risk, decision, approver, and authority records.
 - [ ] No comments added to code, and no em-dash characters anywhere
 - [ ] No `any`, no non-null assertions

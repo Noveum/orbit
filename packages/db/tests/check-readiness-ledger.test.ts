@@ -6,7 +6,10 @@ import {
   parsePlanFindings,
   validateReadinessLedger,
 } from '../../../scripts/check-readiness-ledger.ts';
-import { readinessReferenceRegistry } from '../../../scripts/readiness-reference-registry.ts';
+import {
+  type ReadinessReferenceRegistry,
+  readinessReferenceRegistry,
+} from '../../../scripts/readiness-reference-registry.ts';
 
 const verificationDate = '2026-08-09';
 
@@ -27,6 +30,130 @@ const findingSeparator =
 const exceptionHeader =
   '| Finding ID | Accountable owner reference | Expiry date | Mitigation evidence | Public limitation | Residual-risk record | Decision record | Independent Release approver | Security authority record |';
 const exceptionSeparator = '| --- | --- | --- | --- | --- | --- | --- | --- | --- |';
+
+const resolvedRegistry: ReadinessReferenceRegistry = {
+  records: new Map([
+    ['record:audit/doc-001', { kind: 'audit-risk', url: 'https://example.test/audit/doc-001' }],
+    [
+      'record:implementation/doc-001',
+      {
+        kind: 'implementation',
+        url: 'https://example.test/implementation/doc-001',
+        releaseCommit: '808d714',
+      },
+    ],
+    [
+      'record:test/doc-001',
+      { kind: 'test', url: 'https://example.test/test/doc-001', releaseCommit: '808d714' },
+    ],
+    [
+      'record:gate/doc-001',
+      { kind: 'gate', url: 'https://example.test/gate/doc-001', releaseCommit: '808d714' },
+    ],
+    ['record:docs/doc-001', { kind: 'docs', url: 'https://example.test/docs/doc-001' }],
+    [
+      'record:decision/doc-001',
+      { kind: 'decision', url: 'https://example.test/decision/doc-001', releaseCommit: '808d714' },
+    ],
+    [
+      'record:mitigation/doc-001',
+      { kind: 'mitigation', url: 'https://example.test/mitigation/doc-001' },
+    ],
+    [
+      'record:non-behavioral/doc-001',
+      {
+        kind: 'non-behavioral',
+        url: 'https://example.test/non-behavioral/doc-001',
+        releaseCommit: '808d714',
+      },
+    ],
+    [
+      'record:justification/doc-001',
+      { kind: 'justification', url: 'https://example.test/justification/doc-001' },
+    ],
+  ]),
+  principals: new Map([
+    [
+      'principal:documentation-person',
+      {
+        kind: 'human',
+        role: 'Documentation maintainer',
+        subjectId: 'subject:documentation',
+        assignmentUrl: 'https://example.test/assignments/documentation',
+      },
+    ],
+    [
+      'principal:implementation-person',
+      {
+        kind: 'human',
+        role: 'Repository maintainer',
+        subjectId: 'subject:implementation',
+        assignmentUrl: 'https://example.test/assignments/implementation',
+      },
+    ],
+    [
+      'principal:documentation-alias',
+      {
+        kind: 'human',
+        role: 'Repository maintainer',
+        subjectId: 'subject:documentation',
+        assignmentUrl: 'https://example.test/assignments/documentation-alias',
+      },
+    ],
+    [
+      'principal:release-person',
+      {
+        kind: 'human',
+        role: 'Release maintainer',
+        subjectId: 'subject:release',
+        assignmentUrl: 'https://example.test/assignments/release',
+      },
+    ],
+    [
+      'principal:release-alias',
+      {
+        kind: 'human',
+        role: 'Release maintainer',
+        subjectId: 'subject:release',
+        assignmentUrl: 'https://example.test/assignments/release-alias',
+      },
+    ],
+    [
+      'principal:security-person',
+      {
+        kind: 'human',
+        role: 'Security maintainer',
+        subjectId: 'subject:security',
+        assignmentUrl: 'https://example.test/assignments/security',
+      },
+    ],
+    [
+      'principal:data-person',
+      {
+        kind: 'human',
+        role: 'Data maintainer',
+        subjectId: 'subject:data',
+        assignmentUrl: 'https://example.test/assignments/data',
+      },
+    ],
+    [
+      'principal:security-owner',
+      {
+        kind: 'role-alias',
+        role: 'Security maintainer',
+        assignmentUrl: 'https://example.test/roles/security',
+      },
+    ],
+    [
+      'principal:release-owner',
+      {
+        kind: 'role-alias',
+        role: 'Release maintainer',
+        assignmentUrl: 'https://example.test/roles/release',
+      },
+    ],
+  ]),
+};
 
 function findingRow(overrides: Readonly<Record<string, string>> = {}): string {
   const values = {
@@ -99,7 +226,34 @@ function errors(rows: readonly string[], exceptions: readonly string[] = []): st
     parsed.findings,
     parsed.exceptions,
     verificationDate,
+    readinessReferenceRegistry,
   );
+}
+
+function resolvedErrors(rows: readonly string[], exceptions: readonly string[] = []): string[] {
+  const parsed = parsedLedger(rows, exceptions);
+  return validateReadinessLedger(
+    parsePlanFindings(plan),
+    parsed.findings,
+    parsed.exceptions,
+    verificationDate,
+    resolvedRegistry,
+  );
+}
+
+function resolvedClosedRow(overrides: Readonly<Record<string, string>> = {}): string {
+  return findingRow({
+    ownerReference: 'principal:documentation-person',
+    status: 'Closed',
+    implementation: 'implementation:record:implementation/doc-001',
+    change: 'test:record:test/doc-001',
+    releaseGate: 'gate:record:gate/doc-001',
+    documentation: 'docs:record:docs/doc-001',
+    decision:
+      'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+    approver: 'approver:principal:release-person',
+    ...overrides,
+  });
 }
 
 describe('readiness ledger checker', () => {
@@ -125,6 +279,7 @@ describe('readiness ledger checker', () => {
         parsed.findings,
         parsed.exceptions,
         '2026-08-11',
+        readinessReferenceRegistry,
       ),
     ).toContain('P1 exception row 3 has an expiry date that is not after the verification date.');
   });
@@ -162,11 +317,335 @@ describe('readiness ledger checker', () => {
       verificationDate,
       readinessReferenceRegistry,
     );
-    expect(result).toContain('Ledger ID DOC-001 has an unresolved reference.');
+    expect(result).toContain('Finding ID DOC-001 has an unresolved reference.');
     expect(result).toContain(
       'Finding ID DOC-001 has an approver without Release maintainer authority.',
     );
     expect(result).toContain('Finding ID DOC-001 has an invalid non-behavioral approval.');
+  });
+
+  it('binds owner and security authority references to exact registered roles', () => {
+    expect(resolvedErrors([resolvedClosedRow({ ownerRole: 'Security maintainer' })])).toContain(
+      'Finding ID DOC-001 has an accountable owner role mismatch.',
+    );
+
+    expect(
+      resolvedErrors([
+        resolvedClosedRow({
+          securityRequired: 'Yes',
+          authority: 'authority:principal:data-person',
+        }),
+      ]),
+    ).toContain('Finding ID DOC-001 has security authority without Security maintainer authority.');
+  });
+
+  it('uses registered subject identity for independence across aliases', () => {
+    const result = resolvedErrors([
+      resolvedClosedRow({
+        decision:
+          'decision:record:decision/doc-001;implementation=principal:documentation-alias;finding=principal:documentation-person;approver=principal:release-person',
+      }),
+    ]);
+    expect(result).toContain('Finding ID DOC-001 has a decision with non-independent subjects.');
+  });
+
+  it('requires terminal principals to resolve to human assignment subjects with valid HTTPS links', () => {
+    expect(
+      resolvedErrors([
+        resolvedClosedRow({
+          ownerRole: 'Release maintainer',
+          ownerReference: 'principal:release-owner',
+          decision:
+            'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:release-owner;approver=principal:release-person',
+        }),
+      ]),
+    ).toContain('Finding ID DOC-001 requires a human accountable owner assignment.');
+
+    const invalidPrincipals = new Map(resolvedRegistry.principals);
+    invalidPrincipals.set('principal:release-person', {
+      kind: 'human',
+      role: 'Release maintainer',
+      subjectId: 'subject:release',
+      assignmentUrl: 'http://example.test/assignments/release',
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          principals: invalidPrincipals,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has an invalid principal assignment link.');
+
+    expect(
+      resolvedErrors([
+        resolvedClosedRow({
+          decision:
+            'decision:record:decision/doc-001;implementation=principal:security-owner;finding=principal:documentation-person;approver=principal:release-person',
+        }),
+      ]),
+    ).toContain('Finding ID DOC-001 requires human decision principal assignments.');
+
+    const invalidSubjectPrincipals = new Map(resolvedRegistry.principals);
+    invalidSubjectPrincipals.set('principal:documentation-person', {
+      kind: 'human',
+      role: 'Documentation maintainer',
+      subjectId: '   ',
+      assignmentUrl: 'https://example.test/assignments/documentation',
+    });
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          principals: invalidSubjectPrincipals,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has an invalid principal subject identity.');
+  });
+
+  it('requires every evidence field to resolve to its exact type and selected release', () => {
+    const wrongCategoryRows = [
+      resolvedClosedRow({ implementation: 'implementation:record:test/doc-001' }),
+      resolvedClosedRow({ change: 'test:record:implementation/doc-001' }),
+      resolvedClosedRow({ releaseGate: 'gate:record:test/doc-001' }),
+      resolvedClosedRow({ documentation: 'docs:record:gate/doc-001' }),
+      resolvedClosedRow({ residualRisk: 'risk:record:docs/doc-001' }),
+      resolvedClosedRow({
+        decision:
+          'decision:record:audit/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+      }),
+      resolvedClosedRow({ implementation: 'implementation:record:audit/doc-001' }),
+      resolvedClosedRow({ change: 'test:record:audit/doc-001' }),
+      resolvedClosedRow({ releaseGate: 'gate:record:audit/doc-001' }),
+      resolvedClosedRow({ documentation: 'docs:record:audit/doc-001' }),
+    ];
+    for (const row of wrongCategoryRows) {
+      expect(resolvedErrors([row])).toContain('Finding ID DOC-001 has an evidence type mismatch.');
+    }
+
+    const staleRecords = new Map(resolvedRegistry.records);
+    staleRecords.set('record:test/doc-001', {
+      kind: 'test',
+      url: 'https://example.test/test/doc-001',
+      releaseCommit: 'stale123',
+    });
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          records: staleRecords,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has release evidence for the wrong commit.');
+
+    const invalidLinkRecords = new Map(resolvedRegistry.records);
+    invalidLinkRecords.set('record:test/doc-001', {
+      kind: 'test',
+      url: 'http://example.test/test/doc-001',
+      releaseCommit: '808d714',
+    });
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          records: invalidLinkRecords,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has an invalid evidence link.');
+
+    const staleGateRecords = new Map(resolvedRegistry.records);
+    staleGateRecords.set('record:gate/doc-001', {
+      kind: 'gate',
+      url: 'https://example.test/gate/doc-001',
+      releaseCommit: 'stale123',
+    });
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          records: staleGateRecords,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has release evidence for the wrong commit.');
+
+    const mislabeledRecords = new Map(resolvedRegistry.records);
+    mislabeledRecords.set('record:audit/mislabeled', {
+      kind: 'implementation',
+      url: 'https://example.test/implementation/mislabeled',
+      releaseCommit: '808d714',
+    });
+    const mislabeled = parsedLedger([
+      resolvedClosedRow({ implementation: 'implementation:record:audit/mislabeled' }),
+    ]);
+    expect(
+      validateReadinessLedger(
+        parsePlanFindings(plan),
+        mislabeled.findings,
+        mislabeled.exceptions,
+        verificationDate,
+        {
+          ...resolvedRegistry,
+          records: mislabeledRecords,
+        },
+      ),
+    ).toContain('Finding ID DOC-001 has an evidence type mismatch.');
+  });
+
+  it('type-checks mitigation and non-behavioral embedded records', () => {
+    const nonBehavioral = resolvedClosedRow({
+      change:
+        'test-na:record:mitigation/doc-001;justification=record:docs/doc-001;approver=principal:release-person',
+    });
+    expect(resolvedErrors([nonBehavioral])).toContain(
+      'Finding ID DOC-001 has an evidence type mismatch.',
+    );
+
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    expect(
+      resolvedErrors(
+        [finding],
+        [
+          exceptionRow({
+            ownerReference: 'principal:documentation-person',
+            mitigation: 'mitigation:record:docs/doc-001',
+            residualRisk: 'risk:record:audit/doc-001',
+            decision:
+              'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+            approver: 'approver:principal:release-person',
+          }),
+        ],
+      ),
+    ).toContain('P1 exception finding ID DOC-001 has an evidence type mismatch.');
+  });
+
+  it('rejects placeholder and whitespace public limitations through resolved validation', () => {
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    const exception = exceptionRow({
+      ownerReference: 'principal:documentation-person',
+      mitigation: 'mitigation:record:mitigation/doc-001',
+      residualRisk: 'risk:record:audit/doc-001',
+      decision:
+        'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+      approver: 'approver:principal:release-person',
+    });
+    for (const limitation of ['pending:open', 'not-required', '   ']) {
+      expect(
+        resolvedErrors(
+          [finding],
+          [
+            exceptionRow({
+              ownerReference: 'principal:documentation-person',
+              mitigation: 'mitigation:record:mitigation/doc-001',
+              limitation,
+              residualRisk: 'risk:record:audit/doc-001',
+              decision:
+                'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+              approver: 'approver:principal:release-person',
+            }),
+          ],
+        ),
+      ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+    }
+    expect(resolvedErrors([finding], [exception])).not.toContain(
+      'P1 exception finding ID DOC-001 has an invalid public limitation.',
+    );
+  });
+
+  it('accepts a complete resolvable closure and future exception fixture', () => {
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    const rows = [
+      findingRow({
+        id: 'SEC-001',
+        priority: 'P0',
+        ownerRole: 'Security maintainer',
+        ownerReference: 'principal:security-owner',
+        securityRequired: 'Yes',
+        authority: 'pending:open',
+      }),
+      finding,
+      findingRow({
+        id: 'CI-002',
+        ownerRole: 'Release maintainer',
+        ownerReference: 'principal:release-owner',
+        securityRequired: 'Yes',
+        authority: 'pending:open',
+      }),
+    ];
+    expect(
+      resolvedErrors(rows, [
+        exceptionRow({
+          ownerReference: 'principal:documentation-person',
+          mitigation: 'mitigation:record:mitigation/doc-001',
+          residualRisk: 'risk:record:audit/doc-001',
+          decision:
+            'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+          approver: 'approver:principal:release-person',
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('applies CommonMark fence opener and closer rules', () => {
+    const invalidBacktickOpener = [
+      plan,
+      '```lang`bad',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+      '```',
+    ].join('\n');
+    expect(() => parsePlanFindings(invalidBacktickOpener)).toThrow(
+      'outside the selected plan findings table',
+    );
+
+    const trailingTextDoesNotClose = [
+      plan,
+      '````md',
+      '```` still fenced',
+      '| ROGUE-999 | P0 | Example | Audit | Outcome |',
+      '````',
+    ].join('\n');
+    expect(() => parsePlanFindings(trailingTextDoesNotClose)).not.toThrow();
+
+    const shorterRunDoesNotClose = [
+      plan,
+      '``````md',
+      '`````',
+      '| ROGUE-999 | P0 | Example | Audit | Outcome |',
+      '``````',
+    ].join('\n');
+    expect(() => parsePlanFindings(shorterRunDoesNotClose)).not.toThrow();
+  });
+
+  it('rejects exception-shaped rows outside the exception register', () => {
+    const stray = `${ledger([findingRow()])}\n## Notes\n\n${exceptionRow()}`;
+    expect(() => parseExceptionRows(stray)).toThrow(
+      'Exception-shaped row is outside the selected P1 exceptions table.',
+    );
+    const malformedStray = `${ledger([findingRow()])}\n## Notes\n\n${exceptionRow({ expiry: 'not-a-date' })}`;
+    expect(() => parseExceptionRows(malformedStray)).toThrow(
+      'Exception-shaped row is outside the selected P1 exceptions table.',
+    );
   });
 
   it('ignores tilde and long backtick fences and double-backtick code spans', () => {
@@ -186,8 +665,9 @@ describe('readiness ledger checker', () => {
         ownerReference: 'principal:security-owner',
         securityRequired: 'Yes',
         authority: 'pending:open',
+        residualRisk: 'risk:record:audit/f1bfdc3',
       }),
-      findingRow(),
+      findingRow({ residualRisk: 'risk:record:audit/f1bfdc3' }),
       findingRow({
         id: 'CI-002',
         finding: 'Supply chain finding',
@@ -195,6 +675,7 @@ describe('readiness ledger checker', () => {
         ownerReference: 'principal:release-owner',
         securityRequired: 'Yes',
         authority: 'pending:open',
+        residualRisk: 'risk:record:audit/f1bfdc3',
       }),
     ];
     expect(errors(rows)).toEqual([]);
@@ -332,16 +813,11 @@ describe('readiness ledger checker', () => {
     );
   });
 
-  it('accepts a complete future exception with matching structured records', () => {
-    const finding = findingRow({
+  it('requires exact Security maintainer authority on an accepted security exception', () => {
+    const finding = resolvedClosedRow({
       status: 'Accepted P1 exception',
-      implementation: 'implementation:record:pull/123',
-      change: 'test:record:test/doc-001',
-      releaseGate: 'gate:record:ci/doc-001',
-      documentation: 'docs:record:docs/doc-001',
-      decision:
-        'decision:record:release/doc-001;implementation=principal:writer-a;finding=principal:documentation-owner;approver=principal:release-a',
-      approver: 'approver:principal:release-a',
+      securityRequired: 'Yes',
+      authority: 'authority:principal:data-person',
     });
     const rows = [
       findingRow({
@@ -352,6 +828,7 @@ describe('readiness ledger checker', () => {
         ownerReference: 'principal:security-owner',
         securityRequired: 'Yes',
         authority: 'pending:open',
+        residualRisk: 'risk:record:audit/doc-001',
       }),
       finding,
       findingRow({
@@ -361,9 +838,24 @@ describe('readiness ledger checker', () => {
         ownerReference: 'principal:release-owner',
         securityRequired: 'Yes',
         authority: 'pending:open',
+        residualRisk: 'risk:record:audit/doc-001',
       }),
     ];
-    expect(errors(rows, [exceptionRow()])).toEqual([]);
+    expect(
+      resolvedErrors(rows, [
+        exceptionRow({
+          ownerReference: 'principal:documentation-person',
+          mitigation: 'mitigation:record:mitigation/doc-001',
+          residualRisk: 'risk:record:audit/doc-001',
+          decision:
+            'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+          approver: 'approver:principal:release-person',
+          authority: 'authority:principal:data-person',
+        }),
+      ]),
+    ).toContain(
+      'P1 exception finding ID DOC-001 has security authority without Security maintainer authority.',
+    );
   });
 
   it('redacts malformed identifiers in validation and parser diagnostics', () => {
