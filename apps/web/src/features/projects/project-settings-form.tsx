@@ -2,12 +2,14 @@
 
 import type { ProjectHealth, ProjectStatus } from '@orbit/shared/constants';
 import { PROJECT_HEALTHS, PROJECT_STATUSES } from '@orbit/shared/constants';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { invalidateBootstrap } from '@/lib/query/bootstrap-cache.ts';
 import { HEALTH_LABELS, STATUS_LABELS } from './health-chip.tsx';
 
 export interface ProjectTeamOption {
@@ -49,6 +51,7 @@ export function ProjectSettingsForm({
   canManage,
 }: ProjectSettingsFormProps) {
   const router = useRouter();
+  const client = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState({
     name,
@@ -85,6 +88,7 @@ export function ProjectSettingsForm({
           teamIds: [...teamIds],
         },
       });
+      invalidateBootstrap(client);
       toast({ title: 'Project updated', tone: 'success' });
       router.refresh();
     } catch (caught) {
@@ -99,6 +103,7 @@ export function ProjectSettingsForm({
     setError(null);
     try {
       await apiRequest(`/api/projects/${projectId}?mode=archive`, { method: 'DELETE' });
+      invalidateBootstrap(client);
       toast({ title: 'Project archived', tone: 'success' });
       router.push('/projects');
     } catch (caught) {

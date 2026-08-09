@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { queryKeys } from '@/lib/query/keys.ts';
 
 const pushes: string[] = [];
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({
@@ -61,7 +64,11 @@ function stubFetch(): void {
 }
 
 function Providers({ children }: { children: ReactNode }) {
-  return <ToastProvider>{children}</ToastProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
+  );
 }
 
 function mountDialog(canManage = true) {
@@ -82,6 +89,8 @@ beforeEach(() => {
   calls.length = 0;
   pushes.length = 0;
   failure = null;
+  queryClient.clear();
+  queryClient.setQueryData(queryKeys.bootstrap(null), { projects: [] });
   stubFetch();
 });
 
@@ -106,6 +115,7 @@ describe('NewProjectDialog', () => {
       targetDate: null,
     });
     await waitFor(() => expect(pushes).toEqual(['/projects/realtime-delta-protocol']));
+    expect(queryClient.getQueryState(queryKeys.bootstrap(null))?.isInvalidated).toBe(true);
   });
 
   it('sends no slug of its own, so the server is the one that names the address', async () => {
@@ -136,6 +146,7 @@ describe('NewProjectDialog', () => {
       'Your role cannot project manage.',
     );
     expect(pushes).toEqual([]);
+    expect(queryClient.getQueryState(queryKeys.bootstrap(null))?.isInvalidated).toBe(false);
   });
 
   it('will not submit a name shorter than the server accepts', async () => {
