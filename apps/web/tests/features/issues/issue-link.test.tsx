@@ -5,8 +5,14 @@ import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { render, screen, within } from '@/test/render.tsx';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 const realLink = await import('next/link');
+
+await restoreModulesAfterThisFile([
+  '@/features/issues/workspace-provider.tsx',
+  '@/lib/query/use-issue-search.ts',
+]);
 
 interface LinkStubProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
   readonly href: string;
