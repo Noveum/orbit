@@ -29,6 +29,13 @@
       "when": 1786258484941,
       "tag": "0003_cute_sway",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786300066208,
+      "tag": "0004_clear_mandroid",
+      "breakpoints": true
     }
   ]
 }
