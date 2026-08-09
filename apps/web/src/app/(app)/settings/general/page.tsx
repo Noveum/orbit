@@ -1,11 +1,13 @@
 import { getOrganization } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
 import { GeneralForm } from '@/features/settings/general-form.tsx';
+import { WorkspaceDangerZone } from '@/features/settings/workspace-danger-zone.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 
 export default async function GeneralSettingsPage() {
-  const { principal } = await pageContext();
+  const { principal, deletionRequestedAt } = await pageContext({ allowDeleting: true });
   const organization = await getOrganization(principal.organizationId);
+  const deletionPending = deletionRequestedAt !== null;
 
   return (
     <section className="flex flex-col gap-4">
@@ -14,8 +16,14 @@ export default async function GeneralSettingsPage() {
         name={organization.name}
         logo={organization.logo}
         allowedEmailDomains={organization.allowedEmailDomains}
-        canManage={can(principal, 'org:manage')}
+        canManage={!deletionPending && can(principal, 'org:manage')}
       />
+      {can(principal, 'org:delete') ? (
+        <WorkspaceDangerZone
+          organizationName={organization.name}
+          deletionRequestedAt={deletionRequestedAt?.toISOString() ?? null}
+        />
+      ) : null}
     </section>
   );
 }

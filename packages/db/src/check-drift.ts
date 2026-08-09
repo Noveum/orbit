@@ -128,13 +128,40 @@ function targetName(url: string): string {
   }
 }
 
+const GUARD_FLAG = '--guard-deploy';
+
 if (import.meta.main) {
+  const guarding = process.argv.includes(GUARD_FLAG);
   const url = process.env['DATABASE_URL'];
+
   if (url === undefined || url.length === 0) {
-    process.stderr.write('DATABASE_URL is not set.\n');
-    process.exit(2);
+    if (!guarding) {
+      process.stderr.write('DATABASE_URL is not set.\n');
+      process.exit(2);
+    }
+    process.stdout.write('No DATABASE_URL, so there is no database to check against.\n');
+    process.exit(0);
   }
-  const drift = driftBetween(expectedTables(schema), await liveColumns(url));
+
+  let live: Map<string, Set<string>>;
+  try {
+    live = await liveColumns(url);
+  } catch (error) {
+    if (!guarding) throw error;
+    process.stdout.write(
+      `Could not reach ${targetName(url)}, so its schema went unchecked: ${String(error)}\n`,
+    );
+    process.exit(0);
+  }
+
+  const drift = driftBetween(expectedTables(schema), live);
   process.stdout.write(describeDrift(drift, targetName(url)));
-  process.exit(isBehind(drift) ? 1 : 0);
+  if (!isBehind(drift)) process.exit(0);
+  if (guarding) {
+    process.stdout.write(
+      '\nRefusing to build against a database that cannot answer what this code asks for.\n' +
+        'Apply the matching script in packages/db/catchup, then build again.\n',
+    );
+  }
+  process.exit(1);
 }

@@ -52,6 +52,13 @@ describe('can', () => {
     expect(can(principal('admin'), 'team:manage')).toBe(true);
   });
 
+  it('reserves permanent workspace deletion for administrators', () => {
+    expect(can(principal('admin'), 'org:delete')).toBe(true);
+    expect(can(principal('member'), 'org:delete')).toBe(false);
+    expect(can(principal('contributor'), 'org:delete')).toBe(false);
+    expect(can(principal('guest'), 'org:delete')).toBe(false);
+  });
+
   it('reports no capability that no route enforces', () => {
     const retired = ['attachment:delete', 'agent:delegate', 'audit:read'];
     for (const permission of retired) expect(permissionsFor('admin')).not.toContain(permission);

@@ -13,6 +13,7 @@ export interface MembershipContext {
   readonly memberId: string;
   readonly organizationName: string;
   readonly organizationSlug: string;
+  readonly deletionRequestedAt: Date | null;
 }
 
 export async function resolveMembership(
@@ -27,6 +28,7 @@ export async function resolveMembership(
       organizationId: schema.organization.id,
       organizationName: schema.organization.name,
       organizationSlug: schema.organization.slug,
+      deletionRequestedAt: schema.organization.deletionRequestedAt,
     })
     .from(schema.member)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
@@ -47,6 +49,7 @@ export async function resolveMembership(
     memberId: row.memberId,
     organizationName: row.organizationName,
     organizationSlug: row.organizationSlug,
+    deletionRequestedAt: row.deletionRequestedAt,
     principal: {
       userId,
       organizationId: row.organizationId,

@@ -24,3 +24,24 @@ export function assertSafeKey(key: string): string {
   }
   return normalized;
 }
+
+export function assertSafePrefix(prefix: string): string {
+  if (!prefix.endsWith('/') || prefix.length < 2) {
+    throw validationFailed('That storage prefix is not allowed.', { details: { prefix } });
+  }
+  const marker = `${prefix}sentinel`;
+  if (assertSafeKey(marker) !== marker) {
+    throw validationFailed('That storage prefix is not allowed.', { details: { prefix } });
+  }
+  return prefix;
+}
+
+export function storagePrefixFor(organizationId: string): string {
+  const valid = /^[A-Za-z0-9_-]+$/.test(organizationId);
+  if (!valid) {
+    throw validationFailed('That organization cannot own stored files.', {
+      details: { organizationId },
+    });
+  }
+  return assertSafePrefix(`${organizationId}/`);
+}

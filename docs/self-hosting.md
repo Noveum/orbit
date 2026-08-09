@@ -58,7 +58,10 @@ continent adds its round trip to every live update anyone sees.
 ### 3. Create the bucket
 
 Cloudflare R2 is the cheapest of these because it does not charge for egress.
-Create a bucket, then create an API token with object read and write on it.
+Create a bucket, then create an API token with object read, write, list, and
+delete permissions. AWS S3 deployments also need `s3:ListBucketVersions` and
+`s3:DeleteObjectVersion` so workspace deletion removes recoverable historical
+versions instead of leaving them behind.
 
 R2 gives you an endpoint like
 `https://<account-id>.r2.cloudflarestorage.com`, and the region is `auto`.

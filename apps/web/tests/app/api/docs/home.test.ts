@@ -94,6 +94,7 @@ mockMembership(() => ({
   memberId: 'member_1',
   organizationName: 'Nova',
   organizationSlug: 'nova',
+  deletionRequestedAt: null,
 }));
 
 const { GET } = await import('../../../../src/app/api/docs/home/route.ts');

@@ -1,6 +1,43 @@
-import { describe, expect, it } from 'bun:test';
-import { scopes, syncActionSchema } from '@orbit/shared/events';
-import { buildSyncAction, publishDeltas } from '../../src/realtime/publisher.ts';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { REDIS_CONTROL_CHANNEL, scopes, syncActionSchema } from '@orbit/shared/events';
+
+class FakeRedis {
+  static readonly published: { channel: string; message: string }[] = [];
+
+  on(): this {
+    return this;
+  }
+
+  publish(channel: string, message: string): Promise<number> {
+    FakeRedis.published.push({ channel, message });
+    return Promise.resolve(1);
+  }
+
+  disconnect(): void {
+    FakeRedis.published.splice(0);
+  }
+}
+
+const previousRedisUrl = process.env['REDIS_URL'];
+const redisModule = await import('ioredis');
+process.env['REDIS_URL'] = 'redis://fake:6379';
+mock.module('ioredis', () => ({ Redis: FakeRedis }));
+
+const { buildSyncAction, closeRealtime, publishDeltas, publishOrganizationDeleted } = await import(
+  '../../src/realtime/publisher.ts'
+);
+
+beforeEach(async () => {
+  await closeRealtime();
+  FakeRedis.published.length = 0;
+});
+
+afterAll(async () => {
+  await closeRealtime();
+  if (previousRedisUrl === undefined) delete process.env['REDIS_URL'];
+  else process.env['REDIS_URL'] = previousRedisUrl;
+  mock.module('ioredis', () => redisModule);
+});
 
 describe('buildSyncAction', () => {
   it('stamps an ISO timestamp, dedupes scopes, and matches the shared contract', () => {
@@ -54,8 +91,34 @@ describe('buildSyncAction', () => {
 });
 
 describe('publishDeltas', () => {
-  it('is a no op when there is nothing to publish or no redis configured', async () => {
+  it('is a no op when there is nothing to publish', async () => {
     await expect(publishDeltas([])).resolves.toBeUndefined();
+    expect(FakeRedis.published).toHaveLength(0);
+  });
+
+  it('is a no op when redis is not configured', async () => {
+    await closeRealtime();
+    delete process.env['REDIS_URL'];
+    try {
+      await publishDeltas([
+        buildSyncAction({
+          syncId: 1,
+          organizationId: 'org_1',
+          scopes: [scopes.organization('org_1')],
+          action: 'insert',
+          model: 'issue',
+          modelId: 'issue_1',
+          data: {},
+          actor: { type: 'system', id: 'system' },
+        }),
+      ]);
+      expect(FakeRedis.published).toHaveLength(0);
+    } finally {
+      process.env['REDIS_URL'] = 'redis://fake:6379';
+    }
+  });
+
+  it('publishes actions when redis is configured', async () => {
     await expect(
       publishDeltas([
         buildSyncAction({
@@ -70,5 +133,22 @@ describe('publishDeltas', () => {
         }),
       ]),
     ).resolves.toBeUndefined();
+    expect(FakeRedis.published).toHaveLength(1);
+  });
+});
+
+describe('publishOrganizationDeleted', () => {
+  it('publishes a validated organization deletion control message', async () => {
+    await publishOrganizationDeleted('org_deleted');
+
+    expect(FakeRedis.published).toEqual([
+      {
+        channel: REDIS_CONTROL_CHANNEL,
+        message: JSON.stringify({
+          type: 'organization_deleted',
+          organizationId: 'org_deleted',
+        }),
+      },
+    ]);
   });
 });

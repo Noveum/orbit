@@ -22,6 +22,13 @@ export interface DownloadOptions {
   readonly disposition?: string;
 }
 
+export interface StoragePrefixSummary {
+  readonly objects: number;
+  readonly bytes: number;
+  readonly versions: number;
+  readonly versionBytes: number;
+}
+
 export interface StorageDriver {
   readonly name: 's3';
   createUploadTarget(
@@ -32,5 +39,7 @@ export interface StorageDriver {
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
   getUrl(key: string, expiresInSeconds: number, options?: DownloadOptions): Promise<string>;
   delete(key: string): Promise<void>;
+  summarizePrefix(prefix: string): Promise<StoragePrefixSummary>;
+  deletePrefix(prefix: string): Promise<void>;
   stat(key: string): Promise<StoredObject | null>;
 }

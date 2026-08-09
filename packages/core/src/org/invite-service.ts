@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
+import { and, asc, db, eq, gt, inArray, isNull, schema, sql } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -11,6 +11,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { lockOrganization } from './organization-lock.ts';
 import { assertEmailDomainAllowed, type MemberRow } from './organization-service.ts';
 
 export type InvitationRow = typeof schema.invitation.$inferSelect;
@@ -208,6 +209,7 @@ export async function pendingInvitesForEmail(email: string): Promise<PendingInvi
         eq(sql`lower(${schema.invitation.email})`, email.toLowerCase()),
         eq(schema.invitation.status, 'pending'),
         gt(schema.invitation.expiresAt, new Date()),
+        isNull(schema.organization.deletionRequestedAt),
       ),
     )
     .orderBy(asc(schema.invitation.createdAt));
@@ -299,6 +301,10 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
       .where(eq(schema.invitation.id, token))
       .limit(1);
     const invitation = requireRow(found, 'That invite is not valid.');
+    const organization = await lockOrganization(tx, invitation.organizationId);
+    if (organization.deletionRequestedAt !== null) {
+      throw conflict('That workspace is being permanently deleted.');
+    }
 
     const [existingMember] = await tx
       .select()

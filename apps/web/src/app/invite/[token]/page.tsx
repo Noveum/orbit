@@ -1,4 +1,4 @@
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, isNull, schema } from '@orbit/db';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
@@ -29,7 +29,7 @@ async function loadInvite(token: string): Promise<InviteRecord | null> {
     })
     .from(schema.invitation)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.invitation.organizationId))
-    .where(eq(schema.invitation.id, token))
+    .where(and(eq(schema.invitation.id, token), isNull(schema.organization.deletionRequestedAt)))
     .limit(1);
   return row ?? null;
 }

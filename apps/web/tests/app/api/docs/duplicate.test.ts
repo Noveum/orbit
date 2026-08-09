@@ -77,6 +77,7 @@ mockMembership(() => ({
   memberId: 'member_1',
   organizationName: 'Nova',
   organizationSlug: 'nova',
+  deletionRequestedAt: null,
 }));
 
 const { POST } = await import('../../../../src/app/api/docs/[id]/duplicate/route.ts');

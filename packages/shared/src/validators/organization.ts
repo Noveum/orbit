@@ -27,6 +27,46 @@ export const organizationUpdateSchema = z
   })
   .partial();
 
+export const organizationDeleteSchema = z
+  .object({
+    confirmation: z
+      .string()
+      .min(1)
+      .max(80)
+      .refine((value) => value === value.trim()),
+  })
+  .strict();
+
+export const organizationDeletionSummarySchema = z
+  .object({
+    organizationName: z.string(),
+    members: z.number().int().nonnegative(),
+    teams: z.number().int().nonnegative(),
+    projects: z.number().int().nonnegative(),
+    issues: z.number().int().nonnegative(),
+    documents: z.number().int().nonnegative(),
+    files: z.number().int().nonnegative(),
+    fileBytes: z.number().int().nonnegative(),
+    fileVersions: z.number().int().nonnegative(),
+    fileVersionBytes: z.number().int().nonnegative(),
+    integrations: z.number().int().nonnegative(),
+    webhooks: z.number().int().nonnegative(),
+    availableAt: z.string().datetime().nullable(),
+    deletionRequestedAt: z.string().datetime().nullable(),
+  })
+  .strict();
+
+export const organizationDeletionSummaryResponseSchema = z
+  .object({ summary: organizationDeletionSummarySchema })
+  .strict();
+
+export const organizationDeletionResponseSchema = z
+  .object({
+    deletedOrganizationId: idSchema,
+    nextOrganizationId: idSchema.nullable(),
+  })
+  .strict();
+
 export const inviteCreateSchema = z.object({
   email: emailSchema,
   role: z.enum(ORG_ROLES).default('member'),
@@ -42,4 +82,10 @@ export const memberUpdateSchema = z.object({
 });
 
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
+export type OrganizationDeleteInput = z.infer<typeof organizationDeleteSchema>;
+export type OrganizationDeletionSummary = z.infer<typeof organizationDeletionSummarySchema>;
+export type OrganizationDeletionSummaryResponse = z.infer<
+  typeof organizationDeletionSummaryResponseSchema
+>;
+export type OrganizationDeletionResponse = z.infer<typeof organizationDeletionResponseSchema>;
 export type InviteCreateInput = z.infer<typeof inviteCreateSchema>;

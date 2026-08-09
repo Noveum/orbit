@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { SYNC_MODELS } from '@orbit/shared/events';
-import { getTableColumns, type Table } from 'drizzle-orm';
+import { getTableColumns, type SQL, type Table } from 'drizzle-orm';
 import { getTableConfig, PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import * as schema from '../../src/schema/index.ts';
 
@@ -137,6 +137,21 @@ describe('list and search indexes', () => {
 });
 
 describe('domain invariants', () => {
+  it('records a durable workspace deletion request', () => {
+    const deletionRequestedAt = getTableColumns(schema.organization).deletionRequestedAt;
+    expect(deletionRequestedAt?.name).toBe('deletion_requested_at');
+    expect(deletionRequestedAt?.notNull).toBe(false);
+  });
+
+  it('tracks the expiration of presigned attachment targets', () => {
+    const uploadExpiresAt = getTableColumns(schema.attachment).uploadExpiresAt;
+    expect(uploadExpiresAt?.name).toBe('upload_expires_at');
+    expect(uploadExpiresAt?.default).toBeDefined();
+    expect(new PgDialect().sqlToQuery(uploadExpiresAt?.default as SQL).sql).toBe(
+      "now() + interval '900 seconds'",
+    );
+  });
+
   it('keeps authored rows when their author is deleted', () => {
     expect(deleteActionOf(schema.issue, 'creator_id')).toBe('restrict');
     expect(deleteActionOf(schema.comment, 'author_id')).toBe('restrict');

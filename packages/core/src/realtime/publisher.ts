@@ -66,6 +66,13 @@ export async function publishSessionRevoked(userId: string): Promise<void> {
   await redis.publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
 }
 
+export async function publishOrganizationDeleted(organizationId: string): Promise<void> {
+  const redis = connection();
+  if (redis === null) return;
+  const message: ControlMessage = { type: 'organization_deleted', organizationId };
+  await redis.publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
+}
+
 export function closeRealtime(): Promise<void> {
   const open = client;
   client = null;

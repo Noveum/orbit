@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { db, eq, inArray, schema } from '@orbit/db';
+import { and, db, eq, inArray, schema } from '@orbit/db';
 import { listInbox, markRead } from '@orbit/services/notifications';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -12,16 +12,27 @@ interface IssueSummary {
   readonly teamKey: string;
 }
 
-async function issueIdsForComments(commentIds: readonly string[]): Promise<Map<string, string>> {
+async function issueIdsForComments(
+  organizationId: string,
+  commentIds: readonly string[],
+): Promise<Map<string, string>> {
   if (commentIds.length === 0) return new Map();
   const rows = await db
     .select({ id: schema.comment.id, issueId: schema.comment.issueId })
     .from(schema.comment)
-    .where(inArray(schema.comment.id, [...commentIds]));
+    .where(
+      and(
+        eq(schema.comment.organizationId, organizationId),
+        inArray(schema.comment.id, [...commentIds]),
+      ),
+    );
   return new Map(rows.map((row) => [row.id, row.issueId]));
 }
 
-async function issueSummaries(issueIds: readonly string[]): Promise<Map<string, IssueSummary>> {
+async function issueSummaries(
+  organizationId: string,
+  issueIds: readonly string[],
+): Promise<Map<string, IssueSummary>> {
   if (issueIds.length === 0) return new Map();
   const rows = await db
     .select({
@@ -32,7 +43,9 @@ async function issueSummaries(issueIds: readonly string[]): Promise<Map<string, 
     })
     .from(schema.issue)
     .innerJoin(schema.team, eq(schema.team.id, schema.issue.teamId))
-    .where(inArray(schema.issue.id, [...issueIds]));
+    .where(
+      and(eq(schema.issue.organizationId, organizationId), inArray(schema.issue.id, [...issueIds])),
+    );
   return new Map(
     rows.map((row) => [
       row.id,
@@ -73,14 +86,14 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
       const commentIds = page.items
         .filter((item) => item.entityType === 'comment')
         .map((item) => item.entityId);
-      const byComment = await issueIdsForComments(commentIds);
+      const byComment = await issueIdsForComments(principal.organizationId, commentIds);
 
       const issueIds = page.items.flatMap((item) => {
         if (item.entityType === 'issue') return [item.entityId];
         const resolved = byComment.get(item.entityId);
         return resolved === undefined ? [] : [resolved];
       });
-      const byIssue = await issueSummaries(issueIds);
+      const byIssue = await issueSummaries(principal.organizationId, issueIds);
 
       return {
         notifications: page.items.map((item) => {

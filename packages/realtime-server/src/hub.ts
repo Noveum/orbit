@@ -192,13 +192,25 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     }
   }
 
+  function closeOrganizationConnections(organizationId: string): void {
+    for (const connection of connections.values()) {
+      if (connection.organizationId !== organizationId) continue;
+      connections.delete(connection.id);
+      connection.close(ORGANIZATION_FORBIDDEN_CLOSE_CODE, 'organization_deleted');
+    }
+  }
+
   function deliverControl(payload: string): void {
     const parsed = controlMessageSchema.safeParse(parseJson(payload));
     if (!parsed.success) {
       logger.warn('discarded malformed control message', { channel: REDIS_CONTROL_CHANNEL });
       return;
     }
-    revalidateSessionsFor(parsed.data.userId);
+    if (parsed.data.type === 'session_revoked') {
+      revalidateSessionsFor(parsed.data.userId);
+      return;
+    }
+    closeOrganizationConnections(parsed.data.organizationId);
   }
 
   function revalidateDocScopes(action: SyncAction): void {

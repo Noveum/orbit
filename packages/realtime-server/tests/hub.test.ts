@@ -420,6 +420,41 @@ describe('membership and session revocation', () => {
       await hub.close();
     }
   });
+
+  it('closes only connections attached to a deleted workspace', async () => {
+    const hub = await newHub();
+    try {
+      const deletedAdmin = await connect(hub, home.adminUserId, home.organizationId);
+      const deletedReader = await connect(hub, home.readerUserId, home.organizationId);
+      const retained = await connect(hub, away.adminUserId, away.organizationId);
+
+      await driver().publish(
+        REDIS_CONTROL_CHANNEL,
+        JSON.stringify({
+          type: 'organization_deleted',
+          organizationId: home.organizationId,
+        }),
+      );
+      await waitFor(
+        () => deletedAdmin.socket.closures.length > 0 && deletedReader.socket.closures.length > 0,
+        'the deleted workspace connections to be closed',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      expect(deletedAdmin.socket.closures[0]).toEqual({
+        code: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+        reason: 'organization_deleted',
+      });
+      expect(deletedReader.socket.closures[0]).toEqual({
+        code: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+        reason: 'organization_deleted',
+      });
+      expect(retained.socket.closures).toHaveLength(0);
+      expect(hub.stats().connections).toBe(1);
+    } finally {
+      await hub.close();
+    }
+  });
 });
 
 describe('the periodic session sweep closes what no control message ever announced', () => {

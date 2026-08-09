@@ -1,4 +1,4 @@
-import { and, asc, count, db, eq, inArray, ne, schema } from '@orbit/db';
+import { and, asc, count, db, eq, inArray, isNull, ne, schema } from '@orbit/db';
 import { OPEN_STATE_CATEGORIES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -31,9 +31,16 @@ export async function resolvePrincipal(
   executor: Executor = db,
 ): Promise<Principal> {
   const [membership] = await executor
-    .select()
+    .select({ role: schema.member.role })
     .from(schema.member)
-    .where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, userId)))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
+    .where(
+      and(
+        eq(schema.member.organizationId, organizationId),
+        eq(schema.member.userId, userId),
+        isNull(schema.organization.deletionRequestedAt),
+      ),
+    )
     .limit(1);
   if (membership === undefined) throw forbidden('You are not a member of this workspace.');
 

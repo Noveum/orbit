@@ -101,6 +101,10 @@ The bucket needs a CORS policy allowing your origin, otherwise uploads fail in
 the browser while the server logs look healthy. `infra/s3-cors.json` is the
 document, with the origin as a placeholder.
 
+Workspace deletion needs permission to list and delete both current objects and
+object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
+`s3:DeleteObject`, and `s3:DeleteObjectVersion` for the upload bucket.
+
 ## Integrations
 
 | Variable | Notes |

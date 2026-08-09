@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import type { StorageDriver, StoredObject } from '@orbit/services/storage';
 import type { Principal } from '@orbit/shared/policy';
+import postgres from 'postgres';
 import {
   type AttachmentRecord,
   attachFile,
@@ -35,21 +36,25 @@ interface FakeStorage {
   readonly deletes: string[];
 }
 
-function fakeStorage(): FakeStorage {
+function fakeStorage(
+  options: { readonly expiresAt?: string; readonly onCreateTarget?: () => void } = {},
+): FakeStorage {
   const puts: { key: string; bytes: number; contentType: string }[] = [];
   const deletes: string[] = [];
   const objects = new Map<string, StoredObject>();
   const driver = {
     name: 's3',
-    createUploadTarget: (key: string, contentType: string, contentLength: number) =>
-      Promise.resolve({
+    createUploadTarget: (key: string, contentType: string, contentLength: number) => {
+      options.onCreateTarget?.();
+      return Promise.resolve({
         key,
         url: `https://storage.test/${key}`,
         method: 'PUT',
         headers: { 'content-type': contentType },
         maxBytes: contentLength,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      }),
+        expiresAt: options.expiresAt ?? new Date(Date.now() + 60_000).toISOString(),
+      });
+    },
     put: (key: string, body: Uint8Array, contentType: string) => {
       puts.push({ key, bytes: body.byteLength, contentType });
       objects.set(key, { key, size: body.byteLength, contentType, updatedAt: new Date() });
@@ -64,6 +69,34 @@ function fakeStorage(): FakeStorage {
     stat: (key: string) => Promise.resolve(objects.get(key) ?? null),
   } as unknown as StorageDriver;
   return { driver, puts, deletes };
+}
+
+function databaseUrl(): string {
+  const url = process.env['DATABASE_URL'];
+  if (url === undefined || url.length === 0) throw new Error('DATABASE_URL is required.');
+  return url;
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await client<{ waiting: number }[]>`
+      select count(*)::int as waiting
+      from pg_stat_activity
+      where datname = current_database()
+        and pid <> pg_backend_pid()
+        and wait_event_type = 'Lock'
+    `;
+    if ((rows[0]?.waiting ?? 0) > 0) return;
+    await pause(10);
+  }
+  throw new Error('The upload did not wait for the organization row lock.');
 }
 
 beforeEach(async () => {
@@ -216,6 +249,30 @@ describe('markAttachmentReady', () => {
 });
 
 describe('registerUpload', () => {
+  it('does not mint a storage target after workspace deletion enters its retry state', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, nova.organizationId));
+    let targetCreated = false;
+    const storage = fakeStorage({ onCreateTarget: () => (targetCreated = true) });
+
+    await expect(
+      registerUpload(
+        nova.admin,
+        {
+          fileName: 'trace.log',
+          contentType: 'text/plain',
+          size: 12,
+          parentType: 'comment',
+          parentId: commentId,
+        },
+        storage.driver,
+      ),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(targetCreated).toBe(false);
+  });
+
   it('registers a comment upload and publishes it on the issue of that comment', async () => {
     const storage = fakeStorage();
 
@@ -234,6 +291,7 @@ describe('registerUpload', () => {
     expect(registered.attachment.parentType).toBe('comment');
     expect(registered.attachment.parentId).toBe(commentId);
     expect(registered.attachment.status).toBe('pending');
+    expect(registered.attachment.uploadExpiresAt?.toISOString()).toBe(registered.upload.expiresAt);
     expect(registered.upload.method).toBe('PUT');
     expect(registered.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
   });
@@ -266,6 +324,41 @@ describe('registerUpload', () => {
         ),
       ),
     ).toEqual({ code: 'not_found', status: 404 });
+  });
+
+  it('waits for the organization lock before creating an upload target', async () => {
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    let announceTarget: (() => void) | undefined;
+    const targetCreated = new Promise<void>((resolve) => {
+      announceTarget = resolve;
+    });
+    const storage = fakeStorage({ onCreateTarget: () => announceTarget?.() });
+    await client.unsafe('begin');
+    await client`select id from organization where id = ${nova.organizationId} for update`;
+    const registration = registerUpload(
+      nova.admin,
+      {
+        fileName: 'trace.log',
+        contentType: 'text/plain',
+        size: 12,
+        parentType: 'comment',
+        parentId: commentId,
+      },
+      storage.driver,
+    );
+    try {
+      const first = await Promise.race([
+        targetCreated.then(() => 'target' as const),
+        waitForDatabaseLock(client).then(() => 'lock' as const),
+      ]);
+      expect(first).toBe('lock');
+      await client.unsafe('commit');
+      expect((await registration).attachment.status).toBe('pending');
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await registration.catch(() => undefined);
+      await client.end();
+    }
   });
 });
 
@@ -314,6 +407,29 @@ describe('finishUpload', () => {
 });
 
 describe('attachFile', () => {
+  it('does not store inline bytes after workspace deletion enters its retry state', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, nova.organizationId));
+    const storage = fakeStorage();
+
+    await expect(
+      attachFile(
+        nova.admin,
+        {
+          parentType: 'comment',
+          parentId: commentId,
+          fileName: 'notes.txt',
+          contentType: 'text/plain',
+          content: Buffer.from('hello orbit').toString('base64'),
+        },
+        storage.driver,
+      ),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(storage.puts).toHaveLength(0);
+  });
+
   it('stores the decoded bytes and returns a url that serves them back', async () => {
     const storage = fakeStorage();
 
@@ -333,6 +449,7 @@ describe('attachFile', () => {
     expect(storage.puts[0]?.bytes).toBe(11);
     expect(stored.attachment.size).toBe(11);
     expect(stored.attachment.status).toBe('ready');
+    expect(stored.attachment.uploadExpiresAt).toBeNull();
     expect(stored.url).toBe(`/api/files/${stored.attachment.storageKey}`);
     expect(stored.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
   });

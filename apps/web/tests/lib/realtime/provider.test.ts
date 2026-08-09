@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { SESSION_REVOKED_CLOSE_CODE, UNAUTHORIZED_CLOSE_CODE } from '@orbit/shared/events';
-import type { SessionGate } from '../../../src/lib/realtime/provider.tsx';
-import { endSessionIfRevoked, handleTerminalClose } from '../../../src/lib/realtime/provider.tsx';
+import {
+  ORGANIZATION_FORBIDDEN_CLOSE_CODE,
+  SESSION_REVOKED_CLOSE_CODE,
+  UNAUTHORIZED_CLOSE_CODE,
+} from '@orbit/shared/events';
+import type { SessionGate, WorkspaceRecoveryGate } from '../../../src/lib/realtime/provider.tsx';
+import {
+  endSessionIfRevoked,
+  handleTerminalClose,
+  recoverWorkspaceAfterForbidden,
+} from '../../../src/lib/realtime/provider.tsx';
 
 const HERE = 'https://orbit.example/my-issues';
 
@@ -25,6 +33,28 @@ function gateReturning(answer: () => Promise<unknown>): Recorder {
       signOut: () => {
         calls.signOuts += 1;
         return Promise.resolve(undefined);
+      },
+    },
+  };
+}
+
+interface WorkspaceRecorder {
+  readonly gate: WorkspaceRecoveryGate;
+  readonly calls: { lists: number; active: string[] };
+}
+
+function workspaceGateReturning(organizations: unknown): WorkspaceRecorder {
+  const calls = { lists: 0, active: [] as string[] };
+  return {
+    calls,
+    gate: {
+      listOrganizations: () => {
+        calls.lists += 1;
+        return Promise.resolve({ organizations });
+      },
+      setActive: ({ organizationId }) => {
+        calls.active.push(organizationId);
+        return Promise.resolve({ error: null });
       },
     },
   };
@@ -117,5 +147,64 @@ describe('handleTerminalClose', () => {
     expect(calls.sessions).toHaveLength(1);
     expect(calls.signOuts).toBe(0);
     expect(location.href).toBe(HERE);
+  });
+
+  it('starts workspace recovery only for an organization-forbidden close', async () => {
+    const session = gateReturning(async () => ({ data: { session: { id: 'live' } } }));
+    const workspace = workspaceGateReturning([{ id: 'org_2' }]);
+
+    handleTerminalClose(ORGANIZATION_FORBIDDEN_CLOSE_CODE, session.gate, workspace.gate);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(workspace.calls.lists).toBe(1);
+    expect(workspace.calls.active).toEqual(['org_2']);
+    expect(location.href).toBe('/my-issues');
+    expect(session.calls.sessions).toEqual([]);
+  });
+});
+
+describe('recoverWorkspaceAfterForbidden', () => {
+  it('activates the first surviving workspace before leaving the stale tenant', async () => {
+    const { gate, calls } = workspaceGateReturning([{ id: 'org_2' }, { id: 'org_3' }]);
+
+    await recoverWorkspaceAfterForbidden(gate);
+
+    expect(calls.active).toEqual(['org_2']);
+    expect(location.href).toBe('/my-issues');
+  });
+
+  it('opens workspace creation when no membership remains', async () => {
+    const { gate, calls } = workspaceGateReturning([]);
+
+    await recoverWorkspaceAfterForbidden(gate);
+
+    expect(calls.active).toEqual([]);
+    expect(location.href).toBe('/workspaces/new');
+  });
+
+  it('fails closed to workspace creation when recovery throws', async () => {
+    const { gate } = workspaceGateReturning([{ id: 'org_2' }]);
+    const failing: WorkspaceRecoveryGate = {
+      ...gate,
+      setActive: () => Promise.reject(new Error('session update failed')),
+    };
+
+    await recoverWorkspaceAfterForbidden(failing);
+
+    expect(location.href).toBe('/workspaces/new');
+  });
+
+  it('fails closed when the surviving workspace cannot be activated', async () => {
+    const { gate } = workspaceGateReturning([{ id: 'org_2' }]);
+    const rejected: WorkspaceRecoveryGate = {
+      ...gate,
+      setActive: () => Promise.resolve({ error: { message: 'membership changed' } }),
+    };
+
+    await recoverWorkspaceAfterForbidden(rejected);
+
+    expect(location.href).toBe('/workspaces/new');
   });
 });

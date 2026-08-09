@@ -4,17 +4,102 @@ import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/re
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
 import { GitPullRequest } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
+import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
-import type { PullRequestRow } from './data.ts';
+import type { GithubReach, PullRequestRow } from './data.ts';
 import { PR_GROUP_ORDER, prStateLabel, prStateTone } from './pr-state.ts';
 
 export interface PullsViewProps {
   readonly pulls: readonly PullRequestRow[];
   readonly userId: string;
+  readonly reach: GithubReach;
+  readonly canManageIntegrations: boolean;
+}
+
+export function PullsEmptyState({
+  reach,
+  canManageIntegrations,
+}: {
+  readonly reach: GithubReach;
+  readonly canManageIntegrations: boolean;
+}) {
+  const icon = <GitPullRequest strokeWidth={1.75} aria-hidden="true" />;
+  const settingsAction = (label: string) =>
+    canManageIntegrations ? (
+      <Button asChild variant="primary">
+        <Link href="/settings/integrations" data-testid="pulls-connect-github">
+          {label}
+        </Link>
+      </Button>
+    ) : undefined;
+
+  if (reach === 'not_installed') {
+    return (
+      <EmptyState
+        icon={icon}
+        title="GitHub is not connected yet"
+        description={
+          canManageIntegrations
+            ? 'Connect GitHub, pick the repositories to track, and pull requests naming an issue show up here.'
+            : 'A workspace admin needs to connect GitHub before pull requests can appear here.'
+        }
+        {...(settingsAction('Connect GitHub') === undefined
+          ? {}
+          : { action: settingsAction('Connect GitHub') })}
+        className="flex-1"
+      />
+    );
+  }
+
+  if (reach === 'suspended') {
+    return (
+      <EmptyState
+        icon={icon}
+        title="The GitHub installation is suspended"
+        description={
+          canManageIntegrations
+            ? 'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then pull requests naming an issue show up here.'
+            : 'GitHub is refusing to send anything while the installation is suspended. A workspace admin has to lift it on GitHub.'
+        }
+        {...(settingsAction('Open integrations') === undefined
+          ? {}
+          : { action: settingsAction('Open integrations') })}
+        className="flex-1"
+      />
+    );
+  }
+
+  if (reach === 'no_repositories') {
+    return (
+      <EmptyState
+        icon={icon}
+        title="No repository is being tracked"
+        description={
+          canManageIntegrations
+            ? 'GitHub is connected but no repository is switched on yet. Pick the ones this workspace should track.'
+            : 'GitHub is connected but no repository is switched on yet. A workspace admin picks which ones to track.'
+        }
+        {...(settingsAction('Pick repositories') === undefined
+          ? {}
+          : { action: settingsAction('Pick repositories') })}
+        className="flex-1"
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={icon}
+      title="No pull requests linked to your issues"
+      description="Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches."
+      className="flex-1"
+    />
+  );
 }
 
 function groupPulls(pulls: readonly PullRequestRow[]): { state: string; rows: PullRequestRow[] }[] {
@@ -31,7 +116,7 @@ function indexOfState(state: string): number {
   return index === -1 ? PR_GROUP_ORDER.length : index;
 }
 
-export function PullsView({ pulls, userId }: PullsViewProps) {
+export function PullsView({ pulls, userId, reach, canManageIntegrations }: PullsViewProps) {
   const router = useRouter();
   useScopeSubscription([scopes.user(userId)]);
   useDeltaHandler(
@@ -61,12 +146,7 @@ export function PullsView({ pulls, userId }: PullsViewProps) {
       </header>
 
       {pulls.length === 0 ? (
-        <EmptyState
-          icon={<GitPullRequest strokeWidth={1.75} aria-hidden="true" />}
-          title="No pull requests yet"
-          description="Pull requests linked to your issues appear here with their review state."
-          className="flex-1"
-        />
+        <PullsEmptyState reach={reach} canManageIntegrations={canManageIntegrations} />
       ) : (
         <div className="flex flex-col gap-6 p-5">
           {groups.map((group) => (

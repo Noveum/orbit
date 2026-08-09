@@ -2,7 +2,13 @@ import { validationFailed } from '@orbit/shared';
 import { S3StorageDriver } from './s3.ts';
 import type { StorageDriver } from './types.ts';
 
-export { assertSafeKey, FILE_ROUTE, fileUrlFor } from './key.ts';
+export {
+  assertSafeKey,
+  assertSafePrefix,
+  FILE_ROUTE,
+  fileUrlFor,
+  storagePrefixFor,
+} from './key.ts';
 export {
   type AttachmentOwner,
   type AttachmentParentType,
@@ -11,11 +17,18 @@ export {
   isPubliclyReadable,
   type StorageExecutor,
 } from './parent.ts';
-export { type S3Config, S3StorageDriver, s3ConfigSchema } from './s3.ts';
+export {
+  type S3Config,
+  S3StorageDriver,
+  s3ConfigSchema,
+  UPLOAD_COMPLETION_GRACE_SECONDS,
+  UPLOAD_URL_TTL_SECONDS,
+} from './s3.ts';
 export {
   STORAGE_KINDS,
   type StorageDriver,
   type StorageKind,
+  type StoragePrefixSummary,
   type StoredObject,
   type UploadTarget,
 } from './types.ts';

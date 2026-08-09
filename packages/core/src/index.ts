@@ -14,6 +14,7 @@ export * from './org/avatar-service.ts';
 export * from './org/invite-service.ts';
 export * from './org/member-service.ts';
 export * from './org/onboarding-service.ts';
+export * from './org/organization-deletion-service.ts';
 export * from './org/organization-service.ts';
 export * from './org/profile-service.ts';
 export * from './org/starter-content.ts';

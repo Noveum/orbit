@@ -108,5 +108,23 @@ describe('resolveMembership', () => {
     expect(resolved?.memberId.length ?? 0).toBeGreaterThan(0);
     expect(resolved?.organizationName).toBe('Nova');
     expect(resolved?.organizationSlug.startsWith('nova-')).toBe(true);
+    expect(resolved?.deletionRequestedAt).toBeNull();
+  });
+
+  it('exposes a pending deletion so the app can limit the workspace to retry', async () => {
+    const requestedAt = new Date('2026-08-08T13:00:00.000Z');
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: requestedAt })
+      .where(eq(schema.organization.id, nova.organizationId));
+    try {
+      const resolved = await resolveMembership(nova.adminUser.id, nova.organizationId);
+      expect(resolved?.deletionRequestedAt).toEqual(requestedAt);
+    } finally {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: null })
+        .where(eq(schema.organization.id, nova.organizationId));
+    }
   });
 });

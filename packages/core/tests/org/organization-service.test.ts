@@ -107,6 +107,37 @@ describe('listOrganizationsForUser', () => {
     const theirs = await listOrganizationsForUser(stranger.id);
     expect(theirs.map((row) => row.organization.slug)).toEqual(['quasar']);
   });
+
+  it('hides a pending deletion except from an administrator retry listing', async () => {
+    const user = await createUser('Nia New');
+    const active = await createOrganization(user.id, { name: 'Comet', slug: 'comet' });
+    const deleting = await createOrganization(user.id, { name: 'Nebula', slug: 'nebula' });
+    const member = await createUser('Mira Member');
+    await db.insert(schema.member).values({
+      id: 'member_pending_workspace',
+      organizationId: deleting.organization.id,
+      userId: member.id,
+      role: 'member',
+    });
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, deleting.organization.id));
+
+    const mine = await listOrganizationsForUser(user.id);
+    const retryable = await listOrganizationsForUser(user.id, {
+      includeDeletingForAdmins: true,
+    });
+    const memberRetryable = await listOrganizationsForUser(member.id, {
+      includeDeletingForAdmins: true,
+    });
+
+    expect(mine.map((row) => row.organization.id)).toEqual([active.organization.id]);
+    expect(retryable.map((row) => row.organization.id).sort()).toEqual(
+      [active.organization.id, deleting.organization.id].sort(),
+    );
+    expect(memberRetryable).toEqual([]);
+  });
 });
 
 describe('teams', () => {

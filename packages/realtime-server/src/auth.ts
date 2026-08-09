@@ -1,4 +1,4 @@
-import { and, db, eq, gt, inArray, or, schema, sql } from '@orbit/db';
+import { and, db, eq, gt, inArray, isNull, or, schema, sql } from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { authMessageSchema } from '@orbit/shared/events';
 import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
@@ -108,10 +108,12 @@ export async function authenticateTicket(
   const memberships = await db
     .select({ role: schema.member.role })
     .from(schema.member)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
     .where(
       and(
         eq(schema.member.userId, found.userId),
         eq(schema.member.organizationId, payload.organizationId),
+        isNull(schema.organization.deletionRequestedAt),
       ),
     )
     .limit(1);
@@ -154,10 +156,12 @@ export async function membershipStillValid(principal: ConnectionPrincipal): Prom
   const rows = await db
     .select({ id: schema.member.id })
     .from(schema.member)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
     .where(
       and(
         eq(schema.member.organizationId, principal.organizationId),
         eq(schema.member.userId, principal.userId),
+        isNull(schema.organization.deletionRequestedAt),
       ),
     )
     .limit(1);
@@ -170,10 +174,12 @@ export async function refreshedPrincipal(
   const rows = await db
     .select({ role: schema.member.role })
     .from(schema.member)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
     .where(
       and(
         eq(schema.member.organizationId, principal.organizationId),
         eq(schema.member.userId, principal.userId),
+        isNull(schema.organization.deletionRequestedAt),
       ),
     )
     .limit(1);

@@ -85,6 +85,22 @@ describe('access token verification', () => {
     await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
   });
 
+  it('rejects a token while workspace deletion is pending', async () => {
+    const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+    try {
+      await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'forbidden' });
+    } finally {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: null })
+        .where(eq(schema.organization.id, workspace.organizationId));
+    }
+  });
+
   it('rejects an unknown token', async () => {
     await expect(verifyMcpAccessToken('at_notarealtoken')).rejects.toMatchObject({
       code: 'unauthorized',

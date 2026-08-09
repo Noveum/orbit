@@ -936,7 +936,14 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
   const [doc] = await db
     .select(DOC_COLUMNS)
     .from(schema.doc)
-    .where(and(eq(schema.doc.publishToken, token), isNull(schema.doc.archivedAt)))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
+    .where(
+      and(
+        eq(schema.doc.publishToken, token),
+        isNull(schema.doc.archivedAt),
+        isNull(schema.organization.deletionRequestedAt),
+      ),
+    )
     .limit(1);
   if (doc === undefined) return null;
   if (!isExternallyShared(doc.visibility)) return null;
@@ -947,11 +954,13 @@ export async function listPublicDocs(): Promise<DocRow[]> {
   return await db
     .select(DOC_COLUMNS)
     .from(schema.doc)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
     .where(
       and(
         eq(schema.doc.visibility, 'public'),
         isNull(schema.doc.archivedAt),
         ne(schema.doc.publishToken, ''),
+        isNull(schema.organization.deletionRequestedAt),
       ),
     )
     .orderBy(desc(schema.doc.updatedAt))
@@ -962,7 +971,8 @@ export async function isPublishedDoc(docId: string): Promise<boolean> {
   const [row] = await db
     .select({ visibility: schema.doc.visibility, archivedAt: schema.doc.archivedAt })
     .from(schema.doc)
-    .where(eq(schema.doc.id, docId))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
+    .where(and(eq(schema.doc.id, docId), isNull(schema.organization.deletionRequestedAt)))
     .limit(1);
   return row !== undefined && row.archivedAt === null && isExternallyShared(row.visibility);
 }

@@ -1,4 +1,4 @@
-import { and, asc, db, eq, schema } from '@orbit/db';
+import { and, asc, db, eq, isNull, or, schema } from '@orbit/db';
 import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -199,12 +199,17 @@ export async function getOrganization(organizationId: string): Promise<Organizat
 
 export async function listOrganizationsForUser(
   userId: string,
+  options: { readonly includeDeletingForAdmins?: boolean } = {},
 ): Promise<{ organization: OrganizationRow; role: string }[]> {
+  const visibleOrganization =
+    options.includeDeletingForAdmins === true
+      ? or(isNull(schema.organization.deletionRequestedAt), eq(schema.member.role, 'admin'))
+      : isNull(schema.organization.deletionRequestedAt);
   const rows = await db
     .select({ organization: schema.organization, role: schema.member.role })
     .from(schema.member)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-    .where(eq(schema.member.userId, userId))
+    .where(and(eq(schema.member.userId, userId), visibleOrganization))
     .orderBy(asc(schema.organization.name));
   return rows;
 }

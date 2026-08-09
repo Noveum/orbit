@@ -35,7 +35,7 @@ const pull: PullRequestRow = {
 
 describe('PullsView', () => {
   it('links the issue behind each pull request, identifier and title together', () => {
-    render(<PullsView pulls={[pull]} userId="user_1" />);
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
 
     const link = screen.getByTestId('pull-issue-ENG-12');
     expect(link.tagName).toBe('A');
@@ -45,12 +45,55 @@ describe('PullsView', () => {
   });
 
   it('keeps the pull request itself pointing at the forge', () => {
-    render(<PullsView pulls={[pull]} userId="user_1" />);
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
 
     const row = screen.getByRole('listitem');
     const forge = within(row).getByRole('link', {
       name: 'Buffer the socket until the hub attaches',
     });
     expect(forge).toHaveAttribute('href', 'https://github.com/noveum/orbit/pull/42');
+  });
+});
+
+describe('the empty pull request page explaining itself', () => {
+  it('offers a way to connect when GitHub was never installed', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="not_installed" canManageIntegrations />);
+
+    expect(screen.getByText('GitHub is not connected yet')).toBeInTheDocument();
+    expect(screen.getByTestId('pulls-connect-github')).toHaveAttribute(
+      'href',
+      '/settings/integrations',
+    );
+  });
+
+  it('asks for repositories when the app is installed but none is tracked', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="no_repositories" canManageIntegrations />);
+
+    expect(screen.getByText('No repository is being tracked')).toBeInTheDocument();
+    expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
+  });
+
+  it('says the installation is suspended rather than asking for repositories', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="suspended" canManageIntegrations />);
+
+    expect(screen.getByText('The GitHub installation is suspended')).toBeInTheDocument();
+    expect(screen.queryByText('No repository is being tracked')).not.toBeInTheDocument();
+  });
+
+  it('says what makes a pull request link once a repository is tracked', () => {
+    render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    expect(screen.getByText('No pull requests linked to your issues')).toBeInTheDocument();
+    expect(screen.getByText(/branch or title names an issue/)).toBeInTheDocument();
+    expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
+  });
+
+  it('sends a member who cannot manage integrations to an admin rather than a dead end', () => {
+    render(
+      <PullsView pulls={[]} userId="user_1" reach="not_installed" canManageIntegrations={false} />,
+    );
+
+    expect(screen.getByText(/workspace admin needs to connect GitHub/)).toBeInTheDocument();
+    expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
   });
 });

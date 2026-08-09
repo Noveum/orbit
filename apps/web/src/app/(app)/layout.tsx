@@ -24,16 +24,20 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   const [onboarding, membership, organizations] = await Promise.all([
     getOnboardingStatus(session.user.id),
     resolveMembership(session.user.id, session.session.activeOrganizationId ?? null),
-    listOrganizationsForUser(session.user.id),
+    listOrganizationsForUser(session.user.id, { includeDeletingForAdmins: true }),
   ]);
 
   if (!onboarding.completed) redirect('/onboarding');
 
+  const workspaceAvailable = membership?.deletionRequestedAt === null;
+
   const [teams, dehydrated] = await Promise.all([
-    membership === null
+    !workspaceAvailable || membership === null
       ? Promise.resolve<ShellTeam[]>([])
       : listTeamsForPrincipal(membership.principal),
-    membership === null ? Promise.resolve(null) : dehydratedWorkspace(membership.principal),
+    !workspaceAvailable || membership === null
+      ? Promise.resolve(null)
+      : dehydratedWorkspace(membership.principal),
   ]);
 
   const workspaces: ShellWorkspace[] = organizations.map((row) => ({
@@ -61,7 +65,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     </WorkspaceShell>
   );
 
-  if (membership === null || dehydrated === null) return shell;
+  if (!workspaceAvailable || membership === null || dehydrated === null) return shell;
 
   return (
     <HydrationBoundary state={dehydrated}>

@@ -15,6 +15,13 @@
       "when": 1786216640676,
       "tag": "0001_lean_satana",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786217938315,
+      "tag": "0002_glossy_mister_sinister",
+      "breakpoints": true
     }
   ]
 }

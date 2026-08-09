@@ -16,6 +16,37 @@ export interface PullRequestRow {
   readonly updatedAt: string;
 }
 
+export type GithubReach = 'not_installed' | 'suspended' | 'no_repositories' | 'connected';
+
+export async function githubReach(principal: Principal): Promise<GithubReach> {
+  const [installations, tracked] = await Promise.all([
+    db
+      .select({
+        integrationId: schema.githubInstallation.integrationId,
+        status: schema.githubInstallation.status,
+      })
+      .from(schema.githubInstallation)
+      .where(eq(schema.githubInstallation.organizationId, principal.organizationId)),
+    db
+      .select({ integrationId: schema.githubRepositorySync.integrationId })
+      .from(schema.githubRepositorySync)
+      .where(
+        and(
+          eq(schema.githubRepositorySync.organizationId, principal.organizationId),
+          eq(schema.githubRepositorySync.enabled, true),
+        ),
+      ),
+  ]);
+
+  if (installations.length === 0) return tracked.length === 0 ? 'not_installed' : 'connected';
+
+  const active = new Set(
+    installations.filter((row) => row.status === 'active').map((row) => row.integrationId),
+  );
+  if (active.size === 0) return 'suspended';
+  return tracked.some((row) => active.has(row.integrationId)) ? 'connected' : 'no_repositories';
+}
+
 export async function loadPullRequests(principal: Principal): Promise<PullRequestRow[]> {
   const rows = await db
     .select({

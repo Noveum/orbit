@@ -117,6 +117,7 @@ export function signInAs(person: Actor): void {
     memberId: `member_${person.userId}`,
     organizationName: 'Nova',
     organizationSlug: 'nova',
+    deletionRequestedAt: null,
   };
 }
 
