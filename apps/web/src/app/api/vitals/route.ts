@@ -28,6 +28,7 @@ export async function POST(request: Request): Promise<Response> {
         navigationType: vital.navigationType,
         interactionType: vital.interactionType ?? null,
         target: vital.target ?? null,
+        parts: vital.parts ?? null,
       })),
     );
 
