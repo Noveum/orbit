@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { InboxItem } from '@/features/inbox/data.ts';
@@ -52,10 +53,13 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 function renderInbox(items: readonly InboxItem[]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <HotkeyProvider>
-      <InboxView items={items} unreadCount={1} unreadMentions={1} userId="user_1" />
-    </HotkeyProvider>,
+    <QueryClientProvider client={client}>
+      <HotkeyProvider>
+        <InboxView items={items} unreadCount={1} unreadMentions={1} userId="user_1" />
+      </HotkeyProvider>
+    </QueryClientProvider>,
   );
 }
 

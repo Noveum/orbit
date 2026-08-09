@@ -44,8 +44,24 @@ function pendingLabel(count: number): string {
   return `${count} ${noun} will be attached once the issue is created.`;
 }
 
+function projectSupportsTeam(project: Project | undefined, teamId: string): boolean {
+  return (
+    project !== undefined && (project.teamIds.length === 0 || project.teamIds.includes(teamId))
+  );
+}
+
+function compatibleTeamId(
+  project: Project,
+  currentTeamId: string | null,
+  availableTeamIds: readonly string[],
+): string | null {
+  if (project.teamIds.length === 0) return currentTeamId;
+  if (currentTeamId !== null && project.teamIds.includes(currentTeamId)) return currentTeamId;
+  return availableTeamIds.find((teamId) => project.teamIds.includes(teamId)) ?? null;
+}
+
 function ScopePickers({
-  teamProjects,
+  projects,
   teamCycles,
   projectId,
   estimate,
@@ -54,7 +70,7 @@ function ScopePickers({
   onEstimate,
   onCycle,
 }: {
-  readonly teamProjects: readonly Project[];
+  readonly projects: readonly Project[];
   readonly teamCycles: readonly Cycle[];
   readonly projectId: string | null;
   readonly estimate: number | null;
@@ -70,15 +86,15 @@ function ScopePickers({
         options={[
           {
             id: 'none',
-            label: teamProjects.length === 0 ? 'No projects on this team' : 'No project',
+            label: projects.length === 0 ? 'No projects in this workspace' : 'No project',
           },
-          ...teamProjects.map((project) => ({ id: project.id, label: project.name })),
+          ...projects.map((project) => ({ id: project.id, label: project.name })),
         ]}
         selected={projectId === null ? ['none'] : [projectId]}
         onSelect={(value) => onProject(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-project">
-          {teamProjects.find((project) => project.id === projectId)?.name ?? 'Project'}
+          {projects.find((project) => project.id === projectId)?.name ?? 'Project'}
         </button>
       </PropertyMenu>
 
@@ -125,7 +141,10 @@ function ScopePickers({
 export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
-  const firstTeamId = defaultTeamId ?? teams[0]?.id ?? null;
+  const firstTeamId =
+    defaultTeamId !== null && teams.some((team) => team.id === defaultTeamId)
+      ? defaultTeamId
+      : (teams[0]?.id ?? null);
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -139,6 +158,8 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
 
   const create = useCreateIssue(teamId ?? 'none');
   const update = useUpdateIssue();
@@ -166,6 +187,20 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setCycleId(null);
     setPending([]);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedTeamExists = teamId !== null && teams.some((team) => team.id === teamId);
+    if (selectedTeamExists || teamId === firstTeamId) return;
+    const selectedProject = projects.find((project) => project.id === projectId);
+    setTeamId(firstTeamId);
+    setStateId(null);
+    if (firstTeamId === null || !projectSupportsTeam(selectedProject, firstTeamId))
+      setProjectId(null);
+    setEstimate(null);
+    setCycleId(null);
+    setLabelIds([]);
+  }, [firstTeamId, open, projectId, projects, teamId, teams]);
 
   const hold = useCallback(
     (file: File): Promise<UploadedAttachment> => {
@@ -214,27 +249,48 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
-  const teamProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) =>
-          project.teamIds.length === 0 || (teamId !== null && project.teamIds.includes(teamId)),
-      ),
-    [projects, teamId],
-  );
-
   const teamCycles = useMemo(
     () => cycles.filter((cycle) => cycle.teamId === teamId),
     [cycles, teamId],
   );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
+  useEffect(() => {
+    if (projectId === null || teamId === null) return;
+    const selectedProject = projects.find((project) => project.id === projectId);
+    if (!projectSupportsTeam(selectedProject, teamId)) setProjectId(null);
+  }, [projectId, projects, teamId]);
+
+  const selectProject = (nextProjectId: string | null) => {
+    if (nextProjectId === null) {
+      setProjectId(null);
+      return;
+    }
+    const project = projects.find((entry) => entry.id === nextProjectId);
+    if (project === undefined) return;
+    const nextTeamId = compatibleTeamId(
+      project,
+      teamId,
+      teams.map((team) => team.id),
+    );
+    if (nextTeamId === null) return;
+    if (nextTeamId !== teamId) {
+      setTeamId(nextTeamId);
+      setStateId(null);
+      setEstimate(null);
+      setCycleId(null);
+      setLabelIds([]);
+    }
+    setProjectId(nextProjectId);
+  };
+
   const submit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
-    if (create.isPending) return;
+    if (submittingRef.current || create.isPending) return;
     if (teamId === null || title.trim().length === 0) return;
     const body = description;
     const held = pending;
+    submittingRef.current = true;
     create.mutate(
       {
         teamId,
@@ -249,7 +305,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         labelIds,
       },
       {
+        onError: () => {
+          submittingRef.current = false;
+        },
         onSuccess: (issue) => {
+          submittingRef.current = false;
           setPending((current) => current.filter((entry) => !held.includes(entry)));
           finalize(issue, body, held);
           if (!createMore) {
@@ -260,6 +320,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
           setDescription('');
           setLabelIds([]);
           setComposerKey((value) => value + 1);
+          titleRef.current?.focus();
         },
       },
     );
@@ -282,6 +343,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         <form
           onSubmit={submit}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               submit();
@@ -290,11 +352,16 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
           className="flex flex-col gap-3"
         >
           <Input
+            ref={titleRef}
             autoFocus
             data-testid="quick-create-title"
             placeholder="Issue title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) event.preventDefault();
+            }}
             className="h-9 border-0 px-0 font-medium text-base shadow-none"
           />
           <RichTextEditor
@@ -319,9 +386,10 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               options={teams.map((team) => ({ id: team.id, label: team.name }))}
               selected={teamId === null ? [] : [teamId]}
               onSelect={(id) => {
+                const selectedProject = projects.find((project) => project.id === projectId);
                 setTeamId(id);
                 setStateId(null);
-                setProjectId(null);
+                if (!projectSupportsTeam(selectedProject, id)) setProjectId(null);
                 setEstimate(null);
                 setCycleId(null);
                 setLabelIds([]);
@@ -407,12 +475,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
             </PropertyMenu>
 
             <ScopePickers
-              teamProjects={teamProjects}
+              projects={projects}
               teamCycles={teamCycles}
               projectId={projectId}
               estimate={estimate}
               cycleId={cycleId}
-              onProject={setProjectId}
+              onProject={selectProject}
               onEstimate={setEstimate}
               onCycle={setCycleId}
             />

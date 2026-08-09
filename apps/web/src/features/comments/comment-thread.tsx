@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
+import { taskListClassName } from '@/features/docs/doc-body.tsx';
 import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -176,8 +177,12 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
   );
 }
 
-const bodyClassName =
-  'prose-orbit break-words text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1';
+const bodyClassName = cn(
+  'prose-orbit break-words text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1',
+  '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5',
+  '[&_li]:my-0.5 [&_li]:pl-1 [&_li::marker]:text-faint [&_li_p]:my-0',
+  taskListClassName,
+);
 
 export function CommentBody({ body, bodyHtml }: { body: string; bodyHtml: string }) {
   if (bodyHtml.length === 0) {

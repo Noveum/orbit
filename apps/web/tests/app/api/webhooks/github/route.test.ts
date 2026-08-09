@@ -523,3 +523,135 @@ describe('events that reach no handler', () => {
     }
   });
 });
+
+describe('attributing a delivery to the workspace it belongs to', () => {
+  async function bindInstallation(): Promise<void> {
+    const [row] = await db
+      .select({ id: schema.integration.id })
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId))
+      .limit(1);
+    await db.insert(schema.githubInstallation).values({
+      id: `ghi_${randomUUIDv7()}`,
+      organizationId: workspace.organizationId,
+      installationId: 'inst-42',
+      integrationId: row?.id ?? '',
+      accountLogin: 'acme',
+      accountId: '1',
+      accountType: 'Organization',
+      repositorySelection: 'all',
+      status: 'active',
+      connectedById: workspace.adminUser.id,
+    });
+  }
+
+  it('stamps the workspace behind the installation, even when the repository is unknown', async () => {
+    await bindInstallation();
+    const raw = JSON.stringify({
+      action: 'opened',
+      pull_request: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/nobody/repo/pull/7',
+        draft: false,
+        merged: false,
+        state: 'open',
+        head: { ref: 'orb-3-dashboard' },
+        base: { ref: 'main' },
+        user: { login: 'octocat', id: 500 },
+      },
+      repository: { id: 424242, full_name: 'nobody/repo' },
+      installation: { id: 'inst-42' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    await POST(signed(raw, 'delivery-attributed'));
+
+    const row = await deliveryRow('delivery-attributed');
+    expect(row?.organizationId).toBe(workspace.organizationId);
+    expect(row?.status).toBe('ignored');
+    expect(row?.error).toBe('repository_not_connected');
+  });
+
+  it('leaves a delivery unattributed when no installation here owns it', async () => {
+    const raw = JSON.stringify({
+      action: 'opened',
+      pull_request: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/other/repo/pull/7',
+        draft: false,
+        merged: false,
+        state: 'open',
+        head: { ref: 'orb-3-dashboard' },
+        base: { ref: 'main' },
+        user: { login: 'octocat', id: 500 },
+      },
+      repository: { id: 999999, full_name: 'other/repo' },
+      installation: { id: 'inst-belongs-elsewhere' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    await POST(signed(raw, 'delivery-foreign'));
+
+    expect((await deliveryRow('delivery-foreign'))?.organizationId).toBeNull();
+  });
+});
+
+describe('the whole path from a delivery to the pulls page', () => {
+  it('turns a branch naming an issue into a pull request the page can show', async () => {
+    const { loadPullRequests } = await import('../../../../../src/features/pulls/data.ts');
+
+    const before = await loadPullRequests(workspace.admin);
+    expect(before).toHaveLength(0);
+
+    const response = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-end-to-end'));
+    expect(response.status).toBe(200);
+    expect((await deliveryRow('delivery-end-to-end'))?.status).toBe('processed');
+
+    const after = await loadPullRequests(workspace.admin);
+    expect(after).toHaveLength(1);
+    expect(after[0]?.issueIdentifier).toBe('ORB-3');
+    expect(after[0]?.state).toBe('open');
+  });
+
+  it('shows a merged pull request as merged, which is the state people look for', async () => {
+    const { loadPullRequests } = await import('../../../../../src/features/pulls/data.ts');
+
+    await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-open'));
+    const merged = JSON.stringify({
+      action: 'closed',
+      pull_request: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/acme/web/pull/7',
+        draft: false,
+        merged: true,
+        state: 'closed',
+        head: { ref: 'orb-3-dashboard' },
+        base: { ref: 'main' },
+        user: { login: 'octocat', id: 500 },
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    await POST(signed(merged, 'delivery-merged'));
+
+    const rows = await loadPullRequests(workspace.admin);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.state).toBe('merged');
+    expect(rows[0]?.merged).toBe(true);
+  });
+
+  it('leaves a branch that names no issue off the page and says why on the delivery', async () => {
+    const { loadPullRequests } = await import('../../../../../src/features/pulls/data.ts');
+
+    await POST(signed(pullRequestBody('chore/tidy-up'), 'delivery-unnamed'));
+
+    expect(await loadPullRequests(workspace.admin)).toHaveLength(0);
+    const row = await deliveryRow('delivery-unnamed');
+    expect(row?.status).toBe('ignored');
+    expect(row?.error).toBe('no_issue_identifier');
+  });
+});

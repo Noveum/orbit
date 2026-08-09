@@ -73,6 +73,14 @@ describe('markdown round trip', () => {
     expect(roundTrip('- [x] done\n- [ ] next')).toBe('- [x] done\n- [ ] next');
   });
 
+  it('does not lose the box on a task nested under a bullet', () => {
+    expect(roundTrip('- outer\n  - [ ] nested')).toBe('- outer\n  - [ ] nested');
+  });
+
+  it('keeps a task nested under another task', () => {
+    expect(roundTrip('- [ ] top\n  - [x] child')).toBe('- [ ] top\n  - [x] child');
+  });
+
   it('keeps underline and highlight marks that markdown alone cannot express', () => {
     expect(roundTrip('An <u>underlined</u> word.')).toBe('An <u>underlined</u> word.');
     expect(roundTrip('A <mark>highlighted</mark> word.')).toBe('A <mark>highlighted</mark> word.');
@@ -184,5 +192,43 @@ describe('toEditorHtml', () => {
   it('leaves an ordinary list alone', () => {
     const html = toEditorHtml(renderMarkdown('- one\n- two'));
     expect(html).not.toContain('taskList');
+  });
+
+  it('does not turn a bullet into a task because a task list hangs off it', () => {
+    const html = toEditorHtml(renderMarkdown('- outer\n  - [ ] nested'));
+
+    expect(html).toContain('<ul>');
+    expect(html).not.toMatch(/data-checked="[^"]*"><p>outer/);
+    expect(html.match(/data-type="taskItem"/g)).toHaveLength(1);
+  });
+
+  it('keeps the nested box on the item that owns it', () => {
+    const html = toEditorHtml(renderMarkdown('- outer\n  - [ ] nested'));
+
+    expect(html).toContain('nested');
+    expect(html.match(/data-checked/g)).toHaveLength(1);
+  });
+
+  it('keeps a nested list out of the paragraph it wraps the text in', () => {
+    const html = toEditorHtml(renderMarkdown('- [ ] top\n  - [x] child'));
+
+    expect(html).not.toMatch(/<p>[^<]*<ul/);
+    expect(html.match(/data-type="taskList"/g)).toHaveLength(2);
+  });
+
+  it('wraps loose text that pasted markup left beside a paragraph', () => {
+    const html = toEditorHtml('<ul><li><input type="checkbox"> lead<p>tail</p></li></ul>');
+
+    expect(html).toContain('<p> lead</p>');
+    expect(html).toContain('<p>tail</p>');
+  });
+
+  it('does not invent an empty paragraph out of the whitespace between blocks', () => {
+    const html = toEditorHtml(
+      '<ul>\n<li>\n<p><input type="checkbox"> boxed</p>\n<p>tail</p>\n</li>\n</ul>',
+    );
+
+    expect(html).not.toMatch(/<p>\s*<\/p>/);
+    expect(html).toContain('data-checked="false"');
   });
 });

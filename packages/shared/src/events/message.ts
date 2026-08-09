@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { presenceKindSchema, presenceMessageSchema } from './presence.ts';
-import { syncActionSchema, syncCursorSchema } from './sync.ts';
+import { deliveredSyncActionSchema, syncActionSchema, syncCursorSchema } from './sync.ts';
 
 export const authMessageSchema = z.object({
   type: z.literal('auth'),
@@ -46,3 +46,10 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
+
+export const tolerantDeltaMessageSchema = z.object({
+  type: z.literal('delta'),
+  actions: z.array(deliveredSyncActionSchema).min(1),
+});
+
+export type TolerantDeltaMessage = z.infer<typeof tolerantDeltaMessageSchema>;
