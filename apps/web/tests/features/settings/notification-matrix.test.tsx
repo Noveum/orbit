@@ -38,8 +38,11 @@ function renderMatrix(disabledKeys: string[] = []) {
 describe('NotificationMatrix', () => {
   it('renders a checkbox for every channel and type pair', () => {
     renderMatrix();
-    const expected = NOTIFICATION_CHANNELS.length * NOTIFICATION_TYPES.length;
+    const expected =
+      NOTIFICATION_CHANNELS.filter((channel) => channel !== 'slack').length *
+      NOTIFICATION_TYPES.length;
     expect(screen.getAllByRole('checkbox')).toHaveLength(expected);
+    expect(screen.queryByLabelText('Slack for Mention')).toBeNull();
   });
 
   it('reflects disabled preferences as unchecked boxes', () => {
@@ -71,7 +74,8 @@ describe('NotificationMatrix', () => {
       .filter((entry) => !entry.enabled)
       .map((entry) => matrixKey(entry.channel, entry.type))
       .sort();
-    expect(disabled).toEqual([matrixKey('push', 'mention'), matrixKey('slack', 'reaction')].sort());
+    const disabledSlack = NOTIFICATION_TYPES.map((type) => matrixKey('slack', type));
+    expect(disabled).toEqual([...disabledSlack, matrixKey('push', 'mention')].sort());
     expect(body.quietHoursEnabled).toBe(false);
     expect(body.quietHoursStart).toBe('18:00');
     expect(body.urgentBypassEnabled).toBe(true);

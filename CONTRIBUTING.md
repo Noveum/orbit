@@ -122,7 +122,7 @@ apps/realtime             Local-only WebSocket host, never deployed
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
 packages/core             Domain operations shared by REST, MCP and the hub
-packages/services         Markdown, storage, email, notifications, Slack, GitHub
+packages/services         Markdown, storage, email, notifications, integrations
 packages/db               Drizzle schema, migrations, client, seed
 packages/shared           Zod validators, domain types, event contracts, policy
 scripts/                  Repo tooling, TypeScript, run with bun

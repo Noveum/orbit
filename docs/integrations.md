@@ -1,7 +1,7 @@
 # Integrations
 
-Orbit connects to GitHub and Slack. Both are optional, and both are configured
-per workspace under **Settings**, **Integrations**.
+Orbit currently exposes GitHub as its supported external product integration.
+It is optional and configured per workspace under **Settings**, **Integrations**.
 
 When an integration is not configured, Orbit hides the affordance rather than
 showing a button that fails. If a connect button is missing, the environment
@@ -28,7 +28,7 @@ This needs a [GitHub App](https://docs.github.com/en/apps), not an OAuth app.
 GitHub Apps are installed per repository and their tokens are short lived, which
 is the right shape for something reading your code host.
 
-1. Create a GitHub App, under your organisation if the repositories belong to
+1. Create a GitHub App, under your organization if the repositories belong to
    one.
 2. Set the **Callback URL** to `https://orbit.example.com/api/integrations/github/callback`.
 3. Tick **Request user authorization (OAuth) during installation**. This is not
@@ -45,11 +45,18 @@ is the right shape for something reading your code host.
    Orbit now recognises that landing and says so, but the fix is here.
 5. Set the webhook URL to `https://orbit.example.com/api/webhooks/github`, and
    set a webhook secret.
-6. Give it these repository permissions:
-   - **Contents**: read
-   - **Metadata**: read
-   - **Pull requests**: read and write
-7. Subscribe to **Pull request** and **Push** events.
+6. Apply the verified least privilege set from
+   [GitHub App permissions and events](github-app.md):
+   - **Metadata**: read-only
+   - **Pull requests**: read-only
+   - **Checks**: read-only
+   Do not grant organization or account permissions.
+7. Subscribe to these events:
+   - **Repository**
+   - **Pull request**
+   - **Pull request review**
+   - **Check suite**
+   GitHub delivers `installation` and `installation_repositories` automatically.
 8. Generate a private key and download the PEM, and note the app's client ID and
    a generated client secret.
 
@@ -84,56 +91,10 @@ repositories to install it on.
 for signing in with GitHub, and they come from an OAuth app. You can have
 either, both, or neither. See [Configuration](configuration.md#authentication).
 
-## Slack
-
-Sends notifications where the team already is.
-
-What you get:
-
-- **Notifications in Slack**, following the same per-event preferences and quiet
-  hours as everywhere else.
-- **Channel routing**, so a team's activity goes to that team's channel.
-- **Daily summaries posted to Slack**, which combined with the MCP server means
-  an agent can write the update without anyone opening Orbit.
-
-### Setting it up
-
-1. Create a Slack app at <https://api.slack.com/apps>, from scratch.
-2. Under **OAuth & Permissions**, add the redirect URL
-   `https://orbit.example.com/api/integrations/slack/callback`.
-3. Add these bot token scopes:
-   - `chat:write`
-   - `channels:read`
-   - `groups:read`
-   - `users:read`
-   - `users:read.email`
-4. Under **Event Subscriptions**, set the request URL to
-   `https://orbit.example.com/api/webhooks/slack`.
-5. Copy the client id, client secret and signing secret from **Basic
-   Information**.
-
-Then set:
-
-```bash
-SLACK_CLIENT_ID=...
-SLACK_CLIENT_SECRET=...
-SLACK_SIGNING_SECRET=...
-```
-
-The signing secret verifies that inbound requests are really from Slack. Without
-it Slack requests are rejected, which is the correct behaviour but confusing if
-you forgot to set it.
-
-Then go to **Settings**, **Integrations**, **Slack**, connect, and pick the
-channels.
-
-`users:read.email` is what matches Slack accounts to Orbit accounts, so people
-get their own notifications rather than a channel getting everyone's.
-
 ## Email
 
-Not an integration you connect, but worth listing since it is what carries
-invites and magic links.
+Not an integration you connect, but worth listing since it carries invites and
+magic links. Ordinary event notifications are currently in-app only.
 
 Orbit sends through [Resend](https://resend.com) only.
 
@@ -168,23 +129,17 @@ GitHub sent no `code` and Orbit refused to bind an installation it cannot
 attribute to the person connecting. Tick it, confirm `GITHUB_APP_CLIENT_ID` and
 `GITHUB_APP_CLIENT_SECRET` are set, then connect again.
 
-**The connect button is missing.** The environment variable behind it is unset.
-GitHub needs `GITHUB_APP_SLUG`, Slack needs `SLACK_CLIENT_ID` and
-`SLACK_CLIENT_SECRET`. Restart after setting them.
+**The connect button is missing.** `GITHUB_APP_SLUG` is unset. Restart after
+setting it.
 
-**OAuth redirects to an error.** The callback URL registered with the provider
+**OAuth redirects to an error.** The callback URL registered with GitHub
 does not exactly match your deployment, including scheme and trailing slash.
 Check `NEXT_PUBLIC_APP_URL` too, since the redirect is built from it.
 
 **Webhooks arrive but nothing happens.** The signature is not verifying. Confirm
-`GITHUB_WEBHOOK_SECRET` or `SLACK_SIGNING_SECRET` matches what the provider has.
-Both providers show recent deliveries and their responses, which is the fastest
-place to look.
+`GITHUB_WEBHOOK_SECRET` matches what the GitHub App has. The integrations page
+shows recent deliveries and their responses, which is the fastest place to look.
 
 **Pull requests do not link to issues.** The branch name has to contain the
 issue identifier. Use the branch name Orbit generates, or include `ENG-42` in
 your own.
-
-**Slack notifications go to a channel but not to people.** The
-`users:read.email` scope is missing, so Slack accounts cannot be matched to
-Orbit accounts. Add it and reinstall the app.

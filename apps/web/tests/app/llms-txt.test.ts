@@ -29,6 +29,10 @@ describe('/llms.txt', () => {
     expect(text).toContain('https://github.com/Noveum/orbit');
   });
 
+  it('does not advertise the disabled Slack integration', async () => {
+    expect(await body()).not.toMatch(/slack/i);
+  });
+
   it('serves plain text, because that is what the file is for', () => {
     expect(GET().headers.get('content-type')).toBe('text/plain; charset=utf-8');
   });

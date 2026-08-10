@@ -51,11 +51,6 @@ const CONNECTED: IntegrationSettings = {
     ],
     projects: [{ id: 'project-1', name: 'Apollo' }],
   },
-  slackConnected: true,
-  slackHasToken: true,
-  slackConnectEnabled: true,
-  channels: [{ channelId: 'C0123', channelName: 'engineering', teamId: 'team-1', enabled: true }],
-  teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
 };
 
 const EMPTY: IntegrationSettings = {
@@ -67,17 +62,11 @@ const EMPTY: IntegrationSettings = {
     repositories: [],
     projects: [],
   },
-  slackConnected: false,
-  slackHasToken: false,
-  slackConnectEnabled: true,
-  channels: [],
-  teams: [{ id: 'team-1', key: 'ENG', name: 'Engineering' }],
 };
 
 const UNCONFIGURED: IntegrationSettings = {
   ...EMPTY,
   github: { ...EMPTY.github, connectEnabled: false },
-  slackConnectEnabled: false,
 };
 
 function Providers({ children }: { children: ReactNode }) {
@@ -123,12 +112,17 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
-  it('offers one-click connect actions as the primary path when nothing is connected', () => {
+  it('does not render the disabled Slack integration', () => {
+    renderPanel(CONNECTED, true);
+
+    expect(screen.queryByText(/slack/i)).toBeNull();
+    expect(document.querySelector('a[href*="slack"]')).toBeNull();
+  });
+
+  it('offers GitHub connect as the primary path when nothing is connected', () => {
     renderPanel(EMPTY, true);
     const github = screen.getByRole('link', { name: 'Connect GitHub' });
     expect(github).toHaveAttribute('href', '/api/integrations/github/start');
-    const slack = screen.getByRole('link', { name: 'Add to Slack' });
-    expect(slack).toHaveAttribute('href', '/api/integrations/slack/start');
   });
 
   it('never exposes a webhook secret or raw token entry', () => {
@@ -141,27 +135,7 @@ describe('IntegrationsPanel', () => {
   it('hides connect actions and explains configuration is pending when the app is not set up', () => {
     renderPanel(UNCONFIGURED, true);
     expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull();
-    expect(screen.queryByRole('link', { name: 'Add to Slack' })).toBeNull();
     expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
-  });
-
-  it('opens a searchable channel picker to connect a channel', async () => {
-    const user = userEvent.setup();
-    renderPanel(CONNECTED, true);
-    await user.click(screen.getByRole('button', { name: 'Connect a channel' }));
-    expect(await screen.findByPlaceholderText('Search channels…')).toBeInTheDocument();
-  });
-
-  it('disconnects a connected Slack channel through the slack endpoint', async () => {
-    const user = userEvent.setup();
-    renderPanel(CONNECTED, true);
-
-    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
-
-    await waitFor(() => {
-      expect(lastRequest?.url).toBe('/api/integrations/slack');
-    });
-    expect(lastRequest?.body).toEqual({ action: 'disconnect', channelId: 'C0123' });
   });
 
   it('shows the MCP server URL and copies it to the clipboard', async () => {
@@ -182,17 +156,15 @@ describe('IntegrationsPanel', () => {
 
   it('hides management affordances when the viewer cannot manage integrations', () => {
     renderPanel(CONNECTED, false);
-    expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Connect another organisation' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Remove the/ })).toBeNull();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 
-  it('renders no repository or channel name to a viewer who cannot manage integrations', () => {
+  it('renders no repository name to a viewer who cannot manage integrations', () => {
     renderPanel(CONNECTED, false);
 
     expect(screen.queryByText('Noveum/web')).toBeNull();
-    expect(screen.queryByText('#engineering')).toBeNull();
     expect(screen.getByTestId('integrations-withheld')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
