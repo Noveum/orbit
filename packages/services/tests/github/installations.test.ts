@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'bun:test';
-import { githubInstallation, githubRepository, integration } from '@orbit/db/schema';
+import { db, sql } from '@orbit/db';
+import {
+  githubInstallation,
+  githubRepository,
+  integration,
+  member,
+  organization,
+  user,
+} from '@orbit/db/schema';
 import { and, eq } from 'drizzle-orm';
 import {
   bindGithubInstallation,
@@ -124,6 +132,125 @@ describe('bindGithubInstallation', () => {
       });
       expect(row.status).toBe('suspended');
     });
+  });
+
+  it('refuses a member who cannot manage integrations', async () => {
+    await withRollback(async (tx) => {
+      const workspace = await seedWorkspace(tx, 'Noveum');
+      await tx
+        .update(member)
+        .set({ role: 'member' })
+        .where(
+          and(
+            eq(member.organizationId, workspace.organizationId),
+            eq(member.userId, workspace.userId),
+          ),
+        );
+
+      await expect(bind(tx, workspace, NOVEUM, 'Noveum')).rejects.toThrow(
+        /cannot integration manage/,
+      );
+
+      expect(await listGithubInstallations(tx, workspace.organizationId)).toHaveLength(0);
+      const integrations = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(
+          and(
+            eq(integration.organizationId, workspace.organizationId),
+            eq(integration.provider, 'github'),
+          ),
+        );
+      expect(integrations).toHaveLength(0);
+    });
+  });
+
+  it('refuses a user who is no longer a workspace member', async () => {
+    await withRollback(async (tx) => {
+      const workspace = await seedWorkspace(tx, 'Noveum');
+      await tx
+        .delete(member)
+        .where(
+          and(
+            eq(member.organizationId, workspace.organizationId),
+            eq(member.userId, workspace.userId),
+          ),
+        );
+
+      await expect(bind(tx, workspace, NOVEUM, 'Noveum')).rejects.toThrow(
+        /cannot integration manage/,
+      );
+
+      expect(await listGithubInstallations(tx, workspace.organizationId)).toHaveLength(0);
+      const integrations = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(
+          and(
+            eq(integration.organizationId, workspace.organizationId),
+            eq(integration.provider, 'github'),
+          ),
+        );
+      expect(integrations).toHaveLength(0);
+    });
+  });
+
+  it('identifies a workspace awaiting deletion as unavailable', async () => {
+    await withRollback(async (tx) => {
+      const workspace = await seedWorkspace(tx, 'Noveum');
+      await tx
+        .update(organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(organization.id, workspace.organizationId));
+
+      await expect(bind(tx, workspace, NOVEUM, 'Noveum')).rejects.toMatchObject({
+        code: 'conflict',
+        details: { reason: 'workspace_unavailable' },
+      });
+
+      expect(await listGithubInstallations(tx, workspace.organizationId)).toHaveLength(0);
+    });
+  });
+
+  it('holds the membership lock until the installation bind commits', async () => {
+    const workspace = await db.transaction(async (tx) => await seedWorkspace(tx, 'Concurrent'));
+    let markBindingReady: (() => void) | undefined;
+    let releaseBinding: (() => void) | undefined;
+    const bindingReady = new Promise<void>((resolve) => {
+      markBindingReady = resolve;
+    });
+    const bindingRelease = new Promise<void>((resolve) => {
+      releaseBinding = resolve;
+    });
+    const binding = db.transaction(async (tx) => {
+      const row = await bind(tx, workspace, NOVEUM, 'Noveum');
+      markBindingReady?.();
+      await bindingRelease;
+      return row;
+    });
+
+    try {
+      await Promise.race([bindingReady, binding.then(() => undefined)]);
+      const demotion = db.transaction(async (tx) => {
+        await tx.execute(sql`set local lock_timeout = '250ms'`);
+        await tx
+          .update(member)
+          .set({ role: 'member' })
+          .where(
+            and(
+              eq(member.organizationId, workspace.organizationId),
+              eq(member.userId, workspace.userId),
+            ),
+          );
+      });
+
+      await expect(demotion).rejects.toHaveProperty('cause.code', '55P03');
+    } finally {
+      releaseBinding?.();
+      await binding.catch(() => undefined);
+      await db.delete(organization).where(eq(organization.id, workspace.organizationId));
+      await db.delete(user).where(eq(user.id, workspace.userId));
+    }
   });
 });
 
