@@ -19,8 +19,8 @@ test.fixme('two viewers see issue, board and comment changes without reloading',
 
   const first = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const second = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const author = await signIn(first, 'pulkit@noveum.ai');
-  const watcher = await signIn(second, 'shashank@noveum.ai');
+  const author = await signIn(first, 'alex@orbit.example');
+  const watcher = await signIn(second, 'sam@orbit.example');
 
   await author.goto(`${BASE}/team/eng/board`);
   await expect(author.getByTestId('board-column-Todo')).toBeVisible();

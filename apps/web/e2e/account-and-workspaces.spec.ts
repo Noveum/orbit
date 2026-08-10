@@ -5,7 +5,7 @@ import { BASE } from './base-url.ts';
 
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 
-const DEMO_EMAIL = 'pulkit@noveum.ai';
+const DEMO_EMAIL = 'alex@orbit.example';
 
 async function ensureLinkedProvider(email: string, providerId: string): Promise<void> {
   const [owner] = await db
@@ -62,11 +62,11 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   const suffix = `${Date.now() % 1_000_000}`;
   const workspaceName = `Comet ${suffix}`;
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/settings/account`);
   await expect(page.getByTestId('profile-form')).toBeVisible();
-  await expect(page.getByLabel('Handle')).toHaveValue('pulkit');
+  await expect(page.getByLabel('Handle')).toHaveValue('alex');
   await page.screenshot({
     path: `${SHOTS}/01-account-profile.png`,
     fullPage: true,
@@ -131,7 +131,7 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   }
 
   await page.getByTestId('workspace-switcher').click();
-  await expect(page.getByTestId('workspace-option-noveum')).toBeVisible();
+  await expect(page.getByTestId('workspace-option-orbit-demo')).toBeVisible();
   await page.getByTestId('create-workspace').click();
   await page.waitForURL(`${BASE}/workspaces/new`);
   await page.getByLabel('Workspace name').fill(workspaceName);
@@ -152,7 +152,7 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   });
 
   await page.getByTestId('workspace-switcher').click();
-  await expect(page.getByTestId('workspace-option-noveum')).toBeVisible();
+  await expect(page.getByTestId('workspace-option-orbit-demo')).toBeVisible();
   await expect(page.getByTestId(`workspace-option-comet-${suffix}`)).toHaveAttribute(
     'aria-current',
     'true',
@@ -163,9 +163,9 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
     animations: 'disabled',
   });
 
-  await page.getByTestId('workspace-option-noveum').click();
+  await page.getByTestId('workspace-option-orbit-demo').click();
   await page.waitForURL(`${BASE}/my-issues`);
-  await expect(page.getByTestId('workspace-switcher')).toContainText('Noveum');
+  await expect(page.getByTestId('workspace-switcher')).toContainText('Orbit Demo');
   await page.screenshot({
     path: `${SHOTS}/09-switched-back.png`,
     fullPage: true,
@@ -173,12 +173,12 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   });
 
   const otherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const teammate = await signIn(otherContext, 'shashank@noveum.ai');
+  const teammate = await signIn(otherContext, 'sam@orbit.example');
   await teammate.getByTestId('workspace-switcher').click();
-  await expect(teammate.getByTestId('workspace-option-noveum')).toBeVisible();
+  await expect(teammate.getByTestId('workspace-option-orbit-demo')).toBeVisible();
   await expect(teammate.getByTestId(`workspace-option-comet-${suffix}`)).toHaveCount(0);
   await teammate.screenshot({
-    path: `${SHOTS}/10-teammate-sees-only-noveum.png`,
+    path: `${SHOTS}/10-teammate-sees-only-orbit-demo.png`,
     fullPage: true,
     animations: 'disabled',
   });

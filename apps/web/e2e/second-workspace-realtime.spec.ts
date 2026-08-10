@@ -5,8 +5,8 @@ import { BASE } from './base-url.ts';
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 const PROPAGATION_TIMEOUT = 30_000;
 
-const DEMO_EMAIL = 'pulkit@noveum.ai';
-const FIRST_WORKSPACE_ID = 'org_noveum_demo';
+const DEMO_EMAIL = 'alex@orbit.example';
+const FIRST_WORKSPACE_ID = 'org_orbit_demo';
 const FIRST_WORKSPACE_BOARD = '/team/eng/board';
 
 async function rewriteFirstWorkspaceMembershipRow(email: string): Promise<void> {
@@ -43,7 +43,7 @@ async function signIn(context: BrowserContext): Promise<Page> {
 async function openFirstWorkspaceBoard(page: Page): Promise<void> {
   await page.goto(`${BASE}${FIRST_WORKSPACE_BOARD}`);
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
-  await expect(page.getByTestId('workspace-switcher')).toContainText('Noveum');
+  await expect(page.getByTestId('workspace-switcher')).toContainText('Orbit Demo');
 }
 
 test('realtime keeps working in the first workspace after a second one exists', async ({
@@ -65,7 +65,7 @@ test('realtime keeps working in the first workspace after a second one exists', 
   await expect(creator.getByTestId('workspace-switcher')).toContainText(workspaceName);
 
   await creator.getByTestId('workspace-switcher').click();
-  await creator.getByTestId('workspace-option-noveum').click();
+  await creator.getByTestId('workspace-option-orbit-demo').click();
   await creator.waitForURL(`${BASE}/my-issues`);
   await openFirstWorkspaceBoard(creator);
 

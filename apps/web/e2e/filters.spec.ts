@@ -18,7 +18,7 @@ test('filters narrow the list, round trip through the url and save as a view', a
   test.setTimeout(180_000);
 
   await page.goto(`${BASE}/login`);
-  await page.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
   await page.waitForURL(`${BASE}/my-issues`);
 
   await page.goto(`${BASE}/team/eng/issues`);
@@ -126,7 +126,7 @@ test('filters narrow the list, round trip through the url and save as a view', a
 
 test('shift+f removes only the last filter and alt+shift+f clears them all', async ({ page }) => {
   await page.goto(`${BASE}/login`);
-  await page.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
   await page.waitForURL(`${BASE}/my-issues`);
 
   const tree = {
@@ -152,7 +152,7 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
 
 test('display options hide rows and the footer offers them back', async ({ page }) => {
   await page.goto(`${BASE}/login`);
-  await page.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
   await page.waitForURL(`${BASE}/my-issues`);
 
   await page.goto(`${BASE}/team/eng/issues?done=none`);

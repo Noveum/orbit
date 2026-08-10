@@ -113,7 +113,7 @@ bun run db:seed         # load a demo workspace
 bun run dev             # http://localhost:3000
 ```
 
-Sign in as **`pulkit@noveum.ai`**. The seed loads three teams, seven people,
+Sign in as **`alex@orbit.example`**. The seed loads three teams, seven people,
 thirty two issues, projects, sprints and docs, so there is something to click on
 straight away.
 

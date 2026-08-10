@@ -35,7 +35,7 @@ bun run db:push && bun run db:test-setup && bun run db:seed
 bun run dev
 ```
 
-Open <http://localhost:3000> and sign in as `pulkit@noveum.ai`. The seed loads a
+Open <http://localhost:3000> and sign in as `alex@orbit.example`. The seed loads a
 demo workspace with three teams, seven people, thirty two issues, projects,
 sprints and docs, so there is something to click on immediately.
 

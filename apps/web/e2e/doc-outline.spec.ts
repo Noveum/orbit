@@ -12,7 +12,7 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
 test('an editable doc still has a table of contents that navigates it', async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1700, height: 900 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/docs`);
   await page.getByTestId('doc-tree').getByText('Realtime delta protocol').click();

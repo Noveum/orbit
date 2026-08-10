@@ -57,7 +57,7 @@ bun run dev             # web on :3000, realtime on :3100
 
 Open <http://localhost:3000>. `ORBIT_DEV_LOGIN=1` is set in `.env.example`, so
 the login screen lists the seeded users and signs you in with one click. Start
-as `pulkit@noveum.ai`, who is an admin on all three seeded teams.
+as `alex@orbit.example`, who is an admin on all three seeded teams.
 
 If any of that fails, [docs/troubleshooting.md](docs/troubleshooting.md) covers
 the failures we actually hit rather than the ones we imagine.
