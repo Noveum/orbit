@@ -185,11 +185,15 @@ Postgres and is the only mode that can touch someone else's.
 bun run db:seed
 ```
 
-It truncates and reloads. Safe locally, and never point it at production.
+It truncates and reloads. Use it only with the default local demo database, and
+never point it at production.
 
-Localhost and IPv4 loopback targets need no confirmation. Every other host,
-including `postgres` and `host.docker.internal`, must have an explicit username
-and port in `DATABASE_URL`. For these nonlocal targets, `db:seed` stops unless
+Only the exact default Docker Compose target,
+`postgres://orbit:orbit@localhost:5434/orbit` or the same target through
+`127.0.0.1`, needs no confirmation. Every other target, including other
+localhost and IPv4 loopback ports, databases, or credentials, plus `postgres`
+and `host.docker.internal`, must have an explicit username and port in
+`DATABASE_URL`. For these non-default targets, `db:seed` stops unless
 `ORBIT_SEED_CONFIRM_TARGET` exactly matches the credential-safe
 `host:port/database:user-sha256:<64 lowercase hex characters>` target printed in
 the error. The username is decoded before hashing and is never printed. For

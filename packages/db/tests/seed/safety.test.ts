@@ -37,17 +37,61 @@ async function runSeedCommand(
 }
 
 describe('assertSeedResetAllowed', () => {
-  const localTargets = [
+  const defaultDockerTargets = [
     ['localhost', 'postgres://orbit:orbit@localhost:5434/orbit'],
-    ['localhost with the PostgreSQL default port', 'postgres://orbit:orbit@localhost/orbit'],
-    ['IPv4 loopback', 'postgres://orbit:orbit@127.42.0.1:5432/orbit'],
+    ['canonical IPv4 loopback', 'postgres://orbit:orbit@127.0.0.1:5434/orbit'],
+    ['percent-encoded credentials', 'postgres://or%62it:or%62it@localhost:5434/orbit'],
   ] as const;
 
-  for (const [name, databaseUrl] of localTargets) {
-    it(`allows ${name} without confirmation`, () => {
+  for (const [name, databaseUrl] of defaultDockerTargets) {
+    it(`allows the default Docker target through ${name} without confirmation`, () => {
       expect(() => assertSeedResetAllowed(databaseUrl, undefined)).not.toThrow();
     });
   }
+
+  const loopbackTargetsRequiringConfirmation = [
+    [
+      'a production database through localhost',
+      'postgres://alice:top-secret@localhost:5432/production',
+      `localhost:5432/production:user-sha256:${ALICE_FINGERPRINT}`,
+    ],
+    [
+      'a production database through canonical IPv4 loopback',
+      'postgres://alice:top-secret@127.0.0.1:15432/production',
+      `127.0.0.1:15432/production:user-sha256:${ALICE_FINGERPRINT}`,
+    ],
+    [
+      'a noncanonical IPv4 loopback address',
+      'postgres://orbit:orbit@127.42.0.1:5434/orbit',
+      `127.42.0.1:5434/orbit:user-sha256:${ORBIT_FINGERPRINT}`,
+    ],
+    [
+      'different credentials on the default address',
+      'postgres://orbit:top-secret@localhost:5434/orbit',
+      `localhost:5434/orbit:user-sha256:${ORBIT_FINGERPRINT}`,
+    ],
+  ] as const;
+
+  for (const [name, databaseUrl, confirmation] of loopbackTargetsRequiringConfirmation) {
+    it(`requires exact target confirmation for ${name}`, () => {
+      expect(() => assertSeedResetAllowed(databaseUrl, undefined)).toThrow(
+        `ORBIT_SEED_CONFIRM_TARGET=${confirmation}`,
+      );
+      expect(() => assertSeedResetAllowed(databaseUrl, confirmation)).not.toThrow();
+    });
+  }
+
+  it('rejects a localhost target without an explicit port', () => {
+    expect(() =>
+      assertSeedResetAllowed('postgres://orbit:orbit@localhost/orbit', undefined),
+    ).toThrow('DATABASE_URL must include an explicit port for a non-default db:seed target.');
+  });
+
+  it('rejects a localhost target without an explicit username', () => {
+    expect(() =>
+      assertSeedResetAllowed('postgres://:orbit@localhost:5434/orbit', undefined),
+    ).toThrow('DATABASE_URL must include an explicit username for a non-default db:seed target.');
+  });
 
   const ipv6Targets = [
     ['loopback', 'postgres://orbit:secret@[::1]:5432/orbit'],
@@ -107,12 +151,12 @@ describe('assertSeedResetAllowed', () => {
     );
 
     expect(message).toBe(
-      'DATABASE_URL must include an explicit username for a nonlocal db:seed target.',
+      'DATABASE_URL must include an explicit username for a non-default db:seed target.',
     );
     expect(message).not.toContain('alice');
   });
 
-  it('rejects a nonlocal target without an explicit port', () => {
+  it('rejects a remote target without an explicit port', () => {
     const message = thrownMessage(() =>
       assertSeedResetAllowed(
         'postgres://alice:top-secret@db.example.com/orbit',
@@ -121,7 +165,7 @@ describe('assertSeedResetAllowed', () => {
     );
 
     expect(message).toBe(
-      'DATABASE_URL must include an explicit port for a nonlocal db:seed target.',
+      'DATABASE_URL must include an explicit port for a non-default db:seed target.',
     );
     expect(message).not.toContain('alice');
     expect(message).not.toContain('top-secret');
@@ -217,6 +261,38 @@ describe('assertSeedResetAllowed', () => {
       expect(message).not.toContain('alice');
       expect(message).not.toContain('top-secret');
     });
+  }
+
+  const rawAuthorityControlCharacters = [
+    ['a tab', '\t'],
+    ['a line feed', '\n'],
+    ['a carriage return', '\r'],
+  ] as const;
+
+  for (const [controlName, control] of rawAuthorityControlCharacters) {
+    const malformedSchemes = [
+      ['after the scheme colon', `postgres:${control}//alice:top-secret@db-a,db-b:5432/orbit`],
+      [
+        'between the authority slashes',
+        `postgres:/${control}/alice:top-secret@db-a,db-b:5432/orbit`,
+      ],
+    ] as const;
+
+    for (const [positionName, databaseUrl] of malformedSchemes) {
+      it(`rejects ${controlName} ${positionName} before URL normalization`, () => {
+        const message = thrownMessage(() =>
+          assertSeedResetAllowed(
+            databaseUrl,
+            `db-a,db-b:5432/orbit:user-sha256:${ALICE_FINGERPRINT}`,
+          ),
+        );
+        expect(message).toBe(
+          'DATABASE_URL must be a valid PostgreSQL connection URL with a database name before db:seed can reset it.',
+        );
+        expect(message).not.toContain('alice');
+        expect(message).not.toContain('top-secret');
+      });
+    }
   }
 
   const targetChangingOptions = [
@@ -373,7 +449,7 @@ describe('assertSeedResetAllowed', () => {
     expect(exitCode).toBe(1);
     expect(stdout).not.toContain('Resetting database');
     expect(stderr).toContain(
-      'DATABASE_URL must include an explicit port for a nonlocal db:seed target.',
+      'DATABASE_URL must include an explicit port for a non-default db:seed target.',
     );
     expect(stderr).not.toContain('alice');
     expect(stderr).not.toContain('top-secret');
@@ -391,7 +467,7 @@ describe('assertSeedResetAllowed', () => {
     expect(exitCode).toBe(1);
     expect(stdout).not.toContain('Resetting database');
     expect(stderr).toContain(
-      'DATABASE_URL must include an explicit username for a nonlocal db:seed target.',
+      'DATABASE_URL must include an explicit username for a non-default db:seed target.',
     );
     expect(stderr).not.toContain('alice');
     expect(stderr).not.toContain('fallback-user');

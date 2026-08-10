@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isIPv4, isIPv6 } from 'node:net';
+import { isIPv6 } from 'node:net';
 import { z } from 'zod';
 
 const seedResetInputSchema = z.object({
@@ -8,7 +8,12 @@ const seedResetInputSchema = z.object({
 });
 
 const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
-const LOCAL_HOSTS = new Set(['localhost']);
+const RAW_URL_CONTROL_PATTERN = /[\t\n\r]/;
+const DEFAULT_DOCKER_HOSTS = new Set(['localhost', '127.0.0.1']);
+const DEFAULT_DOCKER_PORT = '5434';
+const DEFAULT_DOCKER_DATABASE = 'orbit';
+const DEFAULT_DOCKER_USERNAME = 'orbit';
+const DEFAULT_DOCKER_PASSWORD = 'orbit';
 const TARGET_CHANGING_QUERY_KEYS = new Set([
   'database',
   'db',
@@ -30,10 +35,10 @@ const TARGET_CHANGING_QUERY_KEYS = new Set([
 ]);
 const INVALID_TARGET_MESSAGE =
   'DATABASE_URL must be a valid PostgreSQL connection URL with a database name before db:seed can reset it.';
-const MISSING_REMOTE_PORT_MESSAGE =
-  'DATABASE_URL must include an explicit port for a nonlocal db:seed target.';
-const MISSING_REMOTE_USERNAME_MESSAGE =
-  'DATABASE_URL must include an explicit username for a nonlocal db:seed target.';
+const MISSING_NON_DEFAULT_PORT_MESSAGE =
+  'DATABASE_URL must include an explicit port for a non-default db:seed target.';
+const MISSING_NON_DEFAULT_USERNAME_MESSAGE =
+  'DATABASE_URL must include an explicit username for a non-default db:seed target.';
 const IPV6_DRIVER_MESSAGE =
   'DATABASE_URL cannot use an IPv6 host because the current database driver misparses bracketed IPv6 connection URLs.';
 const TARGET_CHANGING_OPTION_MESSAGE =
@@ -45,9 +50,20 @@ function invalidTarget(): never {
   throw new Error(INVALID_TARGET_MESSAGE);
 }
 
-function isLocalHost(hostname: string): boolean {
-  if (LOCAL_HOSTS.has(hostname)) return true;
-  return isIPv4(hostname) && hostname.startsWith('127.');
+function isDefaultDockerTarget(
+  hostname: string,
+  port: string,
+  databaseName: string,
+  username: string,
+  password: string,
+): boolean {
+  return (
+    DEFAULT_DOCKER_HOSTS.has(hostname) &&
+    port === DEFAULT_DOCKER_PORT &&
+    databaseName === DEFAULT_DOCKER_DATABASE &&
+    username === DEFAULT_DOCKER_USERNAME &&
+    password === DEFAULT_DOCKER_PASSWORD
+  );
 }
 
 function isIpv6Host(hostname: string): boolean {
@@ -100,6 +116,7 @@ function usernameFingerprint(username: string): string {
 export function assertSeedResetAllowed(databaseUrl: unknown, confirmation: unknown): void {
   const input = seedResetInputSchema.safeParse({ databaseUrl, confirmation });
   if (!input.success) invalidTarget();
+  if (RAW_URL_CONTROL_PATTERN.test(input.data.databaseUrl)) invalidTarget();
   if (hasAmbiguousAuthority(input.data.databaseUrl)) invalidTarget();
 
   let parsed: URL;
@@ -125,9 +142,9 @@ export function assertSeedResetAllowed(databaseUrl: unknown, confirmation: unkno
   if (username.includes('\0') || password.includes('\0')) throw new Error(NUL_CREDENTIAL_MESSAGE);
   if (hasNulQueryParameter(parsed)) throw new Error(NUL_OPTION_MESSAGE);
   if (hasTargetChangingOption(parsed)) throw new Error(TARGET_CHANGING_OPTION_MESSAGE);
-  if (isLocalHost(hostname)) return;
-  if (parsed.port.length === 0) throw new Error(MISSING_REMOTE_PORT_MESSAGE);
-  if (username.length === 0) throw new Error(MISSING_REMOTE_USERNAME_MESSAGE);
+  if (isDefaultDockerTarget(hostname, parsed.port, databaseName, username, password)) return;
+  if (parsed.port.length === 0) throw new Error(MISSING_NON_DEFAULT_PORT_MESSAGE);
+  if (username.length === 0) throw new Error(MISSING_NON_DEFAULT_USERNAME_MESSAGE);
 
   const target = `${hostname}:${parsed.port}/${databaseName}:user-sha256:${usernameFingerprint(username)}`;
   if (input.data.confirmation === target) return;
