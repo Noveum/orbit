@@ -67,6 +67,7 @@ const RUNNING: CycleView = {
     started: 0,
     completed: 0,
     canceled: 0,
+    uncommitted: { issues: 0, points: 0 },
     estimated: 0,
     points: { scope: 0, started: 0, completed: 0 },
     changes: { added: 0, addedPoints: 0, removed: 0, removedPoints: 0 },

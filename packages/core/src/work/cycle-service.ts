@@ -509,12 +509,18 @@ export interface CycleScopeChanges {
   readonly removedPoints: number;
 }
 
+export interface UncommittedTally {
+  readonly issues: number;
+  readonly points: number;
+}
+
 export interface CycleProgress {
   readonly cycleId: string;
   readonly scope: number;
   readonly started: number;
   readonly completed: number;
   readonly canceled: number;
+  readonly uncommitted: UncommittedTally;
   readonly estimated: number;
   readonly points: CyclePoints;
   readonly changes: CycleScopeChanges;
@@ -652,7 +658,8 @@ function inCycleAt(entry: MembershipEntry, cutoff: number): boolean {
 }
 
 function droppedBy(issue: CycleIssueFacts, cutoff: number): boolean {
-  if (issue.category !== 'canceled') return false;
+  if (isCommitted(issue.category)) return false;
+  if (issue.category !== 'canceled') return true;
   return issue.canceledAt === null || issue.canceledAt.getTime() < cutoff;
 }
 
@@ -710,20 +717,31 @@ function sumEstimates(rows: readonly CycleIssueFacts[]): number {
   return rows.reduce((total, row) => total + row.estimate, 0);
 }
 
+const UNCOMMITTED_CATEGORIES: readonly string[] = ['triage', 'backlog'];
+
+export function isCommitted(category: string): boolean {
+  return category !== 'canceled' && !UNCOMMITTED_CATEGORIES.includes(category);
+}
+
 function currentTotals(
   issues: ReadonlyMap<string, CycleIssueFacts>,
-): Pick<CycleProgress, 'scope' | 'started' | 'completed' | 'canceled' | 'estimated' | 'points'> {
+): Pick<
+  CycleProgress,
+  'scope' | 'started' | 'completed' | 'canceled' | 'uncommitted' | 'estimated' | 'points'
+> {
   const members = [...issues.values()].filter((issue) => issue.member);
-  const inScope = members.filter((issue) => issue.category !== 'canceled');
+  const inScope = members.filter((issue) => isCommitted(issue.category));
   const started = inScope.filter(
     (issue) => issue.category === 'started' || issue.category === 'review',
   );
   const completed = inScope.filter((issue) => issue.category === 'completed');
+  const uncommitted = members.filter((issue) => UNCOMMITTED_CATEGORIES.includes(issue.category));
   return {
     scope: inScope.length,
     started: started.length,
     completed: completed.length,
-    canceled: members.length - inScope.length,
+    canceled: members.filter((issue) => issue.category === 'canceled').length,
+    uncommitted: { issues: uncommitted.length, points: sumEstimates(uncommitted) },
     estimated: inScope.filter((issue) => issue.estimated).length,
     points: {
       scope: sumEstimates(inScope),

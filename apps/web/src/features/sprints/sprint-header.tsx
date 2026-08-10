@@ -69,6 +69,7 @@ export function SprintHeader({
           aria-label="Sprint name"
           data-testid="sprint-name-input"
           className="h-7 w-56"
+          onFocus={(event) => event.target.select()}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={onKeyDown}

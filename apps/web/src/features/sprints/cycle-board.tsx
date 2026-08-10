@@ -58,6 +58,16 @@ export function CycleAnalytics({ cycle }: { readonly cycle: CycleView }) {
             {progress.points.completed} of {progress.points.scope} points completed
           </p>
         )}
+        {progress.uncommitted.issues === 0 ? null : (
+          <p
+            data-testid="sprint-uncommitted"
+            className="text-center text-2xs text-faint tabular"
+            title="Issues in triage or backlog states sit in the sprint but count towards nothing until they move to Todo."
+          >
+            {progress.uncommitted.issues} uncommitted, {progress.uncommitted.points} points not
+            counted
+          </p>
+        )}
         <ScopeChanges progress={progress} />
       </div>
 

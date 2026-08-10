@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["--env-file=../../.env", "next", "dev", "--port", "3002"],
+      "cwd": "apps/web",
+      "port": 3002
+    }
+  ]
+}

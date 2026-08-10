@@ -8,6 +8,7 @@ import type { CycleView } from '../../../src/features/sprints/data.ts';
 interface ProgressOverrides {
   readonly scope?: number;
   readonly canceled?: number;
+  readonly uncommitted?: { issues: number; points: number };
   readonly estimated?: number;
   readonly points?: { scope: number; started: number; completed: number };
   readonly changes?: { added: number; addedPoints: number; removed: number; removedPoints: number };
@@ -38,6 +39,7 @@ function cycleWith(overrides: ProgressOverrides): CycleView {
       started: 1,
       completed: 2,
       canceled: overrides.canceled ?? 0,
+      uncommitted: overrides.uncommitted ?? { issues: 0, points: 0 },
       estimated: overrides.estimated ?? 0,
       points: overrides.points ?? { scope: 0, started: 0, completed: 0 },
       changes: overrides.changes ?? { added: 0, addedPoints: 0, removed: 0, removedPoints: 0 },
