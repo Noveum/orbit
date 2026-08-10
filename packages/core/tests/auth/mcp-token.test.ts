@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import {
+  bindMcpCredential,
   finalizeMcpConsent,
   getMcpClient,
   listMcpGrants,
   passkeyVerifiedWithin,
   recordMcpGrant,
   revokeMcpGrant,
+  unbindMcpCredential,
   userHasPasskey,
   verifyMcpAccessToken,
 } from '../../src/auth/mcp-token.ts';
@@ -20,8 +22,33 @@ import {
 } from '../../src/test-support.ts';
 
 const SCOPES = 'openid profile email orbit.read orbit.write';
+const MCP_SECRET = 'mcp-binding-test-secret-0123456789abcdef';
 
 let workspace: Workspace;
+
+describe('MCP credential binding', () => {
+  it('round trips an opaque credential and rejects a changed binding', () => {
+    const bound = bindMcpCredential('opaque-token', 'grant-one', MCP_SECRET);
+    expect(unbindMcpCredential(bound, MCP_SECRET)).toEqual({
+      credential: 'opaque-token',
+      grantId: 'grant-one',
+    });
+    const replacement = bound.endsWith('A') ? 'B' : 'A';
+    expect(unbindMcpCredential(`${bound.slice(0, -1)}${replacement}`, MCP_SECRET)).toBeNull();
+    expect(unbindMcpCredential(bound, `${MCP_SECRET}-wrong`)).toBeNull();
+    expect(unbindMcpCredential('opaque-token', MCP_SECRET)).toBeNull();
+    expect(unbindMcpCredential(`${bound}.extra`, MCP_SECRET)).toBeNull();
+    expect(unbindMcpCredential(`${bound}${'a'.repeat(4096)}`, MCP_SECRET)).toBeNull();
+
+    const nonCanonicalPayload = 'orbit-mcp-v1.Z3JhbnQtb25l=.b3BhcXVlLXRva2Vu';
+    const nonCanonicalSignature = createHmac('sha256', MCP_SECRET)
+      .update(nonCanonicalPayload)
+      .digest('base64url');
+    expect(
+      unbindMcpCredential(`${nonCanonicalPayload}.${nonCanonicalSignature}`, MCP_SECRET),
+    ).toBeNull();
+  });
+});
 
 async function createClient(name = 'Claude'): Promise<string> {
   const clientId = `client_${randomUUID().replace(/-/g, '')}`;
@@ -53,10 +80,23 @@ async function issueToken(
     userId,
     scopes,
   });
-  return accessToken;
+  const [grant] = await db
+    .select({ id: schema.mcpGrant.id })
+    .from(schema.mcpGrant)
+    .where(eq(schema.mcpGrant.clientId, clientId))
+    .limit(1);
+  if (grant === undefined) throw new Error('the test client has no MCP grant');
+  return bindMcpCredential(accessToken, grant.id, MCP_SECRET);
+}
+
+function rawTokenOf(token: string): string {
+  const binding = unbindMcpCredential(token, MCP_SECRET);
+  if (binding === null) throw new Error('the test token has no MCP grant binding');
+  return binding.credential;
 }
 
 beforeEach(async () => {
+  process.env['BETTER_AUTH_SECRET'] = MCP_SECRET;
   await resetDatabase();
   workspace = await createWorkspace('Nova');
 });
@@ -80,7 +120,62 @@ describe('recordMcpGrant', () => {
   it('upserts the workspace when the same client re-consents', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);
+    const firstGrantId = await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: SCOPES,
+    });
+    const secondGrantId = await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: other,
+      scopes: SCOPES,
+    });
+
+    const grants = await listMcpGrants(workspace.adminUser.id);
+    expect(grants).toHaveLength(1);
+    expect(grants[0]?.organizationId).toBe(other);
+    expect(secondGrantId).not.toBe(firstGrantId);
+    expect(grants[0]?.id).toBe(secondGrantId);
+  });
+
+  it('invalidates a token issued for the workspace bound before re-consent', async () => {
+    const clientId = await createClient();
+    const other = await createOrganizationFor(workspace.adminUser.id);
     await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: SCOPES,
+    });
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+    );
+
+    await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: other,
+      scopes: SCOPES,
+    });
+
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+    const remaining = await db
+      .select()
+      .from(schema.oauthAccessToken)
+      .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
+    expect(remaining).toHaveLength(0);
+  });
+});
+
+describe('verifyMcpAccessToken with a grant', () => {
+  it('accepts only the immutable grant version carried by a late-issued token', async () => {
+    const clientId = await createClient();
+    const other = await createOrganizationFor(workspace.adminUser.id);
+    const firstGrantId = await recordMcpGrant({
       clientId,
       userId: workspace.adminUser.id,
       organizationId: workspace.organizationId,
@@ -92,27 +187,32 @@ describe('recordMcpGrant', () => {
       organizationId: other,
       scopes: SCOPES,
     });
-
-    const grants = await listMcpGrants(workspace.adminUser.id);
-    expect(grants).toHaveLength(1);
-    expect(grants[0]?.organizationId).toBe(other);
-  });
-});
-
-describe('verifyMcpAccessToken with a grant', () => {
-  it('resolves the workspace bound at consent time', async () => {
-    const clientId = await createClient();
-    const token = await issueToken(
+    const currentToken = await issueToken(
       clientId,
       workspace.adminUser.id,
       new Date(Date.now() + 3_600_000),
     );
+
+    const current = await verifyMcpAccessToken(currentToken);
+    expect(current.organizationId).toBe(other);
+    await expect(
+      verifyMcpAccessToken(bindMcpCredential(rawTokenOf(currentToken), firstGrantId, MCP_SECRET)),
+    ).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('resolves the workspace bound at consent time', async () => {
+    const clientId = await createClient();
     await recordMcpGrant({
       clientId,
       userId: workspace.adminUser.id,
       organizationId: workspace.organizationId,
       scopes: SCOPES,
     });
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+    );
 
     const context = await verifyMcpAccessToken(token);
     expect(context.organizationId).toBe(workspace.organizationId);
@@ -121,17 +221,17 @@ describe('verifyMcpAccessToken with a grant', () => {
 
   it('rejects once the grant is revoked', async () => {
     const clientId = await createClient();
-    const token = await issueToken(
-      clientId,
-      workspace.adminUser.id,
-      new Date(Date.now() + 3_600_000),
-    );
     await recordMcpGrant({
       clientId,
       userId: workspace.adminUser.id,
       organizationId: workspace.organizationId,
       scopes: SCOPES,
     });
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+    );
     const [grant] = await listMcpGrants(workspace.adminUser.id);
     await revokeMcpGrant(grant?.id ?? '', workspace.adminUser.id);
 
@@ -139,24 +239,24 @@ describe('verifyMcpAccessToken with a grant', () => {
     const remaining = await db
       .select()
       .from(schema.oauthAccessToken)
-      .where(eq(schema.oauthAccessToken.accessToken, token));
+      .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
     expect(remaining).toHaveLength(0);
   });
 
   it('rejects token scopes beyond the active grant without touching the grant', async () => {
     const clientId = await createClient();
-    const token = await issueToken(
-      clientId,
-      workspace.adminUser.id,
-      new Date(Date.now() + 3_600_000),
-      'openid orbit.read orbit.write',
-    );
     await recordMcpGrant({
       clientId,
       userId: workspace.adminUser.id,
       organizationId: workspace.organizationId,
       scopes: 'openid orbit.read',
     });
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+      'openid orbit.read orbit.write',
+    );
 
     await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
     const [grant] = await db
@@ -166,14 +266,21 @@ describe('verifyMcpAccessToken with a grant', () => {
     expect(grant?.lastUsedAt).toBeNull();
   });
 
-  it('accepts the same token after the active grant expands to include its scopes', async () => {
+  it('invalidates an existing token when re-consent expands the active grant', async () => {
     const clientId = await createClient();
+    await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: 'openid orbit.read',
+    });
     const token = await issueToken(
       clientId,
       workspace.adminUser.id,
       new Date(Date.now() + 3_600_000),
-      'openid orbit.read orbit.write',
+      'openid orbit.read',
     );
+
     await recordMcpGrant({
       clientId,
       userId: workspace.adminUser.id,
@@ -181,8 +288,12 @@ describe('verifyMcpAccessToken with a grant', () => {
       scopes: 'openid orbit.read orbit.write',
     });
 
-    const context = await verifyMcpAccessToken(token);
-    expect(context.scopes).toBe('openid orbit.read orbit.write');
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+    const remaining = await db
+      .select()
+      .from(schema.oauthAccessToken)
+      .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
+    expect(remaining).toHaveLength(0);
   });
 });
 
@@ -267,6 +378,7 @@ describe('finalizeMcpConsent', () => {
       userId: workspace.adminUser.id,
       consentCode,
       accept: true,
+      organizationId: workspace.organizationId,
     });
 
     const url = new URL(redirectUri);
@@ -287,6 +399,9 @@ describe('finalizeMcpConsent', () => {
     const value = JSON.parse(minted?.value ?? '{}');
     expect(value.requireConsent).toBe(false);
     expect(value.codeChallenge).toBe('challenge');
+
+    const [grant] = await db.select({ id: schema.mcpGrant.id }).from(schema.mcpGrant);
+    expect(value.mcpGrantId).toBe(grant?.id);
 
     const [consent] = await db.select().from(schema.oauthConsent);
     expect(consent?.consentGiven).toBe(true);

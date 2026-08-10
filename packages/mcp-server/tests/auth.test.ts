@@ -9,6 +9,7 @@ import {
   createWorkspace,
   MCP_TEST_ORIGIN,
   mintToken,
+  rawTokenOf,
   resetDatabase,
   type TestClient,
   type TestWorkspace,
@@ -25,7 +26,7 @@ async function clientIdOf(token: string): Promise<string> {
   const [row] = await db
     .select()
     .from(schema.oauthAccessToken)
-    .where(eq(schema.oauthAccessToken.accessToken, token));
+    .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
   if (row === undefined) throw new Error('token not found');
   return row.clientId;
 }
@@ -70,7 +71,7 @@ describe('access token verification', () => {
     await db
       .update(schema.oauthAccessToken)
       .set({ accessTokenExpiresAt: new Date(Date.now() - 1000) })
-      .where(eq(schema.oauthAccessToken.accessToken, token));
+      .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
     await expect(verifyMcpAccessToken(token)).rejects.toBeInstanceOf(DomainError);
     await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
   });

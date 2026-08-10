@@ -3,7 +3,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createOrganization, recordMcpGrant, resolvePrincipal } from '@orbit/core';
+import {
+  bindMcpCredential,
+  createOrganization,
+  recordMcpGrant,
+  resolvePrincipal,
+  unbindMcpCredential,
+} from '@orbit/core';
 import { db, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -102,6 +108,7 @@ export async function mintToken(
     type: 'public',
     userId,
   });
+  const grantId = await recordMcpGrant({ clientId, userId, organizationId, scopes });
   const accessToken = token('at_');
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
@@ -113,8 +120,17 @@ export async function mintToken(
     userId,
     scopes,
   });
-  await recordMcpGrant({ clientId, userId, organizationId, scopes });
-  return accessToken;
+  const secret =
+    process.env['BETTER_AUTH_SECRET'] ?? 'dev-secret-change-me-in-production-0123456789abcdef';
+  return bindMcpCredential(accessToken, grantId, secret);
+}
+
+export function rawTokenOf(tokenValue: string): string {
+  const secret =
+    process.env['BETTER_AUTH_SECRET'] ?? 'dev-secret-change-me-in-production-0123456789abcdef';
+  const binding = unbindMcpCredential(tokenValue, secret);
+  if (binding === null) throw new Error('The test token has no MCP grant binding.');
+  return binding.credential;
 }
 
 export interface TestClient {

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import {
+  createOrganization,
+  finalizeMcpConsent,
+  recordMcpGrant,
+  unbindMcpCredential,
+  verifyMcpAccessToken,
+} from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, desc, schema } from '@orbit/db';
 import { mcpContinueUrl } from '../../../../../src/app/(auth)/login/continue-url.ts';
@@ -64,6 +71,38 @@ async function withNativeFetchGlobals<T>(operation: () => Promise<T>): Promise<T
   }
 }
 
+async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
+  code: string;
+  verifier: string;
+}> {
+  const verifier = 'mcp-code-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
+  const consentCode = randomUUID().replace(/-/g, '');
+  await db.insert(schema.verification).values({
+    id: randomUUID(),
+    identifier: consentCode,
+    value: JSON.stringify({
+      clientId: 'client_test',
+      redirectURI: CALLBACK_URL,
+      scope: ['openid', 'offline_access', 'orbit.read'],
+      userId: workspace.adminUser.id,
+      requireConsent: true,
+      state: 'state_test',
+      codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
+      codeChallengeMethod: 'S256',
+    }),
+    expiresAt: new Date(Date.now() + 600_000),
+  });
+  const approved = await finalizeMcpConsent({
+    userId: workspace.adminUser.id,
+    consentCode,
+    accept: true,
+    organizationId: workspace.organizationId,
+  });
+  const code = new URL(approved.redirectUri).searchParams.get('code');
+  if (code === null) throw new Error('the consent redirect did not carry a code');
+  return { code, verifier };
+}
+
 describe('MCP authorize consent boundary', () => {
   it('rejects a direct request that omits prompt before login', async () => {
     const response = await GET(authorizeRequest(authorizeSearch()));
@@ -75,6 +114,70 @@ describe('MCP authorize consent boundary', () => {
     search.append('prompt', 'consent');
     const response = await GET(authorizeRequest(search));
     expect(response.status).toBe(400);
+  });
+
+  it('returns OAuth errors for malformed and unsupported token grants', async () => {
+    const missingCode = await authPost(
+      new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'authorization_code' }),
+      }),
+    );
+    expect(missingCode.status).toBe(400);
+    expect(await missingCode.json()).toMatchObject({ error: 'invalid_request' });
+
+    const missingRefreshToken = await authPost(
+      new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'refresh_token' }),
+      }),
+    );
+    expect(missingRefreshToken.status).toBe(400);
+    expect(await missingRefreshToken.json()).toMatchObject({ error: 'invalid_request' });
+
+    const unsupportedGrant = await authPost(
+      new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'client_credentials' }),
+      }),
+    );
+    expect(unsupportedGrant.status).toBe(400);
+    expect(await unsupportedGrant.json()).toMatchObject({ error: 'unsupported_grant_type' });
+  });
+
+  it('rate limits invalid token requests before their database prechecks', async () => {
+    await withNativeFetchGlobals(async () => {
+      const context = await auth.$context;
+      const previous = {
+        enabled: context.rateLimit.enabled,
+        max: context.rateLimit.max,
+        window: context.rateLimit.window,
+      };
+      Object.assign(context.rateLimit, { enabled: true, max: 1, window: 60 });
+      try {
+        const invalidTokenRequest = () =>
+          authPost(
+            new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-forwarded-for': '203.0.113.77',
+              },
+              body: JSON.stringify({
+                grant_type: 'authorization_code',
+                code: 'unknown-code',
+              }),
+            }),
+          );
+        expect((await invalidTokenRequest()).status).toBe(400);
+        expect((await invalidTokenRequest()).status).toBe(429);
+      } finally {
+        Object.assign(context.rateLimit, previous);
+      }
+    });
   });
 });
 
@@ -196,5 +299,242 @@ describe('MCP authorize PKCE boundary', () => {
     const location = new URL(response.headers.get('location') ?? '', APP_ORIGIN);
     expect(location.pathname).toBe('/oauth/authorize');
     expect(location.searchParams.get('consent_code')).not.toBeNull();
+  });
+
+  it('binds authorization and refresh tokens to the consented workspace grant', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      expect(token.status).toBe(200);
+      const tokenBody = (await token.json()) as Record<string, unknown>;
+      const accessToken = tokenBody['access_token'];
+      const refreshToken = tokenBody['refresh_token'];
+      expect(typeof accessToken).toBe('string');
+      expect(typeof refreshToken).toBe('string');
+      if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
+        throw new Error('the token response did not contain both credentials');
+      }
+      const context = await auth.$context;
+      const accessBinding = unbindMcpCredential(accessToken, context.secret);
+      const refreshBinding = unbindMcpCredential(refreshToken, context.secret);
+      expect(accessBinding).not.toBeNull();
+      expect(refreshBinding).not.toBeNull();
+      if (accessBinding === null || refreshBinding === null) {
+        throw new Error('the token response did not bind both credentials');
+      }
+      expect((await verifyMcpAccessToken(accessToken)).organizationId).toBe(
+        workspace.organizationId,
+      );
+      await expect(verifyMcpAccessToken(accessBinding.credential)).rejects.toMatchObject({
+        code: 'unauthorized',
+      });
+
+      const rawRefresh = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshBinding.credential,
+            client_id: 'client_test',
+          }),
+        }),
+      );
+      expect(rawRefresh.status).toBe(400);
+      expect(await rawRefresh.json()).toMatchObject({ error: 'invalid_grant' });
+
+      const refreshed = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: 'client_test',
+          }),
+        }),
+      );
+      expect(refreshed.status).toBe(200);
+      expect(refreshed.headers.get('cache-control')).toBe('no-store');
+      expect(refreshed.headers.get('pragma')).toBe('no-cache');
+      const refreshedBody = (await refreshed.json()) as Record<string, unknown>;
+      const refreshedAccess = refreshedBody['access_token'];
+      expect(typeof refreshedAccess).toBe('string');
+      if (typeof refreshedAccess !== 'string') {
+        throw new Error('the refresh response did not contain an access token');
+      }
+      expect((await verifyMcpAccessToken(refreshedAccess)).organizationId).toBe(
+        workspace.organizationId,
+      );
+
+      const replayed = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: 'client_test',
+          }),
+        }),
+      );
+      expect(replayed.status).toBe(400);
+      expect(await replayed.json()).toMatchObject({ error: 'invalid_grant' });
+    });
+  });
+
+  it('lets only one concurrent refresh consume a credential', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      const tokenBody = (await token.json()) as Record<string, unknown>;
+      const refreshToken = tokenBody['refresh_token'];
+      if (typeof refreshToken !== 'string') {
+        throw new Error('the token response did not contain a refresh credential');
+      }
+
+      const refresh = () =>
+        authPost(
+          new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              grant_type: 'refresh_token',
+              refresh_token: refreshToken,
+              client_id: 'client_test',
+            }),
+          }),
+        );
+      const responses = await Promise.all([refresh(), refresh(), refresh()]);
+      expect(responses.filter(({ ok }) => ok)).toHaveLength(1);
+      const failures = responses.filter(({ ok }) => !ok);
+      expect(failures).toHaveLength(2);
+      for (const response of failures) {
+        expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      }
+    });
+  });
+
+  it('preserves HTTP Basic authentication for a confidential client', async () => {
+    await withNativeFetchGlobals(async () => {
+      await db
+        .update(schema.oauthApplication)
+        .set({ type: 'confidential', clientSecret: 'client-secret' });
+      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const authorization = `Basic ${Buffer.from('client_test:client-secret').toString('base64')}`;
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: {
+            authorization,
+            'content-type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      expect(token.status).toBe(200);
+      const tokenBody = (await token.json()) as Record<string, unknown>;
+      const refreshToken = tokenBody['refresh_token'];
+      if (typeof refreshToken !== 'string') {
+        throw new Error('the token response did not contain a refresh credential');
+      }
+
+      const refreshed = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { authorization, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: 'client_test',
+          }),
+        }),
+      );
+      expect(refreshed.status).toBe(200);
+    });
+  });
+
+  it('refuses an authorization code after re-consent selects another workspace', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const other = await createOrganization(workspace.adminUser.id, {
+        name: 'Other workspace',
+        slug: `other-${randomUUID().slice(0, 8)}`,
+      });
+      await recordMcpGrant({
+        clientId: 'client_test',
+        userId: workspace.adminUser.id,
+        organizationId: other.organization.id,
+        scopes: 'openid offline_access orbit.read',
+      });
+
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      expect(token.status).toBe(400);
+      expect(await token.json()).toMatchObject({ error: 'invalid_grant' });
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
+    });
+  });
+
+  it('does not expose an unbound token through an alternate token path', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token/`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      expect(token.status).not.toBe(200);
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
+    });
   });
 });
