@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, schema, sql } from '@orbit/db';
-import { PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
+import { PRIORITY_LABELS, type Priority, readableRelation } from '@orbit/shared/constants';
 import type { Actor } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -163,7 +163,9 @@ const FIELD_RENDERERS: Record<string, (change: RenderedChange) => string> = {
   dueDate: ({ to }) => (to === null ? 'cleared the due date' : `set the due date to ${to}`),
   labelId: ({ from, to }) => (to === null ? `removed label ${from ?? ''}` : `added label ${to}`),
   relation: ({ from, to }) =>
-    to === null ? `removed a ${from ?? 'relation'} relation` : `marked as ${to}`,
+    to === null
+      ? `removed a ${from === null ? 'relation' : readableRelation(from)} relation`
+      : `marked as ${readableRelation(to)}`,
   projectId: ({ to }) => (to === null ? 'removed from its project' : `moved to project ${to}`),
   cycleId: ({ to }) => (to === null ? 'removed from its cycle' : `moved to ${to}`),
   milestoneId: ({ to }) => (to === null ? 'removed from its milestone' : `moved to ${to}`),
