@@ -16,7 +16,7 @@ gated behind a plan.
 | Look up an environment variable | [Configuration](configuration.md) |
 | Stop reaching for the mouse | [Keyboard shortcuts](keyboard-shortcuts.md) |
 | Let an AI agent read and update your board | [MCP server](mcp.md) |
-| Connect GitHub or Slack | [Integrations](integrations.md) |
+| Connect GitHub | [Integrations](integrations.md) |
 | Know how the realtime sync actually works | [Architecture](architecture.md) |
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
@@ -58,7 +58,7 @@ in [Getting started](getting-started.md).
   fans out over a websocket to everyone allowed to see it.
 - **An MCP server**, so an agent can read the board and file work with the same
   permissions the person who authorised it has.
-- **Notifications**, an inbox, GitHub and Slack.
+- **Notifications**, an inbox and GitHub integration.
 
 ## What Orbit is not
 

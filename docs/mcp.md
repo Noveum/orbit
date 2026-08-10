@@ -214,10 +214,10 @@ Once connected, these all work:
 - "Summarise what the team finished last sprint and what carried over."
 - "Read ENG-42 and write the migration it describes."
 - "Everything in Design labelled Bug with no assignee, and who should take each one."
-- "Post a summary of what each person closed yesterday to Slack."
+- "Summarise what each person closed yesterday."
 
-The last one is the shape that pays for itself. An agent with `orbit.read` and a
-Slack connection can write the update nobody wants to write.
+The last one is the shape that pays for itself. An agent with `orbit.read` can
+prepare the update nobody wants to compile by hand.
 
 ## Managing access
 

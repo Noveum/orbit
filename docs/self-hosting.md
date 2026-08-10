@@ -1,5 +1,10 @@
 # Self-hosting Orbit
 
+> **Status: Preview.** This page documents the current Noveum AI deployment and
+> evaluation paths. Orbit does not yet publish a provider-neutral production
+> support, migration, rollback, backup, or compatibility contract. Review the
+> [readiness tracker](open-source-readiness.md) before deploying important data.
+
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
 and that is the whole architecture. There is nothing to containerise and nothing
 to orchestrate.

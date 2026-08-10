@@ -28,7 +28,7 @@ The core is done and in daily use.
 - **Auth**: passkeys, Google, GitHub, magic links, optional password.
 - **Roles and permissions**: admin, member, contributor, guest.
 - **MCP server** over OAuth, with sixty odd tools and scoped access.
-- **GitHub** pull request linking, **Slack** notifications.
+- **GitHub** pull request linking.
 - **File attachments** through presigned uploads.
 - **Light and dark**, both first class.
 

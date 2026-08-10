@@ -210,7 +210,7 @@ The inbox collects what happened that involves you: assignments, mentions,
 comments on issues you follow, state changes on work you are watching.
 
 Notification preferences are per event type, with quiet hours that respect your
-timezone. You can be notified in the app, by email, or in Slack.
+timezone. You can be notified in the app or by email.
 
 ## Realtime
 

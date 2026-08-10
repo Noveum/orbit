@@ -26,7 +26,13 @@ describe('/llms.txt', () => {
 
     expect(text).toContain('Apache-2.0');
     expect(text).toContain('self-hosted');
+    expect(text).toContain('Self-hosting status: Preview');
+    expect(text).toContain('not a supported production release');
     expect(text).toContain('https://github.com/Noveum/orbit');
+  });
+
+  it('does not advertise the disabled Slack integration', async () => {
+    expect(await body()).not.toMatch(/slack/i);
   });
 
   it('serves plain text, because that is what the file is for', () => {
