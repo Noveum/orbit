@@ -1,15 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { InboxItem } from '@/features/inbox/data.ts';
-import { InboxView } from '@/features/inbox/inbox-view.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 
 mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
 }));
+
+const issueDetail = { ...(await import('@/features/issues/issue-detail.tsx')) };
+mock.module('@/features/issues/issue-detail.tsx', () => ({
+  ...issueDetail,
+  IssueDetailView: ({ identifier }: { identifier: string }) => (
+    <div data-testid="issue-detail">{identifier}</div>
+  ),
+}));
+
+afterAll(() => {
+  mock.module('@/features/issues/issue-detail.tsx', () => issueDetail);
+});
+
+const { InboxView } = await import('@/features/inbox/inbox-view.tsx');
 
 interface ReadCall {
   readonly notificationIds: string[];

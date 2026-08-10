@@ -33,6 +33,7 @@ export interface IssueDetailViewProps {
   readonly identifier: string;
   readonly known?: Issue;
   readonly onDeleted?: (() => void) | undefined;
+  readonly focusCommentId?: string | null;
 }
 
 export function teamIssuesPath(teams: readonly Team[], teamId: string): string {
@@ -164,7 +165,12 @@ function IssueBody({
   );
 }
 
-export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailViewProps) {
+export function IssueDetailView({
+  identifier,
+  known,
+  onDeleted,
+  focusCommentId = null,
+}: IssueDetailViewProps) {
   const { toast } = useToast();
   const router = useRouter();
   const workspace = useWorkspace();
@@ -320,6 +326,7 @@ export function IssueDetailView({ identifier, known, onDeleted }: IssueDetailVie
                 comments={comments.data ?? []}
                 activity={detail.data.activity}
                 members={workspace.members}
+                focusCommentId={focusCommentId}
               />
             </>
           )}
