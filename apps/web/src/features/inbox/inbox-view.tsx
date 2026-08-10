@@ -249,6 +249,15 @@ function NotificationDetail({
         </Link>
       </div>
 
+      {isPullRequestNotification(item.type) && item.body.length > 0 ? (
+        <p
+          className="border-border border-b px-5 py-1.5 text-2xs text-muted"
+          data-testid="inbox-event-context"
+        >
+          {item.body}
+        </p>
+      ) : null}
+
       <NotificationBody
         item={item}
         canWriteDocs={canWriteDocs}
@@ -312,6 +321,13 @@ export function InboxView({
   );
   const selectedIndex = visible.findIndex((row) => row.id === selectedId);
   const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
+
+  const leaveDeletedIssue = useCallback(() => {
+    if (current === undefined) return;
+    const index = visible.findIndex((row) => row.id === current.id);
+    const next = visible[index + 1] ?? visible[index - 1];
+    setSelectedId(next?.id ?? null);
+  }, [visible, current]);
 
   const move = useCallback(
     (delta: number) => {
@@ -544,7 +560,7 @@ export function InboxView({
                 }}
                 canWriteDocs={canWriteDocs}
                 canPublishDocs={canPublishDocs}
-                onIssueDeleted={() => setSelectedId(null)}
+                onIssueDeleted={leaveDeletedIssue}
               />
             )}
           </section>

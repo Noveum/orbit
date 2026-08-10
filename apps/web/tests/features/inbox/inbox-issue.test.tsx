@@ -303,6 +303,39 @@ describe('reading a notification in the inbox', () => {
     });
   });
 
+  it('keeps the pull request a review was requested on, which the issue never names', async () => {
+    renderInbox([
+      item({
+        type: 'pr_review_requested',
+        entityType: 'issue',
+        entityId: 'issue_1',
+        title: 'Review requested on Fan out delta packets',
+        body: 'Noveum/orbit#412',
+        url: '/issue/ENG-3',
+      }),
+    ]);
+
+    await screen.findByTestId('issue-detail');
+    expect(screen.getByTestId('inbox-event-context')).toHaveTextContent('Noveum/orbit#412');
+  });
+
+  it('does not repeat a body the issue itself already says', async () => {
+    renderInbox([
+      item({
+        type: 'issue_assigned',
+        entityType: 'issue',
+        entityId: 'issue_1',
+        title: 'Assigned you ENG-3',
+        body: 'Review the AutoFix pull requests',
+        url: '/issue/ENG-3',
+      }),
+    ]);
+
+    await screen.findByTestId('issue-detail');
+    expect(screen.queryByTestId('inbox-event-context')).toBeNull();
+    expect(screen.getAllByText('Review the AutoFix pull requests')).toHaveLength(1);
+  });
+
   it('shows the doc itself when the notification is about one', () => {
     renderInbox([
       item({

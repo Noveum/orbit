@@ -159,6 +159,25 @@ describe('opening a notification in the Unread tab', () => {
 });
 
 describe('deleting the issue a notification points at', () => {
+  it('moves on to the next notification rather than re-opening the dead one', async () => {
+    const user = userEvent.setup();
+    renderInbox([
+      item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
+      item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: /First/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-1');
+    });
+
+    await user.click(screen.getByTestId('stub-delete'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
+    });
+  });
+
   it('keeps the reader in the inbox rather than sending them to the team list', async () => {
     const user = userEvent.setup();
     renderInbox([
