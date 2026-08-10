@@ -348,6 +348,7 @@ export function InboxView({
   const [mentions, setMentions] = useState(unreadMentions);
   const [cursor, setCursor] = useState<string | null>(nextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pagingError, setPagingError] = useState<string | null>(null);
   const inFlight = useRef(false);
   const cursorRef = useRef<string | null>(nextCursor);
   const [tab, setTab] = useState<TabId>('all');
@@ -406,9 +407,9 @@ export function InboxView({
       });
       cursorRef.current = parsed.nextCursor;
       setCursor(parsed.nextCursor);
-      setError(null);
+      setPagingError(null);
     } catch {
-      setError('Could not load older notifications. Check your connection and try again.');
+      setPagingError('Could not load these. Check your connection and try again.');
     } finally {
       inFlight.current = false;
       setLoadingMore(false);
@@ -643,6 +644,15 @@ export function InboxView({
             {cursor === null ? null : (
               <li key="load-more">
                 <LoadMoreRow loading={loadingMore} onReach={loadMore} />
+                {pagingError === null ? null : (
+                  <p
+                    role="alert"
+                    data-testid="inbox-paging-error"
+                    className="px-3 pb-3 text-center text-2xs text-danger"
+                  >
+                    {pagingError}
+                  </p>
+                )}
               </li>
             )}
           </ul>

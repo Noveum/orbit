@@ -67,10 +67,12 @@ const realFetch = globalThis.fetch;
 let requests: string[] = [];
 let pages: Record<string, unknown> = {};
 let failNext = false;
+let failRead = false;
 
 beforeEach(() => {
   requests = [];
   failNext = false;
+  failRead = false;
   pages = { 'cursor-1': olderPage(['n51', 'n52'], null) };
   globalThis.fetch = mock((url: string) => {
     const path = String(url);
@@ -84,6 +86,9 @@ beforeEach(() => {
         status: 200,
         json: () => Promise.resolve(pages[cursor] ?? olderPage([], null)),
       });
+    }
+    if (failRead) {
+      return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) });
     }
     return Promise.resolve({
       ok: true,
@@ -208,7 +213,7 @@ describe('an inbox with more notifications than one page', () => {
 
     await user.click(screen.getByTestId('inbox-load-more'));
     await waitFor(() => {
-      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+      expect(screen.getByTestId('inbox-paging-error')).toBeInTheDocument();
     });
 
     failNext = false;
@@ -217,7 +222,7 @@ describe('an inbox with more notifications than one page', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Notification n51/ })).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('inbox-error')).toBeNull();
+    expect(screen.queryByTestId('inbox-paging-error')).toBeNull();
   });
 
   it('says so when the page cannot be fetched, and keeps the offer open', async () => {
@@ -228,8 +233,27 @@ describe('an inbox with more notifications than one page', () => {
     await user.click(screen.getByTestId('inbox-load-more'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+      expect(screen.getByTestId('inbox-paging-error')).toBeInTheDocument();
     });
     expect(screen.getByTestId('inbox-load-more')).toBeInTheDocument();
+  });
+
+  it('leaves a failed save alone when a page loads, they are separate complaints', async () => {
+    const user = userEvent.setup();
+    renderInbox([item('n1', { read: false })], 'cursor-1');
+
+    failRead = true;
+    await user.click(screen.getByRole('button', { name: /Notification n1/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+    });
+
+    failRead = false;
+    await user.click(screen.getByTestId('inbox-load-more'));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Notification n51/ })).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
   });
 });
