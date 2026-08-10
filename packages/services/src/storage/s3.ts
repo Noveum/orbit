@@ -421,6 +421,20 @@ export class S3StorageDriver implements StorageDriver {
     );
   }
 
+  async get(key: string): Promise<Uint8Array | null> {
+    assertSafeKey(key);
+    try {
+      const client = await this.client();
+      const object = await client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      const body = object.Body;
+      if (body === undefined) return null;
+      return await body.transformToByteArray();
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw internal('Could not read that file from storage.', error);
+    }
+  }
+
   async delete(key: string): Promise<void> {
     assertSafeKey(key);
     const client = await this.client();
