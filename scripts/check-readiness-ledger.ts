@@ -5,6 +5,8 @@ import {
   createProductionReadinessEvidenceVerifier,
   type HostedEvidence,
   type ReadinessEvidenceVerifier,
+  TRUSTED_CI_WORKFLOW_DEFINITION_DIGEST,
+  TRUSTED_CI_WORKFLOW_ID,
 } from './readiness-evidence-verifier.ts';
 import {
   buildReadinessReferenceRegistry,
@@ -230,17 +232,50 @@ function htmlBlockOpening(content: string):
   return undefined;
 }
 
-function paragraphContent(content: string | undefined): boolean {
+function paragraphContent(content: string | undefined, paragraphOpen = false): boolean {
   if (content === undefined || content.trim().length === 0) return false;
   if (/^#{1,6}(?:[ \t]+|$)/.test(content)) return false;
-  if (/^(?:>[ \t]?|[-+*][ \t]+|\d+[.)][ \t]+)/.test(content)) return false;
+  if (/^(?:>[ \t]?|[-+*][ \t]+)/.test(content)) return false;
+  const orderedListStart = /^(\d{1,9})[.)][ \t]+/.exec(content)?.[1];
+  if (orderedListStart !== undefined)
+    return paragraphOpen && Number.parseInt(orderedListStart, 10) !== 1;
   return !/^(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(content);
+}
+
+function quotedContent(line: string, depth: number): string | undefined {
+  let content = line;
+  for (let index = 0; index < depth; index += 1) {
+    const root = rootBlockContent(content);
+    if (root?.startsWith('>') !== true) return undefined;
+    content = root.slice(1).replace(/^[ \t]/, '');
+  }
+  return content;
+}
+
+function blockquoteContent(
+  line: string,
+): { readonly content: string; readonly depth: number } | undefined {
+  let content = line;
+  let depth = 0;
+  while (true) {
+    const nested = quotedContent(content, 1);
+    if (nested === undefined) break;
+    content = nested;
+    depth += 1;
+  }
+  return depth === 0 ? undefined : { content, depth };
 }
 
 function activeLines(text: string): string[] {
   let fence: { readonly character: string; readonly length: number } | undefined;
   let htmlEnd: string | null | undefined;
   let htmlComment = false;
+  let quotedFence:
+    | { readonly character: string; readonly depth: number; readonly length: number }
+    | undefined;
+  let quotedHtml:
+    | { readonly comment: boolean; readonly depth: number; readonly end: string | null }
+    | undefined;
   let paragraphOpen = false;
   return (
     text
@@ -248,6 +283,29 @@ function activeLines(text: string): string[] {
       .split('\n')
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: GFM block precedence requires explicit parser state.
       .map((line) => {
+        if (quotedHtml !== undefined) {
+          const content = quotedContent(line, quotedHtml.depth);
+          if (content === undefined) quotedHtml = undefined;
+          else {
+            if (!quotedHtml.comment && HTML_TABLE_TAG.test(content))
+              throw new Error('Visible HTML table alternatives are not allowed.');
+            if (quotedHtml.end === null) {
+              if (content.trim().length === 0) quotedHtml = undefined;
+            } else if (content.toLowerCase().includes(quotedHtml.end)) quotedHtml = undefined;
+            return '';
+          }
+        }
+        if (quotedFence !== undefined) {
+          const content = quotedContent(line, quotedFence.depth);
+          if (content === undefined) quotedFence = undefined;
+          else {
+            const closing = /^(?: {0,3})(`{3,}|~{3,})[ \t]*$/.exec(content);
+            const value = closing?.[1] ?? '';
+            if (value[0] === quotedFence.character && value.length >= quotedFence.length)
+              quotedFence = undefined;
+            return '';
+          }
+        }
         if (htmlEnd !== undefined) {
           if (!htmlComment && HTML_TABLE_TAG.test(line))
             throw new Error('Visible HTML table alternatives are not allowed.');
@@ -263,10 +321,43 @@ function activeLines(text: string): string[] {
           if (value[0] === fence.character && value.length >= fence.length) fence = undefined;
           return '';
         }
+        const quote = blockquoteContent(line);
+        const quoteHtml = quote === undefined ? undefined : htmlBlockOpening(quote.content);
+        if (quote !== undefined && quoteHtml?.interruptsParagraph === true) {
+          if (!quoteHtml.isComment && HTML_TABLE_TAG.test(quote.content))
+            throw new Error('Visible HTML table alternatives are not allowed.');
+          if (
+            quoteHtml.end === null ||
+            !quote.content.toLowerCase().slice(quoteHtml.searchFrom).includes(quoteHtml.end)
+          )
+            quotedHtml = {
+              comment: quoteHtml.isComment,
+              depth: quote.depth,
+              end: quoteHtml.end,
+            };
+          paragraphOpen = false;
+          return '';
+        }
+        const quotedOpening =
+          quote === undefined ? null : /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(quote.content);
+        if (quote !== undefined && quotedOpening !== null) {
+          const value = quotedOpening[1] ?? '';
+          const info = quotedOpening[2] ?? '';
+          if (!(value.startsWith('`') && info.includes('`'))) {
+            quotedFence = {
+              character: value[0] ?? '',
+              depth: quote.depth,
+              length: value.length,
+            };
+            paragraphOpen = false;
+            return '';
+          }
+        }
         const root = rootBlockContent(line);
         const html = root === undefined ? undefined : htmlBlockOpening(root);
         if (html?.isComment !== true && HTML_TABLE_TAG.test(root ?? line))
           throw new Error('Visible HTML table alternatives are not allowed.');
+        if (root === undefined && paragraphOpen && line.trim().length > 0) return line;
         if (
           root !== undefined &&
           html !== undefined &&
@@ -281,13 +372,13 @@ function activeLines(text: string): string[] {
         }
         const opening = /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
         if (opening === null) {
-          paragraphOpen = paragraphContent(root);
+          paragraphOpen = paragraphContent(root, paragraphOpen);
           return line;
         }
         const value = opening[1] ?? '';
         const info = opening[2] ?? '';
         if (value.startsWith('`') && info.includes('`')) {
-          paragraphOpen = paragraphContent(root);
+          paragraphOpen = paragraphContent(root, paragraphOpen);
           return line;
         }
         fence = { character: value[0] ?? '', length: value.length };
@@ -509,6 +600,84 @@ export function parseExceptionRows(text: string): ExceptionRow[] {
   }));
 }
 
+interface PhysicalLine {
+  readonly content: string;
+  readonly ending: string;
+}
+
+function physicalLines(text: string): PhysicalLine[] {
+  const lines: PhysicalLine[] = [];
+  let start = 0;
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index] ?? '';
+    if (character !== '\r' && character !== '\n') {
+      index += 1;
+      continue;
+    }
+    const width = character === '\r' && text[index + 1] === '\n' ? 2 : 1;
+    lines.push({ content: text.slice(start, index), ending: text.slice(index, index + width) });
+    index += width;
+    start = index;
+  }
+  lines.push({ content: text.slice(start), ending: '' });
+  return lines;
+}
+
+export function readinessGovernanceFingerprint(
+  text: string,
+  kind: 'ledger' | 'plan',
+  excludedFindingIds: ReadonlySet<string>,
+  excludedExceptionIds: ReadonlySet<string> = new Set(),
+): string {
+  const lines = activeLines(text);
+  const physical = physicalLines(text);
+  if (lines.length !== physical.length) throw new Error('Readiness document line mapping failed.');
+  const heading = kind === 'plan' ? 'Findings register' : 'Readiness findings register';
+  const header = kind === 'plan' ? PLAN_HEADER : FINDING_HEADER;
+  const [start, end] = section(lines, heading);
+  const headerIndexes = lines.flatMap((line, index) =>
+    index >= start && index < end && matchesHeader(line, header) ? [index] : [],
+  );
+  if (headerIndexes.length !== 1)
+    throw new Error('Readiness document canonical table mapping failed.');
+  const headerIndex = headerIndexes[0] ?? 0;
+  let rowEnd = headerIndex + 2;
+  while (rowEnd < end && cells(lines[rowEnd] ?? '') !== undefined) rowEnd += 1;
+  let exceptionStart = -1;
+  let exceptionEnd = -1;
+  if (kind === 'ledger') {
+    const [exceptionSectionStart, exceptionSectionEnd] = section(lines, 'P1 exception register');
+    const exceptionHeaders = lines.flatMap((line, index) =>
+      index >= exceptionSectionStart &&
+      index < exceptionSectionEnd &&
+      matchesHeader(line, EXCEPTION_HEADER)
+        ? [index]
+        : [],
+    );
+    if (exceptionHeaders.length !== 1)
+      throw new Error('Readiness document canonical table mapping failed.');
+    exceptionStart = (exceptionHeaders[0] ?? 0) + 2;
+    exceptionEnd = exceptionStart;
+    while (exceptionEnd < exceptionSectionEnd && cells(lines[exceptionEnd] ?? '') !== undefined)
+      exceptionEnd += 1;
+  }
+  return physical
+    .filter((_, index) => {
+      if (index >= headerIndex + 2 && index < rowEnd) {
+        const id = cells(lines[index] ?? '')?.[0];
+        if (id !== undefined && excludedFindingIds.has(id)) return false;
+      }
+      if (index >= exceptionStart && index < exceptionEnd) {
+        const id = cells(lines[index] ?? '')?.[0];
+        if (id !== undefined && excludedExceptionIds.has(id)) return false;
+      }
+      return true;
+    })
+    .map((line) => `${line.content}${line.ending}`)
+    .join('');
+}
+
 function validId(id: string): boolean {
   return FINDING_ID.test(id);
 }
@@ -646,6 +815,9 @@ function decodeEntity(entity: string): string {
 
 function normalizedLimitation(value: string): string {
   return value
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/!?\[([^\]\r\n]*)\]\((?:\\.|[^\\)\r\n])*\)/g, '$1')
+    .replace(/<\/?[A-Za-z][^>\r\n]*>/g, ' ')
     .replace(/&(?:#[xX][\dA-Fa-f]+|#\d+|[A-Za-z][A-Za-z0-9]+);/g, decodeEntity)
     .normalize('NFKC')
     .toLowerCase()
@@ -664,24 +836,27 @@ function substantiveLimitation(value: string): boolean {
 function placeholderLimitation(value: string): boolean {
   const normalized = normalizedLimitation(value);
   const padded = ` ${normalized} `;
-  return [
-    'pending',
-    'tbd',
-    't b d',
-    'todo',
-    'placeholder',
-    'not applicable',
-    'not yet determined',
-    'to be determined',
-    'to be decided',
-    'deferred',
-    'not required',
-    'not available',
-    'n a',
-    'none',
-    'unknown',
-    'unspecified',
-  ].some((reserved) => padded.includes(` ${reserved} `));
+  return (
+    /\bt\s*b\s*d\b/.test(normalized) ||
+    /\b(?:awaits?|awaiting) (?:a |later |future )*review\b/.test(normalized) ||
+    /\bunder (?:later |future )*review\b/.test(normalized) ||
+    [
+      'pending',
+      'todo',
+      'placeholder',
+      'not applicable',
+      'not yet determined',
+      'to be determined',
+      'to be decided',
+      'deferred',
+      'not required',
+      'not available',
+      'n a',
+      'none',
+      'unknown',
+      'unspecified',
+    ].some((reserved) => padded.includes(` ${reserved} `))
+  );
 }
 function duplicates(values: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -952,6 +1127,10 @@ function canonicalTimestamp(value: unknown): value is string {
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
+function timestamp(value: string): number {
+  return Date.parse(value);
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
   if (typeof value === 'object' && value !== null) {
@@ -1213,11 +1392,14 @@ function hostedWorkflowValid(record: HostedWorkflowRecord, hosted: HostedEvidenc
     record.kind !== 'failing-test' || hosted.pullRequestNumbers.includes(record.pullRequest.number);
   return (
     hosted.workflowPath === '.github/workflows/ci.yml' &&
+    hosted.workflowId === TRUSTED_CI_WORKFLOW_ID &&
+    hosted.workflowDefinitionDigest === TRUSTED_CI_WORKFLOW_DEFINITION_DIGEST &&
+    hosted.repository === 'Noveum/orbit' &&
     hosted.runAttempt === actionsAttempt(record.url) &&
     hosted.event === expectedEvent &&
     hosted.conclusion === expectedConclusion &&
-    hosted.runStartedAt <= hosted.updatedAt &&
-    hosted.updatedAt <= record.observedAt &&
+    timestamp(hosted.runStartedAt) <= timestamp(hosted.updatedAt) &&
+    timestamp(hosted.updatedAt) <= timestamp(record.observedAt) &&
     pullRequestBound
   );
 }
@@ -1239,8 +1421,8 @@ function hostedArtifactValid(record: HostedWorkflowRecord, hosted: HostedEvidenc
     artifact.digest === record.artifactDigest &&
     !artifact.expired &&
     artifact.headSha === commit &&
-    hosted.runStartedAt <= artifact.createdAt &&
-    artifact.createdAt <= hosted.updatedAt
+    timestamp(hosted.runStartedAt) <= timestamp(artifact.createdAt) &&
+    timestamp(artifact.createdAt) <= timestamp(hosted.updatedAt)
   );
 }
 
@@ -1378,7 +1560,7 @@ function durableClosureErrors(
     changedFiles.some((file) => !CLOSURE_EVIDENCE_FILES.has(file))
   )
     errors.push(`${id} has an invalid durable evidence-commit file shape.`);
-  if (decisionAt !== undefined && closure.observedAt <= decisionAt)
+  if (decisionAt !== undefined && timestamp(closure.observedAt) <= timestamp(decisionAt))
     errors.push(`${id} has invalid durable closure observation chronology.`);
   errors.push(...durableSnapshotErrors(id, finding, exception, registry, closure, verifier));
   return errors;
@@ -1691,7 +1873,10 @@ function temporalEvidenceErrors(
     errors.push('Evidence verification instant does not match the verification date.');
   for (const [index, [, value]] of source.recordEntries.entries()) {
     const observedAt = objectValue(value)?.['observedAt'];
-    if (canonicalTimestamp(observedAt) && observedAt > verifier.verificationInstant)
+    if (
+      canonicalTimestamp(observedAt) &&
+      timestamp(observedAt) > timestamp(verifier.verificationInstant)
+    )
       errors.push(`Registry record entry ${index + 1} has a future evidence timestamp.`);
   }
   return errors;

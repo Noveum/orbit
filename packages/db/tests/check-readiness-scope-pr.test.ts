@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
+  parseExceptionRows,
+  parseFindingRows,
+  parsePlanFindings,
+} from '../../../scripts/check-readiness-ledger.ts';
+import {
+  parseRawGitDiff,
   type ReadinessScopePrInput,
+  readyEvidenceForRegistry,
+  validateFinalReadinessScopeState,
   validateReadinessScopePullRequest,
 } from '../../../scripts/check-readiness-scope-pr.ts';
 import {
@@ -12,6 +20,11 @@ import {
   computeReadinessTextDigest,
   type ReadinessScopeManifest,
 } from '../../../scripts/readiness-scope-manifest.ts';
+import {
+  githubWorkflowAttemptSchema,
+  pullRequestTargetEventSchema,
+  readinessScopePrInputSchema,
+} from '../../shared/src/validators/readiness.ts';
 
 const baseSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const headSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -21,6 +34,86 @@ const allowedFiles = [
   'docs/superpowers/plans/2026-08-09-open-source-readiness.md',
   'scripts/readiness-scope-manifest.json',
 ] as const;
+
+function canonicalJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function closureRegistry(evidenceCommit = baseSha): string {
+  const candidateCommit = 'cccccccccccccccccccccccccccccccccccccccc';
+  return canonicalJson({
+    recordEntries: [
+      [
+        'record:closure/doc-001',
+        {
+          kind: 'closure',
+          findingId: 'DOC-001',
+          observedAt: '2026-08-09T11:00:00.000Z',
+          candidate: {
+            kind: 'git-commit',
+            commitSha: candidateCommit,
+            commitUrl: `https://github.com/Noveum/orbit/commit/${candidateCommit}`,
+          },
+          evidenceCommit: {
+            kind: 'git-commit',
+            commitSha: evidenceCommit,
+            commitUrl: `https://github.com/Noveum/orbit/commit/${evidenceCommit}`,
+          },
+          evidenceDigest: `sha256:${'1'.repeat(64)}`,
+          url: `https://github.com/Noveum/orbit/commit/${evidenceCommit}`,
+        },
+      ],
+    ],
+    principalEntries: [],
+  });
+}
+
+function readyEvidence(evidenceCommit = baseSha, baseContainsEvidence = true) {
+  const pullRequestBaseSha = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const pullRequestHeadSha = 'dddddddddddddddddddddddddddddddddddddddd';
+  return {
+    findingId: 'DOC-001',
+    evidenceCommit,
+    baseContainsEvidence,
+    pullRequestNumber: 123,
+    pullRequestBaseRef: 'main',
+    pullRequestBaseSha,
+    pullRequestBaseRepository: 'Noveum/orbit',
+    pullRequestHeadSha,
+    mergeCommitSha: evidenceCommit,
+    mergedAt: '2026-08-09T10:00:00.000Z',
+    statusState: 'success' as const,
+    statusContext: 'Trusted readiness policy',
+    statusCreator: 'github-actions[bot]',
+    statusTargetUrl: 'https://github.com/Noveum/orbit/actions/runs/2000/attempts/1',
+    statusCreatedAt: '2026-08-09T09:30:00.000Z',
+    statusUpdatedAt: '2026-08-09T09:31:00.000Z',
+    configuredWorkflowId: 456,
+    runWorkflowId: 456,
+    runWorkflowPath: '.github/workflows/readiness-scope.yml',
+    runWorkflowState: 'active' as const,
+    runWorkflowDefinitionDigest:
+      'sha256:16ee9762d4441a25db918d290e777a0b45418c93d526df4b4bca2ed87a444496',
+    runRepository: 'Noveum/orbit',
+    runId: 2000,
+    runAttempt: 1,
+    runEvent: 'pull_request_target',
+    runConclusion: 'success',
+    runHeadSha: pullRequestHeadSha,
+    definitionCommitSha: pullRequestBaseSha,
+    definitionCommitIsEvidenceAncestor: true,
+    runStartedAt: '2026-08-09T09:00:00.000Z',
+    runUpdatedAt: '2026-08-09T09:32:00.000Z',
+    runPullRequests: [
+      {
+        number: 123,
+        headSha: pullRequestHeadSha,
+        baseRef: 'main',
+        baseSha: pullRequestBaseSha,
+      },
+    ],
+  };
+}
 
 function plan(finding: string, outcome: string): string {
   return `
@@ -43,8 +136,18 @@ function ledger(finding: string, outcome: string, status = 'Open'): string {
 ## P1 exception register
 
 | Finding ID | Accountable owner reference | Expiry date | Mitigation evidence | Public limitation | Residual-risk record | Decision record | Independent Release approver | Security authority record |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 `;
+}
+
+function stagedExceptionLedger(status: 'Accepted P1 exception' | 'Ready for closure'): string {
+  const staged = ledger('Original risk', 'Original outcome', status).replace(
+    `| ${status} | pending:open | pending:open | pending:open | pending:open | Original outcome | risk:record:audit/doc-001 | pending:open | pending:open | not-required |`,
+    `| ${status} | implementation:record:implementation/doc-001 | test-na:record:non-behavioral/doc-001;justification=record:justification/doc-001;approver=principal:release-owner | gate:record:gate/doc-001 | docs:record:docs/doc-001 | Original outcome | risk:record:audit/doc-001 | decision:record:decision/doc-001;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |`,
+  );
+  const exception =
+    '| DOC-001 | principal:documentation-owner | 2026-12-01 | mitigation:record:mitigation/doc-001 | Self-hosted users cannot import legacy archives during migration. | risk:record:audit/doc-001 | decision:record:decision/doc-001;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |';
+  return staged.replace(/\n$/, `\n${exception}\n`);
 }
 
 function manifest(version: string, finding: string, outcome: string): string {
@@ -56,7 +159,7 @@ function manifest(version: string, finding: string, outcome: string): string {
       requiredOutcomeHash: computeReadinessTextDigest(outcome),
     },
   ];
-  return JSON.stringify({
+  return canonicalJson({
     version,
     digest: computeReadinessScopeDigest(version, findings),
     findings,
@@ -71,6 +174,7 @@ function fixture(): ReadinessScopePrInput {
   const baseDigest = JSON.parse(baseManifest).digest as string;
   const headDigest = JSON.parse(headManifest).digest as string;
   return {
+    baseRef: 'main',
     baseSha,
     headSha,
     changedFiles: [...allowedFiles],
@@ -78,14 +182,14 @@ function fixture(): ReadinessScopePrInput {
       plan: plan('Original risk', 'Original outcome'),
       ledger: ledger('Original risk', 'Original outcome'),
       manifest: baseManifest,
-      audit: '{}',
-      registry: '{"recordEntries":[],"principalEntries":[]}',
+      audit: canonicalJson({}),
+      registry: canonicalJson({ recordEntries: [], principalEntries: [] }),
     },
     head: {
       plan: plan('Canonical risk', 'Canonical outcome'),
       ledger: ledger('Canonical risk', 'Canonical outcome'),
       manifest: headManifest,
-      audit: JSON.stringify({
+      audit: canonicalJson({
         schemaVersion: 1,
         kind: 'scope-change',
         baseVersion,
@@ -97,8 +201,9 @@ function fixture(): ReadinessScopePrInput {
         noRiskDisappears: true,
         rationale: 'The canonical wording is strengthened and remains explicitly governed.',
       }),
-      registry: '{"recordEntries":[],"principalEntries":[]}',
+      registry: canonicalJson({ recordEntries: [], principalEntries: [] }),
     },
+    readyEvidence: [],
     reviews: [
       {
         login: 'imshashank',
@@ -135,7 +240,7 @@ function withUnchangedFinding(input: ReadinessScopePrInput): ReadinessScopePrInp
         requiredOutcomeHash: computeReadinessTextDigest(outcome),
       },
     ];
-    return JSON.stringify({
+    return canonicalJson({
       version: parsed.version,
       digest: computeReadinessScopeDigest(parsed.version, findings),
       findings,
@@ -157,7 +262,57 @@ function withUnchangedFinding(input: ReadinessScopePrInput): ReadinessScopePrInp
       plan: addPlanRow(input.head.plan),
       ledger: addLedgerRow(input.head.ledger),
       manifest: headManifest,
-      audit: JSON.stringify({
+      audit: canonicalJson({
+        ...audit,
+        baseDigest: (JSON.parse(baseManifest) as ReadinessScopeManifest).digest,
+        headDigest: (JSON.parse(headManifest) as ReadinessScopeManifest).digest,
+      }),
+    },
+  };
+}
+
+function withUnchangedAcceptedP1Finding(input: ReadinessScopePrInput): ReadinessScopePrInput {
+  const finding = 'Unchanged compatibility risk';
+  const outcome = 'Unchanged compatibility outcome';
+  const planRow = `| DOC-002 | P1 | ${finding} | Audit | ${outcome} |`;
+  const ledgerRow = `| DOC-002 | P1 | ${finding} | Documentation maintainer | principal:documentation-owner | No | Accepted P1 exception | implementation:record:implementation/doc-002 | test-na:record:non-behavioral/doc-002;justification=record:justification/doc-002;approver=principal:release-owner | gate:record:gate/doc-002 | docs:record:docs/doc-002 | ${outcome} | risk:record:risk/doc-002 | decision:record:decision/doc-002;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |`;
+  const addPlanRow = (value: string) => value.replace(/\n$/, `\n${planRow}\n`);
+  const addLedgerRow = (value: string) =>
+    value.replace('\n\n## P1 exception register', `\n${ledgerRow}\n\n## P1 exception register`);
+  const addManifestRow = (value: string) => {
+    const parsed = JSON.parse(value) as ReadinessScopeManifest;
+    const findings = [
+      ...parsed.findings,
+      {
+        id: 'DOC-002',
+        priority: 'P1' as const,
+        findingHash: computeReadinessTextDigest(finding),
+        requiredOutcomeHash: computeReadinessTextDigest(outcome),
+      },
+    ];
+    return canonicalJson({
+      version: parsed.version,
+      digest: computeReadinessScopeDigest(parsed.version, findings),
+      findings,
+    });
+  };
+  const baseManifest = addManifestRow(input.base.manifest);
+  const headManifest = addManifestRow(input.head.manifest);
+  const audit = JSON.parse(input.head.audit) as Record<string, unknown>;
+  return {
+    ...input,
+    base: {
+      ...input.base,
+      plan: addPlanRow(input.base.plan),
+      ledger: addLedgerRow(input.base.ledger),
+      manifest: baseManifest,
+    },
+    head: {
+      ...input.head,
+      plan: addPlanRow(input.head.plan),
+      ledger: addLedgerRow(input.head.ledger),
+      manifest: headManifest,
+      audit: canonicalJson({
         ...audit,
         baseDigest: (JSON.parse(baseManifest) as ReadinessScopeManifest).digest,
         headDigest: (JSON.parse(headManifest) as ReadinessScopeManifest).digest,
@@ -168,7 +323,17 @@ function withUnchangedFinding(input: ReadinessScopePrInput): ReadinessScopePrInp
 
 describe('readiness scope pull request policy', () => {
   it('accepts a dedicated, audited, dual-approved exact-head scope change', () => {
-    expect(validateReadinessScopePullRequest(fixture())).toEqual([]);
+    const input = fixture();
+    for (const run of [
+      () => parsePlanFindings(input.base.plan),
+      () => parsePlanFindings(input.head.plan),
+      () => parseFindingRows(input.base.ledger),
+      () => parseFindingRows(input.head.ledger),
+      () => parseExceptionRows(input.base.ledger),
+      () => parseExceptionRows(input.head.ledger),
+    ])
+      expect(run).not.toThrow();
+    expect(validateReadinessScopePullRequest(input)).toEqual([]);
   });
 
   it('allows ordinary pull requests when governed semantics do not change', () => {
@@ -183,6 +348,36 @@ describe('readiness scope pull request policy', () => {
     ).toEqual([]);
   });
 
+  it('allows ordinary plan progress outside the governed findings table', () => {
+    const input = fixture();
+    const base = input.base;
+    const head = { ...base, plan: `${base.plan}\n- [x] Implementation progress\n` };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: ['docs/superpowers/plans/2026-08-09-open-source-readiness.md'],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects ordinary changes to governed verified-evidence cells', () => {
+    const input = fixture();
+    const base = input.base;
+    const head = { ...base, plan: base.plan.replace('| Audit |', '| Unreviewed claim |') };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: ['docs/superpowers/plans/2026-08-09-open-source-readiness.md'],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toContain('Non-semantic changes cannot modify governed plan finding rows.');
+  });
+
   it('requires exact ledger and registry changes for a closure transition', () => {
     const input = fixture();
     const base = {
@@ -192,7 +387,7 @@ describe('readiness scope pull request policy', () => {
     const head = {
       ...base,
       ledger: ledger('Original risk', 'Original outcome', 'Closed'),
-      registry: '{"recordEntries":[["record:closure/doc-001",{}]],"principalEntries":[]}',
+      registry: closureRegistry(),
     };
     expect(
       validateReadinessScopePullRequest({
@@ -203,6 +398,7 @@ describe('readiness scope pull request policy', () => {
         ],
         base,
         head,
+        readyEvidence: [readyEvidence()],
         reviews: [],
       }),
     ).toEqual([]);
@@ -216,9 +412,150 @@ describe('readiness scope pull request policy', () => {
         ],
         base,
         head,
+        readyEvidence: [readyEvidence()],
         reviews: [],
       }),
     ).toContain('Closure transitions must use the exact ledger-and-registry file shape.');
+  });
+
+  it('allows a P1 exception to stage before a later independently proven seal', () => {
+    const input = fixture();
+    const ready = {
+      ...input.base,
+      ledger: stagedExceptionLedger('Ready for closure'),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base: input.base,
+        head: ready,
+        reviews: [],
+      }),
+    ).toEqual([]);
+    const accepted = {
+      ...ready,
+      ledger: stagedExceptionLedger('Accepted P1 exception'),
+      registry: closureRegistry(),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base: ready,
+        head: accepted,
+        readyEvidence: [readyEvidence()],
+        reviews: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects a closure compressed from Open through Ready into one pull request', () => {
+    const input = fixture();
+    const head = {
+      ...input.base,
+      ledger: ledger('Original risk', 'Original outcome', 'Closed'),
+      registry: closureRegistry('cccccccccccccccccccccccccccccccccccccccc'),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        head,
+        readyEvidence: [readyEvidence('cccccccccccccccccccccccccccccccccccccccc', false)],
+        reviews: [],
+      }),
+    ).toContain('Closure seals require a Ready for closure finding on the trusted base.');
+  });
+
+  it('rejects unauthenticated or mismatched prior Ready proof', () => {
+    const input = fixture();
+    const base = {
+      ...input.base,
+      ledger: ledger('Original risk', 'Original outcome', 'Ready for closure'),
+    };
+    const head = {
+      ...base,
+      ledger: ledger('Original risk', 'Original outcome', 'Closed'),
+      registry: closureRegistry(),
+    };
+    const proof = readyEvidence();
+    const runPullRequest = proof.runPullRequests[0];
+    if (runPullRequest === undefined) throw new Error('Ready proof fixture is invalid.');
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base,
+        head,
+        readyEvidence: [{ ...proof, runStartedAt: '2026-08-09T09:30:00Z' }],
+        reviews: [],
+      }),
+    ).toEqual([]);
+    const invalidProofs = [
+      { ...proof, baseContainsEvidence: false },
+      { ...proof, pullRequestBaseRef: 'release' },
+      { ...proof, pullRequestBaseRepository: 'attacker/orbit' },
+      { ...proof, mergeCommitSha: headSha },
+      { ...proof, statusState: 'failure' as const },
+      { ...proof, statusUpdatedAt: '2026-08-09T10:30:00.000Z' },
+      { ...proof, configuredWorkflowId: proof.runWorkflowId + 1 },
+      { ...proof, runWorkflowPath: '.github/workflows/ci.yml' },
+      { ...proof, runWorkflowDefinitionDigest: `sha256:${'0'.repeat(64)}` },
+      { ...proof, runRepository: 'attacker/orbit' },
+      { ...proof, runAttempt: 2 },
+      { ...proof, runEvent: 'pull_request' },
+      { ...proof, runHeadSha: headSha },
+      { ...proof, definitionCommitIsEvidenceAncestor: false },
+      {
+        ...proof,
+        runPullRequests: [...proof.runPullRequests, { ...runPullRequest, number: 124 }],
+      },
+      {
+        ...proof,
+        runPullRequests: [{ ...runPullRequest, headSha }],
+      },
+    ];
+    for (const invalidProof of invalidProofs) {
+      expect(
+        validateReadinessScopePullRequest({
+          ...input,
+          changedFiles: [
+            'docs/maintainers/readiness-ledger.md',
+            'scripts/readiness-reference-registry.json',
+          ],
+          base,
+          head,
+          readyEvidence: [invalidProof],
+          reviews: [],
+        }),
+      ).toContain('Seal transition has invalid independently authenticated Ready evidence.');
+    }
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base,
+        head,
+        readyEvidence: [],
+        reviews: [],
+      }),
+    ).toContain('Seal transition has invalid independently authenticated Ready evidence.');
   });
 
   it('allows later product changes when sealed terminal rows stay unchanged', () => {
@@ -236,6 +573,25 @@ describe('readiness scope pull request policy', () => {
         reviews: [],
       }),
     ).toEqual([]);
+  });
+
+  it('does not load prior Ready proof again for unchanged sealed rows', async () => {
+    const sealed = ledger('Original risk', 'Original outcome', 'Closed');
+    let calls = 0;
+    const proofs = await readyEvidenceForRegistry(
+      '.',
+      baseSha,
+      sealed,
+      sealed,
+      closureRegistry(),
+      'token',
+      () => {
+        calls += 1;
+        return Promise.resolve(readyEvidence());
+      },
+    );
+    expect(proofs).toEqual([]);
+    expect(calls).toBe(0);
   });
 
   it('preserves manifest and audit bytes when governed semantics do not change', () => {
@@ -327,6 +683,47 @@ describe('readiness scope pull request policy', () => {
     expect(result.join('\n')).not.toContain('SEC-001');
   });
 
+  it('preserves unaffected exception state during a semantic scope change', () => {
+    const input = withUnchangedAcceptedP1Finding(fixture());
+    const exception =
+      '| DOC-002 | principal:documentation-owner | 2026-12-01 | mitigation:record:mitigation/doc-002 | Operators must retain the legacy proxy until the migration completes. | risk:record:risk/doc-002 | decision:record:decision/doc-002;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |';
+    const addException = (value: string, limitation: string) =>
+      value.replace(
+        /\n$/,
+        `\n${exception.replace('Operators must retain the legacy proxy until the migration completes.', limitation)}\n`,
+      );
+    const base = {
+      ...input.base,
+      ledger: addException(
+        input.base.ledger,
+        'Operators must retain the legacy proxy until the migration completes.',
+      ),
+    };
+    const head = {
+      ...input.head,
+      ledger: addException(
+        input.head.ledger,
+        'Operators may remove the legacy proxy without completing the migration.',
+      ),
+    };
+    expect(validateReadinessScopePullRequest({ ...input, base, head })).toContain(
+      'Scope changes cannot modify unaffected exception state.',
+    );
+  });
+
+  it('preserves governance prose outside changed scope rows', () => {
+    const input = fixture();
+    for (const head of [
+      { ...input.head, plan: `${input.head.plan}\nUnreviewed plan policy override.\n` },
+      { ...input.head, plan: `${input.head.plan}\n<!-- hidden policy override -->\n` },
+      { ...input.head, ledger: `${input.head.ledger}\nUnreviewed ledger policy override.\n` },
+    ]) {
+      expect(validateReadinessScopePullRequest({ ...input, head })).toContain(
+        'Scope changes cannot modify governance content outside changed finding rows.',
+      );
+    }
+  });
+
   it('requires a canonical audit link and complete semantic change mapping', () => {
     const input = fixture();
     const audit = JSON.parse(input.head.audit) as Record<string, unknown>;
@@ -345,6 +742,50 @@ describe('readiness scope pull request policy', () => {
         }),
       ).toContain('Scope change audit record is invalid or incomplete.');
     }
+  });
+
+  it('rejects duplicate keys in governed JSON artifacts', () => {
+    const input = fixture();
+    const duplicateManifest = input.head.manifest.replace(
+      '{',
+      '{"version":"readiness-scope/2099-01-01-v999",',
+    );
+    const duplicateAudit = input.head.audit.replace('{', '{"kind":"baseline",');
+    const duplicateRegistry = input.head.registry.replace(
+      '{',
+      '{"recordEntries":[["record:audit/doc-001",{"kind":"risk","kind":"audit-risk","url":"https://example.test/risk","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]],',
+    );
+    for (const head of [
+      { ...input.head, manifest: duplicateManifest },
+      { ...input.head, audit: duplicateAudit },
+      { ...input.head, registry: duplicateRegistry },
+    ]) {
+      expect(validateReadinessScopePullRequest({ ...input, head })).toContain(
+        'Governed JSON artifacts must use unique object keys.',
+      );
+    }
+  });
+
+  it('rejects noncanonical governed JSON bytes', () => {
+    const input = fixture();
+    const head = {
+      ...input.head,
+      manifest: JSON.stringify(JSON.parse(input.head.manifest)),
+    };
+    expect(validateReadinessScopePullRequest({ ...input, head })).toContain(
+      'Governed JSON artifacts must use canonical bytes.',
+    );
+  });
+
+  it('caps the aggregate governed artifact input size', () => {
+    const input = fixture();
+    const large = 'x'.repeat(900_000);
+    const result = readinessScopePrInputSchema.safeParse({
+      ...input,
+      base: { ...input.base, plan: large, ledger: large, registry: large },
+      head: { ...input.head, plan: large, ledger: large, registry: large },
+    });
+    expect(result.success).toBe(false);
   });
 
   it('requires both maintainers latest opinionated review on the exact head', () => {
@@ -374,6 +815,68 @@ describe('readiness scope pull request policy', () => {
         ],
       }),
     ).toContain('Scope change lacks both required exact-head approvals.');
+  });
+
+  it('rejects a dismissed approval in the final fresh review snapshot', () => {
+    const input = fixture();
+    const freshReviews = [
+      ...input.reviews,
+      {
+        login: 'imshashank',
+        state: 'DISMISSED' as const,
+        commitId: headSha,
+        submittedAt: '2026-08-09T11:00:00.000Z',
+      },
+    ];
+    expect(validateFinalReadinessScopeState(input, freshReviews, baseSha, headSha)).toContain(
+      'Scope change lacks both required exact-head approvals.',
+    );
+    expect(validateFinalReadinessScopeState(input, input.reviews, headSha, headSha)).toContain(
+      'Pull request head or base changed during scope validation.',
+    );
+  });
+
+  it('requires a dedicated approved shape for future trust-root changes', () => {
+    const input = fixture();
+    const unchanged = {
+      ...input,
+      base: input.base,
+      head: input.base,
+      changedFiles: [
+        'scripts/check-readiness-scope-pr.ts',
+        'packages/db/tests/check-readiness-scope-pr.test.ts',
+      ],
+    };
+    expect(validateReadinessScopePullRequest(unchanged)).toEqual([]);
+    expect(validateReadinessScopePullRequest({ ...unchanged, reviews: [] })).toContain(
+      'Trust-root changes lack both required exact-head approvals.',
+    );
+    expect(
+      validateReadinessScopePullRequest({
+        ...unchanged,
+        changedFiles: ['.github/workflows/spoof.yml'],
+        reviews: [],
+      }),
+    ).toContain('Trust-root changes lack both required exact-head approvals.');
+    expect(
+      validateReadinessScopePullRequest({
+        ...unchanged,
+        changedFiles: ['apps/web/package.json'],
+        reviews: [],
+      }),
+    ).toContain('Trust-root changes lack both required exact-head approvals.');
+    for (const changedFiles of [
+      ['scripts/check-readiness-scope-pr.ts', 'apps/web/src/app/page.tsx'],
+      [
+        '.github/workflows/ci.yml',
+        'docs/maintainers/readiness-ledger.md',
+        'scripts/readiness-reference-registry.json',
+      ],
+    ]) {
+      expect(validateReadinessScopePullRequest({ ...unchanged, changedFiles })).toContain(
+        'Trust-root changes require the dedicated policy-update file shape.',
+      );
+    }
   });
 
   it('redacts untrusted identifiers and changed paths', () => {
@@ -425,5 +928,126 @@ describe('readiness scope pull request policy', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('reads only regular NUL-free strictly decoded UTF-8 Git artifacts', async () => {
+    const module = (await import('../../../scripts/check-readiness-scope-pr.ts')) as Readonly<
+      Record<string, unknown>
+    >;
+    const reader = module['readGitArtifact'];
+    expect(typeof reader).toBe('function');
+    if (typeof reader !== 'function') return;
+    const readArtifact = reader as (root: string, commit: string, path: string) => string;
+    const directory = await mkdtemp(join(tmpdir(), 'orbit-readiness-artifact-'));
+    const artifactPath = join(directory, 'artifact.md');
+    const git = (args: readonly string[]) => {
+      const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error('Git fixture operation failed.');
+      return String(result.stdout).trim();
+    };
+    try {
+      git(['init']);
+      git(['config', 'user.email', 'fixture@example.test']);
+      git(['config', 'user.name', 'Fixture']);
+      await writeFile(artifactPath, 'valid UTF-8\n');
+      git(['add', 'artifact.md']);
+      git(['commit', '-m', 'valid']);
+      const validCommit = git(['rev-parse', 'HEAD']);
+      expect(readArtifact(directory, validCommit, 'artifact.md')).toBe('valid UTF-8\n');
+
+      await chmod(artifactPath, 0o755);
+      git(['add', 'artifact.md']);
+      git(['commit', '-m', 'executable']);
+      const executableCommit = git(['rev-parse', 'HEAD']);
+      expect(() => readArtifact(directory, executableCommit, 'artifact.md')).toThrow();
+
+      await writeFile(artifactPath, Buffer.from('before\0after'));
+      git(['add', 'artifact.md']);
+      git(['commit', '-m', 'nul']);
+      const nulCommit = git(['rev-parse', 'HEAD']);
+      expect(() => readArtifact(directory, nulCommit, 'artifact.md')).toThrow();
+
+      await writeFile(artifactPath, Buffer.from([0xc3, 0x28]));
+      git(['add', 'artifact.md']);
+      git(['commit', '-m', 'utf8']);
+      const malformedCommit = git(['rev-parse', 'HEAD']);
+      expect(() => readArtifact(directory, malformedCommit, 'artifact.md')).toThrow();
+
+      await rm(artifactPath);
+      await symlink('target.md', artifactPath);
+      git(['add', 'artifact.md']);
+      git(['commit', '-m', 'symlink']);
+      const symlinkCommit = git(['rev-parse', 'HEAD']);
+      expect(() => readArtifact(directory, symlinkCommit, 'artifact.md')).toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('parses raw Git diffs and rejects invalid governed modes or statuses', () => {
+    const zero = '0'.repeat(40);
+    const before = '1'.repeat(40);
+    const after = '2'.repeat(40);
+    const encoded = (value: string) => new TextEncoder().encode(value);
+    expect(
+      parseRawGitDiff(
+        encoded(
+          `:100644 100644 ${before} ${after} M\0apps/web/src/app/page.tsx\0:000000 100755 ${zero} ${after} A\0scripts/tool.ts\0`,
+        ),
+      ),
+    ).toEqual(['apps/web/src/app/page.tsx', 'scripts/tool.ts']);
+    for (const value of [
+      `:100644 100755 ${before} ${after} M\0docs/maintainers/readiness-ledger.md\0`,
+      `:000000 100644 ${zero} ${after} A\0scripts/readiness-scope-manifest.json\0`,
+      `:000000 100644 ${before} ${after} A\0scripts/tool.ts\0`,
+      `:100644 100644 ${before} ${zero} M\0scripts/tool.ts\0`,
+      `:100644 100644 ${before} ${after} R100\0apps/web/src/app/page.tsx\0`,
+      `:100644 100644 ${before} ${after} M\0../outside\0`,
+      `:100644 100644 ${before} ${after} M\0line\nbreak\0`,
+      `:100644 100644 ${before} ${after} M\0control\u007fpath\0`,
+      `:100644 100644 ${before} ${after} M\0duplicate\0:100644 100644 ${before} ${after} M\0duplicate\0`,
+      `:100644 100644 ${before} ${after} M\0missing-terminator`,
+    ]) {
+      expect(() => parseRawGitDiff(encoded(value))).toThrow();
+    }
+    expect(() => parseRawGitDiff(Uint8Array.from([0xc3, 0x28]))).toThrow();
+  });
+
+  it('accepts review webhook identity from the nested pull request', () => {
+    const result = pullRequestTargetEventSchema.safeParse({
+      action: 'dismissed',
+      pull_request: {
+        number: 123,
+        base: { ref: 'main', sha: baseSha },
+        head: { sha: headSha },
+      },
+      review: { user: { login: 'imshashank' } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.pull_request.number).toBe(123);
+  });
+
+  it('accepts live pull request target run metadata with nullable nested repositories', () => {
+    const proof = readyEvidence();
+    const result = githubWorkflowAttemptSchema.safeParse({
+      workflow_id: proof.runWorkflowId,
+      head_sha: proof.pullRequestHeadSha,
+      conclusion: 'success',
+      run_attempt: 1,
+      event: 'pull_request_target',
+      path: '.github/workflows/readiness-scope.yml',
+      run_started_at: proof.runStartedAt,
+      updated_at: proof.runUpdatedAt,
+      repository: { full_name: 'Noveum/orbit' },
+      head_repository: { full_name: 'contributor/orbit' },
+      pull_requests: [
+        {
+          number: proof.pullRequestNumber,
+          head: { sha: proof.pullRequestHeadSha, repo: null },
+          base: { ref: 'main', sha: proof.pullRequestBaseSha, repo: null },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
   });
 });

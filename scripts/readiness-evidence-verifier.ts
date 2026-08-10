@@ -1,15 +1,21 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   githubActionsArtifactsSchema,
+  githubContentFileSchema,
   githubEvidencePullResponseSchema,
   githubWorkflowAttemptSchema,
   githubWorkflowJobsSchema,
 } from '../packages/shared/src/validators/readiness.ts';
+import { readTrustedGitArtifact, readTrustedGitChangedFiles } from './readiness-git-artifact.ts';
 import type { ReadinessReferenceRegistrySource } from './readiness-reference-registry.ts';
 
 const FULL_COMMIT = /^[a-f0-9]{40}$/;
 const ACTIONS_ATTEMPT =
   /^https:\/\/github\.com\/Noveum\/orbit\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/;
+export const TRUSTED_CI_WORKFLOW_ID = 318351752;
+export const TRUSTED_CI_WORKFLOW_DEFINITION_DIGEST =
+  'sha256:6db001bbbd4aec66a1c8a274238073d8bdc82a1d9fe1b130c39430c2aacd5b87';
 
 export interface HostedJobStep {
   readonly name: string;
@@ -37,6 +43,9 @@ export interface HostedEvidence {
   readonly runAttempt: number;
   readonly event: string;
   readonly workflowPath: string;
+  readonly workflowId: number;
+  readonly workflowDefinitionDigest: string;
+  readonly repository: string;
   readonly runStartedAt: string;
   readonly updatedAt: string;
   readonly pullRequestNumbers: readonly number[];
@@ -87,6 +96,38 @@ async function responseJson(url: string, token: string): Promise<unknown> {
   return response.json();
 }
 
+function githubFileBytes(value: typeof githubContentFileSchema._output): Buffer | undefined {
+  const bytes = Buffer.from(value.content.replaceAll('\n', ''), 'base64');
+  const header = Buffer.from(`blob ${bytes.byteLength}\0`);
+  const objectId = createHash('sha1').update(header).update(bytes).digest('hex');
+  if (bytes.byteLength !== value.size || bytes.includes(0) || objectId !== value.sha)
+    return undefined;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return bytes;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function githubWorkflowDefinitionDigest(
+  commit: string,
+  path: '.github/workflows/ci.yml' | '.github/workflows/readiness-scope.yml',
+  token: string,
+): Promise<string | undefined> {
+  const result = githubContentFileSchema.safeParse(
+    await responseJson(
+      `https://api.github.com/repos/Noveum/orbit/contents/${path}?ref=${commit}`,
+      token,
+    ),
+  );
+  if (!result.success) return undefined;
+  const bytes = githubFileBytes(result.data);
+  return bytes === undefined
+    ? undefined
+    : `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
+
 async function hostedEvidenceForUrl(
   url: string,
   token: string,
@@ -112,6 +153,12 @@ async function hostedEvidenceForUrl(
       artifacts.data.total_count > artifacts.data.artifacts.length
     )
       return undefined;
+    const definitionDigest = await githubWorkflowDefinitionDigest(
+      run.data.head_sha,
+      '.github/workflows/ci.yml',
+      token,
+    );
+    if (definitionDigest === undefined) return undefined;
     const hostedArtifacts = artifacts.data.artifacts.flatMap((artifact) =>
       typeof artifact.digest === 'string'
         ? [
@@ -133,6 +180,9 @@ async function hostedEvidenceForUrl(
         runAttempt: run.data.run_attempt,
         event: run.data.event,
         workflowPath: run.data.path.split('@')[0] ?? '',
+        workflowId: run.data.workflow_id,
+        workflowDefinitionDigest: definitionDigest,
+        repository: run.data.repository.full_name,
         runStartedAt: run.data.run_started_at,
         updatedAt: run.data.updated_at,
         pullRequestNumbers: run.data.pull_requests.map((pullRequest) => pullRequest.number),
@@ -249,28 +299,19 @@ export async function createProductionReadinessEvidenceVerifier(
       git(root, ['merge-base', '--is-ancestor', ancestor, descendant]).status === 0,
     changedFilesBetween: (ancestor, descendant) => {
       if (!(FULL_COMMIT.test(ancestor) && FULL_COMMIT.test(descendant))) return undefined;
-      const result = git(root, ['diff', '--name-only', '-z', `${ancestor}..${descendant}`]);
-      if (result.status !== 0) return undefined;
-      return String(result.stdout)
-        .split('\0')
-        .filter((value) => value.length > 0);
+      try {
+        return readTrustedGitChangedFiles(root, ancestor, descendant);
+      } catch {
+        return undefined;
+      }
     },
     artifactAtCommit: (commit, path) => {
       if (!FULL_COMMIT.test(commit)) return undefined;
-      const object = `${commit}:${path}`;
-      const type = git(root, ['cat-file', '-t', object]);
-      const size = git(root, ['cat-file', '-s', object]);
-      if (type.status !== 0 || size.status !== 0) return undefined;
-      const byteLength = Number(String(size.stdout).trim());
-      if (
-        String(type.stdout).trim() !== 'blob' ||
-        !Number.isSafeInteger(byteLength) ||
-        byteLength < 0 ||
-        byteLength > 1_000_000
-      )
+      try {
+        return readTrustedGitArtifact(root, commit, path);
+      } catch {
         return undefined;
-      const blob = git(root, ['cat-file', 'blob', object]);
-      return blob.status === 0 ? String(blob.stdout) : undefined;
+      }
     },
     hostedEvidence: (url) => hosted.get(url),
     pullRequestEvidence: (number) => pullRequests.get(number),

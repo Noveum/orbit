@@ -334,6 +334,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Create: `scripts/readiness-reference-registry.ts`
 - Create: `scripts/readiness-reference-registry.json`
 - Create: `scripts/readiness-evidence-verifier.ts`
+- Create: `scripts/readiness-git-artifact.ts`
 - Create: `scripts/check-readiness-ledger.ts`
 - Create: `scripts/check-readiness-scope-pr.ts`
 - Create: `packages/shared/src/validators/readiness.ts`
@@ -350,14 +351,18 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Copy every P0 and P1 finding ID into a ledger with owner, status, pull request, evidence, and residual risk.
 - [ ] Pin every audited ID, priority, canonical finding, and required outcome in an independently versioned and digested manifest. Validate the raw plan rows and ledger semantics against it.
 - [ ] Govern any scope addition, removal, rename, split, merge, reprioritization, or semantic change through a dedicated trusted-base pull request policy with both named exact-head approvals.
+- [ ] Require future workflow, local-action, lockfile, package or Bun configuration, and readiness runtime trust-root changes to use a dedicated policy-update pull request with both named exact-head approvals and no governed state or product files.
+- [ ] Request trusted-policy revalidation on submitted, edited, and dismissed reviews by either named required reviewer, ignore unrelated review events, document the fork-token rerun path, then re-fetch the current pull request and reviews immediately before success.
 - [ ] Require pull requests closing a finding to link the failing test added first and the passing release gate.
 - [ ] Bind staged evidence to the squash-merged implementation pull request, its distinct failing PR-head run, direct candidate CI attempts and digests, and verified baseline, candidate, and evidence-commit ancestry.
-- [ ] Seal `Closed` and `Accepted P1 exception` rows with a durable record that binds candidate C, the reviewed `Ready for closure` evidence commit M, and the canonical evidence snapshot digest without depending on finite-retention hosted artifacts forever.
+- [ ] Require separate Ready evidence and seal pull requests. Derive the merged evidence pull request from M, authenticate its exact trusted status run and workflow, then seal `Closed` and `Accepted P1 exception` rows with a durable record that binds C, M, and the canonical evidence snapshot digest.
+- [ ] Load hosted Ready proof only for a Ready-to-terminal transition. Validate unchanged terminal rows from their durable Git seal without repeating hosted calls.
 - [ ] Validate every authored evidence and principal registry entry before constructing lookup maps, including duplicate keys and explicit canonical human aliases.
 - [ ] Use GitHub security advisories for vulnerability details that should not be public before a fix.
 - [ ] Keep this implementation plan as the stable scope document and the ledger as changing execution state.
+- [ ] After the readiness workflow reaches the default branch, verify its GitHub-assigned identity and configure an active repository ruleset that requires the explicit head status. Do not use a placeholder workflow ID.
 
-**Verification:** The initial v1 fixture proves exactly 41 pinned P0 and P1 rows while ongoing CI derives current counts from the governed manifest. Semantic scope changes pass only through the trusted-base workflow. `Ready for closure` records agree on a squash-merged candidate and authenticated workflow, job, step, pull request, and artifact evidence. Durable seals bind the reviewed evidence commit and remain valid after artifact expiry or later product commits. Automated limitation checks are supplemented by documented human semantic review. Repository administrators must separately require the explicit `Trusted readiness policy` head status and configure the post-review rerun procedure.
+**Verification:** The initial v1 fixture proves exactly 41 pinned P0 and P1 rows while ongoing CI derives current counts from the governed manifest. Semantic scope and trust-root changes pass only through their dedicated trusted-base shapes, supported review events refresh the result, fork-token limitations have a trusted rerun path, and exact-head approvals are revalidated immediately before success. `Ready for closure` records agree on a squash-merged candidate and authenticated workflow, job, step, pull request, and artifact evidence. A separate seal authenticates the prior Ready pull request for M, including the Actions run's top-level target repository identity, and binds its reviewed snapshot. Durable seals remain valid after artifact expiry or later product commits without repeated hosted calls. Automated limitation checks are supplemented by documented human semantic review. Repository administrators must separately activate and verify the ruleset that requires the explicit `Trusted readiness policy` head status after the workflow reaches the default branch.
 
 **Suggested commit:** `docs: add the open source readiness ledger`
 

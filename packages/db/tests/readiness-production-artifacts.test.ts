@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
@@ -8,7 +9,11 @@ import {
   parsePlanFindings,
   validateReadinessLedger,
 } from '../../../scripts/check-readiness-ledger.ts';
-import { createProductionReadinessEvidenceVerifier } from '../../../scripts/readiness-evidence-verifier.ts';
+import { TRUSTED_READINESS_WORKFLOW_DEFINITION_DIGEST } from '../../../scripts/check-readiness-scope-pr.ts';
+import {
+  createProductionReadinessEvidenceVerifier,
+  TRUSTED_CI_WORKFLOW_DEFINITION_DIGEST,
+} from '../../../scripts/readiness-evidence-verifier.ts';
 import { readinessReferenceRegistrySource } from '../../../scripts/readiness-reference-registry.ts';
 import { readinessScopeManifest } from '../../../scripts/readiness-scope-manifest.ts';
 
@@ -65,10 +70,28 @@ describe('production readiness artifacts', () => {
     expect(staticJob).not.toContain('actions: read');
     expect(staticJob).not.toContain('GITHUB_TOKEN:');
     expect(scopePolicy).toContain('pull_request_target:');
+    expect(scopePolicy).toContain('pull_request_review:');
+    expect(scopePolicy).toContain("github.event.review.user.login == 'imshashank'");
+    expect(scopePolicy).toContain("github.event.review.user.login == 'pulkitxm'");
     expect(scopePolicy).toContain('actions: read');
     expect(scopePolicy).toContain('statuses: write');
     expect(scopePolicy).toContain('persist-credentials: false');
     expect(scopeChecker).toContain("context: 'Trusted readiness policy'");
+    expect(scopeChecker).toContain(
+      'const freshReviews = await githubReviews(event.pull_request.number, token);',
+    );
+    expect(scopeChecker.indexOf('const freshReviews')).toBeLessThan(
+      scopeChecker.indexOf('const currentResult'),
+    );
+    expect(scopeChecker.indexOf('const currentResult')).toBeLessThan(
+      scopeChecker.lastIndexOf('validateFinalReadinessScopeState'),
+    );
+    expect(`sha256:${createHash('sha256').update(ci).digest('hex')}`).toBe(
+      TRUSTED_CI_WORKFLOW_DEFINITION_DIGEST,
+    );
+    expect(`sha256:${createHash('sha256').update(scopePolicy).digest('hex')}`).toBe(
+      TRUSTED_READINESS_WORKFLOW_DEFINITION_DIGEST,
+    );
     expect(ci).toContain(
       `name: readiness-test-${expression}{{ github.event.pull_request.head.sha || github.sha }}-${expression}{{ github.run_attempt }}`,
     );

@@ -322,6 +322,10 @@ function evidenceVerifier(
       runAttempt: 1,
       event: kind === 'failing-test' ? 'pull_request' : 'push',
       workflowPath: '.github/workflows/ci.yml',
+      workflowId: 318351752,
+      workflowDefinitionDigest:
+        'sha256:6db001bbbd4aec66a1c8a274238073d8bdc82a1d9fe1b130c39430c2aacd5b87',
+      repository: 'Noveum/orbit',
       runStartedAt: '2026-08-09T09:00:00.000Z',
       updatedAt: '2026-08-09T09:30:00.000Z',
       pullRequestNumbers: kind === 'failing-test' ? [implementationPullRequest] : [],
@@ -1541,6 +1545,9 @@ describe('readiness ledger checker', () => {
           runAttempt: 2,
           event: 'workflow_dispatch',
           workflowPath: '.github/workflows/untrusted.yml',
+          workflowId: 1,
+          workflowDefinitionDigest: `sha256:${'0'.repeat(64)}`,
+          repository: 'Noveum/orbit',
           runStartedAt: '2026-08-09T09:30:00.000Z',
           updatedAt: '2026-08-09T09:00:00.000Z',
           pullRequestNumbers: [],
@@ -1565,6 +1572,48 @@ describe('readiness ledger checker', () => {
         'Finding ID DOC-001 has hosted evidence with invalid artifact provenance.',
       ]),
     );
+  });
+
+  it('binds hosted evidence to the trusted CI workflow identity and definition', () => {
+    const parsed = parsedLedger([resolvedClosedRow()]);
+    const baseVerifier = evidenceVerifier();
+    const valid = baseVerifier.hostedEvidence(
+      'https://github.com/Noveum/orbit/actions/runs/1001/attempts/1',
+    );
+    if (valid === undefined) throw new Error('Missing hosted evidence fixture.');
+    const trustedWorkflowId = 318351752;
+    const trustedDefinitionDigest =
+      'sha256:6db001bbbd4aec66a1c8a274238073d8bdc82a1d9fe1b130c39430c2aacd5b87';
+    for (const workflowIdentity of [
+      { workflowId: 1, workflowDefinitionDigest: trustedDefinitionDigest },
+      {
+        workflowId: trustedWorkflowId,
+        workflowDefinitionDigest: `sha256:${'0'.repeat(64)}`,
+      },
+      {
+        workflowId: trustedWorkflowId,
+        workflowDefinitionDigest: trustedDefinitionDigest,
+        repository: 'attacker/orbit',
+      },
+    ]) {
+      const result = validateReadinessLedger(
+        parsePlanFindings(plan),
+        parsed.findings,
+        parsed.exceptions,
+        verificationDate,
+        sourceBackedRegistry(),
+        testScopeManifest,
+        evidenceVerifier({
+          hostedEvidence: (url) => {
+            const original = baseVerifier.hostedEvidence(url);
+            return original === undefined ? undefined : { ...original, ...workflowIdentity };
+          },
+        }),
+      );
+      expect(result).toContain(
+        'Finding ID DOC-001 has hosted evidence with invalid workflow provenance.',
+      );
+    }
   });
 
   it('binds failing evidence and the squash candidate to one merged pull request', () => {
@@ -1883,6 +1932,37 @@ describe('readiness ledger checker', () => {
     }
   });
 
+  it('rejects visually blank and deferred public limitations', () => {
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    for (const limitation of [
+      'Operator impact is T​BD after review',
+      'Operator impact is &#84;&#8203;&#66;&#68; after review',
+      'T.BD impact remains after release',
+      'The operational effect awaits later review',
+      'The impact remains under review',
+      '<!-- documented temporary operator limitation remains -->',
+      '<span></span><span></span>',
+      '[](https://example.com/words-that-inflate-count)',
+    ]) {
+      expect(
+        resolvedErrors(
+          [finding],
+          [
+            exceptionRow({
+              ownerReference: 'principal:documentation-person',
+              mitigation: 'mitigation:record:mitigation/doc-001',
+              limitation,
+              residualRisk: 'risk:record:audit/doc-001',
+              decision:
+                'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+              approver: 'approver:principal:release-person',
+            }),
+          ],
+        ),
+      ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+    }
+  });
+
   it('accepts a complete resolvable staged exception fixture', () => {
     const finding = resolvedClosedRow();
     const rows = [
@@ -2078,6 +2158,32 @@ describe('readiness ledger checker', () => {
     expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
   });
 
+  it('does not let indented paragraph continuation hide a later visible scope table', () => {
+    const alternative = [
+      'Paragraph content',
+      '    continuation text',
+      '<custom-element>',
+      '# Alternate register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('does not let list paragraph continuation hide a later visible scope table', () => {
+    const alternative = [
+      'Paragraph content',
+      '2. continuation',
+      '<custom-element>',
+      '# Alternate register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
   it('rejects visible raw HTML table alternatives', () => {
     const table = [
       '<table>',
@@ -2147,6 +2253,15 @@ describe('readiness ledger checker', () => {
     expect(() => parseFindingRows(findingAlternative)).toThrow(
       'Finding-shaped row is outside the selected findings table.',
     );
+  });
+
+  it('ignores rows hidden by fenced code or HTML comments inside blockquotes', () => {
+    const row = '> | ROGUE-999 | P0 | Hidden alternative | Audit | Outcome |';
+    for (const hidden of [
+      ['> ```md', row, '> ```'],
+      ['> <!--', row, '> -->'],
+    ])
+      expect(() => parsePlanFindings([plan, '## Notes', '', ...hidden].join('\n'))).not.toThrow();
   });
 
   it('does not treat GFM autolinks as HTML block openers', () => {

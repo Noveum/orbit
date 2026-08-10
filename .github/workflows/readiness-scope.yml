@@ -2,7 +2,11 @@ name: Readiness scope policy
 
 on:
   pull_request_target:
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    branches: [main]
+    types: [submitted, edited, dismissed]
 
 permissions:
   actions: read
@@ -19,6 +23,7 @@ env:
 
 jobs:
   policy:
+    if: github.event_name == 'pull_request_target' || github.event.review.user.login == 'imshashank' || github.event.review.user.login == 'pulkitxm'
     name: Trusted readiness scope policy
     runs-on: ubuntu-latest
     steps:
