@@ -38,6 +38,10 @@ to the codebase.
   exemption to the exact development Compose target, and bound every other
   confirmation to a credential-safe target identity. It merged as `9779141`
   after all exact-head checks and required reviews passed.
+- [#283](https://github.com/Noveum/orbit/pull/283) completed DEP-001 with a
+  portable standalone Node start path, copied-artifact smoke coverage, and
+  aligned self-hosting and troubleshooting guidance. It merged as `811b0c5d`
+  after all exact-head checks and required reviews passed.
 
 GitHub records show successful hosted CI and completion of required reviews on
 the merged heads. These pull requests reduce the known gaps, but they do not
@@ -45,25 +49,20 @@ make the repository a supported production release.
 
 ### Active pull requests
 
-- [#283](https://github.com/Noveum/orbit/pull/283), DEP-001, adds a tested
-  standalone Node start path and copied-artifact smoke test. Status: in progress,
-  not yet merge-ready. The standalone runtime and troubleshooting corrections
-  are on the public branch, and its prior exact-head checks passed. Latest-`main`
-  integration is in progress, so the resulting public head must complete the
-  full merge gate before merge.
 - [#289](https://github.com/Noveum/orbit/pull/289), SEC-003, requires explicit
   MCP consent and PKCE, preserves OAuth continuation through passwordless login,
-  and prevents issued token scopes from exceeding the active grant. Status: in
-  progress. Its public head passed hosted CI and required review, but is behind
-  `main` and must be refreshed and reverified before merge. Its current diff has
-  an independent clean review.
+  binds issued credentials to an immutable grant, prevents issued token scopes
+  from exceeding that grant, and consumes refresh credentials once. Status: in
+  progress at final exact-head verification and review. It is not merged.
 - [#290](https://github.com/Noveum/orbit/pull/290) makes prepared statements an
   explicit strict application-pool setting, defaults to transaction-pooler-safe
   behavior, and rejects conflicting URL options. Status: in progress. Its public
   head now includes linear-time connection URL normalization and adversarial
-  regression coverage, and its prior exact-head checks passed. It remains behind
-  `main`; latest-main integration, full local verification, and a complete
-  exact-head rerun are required before merge.
+  regression coverage, and its prior exact-head checks passed. It is pending a
+  latest-`main` refresh, full local verification, and a complete exact-head rerun.
+- [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
+  tracker. Status: in progress. It records completed work and remaining release
+  requirements without changing application behavior.
 
 ### Merge gate for this work
 
@@ -73,6 +72,13 @@ make the repository a supported production release.
   review threads, and pass an independent diff review before merge.
 - Slack remains disabled and deferred. Requalification is tracked only as
   future work and is not part of the active merge sequence.
+
+### Known verification warnings
+
+- `biome.json` references schema version 2.5.5 while the installed Biome CLI is
+  version 2.5.7.
+- `packages/db/tests/check-source-bytes.test.ts:19` reports the Biome
+  `noTemplateCurlyInString` lint warning.
 
 ## Release rule
 
@@ -96,9 +102,9 @@ make the repository a supported production release.
 - [ ] **DB-002: Migration identity collisions.** **Status: open.** Reject reused
   migration indexes with different contents and compare the resulting catalog
   in CI.
-- [ ] **DEP-001: Tested production start.** **Status: in progress in #283.**
-  Provide a real start command for the standalone Next.js artifact and smoke-test
-  the exact packaged output.
+- [x] **DEP-001: Tested production start.** **Status: complete in #283.** The
+  standalone Next.js artifact has a portable Node start command and a
+  copied-artifact smoke test.
 - [ ] **DEP-002: Portable realtime topology.** **Status: open.** Put the realtime
   service behind a same-origin proxy without relying on Vercel-only websocket
   behavior.
@@ -224,6 +230,15 @@ make the repository a supported production release.
 - [ ] **INT-002: Slack requalification.** **Status: deferred.** Slack stays
   disabled and absent from supported claims until OAuth, events, permissions,
   delivery, and end-to-end behavior are repaired in a separate project.
+- [ ] **MCP-002: OIDC signing metadata alignment.** **Status: upstream
+  follow-up.** Better Auth metadata advertises RS256 while its current ephemeral
+  ID token is emitted with HS256. Track the upstream correction and add
+  interoperability coverage before relying on that metadata.
+- [ ] **MCP-003: Grant issuance race cleanup.** **Status: low-severity
+  follow-up.** An authorization-code and re-consent race can leave an unusable
+  orphan raw OAuth token row. There is no usable credential or cross-workspace
+  bypass, but a future persisted token-to-grant relation or grant locking should
+  prevent and clean up the orphan row.
 - [ ] **REPO-002: Large module cleanup.** **Status: deferred.** Split oversized
   services and normalize test-support placement only after behavioral safety
   nets exist.
