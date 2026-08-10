@@ -2,13 +2,19 @@
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { type KeyboardEvent, type ReactElement, useState } from 'react';
-import { Badge } from '@/components/ui/badge.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
 import { useUpdateSprint } from '@/lib/query/use-sprints.ts';
 import { CompleteSprintButton, EditSprintButton } from './sprint-actions.tsx';
-import { sprintDay } from './sprint-roll-up.tsx';
+
+const DAY = 86_400_000;
+
+export function sprintDay(startsAt: Date, endsAt: Date, now: Date): { day: number; total: number } {
+  const total = Math.max(1, Math.round((endsAt.getTime() - startsAt.getTime()) / DAY));
+  const elapsed = Math.floor((now.getTime() - startsAt.getTime()) / DAY) + 1;
+  return { day: Math.min(Math.max(elapsed, 1), total), total };
+}
 
 export interface HeaderSprint {
   readonly id: string;
@@ -25,11 +31,9 @@ function formatDay(value: string): string {
 
 export function SprintHeader({
   sprint,
-  teamKey,
   canManage,
 }: {
   readonly sprint: HeaderSprint;
-  readonly teamKey: string;
   readonly canManage: boolean;
 }): ReactElement {
   const [editing, setEditing] = useState(false);
@@ -91,7 +95,6 @@ export function SprintHeader({
           </button>
         )}
       </h1>
-      <Badge tone="accent">{teamKey}</Badge>
       <span className="text-faint text-xs tabular">
         {formatDay(sprint.startsAt)} to {formatDay(sprint.endsAt)}
       </span>

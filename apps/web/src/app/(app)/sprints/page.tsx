@@ -1,33 +1,69 @@
-import { listSprintRollUp } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
+import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
-import { SprintRollUp, type SprintRollUpEntry } from '@/features/sprints/sprint-roll-up.tsx';
+import { EmptyState } from '@/components/ui/empty-state.tsx';
+import { CycleAnalytics, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
+import {
+  getActiveCycleView,
+  listPastSprintViews,
+  listUpcomingCycleViews,
+} from '@/features/sprints/data.ts';
+import { NewSprintButton } from '@/features/sprints/sprint-actions.tsx';
+import { SprintHeader } from '@/features/sprints/sprint-header.tsx';
+import { SprintHistory } from '@/features/sprints/sprint-history.tsx';
+import { SprintSchedule } from '@/features/sprints/sprint-schedule.tsx';
+import { parseSprintTab, SprintTabs } from '@/features/sprints/sprint-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
-import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
 export const metadata: Metadata = { title: 'Sprints' };
 
-export default async function SprintsPage() {
-  const { principal } = await pageContext();
-  const teams = await listTeamsForPrincipal(principal);
-  const rows = await listSprintRollUp(
-    principal,
-    teams.map((team) => team.id),
-  );
-  const byTeam = new Map(rows.map((row) => [row.teamId, row]));
+interface PageProps {
+  readonly searchParams: Promise<{ tab?: string }>;
+}
 
-  const entries: SprintRollUpEntry[] = teams.map((team) => ({
-    team,
-    sprint: byTeam.get(team.id) ?? null,
-  }));
+export default async function SprintsPage({ searchParams }: PageProps) {
+  const { principal } = await pageContext();
+  const canManage = can(principal, 'cycle:manage');
+
+  const [sprint, upcoming, past, { tab }] = await Promise.all([
+    getActiveCycleView(principal),
+    listUpcomingCycleViews(principal),
+    listPastSprintViews(principal),
+    searchParams,
+  ]);
+
+  const active = parseSprintTab(tab);
 
   return (
-    <div className="flex flex-col gap-4 px-6 py-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-semibold text-lg text-text">Sprints</h1>
-        <p className="text-muted text-xs">One row per team. Open a team to plan its sprint.</p>
-      </header>
-      <SprintRollUp entries={entries} canManage={can(principal, 'cycle:manage')} />
+    <div className="flex flex-col gap-6 px-6 py-6">
+      {sprint === null ? (
+        <EmptyState
+          icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
+          title="No sprint running"
+          description="A sprint covers the whole workspace and holds work from every team."
+          action={canManage ? <NewSprintButton /> : null}
+        />
+      ) : (
+        <>
+          <SprintHeader sprint={sprint} canManage={canManage} />
+          <SprintTabs base="/sprints" active={active} available={['board', 'insights']} />
+          {active === 'insights' ? (
+            <CycleAnalytics cycle={sprint} />
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+              <CycleIssueList cycle={sprint} />
+              <CycleAnalytics cycle={sprint} />
+            </div>
+          )}
+        </>
+      )}
+
+      <SprintSchedule upcoming={upcoming} canManage={canManage} running={sprint !== null} />
+
+      <section className="flex flex-col gap-2">
+        <h3 className="font-medium text-dense text-text">Past sprints</h3>
+        <SprintHistory sprints={past} />
+      </section>
     </div>
   );
 }

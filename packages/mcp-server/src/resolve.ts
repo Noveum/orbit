@@ -136,18 +136,14 @@ export async function resolveMilestone(
   return found;
 }
 
-export async function resolveCycle(
-  principal: Principal,
-  teamId: string,
-  ref: string,
-): Promise<CycleRow> {
+export async function resolveCycle(principal: Principal, ref: string): Promise<CycleRow> {
   if (ref.trim().toLowerCase() === 'active') {
-    const current = await activeCycle(principal, teamId);
-    if (current === undefined) throw notFound('That team has no active cycle.');
+    const current = await activeCycle(principal);
+    if (current === undefined) throw notFound('This workspace has no active sprint.');
     return current;
   }
-  const cycles = await listCycles(principal, teamId);
+  const cycles = await listCycles(principal);
   const found = pick(cycles, ref, (cycle) => [cycle.id, sprintLabel(cycle), String(cycle.number)]);
-  if (found === undefined) throw notFound(`No cycle matches "${ref}" on that team.`);
+  if (found === undefined) throw notFound(`No sprint matches "${ref}".`);
   return found;
 }

@@ -127,14 +127,13 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     {
       name: 'list_cycles',
       title: 'List sprints',
-      description: 'List the sprints of one team in number order.',
+      description: 'List the sprints of this workspace in number order.',
       readOnly: true,
-      inputSchema: { team: teamRef },
+      inputSchema: {},
     },
-    async (args) => {
-      const team = await resolveTeam(principal, args.team);
-      const cycles = await listCycles(principal, team.id);
-      return { teamId: team.id, cycles: cycles.map(cycleView) };
+    async () => {
+      const cycles = await listCycles(principal);
+      return { cycles: cycles.map(cycleView) };
     },
   );
 
@@ -143,14 +142,14 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     {
       name: 'active_cycle',
       title: 'Get the active sprint',
-      description: 'Return the sprint a team is currently running, or null when none is open.',
+      description:
+        'Return the sprint this workspace is currently running, or null when none is open.',
       readOnly: true,
-      inputSchema: { team: teamRef },
+      inputSchema: {},
     },
-    async (args) => {
-      const team = await resolveTeam(principal, args.team);
-      const current = await activeCycle(principal, team.id);
-      return { teamId: team.id, cycle: current === undefined ? null : cycleView(current) };
+    async () => {
+      const current = await activeCycle(principal);
+      return { cycle: current === undefined ? null : cycleView(current) };
     },
   );
 
@@ -163,13 +162,11 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
         'Return scope, started, completed and cancelled counts for a sprint, the same totals in points, what was added or removed while it ran, and a day by day burn up series carrying both the scope and the completed work.',
       readOnly: true,
       inputSchema: {
-        team: teamRef,
         cycle: z.string().min(1).describe('Sprint name, number, id, or "active".'),
       },
     },
     async (args) => {
-      const team = await resolveTeam(principal, args.team);
-      const cycle = await resolveCycle(principal, team.id, args.cycle);
+      const cycle = await resolveCycle(principal, args.cycle);
       const progress = await cycleProgress(principal, cycle.id);
       return { cycle: cycleView(cycle), ...progress };
     },
@@ -196,8 +193,7 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const cycleId =
-        args.cycle === null ? null : (await resolveCycle(principal, issue.teamId, args.cycle)).id;
+      const cycleId = args.cycle === null ? null : (await resolveCycle(principal, args.cycle)).id;
       const updated = await updateIssue(principal, issue.id, { cycleId });
       await publish(updated.actions);
       return {

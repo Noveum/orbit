@@ -258,9 +258,8 @@ function ConfirmDialog({
   );
 }
 
-function draftFrom(teamId: string, values: SprintFormValues) {
+function draftFrom(values: SprintFormValues) {
   return {
-    teamId,
     ...(values.name.length === 0 ? {} : { name: values.name }),
     ...(values.startsAt.length === 0 ? {} : { startsAt: values.startsAt }),
     ...(values.endsAt.length === 0 ? {} : { endsAt: values.endsAt }),
@@ -283,13 +282,13 @@ function editFrom(sprint: SprintSummary, values: SprintFormValues) {
   };
 }
 
-export function NewSprintButton({ teamId }: { readonly teamId: string }) {
+export function NewSprintButton() {
   const [open, setOpen] = useState(false);
   const create = useCreateSprint();
 
   return (
     <>
-      <Button size="sm" data-testid={`sprint-new-${teamId}`} onClick={() => setOpen(true)}>
+      <Button size="sm" data-testid="sprint-new" onClick={() => setOpen(true)}>
         <Plus className="size-3.5" aria-hidden="true" />
         New sprint
       </Button>
@@ -305,7 +304,7 @@ export function NewSprintButton({ teamId }: { readonly teamId: string }) {
           testId="sprint-create-dialog"
           offerShift={false}
           onSubmit={(values) => {
-            create.mutate(draftFrom(teamId, values), { onSuccess: () => setOpen(false) });
+            create.mutate(draftFrom(values), { onSuccess: () => setOpen(false) });
           }}
         />
       ) : null}

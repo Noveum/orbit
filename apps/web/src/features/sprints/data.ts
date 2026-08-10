@@ -43,9 +43,6 @@ export interface CycleView {
   readonly id: string;
   readonly name: string;
   readonly number: number;
-  readonly teamId: string;
-  readonly teamKey: string;
-  readonly teamName: string;
   readonly startsAt: string;
   readonly endsAt: string;
   readonly completedAt: string | null;
@@ -59,7 +56,6 @@ export interface UpcomingCycleView {
   readonly name: string;
   readonly startsAt: string;
   readonly endsAt: string;
-  readonly teamKey: string;
 }
 
 export interface CycleIssueRow {
@@ -159,10 +155,9 @@ async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
 
 export async function getActiveCycleView(
   principal: Principal,
-  team: { id: string; key: string; name: string },
   now: Date = new Date(),
 ): Promise<CycleView | null> {
-  const cycle = await activeCycle(principal, team.id, now);
+  const cycle = await activeCycle(principal, now);
   if (cycle === undefined) return null;
   const [progress, issues] = await Promise.all([
     cycleProgress(principal, cycle.id, now),
@@ -172,9 +167,6 @@ export async function getActiveCycleView(
     id: cycle.id,
     name: sprintLabel(cycle),
     number: cycle.number,
-    teamId: team.id,
-    teamKey: team.key,
-    teamName: team.name,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     completedAt: cycle.completedAt?.toISOString() ?? null,
@@ -184,36 +176,24 @@ export async function getActiveCycleView(
   };
 }
 
-export async function runningSprintId(
-  principal: Principal,
-  team: { id: string },
-  now: Date = new Date(),
-): Promise<string | null> {
-  const cycle = await activeCycle(principal, team.id, now);
-  return cycle?.id ?? null;
-}
-
 export async function runningSprintNumber(
   principal: Principal,
-  team: { id: string },
   now: Date = new Date(),
 ): Promise<number | null> {
-  const cycle = await activeCycle(principal, team.id, now);
+  const cycle = await activeCycle(principal, now);
   return cycle?.number ?? null;
 }
 
 export async function listUpcomingCycleViews(
   principal: Principal,
-  team: { id: string; key: string },
   now: Date = new Date(),
 ): Promise<UpcomingCycleView[]> {
-  const cycles = await upcomingCycles(principal, team.id, { now, limit: 6 });
+  const cycles = await upcomingCycles(principal, { now, limit: 6 });
   return cycles.map((cycle) => ({
     id: cycle.id,
     name: sprintLabel(cycle),
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
-    teamKey: team.key,
   }));
 }
 
@@ -221,7 +201,6 @@ export interface PastSprintView {
   readonly id: string;
   readonly name: string;
   readonly number: number;
-  readonly teamKey: string;
   readonly startsAt: string;
   readonly endsAt: string;
   readonly completedAt: string;
@@ -230,16 +209,14 @@ export interface PastSprintView {
 
 export async function listPastSprintViews(
   principal: Principal,
-  team: { id: string; key: string },
   limit = 12,
 ): Promise<PastSprintView[]> {
-  const rows = await pastCycles(principal, team.id, limit);
+  const rows = await pastCycles(principal, limit);
   const outcomes = await sprintOutcomes(principal, rows);
   return rows.map((cycle, index) => ({
     id: cycle.id,
     name: sprintLabel(cycle),
     number: cycle.number,
-    teamKey: team.key,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     completedAt: (cycle.completedAt ?? cycle.endsAt).toISOString(),
@@ -249,10 +226,9 @@ export async function listPastSprintViews(
 
 export async function getSprintView(
   principal: Principal,
-  team: { id: string; key: string; name: string },
   number: number,
 ): Promise<(CycleView & { readonly outcome: RecordedOutcome | null }) | null> {
-  const cycle = await getCycleByNumber(principal, team.id, number);
+  const cycle = await getCycleByNumber(principal, number);
   if (cycle === null) return null;
   const [progress, issues, outcome] = await Promise.all([
     cycleProgress(principal, cycle.id),
@@ -263,9 +239,6 @@ export async function getSprintView(
     id: cycle.id,
     name: sprintLabel(cycle),
     number: cycle.number,
-    teamId: team.id,
-    teamKey: team.key,
-    teamName: team.name,
     startsAt: cycle.startsAt.toISOString(),
     endsAt: cycle.endsAt.toISOString(),
     completedAt: cycle.completedAt?.toISOString() ?? null,

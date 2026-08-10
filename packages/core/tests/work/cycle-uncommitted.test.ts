@@ -5,7 +5,6 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { listSprintRollUp } from '../../src/work/cycle-roll-up.ts';
 import { cycleProgress, listCycles } from '../../src/work/cycle-service.ts';
 import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
 
@@ -72,21 +71,6 @@ describe('uncommitted work', () => {
     expect(progress.canceled).toBe(1);
     expect(progress.uncommitted.issues).toBe(1);
     expect(progress.scope).toBe(1);
-  });
-
-  it('agrees with the roll up shown on the sprints page', async () => {
-    const cycle = await runningCycle();
-    await issueIn(cycle.id, 'Todo', 3);
-    await issueIn(cycle.id, 'Done', 5);
-    await issueIn(cycle.id, 'Triage', 13);
-    await issueIn(cycle.id, 'Backlog', 21);
-
-    const progress = await cycleProgress(workspace.admin, cycle.id);
-    const [row] = await listSprintRollUp(workspace.admin, [workspace.teamId]);
-
-    expect(row?.committedIssues).toBe(progress.scope);
-    expect(row?.committedPoints).toBe(progress.points.scope);
-    expect(row?.completedPoints).toBe(progress.points.completed);
   });
 
   it('leaves uncommitted work out of the burn up as well', async () => {

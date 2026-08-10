@@ -155,7 +155,7 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
       buildSyncAction({
         syncId,
         organizationId: cycle.organizationId,
-        scopes: [scopes.organization(cycle.organizationId), scopes.team(cycle.teamId)],
+        scopes: [scopes.organization(cycle.organizationId)],
         action: 'update',
         model: 'cycle',
         modelId: cycle.id,

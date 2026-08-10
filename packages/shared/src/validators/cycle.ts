@@ -1,10 +1,8 @@
 import { z } from 'zod';
-import { idSchema } from './common.ts';
 
 const instantSchema = z.union([z.string().trim().min(1), z.date()]).pipe(z.coerce.date());
 
 export const cycleCreateSchema = z.object({
-  teamId: idSchema,
   name: z.string().trim().min(1).max(120).optional(),
   startsAt: instantSchema.optional(),
   endsAt: instantSchema.optional(),
@@ -37,7 +35,6 @@ export const sprintOutcomeSchema = z.object({
 });
 
 export const cycleListQuerySchema = z.object({
-  teamId: idSchema.optional(),
   status: z.enum(['all', 'past']).default('all'),
   limit: z.coerce.number().int().min(1).max(50).default(12),
 });

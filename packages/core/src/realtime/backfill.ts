@@ -361,7 +361,7 @@ const LOADERS: Record<SyncModel, Loader> = {
     ).map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes: [scopes.organization(row.organizationId), scopes.team(row.teamId)],
+      scopes: [scopes.organization(row.organizationId)],
       data: row,
     })),
 

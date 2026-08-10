@@ -16,10 +16,10 @@ import {
   type ScopePoint,
   scopeSeries,
   stateGroupBreakdown,
-  teamVelocity,
   toSavedAnalyticsViewPayload,
   type VelocityPoint,
   workDistribution,
+  workspaceVelocity,
 } from '@orbit/core';
 import { and, db, desc, eq, inArray, isNull, type SQL, schema, sql } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
@@ -150,7 +150,7 @@ export async function loadCycleBundle(
     cycleChurn(principal, cycleId),
     cycleFlowMetrics(principal, cycleId),
     listCheckpoints(principal, cycleId),
-    teamVelocity(principal, cycle.teamId, measure),
+    workspaceVelocity(principal, measure),
   ]);
 
   return { measure, burndown, churn, flow, checkpoints, velocity };
