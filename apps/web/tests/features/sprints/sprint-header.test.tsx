@@ -64,6 +64,12 @@ describe('SprintHeader', () => {
     expect(screen.getByTestId('sprint-name').textContent).toBe('Sprint 1');
   });
 
+  it('makes the sprint name the page heading', () => {
+    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={true} />));
+
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sprint 1');
+  });
+
   it('shows a chosen name in place of the number', () => {
     render(
       wrap(<SprintHeader sprint={{ ...SPRINT, name: 'Hardening' }} teamKey="NOV" canManage />),

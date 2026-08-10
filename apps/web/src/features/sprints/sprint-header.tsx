@@ -60,35 +60,37 @@ export function SprintHeader({
 
   return (
     <header className="flex flex-wrap items-center gap-2">
-      {editing ? (
-        <Input
-          autoFocus
-          maxLength={120}
-          value={draft}
-          placeholder={label}
-          aria-label="Sprint name"
-          data-testid="sprint-name-input"
-          className="h-7 w-56"
-          onFocus={(event) => event.target.select()}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={onKeyDown}
-        />
-      ) : (
-        <button
-          type="button"
-          disabled={!canManage}
-          data-testid="sprint-name"
-          onClick={() => setEditing(true)}
-          className={cn(
-            '-mx-1 rounded-md px-1 font-semibold text-lg text-text outline-none',
-            'focus-visible:ring-2 focus-visible:ring-accent',
-            canManage ? rowHover : undefined,
-          )}
-        >
-          {label}
-        </button>
-      )}
+      <h1 className="font-semibold text-lg text-text">
+        {editing ? (
+          <Input
+            autoFocus
+            maxLength={120}
+            value={draft}
+            placeholder={label}
+            aria-label="Sprint name"
+            data-testid="sprint-name-input"
+            className="h-7 w-56"
+            onFocus={(event) => event.target.select()}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commit}
+            onKeyDown={onKeyDown}
+          />
+        ) : (
+          <button
+            type="button"
+            disabled={!canManage}
+            data-testid="sprint-name"
+            onClick={() => setEditing(true)}
+            className={cn(
+              '-mx-1 rounded-md px-1 font-semibold text-lg text-text outline-none',
+              'focus-visible:ring-2 focus-visible:ring-accent',
+              canManage ? rowHover : undefined,
+            )}
+          >
+            {label}
+          </button>
+        )}
+      </h1>
       <Badge tone="accent">{teamKey}</Badge>
       <span className="text-faint text-xs tabular">
         {formatDay(sprint.startsAt)} to {formatDay(sprint.endsAt)}
