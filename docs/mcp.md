@@ -142,6 +142,22 @@ them.
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
 | `archive_issue`, `unarchive_issue`, `delete_issue` | write | |
 | `edit_comment`, `delete_comment` | write | |
+| `list_issue_attachments` | read | Every file attached to an issue or to a comment on it |
+| `read_attachment` | read | The contents of an attached file |
+| `attach_file` | write | Upload a file and attach it to an issue, a comment, a doc or a project |
+
+### Files
+
+An assistant can both send and read files. `attach_file` uploads up to 4MB inline as
+base64 and returns a url and ready made markdown, so a generated report or a chart can
+be posted straight onto the issue it belongs to. `list_issue_attachments` shows what is
+attached to an issue and to every comment on it, and `get_issue` reports the same list,
+so an assistant can tell a file is there without being told. `read_attachment` returns
+the contents: text-like types come back as text, anything else base64, and a large file
+is truncated with `truncated: true` rather than silently cut.
+
+Reads are governed by the issue, not by the file. If you cannot read the issue a file
+hangs off, you cannot list it or read it.
 
 ### Projects and milestones
 

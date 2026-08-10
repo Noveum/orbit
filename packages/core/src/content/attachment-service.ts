@@ -1,4 +1,4 @@
-import { and, db, eq, schema, type Transaction } from '@orbit/db';
+import { and, asc, db, eq, inArray, isNull, schema, type Transaction } from '@orbit/db';
 import {
   assertUploadParent,
   fileUrlFor,
@@ -12,6 +12,7 @@ import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { inlineUploadSchema, uploadRequestSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
@@ -258,4 +259,146 @@ export async function attachFile(
     if (objectStored && store !== null) await store.delete(key).catch(() => undefined);
     throw error;
   }
+}
+
+export interface IssueAttachment {
+  readonly id: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly size: number;
+  readonly parentType: string;
+  readonly parentId: string;
+  readonly uploadedById: string;
+  readonly createdAt: Date;
+  readonly url: string;
+}
+
+async function requireReadableIssue(principal: Principal, issueId: string) {
+  assertCan(principal, 'issue:read');
+  const [issue] = await db
+    .select({
+      id: schema.issue.id,
+      teamId: schema.issue.teamId,
+      projectId: schema.issue.projectId,
+      organizationId: schema.issue.organizationId,
+    })
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, principal.organizationId)),
+    )
+    .limit(1);
+  const found = requireRow(issue, 'That issue does not exist.');
+  assertInTeam(principal, teamScope(found));
+  return found;
+}
+
+export async function listIssueAttachments(
+  principal: Principal,
+  issueId: string,
+): Promise<IssueAttachment[]> {
+  await requireReadableIssue(principal, issueId);
+  const commentIds = await db
+    .select({ id: schema.comment.id })
+    .from(schema.comment)
+    .where(and(eq(schema.comment.issueId, issueId), isNull(schema.comment.deletedAt)));
+  const parents = [issueId, ...commentIds.map((row) => row.id)];
+  const rows = await db
+    .select()
+    .from(schema.attachment)
+    .where(
+      and(
+        eq(schema.attachment.organizationId, principal.organizationId),
+        eq(schema.attachment.status, 'ready'),
+        inArray(schema.attachment.parentId, parents),
+      ),
+    )
+    .orderBy(asc(schema.attachment.createdAt));
+  return rows
+    .filter((row) => row.parentType === 'issue' || row.parentType === 'comment')
+    .map((row) => ({
+      id: row.id,
+      fileName: row.fileName,
+      contentType: row.contentType,
+      size: row.size,
+      parentType: row.parentType,
+      parentId: row.parentId,
+      uploadedById: row.uploadedById,
+      createdAt: row.createdAt,
+      url: fileUrlFor(row.storageKey),
+    }));
+}
+
+export interface AttachmentContent {
+  readonly attachment: IssueAttachment;
+  readonly encoding: 'utf8' | 'base64';
+  readonly content: string;
+  readonly truncated: boolean;
+}
+
+const TEXT_CONTENT_TYPES =
+  /^(text\/|application\/(json|xml|yaml|x-yaml|javascript|typescript|sql))/;
+
+export function isTextualContentType(contentType: string): boolean {
+  return TEXT_CONTENT_TYPES.test(contentType.toLowerCase());
+}
+
+async function issueIdForAttachment(
+  principal: Principal,
+  record: AttachmentRecord,
+): Promise<string | null> {
+  if (record.parentType === 'issue') return record.parentId;
+  if (record.parentType === 'comment') return await commentIssueId(principal, record.parentId);
+  return null;
+}
+
+export async function readAttachment(
+  principal: Principal,
+  attachmentId: string,
+  maxBytes: number,
+  driver?: StorageDriver,
+): Promise<AttachmentContent> {
+  const record = await findAttachmentForOrganization(principal, attachmentId);
+  const issueId = await issueIdForAttachment(principal, record);
+  if (issueId === null) {
+    throw validationFailed('Only files attached to an issue or a comment can be read.');
+  }
+  await requireReadableIssue(principal, issueId);
+
+  const store = driver ?? storageDriver();
+  const bytes = await store.get(record.storageKey);
+  if (bytes === null) throw notFound('That file is no longer in storage.');
+
+  const truncated = bytes.byteLength > maxBytes;
+  const slice = truncated ? bytes.slice(0, maxBytes) : bytes;
+  const textual = isTextualContentType(record.contentType);
+  return {
+    attachment: {
+      id: record.id,
+      fileName: record.fileName,
+      contentType: record.contentType,
+      size: record.size,
+      parentType: record.parentType,
+      parentId: record.parentId,
+      uploadedById: record.uploadedById,
+      createdAt: record.createdAt,
+      url: fileUrlFor(record.storageKey),
+    },
+    encoding: textual ? 'utf8' : 'base64',
+    content: textual ? Buffer.from(slice).toString('utf8') : Buffer.from(slice).toString('base64'),
+    truncated,
+  };
+}
+
+async function commentIssueId(principal: Principal, commentId: string): Promise<string | null> {
+  const [comment] = await db
+    .select({ issueId: schema.comment.issueId })
+    .from(schema.comment)
+    .where(
+      and(
+        eq(schema.comment.id, commentId),
+        eq(schema.comment.organizationId, principal.organizationId),
+      ),
+    )
+    .limit(1);
+  return comment?.issueId ?? null;
 }
