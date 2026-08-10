@@ -100,19 +100,19 @@ narrower `allowedEmailDomains`.
 
 ### An endless "Reconnecting to live updates" banner
 
-The most common failure in Orbit, and it has three causes.
+The expected behavior depends on the deployment route.
 
-**In production:** `NEXT_PUBLIC_REALTIME_URL` is set. It must not be. The socket
-is served from the page's own origin at `/api/ws`, and a leftover value from a
-standalone realtime host sends browsers to a dead origin. Because the ticket
-still comes from the app, the failure looks like reconnection rather than an
-error. Unset it and redeploy.
+**On Vercel:** inspect the websocket request to `/api/ws` and verify that it
+receives a `101 Switching Protocols` response. If it does not, continue with
+[The websocket never reaches a 101](#the-websocket-never-reaches-a-101).
+`NEXT_PUBLIC_REALTIME_URL` cannot redirect a production socket because Orbit
+ignores it whenever `NODE_ENV` is `production`.
 
-**Behind your own proxy:** the proxy is not passing websocket upgrades, or is
-timing them out. See the nginx configuration in
-[Self-hosting](self-hosting.md#run-it-on-your-own-server). The default
-`proxy_read_timeout` of 60 seconds drops every idle socket once a minute, which
-produces a banner that appears and disappears on a timer.
+**With standalone Node (Preview):** realtime is not supported yet because
+`/api/ws` depends on Vercel's websocket request context. Reverse proxy settings
+cannot enable it. Use Vercel when realtime is required, and see
+[Self-hosting](self-hosting.md#run-standalone-node-preview) for the current
+standalone limitations.
 
 **Locally:** the realtime server is not running. `bun run dev` starts it.
 `NEXT_PUBLIC_REALTIME_URL` should be `ws://localhost:3100`.

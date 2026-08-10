@@ -87,9 +87,7 @@ port is development only. In production the socket is always served from the web
 at `/api/ws` on the page's own origin: `configuredRealtimeUrl()` ignores
 `NEXT_PUBLIC_REALTIME_URL` whenever `NODE_ENV` is `production`, so the variable is a
 local development override and nothing else. Never set it on a deployed environment.
-A value left over from the standalone realtime host sends the browser to a dead
-origin, and because the ticket still comes from the app the failure looks like an
-endless "Reconnecting to live updates" banner rather than an error.
+A deployed value is ignored and only obscures the intended production topology.
 
 Email goes out through Resend only. Set `RESEND_API_KEY` and an `EMAIL_FROM` on a
 domain verified in Resend, otherwise every send fails.

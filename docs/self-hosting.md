@@ -16,7 +16,7 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | Route | Effort | Best for |
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
-| [Docker on your own server](#run-it-on-your-own-server) | About 30 minutes | Teams who want it inside their own network |
+| [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
 
 Both need the same four things.
 
@@ -151,10 +151,8 @@ Two variables must **not** be set:
 - **`NEXT_PUBLIC_REALTIME_URL`.** In production the socket is always served from
   the page's own origin at `/api/ws`. `configuredRealtimeUrl()` ignores this
   variable when `NODE_ENV` is `production`, so it is a local development
-  override and nothing else. A value left over from a standalone realtime host
-  sends browsers to a dead origin, and because the ticket still comes from the
-  app the failure looks like an endless "Reconnecting to live updates" banner
-  rather than an error.
+  override and nothing else. Leave it unset so the deployment configuration
+  reflects the production topology.
 - **`ORBIT_DEV_LOGIN`.** It signs anyone in as any user with one click.
 
 ### 8. Deploy and check
@@ -180,10 +178,18 @@ Set up at least one sign-in method before you invite anyone. See
 [Configuration](configuration.md#authentication) for Google, GitHub, passkeys
 and magic links.
 
-## Run it on your own server
+## Run standalone Node (Preview)
 
-If you want Orbit inside your own network, run the Next.js standalone build
-behind a reverse proxy.
+If you want to evaluate Orbit inside your own network, run the Next.js
+standalone build behind a reverse proxy. This standalone path is Preview only:
+HTTP routes and assets work, but realtime and live updates do not yet work in
+this mode. `/api/ws` relies on Vercel's request context for
+`experimental_upgradeWebSocket`; running the standalone server with Node does
+not provide that context. DEP-002 tracks portable realtime deployment
+separately. Use Vercel for production realtime today.
+
+The packaged start command requires Node.js 22 or newer. Bun remains required
+for installing dependencies, applying the schema, and building the app.
 
 ```bash
 git clone https://github.com/Noveum/orbit.git
@@ -194,39 +200,25 @@ bun run db:push
 bun run build
 ```
 
-The build produces a standalone server in `apps/web/.next/standalone`. Run it
-with node, not Bun:
+The build produces a portable standalone server in `apps/web/.next/standalone`,
+including the public and Next static assets. Run it with the package command,
+which loads the repository `.env`:
 
 ```bash
 cd apps/web
-node .next/standalone/apps/web/server.js
+bun run start
 ```
 
-Node matters for the same reason it does on Vercel: the websocket upgrade at
-`/api/ws` needs it.
-
-Your reverse proxy has to pass websocket upgrades through. In nginx:
+Your reverse proxy only needs to forward ordinary HTTP requests to the
+standalone server. In nginx:
 
 ```nginx
-location /api/ws {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_read_timeout 3600s;
-}
-
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
-
-The long `proxy_read_timeout` is not optional. The default is 60 seconds, which
-drops every idle socket once a minute and produces a reconnect banner that comes
-and goes on a timer.
 
 You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
 change every credential in it first. It is written for local development and its
@@ -286,7 +278,7 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | `NEXT_PUBLIC_REALTIME_URL` is set in production, or the proxy is not passing upgrades |
+| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and magic links never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
