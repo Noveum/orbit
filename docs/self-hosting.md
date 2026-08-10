@@ -30,7 +30,7 @@ Both need the same four things.
 | Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
 Email is used for magic links and invites. Orbit will boot without it, but
-nobody who is not already signed in will be able to get in.
+users who rely on those flows will not be able to sign in or accept invites.
 
 ## Deploy on Vercel
 

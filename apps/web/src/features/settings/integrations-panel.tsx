@@ -89,8 +89,8 @@ function WorkspaceIntegrationsWithheld() {
     <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
       <h3 className="font-medium text-dense text-text">GitHub</h3>
       <p className="text-muted text-xs" data-testid="integrations-withheld">
-        Only workspace admins can see which repositories this workspace is connected to. Your own AI
-        client connections are below.
+        Only workspace admins can see which repositories this workspace is connected to. Your own
+        MCP client connections are below.
       </p>
     </section>
   );

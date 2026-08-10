@@ -9,7 +9,7 @@ cp .env.example .env
 
 > **Self-hosting status: Preview.** The production values on this page are a
 > configuration reference, not a supported production release or provider
-> compatibility guarantee. See [Open source readiness](open-source-readiness.md).
+> compatibility guarantee. See [Open-source readiness](open-source-readiness.md).
 
 Orbit parses its own environment with Zod at startup, so a missing or malformed
 required variable fails immediately with a message that names it, rather than

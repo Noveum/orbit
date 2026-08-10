@@ -28,7 +28,7 @@ This needs a [GitHub App](https://docs.github.com/en/apps), not an OAuth app.
 GitHub Apps are installed per repository and their tokens are short lived, which
 is the right shape for something reading your code host.
 
-1. Create a GitHub App, under your organisation if the repositories belong to
+1. Create a GitHub App, under your organization if the repositories belong to
    one.
 2. Set the **Callback URL** to `https://orbit.example.com/api/integrations/github/callback`.
 3. Tick **Request user authorization (OAuth) during installation**. This is not
