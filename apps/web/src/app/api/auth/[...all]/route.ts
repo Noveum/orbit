@@ -19,12 +19,10 @@ const mcpTokenRequestSchema = z
   })
   .catchall(z.string());
 
-const mcpTokenResponseSchema = z
-  .object({
-    access_token: z.string().min(1),
-    refresh_token: z.string().min(1).optional(),
-  })
-  .passthrough();
+const mcpTokenResponseSchema = z.looseObject({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1).optional(),
+});
 
 const mcpAuthorizationCodeSchema = z.object({ mcpGrantId: z.string().min(1) });
 

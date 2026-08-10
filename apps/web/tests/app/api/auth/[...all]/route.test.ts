@@ -8,11 +8,11 @@ import {
   verifyMcpAccessToken,
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, desc, schema } from '@orbit/db';
-import { mcpContinueUrl } from '../../../../../src/app/(auth)/login/continue-url.ts';
-import { POST as authPost, GET } from '../../../../../src/app/api/auth/[...all]/route.ts';
-import { DEV_LOGIN_HEADER } from '../../../../../src/lib/api/dev-login.ts';
-import { auth } from '../../../../../src/lib/auth/server.ts';
+import { db, desc, eq, schema } from '@orbit/db';
+import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
+import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
+import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
+import { auth } from '@/lib/auth/server.ts';
 import { nativeFetchGlobals } from '../../../../../tests-preload.ts';
 
 const APP_ORIGIN = 'http://localhost:3000';
@@ -104,6 +104,10 @@ async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
 }
 
 describe('MCP authorize consent boundary', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
   it('rejects a direct request that omits prompt before login', async () => {
     const response = await GET(authorizeRequest(authorizeSearch()));
     expect(response.status).toBe(400);
@@ -441,9 +445,24 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('preserves HTTP Basic authentication for a confidential client', async () => {
     await withNativeFetchGlobals(async () => {
+      const otherClientId = `other_${randomUUID().replace(/-/g, '')}`;
+      await db.insert(schema.oauthApplication).values({
+        id: randomUUID(),
+        name: 'Other MCP client',
+        clientId: otherClientId,
+        redirectUrls: CALLBACK_URL,
+        type: 'public',
+        userId: workspace.adminUser.id,
+      });
       await db
         .update(schema.oauthApplication)
-        .set({ type: 'confidential', clientSecret: 'client-secret' });
+        .set({ type: 'confidential', clientSecret: 'client-secret' })
+        .where(eq(schema.oauthApplication.clientId, 'client_test'));
+      const [otherClient] = await db
+        .select({ type: schema.oauthApplication.type })
+        .from(schema.oauthApplication)
+        .where(eq(schema.oauthApplication.clientId, otherClientId));
+      expect(otherClient?.type).toBe('public');
       const { code, verifier } = await finalizedAuthorizationCode(workspace);
       const authorization = `Basic ${Buffer.from('client_test:client-secret').toString('base64')}`;
       const token = await authPost(
@@ -517,23 +536,25 @@ describe('MCP authorize PKCE boundary', () => {
     });
   });
 
-  it('does not expose an unbound token through an alternate token path', async () => {
+  it('rejects alternate token paths without exposing an unbound token', async () => {
     await withNativeFetchGlobals(async () => {
       const { code, verifier } = await finalizedAuthorizationCode(workspace);
-      const token = await authPost(
-        new Request(`${APP_ORIGIN}/api/auth/mcp/token/`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'authorization_code',
-            code,
-            client_id: 'client_test',
-            redirect_uri: CALLBACK_URL,
-            code_verifier: verifier,
+      for (const path of ['/api/auth/mcp/token/', '/api/auth/mcp/TOKEN', '/api/auth/mcp/%74oken']) {
+        const token = await authPost(
+          new Request(`${APP_ORIGIN}${path}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code,
+              client_id: 'client_test',
+              redirect_uri: CALLBACK_URL,
+              code_verifier: verifier,
+            }),
           }),
-        }),
-      );
-      expect(token.status).not.toBe(200);
+        );
+        expect(token.status).toBe(404);
+      }
       expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
     });
   });

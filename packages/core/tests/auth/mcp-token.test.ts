@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import {
   bindMcpCredential,
+  type FinalizeMcpConsentInput,
   finalizeMcpConsent,
   getMcpClient,
   listMcpGrants,
@@ -422,12 +423,38 @@ describe('finalizeMcpConsent', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('rejects acceptance without a workspace before minting a code', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const malformedInput = {
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: true,
+    } as unknown as FinalizeMcpConsentInput;
+
+    await expect(finalizeMcpConsent(malformedInput)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+
+    const [request] = await db
+      .select({ identifier: schema.verification.identifier })
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode));
+    expect(request?.identifier).toBe(consentCode);
+    expect(await db.select().from(schema.mcpGrant)).toHaveLength(0);
+    expect(await db.select().from(schema.oauthConsent)).toHaveLength(0);
+  });
+
   it('rejects an expired request', async () => {
     const consentCode = await createConsentCode(workspace.adminUser.id, {
       expiresAt: new Date(Date.now() - 1000),
     });
     await expect(
-      finalizeMcpConsent({ userId: workspace.adminUser.id, consentCode, accept: true }),
+      finalizeMcpConsent({
+        userId: workspace.adminUser.id,
+        consentCode,
+        accept: true,
+        organizationId: workspace.organizationId,
+      }),
     ).rejects.toMatchObject({ code: 'unauthorized' });
   });
 
@@ -435,13 +462,23 @@ describe('finalizeMcpConsent', () => {
     const consentCode = await createConsentCode(workspace.adminUser.id);
     const stranger = await createUser('Stranger');
     await expect(
-      finalizeMcpConsent({ userId: stranger.id, consentCode, accept: true }),
+      finalizeMcpConsent({
+        userId: stranger.id,
+        consentCode,
+        accept: true,
+        organizationId: workspace.organizationId,
+      }),
     ).rejects.toMatchObject({ code: 'forbidden' });
   });
 
   it('rejects an unknown consent code', async () => {
     await expect(
-      finalizeMcpConsent({ userId: workspace.adminUser.id, consentCode: 'nope', accept: true }),
+      finalizeMcpConsent({
+        userId: workspace.adminUser.id,
+        consentCode: 'nope',
+        accept: true,
+        organizationId: workspace.organizationId,
+      }),
     ).rejects.toMatchObject({ code: 'unauthorized' });
   });
 });

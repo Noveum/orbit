@@ -42,6 +42,19 @@ function post(headers: Record<string, string>): Promise<Response> {
 }
 
 describe('access token verification', () => {
+  it('uses one fallback secret when the configured test secret is empty', async () => {
+    const previousSecret = process.env['BETTER_AUTH_SECRET'];
+    process.env['BETTER_AUTH_SECRET'] = '';
+    try {
+      const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
+      expect(rawTokenOf(token)).toStartWith('at_');
+      expect((await verifyMcpAccessToken(token)).organizationId).toBe(workspace.organizationId);
+    } finally {
+      if (previousSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+      else process.env['BETTER_AUTH_SECRET'] = previousSecret;
+    }
+  });
+
   it('resolves the owner principal for a valid token and workspace', async () => {
     const token = await mintToken(workspace.organizationId, workspace.adminUser.id);
     const identity = await verifyMcpAccessToken(token);

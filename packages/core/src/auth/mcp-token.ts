@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, db, desc, eq, gt, isNull, schema } from '@orbit/db';
-import { forbidden, notFound, unauthorized } from '@orbit/shared/errors';
+import { forbidden, notFound, unauthorized, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { type Executor, newId } from '../internal.ts';
@@ -289,18 +289,21 @@ function authorizationCode(): string {
   return randomBytes(24).toString('base64url');
 }
 
-export interface FinalizeMcpConsentInput {
-  readonly userId: string;
-  readonly consentCode: string;
-  readonly accept: boolean;
-}
-
-export interface FinalizeMcpConsentInput2 {
-  readonly organizationId?: string;
-}
+export type FinalizeMcpConsentInput =
+  | {
+      readonly userId: string;
+      readonly consentCode: string;
+      readonly accept: false;
+    }
+  | {
+      readonly userId: string;
+      readonly consentCode: string;
+      readonly accept: true;
+      readonly organizationId: string;
+    };
 
 export async function finalizeMcpConsent(
-  input: FinalizeMcpConsentInput & FinalizeMcpConsentInput2,
+  input: FinalizeMcpConsentInput,
   now: Date = new Date(),
 ): Promise<{ redirectUri: string; clientId: string; scope: string }> {
   const invalid = unauthorized('This authorization request is invalid or has expired.');
@@ -340,21 +343,22 @@ export async function finalizeMcpConsent(
     };
   }
 
+  if (typeof input.organizationId !== 'string' || input.organizationId.length === 0) {
+    throw validationFailed('Choose a workspace before approving this connection.');
+  }
+
   const code = authorizationCode();
   await db.transaction(async (tx) => {
-    const mcpGrantId =
-      input.organizationId === undefined
-        ? undefined
-        : await writeMcpGrant(
-            tx,
-            {
-              clientId: value.clientId,
-              userId: input.userId,
-              organizationId: input.organizationId,
-              scopes: value.scope.join(' '),
-            },
-            now,
-          );
+    const mcpGrantId = await writeMcpGrant(
+      tx,
+      {
+        clientId: value.clientId,
+        userId: input.userId,
+        organizationId: input.organizationId,
+        scopes: value.scope.join(' '),
+      },
+      now,
+    );
     const [updated] = await tx
       .update(schema.verification)
       .set({
