@@ -59,7 +59,9 @@ make the repository a supported production release.
   MCP consent and PKCE, preserves OAuth continuation through passwordless login,
   binds issued credentials to an immutable grant, prevents issued token scopes
   from exceeding that grant, and consumes refresh credentials once. Status:
-  exact head `4f369ee` passes full local verification, but individual CodeQL
+  exact head `9cd1ac9` contains current `main`, passes full local verification
+  and independent review, and has no unresolved ordinary review threads. The
+  remaining individual CodeQL
   alert [#19](https://github.com/Noveum/orbit/security/code-scanning/19)
   misclassifies an opaque OAuth credential's HMAC integrity binding as password
   hashing. The reviewed false-positive classification awaits maintainer
