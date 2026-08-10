@@ -3,7 +3,7 @@
 import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { SmilePlus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -135,10 +135,15 @@ function NewComment({
 }
 
 function useFocusedComment(commentId: string | null, readySignature: string): void {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run the scroll once the comment mounts so a thread opened from the inbox lands on the comment it was opened for
+  const landed = useRef<string | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run until the comment mounts so a thread opened from the inbox lands on the comment it was opened for
   useEffect(() => {
-    if (commentId === null) return;
-    document.getElementById(commentAnchorId(commentId))?.scrollIntoView({ block: 'start' });
+    if (commentId === null || landed.current === commentId) return;
+    const target = document.getElementById(commentAnchorId(commentId));
+    if (target === null) return;
+    landed.current = commentId;
+    target.scrollIntoView({ block: 'start' });
   }, [commentId, readySignature]);
 }
 
