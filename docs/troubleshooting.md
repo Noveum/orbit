@@ -156,14 +156,21 @@ you see it, that is worth reporting.
 ### `bun run db:push` hangs or times out
 
 Against a hosted database, you are probably using the pooled connection string.
-Schema changes need a direct session. Use the direct endpoint, usually port 5432
-rather than 6543.
+Schema changes need a direct session. Use the provider's direct endpoint rather
+than its transaction-pooled runtime endpoint.
 
 ### Connection pool exhausted in production
 
 `DATABASE_URL` points at the direct endpoint instead of the pooler. Serverless
 functions open many short lived connections and the direct endpoint runs out.
 Swap it for the pooled string.
+
+### Prepared statement errors in production
+
+Set `DATABASE_PREPARED_STATEMENTS=false` and remove any `prepare` query option
+from `DATABASE_URL`. Only set the variable to `true` when the endpoint supports
+protocol-level named prepared statements. Pooling mode and port number alone do
+not establish that capability.
 
 ### Tests deadlock or hit foreign key violations for no reason
 
