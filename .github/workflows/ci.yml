@@ -131,6 +131,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
       REDIS_URL: redis://localhost:6380
@@ -170,6 +172,7 @@ jobs:
           } > "$artifact_root/orbit/.env"
           (
             cd "$artifact_root/orbit/apps/web"
+            unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!
