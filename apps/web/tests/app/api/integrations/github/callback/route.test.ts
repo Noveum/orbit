@@ -220,6 +220,7 @@ describe('GET /api/integrations/github/callback', () => {
       state,
     });
 
+    expect(locationOf(response)).toContain('github=claimed');
     await expectRejectedBeforeGithub(response);
   });
 
