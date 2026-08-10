@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import { listGithubCatalogue, listGithubInstallations } from '@orbit/services';
 import {
   completeGithubInstall,
@@ -204,6 +204,67 @@ describe('completeGithubInstall', () => {
   it('accepts an installation the signing-in user can reach', async () => {
     const row = await install(workspace, NOVEUM, NOVEUM_STUB, 'the-code');
     expect(row.installationId).toBe(NOVEUM);
+  });
+
+  it('refuses an actor demoted after GitHub access verification and before binding', async () => {
+    const demotingFetch = ((input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/user/installations')) {
+        return db
+          .update(schema.member)
+          .set({ role: 'member' })
+          .where(
+            and(
+              eq(schema.member.organizationId, workspace.organizationId),
+              eq(schema.member.userId, workspace.adminUser.id),
+            ),
+          )
+          .then(() => githubFetch(NOVEUM_STUB)(url, init));
+      }
+      return githubFetch(NOVEUM_STUB)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      completeGithubInstall({
+        organizationId: workspace.organizationId,
+        userId: workspace.adminUser.id,
+        installationId: NOVEUM,
+        code: 'the-code',
+        config: CONFIG,
+        fetch: demotingFetch,
+      }),
+    ).rejects.toThrow(/cannot integration manage/);
+
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+    expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
+  });
+
+  it('refuses a workspace marked for deletion after GitHub verification and before binding', async () => {
+    const deletingFetch = ((input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/user/installations')) {
+        return db
+          .update(schema.organization)
+          .set({ deletionRequestedAt: new Date() })
+          .where(eq(schema.organization.id, workspace.organizationId))
+          .then(() => githubFetch(NOVEUM_STUB)(url, init));
+      }
+      return githubFetch(NOVEUM_STUB)(url, init);
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      completeGithubInstall({
+        organizationId: workspace.organizationId,
+        userId: workspace.adminUser.id,
+        installationId: NOVEUM,
+        code: 'the-code',
+        config: CONFIG,
+        fetch: deletingFetch,
+      }),
+    ).rejects.toThrow(/deletion is in progress/);
+
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+    expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
   });
 
   it('refuses a callback carrying no code, which proves nothing about the caller', async () => {
