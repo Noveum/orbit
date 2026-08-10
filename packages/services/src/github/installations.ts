@@ -36,6 +36,12 @@ export async function assertGithubIntegrationManager(
   database: GithubDatabase,
   input: { readonly organizationId: string; readonly userId: string },
 ): Promise<void> {
+  const [workspace] = await database
+    .select({ deletionRequestedAt: organization.deletionRequestedAt })
+    .from(organization)
+    .where(eq(organization.id, input.organizationId))
+    .limit(1);
+  if (workspace !== undefined) assertWorkspaceAvailable(workspace.deletionRequestedAt);
   const [membership] = await database
     .select({ role: member.role })
     .from(member)
@@ -48,12 +54,13 @@ async function assertGithubIntegrationManagerForUpdate(
   database: Transaction,
   input: { readonly organizationId: string; readonly userId: string },
 ): Promise<void> {
-  await database
-    .select({ id: organization.id })
+  const [workspace] = await database
+    .select({ deletionRequestedAt: organization.deletionRequestedAt })
     .from(organization)
     .where(eq(organization.id, input.organizationId))
     .limit(1)
     .for('update');
+  if (workspace !== undefined) assertWorkspaceAvailable(workspace.deletionRequestedAt);
   const [membership] = await database
     .select({ role: member.role })
     .from(member)
@@ -61,6 +68,10 @@ async function assertGithubIntegrationManagerForUpdate(
     .limit(1)
     .for('update');
   assertIntegrationManager(input, membership?.role);
+}
+
+function assertWorkspaceAvailable(deletionRequestedAt: Date | null): void {
+  if (deletionRequestedAt !== null) throw conflict('Workspace deletion is in progress.');
 }
 
 function assertIntegrationManager(

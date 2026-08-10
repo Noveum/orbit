@@ -206,6 +206,23 @@ describe('GET /api/integrations/github/callback', () => {
     await expectRejectedBeforeGithub(response);
   });
 
+  it('rejects a callback for a workspace awaiting deletion before calling GitHub', async () => {
+    const state = await validState(workspace);
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    const response = await callback({
+      installation_id: NOVEUM,
+      setup_action: 'install',
+      code: 'the-code',
+      state,
+    });
+
+    await expectRejectedBeforeGithub(response);
+  });
+
   it('refuses a callback with no code, which is all an attacker has to omit', async () => {
     const response = await callback({
       installation_id: NOVEUM,
