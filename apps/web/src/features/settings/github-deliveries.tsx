@@ -22,14 +22,30 @@ function tone(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
   return 'neutral';
 }
 
+function joinClauses(clauses: readonly string[]): string {
+  if (clauses.length <= 1) return clauses[0] ?? '';
+  return `${clauses.slice(0, -1).join(', ')} and ${clauses.at(-1) ?? ''}`;
+}
+
+export function deliverySummary(deliveries: readonly GithubDeliveryView[]): string {
+  const count = (status: string) => deliveries.filter((entry) => entry.status === status).length;
+  const clauses: string[] = [];
+  const ignored = count('ignored');
+  const failed = count('failed');
+  const unfinished = count('received');
+  if (ignored > 0) clauses.push(`${ignored} arrived and changed nothing`);
+  if (failed > 0) clauses.push(`${failed} failed`);
+  if (unfinished > 0) clauses.push(`${unfinished} recorded no outcome`);
+  if (clauses.length === 0) return 'Every recent delivery changed something in Orbit.';
+  return `Of the last ${deliveries.length} deliveries, ${joinClauses(clauses)}. The status and reason are next to each one.`;
+}
+
 export function GithubDeliveries({
   deliveries,
 }: {
   readonly deliveries: readonly GithubDeliveryView[];
 }) {
   if (deliveries.length === 0) return null;
-
-  const ignored = deliveries.filter((entry) => entry.status === 'ignored').length;
 
   return (
     <section
@@ -38,11 +54,7 @@ export function GithubDeliveries({
     >
       <div className="flex flex-col gap-1">
         <span className="font-medium text-dense text-text">Recent GitHub deliveries</span>
-        <p className="text-muted text-xs">
-          {ignored === 0
-            ? 'Every recent delivery changed something in Orbit.'
-            : `${ignored} of the last ${deliveries.length} deliveries arrived and changed nothing. The reason is next to each one.`}
-        </p>
+        <p className="text-muted text-xs">{deliverySummary(deliveries)}</p>
       </div>
       <ul className="flex flex-col gap-1">
         {deliveries.map((delivery) => (
