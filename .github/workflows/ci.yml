@@ -174,6 +174,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
+      ORBIT_SEED_CONFIRM_TARGET: localhost:5433/orbit:user-sha256:4fa1a13ac468ac495f3390e859d76d5e8ef49806815b45a21de7711bcc624194
       REDIS_URL: redis://localhost:6380
       BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
@@ -199,6 +200,7 @@ jobs:
         run: |
           {
             echo "DATABASE_URL=$DATABASE_URL"
+            echo "ORBIT_SEED_CONFIRM_TARGET=$ORBIT_SEED_CONFIRM_TARGET"
             echo "REDIS_URL=$REDIS_URL"
             echo "BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET"
             echo "BETTER_AUTH_URL=$BETTER_AUTH_URL"
