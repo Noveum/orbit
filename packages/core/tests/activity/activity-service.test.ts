@@ -53,6 +53,27 @@ describe('describeActivity', () => {
       'changed mystery from a to b',
     );
   });
+
+  it('names a link by its label rather than the stored type', () => {
+    expect(
+      describeActivity({ field: 'relation', fromValue: null, toValue: 'blocked_by ENG-3' }),
+    ).toBe('marked as Blocked by ENG-3');
+    expect(
+      describeActivity({ field: 'relation', fromValue: null, toValue: 'duplicated_by ENG-9' }),
+    ).toBe('marked as Duplicated by ENG-9');
+    expect(describeActivity({ field: 'relation', fromValue: 'related ENG-4', toValue: null })).toBe(
+      'removed a Relates to ENG-4 relation',
+    );
+  });
+
+  it('leaves a relation value it does not recognise alone', () => {
+    expect(
+      describeActivity({ field: 'relation', fromValue: null, toValue: 'invented_type ENG-1' }),
+    ).toBe('marked as invented_type ENG-1');
+    expect(describeActivity({ field: 'relation', fromValue: null, toValue: null })).toBe(
+      'removed a relation',
+    );
+  });
 });
 
 describe('listActivity', () => {

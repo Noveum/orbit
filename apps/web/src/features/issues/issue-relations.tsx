@@ -1,7 +1,11 @@
 'use client';
 
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
-import { ISSUE_RELATION_TYPES, type IssueRelationType } from '@orbit/shared/constants';
+import {
+  ISSUE_RELATION_TYPES,
+  type IssueRelationType,
+  RELATION_LABELS,
+} from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
 import { Link2, X } from 'lucide-react';
 import Link from 'next/link';
@@ -13,13 +17,7 @@ import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
 import { useIssueRelations, useRemoveRelation, useSetRelation } from '@/lib/query/use-relations.ts';
 import { IssuePicker } from './issue-picker.tsx';
 
-export const RELATION_LABELS: Record<IssueRelationType, string> = {
-  blocks: 'Blocks',
-  blocked_by: 'Blocked by',
-  related: 'Relates to',
-  duplicate_of: 'Duplicate of',
-  duplicated_by: 'Duplicated by',
-};
+export { RELATION_LABELS };
 
 const LAST_TYPE_FILLS_ITS_ROW = ISSUE_RELATION_TYPES.length % 2 === 1;
 
