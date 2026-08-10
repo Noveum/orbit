@@ -12,6 +12,16 @@ if (connectionString === undefined || connectionString.length === 0) {
 const poolMaxSchema = z.coerce.number().int().positive().max(1000).default(10);
 const preparedStatementsSchema = z.enum(['true', 'false']).default('false');
 
+function trimUrlControlEdges(url: string): string {
+  let start = 0;
+  while (start < url.length && url.charCodeAt(start) <= 0x20) start += 1;
+
+  let end = url.length;
+  while (end > start && url.charCodeAt(end - 1) <= 0x20) end -= 1;
+
+  return url.slice(start, end);
+}
+
 const poolMax = poolMaxSchema.safeParse(process.env['DATABASE_POOL_MAX'] ?? undefined);
 
 if (!poolMax.success) {
@@ -21,10 +31,7 @@ if (!poolMax.success) {
 }
 
 export function resolvePreparedStatements(url: string, configured: string | undefined): boolean {
-  const normalizedUrl = url
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: WHATWG trims this exact range from URL input.
-    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
-    .replace(/[\t\n\r]/g, '');
+  const normalizedUrl = trimUrlControlEdges(url).replace(/[\t\n\r]/g, '');
   const authority = normalizedUrl.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] ?? '';
   const hostAuthority = authority.slice(authority.lastIndexOf('@') + 1);
   if (/%2c/i.test(hostAuthority)) {

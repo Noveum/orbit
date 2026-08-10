@@ -116,6 +116,14 @@ describe('resolvePreparedStatements', () => {
     expect(resolvePreparedStatements(`${TRANSACTION}?sslmode=require`, 'false')).toBe(false);
   });
 
+  it('handles a long url with interior spaces within a bounded time', () => {
+    const url = `${SESSION}/${' '.repeat(32_000)}x`;
+    const startedAt = performance.now();
+
+    expect(resolvePreparedStatements(url, 'false')).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(100);
+  });
+
   it('supports postgres.js multi-host urls', () => {
     const url =
       'postgresql://user:pass@pool-a.example:6432,pool-b.example:6432/postgres?sslmode=require';
