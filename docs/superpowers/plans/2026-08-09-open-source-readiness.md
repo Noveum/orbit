@@ -1,6 +1,6 @@
 # Open Source Readiness and Self-Hosting Implementation Plan
 
-> Status: proposed. This document records an audit of commit `f1bfdc3` on 2026-08-09 and a task-by-task implementation sequence. It does not claim that the remediation work is complete.
+> Status: active implementation. This document records an audit of commit `f1bfdc3` on 2026-08-09, subsequent verified deltas, and the task-by-task implementation sequence. It does not claim that the repository is ready for a supported public release.
 
 > Moving-branch note: the shared working branch advanced to `9f961a1` while this audit was in progress. A targeted delta review of that exact commit was added for migration lineage, GitHub delivery diagnostics, document export, and Web Vitals. The primary inventory and full verification baseline remain pinned to `f1bfdc3` so evidence from different trees is not silently combined.
 
@@ -19,6 +19,65 @@
 - Preserve Apache 2.0 attribution and `NOTICE`. Organization-neutrality does not mean deleting lawful upstream ownership, funding, repository, or security-contact information.
 - Never copy private configuration, source exports, Slack object URLs, personal photos, or production database values into tests or documentation.
 - Record an ADR whenever implementation changes a recommendation in this plan.
+- Treat Slack as deferred and unsupported for the initial open-source release. Current work must remove its public claims and fail closed at its UI, OAuth, API, callback, and webhook surfaces; functional Slack repair and requalification belong to a later backlog.
+
+## Live implementation status
+
+Last updated: 2026-08-10
+
+| Measure | Current state |
+| --- | --- |
+| Plan size | 71 tasks, 480 checklist items, 8 phases |
+| Task acceptance | 1 task-scoped implementation accepted; 70 tasks are not accepted, including 1 under active remediation |
+| P0/P1 release-gate inventory | 41 governed Open findings, comprising 18 P0 and 23 P1; `SEC-018` at P0 and `SEC-019` at P1 await governed registration, making the known release-gate inventory 19 P0 and 24 P1 |
+| P2 backlog inventory | `REPO-002` and deferred Slack finding `INT-002` are separately recorded P2 backlog findings and are not part of the governed P0/P1 release-gate count |
+| Current integration base | Latest fetched `main` is `80c4693`; it is integrated in current branch commit `15b2b09` |
+| Audit freshness | The comprehensive inventory and security audit remain pinned to `f1bfdc3`, with targeted reviews at later revisions; an exact-current-head inventory, redacted secret and history scan, and security refresh remain required |
+| Current dependency audit | `bun audit --json` against the current lockfile on 2026-08-10 reports 12 advisories: 3 high, 8 moderate, and 1 low; `SEC-006` remains Open |
+| Last exact full verification | `bun run verify` passed on clean commit `4e85447` |
+| Current working verification | Focused red and green regression work is active; a new clean exact-commit full verification is still required |
+| Evidence durability | Independent review reports and transcripts are currently ignored local artifacts; exact hosted CI evidence or sanitized tracked records must replace them before public release claims |
+| Public release decision | Blocked while any P0 remains Open and until all required P1 work or approved exceptions are complete |
+
+### Phase acceptance summary
+
+| Phase | Tasks | Accepted checklist items | Current status |
+| --- | ---: | ---: | --- |
+| 0. Publish boundary and evidence preservation | 3 | 0 of 23 | Task 0.3 is under active remediation; Tasks 0.1 and 0.2 remain unaccepted |
+| 1. Remove organization coupling and publish safe demo data | 6 | 5 of 35 | Only Task 1.3 is accepted at task scope; the phase-wide neutrality gate remains open |
+| 2. Make realtime recovery and database upgrades durable | 9 | 0 of 53 | Not accepted |
+| 3. Deliver a provider-neutral production package | 9 | 0 of 61 | Not accepted |
+| 4. Close application security and abuse gaps | 21 | 0 of 129 | Not accepted; Task 4.21 records the newly verified organization-mutation control-plane work |
+| 5. Make CI, testing, and the supply chain release-grade | 9 | 0 of 54 | Not accepted; Task 0.3 policy work does not imply acceptance of these release gates |
+| 6. Make documentation, structure, and governance sustainable | 10 | 0 of 55 | Not accepted; Task 0.1 pulls the clean documentation gate forward but has not passed it |
+| 7. Version, release, and rehearse the public launch | 4 | 0 of 23 | Not accepted |
+| Global Definition of Done | Not a task phase | 0 of 47 | Not accepted; these cross-phase release assertions remain separately gated |
+
+### Task-scoped implementation accepted
+
+- Task 1.3 removed the tenant-specific catchup and Yodu operational documents, added the public/private operations ADR policy, and retained the active readiness plan. Its cumulative task-scoped implementation and safety follow-ups were independently accepted at commit `cb2844d`, comprising commits `51f4c3c`, `bf5b43c`, and `cb2844d`.
+- Task 1.3 acceptance does not clear the phase-wide organization-neutrality gate. The broad allowlist scan remains blocked by the seed and importer work in Tasks 1.1 and 1.2 and the portability gate in Task 1.6.
+
+### In progress
+
+- Task 0.3 has the 41-finding ledger, pinned scope manifest, trusted Git artifact boundary, evidence registry, hosted evidence verifier, dedicated scope workflow, and focused policy tests in place.
+- Task 0.3 is not accepted yet. Exact-head adversarial review found remaining Markdown container parsing, visible public-limitation, registry lifecycle, sealed-state immutability, and future execution-dependency issues. Regression fixes are in progress and must pass a new independent exact-head review.
+- The later security and integration review verified `SEC-018` at P0 and `SEC-019` at P1. Because the bootstrap policy has not reached the default branch, both must be folded into the current v1 bootstrap and independently reviewed before Task 0.3 can be accepted. `INT-002` is retained as a P2 backlog record because Slack is excluded from the initial supported-release scope and must fail closed until a future requalification project.
+- Task 4.18 has a substantial partial implementation at `c594023`: delivery rows gained tenant attribution, settings queries gained an exact organization filter, webhook writes gained attribution, and two-tenant and unattributed-row tests exist. `TEN-001` remains Open and Task 4.18 remains unchecked because migration-lineage repair, full task verification, and independent acceptance are incomplete; the canonical finding wording describes the audited revision.
+- The GitHub-assigned workflow identity and repository ruleset remain an external post-merge gate. They cannot be represented as complete by tracked code alone.
+
+### Remaining sequence
+
+1. Finish Task 0.3 parser, registry, terminal-state, workflow, dependency-install, and trust-root remediation, then register `SEC-018` and `SEC-019` in the current v1 bootstrap so it contains all 43 known P0/P1 release gates.
+2. Run focused tests, all static gates, every workspace typecheck and test suite, the production build, and an independent exact-head review.
+3. Merge the Task 0.3 tracked implementation to the default branch, verify the GitHub-assigned workflow identity, and have repository administrators activate and test the required `Trusted readiness policy` ruleset, current-branch requirement, stale-approval dismissal, and reviewer controls.
+4. Re-pin the comprehensive audit to the then-current immutable default-branch commit, rerun inventory, redacted secret and history and personal-data scans, dependency audit, build, verification, and security review, and use the governed-scope process for any finding first discovered by that refresh.
+5. Implement Task 0.1 immediately. Pull its executable documentation-link and clean-checkout command gate forward from Tasks 6.1 and 6.3 before marking the task accepted.
+6. Complete Task 0.2 with the required human privacy, media ownership, and history decision.
+7. Execute Tasks 1.1, 1.2, and 1.4 through 1.6 to remove organization coupling, clear the deferred organization-neutrality scan, and add the portability gate.
+8. Execute every task in Phases 2 through 7 in dependency order. None of those tasks is accepted complete yet.
+
+Checkboxes below represent acceptance, not code presence or partial progress. A task remains unchecked until its verification and independent review are complete.
 
 ## Executive assessment
 
@@ -105,7 +164,7 @@ flowchart LR
   DB[(PostgreSQL)]
   Redis[(Redis pub/sub)]
   S3[(S3-compatible storage)]
-  Providers["Email, GitHub, Slack, OAuth"]
+  Providers["Email, GitHub, OAuth"]
 
   Browser -->|HTTPS| Next
   Browser -->|same-origin WebSocket in production| VercelWS
@@ -143,7 +202,7 @@ This graph is acyclic, and no package was found importing another workspace thro
 - Cross-tenant, role-escalation, invite, session-revocation, and team-scope adversarial tests are extensive.
 - Drizzle queries are parameterized, and the few raw SQL uses are constrained.
 - Realtime tickets are short-lived and HMAC verified. Membership, session, scope, subscription, rate, and outbound-buffer controls already exist.
-- GitHub and Slack webhook signatures are verified, Slack timestamps have a replay window, and GitHub delivery rows support most retry and deduplication behavior.
+- GitHub webhook signatures are verified, and GitHub delivery rows support most retry and deduplication behavior. Slack code exists but is excluded from the supported-release scope and must be disabled rather than advertised as working.
 - Markdown removes scripts, active embedded elements, unsafe URL schemes, and unsafe link targets. The remaining finding concerns permitted classes and remote images.
 - Upload keys are tenant-scoped and sanitized, attachment authorization is server-side, and download names use safe content disposition.
 - CodeQL, Dependabot, strict TypeScript, Biome, the comment check, source-byte check, Bun-import check, dependency dedupe check, package-local tests, and Playwright already exist.
@@ -204,6 +263,7 @@ This graph is acyclic, and no package was found importing another workspace thro
 | PRIV-002 | P1 | Web Vitals records per-user soft-navigation samples, interaction targets, and detailed attribution for 90 days without an operator disable or sampling control | Web Vitals provider, report, route, schema, and prune policy | Data minimization, explicit modes and sampling, documented fields and retention, deletion and abuse controls |
 | REL-001 | P1 | `/api/health` is static, Redis may silently disable realtime, and pruning requires undocumented `CRON_SECRET` | health, publisher, cron, env docs | Liveness/readiness split, required capability validation, scheduled jobs |
 | INT-001 | P0 | GitHub setup docs request write access and a Push event that current code does not need or handle | `docs/integrations.md`, `docs/github-app.md`, GitHub services | One least-privilege permission manifest and generated/tested docs |
+| INT-002 | P2 | Slack integration is currently nonfunctional and is outside the initial supported-release scope | Slack settings UI, OAuth routes, API routes, webhook route, and setup documentation | Keep Slack disabled and absent from supported-release claims until a future project requalifies OAuth, events, API permissions, and end-to-end behavior |
 | MCP-001 | P1 | Every MCP tool declares `destructiveHint: false`, including permanent deletes | MCP tool support and workspace tools | Accurate destructive, read-only, idempotent, and open-world annotations |
 | CI-001 | P0 | CI omits source-byte and Bun-runtime gates and does not test the production deployment shape | root scripts and `.github/workflows/ci.yml` | CI parity plus production artifact, Compose, migration, and realtime smoke tests |
 | CI-002 | P1 | Main CI action tags and some container tags are mutable; workflow permissions are not explicit | main CI and Compose | SHA or digest pins, least privilege, no persisted credentials |
@@ -240,7 +300,7 @@ flowchart TB
   Redis[(Redis<br/>ephemeral fan-out and rate limits)]
   Storage[(S3-compatible object storage)]
   Email["Email provider"]
-  Integrations["GitHub, Slack, OAuth providers"]
+  Integrations["GitHub and OAuth providers"]
 
   Client -->|HTTPS and MCP| Edge
   Client -->|WSS /api/ws| Edge
@@ -290,15 +350,33 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `README.md`
 - Modify: `docs/README.md`
 - Modify: `docs/self-hosting.md`
+- Modify: `docs/getting-started.md`
+- Modify: `docs/configuration.md`
+- Modify: `docs/architecture.md`
+- Modify: `docs/troubleshooting.md`
+- Modify: `docs/concepts.md`
+- Modify: `docs/roadmap.md`
+- Modify: `docs/mcp.md`
+- Modify: `infra/README.md`
+- Modify: `SECURITY.md`
+- Modify: `CLAUDE.md`
+- Modify: `apps/web/src/app/llms.txt/route.ts`
+- Modify: `apps/web/src/features/landing/landing-meta.ts`
+- Modify: `apps/web/src/features/landing/landing-page.tsx`
+- Modify: Slack integration picker, settings, connect, OAuth, API, callback, and webhook surfaces so they fail closed while unsupported
+- Modify: existing landing metadata and `llms.txt` tests
+- Modify: Slack settings and route tests to prove the unsupported surface is absent or denied
 - Create: `docs/open-source-readiness.md`
+- Create: public documentation contract and deterministic link tests under `packages/db/tests/`
+- Create: a content-digest-backed documentation command manifest and clean-checkout runner under `packages/db/tests/support/`
 
-- [ ] State that the current self-hosting path is preview quality until the P0 gates in this plan are complete.
-- [ ] Remove or qualify any claim that Docker and generic standalone realtime are already supported.
-- [ ] Link the readiness page to this plan and publish the verified limitations without security-sensitive exploit detail.
-- [ ] Define who can close each P0 finding and where evidence is recorded.
-- [ ] Test every README and docs command in a clean checkout.
+- [ ] State on every public claim surface that production self-hosting is Preview, not a supported release, while preserving Apache 2.0 rights, intentional upstream attribution, and Noveum AI sponsorship.
+- [ ] Remove or qualify turnkey Docker, generic standalone realtime, one-click bootstrap, production `db:push`, durable-recovery, dependency-readiness, provider-equivalence, release, upgrade, free-tier, timing, scaling, and Slack support claims that the current tree does not prove. Hide Slack controls and deny every Slack OAuth, API, callback, and webhook entry point until a future requalification project.
+- [ ] Link the readiness page to this plan and canonical ledger, project every current Open P0 with its accountable role and outcome-level limitation, and keep exploit mechanics and private evidence in the private advisory process.
+- [ ] Define the separate implementation, finding-owner, Release-approval, Security-authority, Ready-evidence, and terminal-seal responsibilities required to close a P0, and state that P0 findings cannot use the P1 exception path.
+- [ ] Classify every user-facing shell fence, validate local links and fragments against exact tracked-file casing, run every safe command from an immutable clean checkout, probe development services, redact output, and store a candidate-bound transcript and digest without touching another worktree's processes or data.
 
-**Verification:** `bun run verify`, documentation link check, and a stored clean-checkout command transcript produced by the executable docs-command gate.
+**Verification:** documentation contract, Slack absence and route-denial tests, exact-case GFM link and fragment checks, command-manifest completeness, a serial disposable clean-checkout run covering install, development infrastructure, schema setup, seed, web and realtime probes, verification, build, and documented E2E prerequisites, `bun run verify`, and a redacted transcript bound to the immutable candidate SHA and transcript SHA-256.
 
 **Suggested commit:** `docs: state the current self-hosting support boundary`
 
@@ -362,7 +440,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Keep this implementation plan as the stable scope document and the ledger as changing execution state.
 - [ ] After the readiness workflow reaches the default branch, verify its GitHub-assigned identity and configure an active repository ruleset that requires the explicit head status. Do not use a placeholder workflow ID.
 
-**Verification:** The initial v1 fixture proves exactly 41 pinned P0 and P1 rows while ongoing CI derives current counts from the governed manifest. Semantic scope and trust-root changes pass only through their dedicated trusted-base shapes, supported review events refresh the result, fork-token limitations have a trusted rerun path, and exact-head approvals are revalidated immediately before success. `Ready for closure` records agree on a squash-merged candidate and authenticated workflow, job, step, pull request, and artifact evidence. A separate seal authenticates the prior Ready pull request for M, including the Actions run's top-level target repository identity, and binds its reviewed snapshot. Durable seals remain valid after artifact expiry or later product commits without repeated hosted calls. Automated limitation checks are supplemented by documented human semantic review. Repository administrators must separately activate and verify the ruleset that requires the explicit `Trusted readiness policy` head status after the workflow reaches the default branch.
+**Verification:** The initial v1 fixture proves exactly 43 pinned P0 and P1 rows while ongoing CI derives current counts from the governed manifest. Semantic scope and trust-root changes pass only through their dedicated trusted-base shapes, supported review events refresh the result, fork-token limitations have a trusted rerun path, and exact-head approvals are revalidated immediately before success. `Ready for closure` records agree on a squash-merged candidate and authenticated workflow, job, step, pull request, and artifact evidence. A separate seal authenticates the prior Ready pull request for M, including the Actions run's top-level target repository identity, and binds its reviewed snapshot. Durable seals remain valid after artifact expiry or later product commits without repeated hosted calls. Automated limitation checks are supplemented by documented human semantic review. Repository administrators must separately activate and verify the ruleset that requires the explicit `Trusted readiness policy` head status after the workflow reaches the default branch.
 
 **Suggested commit:** `docs: add the open source readiness ledger`
 
@@ -436,13 +514,15 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `.gitignore`
 - Create: `docs/adr/README.md`
 
-- [ ] Prove that the tenant-specific catchup is not required to construct a fresh generic schema.
-- [ ] Move any still-needed operator command to a private, ignored location outside shipped scripts.
-- [ ] Distill durable architectural decisions into ADRs without branch names, review-bot logs, production identifiers, or current-database instructions.
-- [ ] Define a retention rule: public plans describe reusable project work; tenant operations remain outside the repository.
-- [ ] Keep this open-source readiness plan public until completion, then distill its durable decisions and archive its execution state.
+- [x] Prove that the tenant-specific catchup is not required to construct a fresh generic schema.
+- [x] Move any still-needed operator command to a private, ignored location outside shipped scripts.
+- [x] Distill durable architectural decisions into ADRs without branch names, review-bot logs, production identifiers, or current-database instructions.
+- [x] Define a retention rule: public plans describe reusable project work; tenant operations remain outside the repository.
+- [x] Define and record the policy that keeps this open-source readiness plan public while active and requires its durable decisions to be distilled before its execution state is archived.
 
-**Verification:** fresh migrations and generic seed complete without any removed file; organization-specific search allowlist contains only intentional upstream/legal references.
+**Task-scoped verification:** Fresh migrations and the generic seed complete without the removed tenant catchup; focused tests and a full isolated-lane verification pass for the accepted implementation at `cb2844d`.
+
+**Deferred phase gate:** The repository-wide organization-specific allowlist cannot pass until Task 0.2 and Tasks 1.1 through 1.6 remove, replace, or narrowly govern the remaining seed, importer, fixture, media, branding, and operational material. Task 1.3 acceptance does not satisfy that phase-wide gate.
 
 **Suggested commit:** `docs: remove tenant specific operations material`
 
@@ -501,7 +581,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Create: `scripts/check-public-fixtures.ts`
 - Create: `scripts/public-fixture-allowlist.json`
-- Create: `scripts/tests/check-public-fixtures.test.ts`
+- Create: `packages/db/tests/scripts/check-public-fixtures.test.ts`
 - Modify: `package.json`
 - Modify: `.github/workflows/ci.yml`
 
@@ -517,6 +597,8 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 ---
 
 ## Phase 2: Make realtime recovery and database upgrades durable
+
+**Migration sequencing gate:** Complete Task 2.9's lineage guard and repair the observed migration identity collision before Task 2.2 or any other task creates or applies a new migration. The design-only work in Task 2.1 may proceed first. The full cross-version upgrade matrix in Task 2.9 can continue after the guard is active, but no schema-bearing task may bypass the guard.
 
 ### Task 2.1: Approve the durable sync event and outbox design
 
@@ -539,6 +621,8 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 **Suggested commit:** `docs: specify durable realtime recovery`
 
 ### Task 2.2: Add the sync event schema through a committed migration
+
+**Blocked by:** the migration-lineage guard and collision repair in Task 2.9.
 
 **Files:**
 
@@ -694,7 +778,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Modify: migration generation scripts and `packages/db/package.json`
 - Create: `scripts/check-migration-lineage.ts`
-- Create: `scripts/tests/check-migration-lineage.test.ts`
+- Create: `packages/db/tests/scripts/check-migration-lineage.test.ts`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `CONTRIBUTING.md`
 - Modify: `docs/upgrading.md`
@@ -722,10 +806,10 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Refactor: `apps/web/src/lib/env.ts`
 - Modify: `apps/realtime/src/env.ts`
-- Create: `apps/jobs/src/env.ts`
+- Modify: `apps/jobs/src/env.ts`
 - Create: `packages/shared/src/config/capabilities.ts`
 - Create: `scripts/doctor.ts`
-- Create: `scripts/tests/doctor.test.ts`
+- Create: `packages/db/tests/scripts/doctor.test.ts`
 - Modify: root `package.json`
 - Replace or split: `.env.example`
 - Create: `.env.production.example`
@@ -889,7 +973,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Create: `docs/operations/backup-and-restore.md`
 - Create: `docs/operations/disaster-recovery.md`
 - Create: `scripts/verify-backup.ts`
-- Create: `scripts/tests/verify-backup.test.ts`
+- Create: `packages/db/tests/scripts/verify-backup.test.ts`
 - Modify: Compose and release documentation
 
 - [ ] Document consistent backup of PostgreSQL and object storage, including encryption, retention, access control, and off-site copies.
@@ -1025,7 +1109,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Files:**
 
-- Modify: Slack and GitHub start and callback routes
+- Modify: GitHub start and callback routes
 - Modify: `apps/web/src/features/settings/integrations-connect.ts`
 - Modify: `apps/web/src/features/settings/github-connect.ts`
 - Modify: integration service write APIs
@@ -1037,7 +1121,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Ensure a rejected callback cannot overwrite an existing integration or leave a partial credential row.
 - [ ] Keep callback error redirects opaque and avoid logging authorization codes or provider tokens.
 
-**Verification:** Slack and GitHub callback suites, concurrency test, state replay test, and existing cross-tenant integration tests.
+**Verification:** GitHub callback suite, concurrency test, state replay test, existing cross-tenant integration tests, and the Task 0.1 Slack route-denial contract.
 
 **Suggested commit:** `fix(integrations): reauthorize OAuth callbacks`
 
@@ -1074,7 +1158,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `apps/web/src/features/docs/doc-body.tsx`
 - Modify: Markdown tests
 - Create: remote-media policy or proxy modules only if approved
-- Create: `docs/security/user-content.md`
+- Modify: `docs/security/user-content.md`
 
 - [ ] Add failing tests for fixed full-screen overlays, high z-index content, hidden controls, pointer interception, copied application utility classes, remote tracking pixels, referrer leakage, and authenticated document viewing.
 - [ ] Remove arbitrary `class` attributes from user HTML. Allow only renderer-generated code-highlight classes through a strict token validator.
@@ -1092,7 +1176,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Modify: `apps/web/src/lib/api/handler.ts`
 - Modify: direct `request.json()` routes
-- Modify: GitHub and Slack webhook routes
+- Modify: GitHub webhook routes
 - Modify: `apps/web/src/app/api/ws/route.ts`
 - Modify: `apps/realtime/src/server.ts`
 - Modify: `packages/realtime-server/src/hub.ts`
@@ -1173,14 +1257,12 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Files:**
 
-- Modify: `apps/web/src/app/api/integrations/slack/route.ts`
-- Modify: Slack route tests
 - Modify: `packages/mcp-server/src/tools/support.ts`
 - Modify: all MCP tool definitions
 - Modify: `packages/mcp-server/tests/tools.test.ts`
 - Modify: `packages/mcp-server/src/server.ts`
 
-- [ ] Require `integration:manage` for Slack configuration metadata and test guest, contributor, member, and administrator behavior.
+- [ ] Keep Task 0.1's unsupported Slack surface inventory and route-denial tests green. Do not add Slack repair or support claims in the initial release.
 - [ ] Add explicit MCP `readOnly`, `destructive`, `idempotent`, and `openWorld` properties to the internal tool config.
 - [ ] Mark permanent delete tools destructive, and classify archive, restore, create, update, and external-network tools accurately.
 - [ ] Generate a test inventory that fails when a newly registered tool lacks reviewed annotations.
@@ -1195,13 +1277,11 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 **Files:**
 
 - Modify: GitHub webhook route and delivery service
-- Modify: Slack webhook route and schema
-- Add an ordered migration for Slack event deduplication if needed
 - Add webhook tests under web and services test trees
 
-- [ ] Preserve constant-time signatures and Slack timestamp validation.
+- [ ] Preserve constant-time GitHub signature validation.
 - [ ] Claim a GitHub delivery atomically so concurrent retries cannot both process a received or failed row.
-- [ ] Deduplicate Slack events by signed workspace and event ID with bounded retention.
+- [ ] Keep the unsupported Slack webhook denied through the Task 0.1 route inventory rather than repairing or advertising it in this release.
 - [ ] Separate provider acknowledgment from internal asynchronous work when provider timeouts can cause retries.
 - [ ] Make every side effect idempotent or keyed by the provider event and target.
 - [ ] Store only the minimum event metadata required for retry and audit.
@@ -1238,7 +1318,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `packages/db/src/schema/oauth.ts`
 - Modify: `packages/db/src/schema/comms.ts` and add ordered migrations
 - Create: `packages/services/src/secrets/`
-- Modify: Slack, GitHub, OAuth, and webhook credential read/write paths
+- Modify: GitHub, OAuth, and supported webhook credential read/write paths
 - Create: credential encryption and rotation tests
 - Create: `docs/operations/credential-rotation.md`
 
@@ -1247,7 +1327,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Keep encryption keys outside the database, support a current and prior key during rotation, and never expose them to browser bundles, logs, or job payloads.
 - [ ] Hash secrets that only need equality verification, including OAuth client secrets or bearer tokens where framework constraints permit.
 - [ ] Add a resumable rotation command that re-encrypts in bounded batches, verifies before replacing, and reports only counts and record IDs.
-- [ ] Define compromise response for auth secret, credential-encryption key, OAuth provider tokens, Slack tokens, GitHub App key, webhook secrets, and storage credentials.
+- [ ] Define compromise response for auth secret, credential-encryption key, OAuth provider tokens, GitHub App key, webhook secrets, storage credentials, and any retained dormant-integration secrets pending deletion.
 
 **Verification:** ciphertext tamper, wrong tenant AAD, wrong key, mixed key version, interrupted rotation, old-row migration, deletion, and redaction tests.
 
@@ -1378,6 +1458,31 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Suggested commit:** `feat(vitals): add explicit privacy and collection controls`
 
+### Task 4.21: Eliminate the parallel organization mutation control plane
+
+**Files:**
+
+- Modify: `apps/web/src/lib/auth/server.ts`
+- Modify: `apps/web/src/app/api/auth/[...all]/route.ts`
+- Create or modify: Better Auth endpoint-inventory and organization-route policy tests under `apps/web/tests/lib/auth/`
+- Modify: canonical organization, invitation, membership, session, storage-cleanup, and realtime services where parity gaps remain
+- Create: a reviewed reconciliation command for plugin-created organizations, roles, memberships, invitations, sessions, and storage state
+- Modify: the repository threat model and operator upgrade guidance
+
+**Prerequisites:** Complete Task 2.9's migration-lineage guard, Task 3.5's first-run and bootstrap contract, Task 4.2's storage-cleanup guarantees, and Task 4.14's audit-event contract. Build and review the reconciliation preflight before strict route denial so an existing plugin-created organization, role, membership, invitation, or session cannot be stranded.
+
+- [ ] Add a failing endpoint-inventory test that enumerates every mounted Better Auth organization route and denies every mutation except explicitly approved active-session behavior.
+- [ ] Build a default-dry-run reconciliation preflight for plugin-created organizations, roles, memberships, invitations, sessions, incomplete bootstrap state, and storage. Report affected identities and stop on unresolved ownership or cleanup state before changing anything.
+- [ ] Route every supported organization write through the canonical Orbit services with current policy, organization locking, session revocation, storage lifecycle, audit, and realtime publication.
+- [ ] Align the role model, reject new non-Orbit roles, and define a safe migration for existing `owner` or other plugin-only roles.
+- [ ] After the preflight and reconciliation are accepted, disable plugin organization creation and deletion and fail closed when a dependency upgrade adds or renames an organization mutation endpoint.
+- [ ] Deny alternate invite, cancel, accept, reject, remove, role-update, leave, and organization-update routes at the auth boundary only after affected existing state has a verified migration or explicit operator stop.
+- [ ] Prove lifecycle parity for creation bootstrap, allowed domains, current inviter authority, deletion state, last-admin protection, issue reassignment, sessions, connected realtime clients, storage cleanup, and future endpoint drift.
+
+**Verification:** endpoint inventory and denial tests, service parity tests, migration and reconciliation tests on disposable databases, two-session realtime invalidation, storage cleanup failure tests, full verification, and a production build.
+
+**Suggested commit:** `fix(auth): use one organization lifecycle control plane`
+
 ---
 
 ## Phase 5: Make CI, testing, and the supply chain release-grade
@@ -1414,7 +1519,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `AGENTS.md`
 - Modify: `CONTRIBUTING.md`
 - Create: `scripts/check-test-output.ts`
-- Create: `scripts/tests/check-test-output.test.ts`
+- Create: `packages/db/tests/scripts/check-test-output.test.ts`
 
 - [ ] Add `verify:static` containing format/lint, comment policy, control-byte policy, Node-runtime policy, dependency checks, generated-file checks, and typechecking.
 - [ ] Define `verify` as `verify:static` plus the complete package test matrix.
@@ -1496,7 +1601,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Create: `.gitleaks.toml`
 - Modify: `.github/workflows/ci.yml`
-- Create: release workflow under `.github/workflows/`
+- Create: `.github/workflows/supply-chain.yml` as a reusable security gate for CI and the later release workflow
 - Create: `docs/security/supply-chain.md`
 - Modify: release artifact configuration
 
@@ -1508,7 +1613,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Sign image digests and release checksums through keyless or documented protected signing.
 - [ ] Generate build provenance and attach SBOM, checksums, vulnerability summary, and migration notes to each release.
 
-**Verification:** a synthetic secret fails, the documented Slack test vector passes only through its narrow rule, incompatible license fixture fails, and release artifacts verify offline.
+**Verification:** a synthetic secret fails, each documented published webhook test vector passes only through its narrow rule, an incompatible license fixture fails, and release artifacts verify offline.
 
 **Suggested commit:** `ci(security): add secret and supply chain gates`
 
@@ -1611,12 +1716,12 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Create: `docs/architecture/components.md`
 - Create: `docs/architecture/data-model.md`
 - Create: `docs/architecture/authentication-and-authorization.md`
-- Create: `docs/architecture/realtime-consistency.md`
+- Modify: `docs/architecture/realtime-consistency.md`
 - Create: `docs/architecture/storage-and-uploads.md`
 - Create: `docs/architecture/integrations-and-webhooks.md`
 - Create: `docs/architecture/mcp.md`
 - Create: `docs/architecture/jobs-and-retention.md`
-- Create: `docs/adr/`
+- Modify: `docs/adr/README.md` and the relevant ADRs
 
 - [ ] Generate a system context diagram, runtime container diagrams for every supported profile, and a package dependency diagram from checked-in manifests.
 - [ ] Generate an ER diagram from Drizzle schema metadata and label tenant keys, cascades, retention classes, and credential-bearing tables.
@@ -1638,7 +1743,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `docs/troubleshooting.md`
 - Modify: development Compose profile
 - Create: `scripts/bootstrap.ts`
-- Create: `scripts/tests/bootstrap.test.ts`
+- Create: `packages/db/tests/scripts/bootstrap.test.ts`
 
 - [ ] Provide a concise quickstart that installs locked dependencies, copies the development example, starts loopback-only infrastructure, migrates, creates test databases, seeds fictional data, and starts web plus realtime.
 - [ ] Make bootstrap idempotent and give every failure a specific corrective message.
@@ -1655,14 +1760,14 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 **Files:**
 
 - Modify: `docs/self-hosting.md`
-- Create: `docs/deploy/vercel.md`
+- Modify: `docs/deploy/vercel.md`
 - Create: `docs/deploy/compose.md`
 - Create: `docs/deploy/kubernetes.md` only after it is tested and supported
 - Create: `docs/operations/monitoring.md`
 - Create: `docs/operations/maintenance.md`
 - Create: `docs/operations/incident-response.md`
 - Create: `docs/operations/capacity.md`
-- Create: `docs/upgrading.md`
+- Modify: `docs/upgrading.md`
 
 - [ ] Document exact supported component versions, network paths, TLS, proxy headers, connection limits, database pooling, Redis persistence expectations, storage CORS, email DNS, and job schedules.
 - [ ] Provide preflight, deploy, verify, rollback-by-forward-fix, backup, restore, rotate-secret, scale, and uninstall procedures.
@@ -1681,7 +1786,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - Modify: `docs/configuration.md`
 - Modify: `docs/github-app.md`
 - Modify: `docs/integrations.md`
-- Create: typed GitHub and Slack permission manifests
+- Create: a typed GitHub permission manifest
 - Create: `scripts/generate-config-docs.ts`
 - Create: `scripts/generate-integration-docs.ts`
 - Modify: CI generated-file check
@@ -1690,8 +1795,8 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 - [ ] Keep example values safe and visibly non-production.
 - [ ] Define GitHub App permissions and subscribed events once, at least privilege, then render both guides from that manifest.
 - [ ] Remove Contents permission, Pull Requests write access, and Push subscription unless code gains a reviewed need.
-- [ ] Document Slack scopes and events from the same source used by integration readiness checks.
-- [ ] Add tests mapping implemented webhook event handlers to documented provider events.
+- [ ] Add tests mapping implemented GitHub webhook handlers and API consumers to the manifest, rejecting an undocumented event, an unrequested required permission, an unused requested permission, or a runtime call without its reviewed permission.
+- [ ] Keep generated integration references explicit that Slack is deferred and unsupported, and fail generation if a Slack setup or support claim returns before its future requalification gate exists.
 
 **Verification:** generated docs are clean after generation; provider permission snapshots match code and official provider documentation.
 
@@ -1746,7 +1851,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 - Modify: `biome.json`
 - Create: `scripts/check-package-boundaries.ts`
-- Create: `scripts/tests/check-package-boundaries.test.ts`
+- Create: `packages/db/tests/scripts/check-package-boundaries.test.ts`
 - Modify: package manifests
 - Modify: root verification scripts
 
@@ -1830,7 +1935,7 @@ The provider-neutral profile must not call the Vercel WebSocket upgrade function
 
 **Files:**
 
-- Create: `.github/workflows/release.yml`
+- Create: `.github/workflows/release.yml` and call the reusable `.github/workflows/supply-chain.yml` gate
 - Modify: Dockerfiles and release scripts
 - Create: release notes template
 - Modify: security and upgrade docs
@@ -1922,7 +2027,7 @@ Safe parallel tracks after Phase 0:
 
 - Demo, fixture, screenshot, and branding cleanup
 - Realtime event-log design and migration-upgrade design
-- Request limits, browser headers, Slack metadata policy, and MCP annotations
+- Request limits, browser headers, the unsupported Slack denial boundary, and MCP annotations
 - Documentation information architecture and governance drafts
 - Dependency updates and CI pinning, provided lockfile ownership is coordinated
 
@@ -1963,7 +2068,7 @@ These are relative sizes, not delivery dates.
 | Migrations | Catalog fingerprint and baseline parser | Empty and every supported prior release | Start artifact after upgrade | Partial migration, incompatible schema, unreachable DB |
 | Auth | Provider pairing, linking, step-up | Session and credential lifecycle | Every supported first-login mode | Different email, last credential, replay, placeholder config |
 | MCP | Scope and tool annotation contracts | Grant and token binding | Discovery, consent, call, revoke | Rebind, downgrade, expired grant, tenant deletion |
-| Integrations | State, signature, event schemas | Tenant-bound credentials and delivery rows | GitHub and Slack happy paths | Demotion during callback, replay, concurrent webhook retry |
+| Integrations | State, signature, event schemas | Tenant-bound credentials and delivery rows | GitHub happy paths and Slack absence | Demotion during callback, replay, concurrent GitHub webhook retry, Slack route denial |
 | Uploads | Name, MIME, bytes, image decoder | Quota reservation and attachment ownership | Presign, complete, view, delete | Oversubscription, orphan, spoofed type, storage loss, SSRF |
 | Markdown | Sanitizer and URL policy corpus | Stored private document rendering | Keyboard and screen-reader document use | UI overlay, remote pixel, CSP violation, malicious HTML |
 | Document export | URL normalization and renderer contracts | Authorized attachment resolution | Download and inspect a real PDF | Remote image, oversized media, renderer failure, duplicate click |
@@ -1987,7 +2092,7 @@ The supported release is not complete until these documents are accurate and tes
 - System context, container, component, package, data, auth, realtime, storage, integration, MCP, and jobs architecture documents
 - Threat model, browser policy, user-content policy, retention policy, supply-chain policy, and dependency policy
 - Web Vitals field inventory, sampling, local-storage, retention, deletion, and disablement guide
-- GitHub App and Slack least-privilege setup generated from manifests
+- GitHub App least-privilege setup generated from its manifest; Slack is documented as deferred and disabled
 - MCP user and operator guide
 - Branding and fork checklist
 - API and schema stability policy

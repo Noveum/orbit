@@ -521,6 +521,23 @@ function resolvedErrors(rows: readonly string[], exceptions: readonly string[] =
   );
 }
 
+function resolvedPublicLimitationErrors(limitation: string): string[] {
+  return resolvedErrors(
+    [resolvedClosedRow({ status: 'Accepted P1 exception' })],
+    [
+      exceptionRow({
+        ownerReference: 'principal:documentation-person',
+        mitigation: 'mitigation:record:mitigation/doc-001',
+        limitation,
+        residualRisk: 'risk:record:audit/doc-001',
+        decision:
+          'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+        approver: 'approver:principal:release-person',
+      }),
+    ],
+  );
+}
+
 function resolvedClosedRow(overrides: Readonly<Record<string, string>> = {}): string {
   return findingRow({
     ownerReference: 'principal:documentation-person',
@@ -1933,16 +1950,68 @@ describe('readiness ledger checker', () => {
   });
 
   it('rejects visually blank and deferred public limitations', () => {
-    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
     for (const limitation of [
       'Operator impact is T​BD after review',
       'Operator impact is &#84;&#8203;&#66;&#68; after review',
       'T.BD impact remains after release',
       'The operational effect awaits later review',
       'The impact remains under review',
+    ]) {
+      expect(resolvedPublicLimitationErrors(limitation)).toContain(
+        'P1 exception finding ID DOC-001 has an invalid public limitation.',
+      );
+    }
+    for (const limitation of [
       '<!-- documented temporary operator limitation remains -->',
       '<span></span><span></span>',
-      '[](https://example.com/words-that-inflate-count)',
+    ]) {
+      expect(() => resolvedPublicLimitationErrors(limitation)).toThrow(
+        'Markdown HTML tokens are not allowed in governed tables.',
+      );
+    }
+    expect(() =>
+      resolvedPublicLimitationErrors('[](https://example.com/words-that-inflate-count)'),
+    ).toThrow('Markdown link tokens are not allowed in governed tables.');
+  });
+
+  it('rejects public limitations whose apparent prose is hidden raw HTML', () => {
+    for (const limitation of [
+      '<script>Self hosted users cannot import legacy archives</script>',
+      '<style>Self hosted users cannot import legacy archives</style>',
+      '<title>Self hosted users cannot import legacy archives</title>',
+      '<head>Self hosted users cannot import legacy archives</head>',
+      '<template>Self hosted users cannot import legacy archives</template>',
+    ]) {
+      expect(() => resolvedPublicLimitationErrors(limitation)).toThrow(
+        'Markdown HTML tokens are not allowed in governed tables.',
+      );
+    }
+  });
+
+  it('rejects a public limitation rendered as an empty reference link', () => {
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    const exception = exceptionRow({
+      ownerReference: 'principal:documentation-person',
+      mitigation: 'mitigation:record:mitigation/doc-001',
+      limitation: '[][documented-temporary-operator-limitation-remains]',
+      residualRisk: 'risk:record:audit/doc-001',
+      decision:
+        'decision:record:decision/doc-001;implementation=principal:implementation-person;finding=principal:documentation-person;approver=principal:release-person',
+      approver: 'approver:principal:release-person',
+    });
+    const document = `${ledger([finding], [exception])}\n[documented-temporary-operator-limitation-remains]: https://example.com\n`;
+    expect(() => parseExceptionRows(document)).toThrow(
+      'Markdown link tokens are not allowed in governed tables.',
+    );
+  });
+
+  it('rejects default-ignorable characters as public limitation prose', () => {
+    const finding = resolvedClosedRow({ status: 'Accepted P1 exception' });
+    const literalFiller = String.fromCodePoint(0x1160);
+    const entityFiller = '&#x3164;';
+    for (const limitation of [
+      `${entityFiller.repeat(6)} ${entityFiller.repeat(5)} ${entityFiller.repeat(5)}`,
+      `${literalFiller.repeat(6)} ${literalFiller.repeat(5)} ${literalFiller.repeat(5)}`,
     ]) {
       expect(
         resolvedErrors(
@@ -1961,6 +2030,128 @@ describe('readiness ledger checker', () => {
         ),
       ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
     }
+  });
+
+  for (const [form, limitation] of [
+    [
+      'literal zero-width formatting',
+      `Migration remains pen${String.fromCodePoint(0x200b)}ding after release.`,
+    ],
+    ['encoded zero-width formatting', 'Migration remains pen&#x200B;ding after release.'],
+    [
+      'semicolonless encoded zero-width formatting',
+      'Migration remains pen&#8203ding after release.',
+    ],
+    ['semicolonless legacy named formatting', 'Migration remains pen&shyding after release.'],
+    ['encoded soft-hyphen formatting', 'Migration remains pen&shy;ding after release.'],
+    ['Markdown emphasis formatting', 'Migration remains pen**din**g after release.'],
+  ] as const) {
+    it(`rejects placeholder terms split with ${form}`, () => {
+      expect(resolvedPublicLimitationErrors(limitation)).toContain(
+        'P1 exception finding ID DOC-001 has an invalid public limitation.',
+      );
+    });
+  }
+
+  for (const [entity, limitation] of [
+    ['ZeroWidthSpace', 'Migration remains pen&ZeroWidthSpace;ding after release.'],
+    ['zwnj', 'Migration remains pen&zwnj;ding after release.'],
+    ['zwj', 'Migration remains pen&zwj;ding after release.'],
+    ['lrm', 'Migration remains pen&lrm;ding after release.'],
+    ['NegativeMediumSpace', 'Migration remains pen&NegativeMediumSpace;ding after release.'],
+  ] as const) {
+    it(`rejects a placeholder split with the ${entity} HTML5 entity`, () => {
+      expect(resolvedPublicLimitationErrors(limitation)).toContain(
+        'P1 exception finding ID DOC-001 has an invalid public limitation.',
+      );
+    });
+  }
+
+  it('rejects an unknown character reference instead of splitting a placeholder word', () => {
+    expect(
+      resolvedPublicLimitationErrors(
+        'Migration remains pen&notARealHtmlEntity;ding after release.',
+      ),
+    ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+  });
+
+  it('rejects a semicolonless unknown character reference', () => {
+    expect(
+      resolvedPublicLimitationErrors('Migration remains pen&madeupentityding after release.'),
+    ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+  });
+
+  it('rejects a bare URL autolink in a public limitation', () => {
+    expect(() =>
+      resolvedPublicLimitationErrors(
+        'Self hosted users remain constrained by https://example.com/temporary-limitation.',
+      ),
+    ).toThrow('Markdown link tokens are not allowed in governed tables.');
+  });
+
+  it('rejects a www autolink in a public limitation', () => {
+    expect(() =>
+      resolvedPublicLimitationErrors(
+        'Self hosted users remain constrained by www.example.com/temporary.',
+      ),
+    ).toThrow('Markdown link tokens are not allowed in governed tables.');
+  });
+
+  it('rejects a bare email autolink in a public limitation', () => {
+    expect(() =>
+      resolvedPublicLimitationErrors(
+        'Contact operator@example.com for documented temporary limitation.',
+      ),
+    ).toThrow('Markdown link tokens are not allowed in governed tables.');
+  });
+
+  it('rejects an HTML5-entity-obfuscated bare email in a public limitation', () => {
+    expect(
+      resolvedPublicLimitationErrors(
+        'Contact operator&commat;example.com for documented temporary limitation.',
+      ),
+    ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+  });
+
+  for (const [form, limitation] of [
+    [
+      'literal zero-width formatting',
+      `Contact operator@exa${String.fromCodePoint(0x200b)}mple.com for documented temporary limitation.`,
+    ],
+    [
+      'encoded zero-width formatting',
+      'Contact operator@exa&ZeroWidthSpace;mple.com for documented temporary limitation.',
+    ],
+  ] as const) {
+    it(`rejects an email domain containing ${form}`, () => {
+      expect(resolvedPublicLimitationErrors(limitation)).toContain(
+        'P1 exception finding ID DOC-001 has an invalid public limitation.',
+      );
+    });
+  }
+
+  it('rejects a non-HTTP URI scheme in a public limitation', () => {
+    expect(
+      resolvedPublicLimitationErrors(
+        'Self hosted users remain constrained by git+ssh://example.com/operator.',
+      ),
+    ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+  });
+
+  it('rejects an unknown reference that can conceal an email address', () => {
+    expect(
+      resolvedPublicLimitationErrors(
+        'Contact operator@exa&madeupentitymple.com for documented temporary limitation.',
+      ),
+    ).toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
+  });
+
+  it('accepts ordinary punctuation in substantive public limitation prose', () => {
+    expect(
+      resolvedPublicLimitationErrors(
+        'Note: R&D and AT&T operators retain Q&A2 records and &development notes.',
+      ),
+    ).not.toContain('P1 exception finding ID DOC-001 has an invalid public limitation.');
   });
 
   it('accepts a complete resolvable staged exception fixture', () => {
@@ -2137,6 +2328,170 @@ describe('readiness ledger checker', () => {
     expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}`)).toThrow();
   });
 
+  for (const [form, headerPriority, id, priority] of [
+    ['HTML entities', 'Prior&#105;ty', 'ROGUE-&#57;99', 'P&#48;'],
+    ['semicolonless numeric entities', 'Prior&#105ty', 'ROGUE-999', 'P&#48'],
+    ['emphasis', 'Prior**i**ty', 'ROGUE-**999**', 'P**0**'],
+    ['a code span', 'Prior`i`ty', 'ROGUE-`999`', 'P`0`'],
+    ['inline HTML', 'Prior<i>i</i>ty', 'ROGUE-<i>999</i>', 'P<i>0</i>'],
+  ] as const) {
+    it(`rejects a rendered duplicate plan table obfuscated with ${form}`, () => {
+      const alternative = [
+        `| ID | ${headerPriority} | Finding | Verified evidence | Required outcome |`,
+        '| --- | --- | --- | --- | --- |',
+        `| ${id} | ${priority} | Visible alternative | Audit | Outcome |`,
+      ].join('\n');
+      expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}`)).toThrow();
+    });
+  }
+
+  for (const [variant, opening, closing] of [
+    ['span', '<span>', '</span>'],
+    ['hidden', '<span hidden>', '</span>'],
+    ['template', '<template>', '</template>'],
+    ['script', '<script>', '</script>'],
+    ['style', '<style>', '</style>'],
+    ['title', '<title>', '</title>'],
+    ['details', '<details>', '</details>'],
+    ['ARIA', '<span aria-hidden="true">', '</span>'],
+    ['CSS', '<span style="display: none">', '</span>'],
+  ] as const) {
+    it(`rejects the ${variant} HTML token variant in a canonical plan table`, () => {
+      const document = plan.replace(
+        'Documentation finding',
+        `${opening}Documentation finding${closing}`,
+      );
+      expect(() => parsePlanFindings(document)).toThrow(
+        'Markdown HTML tokens are not allowed in governed tables.',
+      );
+    });
+  }
+
+  it('rejects an HTML token in each canonical ledger register', () => {
+    expect(() =>
+      parseFindingRows(
+        ledger([findingRow({ finding: '<span hidden>Documentation finding</span>' })]),
+      ),
+    ).toThrow('Markdown HTML tokens are not allowed in governed tables.');
+    expect(() =>
+      parseExceptionRows(
+        ledger(
+          [findingRow()],
+          [exceptionRow({ limitation: '<span hidden>A temporary limitation remains</span>' })],
+        ),
+      ),
+    ).toThrow('Markdown HTML tokens are not allowed in governed tables.');
+  });
+
+  it('rejects an HTML token in a competing rendered plan table', () => {
+    const alternative = [
+      '| ID | Prior<span>i</span>ty | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P<span>0</span> | Visible alternative | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}`)).toThrow(
+      'Markdown HTML tokens are not allowed in governed tables.',
+    );
+  });
+
+  for (const [location, headerPriority, priority] of [
+    [
+      'header Priority',
+      '![](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)Priority',
+      'P0',
+    ],
+    [
+      'row P0',
+      'Priority',
+      '![](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)P0',
+    ],
+  ] as const) {
+    it(`rejects a data-image prefix before ${location}`, () => {
+      const alternative = [
+        `| ID | ${headerPriority} | Finding | Verified evidence | Required outcome |`,
+        '| --- | --- | --- | --- | --- |',
+        `| ROGUE-999 | ${priority} | Visible alternative | Audit | Outcome |`,
+      ].join('\n');
+      expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}`)).toThrow(
+        'Markdown image tokens are not allowed in governed tables.',
+      );
+    });
+  }
+
+  it('rejects image and link tokens in a canonical plan table', () => {
+    const image = plan.replace(
+      '| SEC-001 | P0 |',
+      '| SEC-001 | ![](data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==)P0 |',
+    );
+    expect(() => parsePlanFindings(image)).toThrow(
+      'Markdown image tokens are not allowed in governed tables.',
+    );
+    const link = plan.replace(
+      'Documentation finding',
+      '[Documentation finding](https://example.com/finding)',
+    );
+    expect(() => parsePlanFindings(link)).toThrow(
+      'Markdown link tokens are not allowed in governed tables.',
+    );
+  });
+
+  it('continues to accept code spans in governed table cells', () => {
+    const document = plan.replace(
+      'Documentation finding',
+      '`<span hidden>Documentation finding</span>`',
+    );
+    expect(() => parsePlanFindings(document)).not.toThrow();
+  });
+
+  for (const register of [
+    {
+      name: 'plan findings',
+      heading: 'Findings register',
+      table: [
+        '| ID | Priority | Finding | Verified evidence | Required outcome |',
+        '| --- | --- | --- | --- | --- |',
+        '| SEC-001 | P0 | Finding | Evidence | Outcome |',
+      ],
+      parse: (document: string) => parsePlanFindings(document),
+    },
+    {
+      name: 'readiness findings',
+      heading: 'Readiness findings register',
+      table: [findingHeader, findingSeparator, findingRow()],
+      parse: (document: string) => parseFindingRows(document),
+    },
+    {
+      name: 'P1 exceptions',
+      heading: 'P1 exception register',
+      table: [exceptionHeader, exceptionSeparator, exceptionRow()],
+      parse: (document: string) => parseExceptionRows(document),
+    },
+  ] as const) {
+    it(`rejects the ${register.name} table nested under a list item`, () => {
+      const document = [
+        `## ${register.heading}`,
+        '',
+        '- Archived examples',
+        '',
+        ...register.table.map((line) => `  ${line}`),
+      ].join('\n');
+      expect(() => register.parse(document)).toThrow();
+    });
+
+    for (const [form, boundary] of [
+      ['ATX H1', ['# Archived examples']],
+      ['Setext H1', ['Archived examples', '=================']],
+      ['Setext H2', ['Archived examples', '-----------------']],
+    ] as const) {
+      it(`rejects the ${register.name} table after a root ${form} boundary`, () => {
+        const document = [`## ${register.heading}`, '', ...boundary, '', ...register.table].join(
+          '\n',
+        );
+        expect(() => register.parse(document)).toThrow();
+      });
+    }
+  }
+
   it('uses ASCII whitespace when identifying HTML blocks', () => {
     const alternative = [
       '<div\u00a0data-kind>',
@@ -2154,6 +2509,120 @@ describe('readiness ledger checker', () => {
       '| ID | Priority | Finding | Verified evidence | Required outcome |',
       '| --- | --- | --- | --- | --- |',
       '| ROGUE-999 | P0 | Visible alternative | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects a type-seven HTML block instead of selecting its hidden register', () => {
+    const hidden = [
+      '<custom-element>',
+      '## Findings register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Hidden | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(hidden)).toThrow(
+      'Type-seven HTML blocks are not allowed in governed Markdown.',
+    );
+  });
+
+  it('does not let empty list markers open a suppressing type-seven HTML block', () => {
+    for (const marker of ['*   ', '+   ', '1.   ', '1)   ']) {
+      const alternative = [
+        'Paragraph content',
+        marker,
+        '<custom-element>',
+        '# Alternate register',
+        '| ID | Priority | Finding | Verified evidence | Required outcome |',
+        '| --- | --- | --- | --- | --- |',
+        '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+      ].join('\n');
+      expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+    }
+  });
+
+  it('does not let list-container indentation open a suppressing type-seven HTML block', () => {
+    const alternative = [
+      '- Paragraph',
+      '      continuation',
+      '  <custom-element>',
+      '  # Alternate register',
+      '  | ID | Priority | Finding | Verified evidence | Required outcome |',
+      '  | --- | --- | --- | --- | --- |',
+      '  | ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  for (const [kind, opening] of [
+    ['backtick fence', '```md'],
+    ['tilde fence', '~~~md'],
+    ['HTML block', '<div>'],
+  ] as const) {
+    it(`rejects a rendered table after a list-container ${kind} outdent`, () => {
+      const alternative = [
+        '- item',
+        `  ${opening}`,
+        '# Alternate register',
+        '| ID | Priority | Finding | Verified evidence | Required outcome |',
+        '| --- | --- | --- | --- | --- |',
+        '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+      ].join('\n');
+      expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+    });
+  }
+
+  it('rejects a rendered governed section after a list-container fence outdent', () => {
+    const alternative = ['- item', '  ```md', '## Findings register'].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects a rendered table after a blockquote-list fence outdent', () => {
+    const alternative = [
+      '> - item',
+      '>   ```md',
+      '> # Alternate register',
+      '> | ID | Priority | Finding | Verified evidence | Required outcome |',
+      '> | --- | --- | --- | --- | --- |',
+      '> | ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects a rendered table after an ordered-list fence outdent', () => {
+    const alternative = [
+      '1. item',
+      '   ```md',
+      '# Alternate register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects a rendered table after a nested unordered-list fence outdent', () => {
+    const alternative = [
+      '- outer',
+      '  - inner',
+      '  ```md',
+      '# Alternate register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
+    ].join('\n');
+    expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
+  });
+
+  it('rejects a rendered table after a nested ordered-list fence outdent', () => {
+    const alternative = [
+      '1. outer',
+      '   1. inner',
+      '   ```md',
+      '# Alternate register',
+      '| ID | Priority | Finding | Verified evidence | Required outcome |',
+      '| --- | --- | --- | --- | --- |',
+      '| ROGUE-999 | P0 | Visible | Audit | Outcome |',
     ].join('\n');
     expect(() => parsePlanFindings(`${plan}\n## Notes\n\n${alternative}\n`)).toThrow();
   });

@@ -93,7 +93,7 @@ function readyEvidence(evidenceCommit = baseSha, baseContainsEvidence = true) {
     runWorkflowPath: '.github/workflows/readiness-scope.yml',
     runWorkflowState: 'active' as const,
     runWorkflowDefinitionDigest:
-      'sha256:16ee9762d4441a25db918d290e777a0b45418c93d526df4b4bca2ed87a444496',
+      'sha256:bbe370f0610b279ad230dc22a6a4819ab9380e7ca88fa4e10bd75785406c24be',
     runRepository: 'Noveum/orbit',
     runId: 2000,
     runAttempt: 1,
@@ -148,6 +148,13 @@ function stagedExceptionLedger(status: 'Accepted P1 exception' | 'Ready for clos
   const exception =
     '| DOC-001 | principal:documentation-owner | 2026-12-01 | mitigation:record:mitigation/doc-001 | Self-hosted users cannot import legacy archives during migration. | risk:record:audit/doc-001 | decision:record:decision/doc-001;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |';
   return staged.replace(/\n$/, `\n${exception}\n`);
+}
+
+function stagedClosedLedger(status: 'Closed' | 'Ready for closure'): string {
+  return ledger('Original risk', 'Original outcome', status).replace(
+    `| ${status} | pending:open | pending:open | pending:open | pending:open | Original outcome | risk:record:audit/doc-001 | pending:open | pending:open | not-required |`,
+    `| ${status} | implementation:record:implementation/doc-001 | test-na:record:non-behavioral/doc-001;justification=record:justification/doc-001;approver=principal:release-owner | gate:record:gate/doc-001 | docs:record:docs/doc-001 | Original outcome | risk:record:audit/doc-001 | decision:record:decision/doc-001;implementation=principal:implementation-owner;finding=principal:documentation-owner;approver=principal:release-owner | approver:principal:release-owner | not-required |`,
+  );
 }
 
 function manifest(version: string, finding: string, outcome: string): string {
@@ -336,6 +343,100 @@ describe('readiness scope pull request policy', () => {
     expect(validateReadinessScopePullRequest(input)).toEqual([]);
   });
 
+  it('allows a scope change to append only its newly referenced audit-risk records', () => {
+    const input = fixture();
+    const registry = canonicalJson({
+      recordEntries: [
+        [
+          'record:audit/doc-001',
+          {
+            kind: 'audit-risk',
+            url: `https://github.com/Noveum/orbit/commit/${baseSha}`,
+            sourceCommit: baseSha,
+          },
+        ],
+      ],
+      principalEntries: [],
+    });
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [...allowedFiles, 'scripts/readiness-reference-registry.json'],
+        head: { ...input.head, registry },
+      }),
+    ).toEqual([]);
+
+    const unrelatedRegistry = canonicalJson({
+      recordEntries: [
+        [
+          'record:audit/unrelated',
+          {
+            kind: 'audit-risk',
+            url: `https://github.com/Noveum/orbit/commit/${baseSha}`,
+            sourceCommit: baseSha,
+          },
+        ],
+      ],
+      principalEntries: [],
+    });
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [...allowedFiles, 'scripts/readiness-reference-registry.json'],
+        head: { ...input.head, registry: unrelatedRegistry },
+      }),
+    ).toContain(
+      'Scope-change registry additions must be audit-risk records reachable from changed findings.',
+    );
+
+    const riskRegistry = canonicalJson({
+      recordEntries: [
+        ['record:risk/doc-001', { kind: 'risk', url: 'https://example.test/risk/doc-001' }],
+      ],
+      principalEntries: [],
+    });
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [...allowedFiles, 'scripts/readiness-reference-registry.json'],
+        head: {
+          ...input.head,
+          ledger: input.head.ledger.replace(
+            'risk:record:audit/doc-001',
+            'risk:record:risk/doc-001',
+          ),
+          registry: riskRegistry,
+        },
+      }),
+    ).toContain(
+      'Scope-change registry additions must be audit-risk records reachable from changed findings.',
+    );
+
+    const principalRegistry = canonicalJson({
+      recordEntries: [],
+      principalEntries: [
+        [
+          'principal:future-owner',
+          {
+            kind: 'human',
+            role: 'Documentation maintainer',
+            subjectId: 'subject:future-owner',
+            assignmentUrl: 'https://example.test/assignment',
+          },
+        ],
+      ],
+    });
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [...allowedFiles, 'scripts/readiness-reference-registry.json'],
+        head: { ...input.head, registry: principalRegistry },
+      }),
+    ).toContain(
+      'Scope-change registry additions must be audit-risk records reachable from changed findings.',
+    );
+  });
+
   it('allows ordinary pull requests when governed semantics do not change', () => {
     const input = fixture();
     expect(
@@ -346,6 +447,190 @@ describe('readiness scope pull request policy', () => {
         reviews: [],
       }),
     ).toEqual([]);
+  });
+
+  it('rejects registry evidence pre-staged in an ordinary product pull request', () => {
+    const input = fixture();
+    const registry = canonicalJson({
+      recordEntries: [
+        ['record:docs/prestage', { kind: 'docs', url: 'https://example.test/prestaged-evidence' }],
+      ],
+      principalEntries: [],
+    });
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: ['apps/web/src/app/page.tsx', 'scripts/readiness-reference-registry.json'],
+        base: input.base,
+        head: { ...input.base, registry },
+        reviews: [],
+      }),
+    ).toContain('Registry changes require an accounted ledger lifecycle transition.');
+  });
+
+  it('rejects registry-only evidence and authority changes', () => {
+    const input = fixture();
+    const registries = [
+      canonicalJson({
+        recordEntries: [
+          ['record:docs/prestage', { kind: 'docs', url: 'https://example.test/docs' }],
+        ],
+        principalEntries: [],
+      }),
+      canonicalJson({
+        recordEntries: [],
+        principalEntries: [
+          [
+            'principal:future-owner',
+            {
+              kind: 'human',
+              role: 'Documentation maintainer',
+              subjectId: 'subject:future-owner',
+              assignmentUrl: 'https://example.test/assignment',
+            },
+          ],
+        ],
+      }),
+      canonicalJson({
+        recordEntries: [],
+        principalEntries: [
+          [
+            'principal:future-owner',
+            {
+              kind: 'human',
+              role: 'Documentation maintainer',
+              subjectId: 'subject:future-owner',
+              assignmentUrl: 'https://example.test/assignment',
+            },
+          ],
+          [
+            'principal:future-alias',
+            {
+              kind: 'human-alias',
+              role: 'Documentation maintainer',
+              canonicalPrincipal: 'principal:future-owner',
+              assignmentUrl: 'https://example.test/alias',
+            },
+          ],
+        ],
+      }),
+    ];
+    for (const registry of registries) {
+      expect(
+        validateReadinessScopePullRequest({
+          ...input,
+          changedFiles: ['scripts/readiness-reference-registry.json'],
+          base: input.base,
+          head: { ...input.base, registry },
+          reviews: [],
+        }),
+      ).toContain('Registry changes require an accounted ledger lifecycle transition.');
+    }
+  });
+
+  it('accepts registry evidence accounted for by a dedicated lifecycle transition', () => {
+    const input = fixture();
+    const registry = canonicalJson({
+      recordEntries: [
+        ['record:docs/doc-001', { kind: 'docs', url: 'https://example.test/docs/doc-001' }],
+      ],
+      principalEntries: [],
+    });
+    const ready = ledger('Original risk', 'Original outcome', 'Ready for closure').replace(
+      '| pending:open | Original outcome |',
+      '| docs:record:docs/doc-001 | Original outcome |',
+    );
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base: input.base,
+        head: { ...input.base, ledger: ready, registry },
+        reviews: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it('accounts for the canonical principal behind a referenced human alias', () => {
+    const input = fixture();
+    const registry = canonicalJson({
+      recordEntries: [],
+      principalEntries: [
+        [
+          'principal:future-owner',
+          {
+            kind: 'human',
+            role: 'Documentation maintainer',
+            subjectId: 'subject:future-owner',
+            assignmentUrl: 'https://example.test/assignment',
+          },
+        ],
+        [
+          'principal:future-alias',
+          {
+            kind: 'human-alias',
+            role: 'Documentation maintainer',
+            canonicalPrincipal: 'principal:future-owner',
+            assignmentUrl: 'https://example.test/alias',
+          },
+        ],
+      ],
+    });
+    const ready = ledger('Original risk', 'Original outcome', 'Ready for closure').replace(
+      'principal:documentation-owner',
+      'principal:future-alias',
+    );
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base: input.base,
+        head: { ...input.base, ledger: ready, registry },
+        reviews: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects replacement of referenced registry evidence during a lifecycle transition', () => {
+    const input = fixture();
+    const auditRegistry = (commitSha: string) =>
+      canonicalJson({
+        recordEntries: [
+          [
+            'record:audit/doc-001',
+            {
+              kind: 'audit-risk',
+              url: `https://github.com/Noveum/orbit/commit/${commitSha}`,
+              sourceCommit: commitSha,
+            },
+          ],
+        ],
+        principalEntries: [],
+      });
+    const base = { ...input.base, registry: auditRegistry(baseSha) };
+    const head = {
+      ...base,
+      ledger: ledger('Original risk', 'Original outcome', 'Ready for closure'),
+      registry: auditRegistry('cccccccccccccccccccccccccccccccccccccccc'),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toContain('Existing registry entries are immutable.');
   });
 
   it('allows ordinary plan progress outside the governed findings table', () => {
@@ -416,6 +701,60 @@ describe('readiness scope pull request policy', () => {
         reviews: [],
       }),
     ).toContain('Closure transitions must use the exact ledger-and-registry file shape.');
+  });
+
+  it('rejects unrelated registry entries bundled with a valid seal transition', () => {
+    const input = fixture();
+    const base = {
+      ...input.base,
+      ledger: ledger('Original risk', 'Original outcome', 'Ready for closure'),
+    };
+    const source = JSON.parse(closureRegistry()) as {
+      principalEntries: unknown[];
+      recordEntries: unknown[];
+    };
+    source.recordEntries.push([
+      'record:docs/prestage',
+      { kind: 'docs', url: 'https://example.test/prestaged-evidence' },
+    ]);
+    const head = {
+      ...base,
+      ledger: ledger('Original risk', 'Original outcome', 'Closed'),
+      registry: canonicalJson(source),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base,
+        head,
+        readyEvidence: [readyEvidence()],
+        reviews: [],
+      }),
+    ).toContain('Registry changes contain entries outside the changed lifecycle state.');
+  });
+
+  it('rejects closure evidence added before the Ready state is sealed', () => {
+    const input = fixture();
+    const head = {
+      ...input.base,
+      ledger: ledger('Original risk', 'Original outcome', 'Ready for closure'),
+      registry: closureRegistry(),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        head,
+        reviews: [],
+      }),
+    ).toContain('Registry changes contain entries outside the changed lifecycle state.');
   });
 
   it('allows a P1 exception to stage before a later independently proven seal', () => {
@@ -573,6 +912,86 @@ describe('readiness scope pull request policy', () => {
         reviews: [],
       }),
     ).toEqual([]);
+  });
+
+  it('rejects a same-status Closed rewrite through an unmerged Ready intermediate', () => {
+    const input = fixture();
+    const base = {
+      ...input.base,
+      ledger: stagedClosedLedger('Closed'),
+      registry: closureRegistry(baseSha),
+    };
+    const intermediate = {
+      ...base,
+      ledger: stagedClosedLedger('Ready for closure'),
+      registry: canonicalJson({ recordEntries: [], principalEntries: [] }),
+    };
+    const head = {
+      ...intermediate,
+      ledger: base.ledger.replace(
+        'record:implementation/doc-001',
+        'record:implementation/doc-001-replacement',
+      ),
+      registry: closureRegistry('cccccccccccccccccccccccccccccccccccccccc'),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: [
+          'docs/maintainers/readiness-ledger.md',
+          'scripts/readiness-reference-registry.json',
+        ],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toContain('Sealed readiness state is immutable.');
+  });
+
+  it('rejects mutation of a same-status accepted exception', () => {
+    const input = fixture();
+    const accepted = stagedExceptionLedger('Accepted P1 exception');
+    const base = { ...input.base, ledger: accepted, registry: closureRegistry(baseSha) };
+    const intermediate = {
+      ...base,
+      ledger: stagedExceptionLedger('Ready for closure'),
+      registry: canonicalJson({ recordEntries: [], principalEntries: [] }),
+    };
+    const head = {
+      ...intermediate,
+      ledger: accepted.replace(
+        'Self-hosted users cannot import legacy archives during migration.',
+        'Self-hosted users cannot export legacy archives during migration.',
+      ),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: ['docs/maintainers/readiness-ledger.md'],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toContain('Sealed readiness state is immutable.');
+  });
+
+  it('rejects mutation of an existing closure record', () => {
+    const input = fixture();
+    const sealed = ledger('Original risk', 'Original outcome', 'Closed');
+    const base = { ...input.base, ledger: sealed, registry: closureRegistry(baseSha) };
+    const head = {
+      ...base,
+      registry: closureRegistry('cccccccccccccccccccccccccccccccccccccccc'),
+    };
+    expect(
+      validateReadinessScopePullRequest({
+        ...input,
+        changedFiles: ['scripts/readiness-reference-registry.json'],
+        base,
+        head,
+        reviews: [],
+      }),
+    ).toContain('Existing registry entries are immutable.');
   });
 
   it('does not load prior Ready proof again for unchanged sealed rows', async () => {
@@ -865,6 +1284,24 @@ describe('readiness scope pull request policy', () => {
         reviews: [],
       }),
     ).toContain('Trust-root changes lack both required exact-head approvals.');
+    expect(
+      validateReadinessScopePullRequest({
+        ...unchanged,
+        changedFiles: ['.github/actions/pre-existing-action/src/index.ts'],
+        reviews: [],
+      }),
+    ).toContain('Trust-root changes lack both required exact-head approvals.');
+    expect(
+      validateReadinessScopePullRequest({
+        ...unchanged,
+        changedFiles: ['scripts/helpers/extensionless-tool'],
+        reviews: [],
+      }),
+    ).toContain('Trust-root changes lack both required exact-head approvals.');
+    for (const path of ['tsconfig.base.json', 'tsconfig.json', '.npmrc', '.env.local'])
+      expect(
+        validateReadinessScopePullRequest({ ...unchanged, changedFiles: [path], reviews: [] }),
+      ).toContain('Trust-root changes lack both required exact-head approvals.');
     for (const changedFiles of [
       ['scripts/check-readiness-scope-pr.ts', 'apps/web/src/app/page.tsx'],
       [

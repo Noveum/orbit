@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { posix } from 'node:path';
+import ts from 'typescript';
 import {
   githubAssociatedPullsResponseSchema,
   githubCommitStatusesResponseSchema,
@@ -48,6 +51,7 @@ const ALLOWED_SCOPE_FILES = [
 ] as const;
 const REGISTRY_DATA_FILE = 'scripts/readiness-reference-registry.json';
 const CLOSURE_TRANSITION_FILES = [ALLOWED_SCOPE_FILES[0], REGISTRY_DATA_FILE] as const;
+const SCOPE_CHANGE_FILES_WITH_REGISTRY = [...ALLOWED_SCOPE_FILES, REGISTRY_DATA_FILE] as const;
 const REQUIRED_APPROVERS = ['imshashank', 'pulkitxm'] as const;
 const OPINIONATED_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']);
 const TRUST_ROOT_FILES = new Set([
@@ -63,6 +67,8 @@ const TRUST_ROOT_FILES = new Set([
   'scripts/readiness-git-artifact.ts',
   'scripts/readiness-reference-registry.ts',
   'scripts/readiness-scope-manifest.ts',
+  'tsconfig.base.json',
+  'tsconfig.json',
 ]);
 const TRUST_POLICY_COMPANION_FILES = new Set([
   '.github/PULL_REQUEST_TEMPLATE.md',
@@ -72,7 +78,7 @@ const TRUST_POLICY_COMPANION_FILES = new Set([
   'packages/db/tests/readiness-production-artifacts.test.ts',
 ]);
 export const TRUSTED_READINESS_WORKFLOW_DEFINITION_DIGEST =
-  'sha256:16ee9762d4441a25db918d290e777a0b45418c93d526df4b4bca2ed87a444496';
+  'sha256:bbe370f0610b279ad230dc22a6a4819ab9380e7ca88fa4e10bd75785406c24be';
 
 export type ReadinessScopePrInput = typeof readinessScopePrInputSchema._output;
 
@@ -244,6 +250,185 @@ function exceptionState(row: ReturnType<typeof parseExceptionRows>[number]): str
   return JSON.stringify(Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'row')));
 }
 
+function changedLifecycleIds(
+  baseFindings: readonly FindingRow[],
+  headFindings: readonly FindingRow[],
+  baseExceptions: ReturnType<typeof parseExceptionRows>,
+  headExceptions: ReturnType<typeof parseExceptionRows>,
+): Set<string> {
+  const baseFindingState = new Map(baseFindings.map((row) => [row.id, findingState(row)]));
+  const headFindingState = new Map(headFindings.map((row) => [row.id, findingState(row)]));
+  const baseExceptionState = new Map(
+    baseExceptions.map((row) => [row.findingId, exceptionState(row)]),
+  );
+  const headExceptionState = new Map(
+    headExceptions.map((row) => [row.findingId, exceptionState(row)]),
+  );
+  const ids = new Set([
+    ...baseFindingState.keys(),
+    ...headFindingState.keys(),
+    ...baseExceptionState.keys(),
+    ...headExceptionState.keys(),
+  ]);
+  return new Set(
+    [...ids].filter(
+      (id) =>
+        baseFindingState.get(id) !== headFindingState.get(id) ||
+        baseExceptionState.get(id) !== headExceptionState.get(id),
+    ),
+  );
+}
+
+function sealedStateChanged(
+  baseFindings: readonly FindingRow[],
+  headFindings: readonly FindingRow[],
+  baseExceptions: ReturnType<typeof parseExceptionRows>,
+  headExceptions: ReturnType<typeof parseExceptionRows>,
+): boolean {
+  const sealed = new Set(['Closed', 'Accepted P1 exception']);
+  const headById = new Map(headFindings.map((row) => [row.id, row]));
+  const baseExceptionState = new Map(
+    baseExceptions.map((row) => [row.findingId, exceptionState(row)]),
+  );
+  const headExceptionState = new Map(
+    headExceptions.map((row) => [row.findingId, exceptionState(row)]),
+  );
+  return baseFindings.some((baseRow) => {
+    if (!sealed.has(baseRow.status)) return false;
+    const headRow = headById.get(baseRow.id);
+    if (headRow === undefined || findingState(baseRow) !== findingState(headRow)) return true;
+    return (
+      baseRow.status === 'Accepted P1 exception' &&
+      baseExceptionState.get(baseRow.id) !== headExceptionState.get(baseRow.id)
+    );
+  });
+}
+
+function registrySource(value: unknown): ReadinessReferenceRegistrySource | undefined {
+  const result = readinessReferenceRegistrySourceSchema.safeParse(value);
+  if (!result.success) return undefined;
+  const source = result.data as unknown as ReadinessReferenceRegistrySource;
+  return 'registry' in buildReadinessReferenceRegistry(source) ? source : undefined;
+}
+
+function entryPrefixUnchanged(
+  base: ReadinessReferenceRegistrySource,
+  head: ReadinessReferenceRegistrySource,
+): boolean {
+  return (
+    base.recordEntries.length <= head.recordEntries.length &&
+    base.principalEntries.length <= head.principalEntries.length &&
+    base.recordEntries.every(
+      (entry, index) => JSON.stringify(entry) === JSON.stringify(head.recordEntries[index]),
+    ) &&
+    base.principalEntries.every(
+      (entry, index) => JSON.stringify(entry) === JSON.stringify(head.principalEntries[index]),
+    )
+  );
+}
+
+function readinessReferences(value: unknown): readonly string[] {
+  return JSON.stringify(value).match(/(?:record|principal):[a-z0-9][a-z0-9._/-]*/g) ?? [];
+}
+
+function accountedRegistryKeys(
+  lifecycleIds: ReadonlySet<string>,
+  sealIds: ReadonlySet<string>,
+  headFindings: readonly FindingRow[],
+  headExceptions: ReturnType<typeof parseExceptionRows>,
+  head: ReadinessReferenceRegistrySource,
+): Set<string> {
+  const references = new Set<string>();
+  for (const row of headFindings) {
+    if (!lifecycleIds.has(row.id)) continue;
+    for (const reference of readinessReferences(row)) references.add(reference);
+  }
+  for (const row of headExceptions) {
+    if (!lifecycleIds.has(row.findingId)) continue;
+    for (const reference of readinessReferences(row)) references.add(reference);
+  }
+  for (const [key, record] of head.recordEntries) {
+    if (record.kind === 'closure' && sealIds.has(record.findingId)) references.add(key);
+  }
+  const principals = new Map(head.principalEntries);
+  const queue = [...references];
+  for (const key of queue) {
+    const principal = principals.get(key);
+    if (principal?.kind !== 'human-alias' || references.has(principal.canonicalPrincipal)) continue;
+    references.add(principal.canonicalPrincipal);
+    queue.push(principal.canonicalPrincipal);
+  }
+  return references;
+}
+
+function scopeChangeRegistryErrors(
+  changedIds: ReadonlySet<string>,
+  headFindings: readonly FindingRow[],
+  base: ReadinessReferenceRegistrySource,
+  head: ReadinessReferenceRegistrySource,
+): string[] {
+  const references = new Set<string>();
+  for (const row of headFindings) {
+    if (!changedIds.has(row.id)) continue;
+    for (const reference of readinessReferences(row.residualRisk)) references.add(reference);
+  }
+  const addedRecords = head.recordEntries.slice(base.recordEntries.length);
+  const valid =
+    addedRecords.length > 0 &&
+    head.principalEntries.length === base.principalEntries.length &&
+    addedRecords.every(([key, record]) => record.kind === 'audit-risk' && references.has(key));
+  return valid
+    ? []
+    : [
+        'Scope-change registry additions must be audit-risk records reachable from changed findings.',
+      ];
+}
+
+function registryLifecycleErrors(
+  input: ReadinessScopePrInput,
+  baseFindings: readonly FindingRow[],
+  headFindings: readonly FindingRow[],
+  baseExceptions: ReturnType<typeof parseExceptionRows>,
+  headExceptions: ReturnType<typeof parseExceptionRows>,
+  baseRegistryValue: unknown,
+  headRegistryValue: unknown,
+  scopeChangeIds: ReadonlySet<string> | undefined,
+): string[] {
+  if (input.base.registry === input.head.registry) return [];
+  const errors: string[] = [];
+  const lifecycleIds = changedLifecycleIds(
+    baseFindings,
+    headFindings,
+    baseExceptions,
+    headExceptions,
+  );
+  const base = registrySource(baseRegistryValue);
+  const head = registrySource(headRegistryValue);
+  if (base === undefined || head === undefined)
+    return [...errors, 'Registry transition data is invalid.'];
+  if (!entryPrefixUnchanged(base, head)) errors.push('Existing registry entries are immutable.');
+  if (scopeChangeIds !== undefined) {
+    errors.push(...scopeChangeRegistryErrors(scopeChangeIds, headFindings, base, head));
+    return errors;
+  }
+  if (lifecycleIds.size === 0 || !exactChangedFiles(input.changedFiles, CLOSURE_TRANSITION_FILES))
+    errors.push('Registry changes require an accounted ledger lifecycle transition.');
+  const addedKeys = [
+    ...head.recordEntries.slice(base.recordEntries.length).map(([key]) => key),
+    ...head.principalEntries.slice(base.principalEntries.length).map(([key]) => key),
+  ];
+  const accounted = accountedRegistryKeys(
+    lifecycleIds,
+    new Set(sealTransitionIds(baseFindings, headFindings)),
+    headFindings,
+    headExceptions,
+    head,
+  );
+  if (addedKeys.some((key) => !accounted.has(key)))
+    errors.push('Registry changes contain entries outside the changed lifecycle state.');
+  return errors;
+}
+
 function invalidSealTransition(base: readonly FindingRow[], head: readonly FindingRow[]): boolean {
   const sealed = new Set(['Closed', 'Accepted P1 exception']);
   const baseById = new Map(base.map((row) => [row.id, row]));
@@ -296,15 +481,761 @@ function hasExactApprovals(input: ReadinessScopePrInput): boolean {
   });
 }
 
+function repositoryScriptPath(path: string): boolean {
+  return (
+    (path.startsWith('scripts/') || path.includes('/scripts/')) &&
+    path !== REGISTRY_DATA_FILE &&
+    path !== ALLOWED_SCOPE_FILES[3]
+  );
+}
+
+function forbiddenRootEnvironmentPath(path: string): boolean {
+  return !path.includes('/') && path.startsWith('.env') && path !== '.env.example';
+}
+
 function trustRootPath(path: string): boolean {
   return (
     TRUST_ROOT_FILES.has(path) ||
+    repositoryScriptPath(path) ||
     path.startsWith('.github/workflows/') ||
     path.startsWith('.github/actions/') ||
     path.endsWith('/package.json') ||
+    path === '.npmrc' ||
+    forbiddenRootEnvironmentPath(path) ||
     path === 'bunfig.toml' ||
     path.endsWith('/bunfig.toml')
   );
+}
+
+interface TrustRootExecutionArtifact {
+  readonly path: string;
+  readonly text: string;
+}
+
+const PACKAGE_LIFECYCLE_SCRIPTS = new Set([
+  'preinstall',
+  'install',
+  'postinstall',
+  'preprepare',
+  'prepare',
+  'postprepare',
+  'prepublish',
+  'prepublishOnly',
+  'prepack',
+  'postpack',
+  'publish',
+  'postpublish',
+  'preversion',
+  'version',
+  'postversion',
+  'dependencies',
+]);
+
+function objectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+function writePermission(value: unknown): boolean {
+  if (value === 'write-all') return true;
+  const permissions = objectRecord(value);
+  return (
+    permissions !== undefined &&
+    Object.values(permissions).some((permission) => permission === 'write')
+  );
+}
+
+function pullRequestTargetTrigger(value: unknown): boolean {
+  if (value === 'pull_request_target') return true;
+  if (Array.isArray(value)) return value.includes('pull_request_target');
+  return objectRecord(value)?.['pull_request_target'] !== undefined;
+}
+
+interface ActionInvocation {
+  readonly inputs: Readonly<Record<string, unknown>>;
+  readonly uses: string;
+}
+
+interface WorkflowDefinition {
+  readonly actions: readonly ActionInvocation[];
+  readonly privileged: boolean;
+  readonly runs: readonly string[];
+  readonly unprotectedExecutableSurface: boolean;
+  readonly workflowUses: readonly string[];
+}
+
+const GITHUB_EXPRESSION_PREFIX = '$';
+const EXPECTED_READINESS_WORKFLOW = {
+  name: 'Readiness scope policy',
+  on: {
+    pull_request_target: {
+      branches: ['main'],
+      types: ['opened', 'synchronize', 'reopened', 'ready_for_review'],
+    },
+    pull_request_review: {
+      branches: ['main'],
+      types: ['submitted', 'edited', 'dismissed'],
+    },
+  },
+  permissions: {
+    actions: 'read',
+    contents: 'read',
+    'pull-requests': 'read',
+    statuses: 'write',
+  },
+  concurrency: {
+    group: `readiness-scope-${GITHUB_EXPRESSION_PREFIX}{{ github.event.pull_request.number }}`,
+    'cancel-in-progress': true,
+  },
+  env: {
+    BUN_VERSION: '1.3.14',
+  },
+  jobs: {
+    policy: {
+      if: "github.event_name == 'pull_request_target' || github.event.review.user.login == 'imshashank' || github.event.review.user.login == 'pulkitxm'",
+      name: 'Trusted readiness scope policy',
+      'runs-on': 'ubuntu-latest',
+      steps: [
+        {
+          uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+          with: {
+            ref: `${GITHUB_EXPRESSION_PREFIX}{{ github.event.pull_request.base.sha }}`,
+            'fetch-depth': 0,
+            'persist-credentials': false,
+          },
+        },
+        {
+          uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
+          with: {
+            'bun-version': `${GITHUB_EXPRESSION_PREFIX}{{ env.BUN_VERSION }}`,
+          },
+        },
+        {
+          run: 'bun install --frozen-lockfile --ignore-scripts',
+        },
+        {
+          name: 'Validate fetched scope artifacts with trusted base code',
+          env: {
+            GITHUB_TOKEN: `${GITHUB_EXPRESSION_PREFIX}{{ github.token }}`,
+          },
+          run: 'bun scripts/check-readiness-scope-pr.ts',
+        },
+      ],
+    },
+  },
+} as const;
+
+function canonicalSemanticValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalSemanticValue);
+  const record = objectRecord(value);
+  if (record === undefined) return value;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalSemanticValue(record[key])]),
+  );
+}
+
+function exactReadinessWorkflow(source: string): boolean {
+  if (
+    `sha256:${createHash('sha256').update(source).digest('hex')}` !==
+    TRUSTED_READINESS_WORKFLOW_DEFINITION_DIGEST
+  )
+    return false;
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(source);
+  } catch {
+    return false;
+  }
+  return (
+    JSON.stringify(canonicalSemanticValue(parsed)) ===
+    JSON.stringify(canonicalSemanticValue(EXPECTED_READINESS_WORKFLOW))
+  );
+}
+
+function secretOrEnvironmentSurface(value: unknown): boolean {
+  if (typeof value === 'string') return /\$\{\{[^}]*\bsecrets\b/i.test(value);
+  if (Array.isArray(value)) return value.some(secretOrEnvironmentSurface);
+  const record = objectRecord(value);
+  if (record === undefined) return false;
+  return Object.entries(record).some(
+    ([key, nested]) =>
+      key === 'environment' || key === 'secrets' || secretOrEnvironmentSurface(nested),
+  );
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Workflow parsing validates nested jobs and executable steps together.
+function workflowDefinition(source: string): WorkflowDefinition | undefined {
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(source);
+  } catch {
+    return undefined;
+  }
+  const workflow = objectRecord(parsed);
+  const jobs = objectRecord(workflow?.['jobs']);
+  if (workflow === undefined || jobs === undefined) return undefined;
+  const actions: ActionInvocation[] = [];
+  const workflowUses: string[] = [];
+  const runs: string[] = [];
+  let unprotectedExecutableSurface = false;
+  let privileged =
+    workflow['permissions'] === undefined ||
+    pullRequestTargetTrigger(workflow['on']) ||
+    writePermission(workflow['permissions']) ||
+    secretOrEnvironmentSurface(workflow);
+  for (const jobValue of Object.values(jobs)) {
+    const job = objectRecord(jobValue);
+    if (job === undefined) return undefined;
+    privileged ||= writePermission(job['permissions']);
+    unprotectedExecutableSurface ||=
+      job['container'] !== undefined || job['services'] !== undefined;
+    const workflowUse = job['uses'];
+    const stepsValue = job['steps'];
+    if (workflowUse !== undefined) {
+      if (typeof workflowUse !== 'string' || stepsValue !== undefined) return undefined;
+      workflowUses.push(workflowUse);
+      continue;
+    }
+    if (stepsValue === undefined) continue;
+    if (!Array.isArray(stepsValue)) return undefined;
+    for (const stepValue of stepsValue) {
+      const step = objectRecord(stepValue);
+      if (step === undefined) return undefined;
+      const usesValue = step['uses'];
+      const runValue = step['run'];
+      if ((usesValue === undefined) === (runValue === undefined)) return undefined;
+      if (usesValue !== undefined) {
+        if (typeof usesValue !== 'string') return undefined;
+        const inputs = step['with'] === undefined ? {} : objectRecord(step['with']);
+        if (inputs === undefined) return undefined;
+        actions.push({ inputs, uses: usesValue });
+      }
+      if (runValue !== undefined) {
+        if (typeof runValue !== 'string') return undefined;
+        runs.push(runValue);
+      }
+    }
+  }
+  return { actions, privileged, runs, unprotectedExecutableSurface, workflowUses };
+}
+
+function protectedLocalAction(value: string): string | undefined {
+  if (!value.startsWith('./')) return undefined;
+  const relative = value.slice(2);
+  const normalized = posix.normalize(relative);
+  return relative === normalized &&
+    normalized.startsWith('.github/actions/') &&
+    !normalized.endsWith('/')
+    ? normalized
+    : '';
+}
+
+interface LocalActionDefinition {
+  readonly actions: readonly ActionInvocation[];
+}
+
+const ALLOWED_PRIVILEGED_ACTION_CAPABILITIES = new Map<string, ReadonlySet<string>>([
+  ['actions/checkout', new Set([''])],
+  ['actions/first-interaction', new Set([''])],
+  ['actions/labeler', new Set([''])],
+  ['actions/stale', new Set([''])],
+  ['github/codeql-action', new Set(['/analyze', '/init'])],
+  ['oven-sh/setup-bun', new Set([''])],
+]);
+const ALLOWED_EXTERNAL_REUSABLE_WORKFLOW_REPOSITORIES = new Set<string>();
+
+function localActionDirectory(path: string): string | undefined {
+  const match = /^(\.github\/actions\/.+)\/action\.ya?ml$/.exec(path);
+  return match?.[1];
+}
+
+function localActionDefinition(source: string): LocalActionDefinition | undefined {
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(source);
+  } catch {
+    return undefined;
+  }
+  const action = objectRecord(parsed);
+  const runs = objectRecord(action?.['runs']);
+  const steps = runs?.['steps'];
+  if (runs?.['using'] !== 'composite' || !Array.isArray(steps)) return undefined;
+  const actions: ActionInvocation[] = [];
+  for (const stepValue of steps) {
+    const step = objectRecord(stepValue);
+    if (step === undefined || step['run'] !== undefined || typeof step['uses'] !== 'string')
+      return undefined;
+    const inputs = step['with'] === undefined ? {} : objectRecord(step['with']);
+    if (inputs === undefined) return undefined;
+    actions.push({ inputs, uses: step['uses'] });
+  }
+  return { actions };
+}
+
+function localActionDefinitions(
+  artifacts: readonly TrustRootExecutionArtifact[],
+): ReadonlyMap<string, LocalActionDefinition> | undefined {
+  const definitions = new Map<string, LocalActionDefinition>();
+  for (const artifact of artifacts) {
+    const directory = localActionDirectory(artifact.path);
+    if (directory === undefined) continue;
+    const definition = localActionDefinition(artifact.text);
+    if (definition === undefined || definitions.has(directory)) return undefined;
+    definitions.set(directory, definition);
+  }
+  return definitions;
+}
+
+function protectedLocalWorkflow(value: string): string | undefined {
+  if (!value.startsWith('./')) return undefined;
+  const relative = value.slice(2);
+  const normalized = posix.normalize(relative);
+  return relative === normalized && /^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)
+    ? normalized
+    : '';
+}
+
+function immutableExternalReference(
+  value: string,
+): { readonly repository: string; readonly suffix: string } | undefined {
+  const match = /^([^/@\s]+)\/([^/@\s]+)(\/[^@\s]+)?@([a-f0-9]{40})$/.exec(value);
+  if (match === null) return undefined;
+  return {
+    repository: `${(match[1] ?? '').toLowerCase()}/${(match[2] ?? '').toLowerCase()}`,
+    suffix: match[3] ?? '',
+  };
+}
+
+function safePrivilegedCheckoutInputs(inputs: Readonly<Record<string, unknown>>): boolean {
+  const allowed = [
+    { 'persist-credentials': false },
+    {
+      ref: `${GITHUB_EXPRESSION_PREFIX}{{ github.event.pull_request.base.sha }}`,
+      'fetch-depth': 0,
+      'persist-credentials': false,
+    },
+  ];
+  const actual = JSON.stringify(canonicalSemanticValue(inputs));
+  return allowed.some((expected) => JSON.stringify(canonicalSemanticValue(expected)) === actual);
+}
+
+function allowedPrivilegedAction(invocation: ActionInvocation): boolean {
+  const reference = immutableExternalReference(invocation.uses);
+  if (reference === undefined || reference.suffix.startsWith('/.github/workflows/')) return false;
+  if (!ALLOWED_PRIVILEGED_ACTION_CAPABILITIES.get(reference.repository)?.has(reference.suffix))
+    return false;
+  return (
+    reference.repository !== 'actions/checkout' || safePrivilegedCheckoutInputs(invocation.inputs)
+  );
+}
+
+function allowedExternalReusableWorkflow(value: string): boolean {
+  const reference = immutableExternalReference(value);
+  return (
+    reference !== undefined &&
+    /^\/\.github\/workflows\/[^/]+\.ya?ml$/.test(reference.suffix) &&
+    ALLOWED_EXTERNAL_REUSABLE_WORKFLOW_REPOSITORIES.has(reference.repository)
+  );
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Lifecycle validation checks every package script boundary.
+function lifecycleErrors(artifacts: readonly TrustRootExecutionArtifact[]): string[] {
+  for (const artifact of artifacts) {
+    if (!(artifact.path === 'package.json' || artifact.path.endsWith('/package.json'))) continue;
+    const value = parsedJson(artifact.text);
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+      return ['Package lifecycle definitions are invalid.'];
+    const scriptsValue = (value as Readonly<Record<string, unknown>>)['scripts'];
+    if (scriptsValue === undefined) continue;
+    if (typeof scriptsValue !== 'object' || scriptsValue === null || Array.isArray(scriptsValue))
+      return ['Package lifecycle definitions are invalid.'];
+    for (const [name, command] of Object.entries(scriptsValue)) {
+      if (!PACKAGE_LIFECYCLE_SCRIPTS.has(name)) continue;
+      if (
+        !(
+          artifact.path === 'package.json' &&
+          name === 'prepare' &&
+          command === 'lefthook install || true'
+        )
+      )
+        return ['Package lifecycle execution is outside the protected command surface.'];
+    }
+  }
+  return [];
+}
+
+const ALLOWED_TRUSTED_DEPENDENCIES = ['@biomejs/biome', 'esbuild', 'lefthook', 'sharp'];
+
+function executionConfigurationErrors(artifacts: readonly TrustRootExecutionArtifact[]): string[] {
+  const errors: string[] = [];
+  if (artifacts.some((artifact) => artifact.path === '.npmrc'))
+    errors.push('Root package manager configuration must remain absent.');
+  if (artifacts.some((artifact) => forbiddenRootEnvironmentPath(artifact.path)))
+    errors.push('Tracked runtime environment configuration must remain absent.');
+  if (artifacts.some((artifact) => artifact.path === 'bunfig.toml'))
+    errors.push('Root Bun execution configuration must remain absent.');
+  const rootPackages = artifacts.filter((artifact) => artifact.path === 'package.json');
+  if (rootPackages.length !== 1)
+    return [...errors, 'Root package execution configuration is invalid.'];
+  const rootPackage = objectRecord(parsedJson(rootPackages[0]?.text ?? ''));
+  if (rootPackage === undefined)
+    return [...errors, 'Root package execution configuration is invalid.'];
+  if (rootPackage['imports'] !== undefined || rootPackage['patchedDependencies'] !== undefined)
+    errors.push('Root package execution configuration contains a forbidden install surface.');
+  const trustedDependencies = rootPackage['trustedDependencies'];
+  if (trustedDependencies === undefined) return errors;
+  if (
+    !Array.isArray(trustedDependencies) ||
+    trustedDependencies.some((dependency) => typeof dependency !== 'string') ||
+    JSON.stringify([...trustedDependencies].sort()) !==
+      JSON.stringify([...ALLOWED_TRUSTED_DEPENDENCIES].sort())
+  )
+    errors.push('Root package trusted dependencies are outside the approved set.');
+  return errors;
+}
+
+const TYPESCRIPT_RESOLVER_OPTIONS = new Set([
+  'allowArbitraryExtensions',
+  'baseUrl',
+  'customConditions',
+  'jsxImportSource',
+  'moduleSuffixes',
+  'paths',
+  'plugins',
+  'preserveSymlinks',
+  'resolvePackageJsonExports',
+  'resolvePackageJsonImports',
+  'rootDirs',
+]);
+
+function compilerOptions(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value === undefined ? {} : objectRecord(value);
+}
+
+function trustedTypeScriptConfigurationErrors(
+  artifacts: readonly TrustRootExecutionArtifact[],
+): string[] {
+  if (artifacts.some((artifact) => artifact.path === 'tsconfig.json'))
+    return ['Trusted TypeScript resolver configuration is invalid.'];
+  const scriptArtifact = artifacts.find((artifact) => artifact.path === 'scripts/tsconfig.json');
+  const baseArtifact = artifacts.find((artifact) => artifact.path === 'tsconfig.base.json');
+  if (scriptArtifact === undefined && baseArtifact === undefined) return [];
+  if (scriptArtifact === undefined || baseArtifact === undefined)
+    return ['Trusted TypeScript resolver configuration is invalid.'];
+  const scriptJson = governedJson(scriptArtifact.text);
+  const baseJson = governedJson(baseArtifact.text);
+  const script = objectRecord(scriptJson.value);
+  const base = objectRecord(baseJson.value);
+  if (
+    script === undefined ||
+    base === undefined ||
+    scriptJson.duplicateKeys ||
+    baseJson.duplicateKeys ||
+    script['extends'] !== '../tsconfig.base.json' ||
+    base['extends'] !== undefined
+  )
+    return ['Trusted TypeScript resolver configuration is invalid.'];
+  const scriptOptions = compilerOptions(script['compilerOptions']);
+  const baseOptions = compilerOptions(base['compilerOptions']);
+  if (scriptOptions === undefined || baseOptions === undefined)
+    return ['Trusted TypeScript resolver configuration is invalid.'];
+  if (
+    [...TYPESCRIPT_RESOLVER_OPTIONS].some(
+      (option) => scriptOptions[option] !== undefined || baseOptions[option] !== undefined,
+    ) ||
+    scriptOptions['module'] !== undefined ||
+    scriptOptions['moduleResolution'] !== undefined ||
+    baseOptions['module'] !== 'Preserve' ||
+    baseOptions['moduleResolution'] !== 'Bundler'
+  )
+    return ['Trusted TypeScript resolver configuration is invalid.'];
+  return [];
+}
+
+interface ParsedModuleSpecifiers {
+  readonly invalid: boolean;
+  readonly specifiers: readonly string[];
+}
+
+function trustedSourceScriptKind(path: string): ts.ScriptKind {
+  if (path.endsWith('.tsx')) return ts.ScriptKind.TSX;
+  if (path.endsWith('.jsx')) return ts.ScriptKind.JSX;
+  if (path.endsWith('.js') || path.endsWith('.mjs') || path.endsWith('.cjs'))
+    return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+function parsedModuleSpecifiers(path: string, source: string): ParsedModuleSpecifiers {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    trustedSourceScriptKind(path),
+  );
+  const parseDiagnostics = (
+    sourceFile as ts.SourceFile & { readonly parseDiagnostics: readonly ts.Diagnostic[] }
+  ).parseDiagnostics;
+  const specifiers: string[] = [];
+  let invalid = parseDiagnostics.length > 0;
+  const addExpression = (expression: ts.Expression | undefined) => {
+    if (expression !== undefined && ts.isStringLiteralLike(expression)) {
+      specifiers.push(expression.text);
+      return;
+    }
+    invalid = true;
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isImportDeclaration(node)) addExpression(node.moduleSpecifier);
+    else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined)
+      addExpression(node.moduleSpecifier);
+    else if (ts.isImportEqualsDeclaration(node)) {
+      if (ts.isExternalModuleReference(node.moduleReference))
+        addExpression(node.moduleReference.expression);
+      else invalid = true;
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+    ) {
+      if (node.arguments.length === 1) addExpression(node.arguments[0]);
+      else invalid = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { invalid, specifiers };
+}
+
+const ALLOWED_TRUSTED_EXTERNAL_MODULES = new Set(['entities', 'marked', 'typescript', 'zod']);
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Dependency traversal rejects dynamic and unprotected module identities.
+function protectedDependencyErrors(artifacts: readonly TrustRootExecutionArtifact[]): string[] {
+  const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.text]));
+  const queue = ['scripts/check-readiness-scope-pr.ts'];
+  const visited = new Set<string>();
+  const governedData = new Set([REGISTRY_DATA_FILE, ALLOWED_SCOPE_FILES[3]]);
+  while (queue.length > 0) {
+    const path = queue.shift();
+    if (path === undefined || visited.has(path)) continue;
+    visited.add(path);
+    const source = byPath.get(path);
+    if (source === undefined) return ['Trusted execution dependency source is unavailable.'];
+    const parsed = parsedModuleSpecifiers(path, source);
+    if (parsed.invalid)
+      return ['Trusted execution dependencies must use static module identities.'];
+    for (const specifier of parsed.specifiers) {
+      if (!specifier.startsWith('.')) {
+        if (specifier.startsWith('node:') || ALLOWED_TRUSTED_EXTERNAL_MODULES.has(specifier))
+          continue;
+        return ['Trusted execution dependencies must stay inside protected source paths.'];
+      }
+      const resolved = posix.normalize(posix.join(posix.dirname(path), specifier));
+      if (resolved.startsWith('../') || resolved.includes('/../'))
+        return ['Trusted execution dependencies must stay inside protected source paths.'];
+      if (governedData.has(resolved)) continue;
+      if (!trustRootPath(resolved))
+        return ['Trusted execution dependencies must stay inside protected source paths.'];
+      if (repositoryScriptPath(resolved) || TRUST_ROOT_FILES.has(resolved)) queue.push(resolved);
+    }
+  }
+  return [];
+}
+
+function workflowDefinitions(
+  artifacts: readonly TrustRootExecutionArtifact[],
+): ReadonlyMap<string, WorkflowDefinition> | undefined {
+  const definitions = new Map<string, WorkflowDefinition>();
+  for (const artifact of artifacts) {
+    if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(artifact.path)) continue;
+    const definition = workflowDefinition(artifact.text);
+    if (definition === undefined || definitions.has(artifact.path)) return undefined;
+    definitions.set(artifact.path, definition);
+  }
+  return definitions;
+}
+
+function graphHasCycle(edges: ReadonlyMap<string, readonly string[]>): boolean {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (path: string): boolean => {
+    if (visiting.has(path)) return true;
+    if (visited.has(path)) return false;
+    visiting.add(path);
+    if ((edges.get(path) ?? []).some(visit)) return true;
+    visiting.delete(path);
+    visited.add(path);
+    return false;
+  };
+  return [...edges.keys()].some(visit);
+}
+
+function workflowEdges(
+  definitions: ReadonlyMap<string, WorkflowDefinition>,
+): ReadonlyMap<string, readonly string[]> | undefined {
+  const edges = new Map<string, readonly string[]>();
+  for (const [path, definition] of definitions) {
+    const targets: string[] = [];
+    for (const uses of definition.workflowUses) {
+      const local = protectedLocalWorkflow(uses);
+      if (local === '') return undefined;
+      if (local === undefined) {
+        if (!allowedExternalReusableWorkflow(uses)) return undefined;
+        continue;
+      }
+      if (!definitions.has(local)) return undefined;
+      targets.push(local);
+    }
+    edges.set(path, targets);
+  }
+  return graphHasCycle(edges) ? undefined : edges;
+}
+
+function privilegedWorkflowPaths(
+  definitions: ReadonlyMap<string, WorkflowDefinition>,
+  edges: ReadonlyMap<string, readonly string[]>,
+): Set<string> {
+  const privileged = new Set(
+    [...definitions].flatMap(([path, definition]) => (definition.privileged ? [path] : [])),
+  );
+  const queue = [...privileged];
+  for (const path of queue) {
+    for (const target of edges.get(path) ?? []) {
+      if (privileged.has(target)) continue;
+      privileged.add(target);
+      queue.push(target);
+    }
+  }
+  return privileged;
+}
+
+function localActionEdges(
+  definitions: ReadonlyMap<string, LocalActionDefinition>,
+): ReadonlyMap<string, readonly string[]> | undefined {
+  const edges = new Map<string, readonly string[]>();
+  for (const [path, definition] of definitions) {
+    const targets: string[] = [];
+    for (const invocation of definition.actions) {
+      const local = protectedLocalAction(invocation.uses);
+      if (local === '') return undefined;
+      if (local === undefined) continue;
+      if (!definitions.has(local)) return undefined;
+      targets.push(local);
+    }
+    edges.set(path, targets);
+  }
+  return graphHasCycle(edges) ? undefined : edges;
+}
+
+function workflowActionShapeErrors(
+  definitions: ReadonlyMap<string, WorkflowDefinition>,
+  actions: ReadonlyMap<string, LocalActionDefinition>,
+): string[] {
+  for (const definition of definitions.values()) {
+    for (const invocation of definition.actions) {
+      const local = protectedLocalAction(invocation.uses);
+      if (local === '')
+        return [
+          'Repository-local actions must live under the protected .github/actions directory.',
+        ];
+      if (local !== undefined && !actions.has(local))
+        return ['Protected repository-local action definition is unavailable.'];
+    }
+  }
+  return [];
+}
+
+function enqueuePrivilegedAction(
+  invocation: ActionInvocation,
+  actions: ReadonlyMap<string, LocalActionDefinition>,
+  queue: string[],
+): string | undefined {
+  const local = protectedLocalAction(invocation.uses);
+  if (local === '')
+    return 'Repository-local actions must live under the protected .github/actions directory.';
+  if (local === undefined)
+    return allowedPrivilegedAction(invocation)
+      ? undefined
+      : 'Privileged workflow dependencies must use allowed immutable actions.';
+  if (!actions.has(local))
+    return 'Repository-local action execution must stay inside protected dependencies.';
+  queue.push(local);
+  return undefined;
+}
+
+function privilegedActionErrors(
+  definitions: ReadonlyMap<string, WorkflowDefinition>,
+  privilegedWorkflows: ReadonlySet<string>,
+  actions: ReadonlyMap<string, LocalActionDefinition>,
+): string[] {
+  const queue: string[] = [];
+  for (const path of privilegedWorkflows) {
+    for (const invocation of definitions.get(path)?.actions ?? []) {
+      const error = enqueuePrivilegedAction(invocation, actions, queue);
+      if (error !== undefined) return [error];
+    }
+  }
+  const visited = new Set<string>();
+  for (const path of queue) {
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const definition = actions.get(path);
+    if (definition === undefined)
+      return ['Repository-local action execution must stay inside protected dependencies.'];
+    for (const invocation of definition.actions) {
+      const error = enqueuePrivilegedAction(invocation, actions, queue);
+      if (error !== undefined) return [error];
+    }
+  }
+  return [];
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Workflow validation binds actions, privileges, commands, lifecycle hooks, and imports.
+export function validateTrustRootExecutionDependencies(
+  artifacts: readonly TrustRootExecutionArtifact[],
+): string[] {
+  const errors: string[] = [];
+  const paths = artifacts.map((artifact) => artifact.path);
+  if (new Set(paths).size !== paths.length)
+    errors.push('Trusted execution dependency source is invalid.');
+  const workflows = workflowDefinitions(artifacts);
+  const actions = localActionDefinitions(artifacts);
+  if (workflows === undefined) errors.push('Workflow execution definition is invalid.');
+  if (actions === undefined)
+    errors.push('Repository-local action execution must stay inside protected dependencies.');
+  if (workflows !== undefined && actions !== undefined) {
+    const workflowGraph = workflowEdges(workflows);
+    const actionGraph = localActionEdges(actions);
+    if (workflowGraph === undefined) errors.push('Reusable workflow dependency graph is invalid.');
+    if (actionGraph === undefined)
+      errors.push('Repository-local action execution must stay inside protected dependencies.');
+    errors.push(...workflowActionShapeErrors(workflows, actions));
+    if (workflowGraph !== undefined && actionGraph !== undefined) {
+      const privileged = privilegedWorkflowPaths(workflows, workflowGraph);
+      for (const [path, workflow] of workflows) {
+        if (
+          path === '.github/workflows/readiness-scope.yml' &&
+          !exactReadinessWorkflow(artifacts.find((artifact) => artifact.path === path)?.text ?? '')
+        )
+          errors.push('Privileged readiness workflow semantic contract is invalid.');
+        else if (
+          path !== '.github/workflows/readiness-scope.yml' &&
+          privileged.has(path) &&
+          (workflow.runs.length > 0 || workflow.unprotectedExecutableSurface)
+        )
+          errors.push('Privileged workflows cannot execute unprotected repository commands.');
+      }
+      errors.push(...privilegedActionErrors(workflows, privileged, actions));
+    }
+  }
+  errors.push(...executionConfigurationErrors(artifacts));
+  errors.push(...trustedTypeScriptConfigurationErrors(artifacts));
+  errors.push(...lifecycleErrors(artifacts));
+  errors.push(...protectedDependencyErrors(artifacts));
+  return errors;
 }
 
 function trustPolicyErrors(input: ReadinessScopePrInput): string[] {
@@ -477,6 +1408,10 @@ export function validateReadinessScopePullRequest(input: ReadinessScopePrInput):
     return [...errors, 'Readiness scope manifest data is invalid.'];
   const baseManifest = baseManifestResult.data as ReadinessScopeManifest;
   const headManifest = headManifestResult.data as ReadinessScopeManifest;
+  const semanticChange = semanticSignature(baseManifest) !== semanticSignature(headManifest);
+  const semanticChangedIds = semanticChange
+    ? new Set(changedFindingIds(baseManifest, headManifest))
+    : undefined;
   const artifactErrors = [
     ...validateReadinessScopeArtifacts(basePlan, baseLedger, baseManifest),
     ...validateReadinessScopeArtifacts(headPlan, headLedger, headManifest),
@@ -485,8 +1420,21 @@ export function validateReadinessScopePullRequest(input: ReadinessScopePrInput):
     errors.push('Readiness scope artifacts do not match the governed manifest.');
   if (invalidSealTransition(baseLedger, headLedger))
     errors.push('Closure seals require a Ready for closure finding on the trusted base.');
+  if (sealedStateChanged(baseLedger, headLedger, baseExceptions, headExceptions))
+    errors.push('Sealed readiness state is immutable.');
+  errors.push(
+    ...registryLifecycleErrors(
+      input,
+      baseLedger,
+      headLedger,
+      baseExceptions,
+      headExceptions,
+      baseRegistryJson.value,
+      headRegistryJson.value,
+      semanticChangedIds,
+    ),
+  );
   errors.push(...readyEvidenceErrors(input, baseLedger, headLedger, headRegistryJson.value));
-  const semanticChange = semanticSignature(baseManifest) !== semanticSignature(headManifest);
   if (!semanticChange) {
     if (
       baseManifest.version !== headManifest.version ||
@@ -526,7 +1474,11 @@ export function validateReadinessScopePullRequest(input: ReadinessScopePrInput):
       errors.push('Closure transitions must use the exact ledger-and-registry file shape.');
     return errors;
   }
-  if (!exactChangedFiles(input.changedFiles, ALLOWED_SCOPE_FILES))
+  const scopeChangeFiles =
+    input.base.registry === input.head.registry
+      ? ALLOWED_SCOPE_FILES
+      : SCOPE_CHANGE_FILES_WITH_REGISTRY;
+  if (!exactChangedFiles(input.changedFiles, scopeChangeFiles))
     errors.push('Scope changes must use the dedicated allowed-file shape.');
   if (!exactVersionIncrement(baseManifest.version, headManifest.version))
     errors.push('Scope changes require an exact one-step manifest version increment.');
@@ -884,6 +1836,83 @@ export async function readyEvidenceForRegistry(
   );
 }
 
+function trustedGitTreePaths(root: string, commit: string): readonly string[] {
+  if (!/^[a-f0-9]{40}$/.test(commit))
+    throw new Error('Trusted scope policy Git commit identity is invalid.');
+  const result = spawnSync('git', ['ls-tree', '-rz', '--name-only', commit], { cwd: root });
+  if (result.status !== 0 || !(result.stdout instanceof Uint8Array))
+    throw new Error('Trusted scope policy Git operation failed.');
+  const decoded = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
+  const fields = decoded.split('\0');
+  if (fields.at(-1) !== '') throw new Error('Trusted scope policy Git tree data is invalid.');
+  fields.pop();
+  if (fields.length > 20_000 || new Set(fields).size !== fields.length)
+    throw new Error('Trusted scope policy Git tree data is invalid.');
+  const hasControlCharacter = (path: string) =>
+    [...path].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+  if (
+    fields.some(
+      (path) =>
+        path.length === 0 ||
+        path.length > 1_024 ||
+        path.startsWith('/') ||
+        path.split('/').some((part) => part === '' || part === '.' || part === '..') ||
+        hasControlCharacter(path),
+    )
+  )
+    throw new Error('Trusted scope policy Git tree data is invalid.');
+  return fields;
+}
+
+function trustExecutionArtifactPath(path: string): boolean {
+  return (
+    /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path) ||
+    path.startsWith('.github/actions/') ||
+    path === '.npmrc' ||
+    forbiddenRootEnvironmentPath(path) ||
+    path === 'bun.lock' ||
+    path === 'bunfig.toml' ||
+    path === 'package.json' ||
+    path === 'tsconfig.base.json' ||
+    path === 'tsconfig.json' ||
+    path.endsWith('/package.json') ||
+    repositoryScriptPath(path) ||
+    path === 'packages/shared/src/validators/readiness.ts'
+  );
+}
+
+function trustExecutionArtifacts(root: string, commit: string): TrustRootExecutionArtifact[] {
+  const paths = trustedGitTreePaths(root, commit).filter(trustExecutionArtifactPath);
+  if (paths.length > 2_048) throw new Error('Trusted execution dependency set is too large.');
+  const artifacts = paths.map((path) => ({ path, text: readGitArtifact(root, commit, path) }));
+  if (artifacts.reduce((size, artifact) => size + artifact.text.length, 0) > 5_000_000)
+    throw new Error('Trusted execution dependency set is too large.');
+  return artifacts;
+}
+
+export function validateTrustRootExecutionDependenciesForCommit(
+  root: string,
+  commit: string,
+): string[] {
+  const artifacts = trustExecutionArtifacts(root, commit);
+  const paths = new Set(artifacts.map((artifact) => artifact.path));
+  const errors = validateTrustRootExecutionDependencies(artifacts);
+  const required = [
+    '.github/workflows/readiness-scope.yml',
+    'bun.lock',
+    'package.json',
+    'scripts/check-readiness-scope-pr.ts',
+    'scripts/tsconfig.json',
+    'tsconfig.base.json',
+  ];
+  if (required.some((path) => !paths.has(path)))
+    errors.push('Trusted execution dependency source is unavailable.');
+  return errors;
+}
+
 async function productionInput(
   root: string,
   event: typeof pullRequestTargetEventSchema._output,
@@ -1008,6 +2037,7 @@ async function productionMain(root: string): Promise<void> {
     const input = await productionInput(root, event, token);
     const errors = [
       ...validateReadinessScopePullRequest(input),
+      ...validateTrustRootExecutionDependenciesForCommit(root, input.headSha),
       ...(await headReadinessErrors(root, input)),
     ];
     if (errors.length === 0) {

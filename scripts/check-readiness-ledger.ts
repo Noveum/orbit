@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { decodeHTML, decodeHTMLStrict } from 'entities';
+import { Marked, type Token, type Tokens } from 'marked';
 import { readinessReferenceRegistrySourceSchema } from '../packages/shared/src/validators/readiness.ts';
 import {
   createProductionReadinessEvidenceVerifier,
@@ -148,6 +150,7 @@ const COMPLETE_OPENING_HTML_TAG =
 const COMPLETE_CLOSING_HTML_TAG = /^<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
 const HTML_TABLE_TAG =
   /<\/?(?:caption|col|colgroup|table|tbody|td|tfoot|th|thead|tr)(?:[ \t]|\/?>|$)/i;
+const GFM_MARKDOWN = new Marked({ async: false, breaks: false, gfm: true, pedantic: false });
 
 export interface PlanFinding {
   readonly row: number;
@@ -355,14 +358,12 @@ function activeLines(text: string): string[] {
         }
         const root = rootBlockContent(line);
         const html = root === undefined ? undefined : htmlBlockOpening(root);
+        if (html?.interruptsParagraph === false)
+          throw new Error('Type-seven HTML blocks are not allowed in governed Markdown.');
         if (html?.isComment !== true && HTML_TABLE_TAG.test(root ?? line))
           throw new Error('Visible HTML table alternatives are not allowed.');
         if (root === undefined && paragraphOpen && line.trim().length > 0) return line;
-        if (
-          root !== undefined &&
-          html !== undefined &&
-          (html.interruptsParagraph || !paragraphOpen)
-        ) {
+        if (root !== undefined && html?.interruptsParagraph === true) {
           if (html.end === null || !root.toLowerCase().slice(html.searchFrom).includes(html.end)) {
             htmlEnd = html.end;
             htmlComment = html.isComment;
@@ -424,6 +425,207 @@ function cells(line: string): string[] | undefined {
   if (startsWithDelimiter) values.shift();
   if (endsWithDelimiter) values.pop();
   return values;
+}
+
+interface RenderedTable {
+  readonly header: readonly string[];
+  readonly rows: ReadonlyArray<readonly string[]>;
+  readonly rootIndex: number | undefined;
+  readonly sourceHeader: readonly string[];
+  readonly sourceRows: ReadonlyArray<readonly string[]>;
+}
+
+interface RenderedMarkdown {
+  readonly rootHeadings: ReadonlyArray<{
+    readonly depth: number;
+    readonly rootIndex: number;
+    readonly text: string;
+  }>;
+  readonly renderSourceText: (value: string) => string;
+  readonly tables: readonly RenderedTable[];
+}
+
+function renderedTableToken(token: Token): token is Tokens.Table {
+  return token.type === 'table';
+}
+
+function renderedHeadingToken(token: Token): token is Tokens.Heading {
+  return token.type === 'heading';
+}
+
+function renderedInlineContainerToken(
+  token: Token,
+): token is Tokens.Del | Tokens.Em | Tokens.Image | Tokens.Link | Tokens.Strong {
+  return (
+    token.type === 'del' ||
+    token.type === 'em' ||
+    token.type === 'image' ||
+    token.type === 'link' ||
+    token.type === 'strong'
+  );
+}
+
+function renderedTextToken(token: Token): token is Tokens.Escape | Tokens.Text {
+  return token.type === 'escape' || token.type === 'text';
+}
+
+function renderedCodeSpanToken(token: Token): token is Tokens.Codespan {
+  return token.type === 'codespan';
+}
+
+function assertGovernedTableTokens(token: Tokens.Table): void {
+  let html = false;
+  let image = false;
+  let link = false;
+  const cells = [...token.header, ...token.rows.flat()];
+  for (const cell of cells) {
+    GFM_MARKDOWN.walkTokens(cell.tokens, (candidate) => {
+      html ||= candidate.type === 'html';
+      image ||= candidate.type === 'image';
+      link ||= candidate.type === 'link';
+    });
+  }
+  if (html) throw new Error('Markdown HTML tokens are not allowed in governed tables.');
+  if (image) throw new Error('Markdown image tokens are not allowed in governed tables.');
+  if (link) throw new Error('Markdown link tokens are not allowed in governed tables.');
+}
+
+function normalizedRenderedText(value: string): string {
+  return decodeHTML(value)
+    .normalize('NFKC')
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function renderedInlineTokenText(token: Token): string {
+  if (token.type === 'html') return /^<br[ \t]*\/?>$/iu.test(token.raw) ? ' ' : '';
+  if (token.type === 'br') return ' ';
+  if (renderedInlineContainerToken(token)) return renderedInlineText(token.tokens);
+  if (renderedCodeSpanToken(token)) return token.text;
+  if (renderedTextToken(token))
+    return token.type === 'text' && token.tokens !== undefined
+      ? renderedInlineText(token.tokens)
+      : token.text;
+  return token.raw;
+}
+
+function renderedInlineText(tokens: readonly Token[]): string {
+  return normalizedRenderedText(tokens.map(renderedInlineTokenText).join(''));
+}
+
+function renderedMarkdown(text: string): RenderedMarkdown {
+  const lexer = new GFM_MARKDOWN.Lexer(GFM_MARKDOWN.defaults);
+  const tokens = lexer.lex(text.replace(/\r\n?/g, '\n'));
+  const rootIndexes = new Map<Token, number>(tokens.map((token, index) => [token, index] as const));
+  const tables: RenderedTable[] = [];
+  GFM_MARKDOWN.walkTokens(tokens, (token) => {
+    if (!renderedTableToken(token)) return;
+    assertGovernedTableTokens(token);
+    tables.push({
+      header: token.header.map((cell) => renderedInlineText(cell.tokens)),
+      rootIndex: rootIndexes.get(token),
+      rows: token.rows.map((row) => row.map((cell) => renderedInlineText(cell.tokens))),
+      sourceHeader: token.header.map((cell) => cell.text),
+      sourceRows: token.rows.map((row) => row.map((cell) => cell.text)),
+    });
+  });
+  return {
+    rootHeadings: tokens.flatMap((token, rootIndex) =>
+      renderedHeadingToken(token)
+        ? [{ depth: token.depth, rootIndex, text: renderedInlineText(token.tokens) }]
+        : [],
+    ),
+    renderSourceText: (value) => renderedInlineText(lexer.inlineTokens(value)),
+    tables,
+  };
+}
+
+function sameCells(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameRows(
+  left: ReadonlyArray<readonly string[]>,
+  right: ReadonlyArray<readonly string[]>,
+): boolean {
+  return (
+    left.length === right.length && left.every((row, index) => sameCells(row, right[index] ?? []))
+  );
+}
+
+function renderedFindingIdentityCandidate(value: readonly string[]): boolean {
+  return FINDING_ID.test(value[0] ?? '') && /^(P0|P1)$/.test(value[1] ?? '');
+}
+
+function renderedSectionTable(
+  document: RenderedMarkdown,
+  heading: string,
+  header: readonly string[],
+  kind: string,
+): RenderedTable {
+  const sectionHeadings = document.rootHeadings.filter(
+    (candidate) => candidate.depth === 2 && candidate.text === heading,
+  );
+  const sectionHeading = sectionHeadings.length === 1 ? sectionHeadings[0] : undefined;
+  if (sectionHeading === undefined)
+    throw new Error(`${kind} section does not have one rendered GFM representation.`);
+  const sectionEnd = document.rootHeadings.find(
+    (candidate) =>
+      candidate.rootIndex > sectionHeading.rootIndex &&
+      (candidate.depth === 1 || candidate.depth === 2),
+  )?.rootIndex;
+  const matches = document.tables.filter((table) => sameCells(table.header, header));
+  const table = matches.length === 1 ? matches[0] : undefined;
+  if (table === undefined)
+    throw new Error(`${kind} table does not have one rendered GFM representation.`);
+  if (
+    table.rootIndex === undefined ||
+    table.rootIndex <= sectionHeading.rootIndex ||
+    (sectionEnd !== undefined && table.rootIndex >= sectionEnd)
+  )
+    throw new Error(`${kind} table is not a direct child of its rendered GFM section.`);
+  return table;
+}
+
+function assertRenderedTableVisibility(
+  renderedDocument: RenderedMarkdown,
+  rows: ReadonlyArray<{ readonly cells: readonly string[] }>,
+  heading: string,
+  header: readonly string[],
+  kind: string,
+  rejectFindingShapes: boolean,
+  rejectExceptionShapes: boolean,
+): void {
+  const renderedHeading = renderedDocument.renderSourceText(heading);
+  const renderedHeader = header.map(renderedDocument.renderSourceText);
+  const tables = renderedDocument.tables;
+  const rendered = renderedSectionTable(renderedDocument, renderedHeading, renderedHeader, kind);
+  for (const table of tables) {
+    if (table === rendered) continue;
+    const candidates = [table.header, ...table.rows];
+    if (
+      rejectFindingShapes &&
+      candidates.some((value) => {
+        const widthCandidate =
+          value.length === renderedHeader.length &&
+          (kind !== 'plan findings' || /^(P0|P1)$/.test(value[1] ?? ''));
+        return widthCandidate || renderedFindingIdentityCandidate(value);
+      })
+    )
+      throw new Error(
+        `${kind === 'plan findings' ? 'Plan' : 'Finding'}-shaped rendered row is outside the selected ${kind} table.`,
+      );
+    if (rejectExceptionShapes && candidates.some((value) => value.length === renderedHeader.length))
+      throw new Error(`Exception-shaped rendered row is outside the selected ${kind} table.`);
+  }
+  const sourceRows = rows.map((row) => row.cells);
+  const renderedRows = rows.map((row) => row.cells.map(renderedDocument.renderSourceText));
+  const sameSource =
+    sameCells(rendered.sourceHeader, header) && sameRows(rendered.sourceRows, sourceRows);
+  const sameRepresentation = sameSource && sameRows(rendered.rows, renderedRows);
+  if (!sameRepresentation)
+    throw new Error(`${kind} table does not match its rendered GFM representation.`);
 }
 
 function matchesHeader(line: string, header: readonly string[]): boolean {
@@ -533,12 +735,22 @@ function scopedTable(
 }
 
 export function parsePlanFindings(text: string): PlanFinding[] {
+  const renderedDocument = renderedMarkdown(text);
   const rows = scopedTable(
     activeLines(text),
     'Findings register',
     PLAN_HEADER,
     'plan findings',
     true,
+  );
+  assertRenderedTableVisibility(
+    renderedDocument,
+    rows,
+    'Findings register',
+    PLAN_HEADER,
+    'plan findings',
+    true,
+    false,
   );
   return rows.map((row) => ({
     row: row.row,
@@ -551,13 +763,24 @@ export function parsePlanFindings(text: string): PlanFinding[] {
 }
 
 export function parseFindingRows(text: string): FindingRow[] {
-  return scopedTable(
+  const renderedDocument = renderedMarkdown(text);
+  const rows = scopedTable(
     activeLines(text),
     'Readiness findings register',
     FINDING_HEADER,
     'findings',
     true,
-  ).map((row) => ({
+  );
+  assertRenderedTableVisibility(
+    renderedDocument,
+    rows,
+    'Readiness findings register',
+    FINDING_HEADER,
+    'findings',
+    true,
+    false,
+  );
+  return rows.map((row) => ({
     row: row.row,
     id: row.cells[0] ?? '',
     priority: row.cells[1] ?? '',
@@ -579,14 +802,25 @@ export function parseFindingRows(text: string): FindingRow[] {
 }
 
 export function parseExceptionRows(text: string): ExceptionRow[] {
-  return scopedTable(
+  const renderedDocument = renderedMarkdown(text);
+  const rows = scopedTable(
     activeLines(text),
     'P1 exception register',
     EXCEPTION_HEADER,
     'P1 exceptions',
     false,
     true,
-  ).map((row) => ({
+  );
+  assertRenderedTableVisibility(
+    renderedDocument,
+    rows,
+    'P1 exception register',
+    EXCEPTION_HEADER,
+    'P1 exceptions',
+    false,
+    true,
+  );
+  return rows.map((row) => ({
     row: row.row,
     findingId: row.cells[0] ?? '',
     ownerReference: row.cells[1] ?? '',
@@ -790,37 +1024,57 @@ function calendarDate(value: string): boolean {
   );
 }
 
-function decodeEntity(entity: string): string {
-  const numeric = /^&#(x[\da-f]+|\d+);$/i.exec(entity)?.[1];
-  if (numeric !== undefined) {
-    const codePoint = Number.parseInt(
-      numeric.replace(/^x/i, ''),
-      numeric.startsWith('x') ? 16 : 10,
-    );
-    if (Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff)
-      return String.fromCodePoint(codePoint);
-    return ' ';
-  }
-  const named = entity.slice(1, -1).toLowerCase();
+function decodedCharacterReferences(value: string): string {
+  return decodeHTML(value);
+}
+
+function containsInvisibleLimitationCharacter(value: string): boolean {
+  return /[\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value);
+}
+
+function containsUriScheme(value: string): boolean {
+  return /\b[A-Za-z][A-Za-z0-9+.-]*:(?=\S)/u.test(value);
+}
+
+function createsGovernedLimitationToken(value: string): boolean {
+  const decoded = decodedCharacterReferences(value).normalize('NFKC');
   return (
-    {
-      amp: '&',
-      apos: "'",
-      gt: '>',
-      lt: '<',
-      quot: '"',
-    }[named] ?? ' '
+    placeholderLimitation(value) || containsRenderedLink(decoded) || containsUriScheme(decoded)
   );
 }
 
+function unknownCharacterReferenceCreatesGovernedToken(source: string): boolean {
+  const terminated = /&(?:#[^;\s]{1,64}|[A-Za-z][A-Za-z0-9]{1,64});/gu;
+  for (const match of source.matchAll(terminated)) {
+    const reference = match[0];
+    if (decodeHTMLStrict(reference) !== reference) continue;
+    const index = match.index ?? 0;
+    const candidate = source.slice(0, index) + source.slice(index + reference.length);
+    if (createsGovernedLimitationToken(candidate)) return true;
+  }
+  const unterminated =
+    /&((?:#[xX]?[A-Za-z0-9]{1,64})|(?:[A-Za-z][A-Za-z0-9]{1,64}))(?=[^A-Za-z0-9;]|$)/gu;
+  for (const match of source.matchAll(unterminated)) {
+    const reference = match[0];
+    if (decodeHTML(reference) !== reference) continue;
+    const index = match.index ?? 0;
+    const body = match[1] ?? '';
+    for (let length = 1; length <= body.length; length += 1) {
+      const candidate = source.slice(0, index) + source.slice(index + length + 1);
+      if (createsGovernedLimitationToken(candidate)) return true;
+    }
+  }
+  return false;
+}
+
 function normalizedLimitation(value: string): string {
-  return value
+  return decodedCharacterReferences(value)
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/!?\[([^\]\r\n]*)\]\((?:\\.|[^\\)\r\n])*\)/g, '$1')
     .replace(/<\/?[A-Za-z][^>\r\n]*>/g, ' ')
-    .replace(/&(?:#[xX][\dA-Fa-f]+|#\d+|[A-Za-z][A-Za-z0-9]+);/g, decodeEntity)
     .normalize('NFKC')
     .toLowerCase()
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
@@ -831,6 +1085,26 @@ function substantiveLimitation(value: string): boolean {
   const normalized = normalizedLimitation(value);
   const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
   return words.length >= 3 && words.join('').length >= 16;
+}
+
+function containsRenderedLink(value: string): boolean {
+  let containsLink = false;
+  GFM_MARKDOWN.walkTokens(GFM_MARKDOWN.lexer(value), (token) => {
+    if (token.type === 'link' || token.type === 'image') containsLink = true;
+  });
+  return containsLink;
+}
+
+function permittedLimitationSyntax(value: string): boolean {
+  const decoded = decodedCharacterReferences(value);
+  const normalized = decoded.normalize('NFKC');
+  return !(
+    containsInvisibleLimitationCharacter(decoded) ||
+    unknownCharacterReferenceCreatesGovernedToken(value) ||
+    /[<>[\]`*_~]/u.test(normalized) ||
+    containsRenderedLink(normalized) ||
+    containsUriScheme(normalized)
+  );
 }
 
 function placeholderLimitation(value: string): boolean {
@@ -1062,7 +1336,7 @@ function validateException(
       `P1 exception row ${exception.row} has an expiry date that is not after the verification date.`,
     );
   const limitation = exception.limitation.trim();
-  const substantive = substantiveLimitation(limitation);
+  const substantive = permittedLimitationSyntax(limitation) && substantiveLimitation(limitation);
   if (!substantive || placeholderLimitation(limitation))
     errors.push(`${id} has an invalid public limitation.`);
   const validFields = [
