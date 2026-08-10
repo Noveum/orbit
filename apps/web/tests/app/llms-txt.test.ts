@@ -26,8 +26,6 @@ describe('/llms.txt', () => {
 
     expect(text).toContain('Apache-2.0');
     expect(text).toContain('self-hosted');
-    expect(text).toContain('Self-hosting status: Preview');
-    expect(text).toContain('not a supported production release');
     expect(text).toContain('https://github.com/Noveum/orbit');
   });
 

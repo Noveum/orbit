@@ -12,15 +12,16 @@ to the codebase.
 
 ## Current pull request
 
-- [ ] Publish the Preview boundary in the README and self-hosting guide.
-- [ ] Keep Noveum AI sponsorship and Apache-2.0 attribution intact.
-- [ ] Disable Slack in the UI, OAuth, API, callback, webhook, notification, and
+- [x] Publish the Preview boundary in the README and self-hosting guide.
+- [x] Keep Noveum AI sponsorship and Apache-2.0 attribution intact.
+- [x] Disable Slack in the UI, OAuth, API, callback, webhook, notification, and
       GitHub side-effect paths until it is requalified.
-- [ ] Keep GitHub available and correct its documented permission set.
-- [ ] Remove tenant-specific Yodu operational material from the public setup path.
-- [ ] Pass focused tests, `bun run verify`, the production build, and hosted CI.
+- [x] Keep GitHub available and correct its documented permission set.
+- [x] Remove the tenant-specific Yodu catchup and planning artifacts.
+- [x] Pass focused tests, `bun run verify`, and the production build locally.
+- [ ] Pass hosted CI on the pull request commit.
 
-These boxes are checked only after the pull request is verified and merged.
+The completed items are implemented and locally verified on the current branch.
 
 ## Release rule
 

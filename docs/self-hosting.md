@@ -29,8 +29,8 @@ Both need the same four things.
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
 | Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
-Email is only used for magic links, invites and notifications. Orbit will boot
-without it, but nobody who is not already signed in will be able to get in.
+Email is used for magic links and invites. Orbit will boot without it, but
+nobody who is not already signed in will be able to get in.
 
 ## Deploy on Vercel
 

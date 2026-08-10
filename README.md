@@ -88,7 +88,7 @@ yourself and never depend on us at all.
 | **Realtime** | Every change fans out over a websocket to exactly the people allowed to see it |
 | **Keyboard first** | Cmd K for everything, `g` to navigate, single keys to act. Press `?` |
 | **MCP server** | AI agents read the board and file work, with your permissions, over OAuth |
-| **Notifications** | Inbox and email, with per-event preferences and quiet hours |
+| **Notifications** | In-app inbox, with per-event preferences and quiet hours |
 | **GitHub** | Pull requests linked to the issues they close |
 | **Auth** | Passkeys, Google, GitHub, magic links. Password optional and off by default |
 | **Roles** | Admin, member, contributor and guest, enforced on the server |
