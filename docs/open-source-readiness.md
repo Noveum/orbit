@@ -33,46 +33,44 @@ to the codebase.
   one-off database import path by removing destructive and tenant-specific
   import commands while retaining the neutral mapping boundary needed for a
   future supported importer.
+- [#288](https://github.com/Noveum/orbit/pull/288) guarded the destructive demo
+  seed before database-client initialization, limited the confirmation-free
+  exemption to the exact development Compose target, and bound every other
+  confirmation to a credential-safe target identity. It merged as `9779141`
+  after all exact-head checks and required reviews passed.
 
-GitHub records show successful hosted CI and Greptile review on the merged
-heads. These pull requests reduce the known gaps, but they do not make the
-repository a supported production release.
+GitHub records show successful hosted CI and completion of required reviews on
+the merged heads. These pull requests reduce the known gaps, but they do not
+make the repository a supported production release.
 
 ### Active pull requests
 
 - [#283](https://github.com/Noveum/orbit/pull/283), DEP-001, adds a tested
   standalone Node start path and copied-artifact smoke test. Status: in progress,
-  not merge-ready. The public head is behind `main`, its hosted end-to-end job
-  failed, and final review found standalone prerequisite and troubleshooting
-  documentation corrections that must land before exact-head verification.
-- [#288](https://github.com/Noveum/orbit/pull/288), part of PORT-001, stops the
-  destructive demo seed before database-client initialization unless the target
-  is the exact development Compose database or a target-bound confirmation is
-  supplied. Status: in progress, not merge-ready. Its hosted end-to-end job
-  failed because CI did not supply the newly required target confirmation. The
-  updated public head contains current `main` and a reviewed fix scoped to the
-  end-to-end job. Full isolated local verification is green; the updated head
-  must still pass hosted CI and Greptile review.
+  not yet merge-ready. The standalone runtime and troubleshooting corrections
+  are on the public branch, and its prior exact-head checks passed. Latest-`main`
+  integration is in progress, so the resulting public head must complete the
+  full merge gate before merge.
 - [#289](https://github.com/Noveum/orbit/pull/289), SEC-003, requires explicit
   MCP consent and PKCE, preserves OAuth continuation through passwordless login,
   and prevents issued token scopes from exceeding the active grant. Status: in
-  progress. Its public head passed hosted CI and Greptile, but is behind `main`
-  and must be refreshed and reverified before merge. Its current diff has an
-  independent clean review.
+  progress. Its public head passed hosted CI and required review, but is behind
+  `main` and must be refreshed and reverified before merge. Its current diff has
+  an independent clean review.
 - [#290](https://github.com/Noveum/orbit/pull/290) makes prepared statements an
   explicit strict application-pool setting, defaults to transaction-pooler-safe
   behavior, and rejects conflicting URL options. Status: in progress. Its public
-  head is behind `main`. Its failed CodeQL gate is a confirmed high-severity
-  quadratic-regex finding in connection URL normalization. A linear fix,
-  adversarial regression coverage, and a complete exact-head rerun are required
-  before merge.
+  head now includes linear-time connection URL normalization and adversarial
+  regression coverage, and its prior exact-head checks passed. It remains behind
+  `main`; latest-main integration, full local verification, and a complete
+  exact-head rerun are required before merge.
 
 ### Merge gate for this work
 
-- CodeRabbit is not an availability or merge gate for this project.
+- Availability of optional review services is not a merge gate for this project.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
-  exact-head Greptile review at 5/5 with no unresolved review threads, and pass
-  an independent diff review before merge.
+  required exact-head review at its highest confidence level with no unresolved
+  review threads, and pass an independent diff review before merge.
 - Slack remains disabled and deferred. Requalification is tracked only as
   future work and is not part of the active merge sequence.
 
@@ -111,11 +109,11 @@ repository a supported production release.
   start unless at least one complete authentication path is configured and
   tested.
 - [ ] **PORT-001: Neutral seed and import tooling.** **Status: partial through
-  #281 and #287, with #288 active.** Neutral demo data and unsafe importer
-  quarantine are complete. Remaining work includes tenant-specific test
-  fixtures, a branded settings placeholder, and supported argument-driven,
-  dry-run-first replacement importers. Legitimate sponsorship and project
-  contact references remain by design.
+  #281, #287, and #288.** Neutral demo data, unsafe importer quarantine, and
+  destructive seed protection are complete. Remaining work includes
+  tenant-specific test fixtures, a branded settings placeholder, and supported
+  argument-driven, dry-run-first replacement importers. Legitimate sponsorship
+  and project contact references remain by design.
 - [ ] **PRIV-001: Personal and branded artifacts.** **Status: partial through
   #282.** Current screenshots and private working artifacts were replaced or
   removed. Historical blobs, media ownership, and external ownership records
@@ -218,8 +216,8 @@ repository a supported production release.
   quickstarts plus backup, restore, upgrade, and incident runbooks.
 - [ ] **REPO-001: Consistent contributor policy.** **Status: open.** Align agent
   instructions, generated files, test placement, Biome exceptions, and CI
-  enforcement. Remove stale CodeRabbit requirements from `CLAUDE.md` and
-  `CONTRIBUTING.md` so documented review gates match the active policy.
+  enforcement. Remove stale tool-specific review requirements from `CLAUDE.md`
+  and `CONTRIBUTING.md` so documented review gates match the active policy.
 
 ## Deferred P2 work
 
