@@ -65,7 +65,7 @@ Open <http://localhost:3000>.
 on the login screen and signs you in with one click. No email, no password, no
 waiting for a magic link.
 
-Start as **`pulkit@noveum.ai`**, who is an admin on all three teams and sees
+Start as **`alex@orbit.example`**, who is an admin on all three teams and sees
 everything.
 
 The other seeded users are useful for seeing how permissions behave. They all
@@ -73,15 +73,15 @@ sign in the same way:
 
 | User | Role | Teams |
 | --- | --- | --- |
-| `pulkit@noveum.ai` | Admin | Engineering, Design, Marketing |
-| `shashank@noveum.ai` | Admin | Engineering, Marketing |
-| `aditi@noveum.ai` | Member | Engineering, Design |
-| `tanzeela@noveum.ai` | Member | Engineering, Design |
-| `harkirat@noveum.ai` | Member | Marketing |
-| `koushik@noveum.ai` | Contributor | Engineering |
-| `om@noveum.ai` | Guest | Marketing |
+| `alex@orbit.example` | Admin | Engineering, Design, Marketing |
+| `sam@orbit.example` | Admin | Engineering, Marketing |
+| `jordan@orbit.example` | Member | Engineering, Design |
+| `casey@orbit.example` | Member | Engineering, Design |
+| `taylor@orbit.example` | Member | Marketing |
+| `robin@orbit.example` | Contributor | Engineering |
+| `drew@orbit.example` | Guest | Marketing |
 
-Sign in as `om@noveum.ai` to see what a guest can and cannot do. Buttons
+Sign in as `drew@orbit.example` to see what a guest can and cannot do. Buttons
 disappear, because the UI reads the same policy the server enforces.
 
 **`ORBIT_DEV_LOGIN` must never be set on a deployed environment.** It signs

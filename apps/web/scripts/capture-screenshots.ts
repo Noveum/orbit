@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { type Browser, chromium, type Page } from '@playwright/test';
 
 const BASE = (process.env['ORBIT_SHOTS_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '');
-const USER = process.env['ORBIT_SHOTS_USER'] ?? 'pulkit@noveum.ai';
+const USER = process.env['ORBIT_SHOTS_USER'] ?? 'alex@orbit.example';
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const OUT = resolve(REPO_ROOT, 'docs/assets/screenshots');
 const RELATIVE_OUT = 'docs/assets/screenshots';

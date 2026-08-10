@@ -2,7 +2,7 @@ import { SQL } from 'bun';
 
 const DEFAULT_DATABASE_URL = 'postgres://orbit:orbit@localhost:5434/orbit_bench';
 const DEFAULT_BASE_URL = 'http://localhost:3456';
-const DEFAULT_EMAIL = 'pulkit@noveum.ai';
+const DEFAULT_EMAIL = 'alex@orbit.example';
 const ISSUES_PER_TEAM = 2000;
 const EXTRA_TEAM_KEYS = ['OPS', 'SUP', 'FIN', 'LEG', 'SEC', 'DAT', 'PLT'];
 const CYCLES_PER_TEAM = 12;
