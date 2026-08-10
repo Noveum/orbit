@@ -47,6 +47,11 @@ connections, and the direct endpoint will run out of them under any real load.
 Keep the direct `5432` string somewhere too. You need it once, to apply the
 schema.
 
+Set `DATABASE_PREPARED_STATEMENTS=false` for this transaction pooler. Other
+providers use different ports, so use the runtime connection string they
+recommend and choose this setting from the endpoint's prepared-statement
+capability, not its port number.
+
 Any Postgres works. Neon and Railway are equally fine, and so is a Postgres you
 run yourself. Orbit uses `postgres.js` through Drizzle, and no
 provider-specific extensions beyond what `bun run db:push` installs itself.
@@ -127,6 +132,7 @@ In **Settings**, **Environment Variables**:
 
 ```bash
 DATABASE_URL=postgres://...pooler on 6543...
+DATABASE_PREPARED_STATEMENTS=false
 REDIS_URL=rediss://...
 
 BETTER_AUTH_SECRET=<a fresh 32+ character random string>
