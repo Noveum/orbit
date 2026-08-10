@@ -82,7 +82,7 @@ export function SprintHeader({
           className={cn(
             '-mx-1 rounded-md px-1 font-semibold text-lg text-text outline-none',
             'focus-visible:ring-2 focus-visible:ring-accent',
-            canManage ? rowHover : 'cursor-default',
+            canManage ? rowHover : undefined,
           )}
         >
           {label}

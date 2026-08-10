@@ -22,6 +22,7 @@ import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
@@ -69,7 +70,7 @@ async function assertCycleWindow(
   }
   await lockTeamCycles(executor, window.teamId);
   const [clash] = await executor
-    .select({ id: schema.cycle.id, name: schema.cycle.name })
+    .select({ id: schema.cycle.id, name: schema.cycle.name, number: schema.cycle.number })
     .from(schema.cycle)
     .where(
       and(
@@ -83,7 +84,9 @@ async function assertCycleWindow(
     )
     .limit(1);
   if (clash !== undefined) {
-    throw conflict(`Those dates overlap ${clash.name}.`, { details: { cycleId: clash.id } });
+    throw conflict(`Those dates overlap ${sprintLabel(clash)}.`, {
+      details: { cycleId: clash.id },
+    });
   }
 }
 
@@ -218,6 +221,74 @@ export async function updateCycle(
   });
 }
 
+export async function shiftFollowingCycles(
+  principal: Principal,
+  cycleId: string,
+  options: { readonly after: Date; readonly days: number },
+): Promise<{ shifted: CycleRow[]; actions: SyncAction[] }> {
+  assertCan(principal, 'cycle:manage');
+  const { after, days } = options;
+  if (days === 0) return { shifted: [], actions: [] };
+
+  return await db.transaction(async (tx) => {
+    const anchor = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockTeamCycles(tx, anchor.teamId);
+
+    const following = await tx
+      .select()
+      .from(schema.cycle)
+      .where(
+        and(
+          eq(schema.cycle.teamId, anchor.teamId),
+          isNull(schema.cycle.archivedAt),
+          gte(schema.cycle.startsAt, after),
+          ne(schema.cycle.id, anchor.id),
+        ),
+      )
+      .orderBy(asc(schema.cycle.startsAt));
+
+    const movable: CycleRow[] = [];
+    for (const row of following) {
+      if (row.completedAt !== null) break;
+      movable.push(row);
+    }
+    if (movable.length === 0) return { shifted: [], actions: [] };
+
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const shifted: CycleRow[] = [];
+
+    for (const row of movable) {
+      const [moved] = await tx
+        .update(schema.cycle)
+        .set({
+          startsAt: addUtcDays(row.startsAt, days),
+          endsAt: addUtcDays(row.endsAt, days),
+          syncId,
+        })
+        .where(eq(schema.cycle.id, row.id))
+        .returning();
+      shifted.push(requireRow(moved, 'That cycle does not exist.'));
+    }
+
+    return {
+      shifted,
+      actions: shifted.map((row) =>
+        buildSyncAction({
+          syncId,
+          organizationId: principal.organizationId,
+          scopes: cycleScopes(row),
+          action: 'update',
+          model: 'cycle',
+          modelId: row.id,
+          data: row,
+          actor,
+        }),
+      ),
+    };
+  });
+}
+
 async function assertNothingRunning(
   executor: Executor,
   teamId: string,
@@ -225,7 +296,7 @@ async function assertNothingRunning(
   now: Date,
 ): Promise<void> {
   const [running] = await executor
-    .select({ name: schema.cycle.name })
+    .select({ name: schema.cycle.name, number: schema.cycle.number })
     .from(schema.cycle)
     .where(
       and(
@@ -239,7 +310,9 @@ async function assertNothingRunning(
     )
     .limit(1);
   if (running !== undefined) {
-    throw conflict(`${running.name} is still running. Complete it before starting another.`);
+    throw conflict(
+      `${sprintLabel(running)} is still running. Complete it before starting another.`,
+    );
   }
 }
 

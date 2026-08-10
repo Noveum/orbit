@@ -11,6 +11,7 @@ import {
   listTeams,
 } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 import {
   resolveCycle,
   resolveLabelIds,
@@ -237,7 +238,11 @@ describe('the cycle fixture holds more than one sprint on the asking team', () =
       engineeringSprintTwo,
       engineeringSprintThree,
     ]);
-    expect(sprints.map((sprint) => sprint.name)).toEqual(['Sprint 1', 'Sprint 2', 'Sprint 3']);
+    expect(sprints.map((sprint) => sprintLabel(sprint))).toEqual([
+      'Sprint 1',
+      'Sprint 2',
+      'Sprint 3',
+    ]);
   });
 });
 

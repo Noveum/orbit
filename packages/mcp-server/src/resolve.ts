@@ -16,6 +16,7 @@ import {
 } from '@orbit/core';
 import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 
 function matches(candidates: readonly (string | null | undefined)[], ref: string): boolean {
   const needle = ref.trim().toLowerCase();
@@ -146,7 +147,7 @@ export async function resolveCycle(
     return current;
   }
   const cycles = await listCycles(principal, teamId);
-  const found = pick(cycles, ref, (cycle) => [cycle.id, cycle.name, String(cycle.number)]);
+  const found = pick(cycles, ref, (cycle) => [cycle.id, sprintLabel(cycle), String(cycle.number)]);
   if (found === undefined) throw notFound(`No cycle matches "${ref}" on that team.`);
   return found;
 }

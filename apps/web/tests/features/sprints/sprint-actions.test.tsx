@@ -214,7 +214,7 @@ describe('sprint controls on the sprint panel', () => {
     expect(JSON.parse(calls[0]?.body ?? '{}')).not.toHaveProperty('startsAt');
   });
 
-  it('sends the day the user actually moved', async () => {
+  it('sends the day the user actually moved and nothing they left alone', async () => {
     renderPanel({ cycle: RUNNING, canManage: true });
     const user = userEvent.setup();
 
@@ -225,7 +225,7 @@ describe('sprint controls on the sprint panel', () => {
     await user.click(screen.getByTestId('sprint-edit-dialog-submit'));
 
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]?.body).toBe(JSON.stringify({ name: 'Sprint 4', endsAt: '2026-01-22' }));
+    expect(calls[0]?.body).toBe(JSON.stringify({ endsAt: '2026-01-22' }));
   });
 
   it('deletes a planned sprint only after the confirmation is taken', async () => {

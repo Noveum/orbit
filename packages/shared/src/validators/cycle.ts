@@ -12,11 +12,15 @@ export const cycleCreateSchema = z.object({
 
 export const cycleUpdateSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: z.string().trim().max(120),
     startsAt: instantSchema,
     endsAt: instantSchema,
   })
   .partial();
+
+export const cycleEditSchema = cycleUpdateSchema.extend({
+  shiftFollowing: z.boolean().optional(),
+});
 
 export type CycleCreateInput = z.infer<typeof cycleCreateSchema>;
 

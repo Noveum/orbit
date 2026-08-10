@@ -39,6 +39,7 @@ export interface SprintEdit {
   readonly name?: string;
   readonly startsAt?: string;
   readonly endsAt?: string;
+  readonly shiftFollowing?: boolean;
 }
 
 function useRefreshSprints(): () => void {
