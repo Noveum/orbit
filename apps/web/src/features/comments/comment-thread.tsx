@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
-import { taskListClassName } from '@/features/docs/doc-body.tsx';
+import { proseOverflowClassName, taskListClassName } from '@/features/docs/doc-body.tsx';
 import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -202,9 +202,16 @@ export function CommentThread({
 }
 
 const bodyClassName = cn(
-  'prose-orbit break-words text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1',
+  'prose-orbit min-w-0 text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1',
   '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5',
   '[&_li]:my-0.5 [&_li]:pl-1 [&_li::marker]:text-faint [&_li_p]:my-0',
+  '[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-2 [&_pre]:p-3',
+  '[&_pre_code]:bg-transparent [&_pre_code]:p-0',
+  '[&_blockquote]:my-2 [&_blockquote]:border-accent/40 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted',
+  '[&_[data-table-scroll]]:my-2 [&_[data-table-scroll]]:rounded-md [&_[data-table-scroll]]:border [&_[data-table-scroll]]:border-border',
+  '[&_table]:w-full [&_table]:border-collapse [&_th]:bg-surface-2 [&_th]:text-left [&_th]:font-medium',
+  '[&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1 [&_td]:align-top [&_th_p]:my-0 [&_td_p]:my-0',
+  proseOverflowClassName,
   taskListClassName,
 );
 
