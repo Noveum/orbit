@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { CycleIssueList } from '../../../src/features/cycles/cycle-board.tsx';
-import type { CycleView } from '../../../src/features/cycles/data.ts';
+import { CycleIssueList } from '../../../src/features/sprints/cycle-board.tsx';
+import type { CycleView } from '../../../src/features/sprints/data.ts';
 
 const cycle = {
   id: 'cycle_1',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { render } from '@testing-library/react';
-import { CycleSkeleton } from '../../../src/features/cycles/cycle-skeleton.tsx';
+import { CycleSkeleton } from '../../../src/features/sprints/cycle-skeleton.tsx';
 
 describe('CycleSkeleton', () => {
   it('renders the cycles skeleton', () => {

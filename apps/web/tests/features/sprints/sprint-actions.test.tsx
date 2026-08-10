@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
-import type { CycleView, UpcomingCycleView } from '@/features/cycles/data.ts';
+import type { CycleView, UpcomingCycleView } from '@/features/sprints/data.ts';
 
 const calls: { url: string; method: string; body: string | undefined }[] = [];
 const originalFetch = globalThis.fetch;
@@ -44,7 +44,7 @@ mock.module('next/navigation', () => ({
   }),
 }));
 
-const { CyclePanel } = await import('@/features/cycles/cycle-board.tsx');
+const { CyclePanel } = await import('@/features/sprints/cycle-board.tsx');
 
 const TEAM = { id: 'team_eng', key: 'ENG', name: 'Engineering' };
 

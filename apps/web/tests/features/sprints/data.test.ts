@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { breakDownCycleIssues, type CycleIssueRow } from '../../../src/features/cycles/data.ts';
+import { breakDownCycleIssues, type CycleIssueRow } from '../../../src/features/sprints/data.ts';
 
 function row(overrides: Partial<CycleIssueRow> & { id: string }): CycleIssueRow {
   return {

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { BurnUpPoint } from '@orbit/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import { CHART_HEIGHT, CHART_PADDING } from '../../../src/features/charts/geometry.ts';
-import { CycleAnalytics } from '../../../src/features/cycles/cycle-board.tsx';
-import type { CycleView } from '../../../src/features/cycles/data.ts';
+import { CycleAnalytics } from '../../../src/features/sprints/cycle-board.tsx';
+import type { CycleView } from '../../../src/features/sprints/data.ts';
 
 interface ProgressOverrides {
   readonly scope?: number;

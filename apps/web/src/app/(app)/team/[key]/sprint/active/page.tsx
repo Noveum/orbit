@@ -1,8 +1,8 @@
 import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
-import { getActiveCycleView, listUpcomingCycleViews } from '@/features/cycles/data.ts';
+import { CyclePanel } from '@/features/sprints/cycle-board.tsx';
+import { getActiveCycleView, listUpcomingCycleViews } from '@/features/sprints/data.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 

@@ -2,13 +2,13 @@ import { can } from '@orbit/shared/policy';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
+import { CyclePanel } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
   listPastSprintViews,
   listUpcomingCycleViews,
-} from '@/features/cycles/data.ts';
-import { SprintHistory } from '@/features/cycles/sprint-history.tsx';
+} from '@/features/sprints/data.ts';
+import { SprintHistory } from '@/features/sprints/sprint-history.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 
