@@ -37,12 +37,38 @@ function stubs(source: string, specifier: string): boolean {
   return new RegExp(`mock\\.module\\(\\s*['"\`]${asPattern(specifier)}['"\`]`).test(source);
 }
 
+function stringConstantsIn(source: string): Map<string, string> {
+  return new Map(
+    [...source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g)].map(
+      (declaration) => [declaration[1] ?? '', declaration[2] ?? ''],
+    ),
+  );
+}
+
+function timesStubbed(source: string, specifier: string): number {
+  const constants = stringConstantsIn(source);
+  let seen = 0;
+  for (const call of source.matchAll(
+    /mock\.module\(\s*(?:['"`]([^'"`]+)['"`]|([A-Za-z_$][\w$]*))/g,
+  )) {
+    const named = call[2];
+    const reached = call[1] ?? (named === undefined ? undefined : constants.get(named));
+    if (reached === specifier) seen += 1;
+  }
+  return seen;
+}
+
 function specifiersHandedToTheHelper(source: string): Set<string> {
   return new Set(
     [...source.matchAll(/restoreModulesAfterThisFile\(\s*\[([^\]]*)\]/g)].flatMap((call) =>
       [...(call[1] ?? '').matchAll(/['"`]([^'"`]+)['"`]/g)].map((entry) => entry[1] ?? ''),
     ),
   );
+}
+
+function putsItBack(source: string, specifier: string): boolean {
+  if (specifiersHandedToTheHelper(source).has(specifier)) return true;
+  return timesStubbed(source, specifier) >= 2 && /afterAll\s*\(/.test(source);
 }
 
 async function directMocksIn(candidate: Candidate): Promise<string[]> {
@@ -76,11 +102,10 @@ describe('module mock isolation', () => {
 
     for (const candidate of candidates) {
       const source = await readFile(candidate.path, 'utf8');
-      const restored = specifiersHandedToTheHelper(source);
 
       for (const specifier of MUST_BE_RESTORED) {
-        if (!stubs(source, specifier)) continue;
-        if (restored.has(specifier)) continue;
+        if (timesStubbed(source, specifier) === 0) continue;
+        if (putsItBack(source, specifier)) continue;
         offenders.push(
           `${candidate.label} stubs ${specifier} without restoring it, so the stub outlives the file and every later test file sees it. Pass the specifier to restoreModulesAfterThisFile from tests-support.ts.`,
         );
