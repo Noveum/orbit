@@ -5,6 +5,9 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { buildNavigation } from '@/lib/navigation.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { fireEvent, render, screen } from '@/test/render.tsx';
+import { restoreModulesAfterThisFile } from '../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issue-search.ts']);
 
 const push = mock();
 

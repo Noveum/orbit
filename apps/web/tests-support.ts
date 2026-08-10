@@ -29,3 +29,13 @@ export function mockMembership(read: () => MembershipContext | null): void {
     mock.module(PRINCIPAL_MODULE, () => realPrincipal);
   });
 }
+
+export async function restoreModulesAfterThisFile(specifiers: readonly string[]): Promise<void> {
+  const originals = new Map<string, Record<string, unknown>>();
+  for (const specifier of specifiers) {
+    originals.set(specifier, { ...(await import(specifier)) });
+  }
+  afterAll(() => {
+    for (const [specifier, real] of originals) mock.module(specifier, () => real);
+  });
+}

@@ -9,6 +9,8 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const GUARDED = [SESSION_MODULE, PRINCIPAL_MODULE] as const;
 
+const MUST_BE_RESTORED = ['@/lib/query/use-issue-search.ts'] as const;
+
 interface Candidate {
   readonly label: string;
   readonly path: string;
@@ -27,9 +29,51 @@ async function everythingThatCanInstallAMock(): Promise<Candidate[]> {
   ];
 }
 
+function asPattern(specifier: string): string {
+  return specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stubs(source: string, specifier: string): boolean {
+  return new RegExp(`mock\\.module\\(\\s*['"\`]${asPattern(specifier)}['"\`]`).test(source);
+}
+
+function stringConstantsIn(source: string): Map<string, string> {
+  return new Map(
+    [...source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g)].map(
+      (declaration) => [declaration[1] ?? '', declaration[2] ?? ''],
+    ),
+  );
+}
+
+function timesStubbed(source: string, specifier: string): number {
+  const constants = stringConstantsIn(source);
+  let seen = 0;
+  for (const call of source.matchAll(
+    /mock\.module\(\s*(?:['"`]([^'"`]+)['"`]|([A-Za-z_$][\w$]*))/g,
+  )) {
+    const named = call[2];
+    const reached = call[1] ?? (named === undefined ? undefined : constants.get(named));
+    if (reached === specifier) seen += 1;
+  }
+  return seen;
+}
+
+function specifiersHandedToTheHelper(source: string): Set<string> {
+  return new Set(
+    [...source.matchAll(/restoreModulesAfterThisFile\(\s*\[([^\]]*)\]/g)].flatMap((call) =>
+      [...(call[1] ?? '').matchAll(/['"`]([^'"`]+)['"`]/g)].map((entry) => entry[1] ?? ''),
+    ),
+  );
+}
+
+function putsItBack(source: string, specifier: string): boolean {
+  if (specifiersHandedToTheHelper(source).has(specifier)) return true;
+  return timesStubbed(source, specifier) >= 2 && /afterAll\s*\(/.test(source);
+}
+
 async function directMocksIn(candidate: Candidate): Promise<string[]> {
   const source = await readFile(candidate.path, 'utf8');
-  return GUARDED.filter((specifier) => source.includes(`mock.module('${specifier}'`));
+  return GUARDED.filter((specifier) => stubs(source, specifier));
 }
 
 describe('module mock isolation', () => {
@@ -45,6 +89,25 @@ describe('module mock isolation', () => {
       for (const specifier of await directMocksIn(candidate)) {
         offenders.push(
           `${candidate.label} mocks ${specifier} directly, so the mock outlives the file and every later test file sees it. Call mockSession or mockMembership from tests-support.ts instead.`,
+        );
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('restores every shared query module the file stubbed', async () => {
+    const candidates = await everythingThatCanInstallAMock();
+    const offenders: string[] = [];
+
+    for (const candidate of candidates) {
+      const source = await readFile(candidate.path, 'utf8');
+
+      for (const specifier of MUST_BE_RESTORED) {
+        if (timesStubbed(source, specifier) === 0) continue;
+        if (putsItBack(source, specifier)) continue;
+        offenders.push(
+          `${candidate.label} stubs ${specifier} without restoring it, so the stub outlives the file and every later test file sees it. Pass the specifier to restoreModulesAfterThisFile from tests-support.ts.`,
         );
       }
     }

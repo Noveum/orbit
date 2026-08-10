@@ -161,11 +161,10 @@ describe('IssueRelations', () => {
     await user.click(await screen.findByTestId('add-relation'));
     await user.click(await screen.findByTestId('relation-type-duplicate_of'));
     await user.type(await screen.findByTestId('relation-picker-search'), 'downstream');
-    const options = await screen.findAllByTestId(/^relation-picker-option-/);
-    await user.click(options[0] as HTMLElement);
+    await user.click(await screen.findByTestId('relation-picker-option-ENG-2'));
 
     await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
-    expect(bodies.at(-1)).toMatchObject({ type: 'duplicate_of' });
+    expect(bodies.at(-1)).toEqual({ relatedIssueId: 'issue_2', type: 'duplicate_of' });
   });
 
   it('never renders a link the server did not send', async () => {
