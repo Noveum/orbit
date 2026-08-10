@@ -148,8 +148,8 @@ wrong:
   runtime, where the websocket upgrade at `/api/ws` silently never happens and
   the browser retries forever against a socket that never opens.
 - **Never set `NEXT_PUBLIC_REALTIME_URL` in production.** The socket is served
-  from the page's own origin. A leftover value sends browsers to a dead host,
-  and it looks like an endless reconnect banner rather than an error.
+  from the page's own origin, and Orbit ignores this variable in production.
+  Leaving it set only makes the deployment configuration misleading.
 
 Supabase for Postgres, Upstash for Redis, Cloudflare R2 for files and Resend for
 email is the combination we run. Other providers have not yet been certified by

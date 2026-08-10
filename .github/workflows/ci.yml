@@ -145,6 +145,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
       - run: bun install --frozen-lockfile
       - run: bun run build
       - name: Smoke test the copied standalone artifact

@@ -16,7 +16,7 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | Route | Effort | Best for |
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
-| [Docker on your own server](#run-it-on-your-own-server) | About 30 minutes | Teams who want it inside their own network |
+| [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
 
 Both need the same four things.
 
@@ -151,10 +151,8 @@ Two variables must **not** be set:
 - **`NEXT_PUBLIC_REALTIME_URL`.** In production the socket is always served from
   the page's own origin at `/api/ws`. `configuredRealtimeUrl()` ignores this
   variable when `NODE_ENV` is `production`, so it is a local development
-  override and nothing else. A value left over from a standalone realtime host
-  sends browsers to a dead origin, and because the ticket still comes from the
-  app the failure looks like an endless "Reconnecting to live updates" banner
-  rather than an error.
+  override and nothing else. Leave it unset so the deployment configuration
+  reflects the production topology.
 - **`ORBIT_DEV_LOGIN`.** It signs anyone in as any user with one click.
 
 ### 8. Deploy and check
@@ -180,7 +178,7 @@ Set up at least one sign-in method before you invite anyone. See
 [Configuration](configuration.md#authentication) for Google, GitHub, passkeys
 and magic links.
 
-## Run it on your own server
+## Run standalone Node (Preview)
 
 If you want to evaluate Orbit inside your own network, run the Next.js
 standalone build behind a reverse proxy. This standalone path is Preview only:
@@ -189,6 +187,9 @@ this mode. `/api/ws` relies on Vercel's request context for
 `experimental_upgradeWebSocket`; running the standalone server with Node does
 not provide that context. DEP-002 tracks portable realtime deployment
 separately. Use Vercel for production realtime today.
+
+The packaged start command requires Node.js 22 or newer. Bun remains required
+for installing dependencies, applying the schema, and building the app.
 
 ```bash
 git clone https://github.com/Noveum/orbit.git
@@ -277,7 +278,7 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | `NEXT_PUBLIC_REALTIME_URL` is set in production, or the proxy is not passing upgrades |
+| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and magic links never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
