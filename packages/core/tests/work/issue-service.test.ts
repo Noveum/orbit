@@ -516,21 +516,21 @@ describe('moveIssue', () => {
     expect(entries.some((entry) => entry.field === 'cycleId')).toBe(true);
   });
 
-  it('refuses a sprint that belongs to another team', async () => {
-    const { team } = await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
+  it('takes the workspace sprint whichever team the issue is on', async () => {
+    await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: team.id,
       startsAt: new Date('2030-05-01').toISOString(),
       endsAt: new Date('2030-05-15').toISOString(),
     });
-    const issue = await newIssue('Wrong team sprint');
+    const issue = await newIssue('Any team sprint');
 
-    await expect(moveIssue(workspace.admin, issue.id, { cycleId: cycle.id })).rejects.toThrow();
+    const moved = await moveIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    expect(moved.issue.cycleId).toBe(cycle.id);
   });
 
-  it('drops the sprint and project links that belong to the team it left', async () => {
+  it('keeps the sprint and drops the project links that belong to the team it left', async () => {
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2030-01-01').toISOString(),
       endsAt: new Date('2030-01-15').toISOString(),
     });
@@ -554,7 +554,7 @@ describe('moveIssue', () => {
     });
 
     expect(moved.issue.teamId).toBe(team.id);
-    expect(moved.issue.cycleId).toBeNull();
+    expect(moved.issue.cycleId).toBe(cycle.id);
     expect(moved.issue.projectId).toBeNull();
     expect(moved.issue.milestoneId).toBeNull();
   });

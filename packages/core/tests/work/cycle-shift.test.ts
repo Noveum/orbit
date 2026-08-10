@@ -128,7 +128,7 @@ describe('shiftFollowingCycles', () => {
     expect(untouched.startsAt.getTime()).toBe(second.startsAt.getTime());
   });
 
-  it('publishes one action per moved sprint on the team scope', async () => {
+  it('publishes one action per moved sprint on the workspace scope', async () => {
     const first = await scheduled(20, 34);
     await scheduled(34, 48);
 
@@ -138,7 +138,7 @@ describe('shiftFollowingCycles', () => {
     });
 
     expect(actions).toHaveLength(1);
-    expect(actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+    expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
   });
 
   it('refuses somebody who cannot manage sprints', async () => {

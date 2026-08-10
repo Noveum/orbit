@@ -3,7 +3,6 @@ import { and, asc, db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import { sprintLabel } from '@orbit/shared/utils';
 import { sprintOutcomeSchema } from '@orbit/shared/validators';
-import { cycleBurndown, workspaceVelocity } from '../../src/analytics/burndown.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -17,7 +16,6 @@ import {
   completeCycle,
   createCycle,
   cycleProgress,
-  deleteCycle,
   getCycle,
   getCycleByNumber,
   listCycles,
@@ -234,7 +232,7 @@ describe('startCycle', () => {
 
     expect(cycle.startsAt.getTime()).toBe(at.getTime());
     expect(cycle.endsAt.getTime()).toBe(planned.endsAt.getTime());
-    expect(actions[0]?.scopes).toEqual([scopes.team(workspace.teamId)]);
+    expect(actions[0]?.scopes).toEqual([scopes.organization(workspace.organizationId)]);
 
     const running = await activeCycle(workspace.admin, at);
     expect(running?.id).toBe(planned.id);
@@ -285,18 +283,12 @@ describe('startCycle', () => {
     });
   });
 
-  it('refuses a role that cannot manage sprints, and a member of another team', async () => {
+  it('refuses a role that cannot manage sprints', async () => {
     const planned = await plannedSprint();
     await completeCycle(workspace.admin, (await firstCycle()).id);
 
     const contributor = await addMember(workspace, 'contributor');
     await expect(startCycle(contributor.principal, planned.id)).rejects.toMatchObject({
-      code: 'forbidden',
-    });
-
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const outsider = await addMember(workspace, 'member', { teamIds: [other.team.id] });
-    await expect(startCycle(outsider.principal, planned.id)).rejects.toMatchObject({
       code: 'forbidden',
     });
 
@@ -371,9 +363,9 @@ describe('cycleProgress', () => {
   it('reports scope, started, completed, and a day by day burn up', async () => {
     const cycle = await firstCycle();
     const created = await Promise.all([
-      createIssue(workspace.admin, { title: 'A', cycleId: cycle.id }),
-      createIssue(workspace.admin, { title: 'B', cycleId: cycle.id }),
-      createIssue(workspace.admin, { title: 'C', cycleId: cycle.id }),
+      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'A', cycleId: cycle.id }),
+      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'B', cycleId: cycle.id }),
+      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'C', cycleId: cycle.id }),
     ]);
     const [a, b] = created;
     if (a === undefined || b === undefined) throw new Error('missing issues');
@@ -726,33 +718,44 @@ describe('cycle reads are workspace scoped', () => {
   });
 });
 
-describe('cycle writes are team scoped', () => {
-  it('refuses a member of another team renaming or deleting a sprint', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { principal: outsider } = await addMember(workspace, 'member', {
-      teamIds: [other.team.id],
-    });
+describe('cycle writes need the right role, not the right team', () => {
+  it('lets any member of the workspace rename a sprint and refuses a contributor', async () => {
+    const { principal: member } = await addMember(workspace, 'member');
+    const { principal: contributor } = await addMember(workspace, 'contributor');
     const { cycle } = await createCycle(workspace.admin, {
       startsAt: new Date('2030-01-06T00:00:00.000Z'),
       endsAt: new Date('2030-01-20T00:00:00.000Z'),
     });
 
-    await expect(updateCycle(outsider, cycle.id, { name: 'Hijacked' })).rejects.toMatchObject({
+    const { cycle: renamed } = await updateCycle(member, cycle.id, { name: 'Hardening' });
+    expect(renamed.name).toBe('Hardening');
+
+    await expect(updateCycle(contributor, cycle.id, { name: 'Nope' })).rejects.toMatchObject({
       code: 'forbidden',
     });
-    await expect(deleteCycle(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
-
-    const still = await getCycle(workspace.admin, cycle.id);
-    expect(still.name).not.toBe('Hijacked');
   });
 
-  it('refuses putting an issue into another team sprint', async () => {
+  it('takes an issue from any team into the workspace sprint', async () => {
     const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { cycle: theirs } = await createCycle(workspace.admin, {
-      teamId: other.team.id,
+    const { cycle } = await createCycle(workspace.admin, {
       startsAt: new Date('2030-01-06T00:00:00.000Z'),
       endsAt: new Date('2030-01-20T00:00:00.000Z'),
     });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: other.team.id,
+      title: 'From another team',
+    });
+
+    const { issue: moved } = await updateIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    expect(moved.cycleId).toBe(cycle.id);
+    expect(moved.teamId).toBe(other.team.id);
+  });
+
+  it('refuses a sprint that belongs to another workspace', async () => {
+    const vega = await createWorkspace('Vega');
+    const [theirs] = await listCycles(vega.admin);
+    if (theirs === undefined) throw new Error('vega has no sprint');
     const { issue } = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
       title: 'Mine',
@@ -761,30 +764,6 @@ describe('cycle writes are team scoped', () => {
     await expect(
       updateIssue(workspace.admin, issue.id, { cycleId: theirs.id }),
     ).rejects.toMatchObject({ code: 'validation_failed' });
-
-    await expect(
-      createIssue(workspace.admin, {
-        teamId: workspace.teamId,
-        title: 'Also mine',
-        cycleId: theirs.id,
-      }),
-    ).rejects.toMatchObject({ code: 'validation_failed' });
-  });
-
-  it('keeps burndown and velocity inside the team', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { principal: outsider } = await addMember(workspace, 'member', {
-      teamIds: [other.team.id],
-    });
-    const { cycle } = await createCycle(workspace.admin, {
-      startsAt: new Date('2030-01-06T00:00:00.000Z'),
-      endsAt: new Date('2030-01-20T00:00:00.000Z'),
-    });
-
-    await expect(cycleBurndown(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(workspaceVelocity(outsider)).rejects.toMatchObject({
-      code: 'forbidden',
-    });
   });
 });
 
@@ -849,11 +828,12 @@ describe('a finished sprint keeps its own history', () => {
     expect(await getCycleByNumber(workspace.admin, 9999)).toBeNull();
   });
 
-  it('keeps another team out of the history it asks for', async () => {
+  it('keeps another workspace out of the history it asks for', async () => {
     const outsider = await createWorkspace('Vega');
-    await expect(pastCycles(outsider.admin)).rejects.toMatchObject({
-      code: 'not_found',
-    });
+    const theirs = await pastCycles(outsider.admin);
+    const mine = await pastCycles(workspace.admin);
+    const ids = new Set(mine.map((cycle) => cycle.id));
+    expect(theirs.some((cycle) => ids.has(cycle.id))).toBe(false);
   });
 });
 

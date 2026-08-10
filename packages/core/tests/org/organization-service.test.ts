@@ -39,7 +39,7 @@ describe('createOrganization', () => {
     const cycles = await db
       .select()
       .from(schema.cycle)
-      .where(eq(schema.cycle.teamId, bootstrap.team.id));
+      .where(eq(schema.cycle.organizationId, bootstrap.organization.id));
     expect(cycles).toHaveLength(1);
     expect(cycles[0]?.number).toBe(1);
 
