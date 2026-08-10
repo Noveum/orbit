@@ -373,6 +373,31 @@ async function assertAttachmentReadable(
   throw notFound('That file does not exist.');
 }
 
+function decodeWholeCharacters(bytes: Uint8Array): string {
+  return new TextDecoder('utf-8', { fatal: false, ignoreBOM: false })
+    .decode(bytes.subarray(0, wholeCharacterLength(bytes)))
+    .replace(/\uFFFD+$/, '');
+}
+
+function utf8SequenceLength(byte: number): number {
+  if (byte < 0x80) return 1;
+  if ((byte & 0b1110_0000) === 0b1100_0000) return 2;
+  if ((byte & 0b1111_0000) === 0b1110_0000) return 3;
+  return 4;
+}
+
+function wholeCharacterLength(bytes: Uint8Array): number {
+  const CONTINUATION_LIMIT = 3;
+  for (let back = 0; back <= CONTINUATION_LIMIT && back < bytes.length; back += 1) {
+    const index = bytes.length - 1 - back;
+    const byte = bytes[index] ?? 0;
+    if ((byte & 0b1100_0000) === 0b1000_0000) continue;
+    const needed = index + utf8SequenceLength(byte);
+    return needed <= bytes.length ? bytes.length : index;
+  }
+  return bytes.length;
+}
+
 export async function readAttachment(
   principal: Principal,
   attachmentId: string,
@@ -392,7 +417,7 @@ export async function readAttachment(
   return {
     attachment: toIssueAttachment(record),
     encoding: textual ? 'utf8' : 'base64',
-    content: textual ? Buffer.from(slice).toString('utf8') : Buffer.from(slice).toString('base64'),
+    content: textual ? decodeWholeCharacters(slice) : Buffer.from(slice).toString('base64'),
     truncated,
   };
 }
@@ -405,6 +430,7 @@ async function commentIssueId(principal: Principal, commentId: string): Promise<
       and(
         eq(schema.comment.id, commentId),
         eq(schema.comment.organizationId, principal.organizationId),
+        isNull(schema.comment.deletedAt),
       ),
     )
     .limit(1);

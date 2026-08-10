@@ -269,3 +269,54 @@ describe('files on docs and projects', () => {
     expect(read['content']).toBe('phase,week\n1,3\n');
   });
 });
+
+describe('greptile findings', () => {
+  it('never splits a multi-byte character when truncating', async () => {
+    const emoji = 'héllo wörld 🌍 done';
+    const stored = await admin.result('attach_file', {
+      parentType: 'issue',
+      parentId: issueId,
+      fileName: 'utf8.md',
+      contentType: 'text/markdown',
+      content: Buffer.from(emoji, 'utf8').toString('base64'),
+    });
+    const id = (stored['attachment'] as { id: string }).id;
+
+    const full = Buffer.from(emoji, 'utf8');
+    for (let cut = 1; cut < full.byteLength; cut += 1) {
+      const result = await admin.result('read_attachment', { attachment: id, maxBytes: cut });
+      const text = result['content'] as string;
+      expect(text).not.toContain('�');
+      expect(emoji.startsWith(text)).toBe(true);
+    }
+  });
+
+  it('stops reading a file whose comment was deleted', async () => {
+    const commented = await admin.result('add_comment', {
+      issue: issueIdentifier,
+      body: 'Temporary, with a file.',
+    });
+    const doomedCommentId = (commented['comment'] as { id: string }).id;
+    const stored = await admin.result('attach_file', {
+      parentType: 'comment',
+      parentId: doomedCommentId,
+      fileName: 'secret.md',
+      contentType: 'text/markdown',
+      content: Buffer.from('should not survive', 'utf8').toString('base64'),
+    });
+    const id = (stored['attachment'] as { id: string }).id;
+
+    expect((await admin.result('read_attachment', { attachment: id }))['content']).toBe(
+      'should not survive',
+    );
+
+    await admin.result('delete_comment', { commentId: doomedCommentId });
+
+    const afterList = await admin.result('list_issue_attachments', { issue: issueIdentifier });
+    const names = (afterList['attachments'] as { fileName: string }[]).map((f) => f.fileName);
+    expect(names).not.toContain('secret.md');
+
+    const afterRead = await admin.call('read_attachment', { attachment: id });
+    expect(afterRead.isError).toBe(true);
+  });
+});
