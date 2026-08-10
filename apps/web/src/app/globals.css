@@ -468,6 +468,13 @@
     text-size-adjust: 100%;
   }
 
+  html:has([data-app-shell]),
+  body:has([data-app-shell]) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+  }
+
   body {
     background-color: var(--color-bg);
     color: var(--color-text);

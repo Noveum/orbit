@@ -15,8 +15,6 @@
     "push": "bun src/ensure-extensions.ts && drizzle-kit push --force",
     "studio": "drizzle-kit studio",
     "seed": "bun --env-file=../../.env src/seed/index.ts",
-    "import:plane": "bun --env-file=../../.env src/import/index.ts",
-    "import:verify": "bun --env-file=../../.env src/import/verify.ts",
     "test": "bun --env-file=../../.env test --timeout 20000",
     "check-drift": "bun --env-file=../../.env src/check-drift.ts",
     "catchup": "bun --env-file=../../.env src/apply-catchup.ts",

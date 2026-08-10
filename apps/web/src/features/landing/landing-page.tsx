@@ -344,7 +344,7 @@ function ProductWindow() {
             />
             <MockRow
               id="ORB-207"
-              title="Slack: unfurl issue links in threads"
+              title="GitHub: link pull requests to issues"
               priority="medium"
               avatar="MK"
               label="Integrations"
@@ -476,8 +476,8 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
   },
   {
     icon: GitPullRequest,
-    title: 'GitHub and Slack',
-    body: 'Connect the repo and the channel so updates land where the team already looks.',
+    title: 'GitHub',
+    body: 'Connect repositories so pull request state appears beside the issues it closes.',
   },
   {
     icon: Bell,
@@ -532,7 +532,7 @@ function SyncPane({ owner, you = false }: { owner: string; you?: boolean }) {
       </div>
       <div className="mt-3 flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2.5">
         <span className="font-mono text-2xs text-faint">ORB-207</span>
-        <span className="min-w-0 flex-1 truncate text-xs">Slack: unfurl issue links</span>
+        <span className="min-w-0 flex-1 truncate text-xs">GitHub: link pull requests</span>
         <StackSwap
           {...delayProps}
           base={
@@ -684,7 +684,7 @@ function KeyboardSection() {
 const INCLUDED: string[] = [
   'Issues, boards, sprints, projects, docs',
   'Realtime sync for every teammate',
-  'GitHub, Slack, and MCP included',
+  'GitHub and MCP included',
   'Notifications, filters, saved views',
   'No seat limits, no feature gates',
 ];

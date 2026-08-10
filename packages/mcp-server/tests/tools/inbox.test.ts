@@ -133,3 +133,26 @@ describe('mark_notification_read', () => {
     await readOnly.close();
   });
 });
+
+describe('list_notifications on docs', () => {
+  it('resolves the doc for a mention in a doc comment', async () => {
+    const doc = await admin.result('create_doc', { title: 'RBAC permissions', content: 'body' });
+    const docId = (doc['doc'] as { id: string }).id;
+    await admin.result('comment_on_doc', {
+      doc: docId,
+      body: `@${agentHandle} please review this doc against the code.`,
+    });
+
+    const result = await agent.result('list_notifications', { unreadOnly: true });
+    const rows = result['notifications'] as {
+      type: string;
+      issue: unknown;
+      doc: { id: string; title: string } | null;
+    }[];
+    const mention = rows.find((row) => row.doc?.title === 'RBAC permissions');
+
+    expect(mention).toBeDefined();
+    expect(mention?.doc?.id).toBe(docId);
+    expect(mention?.issue).toBeNull();
+  });
+});

@@ -32,7 +32,6 @@ export const metadata: Metadata = {
     'sprints',
     'kanban',
     'docs',
-    'Slack integration',
     'GitHub integration',
     'MCP',
     'free',

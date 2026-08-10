@@ -14,6 +14,8 @@ export interface InboxRealtimeProps {
   readonly userId: string;
   readonly organizationId: string;
   readonly realtimeUrl: string;
+  readonly canWriteDocs: boolean;
+  readonly canPublishDocs: boolean;
 }
 
 export function InboxRealtime({
@@ -23,6 +25,8 @@ export function InboxRealtime({
   userId,
   organizationId,
   realtimeUrl,
+  canWriteDocs,
+  canPublishDocs,
 }: InboxRealtimeProps) {
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
   const socketUrl =
@@ -36,6 +40,8 @@ export function InboxRealtime({
         unreadCount={unreadCount}
         unreadMentions={unreadMentions}
         userId={userId}
+        canWriteDocs={canWriteDocs}
+        canPublishDocs={canPublishDocs}
       />
     </RealtimeProvider>
   );

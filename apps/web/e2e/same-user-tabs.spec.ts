@@ -18,7 +18,7 @@ test('one user in two tabs of the same browser sees issues, comments and reactio
 
   const tabA = await context.newPage();
   await tabA.goto(`${BASE}/login`);
-  await tabA.getByTestId('dev-sign-in-pulkit@noveum.ai').click();
+  await tabA.getByTestId('dev-sign-in-alex@orbit.example').click();
   await tabA.waitForURL(`${BASE}/my-issues`);
 
   const tabB = await context.newPage();

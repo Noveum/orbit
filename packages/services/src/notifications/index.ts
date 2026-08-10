@@ -11,6 +11,7 @@ import {
   idSchema,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
+  SLACK_INTEGRATION_ENABLED,
   type SyncAction,
   scopes,
   syncActionSchema,
@@ -162,7 +163,8 @@ function planFor(
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
-  const slackEnabled = isChannelEnabled(disabled, recipient.id, 'slack', event.type);
+  const slackEnabled =
+    SLACK_INTEGRATION_ENABLED && isChannelEnabled(disabled, recipient.id, 'slack', event.type);
   if (!(inboxEnabled || emailEnabled || slackEnabled)) return null;
   const quietHours: QuietHours = {
     enabled: settings.quietHoursEnabled,

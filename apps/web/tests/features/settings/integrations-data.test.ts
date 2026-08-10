@@ -71,6 +71,7 @@ describe('loadIntegrationSettings', () => {
     expect(settings.github.repositories.map((entry) => entry.fullName)).toEqual([
       SECRET_REPOSITORY,
     ]);
+    expect(JSON.stringify(settings)).not.toMatch(/slack/i);
   });
 
   for (const role of ['guest', 'contributor', 'member'] as const) {
@@ -87,14 +88,13 @@ describe('loadIntegrationSettings', () => {
     });
   }
 
-  it('withholds the workspace Slack wiring from anyone who cannot manage integrations', async () => {
+  it('withholds workspace integration details from anyone who cannot manage integrations', async () => {
     const principal = await principalWithRole('member');
 
     const settings = await loadIntegrationSettings(principal);
 
-    expect(settings.channels).toEqual([]);
-    expect(settings.teams).toEqual([]);
-    expect(settings.slackHasToken).toBe(false);
+    expect(settings.github.repositories).toEqual([]);
+    expect(JSON.stringify(settings)).not.toMatch(/slack/i);
   });
 });
 

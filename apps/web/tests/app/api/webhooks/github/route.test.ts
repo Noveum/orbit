@@ -17,6 +17,8 @@ process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
 const core = await import('@orbit/core');
+const services = await import('@orbit/services');
+const dispatchSlackMessage = mock(() => Promise.resolve(0));
 mock.module('@orbit/core', () => ({
   ...core,
   publishDeltas: (actions: readonly SyncAction[]) => {
@@ -24,6 +26,7 @@ mock.module('@orbit/core', () => ({
     return Promise.resolve(undefined);
   },
 }));
+mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
 
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
@@ -31,6 +34,7 @@ const { POST } = await import('../../../../../src/app/api/webhooks/github/route.
 
 afterAll(() => {
   mock.module('@orbit/core', () => core);
+  mock.module('@orbit/services', () => services);
 });
 
 const bodySchema = z.union([
@@ -80,16 +84,16 @@ async function seed(): Promise<void> {
   });
 }
 
-function pullRequestBody(headRef: string): string {
+function pullRequestBody(headRef: string, state: 'open' | 'closed' = 'open'): string {
   return JSON.stringify({
-    action: 'opened',
+    action: state === 'open' ? 'opened' : 'closed',
     pull_request: {
       number: 7,
       title: 'Rework dashboard',
       html_url: 'https://github.com/acme/web/pull/7',
       draft: false,
       merged: false,
-      state: 'open',
+      state,
       head: { ref: headRef },
       base: { ref: 'main' },
       user: { login: 'octocat', id: 500 },
@@ -144,6 +148,7 @@ async function linkCount(): Promise<number> {
 
 beforeEach(async () => {
   published.length = 0;
+  dispatchSlackMessage.mockClear();
   await seed();
 });
 
@@ -195,6 +200,15 @@ describe('POST /api/webhooks/github', () => {
     expect((await deliveryRow('delivery-first'))?.status).toBe('processed');
     expect(await linkCount()).toBe(1);
     expect(published.flat().some((action) => action.model === 'git_link')).toBe(true);
+  });
+
+  it('does not dispatch disabled Slack effects from a GitHub delivery', async () => {
+    const raw = pullRequestBody('orb-3-dashboard', 'closed');
+
+    const response = await POST(signed(raw, 'delivery-with-disabled-slack'));
+
+    expect(response.status).toBe(200);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {
