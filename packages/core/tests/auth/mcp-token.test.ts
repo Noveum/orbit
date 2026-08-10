@@ -36,7 +36,12 @@ async function createClient(name = 'Claude'): Promise<string> {
   return clientId;
 }
 
-async function issueToken(clientId: string, userId: string, expiresAt: Date): Promise<string> {
+async function issueToken(
+  clientId: string,
+  userId: string,
+  expiresAt: Date,
+  scopes = SCOPES,
+): Promise<string> {
   const accessToken = `at_${randomUUID().replace(/-/g, '')}`;
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
@@ -46,7 +51,7 @@ async function issueToken(clientId: string, userId: string, expiresAt: Date): Pr
     refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
     clientId,
     userId,
-    scopes: SCOPES,
+    scopes,
   });
   return accessToken;
 }
@@ -136,6 +141,48 @@ describe('verifyMcpAccessToken with a grant', () => {
       .from(schema.oauthAccessToken)
       .where(eq(schema.oauthAccessToken.accessToken, token));
     expect(remaining).toHaveLength(0);
+  });
+
+  it('rejects token scopes beyond the active grant without touching the grant', async () => {
+    const clientId = await createClient();
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+      'openid orbit.read orbit.write',
+    );
+    await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: 'openid orbit.read',
+    });
+
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+    const [grant] = await db
+      .select({ lastUsedAt: schema.mcpGrant.lastUsedAt })
+      .from(schema.mcpGrant)
+      .where(eq(schema.mcpGrant.clientId, clientId));
+    expect(grant?.lastUsedAt).toBeNull();
+  });
+
+  it('accepts the same token after the active grant expands to include its scopes', async () => {
+    const clientId = await createClient();
+    const token = await issueToken(
+      clientId,
+      workspace.adminUser.id,
+      new Date(Date.now() + 3_600_000),
+      'openid orbit.read orbit.write',
+    );
+    await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: 'openid orbit.read orbit.write',
+    });
+
+    const context = await verifyMcpAccessToken(token);
+    expect(context.scopes).toBe('openid orbit.read orbit.write');
   });
 });
 

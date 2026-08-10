@@ -251,6 +251,7 @@ export const auth = betterAuth({
         loginPage: MCP_LOGIN_PATH,
         consentPage: MCP_CONSENT_PATH,
         allowDynamicClientRegistration: true,
+        requirePKCE: true,
         scopes: [...MCP_SCOPES],
       },
     }),

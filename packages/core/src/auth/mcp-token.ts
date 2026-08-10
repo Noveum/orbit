@@ -46,6 +46,11 @@ export async function verifyMcpAccessToken(
   if (grant === undefined) {
     throw unauthorized('This connection has been revoked. Reconnect Orbit to continue.');
   }
+  const grantedScopes = new Set(grant.scopes.split(/\s+/).filter(Boolean));
+  const tokenScopes = tokenRow.scopes.split(/\s+/).filter(Boolean);
+  if (tokenScopes.some((scope) => !grantedScopes.has(scope))) {
+    throw unauthorized("This connection's permissions have changed. Reconnect Orbit to continue.");
+  }
 
   const principal = await resolvePrincipal(tokenRow.userId, grant.organizationId);
   await db.update(schema.mcpGrant).set({ lastUsedAt: now }).where(eq(schema.mcpGrant.id, grant.id));
