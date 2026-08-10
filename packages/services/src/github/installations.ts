@@ -71,7 +71,11 @@ async function assertGithubIntegrationManagerForUpdate(
 }
 
 function assertWorkspaceAvailable(deletionRequestedAt: Date | null): void {
-  if (deletionRequestedAt !== null) throw conflict('Workspace deletion is in progress.');
+  if (deletionRequestedAt !== null) {
+    throw conflict('Workspace deletion is in progress.', {
+      details: { reason: 'workspace_unavailable' },
+    });
+  }
 }
 
 function assertIntegrationManager(
@@ -111,7 +115,9 @@ export async function bindGithubInstallation(
     .where(eq(githubInstallation.installationId, account.installationId))
     .limit(1);
   if (claimed !== undefined && claimed.organizationId !== organizationId) {
-    throw conflict(CLAIMED_ELSEWHERE);
+    throw conflict(CLAIMED_ELSEWHERE, {
+      details: { reason: 'github_installation_claimed' },
+    });
   }
 
   const integrationId = await ensureIntegrationRow(database, {
@@ -145,7 +151,11 @@ export async function bindGithubInstallation(
       setWhere: eq(githubInstallation.organizationId, organizationId),
     })
     .returning();
-  if (bound === undefined) throw conflict(CLAIMED_ELSEWHERE);
+  if (bound === undefined) {
+    throw conflict(CLAIMED_ELSEWHERE, {
+      details: { reason: 'github_installation_claimed' },
+    });
+  }
   return bound;
 }
 

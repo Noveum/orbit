@@ -195,6 +195,23 @@ describe('bindGithubInstallation', () => {
     });
   });
 
+  it('identifies a workspace awaiting deletion as unavailable', async () => {
+    await withRollback(async (tx) => {
+      const workspace = await seedWorkspace(tx, 'Noveum');
+      await tx
+        .update(organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(organization.id, workspace.organizationId));
+
+      await expect(bind(tx, workspace, NOVEUM, 'Noveum')).rejects.toMatchObject({
+        code: 'conflict',
+        details: { reason: 'workspace_unavailable' },
+      });
+
+      expect(await listGithubInstallations(tx, workspace.organizationId)).toHaveLength(0);
+    });
+  });
+
   it('holds the membership lock until the installation bind commits', async () => {
     const workspace = await db.transaction(async (tx) => await seedWorkspace(tx, 'Concurrent'));
     let markBindingReady: (() => void) | undefined;

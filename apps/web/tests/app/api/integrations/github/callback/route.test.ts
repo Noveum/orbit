@@ -220,7 +220,7 @@ describe('GET /api/integrations/github/callback', () => {
       state,
     });
 
-    expect(locationOf(response)).toContain('github=claimed');
+    expect(locationOf(response)).toContain('github=error');
     await expectRejectedBeforeGithub(response);
   });
 
@@ -473,6 +473,7 @@ describe('GET /api/integrations/github/callback', () => {
       state: await validState(workspace),
     });
 
+    expect(locationOf(response)).toContain('github=claimed');
     expect(locationOf(response)).not.toContain('github=connected');
     expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
