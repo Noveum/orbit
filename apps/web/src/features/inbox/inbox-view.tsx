@@ -450,15 +450,15 @@ export function InboxView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-col gap-3 border-border border-b px-5 py-3">
+    <div className="flex min-h-0 flex-col md:h-full">
+      <header className="flex flex-col gap-2 border-border border-b px-5 py-2">
         {error === null ? null : (
           <p role="alert" className="text-danger text-xs" data-testid="inbox-error">
             {error}
           </p>
         )}
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h1 className="flex shrink-0 items-center gap-2 font-semibold text-base text-text">
             Inbox
             <Badge tone={unread > 0 ? 'accent' : 'neutral'} data-testid="inbox-unread-count">
               {unread} unread
@@ -469,7 +469,25 @@ export function InboxView({
               </Badge>
             ) : null}
           </h1>
-          <p className="hidden items-center gap-1.5 text-2xs text-faint sm:flex">
+          <nav className="flex items-center gap-1" aria-label="Inbox filters">
+            {TABS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => selectTab(entry.id)}
+                aria-current={tab === entry.id ? 'true' : undefined}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
+                  tab === entry.id
+                    ? 'bg-surface-2 font-medium text-text'
+                    : 'text-muted hover:bg-surface-2 hover:text-text',
+                )}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </nav>
+          <p className="ml-auto hidden items-center gap-1.5 text-2xs text-faint xl:flex">
             <Kbd keys={['J']} />
             <Kbd keys={['K']} /> move
             <Kbd keys={['U']} /> read
@@ -477,24 +495,6 @@ export function InboxView({
             <Kbd keys={['Backspace']} /> delete
           </p>
         </div>
-        <nav className="flex items-center gap-1" aria-label="Inbox filters">
-          {TABS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => selectTab(entry.id)}
-              aria-current={tab === entry.id ? 'true' : undefined}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
-                tab === entry.id
-                  ? 'bg-surface-2 font-medium text-text'
-                  : 'text-muted hover:bg-surface-2 hover:text-text',
-              )}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </nav>
       </header>
 
       {visible.length === 0 ? (
@@ -506,7 +506,7 @@ export function InboxView({
         />
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[22rem_minmax(0,1fr)]">
-          <ul className="flex min-h-0 flex-col overflow-y-auto border-border border-r">
+          <ul className="flex min-h-0 flex-col border-border md:overflow-y-auto md:border-r">
             {visible.map((row) => {
               const Icon = SOURCE_ICONS[row.type];
               return (
