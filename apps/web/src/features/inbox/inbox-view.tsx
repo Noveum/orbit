@@ -30,12 +30,14 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { DocSurface } from '@/features/docs/doc-surface.tsx';
+import { IssueDetailView } from '@/features/issues/issue-detail.tsx';
 import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
-import { InboxIssuePreview, issueIdentifierFromUrl } from './inbox-preview.tsx';
+import { docIdFromUrl, issueIdentifierFromUrl } from './inbox-links.ts';
 
 const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
   issue_assigned: CircleDot,
@@ -168,14 +170,121 @@ export function applyNotificationDeltas(
     .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0 });
 }
 
+function NotificationBody({
+  item,
+  canWriteDocs,
+  canPublishDocs,
+  onIssueDeleted,
+}: {
+  readonly item: InboxItem;
+  readonly canWriteDocs: boolean;
+  readonly canPublishDocs: boolean;
+  readonly onIssueDeleted: () => void;
+}) {
+  const identifier = issueIdentifierFromUrl(item.url);
+  if (identifier !== null) {
+    return (
+      <div className="min-h-0 flex-1">
+        <IssueDetailView
+          key={item.id}
+          identifier={identifier}
+          focusCommentId={item.entityType === 'comment' ? item.entityId : null}
+          onDeleted={onIssueDeleted}
+        />
+      </div>
+    );
+  }
+
+  const docId = docIdFromUrl(item.url);
+  if (docId !== null) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <DocSurface
+          key={item.id}
+          docId={docId}
+          canWriteDocs={canWriteDocs}
+          canPublish={canPublishDocs}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      {item.body.length === 0 ? null : (
+        <p className="whitespace-pre-wrap text-muted text-sm">{item.body}</p>
+      )}
+    </div>
+  );
+}
+
+function NotificationDetail({
+  item,
+  onOpen,
+  canWriteDocs,
+  canPublishDocs,
+  onIssueDeleted,
+}: {
+  readonly item: InboxItem;
+  readonly onOpen: () => void;
+  readonly canWriteDocs: boolean;
+  readonly canPublishDocs: boolean;
+  readonly onIssueDeleted: () => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-3 border-border border-b px-5 py-2">
+        <p className="min-w-0 flex-1 truncate text-2xs text-faint">
+          <span className="text-muted">{item.title}</span> · {item.actorName} ·{' '}
+          {relativeTime(new Date(item.createdAt))}
+          {item.snoozedUntil === null ? '' : ' · snoozed'}
+        </p>
+        <Link
+          href={item.url}
+          data-testid="inbox-open-link"
+          onClick={onOpen}
+          className="shrink-0 rounded-sm text-accent text-2xs hover:underline"
+        >
+          Open in Orbit
+        </Link>
+      </div>
+
+      {isPullRequestNotification(item.type) && item.body.length > 0 ? (
+        <p
+          className="border-border border-b px-5 py-1.5 text-2xs text-muted"
+          data-testid="inbox-event-context"
+        >
+          {item.body}
+        </p>
+      ) : null}
+
+      <NotificationBody
+        item={item}
+        canWriteDocs={canWriteDocs}
+        canPublishDocs={canPublishDocs}
+        onIssueDeleted={onIssueDeleted}
+      />
+    </>
+  );
+}
+
 export interface InboxViewProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
   readonly userId: string;
+  readonly canWriteDocs: boolean;
+  readonly canPublishDocs: boolean;
 }
 
-export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxViewProps) {
+export function InboxView({
+  items,
+  unreadCount,
+  unreadMentions,
+  userId,
+  canWriteDocs,
+  canPublishDocs,
+}: InboxViewProps) {
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
@@ -212,7 +321,13 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
   );
   const selectedIndex = visible.findIndex((row) => row.id === selectedId);
   const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
-  const previewIdentifier = current === undefined ? null : issueIdentifierFromUrl(current.url);
+
+  const leaveDeletedIssue = useCallback(() => {
+    if (current === undefined) return;
+    const index = visible.findIndex((row) => row.id === current.id);
+    const next = visible[index + 1] ?? visible[index - 1];
+    setSelectedId(next?.id ?? null);
+  }, [visible, current]);
 
   const move = useCallback(
     (delta: number) => {
@@ -434,35 +549,19 @@ export function InboxView({ items, unreadCount, unreadMentions, userId }: InboxV
             })}
           </ul>
 
-          <section className="flex min-h-0 flex-col gap-3 overflow-y-auto p-5">
+          <section className="flex min-h-0 min-w-0 flex-col" data-testid="inbox-detail">
             {current === undefined ? (
-              <p className="text-faint text-xs">Pick a notification.</p>
+              <p className="p-5 text-faint text-xs">Pick a notification.</p>
             ) : (
-              <>
-                <h2 className="font-medium text-lg text-text">{current.title}</h2>
-                <p className="text-2xs text-faint">
-                  {current.actorName} · {relativeTime(new Date(current.createdAt))}
-                  {current.snoozedUntil === null ? '' : ' · snoozed'}
-                </p>
-                {current.body.length === 0 || previewIdentifier !== null ? null : (
-                  <p className="whitespace-pre-wrap text-muted text-sm">{current.body}</p>
-                )}
-                <Link
-                  href={current.url}
-                  data-testid="inbox-open-link"
-                  onClick={() => {
-                    setReadState(current, true).catch(() => undefined);
-                  }}
-                  className="w-fit rounded-sm text-accent text-dense hover:underline"
-                >
-                  Open in Orbit
-                </Link>
-                {previewIdentifier === null ? null : (
-                  <div className="mt-1 border-border border-t pt-4">
-                    <InboxIssuePreview identifier={previewIdentifier} body={current.body} />
-                  </div>
-                )}
-              </>
+              <NotificationDetail
+                item={current}
+                onOpen={() => {
+                  setReadState(current, true).catch(() => undefined);
+                }}
+                canWriteDocs={canWriteDocs}
+                canPublishDocs={canPublishDocs}
+                onIssueDeleted={leaveDeletedIssue}
+              />
             )}
           </section>
         </div>

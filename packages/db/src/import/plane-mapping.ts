@@ -1,23 +1,10 @@
 import type { StateCategory } from '@orbit/shared';
 import type { PlaneIssue, PlaneMember, PlaneState } from './plane-source.ts';
 
-export const TEAM_KEYS: Record<string, string> = {
-  APIMKTENG: 'ENG',
-  MARKETING: 'MKT',
-  SALES: 'SALES',
-  CUSTISSUES: 'CUST',
-  SEOSPRINT: 'SEO',
-  LNKDINMKT: 'LNKD',
-  NOVEU: 'NOVEUM',
-  V1PLAN: 'V1',
-};
-
 const KEY_PATTERN = /^[A-Z][A-Z0-9]{1,5}$/;
 
 export function teamKeyFor(identifier: string, taken: Set<string>): string {
-  const mapped = TEAM_KEYS[identifier];
   const candidates = [
-    mapped,
     identifier.slice(0, 6),
     identifier.replace(/[^A-Z0-9]/g, '').slice(0, 6),
   ].filter((value): value is string => value !== undefined && KEY_PATTERN.test(value));
@@ -29,9 +16,10 @@ export function teamKeyFor(identifier: string, taken: Set<string>): string {
     }
   }
 
-  const base = (candidates[0] ?? 'TEAM').slice(0, 5);
+  const base = candidates[0] ?? 'TEAM';
   for (let suffix = 2; suffix < 100; suffix += 1) {
-    const candidate = `${base}${suffix}`;
+    const suffixText = String(suffix);
+    const candidate = `${base.slice(0, 6 - suffixText.length)}${suffixText}`;
     if (KEY_PATTERN.test(candidate) && !taken.has(candidate)) {
       taken.add(candidate);
       return candidate;

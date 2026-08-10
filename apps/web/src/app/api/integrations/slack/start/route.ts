@@ -4,10 +4,15 @@ import { apiContext, handleRoute } from '@/lib/api/handler.ts';
 import { absoluteUrl, slackAppConfig, slackConnectReady } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { issueOAuthState } from '@/lib/integrations/oauth-state-store.ts';
+import {
+  slackIntegrationEnabled,
+  slackIntegrationUnavailable,
+} from '@/lib/integrations/slack-capability.ts';
 
 const SLACK_BOT_SCOPES = 'channels:read,groups:read,chat:write,links:read,commands';
 
 export async function GET(): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     assertCan(principal, 'integration:manage');

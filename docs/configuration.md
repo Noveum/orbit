@@ -7,6 +7,10 @@ configuration, so copy it and change what you need:
 cp .env.example .env
 ```
 
+> **Self-hosting status: Preview.** The production values on this page are a
+> configuration reference, not a supported production release or provider
+> compatibility guarantee. See [Open-source readiness](open-source-readiness.md).
+
 Orbit parses its own environment with Zod at startup, so a missing or malformed
 required variable fails immediately with a message that names it, rather than
 failing later somewhere confusing.
@@ -68,8 +72,8 @@ seeded users on the login screen and signs anyone in as any of them.
 
 ## Email
 
-Orbit sends through [Resend](https://resend.com) only, for magic links, invites
-and notification digests.
+Orbit sends through [Resend](https://resend.com) only, for magic links and
+invites. Event notification email and digests are not currently dispatched.
 
 | Variable | Notes |
 | --- | --- |
@@ -109,16 +113,14 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 
 | Variable | Notes |
 | --- | --- |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Slack OAuth |
-| `SLACK_SIGNING_SECRET` | Verifies inbound Slack requests |
 | `GITHUB_APP_ID` | GitHub App, for linking pull requests to issues |
 | `GITHUB_APP_PRIVATE_KEY` | The PEM. Escaped newlines as `\n` are handled |
 | `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
 
-All optional. Orbit hides the affordance when an integration is not configured
-rather than showing a button that fails. See [Integrations](integrations.md).
+All optional. Orbit hides the GitHub affordance when it is not configured rather
+than showing a button that fails. See [Integrations](integrations.md).
 
 ## MCP
 
@@ -153,7 +155,7 @@ that is unset. `bun run db:test-lanes-drop --all` drops every lane on the
 server, including lanes another worktree is using. Neither mode touches the six
 base databases.
 
-## Reference: a production environment
+## Reference: a deployment environment
 
 ```bash
 DATABASE_URL=postgres://user:pass@db.example.com:6543/orbit

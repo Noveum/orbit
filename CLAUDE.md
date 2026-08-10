@@ -1,6 +1,6 @@
 # Orbit
 
-Free, realtime, keyboard-first task manager. The UX polish of the best paid task managers with the breadth of the open-source ones, plus docs, files, notifications, Slack, and an MCP server. No pricing, no billing, no paid tiers anywhere.
+Free, realtime, keyboard-first task manager. The UX polish of the best paid task managers with the breadth of the open-source ones, plus docs, files, notifications, GitHub, and an MCP server. No pricing, no billing, no paid tiers anywhere.
 
 ## Hard rules
 

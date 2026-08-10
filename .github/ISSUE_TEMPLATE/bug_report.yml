@@ -34,7 +34,7 @@ body:
       label: Steps to reproduce
       description: Start from the seeded demo workspace where you can, since that is what we run.
       value: |
-        1. Sign in as pulkit@noveum.ai
+        1. Sign in as alex@orbit.example
         2. Go to
         3. Do
         4. See

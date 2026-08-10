@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
+import {
+  slackIntegrationEnabled,
+  slackIntegrationUnavailable,
+} from '@/lib/integrations/slack-capability.ts';
 
 const callbackSchema = z.object({
   code: z.string().min(1),
@@ -13,6 +17,7 @@ function settingsRedirect(status: 'connected' | 'error'): Response {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   const params = Object.fromEntries(new URL(request.url).searchParams.entries());
   const parsed = callbackSchema.safeParse(params);
   if (!parsed.success) return settingsRedirect('error');

@@ -4,12 +4,15 @@ import {
   createComment,
   createIssue,
   getIssue,
+  listAttachmentsFor,
   listComments,
+  listIssueAttachments,
   listIssueLabels,
   listIssues,
   listLabels,
   listRelatedIssues,
   moveIssue,
+  readAttachment,
   removeRelation,
   setRelation,
   updateIssue,
@@ -277,6 +280,7 @@ function registerGetIssue(server: McpServer, principal: Principal): void {
           description: issue.description,
           labels: await issueLabelNames(principal, issue.id),
           relations: await issueRelationViews(principal, issue.id),
+          attachments: (await listIssueAttachments(principal, issue.id)).map(describeAttachment),
         },
       };
     },
@@ -607,6 +611,114 @@ function registerRemoveRelation(server: McpServer, principal: Principal): void {
   );
 }
 
+const MAX_ATTACHMENT_READ_BYTES = 256 * 1024;
+
+function describeAttachment(file: {
+  id: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  parentType: string;
+  url: string;
+}) {
+  return {
+    id: file.id,
+    fileName: file.fileName,
+    contentType: file.contentType,
+    size: file.size,
+    attachedTo: file.parentType,
+    url: file.url,
+  };
+}
+
+function registerListIssueAttachments(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'list_issue_attachments',
+      title: 'List the files on an issue',
+      description:
+        'Every file attached to an issue or to a comment on it, oldest first. Call this before you answer a thread that refers to a document, a screenshot or an export, so you work from what was actually attached rather than guessing from the filename.',
+      readOnly: true,
+      inputSchema: {
+        issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
+      },
+    },
+    async (args) => {
+      const issue = await getIssue(principal, args.issue);
+      const files = await listIssueAttachments(principal, issue.id);
+      return { attachments: files.map(describeAttachment) };
+    },
+  );
+}
+
+function registerReadAttachment(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'read_attachment',
+      title: 'Read an attached file',
+      description:
+        'Return the contents of a file attached to an issue, a comment, a doc or a project. Text-like files come back as text; anything else comes back base64 encoded. Large files are truncated, and the response says so.',
+      readOnly: true,
+      inputSchema: {
+        attachment: z
+          .string()
+          .min(1)
+          .describe('Attachment id from list_issue_attachments or get_issue.'),
+        maxBytes: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_ATTACHMENT_READ_BYTES)
+          .optional()
+          .describe(`Stop after this many bytes. Defaults to ${MAX_ATTACHMENT_READ_BYTES}.`),
+      },
+    },
+    async (args) => {
+      const read = await readAttachment(
+        principal,
+        args.attachment,
+        args.maxBytes ?? MAX_ATTACHMENT_READ_BYTES,
+      );
+      return {
+        attachment: describeAttachment(read.attachment),
+        encoding: read.encoding,
+        content: read.content,
+        truncated: read.truncated,
+      };
+    },
+  );
+}
+
+function registerListAttachments(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'list_attachments',
+      title: 'List the files on anything',
+      description:
+        'Files attached to one issue, comment, doc or project. Use list_issue_attachments for an issue, since that one also covers files attached to its comments. This is for docs and projects.',
+      readOnly: true,
+      inputSchema: {
+        parentType: z
+          .enum(['issue', 'comment', 'doc', 'project'])
+          .describe('What the files hang off.'),
+        parentId: z
+          .string()
+          .min(1)
+          .describe(
+            'Id of the issue, comment, doc or project. Issue identifiers are not accepted.',
+          ),
+      },
+    },
+    async (args) => {
+      const files = await listAttachmentsFor(principal, args.parentType, args.parentId);
+      return { attachments: files.map(describeAttachment) };
+    },
+  );
+}
+
 function registerAttachFile(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -698,5 +810,8 @@ export function registerIssueTools(server: McpServer, principal: Principal): voi
   registerSetRelation(server, principal);
   registerRemoveRelation(server, principal);
   registerAttachFile(server, principal);
+  registerListIssueAttachments(server, principal);
+  registerReadAttachment(server, principal);
+  registerListAttachments(server, principal);
   registerCopyBranchName(server, principal);
 }

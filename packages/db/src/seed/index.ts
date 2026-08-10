@@ -3,9 +3,10 @@ import { STATE_CATEGORY_ORDER, unique } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import { db, pool } from '../client.ts';
 import {
-  noveumOrganizationValues,
-  NOVEUM_SEED_ORGANIZATION_ID as ORGANIZATION_ID,
-} from '../noveum-workspace.ts';
+  DEMO_WORKSPACE_TIMEZONE,
+  demoOrganizationValues,
+  DEMO_ORGANIZATION_ID as ORGANIZATION_ID,
+} from '../demo-workspace.ts';
 import * as schema from '../schema/index.ts';
 import {
   SEED_COLLECTIONS,
@@ -91,9 +92,7 @@ async function reset(): Promise<void> {
 }
 
 async function seedOrganizationAndUsers(): Promise<Map<string, string>> {
-  await db
-    .insert(schema.organization)
-    .values(noveumOrganizationValues(ORGANIZATION_ID, daysAgo(240)));
+  await db.insert(schema.organization).values(demoOrganizationValues(daysAgo(240)));
 
   const userIds = new Map<string, string>();
   const userRows = SEED_USERS.map((entry) => {
@@ -106,7 +105,7 @@ async function seedOrganizationAndUsers(): Promise<Map<string, string>> {
       emailVerified: true,
       image: null,
       handle: entry.handle,
-      timezone: 'Asia/Kolkata',
+      timezone: DEMO_WORKSPACE_TIMEZONE,
       onboardingStep: 'done',
       onboardingState: {
         profileComplete: true,
@@ -322,7 +321,7 @@ async function seedProjects(
       id: id(),
       organizationId: ORGANIZATION_ID,
       projectId: required(projects.get('Realtime Sync Engine'), 'missing project').id,
-      authorId: required(userIds.get('shashank'), 'missing user'),
+      authorId: required(userIds.get('sam'), 'missing user'),
       health: 'on_track',
       body: 'Delta fan out is in review and presence lands this week. Scope is holding.',
       syncId: 0,
@@ -332,7 +331,7 @@ async function seedProjects(
       id: id(),
       organizationId: ORGANIZATION_ID,
       projectId: required(projects.get('Workspace Onboarding'), 'missing project').id,
-      authorId: required(userIds.get('aditi'), 'missing user'),
+      authorId: required(userIds.get('jordan'), 'missing user'),
       health: 'at_risk',
       body: 'Passkey behavior on Safari is costing us a few days. Invite lifecycle is unaffected.',
       syncId: 0,
@@ -416,7 +415,7 @@ async function seedIssues(
       description: entry.description,
       stateId,
       priority: entry.priority,
-      creatorId: required(userIds.get('pulkit'), 'missing creator'),
+      creatorId: required(userIds.get('alex'), 'missing creator'),
       assigneeId: entry.assignee === null ? null : (userIds.get(entry.assignee) ?? null),
       projectId: project?.id ?? null,
       milestoneId:
@@ -566,8 +565,8 @@ async function seedNotifications(
   userIds: Map<string, string>,
   issues: Map<string, IssueRecord>,
 ): Promise<void> {
-  const recipient = required(userIds.get('pulkit'), 'missing user');
-  const actor = required(userIds.get('shashank'), 'missing user');
+  const recipient = required(userIds.get('alex'), 'missing user');
+  const actor = required(userIds.get('sam'), 'missing user');
   const entries = [...issues.values()].slice(0, 6);
 
   await db.insert(schema.notification).values(
@@ -578,7 +577,7 @@ async function seedNotifications(
       type: index % 2 === 0 ? 'issue_assigned' : 'comment_created',
       actorType: 'user',
       actorId: actor,
-      actorName: 'Shashank Agarwal',
+      actorName: 'Sam Rivera',
       entityType: 'issue',
       entityId: issue.id,
       title:
@@ -627,7 +626,7 @@ async function main(): Promise<void> {
     `Done. ${SEED_USERS.length} users, ${SEED_TEAMS.length} teams, ${issues.size} issues, ${SEED_DOCS.length} docs.`,
   );
   console.info(
-    `Sign in as ${SEED_USERS[0]?.email ?? 'pulkit@noveum.ai'} to explore the workspace.`,
+    `Sign in as ${SEED_USERS[0]?.email ?? 'alex@orbit.example'} to explore the workspace.`,
   );
 }
 

@@ -94,6 +94,7 @@ export function AppShell({
 
   return (
     <div
+      data-app-shell
       className={cn(
         'flex h-dvh w-full overflow-hidden bg-bg',
         '3xl:[--sidebar-width:17rem] 4xl:[--sidebar-width:19rem]',
@@ -133,7 +134,7 @@ export function AppShell({
           {...(actions === undefined ? {} : { actions })}
         />
         <div className={cn(contentWidthClassName, 'flex min-h-0 flex-1')}>
-          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+          <main className="relative min-h-0 flex-1 overflow-y-auto">{children}</main>
           {panel === undefined || !panelOpen ? null : (
             <aside
               aria-label="Details"

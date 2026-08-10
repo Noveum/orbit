@@ -33,7 +33,7 @@ export function GeneralSettingsSkeleton() {
   );
 }
 
-const INTEGRATION_CARDS = ['github', 'slack', 'mcp'];
+const INTEGRATION_CARDS = ['github', 'mcp'];
 
 export function IntegrationsSettingsSkeleton() {
   return (
@@ -242,7 +242,7 @@ export function MembersSettingsSkeleton() {
 }
 
 const MATRIX_ROWS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const MATRIX_CHANNELS = ['inbox', 'email', 'slack', 'push'];
+const MATRIX_CHANNELS = ['inbox', 'email', 'push'];
 
 export function NotificationsSettingsSkeleton() {
   return (

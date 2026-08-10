@@ -32,7 +32,7 @@ packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-o
 packages/realtime-client   Browser client: subscribe, patch, reconnect
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
 packages/core             Domain operations shared by REST, MCP and the hub
-packages/services         Markdown, storage, email, notifications, Slack, GitHub
+packages/services         Markdown, storage, email, notifications, integrations
 packages/db               Drizzle schema, migrations, client, seed
 packages/shared           Zod validators, domain types, event contracts, policy
 ```
