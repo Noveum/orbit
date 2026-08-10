@@ -177,8 +177,13 @@ and magic links.
 
 ## Run it on your own server
 
-If you want Orbit inside your own network, run the Next.js standalone build
-behind a reverse proxy.
+If you want to evaluate Orbit inside your own network, run the Next.js
+standalone build behind a reverse proxy. This standalone path is Preview only:
+HTTP routes and assets work, but realtime and live updates do not yet work in
+this mode. `/api/ws` relies on Vercel's request context for
+`experimental_upgradeWebSocket`; running the standalone server with Node does
+not provide that context. DEP-002 tracks portable realtime deployment
+separately. Use Vercel for production realtime today.
 
 ```bash
 git clone https://github.com/Noveum/orbit.git
@@ -198,31 +203,16 @@ cd apps/web
 bun run start
 ```
 
-Node matters for the same reason it does on Vercel: the websocket upgrade at
-`/api/ws` needs it.
-
-Your reverse proxy has to pass websocket upgrades through. In nginx:
+Your reverse proxy only needs to forward ordinary HTTP requests to the
+standalone server. In nginx:
 
 ```nginx
-location /api/ws {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_read_timeout 3600s;
-}
-
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
-
-The long `proxy_read_timeout` is not optional. The default is 60 seconds, which
-drops every idle socket once a minute and produces a reconnect banner that comes
-and goes on a timer.
 
 You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
 change every credential in it first. It is written for local development and its
