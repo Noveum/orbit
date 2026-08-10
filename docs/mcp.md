@@ -123,7 +123,7 @@ them.
 | `list_labels` | read | Labels |
 | `list_members` | read | Members with their roles |
 | `invite_member` | write | Invite someone |
-| `list_notifications` | read | Your inbox: mentions, assignments, replies and state changes |
+| `list_notifications` | read | Your inbox: mentions, assignments, replies and state changes. Each row resolves its issue, or its doc for a doc mention |
 | `mark_notification_read` | write | Mark your own notifications read |
 
 ### Issues
@@ -142,6 +142,27 @@ them.
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
 | `archive_issue`, `unarchive_issue`, `delete_issue` | write | |
 | `edit_comment`, `delete_comment` | write | |
+| `list_issue_attachments` | read | Every file attached to an issue or to a comment on it |
+| `list_attachments` | read | Files on one issue, comment, doc or project |
+| `read_attachment` | read | The contents of an attached file |
+| `attach_file` | write | Upload a file and attach it to an issue, a comment, a doc or a project |
+
+### Files
+
+An assistant can both send and read files. `attach_file` uploads up to 4MB inline as
+base64 and returns a url and ready made markdown, so a generated report or a chart can
+be posted straight onto the issue it belongs to. `list_issue_attachments` shows what is
+attached to an issue and to every comment on it, and `get_issue` reports the same list,
+so an assistant can tell a file is there without being told. `list_attachments` does the
+same for one doc or project. `read_attachment` returns the contents: text-like types come
+back as text, anything else base64, and a large file is truncated with `truncated: true`
+rather than silently cut.
+
+Reading and writing cover the same four parents, so a file an assistant can post is a
+file it can open again. Reads are governed by the thing the file hangs off, through that
+type's own check: an issue file by the issue, a comment file by its issue, a doc file by
+the doc, a project file by the project. If you cannot read the parent, you cannot list or
+read its files.
 
 ### Projects and milestones
 
