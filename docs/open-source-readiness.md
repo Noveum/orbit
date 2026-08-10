@@ -42,31 +42,37 @@ to the codebase.
   portable standalone Node start path, copied-artifact smoke coverage, and
   aligned self-hosting and troubleshooting guidance. It merged as `811b0c5d`
   after all exact-head checks and required reviews passed.
+- [#290](https://github.com/Noveum/orbit/pull/290) made prepared statements an
+  explicit strict application-pool setting, defaulted to
+  transaction-pooler-safe behavior, rejected conflicting URL options with
+  linear-time parsing, and added adversarial regression coverage. It merged as
+  `e43d229f` after full local and hosted exact-head verification passed with no
+  unresolved review threads.
 
 GitHub records show successful hosted CI and completion of required reviews on
 the merged heads. These pull requests reduce the known gaps, but they do not
 make the repository a supported production release.
 
-### Active pull requests
+### Active open-source readiness pull requests
 
 - [#289](https://github.com/Noveum/orbit/pull/289), SEC-003, requires explicit
   MCP consent and PKCE, preserves OAuth continuation through passwordless login,
   binds issued credentials to an immutable grant, prevents issued token scopes
-  from exceeding that grant, and consumes refresh credentials once. Status: in
-  progress at final exact-head verification and review. It is not merged.
-- [#290](https://github.com/Noveum/orbit/pull/290) makes prepared statements an
-  explicit strict application-pool setting, defaults to transaction-pooler-safe
-  behavior, and rejects conflicting URL options. Status: in progress. Its public
-  head now includes linear-time connection URL normalization and adversarial
-  regression coverage, and its prior exact-head checks passed. It is pending a
-  latest-`main` refresh, full local verification, and a complete exact-head rerun.
+  from exceeding that grant, and consumes refresh credentials once. Status:
+  exact head `4f369ee` passes full local verification, but individual CodeQL
+  alert [#19](https://github.com/Noveum/orbit/security/code-scanning/19)
+  misclassifies an opaque OAuth credential's HMAC integrity binding as password
+  hashing. The reviewed false-positive classification awaits maintainer
+  dismissal, so the pull request is not merge-ready.
 - [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
   tracker. Status: in progress. It records completed work and remaining release
   requirements without changing application behavior.
 
 ### Merge gate for this work
 
-- Availability of optional review services is not a merge gate for this project.
+- An unavailable optional review service may be replaced only by a documented
+  independent review of the exact diff. This does not waive hosted CI or review
+  thread clearance.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
   required exact-head review at its highest confidence level with no unresolved
   review threads, and pass an independent diff review before merge.
@@ -95,10 +101,13 @@ make the repository a supported production release.
 - [ ] **RT-001: Durable realtime recovery.** **Status: open.** Persist deletes
   and other replayable events, publish through an outbox, detect gaps, and test
   Redis and reconnect failures. Current evidence is in the core backfill and
-  delta bridge paths.
-- [ ] **DB-001: Production migrations.** **Status: open.** Replace production
-  `db:push` guidance with ordered migrations, a safe baseline for existing
-  installs, drift checks, rollback guidance, and upgrade tests.
+  delta bridge paths. Until this lands, `docs/architecture.md` must describe
+  reconnect replay as best effort and identify hard-delete and publish-gap
+  limits.
+- [ ] **DB-001: Production migrations.** **Status: partial.** Ordered migrations
+  and a from-scratch migration and drift check exist in CI. Replace production
+  `db:push` guidance, add a safe baseline for existing installs, rollback
+  guidance, and upgrade tests.
 - [ ] **DB-002: Migration identity collisions.** **Status: open.** Reject reused
   migration indexes with different contents and compare the resulting catalog
   in CI.
@@ -117,9 +126,10 @@ make the repository a supported production release.
 - [ ] **PORT-001: Neutral seed and import tooling.** **Status: partial through
   #281, #287, and #288.** Neutral demo data, unsafe importer quarantine, and
   destructive seed protection are complete. Remaining work includes
-  tenant-specific test fixtures, a branded settings placeholder, and supported
-  argument-driven, dry-run-first replacement importers. Legitimate sponsorship
-  and project contact references remain by design.
+  tenant-specific unit and integration fixtures and branded product-form
+  placeholders. A future general-purpose importer is optional product work, not
+  a release blocker. Legitimate sponsorship and project contact references
+  remain by design.
 - [ ] **PRIV-001: Personal and branded artifacts.** **Status: partial through
   #282.** Current screenshots and private working artifacts were replaced or
   removed. Historical blobs, media ownership, and external ownership records
@@ -152,8 +162,9 @@ make the repository a supported production release.
   permission documentation is corrected, but one tested permission and event
   manifest with generated or validated setup documentation remains.
 - [ ] **CI-001: Production-shaped CI.** **Status: partial.** Existing CI runs the
-  repository checks, build, and end-to-end suite. Container, migration,
-  packaged-start, and realtime smoke coverage is not all complete.
+  repository checks, a from-scratch migration and drift check, build, copied
+  standalone smoke, and the end-to-end suite. Application-container and
+  portable-realtime smoke coverage remain.
 
 ## P1 release requirements
 
@@ -203,9 +214,8 @@ make the repository a supported production release.
 - [ ] **PRIV-002: Web Vitals minimization.** **Status: open.** Add operator
   controls and sampling, reduce recorded attribution, document retention, and
   test deletion and abuse limits.
-- [ ] **REL-001: Operational readiness.** **Status: open.** Split liveness from
-  readiness, require configured capabilities, and document and schedule
-  retention work.
+- [ ] **REL-001: Operational readiness.** **Status: open.** Require configured
+  capabilities and document and schedule retention work.
 - [ ] **MCP-001: Accurate tool annotations.** **Status: open.** Mark destructive,
   read-only, idempotent, and open-world behavior correctly for every MCP tool.
 - [ ] **CI-002: Immutable CI inputs.** **Status: open.** Pin actions and container
@@ -222,8 +232,8 @@ make the repository a supported production release.
   quickstarts plus backup, restore, upgrade, and incident runbooks.
 - [ ] **REPO-001: Consistent contributor policy.** **Status: open.** Align agent
   instructions, generated files, test placement, Biome exceptions, and CI
-  enforcement. Remove stale tool-specific review requirements from `CLAUDE.md`
-  and `CONTRIBUTING.md` so documented review gates match the active policy.
+  enforcement. Remove stale review requirements from repository instruction
+  files and contributor guidance so documented gates match the active policy.
 
 ## Deferred P2 work
 
@@ -242,17 +252,6 @@ make the repository a supported production release.
 - [ ] **REPO-002: Large module cleanup.** **Status: deferred.** Split oversized
   services and normalize test-support placement only after behavioral safety
   nets exist.
-
-## Recommended pull request order
-
-1. Preview boundary, Slack disablement, GitHub documentation, and tenant-specific
-   operational cleanup.
-2. Neutral demo seed, import configuration, screenshots, and privacy cleanup.
-3. Migration safety, production start, application images, and Compose.
-4. Durable realtime recovery and idempotent GitHub delivery processing.
-5. Authentication, MCP, upload, invitation, avatar, and request-boundary
-   security batches.
-6. Dependency, CI, release, observability, backup, restore, and operator docs.
 
 ## Verification required for each pull request
 
