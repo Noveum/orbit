@@ -60,14 +60,17 @@ requested integration feature, and the MCP server only partly covers it.
 
 ### Importers
 
-Getting off a paid task manager should take minutes. The Plane importer is finished
-and wired to `bun run db:import-plane`.
+Orbit has validated readers for Plane and Linear exports, plus reusable mapping
+and row-building helpers. There is no supported command that writes either
+export into an Orbit database.
 
-The Linear importer is half done: `packages/db/src/import/linear-source.ts`
-parses a Linear export and validates it, but nothing imports that module and
-there is no command to run it. Finishing it means mapping its output into
-`ImportRows` and adding the script, which is a well scoped piece of work with an
-obvious model to copy in `plane-source.ts`.
+A supported importer must be tenant-neutral, authorize an explicit target
+organization, separate dry-run and apply modes, and require typed confirmation
+before deleting or replacing data. It must reject unsafe remote targets,
+preserve existing tenants, define collision and retry behavior, apply changes
+transactionally and idempotently, and have tested rollback and recovery paths.
+The retained Plane export fetcher is internal groundwork, not a supported CLI.
+If it is exposed again, its API key and workspace must remain explicit.
 
 Jira and GitHub Issues are the other two worth having.
 
