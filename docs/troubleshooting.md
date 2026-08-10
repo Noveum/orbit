@@ -100,19 +100,19 @@ narrower `allowedEmailDomains`.
 
 ### An endless "Reconnecting to live updates" banner
 
-The most common failure in Orbit, and it has three causes.
+The expected behavior depends on the deployment route.
 
-**In production:** `NEXT_PUBLIC_REALTIME_URL` is set. It must not be. The socket
-is served from the page's own origin at `/api/ws`, and a leftover value from a
-standalone realtime host sends browsers to a dead origin. Because the ticket
-still comes from the app, the failure looks like reconnection rather than an
-error. Unset it and redeploy.
+**On Vercel:** inspect the websocket request to `/api/ws` and verify that it
+receives a `101 Switching Protocols` response. If it does not, continue with
+[The websocket never reaches a 101](#the-websocket-never-reaches-a-101).
+`NEXT_PUBLIC_REALTIME_URL` cannot redirect a production socket because Orbit
+ignores it whenever `NODE_ENV` is `production`.
 
-**Behind your own proxy:** the proxy is not passing websocket upgrades, or is
-timing them out. See the nginx configuration in
-[Self-hosting](self-hosting.md#run-it-on-your-own-server). The default
-`proxy_read_timeout` of 60 seconds drops every idle socket once a minute, which
-produces a banner that appears and disappears on a timer.
+**With standalone Node (Preview):** realtime is not supported yet because
+`/api/ws` depends on Vercel's websocket request context. Reverse proxy settings
+cannot enable it. Use Vercel when realtime is required, and see
+[Self-hosting](self-hosting.md#run-standalone-node-preview) for the current
+standalone limitations.
 
 **Locally:** the realtime server is not running. `bun run dev` starts it.
 `NEXT_PUBLIC_REALTIME_URL` should be `ws://localhost:3100`.
@@ -192,7 +192,29 @@ Postgres and is the only mode that can touch someone else's.
 bun run db:seed
 ```
 
-It truncates and reloads. Safe locally, and never point it at production.
+It truncates and reloads. Use it only with a verified demo database, and never
+point it at production. The exact default local target needs no confirmation;
+every other verified target requires the exact confirmation described below.
+
+Only the exact default Docker Compose target,
+`postgres://orbit:orbit@localhost:5434/orbit` or the same target through
+`127.0.0.1`, needs no confirmation. Every other target, including other
+localhost and IPv4 loopback ports, databases, or credentials, plus `postgres`
+and `host.docker.internal`, must have an explicit username and port in
+`DATABASE_URL`. For these non-default targets, `db:seed` stops unless
+`ORBIT_SEED_CONFIRM_TARGET` exactly matches the credential-safe
+`host:port/database:user-sha256:<64 lowercase hex characters>` target printed in
+the error. The username is decoded before hashing and is never printed. For
+example:
+
+```bash
+ORBIT_SEED_CONFIRM_TARGET='db.example.com:5432/orbit:user-sha256:<64-character-sha256>' bun run db:seed
+```
+
+Multi-host URLs, ambiguous encoded authorities, and query options that can
+change the target database or schema are refused. IPv6 connection URLs are also
+refused because the current database driver misparses bracketed IPv6 hosts. Use
+a hostname or IPv4 endpoint instead.
 
 ## Files
 

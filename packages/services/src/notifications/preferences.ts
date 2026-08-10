@@ -3,6 +3,7 @@ import {
   NOTIFICATION_TYPES,
   type NotificationChannel,
   type NotificationType,
+  SLACK_INTEGRATION_ENABLED,
 } from '@orbit/shared';
 
 export interface PreferenceRow {
@@ -38,7 +39,11 @@ export function defaultPreferences(): DefaultPreference[] {
   const matrix: DefaultPreference[] = [];
   for (const channel of NOTIFICATION_CHANNELS) {
     for (const type of NOTIFICATION_TYPES) {
-      matrix.push({ channel, type, enabled: true });
+      matrix.push({
+        channel,
+        type,
+        enabled: channel === 'slack' ? SLACK_INTEGRATION_ENABLED : true,
+      });
     }
   }
   return matrix;

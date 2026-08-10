@@ -18,7 +18,9 @@ function settingsRedirect(status: CallbackStatus): Response {
 function statusForFailure(error: unknown): CallbackStatus {
   if (!isDomainError(error)) return 'error';
   if (error.code === 'forbidden') return 'denied';
-  if (error.code === 'conflict') return 'claimed';
+  if (error.code === 'conflict' && error.details?.['reason'] === 'github_installation_claimed') {
+    return 'claimed';
+  }
   return 'error';
 }
 

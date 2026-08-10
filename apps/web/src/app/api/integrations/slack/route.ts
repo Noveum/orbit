@@ -15,6 +15,10 @@ import {
 } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
+import {
+  slackIntegrationEnabled,
+  slackIntegrationUnavailable,
+} from '@/lib/integrations/slack-capability.ts';
 import { assertTeamInWorkspace } from '@/lib/workspace.ts';
 
 const requestSchema = z.discriminatedUnion('action', [
@@ -24,6 +28,7 @@ const requestSchema = z.discriminatedUnion('action', [
 ]);
 
 export async function GET(): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const channels = await db
@@ -41,6 +46,7 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     assertCan(principal, 'integration:manage');
@@ -89,6 +95,7 @@ async function slackIntegrationId(organizationId: string): Promise<string> {
 }
 
 export async function PATCH(): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     assertCan(principal, 'integration:manage');

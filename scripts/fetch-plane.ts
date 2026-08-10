@@ -74,12 +74,13 @@ interface AssetRecord {
 }
 
 const KEY = process.env['PLANE_API_KEY'] ?? '';
-const SLUG = process.env['PLANE_WORKSPACE'] ?? 'noveum-ai';
+const SLUG = process.env['PLANE_WORKSPACE']?.trim() ?? '';
 const OUT = resolve(process.env['PLANE_OUT'] ?? 'extras/import/plane');
 const RATE = Number(process.env['PLANE_RATE'] ?? 55);
 const WITH_LINKS = process.env['PLANE_LINKS'] === '1';
 
 if (KEY.length === 0) throw new Error('PLANE_API_KEY is not set.');
+if (SLUG.length === 0) throw new Error('PLANE_WORKSPACE is not set.');
 if (!Number.isFinite(RATE) || RATE < 1) {
   throw new Error(`PLANE_RATE must be a number of at least 1, got "${process.env['PLANE_RATE']}".`);
 }
@@ -423,7 +424,7 @@ await writeText(
   OUT,
   'SUMMARY.md',
   [
-    '# Plane export: noveum-ai',
+    `# Plane export: ${SLUG}`,
     '',
     `Fetched ${new Date().toISOString()}`,
     '',

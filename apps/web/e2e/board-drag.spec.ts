@@ -47,7 +47,7 @@ test('a card dragged to another column lands there and stays after a reload', as
 }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/team/eng/board`);
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
@@ -87,7 +87,7 @@ test('a card dragged to another column lands there and stays after a reload', as
 test('the command palette finds an issue by its title and opens it', async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/team/eng/board`);
   await page.waitForSelector('[data-testid^="issue-card-"]');

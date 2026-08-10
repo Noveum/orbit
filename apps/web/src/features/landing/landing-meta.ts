@@ -65,7 +65,6 @@ export function landingStructuredData(): string {
       'Command palette and keyboard shortcuts',
       'Filters and saved views',
       'GitHub integration',
-      'Slack integration',
       'Notifications',
       'MCP server for agents',
     ],

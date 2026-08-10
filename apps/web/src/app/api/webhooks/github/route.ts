@@ -14,6 +14,7 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { publish } from '@/lib/api/handler.ts';
 import { absoluteUrl } from '@/lib/env.ts';
+import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-hub-signature-256';
 const EVENT_HEADER = 'x-github-event';
@@ -101,7 +102,11 @@ export async function POST(request: Request): Promise<Response> {
 
     await publish(outcome.actions);
 
-    if (outcome.organizationId !== null && outcome.slackText !== null) {
+    if (
+      slackIntegrationEnabled() &&
+      outcome.organizationId !== null &&
+      outcome.slackText !== null
+    ) {
       await dispatchSlackMessage(db, {
         organizationId: outcome.organizationId,
         teamIds: outcome.teamIds,

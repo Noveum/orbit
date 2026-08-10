@@ -20,10 +20,10 @@ import type { PlaneIssue, PlaneMember, PlaneState } from '../../src/import/plane
 function member(overrides: Partial<PlaneMember> = {}): PlaneMember {
   return {
     id: 'plane-member',
-    first_name: 'Pulkit',
+    first_name: 'Taylor',
     last_name: '',
-    email: 'pulkit@noveum.ai',
-    display_name: 'pulkit',
+    email: 'taylor@example.test',
+    display_name: 'taylor',
     avatar_url: null,
     role_slug: 'member',
     is_active: true,
@@ -76,25 +76,36 @@ function issue(overrides: Partial<PlaneIssue> = {}): PlaneIssue {
 }
 
 describe('team keys', () => {
-  it('uses the mapped short key for a known plane project', () => {
-    expect(teamKeyFor('APIMKTENG', new Set())).toBe('ENG');
-    expect(teamKeyFor('MARKETING', new Set())).toBe('MKT');
-  });
-
-  it('truncates an unmapped identifier to the six character limit', () => {
-    expect(teamKeyFor('OPERATIONS', new Set())).toBe('OPERAT');
+  it('truncates a project identifier to the six character limit', () => {
+    expect(teamKeyFor('PLATFORM', new Set())).toBe('PLATFO');
+    expect(teamKeyFor('MARKETING', new Set())).toBe('MARKET');
   });
 
   it('never returns a key that is already taken', () => {
-    const taken = new Set(['ENG']);
-    const key = teamKeyFor('APIMKTENG', taken);
-    expect(key).not.toBe('ENG');
-    expect(key).toMatch(/^[A-Z][A-Z0-9]{1,5}$/);
+    const taken = new Set(['PLATFO']);
+    expect(teamKeyFor('PLATFORM', taken)).toBe('PLATF2');
+  });
+
+  it('keeps multi-digit collision suffixes inside the key limit', () => {
+    const taken = new Set<string>();
+    const keys = Array.from({ length: 10 }, () => teamKeyFor('PLATFORM', taken));
+    expect(keys).toEqual([
+      'PLATFO',
+      'PLATF2',
+      'PLATF3',
+      'PLATF4',
+      'PLATF5',
+      'PLATF6',
+      'PLATF7',
+      'PLATF8',
+      'PLATF9',
+      'PLAT10',
+    ]);
   });
 
   it('produces keys the identifier pattern accepts', () => {
     const taken = new Set<string>();
-    for (const identifier of ['SALES', 'CUSTISSUES', 'SEOSPRINT', 'LNKDINMKT', 'NOVEU', 'V1PLAN']) {
+    for (const identifier of ['DESIGN', 'SUPPORT', 'RESEARCH', 'SECURITY', 'DOCS', 'V2PLAN']) {
       expect(teamKeyFor(identifier, taken)).toMatch(/^[A-Z][A-Z0-9]{1,5}$/);
     }
     expect(taken.size).toBe(6);
@@ -150,16 +161,16 @@ describe('estimates', () => {
 
 describe('people', () => {
   it('collapses a duplicated surname', () => {
-    expect(displayNameFor(member({ first_name: 'Pulkit', last_name: 'Pulkit' }))).toBe('Pulkit');
-    expect(displayNameFor(member({ first_name: 'Shashank Agarwal', last_name: 'Agarwal' }))).toBe(
-      'Shashank Agarwal',
+    expect(displayNameFor(member({ first_name: 'Taylor', last_name: 'Taylor' }))).toBe('Taylor');
+    expect(displayNameFor(member({ first_name: 'Riley Chen', last_name: 'Chen' }))).toBe(
+      'Riley Chen',
     );
   });
 
   it('keeps handles unique', () => {
     const taken = new Set<string>();
-    expect(handleFor(member(), taken)).toBe('pulkit');
-    expect(handleFor(member({ id: 'other' }), taken)).toBe('pulkit-2');
+    expect(handleFor(member(), taken)).toBe('taylor');
+    expect(handleFor(member({ id: 'other' }), taken)).toBe('taylor-2');
   });
 
   it('maps an owner to an admin and a bot to a guest', () => {
@@ -172,8 +183,8 @@ describe('people', () => {
 describe('project slugs', () => {
   it('slugifies and disambiguates', () => {
     const taken = new Set<string>();
-    expect(slugFor('API.market Engineering', taken)).toBe('api-market-engineering');
-    expect(slugFor('API.market Engineering', taken)).toBe('api-market-engineering-2');
+    expect(slugFor('Platform Engineering', taken)).toBe('platform-engineering');
+    expect(slugFor('Platform Engineering', taken)).toBe('platform-engineering-2');
   });
 });
 
@@ -208,13 +219,15 @@ describe('markdown conversion', () => {
     expect(htmlToMarkdown('<h2>Plan</h2><ul><li>One</li><li>Two</li></ul>')).toBe(
       '## Plan\n- One\n- Two',
     );
-    expect(htmlToMarkdown('<p><a href="https://api.market">API.market</a></p>')).toBe(
-      '[API.market](https://api.market)',
+    expect(htmlToMarkdown('<p><a href="https://docs.example.com">Reference</a></p>')).toBe(
+      '[Reference](https://docs.example.com)',
     );
   });
 
   it('falls back to the bare url when the anchor has no text', () => {
-    expect(htmlToMarkdown('<p><a href="https://api.market"></a></p>')).toBe('https://api.market');
+    expect(htmlToMarkdown('<p><a href="https://docs.example.com"></a></p>')).toBe(
+      'https://docs.example.com',
+    );
   });
 
   it('decodes entities and strips remaining markup', () => {
@@ -249,18 +262,18 @@ describe('inlining plane image assets', () => {
   });
 
   it('rewrites the tag so markdown keeps both the alt text and the url', () => {
-    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_example');
     const html = `<image-component data-id="x" src="${assetId}" width="10px"></image-component>`;
     const markdown = htmlToMarkdown(inlineAssets(html, 'comment', 'comment-1', 'user-1', store));
 
-    expect(markdown).toMatch(/^!\[a "quoted" name\.png\]\(\/api\/files\/org_noveum\/plane\//);
+    expect(markdown).toMatch(/^!\[a "quoted" name\.png\]\(\/api\/files\/org_example\/plane\//);
     expect(store.attachments).toHaveLength(1);
     expect(store.attachments[0]?.parentType).toBe('comment');
     expect(store.attachments[0]?.uploadedById).toBe('user-1');
   });
 
   it('registers one attachment however many places reference the same image', () => {
-    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_example');
     const html = `<image-component src="${assetId}"></image-component>`;
     inlineAssets(html, 'issue', 'issue-1', 'user-1', store);
     inlineAssets(html, 'comment', 'comment-1', 'user-2', store);
@@ -268,7 +281,7 @@ describe('inlining plane image assets', () => {
   });
 
   it('leaves an unknown asset alone rather than inventing a url', () => {
-    const store = createAssetStore(manifestRoot, storageRoot, 'org_noveum');
+    const store = createAssetStore(manifestRoot, storageRoot, 'org_example');
     const html = '<image-component src="00000000-0000-0000-0000-000000000000"></image-component>';
     expect(inlineAssets(html, 'issue', 'issue-1', 'user-1', store)).toBe(html);
     expect(store.attachments).toHaveLength(0);

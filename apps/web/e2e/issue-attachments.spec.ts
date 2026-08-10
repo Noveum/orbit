@@ -18,7 +18,7 @@ test('a screenshot dropped on an issue description is uploaded and shown inline'
 }) => {
   test.setTimeout(180_000);
   const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/team/eng/board`);
   await page.waitForSelector('[data-testid^="issue-card-"]');

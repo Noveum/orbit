@@ -1,6 +1,7 @@
 import { and, db, desc, eq, schema } from '@orbit/db';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
+import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 import { loadGithubSettings } from './github-data.ts';
 import type { GithubSettingsView } from './github-view.ts';
@@ -18,13 +19,17 @@ export interface IntegrationTeam {
   readonly name: string;
 }
 
-export interface IntegrationSettings {
-  readonly github: GithubSettingsView;
+export interface SlackIntegrationSettings {
   readonly slackConnected: boolean;
   readonly slackHasToken: boolean;
   readonly slackConnectEnabled: boolean;
   readonly channels: ConnectedChannel[];
   readonly teams: IntegrationTeam[];
+}
+
+export interface IntegrationSettings {
+  readonly github: GithubSettingsView;
+  readonly slack?: SlackIntegrationSettings;
 }
 
 function slackBotTokenFrom(credentials: unknown): string | null {
@@ -42,18 +47,15 @@ const WITHHELD: IntegrationSettings = {
     repositories: [],
     projects: [],
   },
-  slackConnected: false,
-  slackHasToken: false,
-  slackConnectEnabled: false,
-  channels: [],
-  teams: [],
 };
 
 export async function loadIntegrationSettings(principal: Principal): Promise<IntegrationSettings> {
   if (!can(principal, 'integration:manage')) return WITHHELD;
 
-  const [github, integrations, channels, teams] = await Promise.all([
-    loadGithubSettings(principal),
+  const github = await loadGithubSettings(principal);
+  if (!slackIntegrationEnabled()) return { github };
+
+  const [integrations, channels, teams] = await Promise.all([
     db
       .select({
         provider: schema.integration.provider,
@@ -79,11 +81,13 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
 
   return {
     github,
-    slackConnected: slackRow !== undefined,
-    slackHasToken: slackToken !== null,
-    slackConnectEnabled: slackConnectReady(),
-    channels,
-    teams,
+    slack: {
+      slackConnected: slackRow !== undefined,
+      slackHasToken: slackToken !== null,
+      slackConnectEnabled: slackConnectReady(),
+      channels,
+      teams,
+    },
   };
 }
 

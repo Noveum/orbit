@@ -27,6 +27,10 @@ at the end of the month.
 
 </div>
 
+> **Self-hosting status: Preview.** The repository supports local evaluation,
+> but it is not yet a supported production release. Review the current
+> limitations in [the readiness tracker](docs/open-source-readiness.md).
+
 <div align="center">
   <img src="docs/assets/screenshots/board-dark.png" alt="The Orbit board, dark theme" width="100%" />
 </div>
@@ -84,7 +88,7 @@ yourself and never depend on us at all.
 | **Realtime** | Every change fans out over a websocket to exactly the people allowed to see it |
 | **Keyboard first** | Cmd K for everything, `g` to navigate, single keys to act. Press `?` |
 | **MCP server** | AI agents read the board and file work, with your permissions, over OAuth |
-| **Notifications** | Inbox, email and Slack, with per-event preferences and quiet hours |
+| **Notifications** | In-app inbox, with per-event preferences and quiet hours |
 | **GitHub** | Pull requests linked to the issues they close |
 | **Auth** | Passkeys, Google, GitHub, magic links. Password optional and off by default |
 | **Roles** | Admin, member, contributor and guest, enforced on the server |
@@ -109,7 +113,7 @@ bun run db:seed         # load a demo workspace
 bun run dev             # http://localhost:3000
 ```
 
-Sign in as **`pulkit@noveum.ai`**. The seed loads three teams, seven people,
+Sign in as **`alex@orbit.example`**. The seed loads three teams, seven people,
 thirty two issues, projects, sprints and docs, so there is something to click on
 straight away.
 
@@ -126,7 +130,10 @@ something in one to watch the other update.
 
 Full walkthrough in [docs/getting-started.md](docs/getting-started.md).
 
-## Deploy it
+## Reference deployment (Preview)
+
+The setup below describes the Noveum AI deployment profile. It is not a
+provider-neutral production support commitment.
 
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
 all of which have free tiers, so a small team can run it for nothing.
@@ -141,11 +148,12 @@ wrong:
   runtime, where the websocket upgrade at `/api/ws` silently never happens and
   the browser retries forever against a socket that never opens.
 - **Never set `NEXT_PUBLIC_REALTIME_URL` in production.** The socket is served
-  from the page's own origin. A leftover value sends browsers to a dead host,
-  and it looks like an endless reconnect banner rather than an error.
+  from the page's own origin, and Orbit ignores this variable in production.
+  Leaving it set only makes the deployment configuration misleading.
 
 Supabase for Postgres, Upstash for Redis, Cloudflare R2 for files and Resend for
-email is the combination we run. Any equivalent works.
+email is the combination we run. Other providers have not yet been certified by
+this project.
 
 Full guide, including running it on your own server behind nginx:
 [docs/self-hosting.md](docs/self-hosting.md).
@@ -173,7 +181,7 @@ today:
 > "File a bug on Engineering: passkey sign-in fails on Safari when no credential
 > is registered. High priority, assign it to me."
 >
-> "Post a summary of what each person closed yesterday to Slack."
+> "Summarise what each person closed yesterday."
 
 [docs/mcp.md](docs/mcp.md) has the setup and the full tool list.
 
@@ -187,7 +195,7 @@ today:
 | [Configuration](docs/configuration.md) | Every environment variable |
 | [Keyboard shortcuts](docs/keyboard-shortcuts.md) | All of them |
 | [MCP server](docs/mcp.md) | Connect an AI assistant |
-| [Integrations](docs/integrations.md) | GitHub and Slack |
+| [Integrations](docs/integrations.md) | GitHub |
 | [Architecture](docs/architecture.md) | How a change reaches every screen |
 | [Testing](docs/testing.md) | Running and writing tests |
 | [Troubleshooting](docs/troubleshooting.md) | The failures we actually hit |

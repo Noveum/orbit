@@ -1,3 +1,4 @@
+import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { loadInbox } from '@/features/inbox/data.ts';
 import { InboxRealtime } from '@/features/inbox/inbox-realtime.tsx';
@@ -18,6 +19,8 @@ export default async function InboxPage() {
       userId={context.principal.userId}
       organizationId={context.principal.organizationId}
       realtimeUrl={configuredRealtimeUrl()}
+      canWriteDocs={can(context.principal, 'doc:write')}
+      canPublishDocs={can(context.principal, 'doc:publish')}
     />
   );
 }

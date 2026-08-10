@@ -15,7 +15,7 @@ export function GET(): Response {
 - Realtime sync: edits commit to Postgres, publish to Redis, and fan out over WebSockets
 - Command palette and keyboard shortcuts for every action
 - Filters and saved views shared across the team
-- GitHub and Slack integrations
+- GitHub integration
 - Notifications inbox
 - MCP server, so agents can read the board, file issues, and update work
 
