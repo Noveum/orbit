@@ -82,7 +82,7 @@ export async function createFirstCycle(
       organizationId: params.organizationId,
       teamId: params.teamId,
       number: 1,
-      name: 'Sprint 1',
+      name: '',
       startsAt,
       endsAt: addUtcDays(startsAt, 14),
       syncId: params.syncId,

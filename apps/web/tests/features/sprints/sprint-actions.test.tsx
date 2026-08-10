@@ -44,7 +44,8 @@ mock.module('next/navigation', () => ({
   }),
 }));
 
-const { CyclePanel } = await import('@/features/sprints/cycle-board.tsx');
+const { SprintHeader } = await import('@/features/sprints/sprint-header.tsx');
+const { SprintSchedule } = await import('@/features/sprints/sprint-schedule.tsx');
 
 const TEAM = { id: 'team_eng', key: 'ENG', name: 'Engineering' };
 
@@ -99,8 +100,10 @@ function renderPanel(options: {
   );
   render(
     <Wrapper>
-      <CyclePanel
-        cycle={options.cycle}
+      {options.cycle === null ? null : (
+        <SprintHeader sprint={options.cycle} teamKey={TEAM.key} canManage={options.canManage} />
+      )}
+      <SprintSchedule
         upcoming={options.upcoming ?? UPCOMING}
         team={TEAM}
         canManage={options.canManage}

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { and, asc, db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { sprintLabel } from '@orbit/shared/utils';
 import { sprintOutcomeSchema } from '@orbit/shared/validators';
 import { cycleBurndown, teamVelocity } from '../../src/analytics/burndown.ts';
 import { createTeam } from '../../src/org/team-service.ts';
@@ -48,15 +49,27 @@ async function firstCycle() {
 }
 
 describe('createCycle', () => {
-  it('numbers sprints in sequence and names them', async () => {
+  it('numbers sprints in sequence and labels them from the number', async () => {
     const { cycle, actions } = await createCycle(workspace.admin, {
       teamId: workspace.teamId,
       startsAt: daysFromNow(20),
       endsAt: daysFromNow(34),
     });
     expect(cycle.number).toBe(2);
-    expect(cycle.name).toBe('Sprint 2');
+    expect(cycle.name).toBe('');
+    expect(sprintLabel(cycle)).toBe('Sprint 2');
     expect(actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+  });
+
+  it('keeps a name someone chose', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      name: 'Hardening',
+      startsAt: daysFromNow(20),
+      endsAt: daysFromNow(34),
+    });
+    expect(cycle.name).toBe('Hardening');
+    expect(sprintLabel(cycle)).toBe('Hardening');
   });
 
   it('refuses a cycle that ends before it starts', async () => {

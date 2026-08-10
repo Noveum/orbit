@@ -1,25 +1,11 @@
-import { RefreshCcw } from 'lucide-react';
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
-import { Badge } from '@/components/ui/badge.tsx';
-import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { ProgressBar } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { cn } from '@/lib/cn.ts';
-import { cardHover, rowHover } from '@/lib/interaction.ts';
+import { rowHover } from '@/lib/interaction.ts';
 import { buildBurnUp, burnUpMetric } from './burn-up.ts';
-import type { CycleView, UpcomingCycleView } from './data.ts';
-import {
-  CompleteSprintButton,
-  DeleteSprintButton,
-  EditSprintButton,
-  NewSprintButton,
-  StartSprintButton,
-} from './sprint-actions.tsx';
-
-function formatDay(value: string): string {
-  return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-}
+import type { CycleView } from './data.ts';
 
 function Tally({ label, value }: { readonly label: string; readonly value: number }) {
   return (
@@ -173,88 +159,4 @@ export interface SprintTeam {
   readonly id: string;
   readonly key: string;
   readonly name: string;
-}
-
-export interface CyclePanelProps {
-  readonly cycle: CycleView | null;
-  readonly upcoming: readonly UpcomingCycleView[];
-  readonly team: SprintTeam;
-  readonly canManage: boolean;
-  readonly runningSprintId: string | null;
-}
-
-export function CyclePanel({ cycle, upcoming, team, canManage, runningSprintId }: CyclePanelProps) {
-  const open = cycle !== null && cycle.completedAt === null;
-
-  return (
-    <div className="flex flex-col gap-6">
-      {cycle === null ? (
-        <EmptyState
-          icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
-          title="No active sprint"
-          description={`${team.name} has no sprint running right now.`}
-          action={canManage ? <NewSprintButton teamId={team.id} /> : null}
-        />
-      ) : (
-        <>
-          <header className="flex flex-wrap items-center gap-2">
-            <h2 className="font-semibold text-lg text-text">{cycle.name}</h2>
-            <Badge tone="accent">{cycle.teamKey}</Badge>
-            <span className="text-faint text-xs tabular">
-              {formatDay(cycle.startsAt)} to {formatDay(cycle.endsAt)}
-            </span>
-            {canManage && open ? (
-              <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                <EditSprintButton sprint={cycle} />
-                <CompleteSprintButton sprint={cycle} />
-              </div>
-            ) : null}
-          </header>
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <CycleIssueList cycle={cycle} />
-            <CycleAnalytics cycle={cycle} />
-          </div>
-        </>
-      )}
-
-      <section className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-medium text-dense text-text">Upcoming sprints</h3>
-          {canManage && cycle !== null ? <NewSprintButton teamId={team.id} /> : null}
-        </div>
-        {upcoming.length === 0 ? (
-          <p className="text-faint text-xs">Nothing scheduled after this one.</p>
-        ) : (
-          <ul className="flex flex-col gap-1.5">
-            {upcoming.map((entry) => (
-              <li
-                key={entry.id}
-                className={cn(
-                  'flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5',
-                  cardHover,
-                )}
-              >
-                <span className="flex items-center gap-2 text-dense text-text">
-                  <Badge tone="outline">{entry.teamKey}</Badge>
-                  {entry.name}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="text-2xs text-faint tabular">
-                    {formatDay(entry.startsAt)} to {formatDay(entry.endsAt)}
-                  </span>
-                  {canManage ? (
-                    <>
-                      {runningSprintId === null ? <StartSprintButton sprint={entry} /> : null}
-                      <EditSprintButton sprint={entry} />
-                      <DeleteSprintButton sprint={entry} />
-                    </>
-                  ) : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
-  );
 }

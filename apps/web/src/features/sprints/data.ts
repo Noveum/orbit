@@ -193,6 +193,15 @@ export async function runningSprintId(
   return cycle?.id ?? null;
 }
 
+export async function runningSprintNumber(
+  principal: Principal,
+  team: { id: string },
+  now: Date = new Date(),
+): Promise<number | null> {
+  const cycle = await activeCycle(principal, team.id, now);
+  return cycle?.number ?? null;
+}
+
 export async function listUpcomingCycleViews(
   principal: Principal,
   team: { id: string; key: string },
