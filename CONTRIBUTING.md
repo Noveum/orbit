@@ -57,7 +57,7 @@ bun run dev             # web on :3000, realtime on :3100
 
 Open <http://localhost:3000>. `ORBIT_DEV_LOGIN=1` is set in `.env.example`, so
 the login screen lists the seeded users and signs you in with one click. Start
-as `pulkit@noveum.ai`, who is an admin on all three seeded teams.
+as `alex@orbit.example`, who is an admin on all three seeded teams.
 
 If any of that fails, [docs/troubleshooting.md](docs/troubleshooting.md) covers
 the failures we actually hit rather than the ones we imagine.
@@ -122,7 +122,7 @@ apps/realtime             Local-only WebSocket host, never deployed
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
 packages/core             Domain operations shared by REST, MCP and the hub
-packages/services         Markdown, storage, email, notifications, Slack, GitHub
+packages/services         Markdown, storage, email, notifications, integrations
 packages/db               Drizzle schema, migrations, client, seed
 packages/shared           Zod validators, domain types, event contracts, policy
 scripts/                  Repo tooling, TypeScript, run with bun

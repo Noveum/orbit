@@ -3,7 +3,7 @@
 import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { SmilePlus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
-import { taskListClassName } from '@/features/docs/doc-body.tsx';
+import { proseOverflowClassName, taskListClassName } from '@/features/docs/doc-body.tsx';
 import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -54,6 +54,7 @@ export interface CommentThreadProps {
   readonly comments: readonly Comment[];
   readonly activity: readonly Activity[];
   readonly members: readonly Member[];
+  readonly focusCommentId?: string | null;
 }
 
 function cachedCommentBody(
@@ -133,9 +134,30 @@ function NewComment({
   );
 }
 
-export function CommentThread({ issueId, comments, activity, members }: CommentThreadProps) {
+function useFocusedComment(commentId: string | null, readySignature: string): void {
+  const landed = useRef<string | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run until the comment mounts so a thread opened from the inbox lands on the comment it was opened for
+  useEffect(() => {
+    if (commentId === null || landed.current === commentId) return;
+    const target = document.getElementById(commentAnchorId(commentId));
+    if (target === null) return;
+    landed.current = commentId;
+    target.scrollIntoView({ block: 'start' });
+  }, [commentId, readySignature]);
+}
+
+export function CommentThread({
+  issueId,
+  comments,
+  activity,
+  members,
+  focusCommentId = null,
+}: CommentThreadProps) {
   const memberById = new Map(members.map((member) => [member.id, member]));
-  useHashScroll(comments.map((entry) => entry.comment.id).join('|'));
+  const mounted = comments.map((entry) => entry.comment.id).join('|');
+  useHashScroll(mounted);
+  useFocusedComment(focusCommentId, mounted);
 
   const timeline = buildTimeline(activity, comments);
   const repliesOf = (parentId: string) =>
@@ -154,6 +176,7 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                 entry={item.comment}
                 author={memberById.get(item.comment.comment.authorId)}
                 members={members}
+                focused={item.comment.comment.id === focusCommentId}
               />
               <div className="ml-8 flex flex-col gap-3 border-border border-l pl-4 empty:hidden">
                 {repliesOf(item.comment.comment.id).map((reply) => (
@@ -163,6 +186,7 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
                     entry={reply}
                     author={memberById.get(reply.comment.authorId)}
                     members={members}
+                    focused={reply.comment.id === focusCommentId}
                     isReply
                   />
                 ))}
@@ -178,9 +202,16 @@ export function CommentThread({ issueId, comments, activity, members }: CommentT
 }
 
 const bodyClassName = cn(
-  'prose-orbit break-words text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1',
+  'prose-orbit min-w-0 text-dense text-text leading-relaxed [&_a]:text-accent [&_code]:rounded-sm [&_code]:bg-surface-2 [&_code]:px-1 [&_p]:my-1',
   '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5',
   '[&_li]:my-0.5 [&_li]:pl-1 [&_li::marker]:text-faint [&_li_p]:my-0',
+  '[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-2 [&_pre]:p-3',
+  '[&_pre_code]:bg-transparent [&_pre_code]:p-0',
+  '[&_blockquote]:my-2 [&_blockquote]:border-accent/40 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted',
+  '[&_[data-table-scroll]]:my-2 [&_[data-table-scroll]]:rounded-md [&_[data-table-scroll]]:border [&_[data-table-scroll]]:border-border',
+  '[&_table]:w-full [&_table]:border-collapse [&_th]:bg-surface-2 [&_th]:text-left [&_th]:font-medium',
+  '[&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1 [&_td]:align-top [&_th_p]:my-0 [&_td_p]:my-0',
+  proseOverflowClassName,
   taskListClassName,
 );
 
@@ -202,10 +233,18 @@ interface CommentItemProps {
   readonly entry: Comment;
   readonly author: Member | undefined;
   readonly members: readonly Member[];
+  readonly focused?: boolean;
   readonly isReply?: boolean;
 }
 
-function CommentItem({ issueId, entry, author, members, isReply = false }: CommentItemProps) {
+function CommentItem({
+  issueId,
+  entry,
+  author,
+  members,
+  focused = false,
+  isReply = false,
+}: CommentItemProps) {
   const currentUserId = useCurrentUserId();
   const react = useToggleReaction(issueId);
   const update = useUpdateComment(issueId);
@@ -221,7 +260,11 @@ function CommentItem({ issueId, entry, author, members, isReply = false }: Comme
     <article
       id={commentAnchorId(entry.comment.id)}
       data-testid={`comment-${entry.comment.id}`}
-      className="group flex scroll-mt-24 gap-2.5"
+      data-focused={focused ? 'true' : undefined}
+      className={cn(
+        'group flex scroll-mt-24 gap-2.5',
+        focused ? '-mx-2 -my-1 rounded-md bg-accent-soft px-2 py-1 ring-1 ring-accent' : '',
+      )}
     >
       <Avatar name={author?.name ?? 'Unknown'} src={author?.image ?? null} size="md" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">

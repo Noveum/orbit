@@ -468,6 +468,13 @@
     text-size-adjust: 100%;
   }
 
+  html:has([data-app-shell]),
+  body:has([data-app-shell]) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+  }
+
   body {
     background-color: var(--color-bg);
     color: var(--color-text);
@@ -563,6 +570,10 @@
 }
 
 @layer utilities {
+  .sr-only:not(.not-sr-only) {
+    position: fixed;
+  }
+
   .hairline-b {
     box-shadow: inset 0 -1px 0 0 var(--color-border-hairline);
   }

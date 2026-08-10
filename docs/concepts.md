@@ -209,8 +209,8 @@ filters. `Bugs in progress with no assignee` deserves to be a view.
 The inbox collects what happened that involves you: assignments, mentions,
 comments on issues you follow, state changes on work you are watching.
 
-Notification preferences are per event type, with quiet hours that respect your
-timezone. You can be notified in the app, by email, or in Slack.
+In-app notification preferences are per event type, with quiet hours that
+respect your timezone.
 
 ## Realtime
 

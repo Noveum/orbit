@@ -94,6 +94,7 @@ export function AppShell({
 
   return (
     <div
+      data-app-shell
       className={cn(
         'flex h-dvh w-full overflow-hidden bg-bg',
         '3xl:[--sidebar-width:17rem] 4xl:[--sidebar-width:19rem]',

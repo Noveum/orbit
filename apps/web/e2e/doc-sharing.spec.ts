@@ -15,20 +15,20 @@ test('a private doc can be shared with a named person, who can then open it', as
 }) => {
   test.setTimeout(120_000);
   const ownerContext = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const owner = await signIn(ownerContext, 'pulkit@noveum.ai');
+  const owner = await signIn(ownerContext, 'alex@orbit.example');
 
   const doc = await createDoc(owner, 'Compensation review', 'private');
   const docId = doc.id;
 
   const readerContext = await browser.newContext();
-  const reader = await signIn(readerContext, 'aditi@noveum.ai');
+  const reader = await signIn(readerContext, 'jordan@orbit.example');
   expect(await statusOf(reader, `/api/docs/${docId}`)).toBe(404);
 
   await owner.goto(`${BASE}/docs/${docId}`);
   await owner.getByTestId('doc-share').click();
   await expect(owner.getByTestId('doc-people-access')).toBeVisible();
 
-  await owner.getByTestId('doc-access-search').fill('Aditi');
+  await owner.getByTestId('doc-access-search').fill('Jordan');
   const candidate = owner.locator('[data-testid^="doc-access-add-"]').first();
   await expect(candidate).toBeVisible();
   await candidate.click();

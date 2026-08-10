@@ -91,8 +91,8 @@ from code. Before you expose an Orbit instance:
 - Never set `ORBIT_DEV_LOGIN` on a deployed environment. It signs anyone in as
   any seeded user with one click.
 - Never set `NEXT_PUBLIC_REALTIME_URL` in production. The socket is served from
-  the app's own origin at `/api/ws`, and a stale value points browsers at a dead
-  host.
+  the app's own origin at `/api/ws`, and Orbit ignores this variable in
+  production.
 - Do not expose Postgres, Redis or object storage to the internet. Orbit is the
   only thing that needs to reach them.
 - Change every default credential from `docker-compose.yml`, which is built for

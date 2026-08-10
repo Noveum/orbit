@@ -6,11 +6,16 @@ import {
   verifySlackSignature,
 } from '@orbit/services';
 import { slackEventSchema } from '@orbit/shared/validators';
+import {
+  slackIntegrationEnabled,
+  slackIntegrationUnavailable,
+} from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-slack-signature';
 const TIMESTAMP_HEADER = 'x-slack-request-timestamp';
 
 export async function POST(request: Request): Promise<Response> {
+  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   const signingSecret = process.env['SLACK_SIGNING_SECRET'] ?? '';
   const raw = await request.text();
   const signature = request.headers.get(SIGNATURE_HEADER) ?? '';

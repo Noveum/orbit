@@ -38,6 +38,7 @@ export interface StorageDriver {
   ): Promise<UploadTarget>;
   put(key: string, body: Uint8Array, contentType: string): Promise<void>;
   getUrl(key: string, expiresInSeconds: number, options?: DownloadOptions): Promise<string>;
+  get(key: string): Promise<Uint8Array | null>;
   delete(key: string): Promise<void>;
   summarizePrefix(prefix: string): Promise<StoragePrefixSummary>;
   deletePrefix(prefix: string): Promise<void>;

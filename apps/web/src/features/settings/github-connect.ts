@@ -1,5 +1,6 @@
 import { db } from '@orbit/db';
 import {
+  assertGithubIntegrationManager,
   bindGithubInstallation,
   exchangeGithubUserCode,
   fetchGithubInstallation,
@@ -62,6 +63,10 @@ export async function completeGithubInstall(
   if (!discoveryReady(input.config)) {
     throw validationFailed('The GitHub App is not configured yet.');
   }
+  await assertGithubIntegrationManager(db, {
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
   await assertUserControlsInstallation(input);
 
   const account = await fetchGithubInstallation({

@@ -1,6 +1,7 @@
 export * from './actor.ts';
 export * from './doc.ts';
 export * from './estimate.ts';
+export * from './integration.ts';
 export * from './issue.ts';
 export * from './notification.ts';
 export * from './onboarding.ts';
