@@ -4,6 +4,7 @@ import {
   createComment,
   createIssue,
   getIssue,
+  listAttachmentsFor,
   listComments,
   listIssueAttachments,
   listIssueLabels,
@@ -658,7 +659,7 @@ function registerReadAttachment(server: McpServer, principal: Principal): void {
       name: 'read_attachment',
       title: 'Read an attached file',
       description:
-        'Return the contents of a file attached to an issue or a comment. Text-like files come back as text; anything else comes back base64 encoded. Large files are truncated, and the response says so.',
+        'Return the contents of a file attached to an issue, a comment, a doc or a project. Text-like files come back as text; anything else comes back base64 encoded. Large files are truncated, and the response says so.',
       readOnly: true,
       inputSchema: {
         attachment: z
@@ -686,6 +687,34 @@ function registerReadAttachment(server: McpServer, principal: Principal): void {
         content: read.content,
         truncated: read.truncated,
       };
+    },
+  );
+}
+
+function registerListAttachments(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'list_attachments',
+      title: 'List the files on anything',
+      description:
+        'Files attached to one issue, comment, doc or project. Use list_issue_attachments for an issue, since that one also covers files attached to its comments. This is for docs and projects.',
+      readOnly: true,
+      inputSchema: {
+        parentType: z
+          .enum(['issue', 'comment', 'doc', 'project'])
+          .describe('What the files hang off.'),
+        parentId: z
+          .string()
+          .min(1)
+          .describe(
+            'Id of the issue, comment, doc or project. Issue identifiers are not accepted.',
+          ),
+      },
+    },
+    async (args) => {
+      const files = await listAttachmentsFor(principal, args.parentType, args.parentId);
+      return { attachments: files.map(describeAttachment) };
     },
   );
 }
@@ -783,5 +812,6 @@ export function registerIssueTools(server: McpServer, principal: Principal): voi
   registerAttachFile(server, principal);
   registerListIssueAttachments(server, principal);
   registerReadAttachment(server, principal);
+  registerListAttachments(server, principal);
   registerCopyBranchName(server, principal);
 }

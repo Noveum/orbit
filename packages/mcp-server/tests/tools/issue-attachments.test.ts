@@ -223,3 +223,49 @@ describe('read_attachment', () => {
     await client.close();
   });
 });
+
+describe('files on docs and projects', () => {
+  it('lists and reads a file attached to a doc', async () => {
+    const doc = await admin.result('create_doc', { title: 'Spec', content: 'body' });
+    const docId = (doc['doc'] as { id: string }).id;
+    const stored = await admin.result('attach_file', {
+      parentType: 'doc',
+      parentId: docId,
+      fileName: 'spec.md',
+      contentType: 'text/markdown',
+      content: Buffer.from('the spec', 'utf8').toString('base64'),
+    });
+    const attachmentId = (stored['attachment'] as { id: string }).id;
+
+    const listed = await admin.result('list_attachments', {
+      parentType: 'doc',
+      parentId: docId,
+    });
+    expect((listed['attachments'] as { fileName: string }[])[0]?.fileName).toBe('spec.md');
+
+    const read = await admin.result('read_attachment', { attachment: attachmentId });
+    expect(read['content']).toBe('the spec');
+  });
+
+  it('lists and reads a file attached to a project', async () => {
+    const project = await admin.result('create_project', { name: 'Launch' });
+    const projectId = (project['project'] as { id: string }).id;
+    const stored = await admin.result('attach_file', {
+      parentType: 'project',
+      parentId: projectId,
+      fileName: 'plan.csv',
+      contentType: 'text/csv',
+      content: Buffer.from('phase,week\n1,3\n', 'utf8').toString('base64'),
+    });
+    const attachmentId = (stored['attachment'] as { id: string }).id;
+
+    const listed = await admin.result('list_attachments', {
+      parentType: 'project',
+      parentId: projectId,
+    });
+    expect((listed['attachments'] as { fileName: string }[])[0]?.fileName).toBe('plan.csv');
+
+    const read = await admin.result('read_attachment', { attachment: attachmentId });
+    expect(read['content']).toBe('phase,week\n1,3\n');
+  });
+});

@@ -12,6 +12,32 @@ interface IssueSummary {
   readonly teamKey: string;
 }
 
+interface DocSummary {
+  readonly id: string;
+  readonly title: string;
+}
+
+async function docIdsForComments(commentIds: readonly string[]): Promise<Map<string, string>> {
+  if (commentIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: schema.docComment.id, docId: schema.docComment.docId })
+    .from(schema.docComment)
+    .where(inArray(schema.docComment.id, [...commentIds]));
+  return new Map(rows.map((row) => [row.id, row.docId]));
+}
+
+async function docSummaries(
+  organizationId: string,
+  docIds: readonly string[],
+): Promise<Map<string, DocSummary>> {
+  if (docIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: schema.doc.id, title: schema.doc.title })
+    .from(schema.doc)
+    .where(and(eq(schema.doc.organizationId, organizationId), inArray(schema.doc.id, [...docIds])));
+  return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title }]));
+}
+
 async function issueIdsForComments(
   organizationId: string,
   commentIds: readonly string[],
@@ -88,6 +114,18 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         .map((item) => item.entityId);
       const byComment = await issueIdsForComments(principal.organizationId, commentIds);
 
+      const docCommentIds = page.items
+        .filter((item) => item.entityType === 'doc_comment')
+        .map((item) => item.entityId);
+      const byDocComment = await docIdsForComments(docCommentIds);
+
+      const docIds = page.items.flatMap((item) => {
+        if (item.entityType === 'doc') return [item.entityId];
+        const resolved = byDocComment.get(item.entityId);
+        return resolved === undefined ? [] : [resolved];
+      });
+      const byDoc = await docSummaries(principal.organizationId, docIds);
+
       const issueIds = page.items.flatMap((item) => {
         if (item.entityType === 'issue') return [item.entityId];
         const resolved = byComment.get(item.entityId);
@@ -99,6 +137,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         notifications: page.items.map((item) => {
           const issueId =
             item.entityType === 'issue' ? item.entityId : byComment.get(item.entityId);
+          const docId = item.entityType === 'doc' ? item.entityId : byDocComment.get(item.entityId);
           return {
             id: item.id,
             type: item.type,
@@ -110,6 +149,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
             createdAt: item.createdAt.toISOString(),
             read: item.readAt !== null,
             issue: issueId === undefined ? null : (byIssue.get(issueId) ?? null),
+            doc: docId === undefined ? null : (byDoc.get(docId) ?? null),
           };
         }),
         nextCursor: page.nextCursor,

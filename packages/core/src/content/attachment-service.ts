@@ -19,6 +19,8 @@ import { type Executor, newId, requireRow } from '../internal.ts';
 import { lockOrganization } from '../org/organization-lock.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { getProject } from '../work/project-service.ts';
+import { loadReadableDoc } from './doc-service.ts';
 
 export type AttachmentRecord = typeof schema.attachment.$inferSelect;
 
@@ -292,6 +294,20 @@ async function requireReadableIssue(principal: Principal, issueId: string) {
   return found;
 }
 
+function toIssueAttachment(row: AttachmentRecord): IssueAttachment {
+  return {
+    id: row.id,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    size: row.size,
+    parentType: row.parentType,
+    parentId: row.parentId,
+    uploadedById: row.uploadedById,
+    createdAt: row.createdAt,
+    url: fileUrlFor(row.storageKey),
+  };
+}
+
 export async function listIssueAttachments(
   principal: Principal,
   issueId: string,
@@ -315,17 +331,7 @@ export async function listIssueAttachments(
     .orderBy(asc(schema.attachment.createdAt));
   return rows
     .filter((row) => row.parentType === 'issue' || row.parentType === 'comment')
-    .map((row) => ({
-      id: row.id,
-      fileName: row.fileName,
-      contentType: row.contentType,
-      size: row.size,
-      parentType: row.parentType,
-      parentId: row.parentId,
-      uploadedById: row.uploadedById,
-      createdAt: row.createdAt,
-      url: fileUrlFor(row.storageKey),
-    }));
+    .map(toIssueAttachment);
 }
 
 export interface AttachmentContent {
@@ -342,13 +348,29 @@ export function isTextualContentType(contentType: string): boolean {
   return TEXT_CONTENT_TYPES.test(contentType.toLowerCase());
 }
 
-async function issueIdForAttachment(
+async function assertAttachmentReadable(
   principal: Principal,
   record: AttachmentRecord,
-): Promise<string | null> {
-  if (record.parentType === 'issue') return record.parentId;
-  if (record.parentType === 'comment') return await commentIssueId(principal, record.parentId);
-  return null;
+): Promise<void> {
+  if (record.parentType === 'issue') {
+    await requireReadableIssue(principal, record.parentId);
+    return;
+  }
+  if (record.parentType === 'comment') {
+    const issueId = await commentIssueId(principal, record.parentId);
+    if (issueId === null) throw notFound('That comment does not exist.');
+    await requireReadableIssue(principal, issueId);
+    return;
+  }
+  if (record.parentType === 'doc') {
+    await loadReadableDoc(db, principal, record.parentId);
+    return;
+  }
+  if (record.parentType === 'project') {
+    await getProject(principal, record.parentId);
+    return;
+  }
+  throw notFound('That file does not exist.');
 }
 
 export async function readAttachment(
@@ -358,11 +380,7 @@ export async function readAttachment(
   driver?: StorageDriver,
 ): Promise<AttachmentContent> {
   const record = await findAttachmentForOrganization(principal, attachmentId);
-  const issueId = await issueIdForAttachment(principal, record);
-  if (issueId === null) {
-    throw validationFailed('Only files attached to an issue or a comment can be read.');
-  }
-  await requireReadableIssue(principal, issueId);
+  await assertAttachmentReadable(principal, record);
 
   const store = driver ?? storageDriver();
   const bytes = await store.get(record.storageKey);
@@ -372,17 +390,7 @@ export async function readAttachment(
   const slice = truncated ? bytes.slice(0, maxBytes) : bytes;
   const textual = isTextualContentType(record.contentType);
   return {
-    attachment: {
-      id: record.id,
-      fileName: record.fileName,
-      contentType: record.contentType,
-      size: record.size,
-      parentType: record.parentType,
-      parentId: record.parentId,
-      uploadedById: record.uploadedById,
-      createdAt: record.createdAt,
-      url: fileUrlFor(record.storageKey),
-    },
+    attachment: toIssueAttachment(record),
     encoding: textual ? 'utf8' : 'base64',
     content: textual ? Buffer.from(slice).toString('utf8') : Buffer.from(slice).toString('base64'),
     truncated,
@@ -401,4 +409,29 @@ async function commentIssueId(principal: Principal, commentId: string): Promise<
     )
     .limit(1);
   return comment?.issueId ?? null;
+}
+
+export async function listAttachmentsFor(
+  principal: Principal,
+  parentType: 'issue' | 'comment' | 'doc' | 'project',
+  parentId: string,
+): Promise<IssueAttachment[]> {
+  await assertAttachmentReadable(principal, {
+    parentType,
+    parentId,
+    uploadedById: principal.userId,
+  } as AttachmentRecord);
+  const rows = await db
+    .select()
+    .from(schema.attachment)
+    .where(
+      and(
+        eq(schema.attachment.organizationId, principal.organizationId),
+        eq(schema.attachment.status, 'ready'),
+        eq(schema.attachment.parentType, parentType),
+        eq(schema.attachment.parentId, parentId),
+      ),
+    )
+    .orderBy(asc(schema.attachment.createdAt));
+  return rows.map(toIssueAttachment);
 }
