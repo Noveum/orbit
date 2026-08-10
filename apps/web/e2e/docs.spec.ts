@@ -90,7 +90,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
   test.setTimeout(240_000);
 
   const workspace = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const author = await signIn(workspace, 'pulkit@noveum.ai');
+  const author = await signIn(workspace, 'alex@orbit.example');
 
   await author.goto(`${BASE}/docs`);
   await expect(author.getByTestId('docs-workspace')).toBeVisible();
@@ -184,7 +184,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await shoot(author, 'docs-attachment');
 
   const watching = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const watcher = await signIn(watching, 'shashank@noveum.ai');
+  const watcher = await signIn(watching, 'sam@orbit.example');
   await watcher.goto(`${BASE}${new URL(author.url()).pathname}`);
   await expect(watcher.getByTestId('doc-title-input')).toHaveValue(title, { timeout: 30_000 });
 

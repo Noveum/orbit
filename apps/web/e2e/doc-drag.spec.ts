@@ -41,7 +41,7 @@ async function folderHolding(page: Page, docId: string): Promise<string | null> 
 test('a doc dragged onto a folder is filed there and stays after a reload', async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/docs`);
   await expect(page.getByTestId('doc-tree')).toBeVisible();
@@ -88,7 +88,7 @@ test('a private doc offers a link that can be copied and handed to a colleague',
     viewport: { width: 1600, height: 1000 },
     permissions: ['clipboard-read', 'clipboard-write'],
   });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/docs`);
   const firstDoc = page.locator('[data-testid^="doc-row-"]:not([data-testid$="-menu"])').first();

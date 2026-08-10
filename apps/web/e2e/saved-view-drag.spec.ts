@@ -47,7 +47,7 @@ test('a card dragged between columns on a saved view lands there and is saved', 
 }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/my-issues`);
   const teamId = await teamIdByKey(page, 'ENG');
@@ -85,7 +85,7 @@ test('a card dragged between columns on a saved view lands there and is saved', 
 test('every column shows on a saved view board, even the empty ones', async ({ browser }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/my-issues`);
   const teamId = await teamIdByKey(page, 'ENG');

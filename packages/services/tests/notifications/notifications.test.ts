@@ -92,7 +92,8 @@ describe('notifyMany', () => {
         .from(notification)
         .where(eq(notification.organizationId, fixture.organizationId));
       expect(rows).toHaveLength(2);
-      expect(rows[0]?.deliveredChannels).toEqual(['inbox', 'email', 'slack']);
+      expect(rows[0]?.deliveredChannels).toEqual(['inbox', 'email']);
+      expect(outcome.slack).toEqual([]);
     });
   });
 
@@ -133,7 +134,7 @@ describe('notifyMany', () => {
       });
       const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
 
-      expect(outcome.notifications[0]?.deliveredChannels).toEqual(['email', 'slack']);
+      expect(outcome.notifications[0]?.deliveredChannels).toEqual(['email']);
       expect(outcome.actions).toHaveLength(0);
       const page = await listInbox(tx, {
         userId: fixture.adaId,
@@ -187,7 +188,7 @@ describe('notifyMany', () => {
     });
   });
 
-  it('filters email and slack by preference but keeps the inbox row', async () => {
+  it('filters email and never emits disabled Slack delivery', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await tx.insert(notificationPreference).values([
@@ -210,9 +211,12 @@ describe('notifyMany', () => {
 
       expect(outcome.notifications).toHaveLength(2);
       expect(outcome.email.map((dispatch) => dispatch.userId)).toEqual([fixture.graceId]);
-      expect(outcome.slack.map((dispatch) => dispatch.userId)).toEqual([fixture.adaId]);
+      expect(outcome.slack).toEqual([]);
       const ada = outcome.notifications.find((row) => row.userId === fixture.adaId);
-      expect(ada?.deliveredChannels).toEqual(['inbox', 'slack']);
+      expect(ada?.deliveredChannels).toEqual(['inbox']);
+      expect(
+        outcome.actions.find((action) => action.modelId === ada?.id)?.data['deliveredChannels'],
+      ).toEqual(['inbox']);
     });
   });
 
@@ -430,8 +434,13 @@ describe('defaultPreferences', () => {
   it('produces the full channel by type matrix', () => {
     const matrix = defaultPreferences();
     expect(matrix).toHaveLength(NOTIFICATION_CHANNELS.length * NOTIFICATION_TYPES.length);
-    expect(matrix.every((entry) => entry.enabled)).toBe(true);
     expect(new Set(matrix.map((entry) => entry.channel)).size).toBe(NOTIFICATION_CHANNELS.length);
+    expect(
+      matrix.filter((entry) => entry.channel === 'slack').every((entry) => !entry.enabled),
+    ).toBe(true);
+    expect(
+      matrix.filter((entry) => entry.channel !== 'slack').every((entry) => entry.enabled),
+    ).toBe(true);
   });
 });
 

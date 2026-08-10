@@ -5,12 +5,14 @@ import { type ReactNode, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 import { GithubPanel } from './github-panel.tsx';
 import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
 import type {
   ConnectedChannel,
   IntegrationSettings,
   IntegrationTeam,
+  SlackIntegrationSettings,
 } from './integrations-data.ts';
 import { claudeCodeCommand, cursorInstallHref, vscodeInstallHref } from './mcp-install-links.ts';
 import { type PickerChannel, useChannelSearch } from './use-integration-lists.ts';
@@ -70,7 +72,9 @@ export function IntegrationsPanel({
           >
             <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
           </IntegrationCard>
-          <SlackSection settings={settings} canManage={canManage} onCall={call} />
+          {slackIntegrationEnabled() && settings.slack !== undefined ? (
+            <SlackSection settings={settings.slack} canManage={canManage} onCall={call} />
+          ) : null}
         </>
       ) : (
         <WorkspaceIntegrationsWithheld />
@@ -83,10 +87,10 @@ export function IntegrationsPanel({
 function WorkspaceIntegrationsWithheld() {
   return (
     <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
-      <h3 className="font-medium text-dense text-text">GitHub and Slack</h3>
+      <h3 className="font-medium text-dense text-text">GitHub</h3>
       <p className="text-muted text-xs" data-testid="integrations-withheld">
-        Only workspace admins can see which repositories and channels this workspace is connected
-        to. Your own AI client connections are below.
+        Only workspace admins can see which repositories this workspace is connected to. Your own
+        MCP client connections are below.
       </p>
     </section>
   );
@@ -210,7 +214,7 @@ function ChannelPicker({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  settings: IntegrationSettings;
+  settings: SlackIntegrationSettings;
   onCall: CallFn;
 }) {
   const query = useChannelSearch(open);
@@ -262,7 +266,7 @@ function SlackSection({
   canManage,
   onCall,
 }: {
-  settings: IntegrationSettings;
+  settings: SlackIntegrationSettings;
   canManage: boolean;
   onCall: CallFn;
 }) {

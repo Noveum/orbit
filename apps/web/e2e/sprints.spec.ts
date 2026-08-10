@@ -15,7 +15,7 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
 }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/sprints`);
   await expect(page.getByRole('heading', { name: 'Sprints', level: 1 })).toBeVisible();
@@ -44,7 +44,7 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
 
 test('the old cycle urls still land on the sprint pages', async ({ browser }) => {
   const context = await browser.newContext();
-  const page = await signIn(context, 'pulkit@noveum.ai');
+  const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/cycles`);
   await expect(page).toHaveURL(`${BASE}/sprints`);

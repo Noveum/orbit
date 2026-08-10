@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHmac, generateKeyPairSync } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import {
   bindGithubInstallation,
   forgetGithubInstallationTokens,
@@ -182,6 +182,46 @@ describe('GET /api/integrations/github/callback', () => {
 
     expect(await listGithubInstallations(db, rival.organizationId)).toHaveLength(0);
     expect(await listGithubCatalogue(db, rival.organizationId)).toHaveLength(0);
+  });
+
+  it('rejects a callback created by a removed workspace member before calling GitHub', async () => {
+    const state = await validState(workspace);
+    await db
+      .delete(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, workspace.organizationId),
+          eq(schema.member.userId, workspace.adminUser.id),
+        ),
+      );
+
+    const response = await callback({
+      installation_id: NOVEUM,
+      setup_action: 'install',
+      code: 'the-code',
+      state,
+    });
+
+    expect(locationOf(response)).toContain('github=denied');
+    await expectRejectedBeforeGithub(response);
+  });
+
+  it('rejects a callback for a workspace awaiting deletion before calling GitHub', async () => {
+    const state = await validState(workspace);
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    const response = await callback({
+      installation_id: NOVEUM,
+      setup_action: 'install',
+      code: 'the-code',
+      state,
+    });
+
+    expect(locationOf(response)).toContain('github=error');
+    await expectRejectedBeforeGithub(response);
   });
 
   it('refuses a callback with no code, which is all an attacker has to omit', async () => {
@@ -433,6 +473,7 @@ describe('GET /api/integrations/github/callback', () => {
       state: await validState(workspace),
     });
 
+    expect(locationOf(response)).toContain('github=claimed');
     expect(locationOf(response)).not.toContain('github=connected');
     expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);

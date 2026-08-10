@@ -26,6 +26,10 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   push: 'Push',
 };
 
+const VISIBLE_NOTIFICATION_CHANNELS = NOTIFICATION_CHANNELS.filter(
+  (channel) => channel !== 'slack',
+);
+
 function typeLabel(type: NotificationType): string {
   const words = type.split('_');
   const first = words[0] ?? '';
@@ -73,7 +77,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
             NOTIFICATION_TYPES.map((type) => ({
               channel,
               type,
-              enabled: !disabled.has(matrixKey(channel, type)),
+              enabled: channel !== 'slack' && !disabled.has(matrixKey(channel, type)),
             })),
           ),
           quietHoursEnabled,
@@ -99,7 +103,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
               <th scope="col" className="px-3 py-2 text-left font-medium">
                 Notification
               </th>
-              {NOTIFICATION_CHANNELS.map((channel) => (
+              {VISIBLE_NOTIFICATION_CHANNELS.map((channel) => (
                 <th key={channel} scope="col" className="px-3 py-2 text-center font-medium">
                   {CHANNEL_LABELS[channel]}
                 </th>
@@ -112,7 +116,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
                 <th scope="row" className="px-3 py-1.5 text-left font-normal text-muted">
                   {typeLabel(type)}
                 </th>
-                {NOTIFICATION_CHANNELS.map((channel) => (
+                {VISIBLE_NOTIFICATION_CHANNELS.map((channel) => (
                   <td key={channel} className="px-3 py-1.5 text-center">
                     <Checkbox
                       className="mx-auto"

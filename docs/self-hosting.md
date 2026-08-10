@@ -1,5 +1,10 @@
 # Self-hosting Orbit
 
+> **Status: Preview.** This page documents the current Noveum AI deployment and
+> evaluation paths. Orbit does not yet publish a provider-neutral production
+> support, migration, rollback, backup, or compatibility contract. Review the
+> [readiness tracker](open-source-readiness.md) before deploying important data.
+
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
 and that is the whole architecture. There is nothing to containerise and nothing
 to orchestrate.
@@ -24,8 +29,8 @@ Both need the same four things.
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
 | Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
-Email is only used for magic links, invites and notifications. Orbit will boot
-without it, but nobody who is not already signed in will be able to get in.
+Email is used for magic links and invites. Orbit will boot without it, but
+users who rely on those flows will not be able to sign in or accept invites.
 
 ## Deploy on Vercel
 
