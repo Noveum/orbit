@@ -71,7 +71,7 @@ describe('describeActivity', () => {
       describeActivity({ field: 'relation', fromValue: null, toValue: 'invented_type ENG-1' }),
     ).toBe('marked as invented_type ENG-1');
     expect(describeActivity({ field: 'relation', fromValue: null, toValue: null })).toBe(
-      'removed a relation relation',
+      'removed a relation',
     );
   });
 });

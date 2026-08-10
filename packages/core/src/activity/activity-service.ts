@@ -162,10 +162,11 @@ const FIELD_RENDERERS: Record<string, (change: RenderedChange) => string> = {
   title: ({ to }) => `renamed to "${to ?? ''}"`,
   dueDate: ({ to }) => (to === null ? 'cleared the due date' : `set the due date to ${to}`),
   labelId: ({ from, to }) => (to === null ? `removed label ${from ?? ''}` : `added label ${to}`),
-  relation: ({ from, to }) =>
-    to === null
-      ? `removed a ${from === null ? 'relation' : readableRelation(from)} relation`
-      : `marked as ${readableRelation(to)}`,
+  relation: ({ from, to }) => {
+    if (to !== null) return `marked as ${readableRelation(to)}`;
+    if (from === null) return 'removed a relation';
+    return `removed a ${readableRelation(from)} relation`;
+  },
   projectId: ({ to }) => (to === null ? 'removed from its project' : `moved to project ${to}`),
   cycleId: ({ to }) => (to === null ? 'removed from its cycle' : `moved to ${to}`),
   milestoneId: ({ to }) => (to === null ? 'removed from its milestone' : `moved to ${to}`),
