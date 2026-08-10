@@ -1,4 +1,4 @@
-import { organization, project, user } from '@orbit/db/schema';
+import { member, organization, project, user } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import type { GithubInstallationAccount, GithubInstalledRepository } from '../../src/github/app.ts';
 import type { TestTransaction } from '../../src/test-database.ts';
@@ -20,6 +20,12 @@ export async function seedWorkspace(tx: TestTransaction, name = 'Acme'): Promise
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await tx.insert(member).values({
+    id: `mem_${suffix}`,
+    organizationId,
+    userId,
+    role: 'admin',
   });
   return { organizationId, userId };
 }

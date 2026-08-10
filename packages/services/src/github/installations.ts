@@ -1,10 +1,15 @@
+import type { Transaction } from '@orbit/db';
 import {
   githubInstallation,
   githubRepository,
   githubRepositorySync,
   integration,
+  member,
+  organization,
 } from '@orbit/db/schema';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, notFound } from '@orbit/shared/errors';
+import { assertCan } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { GithubInstallationAccount, GithubInstalledRepository } from './app.ts';
@@ -27,12 +32,67 @@ export interface BindInstallationInput {
   readonly now?: Date;
 }
 
-export async function bindGithubInstallation(
+export async function assertGithubIntegrationManager(
   database: GithubDatabase,
+  input: { readonly organizationId: string; readonly userId: string },
+): Promise<void> {
+  const [membership] = await database
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
+    .limit(1);
+  assertIntegrationManager(input, membership?.role);
+}
+
+async function assertGithubIntegrationManagerForUpdate(
+  database: Transaction,
+  input: { readonly organizationId: string; readonly userId: string },
+): Promise<void> {
+  await database
+    .select({ id: organization.id })
+    .from(organization)
+    .where(eq(organization.id, input.organizationId))
+    .limit(1)
+    .for('update');
+  const [membership] = await database
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
+    .limit(1)
+    .for('update');
+  assertIntegrationManager(input, membership?.role);
+}
+
+function assertIntegrationManager(
+  input: { readonly organizationId: string; readonly userId: string },
+  role: string | undefined,
+): void {
+  assertCan(
+    {
+      organizationId: input.organizationId,
+      userId: input.userId,
+      role: organizationRole(role),
+      teamIds: [],
+    },
+    'integration:manage',
+  );
+}
+
+function organizationRole(role: string | undefined): OrgRole {
+  return ORG_ROLES.find((candidate) => candidate === role) ?? 'guest';
+}
+
+export async function bindGithubInstallation(
+  database: Transaction,
   input: BindInstallationInput,
 ): Promise<GithubInstallationRow> {
   const { organizationId, account } = input;
   const now = input.now ?? new Date();
+
+  await assertGithubIntegrationManagerForUpdate(database, {
+    organizationId,
+    userId: input.connectedById,
+  });
 
   const [claimed] = await database
     .select({ organizationId: githubInstallation.organizationId })
