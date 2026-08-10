@@ -185,8 +185,9 @@ Postgres and is the only mode that can touch someone else's.
 bun run db:seed
 ```
 
-It truncates and reloads. Use it only with the default local demo database, and
-never point it at production.
+It truncates and reloads. Use it only with a verified demo database, and never
+point it at production. The exact default local target needs no confirmation;
+every other verified target requires the exact confirmation described below.
 
 Only the exact default Docker Compose target,
 `postgres://orbit:orbit@localhost:5434/orbit` or the same target through
