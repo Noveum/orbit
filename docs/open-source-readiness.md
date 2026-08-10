@@ -17,7 +17,6 @@ to the codebase.
 - [ ] Disable Slack in the UI, OAuth, API, callback, webhook, notification, and
       GitHub side-effect paths until it is requalified.
 - [ ] Keep GitHub available and correct its documented permission set.
-- [ ] Create the catch-up test database in CI so the existing test suite can run.
 - [ ] Remove tenant-specific Yodu operational material from the public setup path.
 - [ ] Pass focused tests, `bun run verify`, the production build, and hosted CI.
 
@@ -145,8 +144,8 @@ These boxes are checked only after the pull request is verified and merged.
 
 ## Recommended pull request order
 
-1. Preview boundary, Slack disablement, GitHub documentation, tenant-specific
-   operational cleanup, and the CI catch-up database fix.
+1. Preview boundary, Slack disablement, GitHub documentation, and tenant-specific
+   operational cleanup.
 2. Neutral demo seed, import configuration, screenshots, and privacy cleanup.
 3. Migration safety, production start, application images, and Compose.
 4. Durable realtime recovery and idempotent GitHub delivery processing.

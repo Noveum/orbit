@@ -85,12 +85,12 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Create an isolated database per package
         run: |
-          for db in orbit_test_catchup orbit_test_core orbit_test_svc orbit_test_rt orbit_test_rts orbit_test_mcp orbit_test_web; do
+          for db in orbit_test_core orbit_test_svc orbit_test_rt orbit_test_rts orbit_test_mcp orbit_test_web; do
             PGPASSWORD=orbit createdb -h localhost -p 5433 -U orbit "$db"
           done
       - name: Push the schema to every database
         run: |
-          for db in orbit orbit_test_catchup orbit_test_core orbit_test_svc orbit_test_rt orbit_test_rts orbit_test_mcp orbit_test_web; do
+          for db in orbit orbit_test_core orbit_test_svc orbit_test_rt orbit_test_rts orbit_test_mcp orbit_test_web; do
             DATABASE_URL="postgres://orbit:orbit@localhost:5433/$db" bun run --filter '@orbit/db' push
           done
       - name: Run tests
