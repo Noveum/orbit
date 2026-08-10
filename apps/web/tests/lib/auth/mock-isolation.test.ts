@@ -29,9 +29,25 @@ async function everythingThatCanInstallAMock(): Promise<Candidate[]> {
   ];
 }
 
+function asPattern(specifier: string): string {
+  return specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stubs(source: string, specifier: string): boolean {
+  return new RegExp(`mock\\.module\\(\\s*['"\`]${asPattern(specifier)}['"\`]`).test(source);
+}
+
+function specifiersHandedToTheHelper(source: string): Set<string> {
+  return new Set(
+    [...source.matchAll(/restoreModulesAfterThisFile\(\s*\[([^\]]*)\]/g)].flatMap((call) =>
+      [...(call[1] ?? '').matchAll(/['"`]([^'"`]+)['"`]/g)].map((entry) => entry[1] ?? ''),
+    ),
+  );
+}
+
 async function directMocksIn(candidate: Candidate): Promise<string[]> {
   const source = await readFile(candidate.path, 'utf8');
-  return GUARDED.filter((specifier) => source.includes(`mock.module('${specifier}'`));
+  return GUARDED.filter((specifier) => stubs(source, specifier));
 }
 
 describe('module mock isolation', () => {
@@ -60,14 +76,10 @@ describe('module mock isolation', () => {
 
     for (const candidate of candidates) {
       const source = await readFile(candidate.path, 'utf8');
-      const restored = new Set(
-        [...source.matchAll(/restoreModulesAfterThisFile\(\[([^\]]*)\]/g)].flatMap((call) =>
-          [...(call[1] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1] ?? ''),
-        ),
-      );
+      const restored = specifiersHandedToTheHelper(source);
 
       for (const specifier of MUST_BE_RESTORED) {
-        if (!source.includes(`mock.module('${specifier}'`)) continue;
+        if (!stubs(source, specifier)) continue;
         if (restored.has(specifier)) continue;
         offenders.push(
           `${candidate.label} stubs ${specifier} without restoring it, so the stub outlives the file and every later test file sees it. Pass the specifier to restoreModulesAfterThisFile from tests-support.ts.`,
