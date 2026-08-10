@@ -19,15 +19,17 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
 
   await page.goto(`${BASE}/sprints`);
   await expect(page.getByRole('heading', { name: 'Sprints', level: 1 })).toBeVisible();
+  await expect(page.getByTestId('sprint-roll-up')).toBeVisible();
 
   const teamId = await teamIdByKey(page, 'ENG');
+  await expect(page.getByTestId(`roll-up-row-${teamId}`)).toBeVisible();
 
   const label = `Regression sprint ${Date.now()}`;
   const sprint = await createSprint(page, teamId, label);
 
   await completeSprint(page, sprint.id);
 
-  await page.goto(`${BASE}/sprints`);
+  await page.goto(`${BASE}/team/eng/sprint/active`);
   const engPanels = page.getByTestId(`sprint-history-eng-${sprint.number}`);
   await expect(engPanels).toHaveCount(1);
   const entry = engPanels.first();
