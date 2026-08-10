@@ -189,12 +189,13 @@ bun run db:push
 bun run build
 ```
 
-The build produces a standalone server in `apps/web/.next/standalone`. Run it
-with node, not Bun:
+The build produces a portable standalone server in `apps/web/.next/standalone`,
+including the public and Next static assets. Run it with the package command,
+which loads the repository `.env`:
 
 ```bash
 cd apps/web
-node .next/standalone/apps/web/server.js
+bun run start
 ```
 
 Node matters for the same reason it does on Vercel: the websocket upgrade at
