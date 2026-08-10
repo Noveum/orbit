@@ -16,7 +16,7 @@ beforeEach(async () => {
 });
 
 async function runningCycle() {
-  const [cycle] = await listCycles(workspace.admin, workspace.teamId);
+  const [cycle] = await listCycles(workspace.admin);
   if (cycle === undefined) throw new Error('missing bootstrap cycle');
   return cycle;
 }

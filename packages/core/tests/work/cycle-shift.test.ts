@@ -31,7 +31,6 @@ function daysFromNow(days: number): Date {
 
 async function scheduled(startDay: number, endDay: number) {
   const { cycle } = await createCycle(workspace.admin, {
-    teamId: workspace.teamId,
     startsAt: daysFromNow(startDay),
     endsAt: daysFromNow(endDay),
   });

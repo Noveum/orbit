@@ -59,27 +59,25 @@ afterEach(cleanup);
 
 describe('SprintHeader', () => {
   it('shows the numbered fallback when the sprint has no name', () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={true} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={true} />));
 
     expect(screen.getByTestId('sprint-name').textContent).toBe('Sprint 1');
   });
 
   it('makes the sprint name the page heading', () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={true} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={true} />));
 
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sprint 1');
   });
 
   it('shows a chosen name in place of the number', () => {
-    render(
-      wrap(<SprintHeader sprint={{ ...SPRINT, name: 'Hardening' }} teamKey="NOV" canManage />),
-    );
+    render(wrap(<SprintHeader sprint={{ ...SPRINT, name: 'Hardening' }} canManage />));
 
     expect(screen.getByTestId('sprint-name').textContent).toBe('Hardening');
   });
 
   it('saves a new name on blur', async () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={true} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={true} />));
 
     await userEvent.click(screen.getByTestId('sprint-name'));
     await userEvent.type(screen.getByTestId('sprint-name-input'), 'Hardening');
@@ -91,9 +89,7 @@ describe('SprintHeader', () => {
   });
 
   it('does not save when the name comes back unchanged', async () => {
-    render(
-      wrap(<SprintHeader sprint={{ ...SPRINT, name: 'Hardening' }} teamKey="NOV" canManage />),
-    );
+    render(wrap(<SprintHeader sprint={{ ...SPRINT, name: 'Hardening' }} canManage />));
 
     await userEvent.click(screen.getByTestId('sprint-name'));
     await userEvent.tab();
@@ -102,7 +98,7 @@ describe('SprintHeader', () => {
   });
 
   it('abandons the edit on escape', async () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={true} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={true} />));
 
     await userEvent.click(screen.getByTestId('sprint-name'));
     await userEvent.type(screen.getByTestId('sprint-name-input'), 'Throwaway{Escape}');
@@ -112,7 +108,7 @@ describe('SprintHeader', () => {
   });
 
   it('does not offer renaming without permission', async () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={false} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={false} />));
 
     await userEvent.click(screen.getByTestId('sprint-name'));
 
@@ -120,7 +116,7 @@ describe('SprintHeader', () => {
   });
 
   it('counts the day of a running sprint', () => {
-    render(wrap(<SprintHeader sprint={SPRINT} teamKey="NOV" canManage={false} />));
+    render(wrap(<SprintHeader sprint={SPRINT} canManage={false} />));
 
     expect(screen.getByTestId('sprint-day').textContent).toContain('of 14');
   });
@@ -130,7 +126,6 @@ describe('SprintHeader', () => {
       wrap(
         <SprintHeader
           sprint={{ ...SPRINT, completedAt: '2026-08-23T00:00:00.000Z' }}
-          teamKey="NOV"
           canManage={true}
         />,
       ),

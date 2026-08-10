@@ -589,20 +589,19 @@ export interface CreatedIssue {
   readonly actions: SyncAction[];
 }
 
-async function assertCycleInTeam(
+async function assertCycleInWorkspace(
   executor: Executor,
   organizationId: string,
-  teamId: string,
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
-    .select({ teamId: schema.cycle.teamId, organizationId: schema.cycle.organizationId })
+    .select({ organizationId: schema.cycle.organizationId })
     .from(schema.cycle)
     .where(eq(schema.cycle.id, cycleId))
     .limit(1);
   const cycle = requireRow(row, 'That sprint does not exist.');
-  if (cycle.organizationId !== organizationId || cycle.teamId !== teamId) {
-    throw validationFailed('That sprint belongs to another team.');
+  if (cycle.organizationId !== organizationId) {
+    throw validationFailed('That sprint belongs to another workspace.');
   }
 }
 
@@ -700,7 +699,7 @@ async function assertAssignableToTeam(
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
-    await assertCycleInTeam(executor, organizationId, teamId, cycleId);
+    await assertCycleInWorkspace(executor, organizationId, cycleId);
   }
   if (projectId !== undefined && projectId !== null) {
     await assertProjectInTeam(executor, organizationId, teamId, projectId);
@@ -1129,7 +1128,6 @@ async function carryToTeam(
   values.teamId = team.id;
   values.number = number;
   values.identifier = issueIdentifier(team.key, number);
-  values.cycleId = null;
   if (await projectFitsTeam(executor, team.id, current.projectId)) return;
   values.projectId = null;
   values.milestoneId = null;

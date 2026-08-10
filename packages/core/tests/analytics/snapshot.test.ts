@@ -12,7 +12,7 @@ let withinCycle: Date;
 beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  const cycle = await activeCycle(workspace.admin, workspace.teamId);
+  const cycle = await activeCycle(workspace.admin);
   if (cycle === undefined) throw new Error('expected a bootstrap active cycle');
   cycleId = cycle.id;
   withinCycle = new Date(cycle.startsAt.getTime() + 86_400_000);
