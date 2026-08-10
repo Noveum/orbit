@@ -174,10 +174,12 @@ function NotificationBody({
   item,
   canWriteDocs,
   canPublishDocs,
+  onIssueDeleted,
 }: {
   readonly item: InboxItem;
   readonly canWriteDocs: boolean;
   readonly canPublishDocs: boolean;
+  readonly onIssueDeleted: () => void;
 }) {
   const identifier = issueIdentifierFromUrl(item.url);
   if (identifier !== null) {
@@ -187,6 +189,7 @@ function NotificationBody({
           key={item.id}
           identifier={identifier}
           focusCommentId={item.entityType === 'comment' ? item.entityId : null}
+          onDeleted={onIssueDeleted}
         />
       </div>
     );
@@ -195,7 +198,7 @@ function NotificationBody({
   const docId = docIdFromUrl(item.url);
   if (docId !== null) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DocSurface
           key={item.id}
           docId={docId}
@@ -220,11 +223,13 @@ function NotificationDetail({
   onOpen,
   canWriteDocs,
   canPublishDocs,
+  onIssueDeleted,
 }: {
   readonly item: InboxItem;
   readonly onOpen: () => void;
   readonly canWriteDocs: boolean;
   readonly canPublishDocs: boolean;
+  readonly onIssueDeleted: () => void;
 }) {
   return (
     <>
@@ -244,7 +249,12 @@ function NotificationDetail({
         </Link>
       </div>
 
-      <NotificationBody item={item} canWriteDocs={canWriteDocs} canPublishDocs={canPublishDocs} />
+      <NotificationBody
+        item={item}
+        canWriteDocs={canWriteDocs}
+        canPublishDocs={canPublishDocs}
+        onIssueDeleted={onIssueDeleted}
+      />
     </>
   );
 }
@@ -254,8 +264,8 @@ export interface InboxViewProps {
   readonly unreadCount: number;
   readonly unreadMentions: number;
   readonly userId: string;
-  readonly canWriteDocs?: boolean;
-  readonly canPublishDocs?: boolean;
+  readonly canWriteDocs: boolean;
+  readonly canPublishDocs: boolean;
 }
 
 export function InboxView({
@@ -263,8 +273,8 @@ export function InboxView({
   unreadCount,
   unreadMentions,
   userId,
-  canWriteDocs = false,
-  canPublishDocs = false,
+  canWriteDocs,
+  canPublishDocs,
 }: InboxViewProps) {
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const [unread, setUnread] = useState(unreadCount);
@@ -534,6 +544,7 @@ export function InboxView({
                 }}
                 canWriteDocs={canWriteDocs}
                 canPublishDocs={canPublishDocs}
+                onIssueDeleted={() => setSelectedId(null)}
               />
             )}
           </section>

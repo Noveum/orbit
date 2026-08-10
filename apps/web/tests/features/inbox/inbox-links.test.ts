@@ -49,8 +49,15 @@ describe('docIdFromUrl', () => {
     expect(docIdFromUrl(`/docs/${'a'.repeat(65)}`)).toBeNull();
   });
 
-  it('survives an escape sequence that would break a naive decode', () => {
-    expect(() => docIdFromUrl('/docs/%E0%A4%A')).not.toThrow();
-    expect(docIdFromUrl('/docs/%E0%A4%A')).toBe('%E0%A4%A');
+  it('takes the uuid a doc is actually keyed by', () => {
+    expect(docIdFromUrl('/docs/0195f0c2-9c1a-7b3d-8f4e-2a6b1c9d0e5f')).toBe(
+      '0195f0c2-9c1a-7b3d-8f4e-2a6b1c9d0e5f',
+    );
+  });
+
+  it('refuses anything outside the id alphabet rather than passing it to a fetch', () => {
+    expect(docIdFromUrl('/docs/%E0%A4%A')).toBeNull();
+    expect(docIdFromUrl('/docs/..')).toBeNull();
+    expect(docIdFromUrl('/docs/a b')).toBeNull();
   });
 });

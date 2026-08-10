@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event';
 import type { InboxItem } from '@/features/inbox/data.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 
+const realtimeReact = { ...(await import('@orbit/realtime-client/react')) };
 mock.module('@orbit/realtime-client/react', () => ({
+  ...realtimeReact,
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
 }));
@@ -13,13 +15,25 @@ mock.module('@orbit/realtime-client/react', () => ({
 const issueDetail = { ...(await import('@/features/issues/issue-detail.tsx')) };
 mock.module('@/features/issues/issue-detail.tsx', () => ({
   ...issueDetail,
-  IssueDetailView: ({ identifier }: { identifier: string }) => (
-    <div data-testid="issue-detail">{identifier}</div>
+  IssueDetailView: ({
+    identifier,
+    onDeleted,
+  }: {
+    identifier: string;
+    onDeleted?: (() => void) | undefined;
+  }) => (
+    <div data-testid="issue-detail">
+      {identifier}
+      <button type="button" data-testid="stub-delete" onClick={() => onDeleted?.()}>
+        delete
+      </button>
+    </div>
   ),
 }));
 
 afterAll(() => {
   mock.module('@/features/issues/issue-detail.tsx', () => issueDetail);
+  mock.module('@orbit/realtime-client/react', () => realtimeReact);
 });
 
 const { InboxView } = await import('@/features/inbox/inbox-view.tsx');
@@ -70,7 +84,14 @@ function renderInbox(items: readonly InboxItem[]) {
   render(
     <QueryClientProvider client={client}>
       <HotkeyProvider>
-        <InboxView items={items} unreadCount={1} unreadMentions={1} userId="user_1" />
+        <InboxView
+          items={items}
+          unreadCount={1}
+          unreadMentions={1}
+          userId="user_1"
+          canWriteDocs
+          canPublishDocs
+        />
       </HotkeyProvider>
     </QueryClientProvider>,
   );
@@ -134,6 +155,28 @@ describe('opening a notification in the Unread tab', () => {
     await waitFor(() => {
       expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
     });
+  });
+});
+
+describe('deleting the issue a notification points at', () => {
+  it('keeps the reader in the inbox rather than sending them to the team list', async () => {
+    const user = userEvent.setup();
+    renderInbox([
+      item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
+      item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: /Second/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
+    });
+
+    await user.click(screen.getByTestId('stub-delete'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-1');
+    });
+    expect(screen.getByTestId('inbox-detail')).toBeInTheDocument();
   });
 });
 
