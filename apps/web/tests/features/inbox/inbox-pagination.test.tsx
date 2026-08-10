@@ -201,6 +201,25 @@ describe('an inbox with more notifications than one page', () => {
     expect(screen.getAllByRole('button', { name: /Notification n1\b/ })).toHaveLength(1);
   });
 
+  it('clears the complaint once a retry gets through', async () => {
+    const user = userEvent.setup();
+    failNext = true;
+    renderInbox([item('n1')], 'cursor-1');
+
+    await user.click(screen.getByTestId('inbox-load-more'));
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+    });
+
+    failNext = false;
+    await user.click(screen.getByTestId('inbox-load-more'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Notification n51/ })).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('inbox-error')).toBeNull();
+  });
+
   it('says so when the page cannot be fetched, and keeps the offer open', async () => {
     const user = userEvent.setup();
     failNext = true;

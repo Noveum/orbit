@@ -406,6 +406,7 @@ export function InboxView({
       });
       cursorRef.current = parsed.nextCursor;
       setCursor(parsed.nextCursor);
+      setError(null);
     } catch {
       setError('Could not load older notifications. Check your connection and try again.');
     } finally {
