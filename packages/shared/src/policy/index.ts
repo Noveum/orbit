@@ -2,6 +2,7 @@ import { isRestricted, ORG_ROLE_RANK, type OrgRole } from '../constants/index.ts
 import { forbidden, notFound } from '../errors/index.ts';
 
 export const PERMISSIONS = [
+  'analytics:read',
   'issue:read',
   'issue:create',
   'issue:update',
@@ -32,6 +33,7 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 const GUEST_PERMISSIONS: readonly Permission[] = [
+  'analytics:read',
   'issue:read',
   'comment:create',
   'comment:update:own',
