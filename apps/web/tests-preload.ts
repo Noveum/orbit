@@ -8,6 +8,12 @@ await ensureLaneDatabase(databaseUrl, 'orbit_test_web');
 process.env['DATABASE_URL'] = databaseUrl;
 process.env['DATABASE_POOL_MAX'] = '2';
 
+export const nativeFetchGlobals = {
+  Headers: globalThis.Headers,
+  Request: globalThis.Request,
+  Response: globalThis.Response,
+};
+
 GlobalRegistrator.register({ url: 'http://localhost:3000' });
 
 Object.defineProperty(window, 'matchMedia', {
