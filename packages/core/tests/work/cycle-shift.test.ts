@@ -233,3 +233,36 @@ describe('two edits shifting the same run at once', () => {
     expect(after.endsAt.getTime()).toBe(second.endsAt.getTime());
   });
 });
+
+describe('an extension that is not a whole number of days', () => {
+  it('moves the sprints after it by exactly that much, leaving no gap', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+    const extendedBy = 36 * 3_600_000;
+
+    await updateCycle(workspace.admin, first.id, {
+      endsAt: new Date(first.endsAt.getTime() + extendedBy),
+      shiftFollowing: true,
+    });
+
+    const anchor = await getCycle(workspace.admin, first.id);
+    const after = await getCycle(workspace.admin, second.id);
+
+    expect(after.startsAt.getTime()).toBe(second.startsAt.getTime() + extendedBy);
+    expect(after.startsAt.getTime()).toBe(anchor.endsAt.getTime());
+  });
+
+  it('makes room for an extension shorter than a day rather than refusing it', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+    const extendedBy = 12 * 3_600_000;
+
+    await updateCycle(workspace.admin, first.id, {
+      endsAt: new Date(first.endsAt.getTime() + extendedBy),
+      shiftFollowing: true,
+    });
+
+    const after = await getCycle(workspace.admin, second.id);
+    expect(after.startsAt.getTime()).toBe(second.startsAt.getTime() + extendedBy);
+  });
+});

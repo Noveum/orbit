@@ -191,13 +191,13 @@ export async function updateCycle(
     if (parsed.startsAt !== undefined) values.startsAt = parsed.startsAt;
     if (parsed.endsAt !== undefined) values.endsAt = parsed.endsAt;
 
-    const days =
+    const millis =
       parsed.shiftFollowing === true && parsed.endsAt !== undefined
-        ? Math.round((parsed.endsAt.getTime() - current.endsAt.getTime()) / DAY_MS)
+        ? parsed.endsAt.getTime() - current.endsAt.getTime()
         : 0;
     const moved = await shiftFollowingWithin(tx, principal, current, {
       after: current.endsAt,
-      days,
+      millis,
     });
 
     if (parsed.startsAt !== undefined || parsed.endsAt !== undefined) {
@@ -245,10 +245,10 @@ async function shiftFollowingWithin(
   tx: Executor,
   principal: Principal,
   anchor: CycleRow,
-  options: { readonly after: Date; readonly days: number },
+  options: { readonly after: Date; readonly millis: number },
 ): Promise<{ shifted: CycleRow[]; actions: SyncAction[] }> {
-  const { after, days } = options;
-  if (days === 0) return { shifted: [], actions: [] };
+  const { after, millis } = options;
+  if (millis === 0) return { shifted: [], actions: [] };
 
   await lockCycles(tx, anchor.organizationId);
 
@@ -278,8 +278,8 @@ async function shiftFollowingWithin(
 
   const moving = new Set(movable.map((row) => row.id));
   for (const row of movable) {
-    const startsAt = addUtcDays(row.startsAt, days);
-    const endsAt = addUtcDays(row.endsAt, days);
+    const startsAt = new Date(row.startsAt.getTime() + millis);
+    const endsAt = new Date(row.endsAt.getTime() + millis);
     const [landedOn] = await tx
       .select({ id: schema.cycle.id, name: schema.cycle.name, number: schema.cycle.number })
       .from(schema.cycle)
@@ -335,7 +335,10 @@ export async function shiftFollowingCycles(
     const found = await requireCycleForUpdate(tx, principal, cycleId);
     await lockCycles(tx, found.organizationId);
     const anchor = await requireCycleForUpdate(tx, principal, cycleId);
-    return await shiftFollowingWithin(tx, principal, anchor, options);
+    return await shiftFollowingWithin(tx, principal, anchor, {
+      after: options.after,
+      millis: options.days * DAY_MS,
+    });
   });
 }
 
