@@ -76,8 +76,11 @@ make the repository a supported production release.
   hashing. The reviewed false-positive classification awaits maintainer
   dismissal, so the pull request is not merge-ready.
 - [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
-  tracker. Status: in progress. It records completed work and remaining release
-  requirements without changing application behavior.
+  tracker. Status: exact head `3030be7` contains current `main`; hosted checks
+  and the exact-head external review are green. Full local exact-tree
+  verification and an accurate pull-request body remain pending, so it is not
+  merge-ready. It records completed work and remaining release requirements
+  without changing application behavior.
 
 ### Merge gate for this work
 
@@ -120,8 +123,10 @@ make the repository a supported production release.
   `db:push` guidance, add a safe baseline for existing installs, rollback
   guidance, and upgrade tests.
 - [ ] **DB-002: Migration identity collisions.** **Status: open.** Reject reused
-  migration indexes with different contents and compare the resulting catalog
-  in CI.
+  migration indexes with different contents, compare the resulting catalog in
+  CI, define the rebase policy, and decide whether databases that applied the
+  abandoned `0003_productive_quicksilver` migration are supported. Test every
+  supported upgrade path instead of treating prevention as historical repair.
 - [x] **DEP-001: Tested production start.** **Status: complete in #283.** The
   standalone Next.js artifact has a portable Node start command and a
   copied-artifact smoke test.
@@ -200,9 +205,6 @@ make the repository a supported production release.
 - [ ] **SEC-011: Email token retention.** **Status: open.** Avoid retaining raw
   magic, reset, and invite tokens; define tenant ownership, deletion, and
   retention.
-- [ ] **SEC-012: Slack metadata authorization.** **Status: deferred with
-  INT-002.** When Slack work resumes, require server-side integration management
-  permission and denial tests.
 - [ ] **SEC-013: Account linking and recovery.** **Status: open.** Default to
   matching identities, require step-up for sensitive changes, and prevent
   unlinking every credential.
@@ -249,6 +251,10 @@ make the repository a supported production release.
 
 ## Deferred P2 work
 
+- [ ] **SEC-012: Slack metadata authorization.** **Status: deferred with
+  INT-002.** It is not a release blocker while Slack is disabled. When Slack
+  work resumes, require server-side integration management permission and
+  denial tests.
 - [ ] **INT-002: Slack requalification.** **Status: deferred.** Slack stays
   disabled and absent from supported claims until OAuth, events, permissions,
   delivery, and end-to-end behavior are repaired in a separate project.
@@ -276,8 +282,12 @@ make the repository a supported production release.
 
 ## Audit limits
 
-The repository audit covered source, packages, schema, migrations, scripts,
-tests, documentation, workflows, Docker configuration, tracked media, dependency
+The full repository baseline audit was pinned to `f1bfdc3`, followed by a
+targeted delta review through `9f961a1`. Later readiness pull requests were
+reviewed and verified individually through current `main` at `64f7972`; this is
+not a claim that the full baseline audit was rerun after every intervening
+commit. The audit covered source, packages, schema, migrations, scripts, tests,
+documentation, workflows, Docker configuration, tracked media, dependency
 advisories, and Git history secret patterns. It did not inspect production cloud
 accounts, bucket policy, database roles, Redis ACLs, DNS, TLS, live provider
 registrations, or legal ownership records. No likely live credential was found
