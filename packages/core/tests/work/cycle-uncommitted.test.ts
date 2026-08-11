@@ -6,7 +6,12 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { completeCycle, cycleProgress, listCycles } from '../../src/work/cycle-service.ts';
+import {
+  activeCycle,
+  completeCycle,
+  cycleProgress,
+  listCycles,
+} from '../../src/work/cycle-service.ts';
 import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
@@ -137,5 +142,17 @@ describe('completing a sprint never loses a task', () => {
       .from(schema.issue)
       .where(eq(schema.issue.id, done.id));
     expect(stayed?.cycleId).toBe(cycle.id);
+  });
+});
+
+describe('the running sprint', () => {
+  it('ignores a sprint that has been archived', async () => {
+    const cycle = await runningCycle();
+    await db
+      .update(schema.cycle)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.cycle.id, cycle.id));
+
+    expect(await activeCycle(workspace.admin)).toBeUndefined();
   });
 });

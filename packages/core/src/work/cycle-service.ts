@@ -452,9 +452,10 @@ export async function activeCycle(
     .where(
       and(
         eq(schema.cycle.organizationId, principal.organizationId),
+        isNull(schema.cycle.archivedAt),
+        isNull(schema.cycle.completedAt),
         lte(schema.cycle.startsAt, now),
         gt(schema.cycle.endsAt, now),
-        isNull(schema.cycle.completedAt),
       ),
     )
     .orderBy(asc(schema.cycle.startsAt))

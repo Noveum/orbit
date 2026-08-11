@@ -81,13 +81,18 @@ function toCategory(value: string): StateCategory {
   return STATE_CATEGORIES.find((entry) => entry === value) ?? 'backlog';
 }
 
+function groupKey(row: CycleIssueRow): string {
+  return `${row.stateCategory}:${row.stateName.trim().toLowerCase()}`;
+}
+
 export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssueBreakdown {
   const groups = new Map<string, StateGroup>();
   const tallies = new Map<string, AssigneeTally>();
 
   for (const row of rows) {
     const category = toCategory(row.stateCategory);
-    const group = groups.get(row.stateId) ?? {
+    const key = groupKey(row);
+    const group = groups.get(key) ?? {
       stateId: row.stateId,
       name: row.stateName,
       category,
@@ -105,7 +110,7 @@ export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssue
       priority: row.priority,
       assignee,
     });
-    groups.set(row.stateId, group);
+    groups.set(key, group);
 
     if (assignee === null || category === 'canceled') continue;
     const tally = tallies.get(assignee.id) ?? {
