@@ -483,12 +483,17 @@ export async function listCycles(principal: Principal): Promise<CycleRow[]> {
 
 export const SPRINT_PAGE_SIZE = 25;
 
+function whole(value: number | undefined, fallback: number, most: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.trunc(value), 1), most);
+}
+
 export async function pageOfCycles(
   principal: Principal,
   options: { page?: number; pageSize?: number } = {},
 ): Promise<{ cycles: CycleRow[]; total: number; page: number; pageCount: number }> {
   assertCan(principal, 'issue:read');
-  const pageSize = Math.min(Math.max(options.pageSize ?? SPRINT_PAGE_SIZE, 1), 100);
+  const pageSize = whole(options.pageSize, SPRINT_PAGE_SIZE, 100);
   const belongs = and(
     eq(schema.cycle.organizationId, principal.organizationId),
     isNull(schema.cycle.archivedAt),
@@ -497,7 +502,7 @@ export async function pageOfCycles(
   const [counted] = await db.select({ total: count() }).from(schema.cycle).where(belongs);
   const total = counted?.total ?? 0;
   const pageCount = Math.max(Math.ceil(total / pageSize), 1);
-  const page = Math.min(Math.max(options.page ?? 1, 1), pageCount);
+  const page = Math.min(whole(options.page, 1, pageCount), pageCount);
 
   const cycles = await db
     .select()

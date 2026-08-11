@@ -24,7 +24,9 @@ function Tally({
         </span>
       </span>
       {points === null ? null : (
-        <span className="text-2xs text-muted tabular">{points} points</span>
+        <span className="text-2xs text-muted tabular">
+          {points} {points === 1 ? 'point' : 'points'}
+        </span>
       )}
       <span className="text-2xs text-faint uppercase">{label}</span>
     </div>
@@ -183,7 +185,10 @@ export function CycleAnalytics({ cycle }: { readonly cycle: CycleView }) {
             title="Issues in triage or backlog states sit in the sprint but count towards nothing until they move to Todo."
           >
             {progress.uncommitted.issues} {progress.uncommitted.issues === 1 ? 'task' : 'tasks'}{' '}
-            uncommitted, {progress.uncommitted.points} points not counted
+            uncommitted
+            {progress.uncommitted.points === 0
+              ? ''
+              : `, ${progress.uncommitted.points} points not counted`}
           </p>
         )}
         <ScopeChanges progress={progress} />

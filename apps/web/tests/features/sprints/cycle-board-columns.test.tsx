@@ -45,11 +45,26 @@ describe('the sprint board', () => {
     expect(within(todo).queryByTestId('sprint-card-ENG-44')).toBeNull();
   });
 
-  it('counts what each column holds', () => {
+  it('counts what each column holds in its own header', () => {
     render(<CycleBoard cycle={cycle} />);
 
-    expect(screen.getByTestId('sprint-column-state_todo').textContent).toContain('2');
-    expect(screen.getByTestId('sprint-column-state_done').textContent).toContain('1');
+    const todo = screen.getByTestId('sprint-column-state_todo');
+    const done = screen.getByTestId('sprint-column-state_done');
+
+    expect(within(todo).getByRole('banner').textContent).toBe('Todo2');
+    expect(within(done).getByRole('banner').textContent).toBe('Done1');
+  });
+
+  it('stands the columns side by side rather than stacking them', () => {
+    render(<CycleBoard cycle={cycle} />);
+
+    const todo = screen.getByTestId('sprint-column-state_todo');
+    const row = todo.parentElement;
+
+    expect(row?.className).toContain('flex');
+    expect(row?.className).not.toContain('flex-col');
+    expect(todo.className).toContain('shrink-0');
+    expect(todo.className).toMatch(/\bw-\d/);
   });
 
   it('opens the issue page from a card, with a focus ring for the keyboard', () => {

@@ -286,8 +286,7 @@ function sprintState(
 ): SprintIndexEntry['state'] {
   if (cycle.completedAt !== null) return 'finished';
   if (cycle.startsAt > now) return 'upcoming';
-  if (cycle.endsAt > now) return 'running';
-  return 'finished';
+  return 'running';
 }
 
 export async function listSprintIndex(

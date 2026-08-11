@@ -320,3 +320,33 @@ describe('paging through the sprints of a workspace', () => {
     expect(theirs.cycles.every((row) => !ids.has(row.id))).toBe(true);
   });
 });
+
+describe('the paging arguments a url can carry', () => {
+  it('falls back rather than letting a NaN reach the query', async () => {
+    await scheduled(40, 54);
+
+    const page = await pageOfCycles(workspace.admin, {
+      page: Number.NaN,
+      pageSize: Number.NaN,
+    });
+
+    expect(page.page).toBe(1);
+    expect(page.cycles.length).toBeGreaterThan(0);
+  });
+
+  it('truncates a fractional page rather than offsetting by part of a row', async () => {
+    for (let index = 0; index < 3; index += 1) await scheduled(index * 20 + 40, index * 20 + 54);
+
+    const fractional = await pageOfCycles(workspace.admin, { page: 2.7, pageSize: 2 });
+    const whole = await pageOfCycles(workspace.admin, { page: 2, pageSize: 2 });
+
+    expect(fractional.page).toBe(2);
+    expect(fractional.cycles.map((row) => row.id)).toEqual(whole.cycles.map((row) => row.id));
+  });
+
+  it('caps the page size so one request cannot ask for everything', async () => {
+    const page = await pageOfCycles(workspace.admin, { pageSize: 100_000 });
+
+    expect(page.cycles.length).toBeLessThanOrEqual(100);
+  });
+});
