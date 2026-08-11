@@ -48,6 +48,14 @@ to the codebase.
   linear-time parsing, and added adversarial regression coverage. It merged as
   `e43d229f` after full local and hosted exact-head verification passed with no
   unresolved review threads.
+- [#294](https://github.com/Noveum/orbit/pull/294) completed DEP-004 by
+  rejecting production builds and standalone starts without a usable
+  first-login path, accepting password authentication, complete Google or
+  GitHub credentials, or Resend with an explicit non-local sender.
+  Copied-artifact smoke coverage verifies rejected and successful startup, and
+  operator documentation records first-user bootstrap limits. It merged as
+  `64f7972` after full local and hosted exact-head verification passed with no
+  unresolved actionable review finding.
 
 GitHub records show successful hosted CI and completion of required reviews on
 the merged heads. These pull requests reduce the known gaps, but they do not
@@ -59,21 +67,14 @@ make the repository a supported production release.
   MCP consent and PKCE, preserves OAuth continuation through passwordless login,
   binds issued credentials to an immutable grant, prevents issued token scopes
   from exceeding that grant, and consumes refresh credentials once. Status:
-  exact head `9cd1ac9` contains current `main`, passes full local verification
-  and independent review, and has no unresolved ordinary review threads. The
-  remaining individual CodeQL
+  exact head `d13252d` contains current `main`, passes full local verification,
+  independent review, and every hosted check except the expected individual
+  CodeQL gate. It has no unresolved ordinary review threads. The remaining
+  CodeQL
   alert [#19](https://github.com/Noveum/orbit/security/code-scanning/19)
   misclassifies an opaque OAuth credential's HMAC integrity binding as password
   hashing. The reviewed false-positive classification awaits maintainer
   dismissal, so the pull request is not merge-ready.
-- [#294](https://github.com/Noveum/orbit/pull/294), DEP-004, rejects production
-  builds and starts unless password authentication, a complete Google or GitHub
-  credential pair, or Resend magic-link delivery with an explicit non-local
-  sender is configured. It tests rejected and successful startup through the
-  copied standalone artifact and documents first-user bootstrap limits. Status:
-  exact head `b21ad89648e3244f228a1f1a64b698040291c75b` contains current `main`,
-  passes full local verification and independent review, and awaits hosted
-  checks and required exact-head reviews, so the pull request is not merge-ready.
 - [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
   tracker. Status: in progress. It records completed work and remaining release
   requirements without changing application behavior.
@@ -130,11 +131,10 @@ make the repository a supported production release.
 - [ ] **DEP-003: Application containers.** **Status: open.** Add reproducible
   production images and a complete Compose profile for web, realtime, Postgres,
   Redis, and object storage.
-- [ ] **DEP-004: First-login validation.** **Status: in progress in #294.**
-  Refuse a production build or start unless at least one complete authentication
-  path is configured. The branch adds regression and copied-artifact coverage
-  for rejected and valid configurations; hosted exact-head checks and reviews
-  remain pending.
+- [x] **DEP-004: First-login validation.** **Status: complete in #294.**
+  Production builds and standalone starts now require at least one complete
+  first-login path, with regression and copied-artifact coverage for rejected
+  and valid configurations.
 - [ ] **PORT-001: Neutral seed and import tooling.** **Status: partial through
   #281, #287, and #288.** Neutral demo data, unsafe importer quarantine, and
   destructive seed protection are complete. Remaining work includes
