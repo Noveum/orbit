@@ -490,6 +490,7 @@ describe('planning', () => {
     for (const issue of [heavy, light]) {
       await admin.result('move_to_cycle', { issue: issue.identifier, cycle: 'active' });
     }
+    await admin.result('update_issue', { issue: light.identifier, state: 'Todo' });
     await admin.result('update_issue', { issue: heavy.identifier, state: 'Done' });
 
     const progress = await admin.result('cycle_progress', { cycle: 'active' });

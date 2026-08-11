@@ -728,7 +728,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
-    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
+    const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -755,7 +756,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         stateId: state.id,
         priority: parsed.priority,
         creatorId: principal.userId,
-        assigneeId: parsed.assigneeId,
+        assigneeId,
         projectId: parsed.projectId,
         milestoneId: parsed.milestoneId,
         cycleId: parsed.cycleId,
@@ -770,7 +771,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const issue = requireRow(created, 'The issue could not be created.');
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
+    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,

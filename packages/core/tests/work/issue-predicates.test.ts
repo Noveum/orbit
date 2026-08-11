@@ -59,7 +59,7 @@ describe('assignee conditions', () => {
     const two = await addMember(workspace, 'member', { name: 'Two' });
     await newIssue('For one', { assigneeId: one.user.id });
     await newIssue('For two', { assigneeId: two.user.id });
-    await newIssue('For nobody');
+    await newIssue('For nobody', { assigneeId: null });
 
     expect(await titlesMatching(inCondition('assignee', [one.user.id, two.user.id]))).toEqual([
       'For one',
@@ -70,7 +70,7 @@ describe('assignee conditions', () => {
   it('treats none as unassigned', async () => {
     const one = await addMember(workspace, 'member', { name: 'One' });
     await newIssue('For one', { assigneeId: one.user.id });
-    await newIssue('For nobody');
+    await newIssue('For nobody', { assigneeId: null });
 
     expect(await titlesMatching(inCondition('assignee', ['none']))).toEqual(['For nobody']);
   });
@@ -80,7 +80,7 @@ describe('assignee conditions', () => {
     const two = await addMember(workspace, 'member', { name: 'Two' });
     await newIssue('For one', { assigneeId: one.user.id });
     await newIssue('For two', { assigneeId: two.user.id });
-    await newIssue('For nobody');
+    await newIssue('For nobody', { assigneeId: null });
 
     expect(await titlesMatching(inCondition('assignee', [one.user.id], true))).toEqual([
       'For nobody',

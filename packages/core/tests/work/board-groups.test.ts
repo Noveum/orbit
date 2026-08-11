@@ -22,11 +22,12 @@ beforeEach(async () => {
   states = workspace.states.map((state) => ({ id: state.id, name: state.name }));
 });
 
-async function newIssue(title: string, stateId?: string) {
+async function newIssue(title: string, stateId?: string, overrides: Record<string, unknown> = {}) {
   const { issue } = await createIssue(workspace.admin, {
     teamId,
     title,
     ...(stateId === undefined ? {} : { stateId }),
+    ...overrides,
   });
   return issue;
 }
@@ -82,7 +83,7 @@ describe('listBoardGroups', () => {
   it('groups by assignee when asked, keeping the unassigned column', async () => {
     const mine = await newIssue('Mine');
     await updateIssue(workspace.admin, mine.id, { assigneeId: workspace.admin.userId });
-    await newIssue('Nobody');
+    await newIssue('Nobody', undefined, { assigneeId: null });
 
     const page = await listBoardGroups(workspace.admin, { teamId, groupBy: 'assignee' });
 

@@ -55,14 +55,41 @@ async function newIssue(title: string, overrides: Record<string, unknown> = {}) 
 }
 
 describe('createIssue', () => {
-  it('allocates sequential identifiers and defaults to the first unstarted state', async () => {
+  it('allocates sequential identifiers and starts a new issue in triage', async () => {
     const first = await newIssue('First');
     const second = await newIssue('Second');
 
     expect(first.identifier).toBe('NOVA-1');
     expect(second.identifier).toBe('NOVA-2');
-    expect(first.stateId).toBe(stateNamed(workspace, 'Todo').id);
+    expect(first.stateId).toBe(stateNamed(workspace, 'Triage').id);
     expect(first.creatorId).toBe(workspace.admin.userId);
+  });
+
+  it('assigns a new issue to whoever created it', async () => {
+    const issue = await newIssue('Mine by default');
+
+    expect(issue.assigneeId).toBe(workspace.admin.userId);
+  });
+
+  it('still honours an assignee that was asked for', async () => {
+    const { principal } = await addMember(workspace, 'member');
+    const issue = await newIssue('Theirs', { assigneeId: principal.userId });
+
+    expect(issue.assigneeId).toBe(principal.userId);
+  });
+
+  it('leaves an issue unassigned when null was asked for on purpose', async () => {
+    const issue = await newIssue('Nobody', { assigneeId: null });
+
+    expect(issue.assigneeId).toBeNull();
+  });
+
+  it('still honours a status that was asked for', async () => {
+    const issue = await newIssue('Started already', {
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+
+    expect(issue.stateId).toBe(stateNamed(workspace, 'Todo').id);
   });
 
   it('allocates unique numbers under concurrency', async () => {
@@ -695,15 +722,15 @@ describe('listIssues', () => {
     const counts = await getIssueCounts(workspace.admin, { teamId: workspace.teamId });
     const byState = new Map(counts.map((row) => [row.stateId, row.total]));
     expect(byState.get(stateNamed(workspace, 'Done').id)).toBe(1);
-    expect(byState.get(stateNamed(workspace, 'Todo').id)).toBe(1);
+    expect(byState.get(stateNamed(workspace, 'Triage').id)).toBe(1);
   });
 });
 
 describe('getIssueSummary', () => {
   it('reports the filtered total beside the unfiltered scope, so nothing has to be crawled', async () => {
     const mine = await newIssue('Mine');
-    await newIssue('Theirs');
-    await newIssue('Also theirs');
+    await newIssue('Theirs', { assigneeId: null });
+    await newIssue('Also theirs', { assigneeId: null });
     await updateIssue(workspace.admin, mine.id, { assigneeId: workspace.admin.userId });
 
     const summary = await getIssueSummary(workspace.admin, {
@@ -731,7 +758,7 @@ describe('getIssueSummary', () => {
 
   it('counts every facet value across the whole scope, not just a loaded page', async () => {
     const done = await newIssue('Shipped');
-    await newIssue('Waiting');
+    await newIssue('Waiting', { assigneeId: null });
     await updateIssue(workspace.admin, done.id, {
       stateId: stateNamed(workspace, 'Done').id,
       assigneeId: workspace.admin.userId,
@@ -741,7 +768,7 @@ describe('getIssueSummary', () => {
     const { facets } = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
 
     expect(facets.state[stateNamed(workspace, 'Done').id]).toBe(1);
-    expect(facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(facets.state[stateNamed(workspace, 'Triage').id]).toBe(1);
     expect(facets.assignee[workspace.admin.userId]).toBe(1);
     expect(facets.assignee['none']).toBe(1);
     expect(facets.creator[workspace.admin.userId]).toBe(2);
@@ -780,7 +807,7 @@ describe('getIssueSummary', () => {
 
     const scoped = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
     expect(scoped.scopeTotal).toBe(2);
-    expect(scoped.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(scoped.facets.state[stateNamed(workspace, 'Triage').id]).toBe(1);
   });
 
   it('reads every column facet in one grouping sets pass instead of one query each', () => {

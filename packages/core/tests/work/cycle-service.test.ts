@@ -363,9 +363,24 @@ describe('cycleProgress', () => {
   it('reports scope, started, completed, and a day by day burn up', async () => {
     const cycle = await firstCycle();
     const created = await Promise.all([
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'A', cycleId: cycle.id }),
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'B', cycleId: cycle.id }),
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'C', cycleId: cycle.id }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'A',
+        cycleId: cycle.id,
+      }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'B',
+        cycleId: cycle.id,
+      }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'C',
+        cycleId: cycle.id,
+      }),
     ]);
     const [a, b] = created;
     if (a === undefined || b === undefined) throw new Error('missing issues');
@@ -424,11 +439,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope up on the day work was added and not before', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const late = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Added later',
     });
@@ -445,11 +462,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope down on the day work was pulled out', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const pulled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Pulled out',
       cycleId: cycle.id,
@@ -468,11 +487,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope up on the day an issue was filed straight into the running sprint', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const filed = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Filed mid sprint',
       cycleId: cycle.id,
@@ -490,12 +511,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('keeps cancelled work in the scope until the day it was cancelled', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Cancelled mid sprint',
       cycleId: cycle.id,
@@ -515,12 +538,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves work cancelled without a recorded time out of the sprint from the first day', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Cancelled at an unknown time',
       cycleId: cycle.id,
@@ -540,12 +565,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves cancelled work out of the scope and counts it on its own', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Dropped',
       cycleId: cycle.id,
@@ -566,6 +593,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('adds points up from the estimates and counts a missing estimate as zero', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -575,6 +603,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     const running = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Running',
       cycleId: cycle.id,
@@ -584,6 +613,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       stateId: stateNamed(workspace, 'In Progress').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Unsized',
       cycleId: cycle.id,
@@ -599,6 +629,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('keeps the days an issue sat in the sprint when it is pulled out after the sprint ends', async () => {
     const cycle = await firstCycle();
     const carried = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Carried the whole sprint',
       cycleId: cycle.id,
@@ -618,12 +649,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves work parked in the sprint after it ended out of every day it ran', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
       estimate: 2,
     });
     const late = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Parked here once the sprint was over',
       estimate: 5,
@@ -641,12 +674,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('reports work pulled out before the sprint ended as removed, and stops counting it that day', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Stayed',
       cycleId: cycle.id,
       estimate: 2,
     });
     const pulled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Pulled out before the end',
       cycleId: cycle.id,
@@ -668,11 +703,13 @@ describe('completeCycle', () => {
   it('rolls unfinished issues into the next cycle and closes the current one', async () => {
     const cycle = await firstCycle();
     const open = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Still open',
       cycleId: cycle.id,
     });
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -757,6 +794,7 @@ describe('cycle writes need the right role, not the right team', () => {
     const [theirs] = await listCycles(vega.admin);
     if (theirs === undefined) throw new Error('vega has no sprint');
     const { issue } = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Mine',
     });
@@ -771,6 +809,7 @@ describe('a finished sprint keeps its own history', () => {
   it('records what it shipped, because the rollover empties it of unfinished work', async () => {
     const cycle = await firstCycle();
     const shipped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -780,6 +819,7 @@ describe('a finished sprint keeps its own history', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Dropped',
       cycleId: cycle.id,
@@ -789,6 +829,7 @@ describe('a finished sprint keeps its own history', () => {
       stateId: stateNamed(workspace, 'Canceled').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Not finished',
       cycleId: cycle.id,
@@ -895,6 +936,7 @@ describe('two people closing the same sprint at once', () => {
   it('lets one through, refuses the other, and leaves a single successor', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Carried',
       cycleId: cycle.id,
@@ -941,6 +983,7 @@ describe('sprintOutcome', () => {
   it('hands back what was recorded when the sprint was closed', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -956,6 +999,7 @@ describe('sprintOutcome', () => {
   it('counts a sprint closed before outcomes were recorded, rather than saying nothing', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -965,6 +1009,7 @@ describe('sprintOutcome', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Left over',
       cycleId: cycle.id,
@@ -994,6 +1039,7 @@ describe('sprintOutcomes', () => {
   it('answers for a page of sprints in one pass, recorded or counted', async () => {
     const first = await firstCycle();
     const one = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'In the first',
       cycleId: first.id,
@@ -1009,6 +1055,7 @@ describe('sprintOutcomes', () => {
       endsAt: daysFromNow(214),
     });
     const two = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'In the second',
       cycleId: second.cycle.id,
@@ -1039,6 +1086,7 @@ describe('sprintOutcomes', () => {
   it('counts the sprint when the stored snapshot is malformed rather than trusting it', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -1063,6 +1111,7 @@ describe('sprintOutcomes', () => {
   it('counts only what is still in the sprint, since a rollover moved the rest away', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -1072,6 +1121,7 @@ describe('sprintOutcomes', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Rolled over',
       cycleId: cycle.id,
