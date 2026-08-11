@@ -636,6 +636,20 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create-cycle')).toBeTruthy();
   });
 
+  it('scrolls the description instead of pushing the submit button past the viewport', () => {
+    workspace = buildWorkspace();
+    open();
+
+    const scroller = screen.getByTestId('quick-create-scroll');
+    const submit = screen.getByTestId('quick-create-submit');
+
+    expect(scroller).toContainElement(screen.getByTestId('quick-create-description'));
+    expect(scroller).toContainElement(screen.getByTestId('quick-create-project'));
+    expect(scroller.className).toContain('overflow-y-auto');
+    expect(scroller.contains(submit)).toBe(false);
+    expect(screen.getByTestId('quick-create').className).toContain('max-h-');
+  });
+
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
     workspace = buildWorkspace();
     open();
