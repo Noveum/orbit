@@ -182,6 +182,8 @@ export async function updateCycle(
   const parsed = cycleEditSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycles(tx, found.organizationId);
     const current = await requireCycleForUpdate(tx, principal, cycleId);
 
     const values: Partial<typeof schema.cycle.$inferInsert> = {};
@@ -330,6 +332,8 @@ export async function shiftFollowingCycles(
   assertCan(principal, 'cycle:manage');
 
   return await db.transaction(async (tx) => {
+    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycles(tx, found.organizationId);
     const anchor = await requireCycleForUpdate(tx, principal, cycleId);
     return await shiftFollowingWithin(tx, principal, anchor, options);
   });

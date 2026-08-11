@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Revised: 2026-08-11
-Branch: `claude/sprint-planning-redesign-ef9d1e`
 Delivery: one specification, six workstreams, one pull request each, landing in
 the order given at the end of this document.
 

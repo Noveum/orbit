@@ -13,6 +13,7 @@ import {
   shiftFollowingCycles,
   updateCycle,
 } from '../../src/work/cycle-service.ts';
+import { raceAcrossCycleLock } from '../support/interleave.ts';
 
 const DAY = 86_400_000;
 
@@ -205,5 +206,30 @@ describe('a shift that would land on a finished sprint', () => {
 
     const untouched = await getCycle(workspace.admin, second.id);
     expect(untouched.startsAt.getTime()).toBe(second.startsAt.getTime());
+  });
+});
+
+describe('two edits shifting the same run at once', () => {
+  it('does not move the sprints after it twice', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+
+    const outcome = await raceAcrossCycleLock({
+      organizationId: workspace.organizationId,
+      race: () =>
+        updateCycle(workspace.admin, first.id, {
+          endsAt: daysFromNow(37),
+          shiftFollowing: true,
+        }),
+      interlope: async (client) => {
+        await client`update cycle set ends_at = ends_at + interval '3 days' where id = ${first.id}`;
+      },
+    });
+
+    const after = await getCycle(workspace.admin, second.id);
+    const movedByDays = (after.startsAt.getTime() - second.startsAt.getTime()) / DAY;
+
+    expect(['fulfilled', 'rejected']).toContain(outcome.status);
+    expect(movedByDays).toBeLessThanOrEqual(3);
   });
 });
