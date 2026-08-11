@@ -642,7 +642,7 @@ describe('listIssues', () => {
   it('narrows to the issues nobody owns when the assignee scope asks for none', async () => {
     const { user: assignee } = await addMember(workspace, 'member');
     await newIssue('Owned', { assigneeId: assignee.id });
-    const orphan = await newIssue('Nobody owns this');
+    const orphan = await newIssue('Nobody owns this', { assigneeId: null });
 
     const unassigned = await listIssues(workspace.admin, { assigneeId: 'none' });
 
@@ -652,7 +652,7 @@ describe('listIssues', () => {
   it('counts the unowned issues under the same key the facets use', async () => {
     const { user: assignee } = await addMember(workspace, 'member');
     await newIssue('Owned', { assigneeId: assignee.id });
-    await newIssue('Nobody owns this');
+    await newIssue('Nobody owns this', { assigneeId: null });
 
     const summary = await getIssueSummary(workspace.admin, { groupBy: 'assignee' });
 
