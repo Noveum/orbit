@@ -10,6 +10,17 @@ if (connectionString === undefined || connectionString.length === 0) {
 }
 
 const poolMaxSchema = z.coerce.number().int().positive().max(1000).default(10);
+const preparedStatementsSchema = z.enum(['true', 'false']).default('false');
+
+function trimUrlControlEdges(url: string): string {
+  let start = 0;
+  while (start < url.length && url.charCodeAt(start) <= 0x20) start += 1;
+
+  let end = url.length;
+  while (end > start && url.charCodeAt(end - 1) <= 0x20) end -= 1;
+
+  return url.slice(start, end);
+}
 
 const poolMax = poolMaxSchema.safeParse(process.env['DATABASE_POOL_MAX'] ?? undefined);
 
@@ -19,14 +30,30 @@ if (!poolMax.success) {
   );
 }
 
-const TRANSACTION_POOLER_PORT = 6543;
-
-export function multiplexesConnections(url: string): boolean {
-  try {
-    return Number(new URL(url).port) === TRANSACTION_POOLER_PORT;
-  } catch {
-    return false;
+export function resolvePreparedStatements(url: string, configured: string | undefined): boolean {
+  const normalizedUrl = trimUrlControlEdges(url).replace(/[\t\n\r]/g, '');
+  const authority = normalizedUrl.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] ?? '';
+  const hostAuthority = authority.slice(authority.lastIndexOf('@') + 1);
+  if (/%2c/i.test(hostAuthority)) {
+    throw new Error(
+      'DATABASE_URL must use literal host separators; a percent-encoded comma is not supported.',
+    );
   }
+  const fragmentStart = normalizedUrl.indexOf('#');
+  const queryStart = normalizedUrl.indexOf('?');
+  const queryEnd = fragmentStart === -1 ? normalizedUrl.length : fragmentStart;
+  const query =
+    queryStart === -1 || queryStart > queryEnd ? '' : normalizedUrl.slice(queryStart + 1, queryEnd);
+  if (new URLSearchParams(`orbit=&${query}`).has('prepare')) {
+    throw new Error(
+      'Remove the prepare query option from DATABASE_URL and set DATABASE_PREPARED_STATEMENTS instead.',
+    );
+  }
+  const parsed = preparedStatementsSchema.safeParse(configured);
+  if (!parsed.success) {
+    throw new Error('DATABASE_PREPARED_STATEMENTS must be exactly "true" or "false".');
+  }
+  return parsed.data === 'true';
 }
 
 export function poolCacheKey(url: string, max: number, prepare: boolean): string {
@@ -42,7 +69,10 @@ interface CachedPool {
 
 const globalForDb = globalThis as unknown as { orbitPool?: CachedPool };
 
-const prepareStatements = !multiplexesConnections(connectionString);
+const prepareStatements = resolvePreparedStatements(
+  connectionString,
+  process.env['DATABASE_PREPARED_STATEMENTS'],
+);
 const cacheKey = poolCacheKey(connectionString, poolMax.data, prepareStatements);
 const cached = globalForDb.orbitPool;
 

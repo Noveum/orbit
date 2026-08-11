@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { STATE_CATEGORY_ORDER, unique } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
-import { db, pool } from '../client.ts';
 import {
   DEMO_WORKSPACE_TIMEZONE,
   demoOrganizationValues,
@@ -19,6 +18,10 @@ import {
   SEED_TEAMS,
   SEED_USERS,
 } from './data.ts';
+import { assertSeedResetAllowed } from './safety.ts';
+
+assertSeedResetAllowed(process.env['DATABASE_URL'], process.env['ORBIT_SEED_CONFIRM_TARGET']);
+const { db, pool } = await import('../client.ts');
 
 const SORT_STEP = 1024;
 

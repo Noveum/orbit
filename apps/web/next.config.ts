@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NextConfig } from 'next';
-import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
+import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants';
+import { assertProductionAuthenticationConfigured } from './src/lib/env.ts';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(appDirectory, '..', '..');
@@ -23,6 +24,19 @@ function standaloneOutputUnlessVercelTracesItItself(): Pick<NextConfig, 'output'
 }
 
 export default function config(phase: string): NextConfig {
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    assertProductionAuthenticationConfigured({
+      NODE_ENV: 'production',
+      ORBIT_PASSWORD_AUTH: process.env['ORBIT_PASSWORD_AUTH'],
+      GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'],
+      GOOGLE_CLIENT_SECRET: process.env['GOOGLE_CLIENT_SECRET'],
+      GITHUB_CLIENT_ID: process.env['GITHUB_CLIENT_ID'],
+      GITHUB_CLIENT_SECRET: process.env['GITHUB_CLIENT_SECRET'],
+      RESEND_API_KEY: process.env['RESEND_API_KEY'],
+      EMAIL_FROM: process.env['EMAIL_FROM'],
+    });
+  }
+
   const isDevServer = phase === PHASE_DEVELOPMENT_SERVER;
   return {
     reactStrictMode: true,

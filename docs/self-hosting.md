@@ -16,9 +16,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | Route | Effort | Best for |
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
-| [Docker on your own server](#run-it-on-your-own-server) | About 30 minutes | Teams who want it inside their own network |
+| [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
 
-Both need the same four things.
+Both need the same infrastructure plus one complete first-login method.
 
 ## What Orbit needs
 
@@ -27,10 +27,11 @@ Both need the same four things.
 | Postgres 16 or newer | [Supabase](https://supabase.com) | Neon, Railway, RDS, your own |
 | Redis | [Upstash](https://upstash.com) | Any Redis 7 or newer, ElastiCache, your own |
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
-| Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
+| Transactional email (optional with password or OAuth) | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
-Email is used for magic links and invites. Orbit will boot without it, but
-users who rely on those flows will not be able to sign in or accept invites.
+Email is used for magic links and invites. It is optional when password, Google
+or GitHub sign-in is configured. Production build and startup refuse to proceed
+when none of those methods can bootstrap the first user.
 
 ## Deploy on Vercel
 
@@ -46,6 +47,11 @@ connections, and the direct endpoint will run out of them under any real load.
 
 Keep the direct `5432` string somewhere too. You need it once, to apply the
 schema.
+
+Set `DATABASE_PREPARED_STATEMENTS=false` for this transaction pooler. Other
+providers use different ports, so use the runtime connection string they
+recommend and choose this setting from the endpoint's prepared-statement
+capability, not its port number.
 
 Any Postgres works. Neon and Railway are equally fine, and so is a Postgres you
 run yourself. Orbit uses `postgres.js` through Drizzle, and no
@@ -82,11 +88,13 @@ aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp
 Skip this and uploads fail in the browser with a CORS error while the server
 logs look completely healthy.
 
-### 4. Set up email
+### 4. Set up email or another sign-in method
 
 Create a [Resend](https://resend.com) account, verify a domain, and create an
 API key. `EMAIL_FROM` has to be on the domain you verified. If it is not, every
-send fails and the only symptom is that invites never arrive.
+send fails and the only symptom is that invites never arrive. You can omit
+Resend when password, Google or GitHub sign-in is configured, but invitations
+and magic links will remain unavailable.
 
 ### 5. Apply the schema
 
@@ -127,6 +135,7 @@ In **Settings**, **Environment Variables**:
 
 ```bash
 DATABASE_URL=postgres://...pooler on 6543...
+DATABASE_PREPARED_STATEMENTS=false
 REDIS_URL=rediss://...
 
 BETTER_AUTH_SECRET=<a fresh 32+ character random string>
@@ -146,15 +155,18 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 Generate the secret with `openssl rand -base64 32`. Never reuse the one from
 `.env.example`, which is public.
 
+The example above uses Resend as the required first-login path. You can instead
+set `ORBIT_PASSWORD_AUTH=true`, both Google OAuth variables, or both GitHub OAuth
+variables. Passkeys cannot bootstrap a new installation, and `ORBIT_DEV_LOGIN`
+is deliberately ignored in production.
+
 Two variables must **not** be set:
 
 - **`NEXT_PUBLIC_REALTIME_URL`.** In production the socket is always served from
   the page's own origin at `/api/ws`. `configuredRealtimeUrl()` ignores this
   variable when `NODE_ENV` is `production`, so it is a local development
-  override and nothing else. A value left over from a standalone realtime host
-  sends browsers to a dead origin, and because the ticket still comes from the
-  app the failure looks like an endless "Reconnecting to live updates" banner
-  rather than an error.
+  override and nothing else. Leave it unset so the deployment configuration
+  reflects the production topology.
 - **`ORBIT_DEV_LOGIN`.** It signs anyone in as any user with one click.
 
 ### 8. Deploy and check
@@ -176,14 +188,26 @@ wired up correctly. That single test covers more than any health check.
 The first person to sign in becomes the owner of a new workspace, and onboarding
 walks through naming it and creating the first team.
 
-Set up at least one sign-in method before you invite anyone. See
-[Configuration](configuration.md#authentication) for Google, GitHub, passkeys
-and magic links.
+The production preflight has already confirmed that at least one first-login
+method is configured. See [Configuration](configuration.md#authentication) for
+Google, GitHub, password authentication, passkeys and magic links.
 
-## Run it on your own server
+Complete one real sign-in before inviting anyone. The preflight cannot validate
+remote OAuth credentials or a Resend domain. Passkeys become available after an
+authenticated user registers one; they cannot create the first session.
 
-If you want Orbit inside your own network, run the Next.js standalone build
-behind a reverse proxy.
+## Run standalone Node (Preview)
+
+If you want to evaluate Orbit inside your own network, run the Next.js
+standalone build behind a reverse proxy. This standalone path is Preview only:
+HTTP routes and assets work, but realtime and live updates do not yet work in
+this mode. `/api/ws` relies on Vercel's request context for
+`experimental_upgradeWebSocket`; running the standalone server with Node does
+not provide that context. DEP-002 tracks portable realtime deployment
+separately. Use Vercel for production realtime today.
+
+The packaged start command requires Node.js 22 or newer. Bun remains required
+for installing dependencies, applying the schema, and building the app.
 
 ```bash
 git clone https://github.com/Noveum/orbit.git
@@ -194,39 +218,25 @@ bun run db:push
 bun run build
 ```
 
-The build produces a standalone server in `apps/web/.next/standalone`. Run it
-with node, not Bun:
+The build produces a portable standalone server in `apps/web/.next/standalone`,
+including the public and Next static assets. Run it with the package command,
+which loads the repository `.env`:
 
 ```bash
 cd apps/web
-node .next/standalone/apps/web/server.js
+bun run start
 ```
 
-Node matters for the same reason it does on Vercel: the websocket upgrade at
-`/api/ws` needs it.
-
-Your reverse proxy has to pass websocket upgrades through. In nginx:
+Your reverse proxy only needs to forward ordinary HTTP requests to the
+standalone server. In nginx:
 
 ```nginx
-location /api/ws {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_read_timeout 3600s;
-}
-
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
-
-The long `proxy_read_timeout` is not optional. The default is 60 seconds, which
-drops every idle socket once a minute and produces a reconnect banner that comes
-and goes on a timer.
 
 You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
 change every credential in it first. It is written for local development and its
@@ -276,6 +286,7 @@ version:
 - Fresh `BETTER_AUTH_SECRET`.
 - `ORBIT_DEV_LOGIN` unset.
 - `NEXT_PUBLIC_REALTIME_URL` unset.
+- A real production sign-in completed successfully.
 - Postgres, Redis and storage not reachable from the internet.
 - Every default credential from `docker-compose.yml` changed.
 - `ALLOWED_EMAIL_DOMAINS` set if only your organisation should get in.
@@ -286,10 +297,11 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | `NEXT_PUBLIC_REALTIME_URL` is set in production, or the proxy is not passing upgrades |
+| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and magic links never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
+| Build or startup says a first-login method is required | Configure password auth, a complete Google or GitHub pair, or Resend with a non-local sender |
 | Connection pool exhausted | `DATABASE_URL` points at the direct endpoint instead of the pooler |
 | Sign-in loops back to the login screen | `BETTER_AUTH_URL` does not exactly match the origin you are visiting |
 | Websocket never reaches 101 | `bunVersion` is set in `apps/web/vercel.json`, so functions run on Bun |
