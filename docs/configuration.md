@@ -59,8 +59,11 @@ the config next, so leave it unset there.
 
 ## Authentication
 
-Orbit uses [better-auth](https://better-auth.com). Passkeys and magic links work
-with no configuration beyond email. The rest are optional.
+Orbit uses [better-auth](https://better-auth.com). A production build and server
+start require at least one usable first-login method: password authentication,
+a complete Google or GitHub credential pair, or magic-link delivery through
+Resend with an explicit non-local sender. Passkeys work after a user registers
+one, but cannot bootstrap a new installation. Local development is unaffected.
 
 | Variable | Notes |
 | --- | --- |
@@ -85,6 +88,14 @@ ALLOWED_EMAIL_DOMAINS=example.com,example.org
 **`ORBIT_DEV_LOGIN` must never be set on a deployed environment.** It lists the
 seeded users on the login screen and signs anyone in as any of them.
 
+`ORBIT_DEV_LOGIN` and passkeys do not satisfy the production first-login check.
+Half-configured OAuth providers, blank values and the local
+`Orbit <auth@orbit.local>` sender are also rejected.
+
+This check proves only that a complete method is present. It cannot contact an
+OAuth provider or confirm that Resend has verified the sender domain, so test a
+real production sign-in after deployment.
+
 ## Email
 
 Orbit sends through [Resend](https://resend.com) only, for magic links and
@@ -102,6 +113,9 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 
 If `EMAIL_FROM` is not on a verified domain every send fails, and the only
 symptom users see is that invites never arrive.
+
+The sender in `.env.example` is local-only. Replace it before relying on Resend
+for production authentication.
 
 ## Object storage
 

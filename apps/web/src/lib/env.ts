@@ -1,5 +1,66 @@
 import { z } from 'zod';
 
+type Environment = Readonly<Record<string, string | undefined>>;
+
+const configured = (value: string | undefined): boolean =>
+  value !== undefined && value.trim().length > 0;
+
+const configuredPair = (environment: Environment, first: string, second: string): boolean =>
+  configured(environment[first]) && configured(environment[second]);
+
+function senderDomainOf(value: string): string | null {
+  const angleAddress = /<([^<>]+)>$/.exec(value)?.[1];
+  const address = (angleAddress ?? value).trim();
+  const parsed = z.email().safeParse(address);
+  if (!parsed.success) return null;
+  return parsed.data.slice(parsed.data.lastIndexOf('@') + 1).toLowerCase();
+}
+
+export function assertProductionAuthenticationConfigured(
+  environment: Environment = process.env,
+): void {
+  if (environment['NODE_ENV'] !== 'production') return;
+
+  const passwordAuthentication =
+    environment['ORBIT_PASSWORD_AUTH'] === 'true' || environment['ORBIT_PASSWORD_AUTH'] === '1';
+  const googleAuthentication = configuredPair(
+    environment,
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+  );
+  const githubAuthentication = configuredPair(
+    environment,
+    'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET',
+  );
+  const emailFrom = environment['EMAIL_FROM']?.trim() ?? '';
+  const senderDomain = senderDomainOf(emailFrom);
+  const magicLinkAuthentication =
+    configured(environment['RESEND_API_KEY']) &&
+    senderDomain !== null &&
+    senderDomain !== 'localhost' &&
+    !senderDomain.endsWith('.local');
+
+  if (
+    passwordAuthentication ||
+    googleAuthentication ||
+    githubAuthentication ||
+    magicLinkAuthentication
+  ) {
+    return;
+  }
+
+  throw new Error(
+    'Production requires a usable first-login method. Set ORBIT_PASSWORD_AUTH=true, both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET, or both RESEND_API_KEY and a non-local EMAIL_FROM.',
+  );
+}
+
+export function assertProductionStartupAuthenticationConfigured(
+  environment: Environment = process.env,
+): void {
+  assertProductionAuthenticationConfigured({ ...environment, NODE_ENV: 'production' });
+}
+
 const serverEnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(16),
   BETTER_AUTH_URL: z.url().default('http://localhost:3000'),

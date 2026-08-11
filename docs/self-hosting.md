@@ -18,7 +18,7 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
 
-Both need the same four things.
+Both need the same infrastructure plus one complete first-login method.
 
 ## What Orbit needs
 
@@ -27,10 +27,11 @@ Both need the same four things.
 | Postgres 16 or newer | [Supabase](https://supabase.com) | Neon, Railway, RDS, your own |
 | Redis | [Upstash](https://upstash.com) | Any Redis 7 or newer, ElastiCache, your own |
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
-| Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
+| Transactional email (optional with password or OAuth) | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
-Email is used for magic links and invites. Orbit will boot without it, but
-users who rely on those flows will not be able to sign in or accept invites.
+Email is used for magic links and invites. It is optional when password, Google
+or GitHub sign-in is configured. Production build and startup refuse to proceed
+when none of those methods can bootstrap the first user.
 
 ## Deploy on Vercel
 
@@ -87,11 +88,13 @@ aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp
 Skip this and uploads fail in the browser with a CORS error while the server
 logs look completely healthy.
 
-### 4. Set up email
+### 4. Set up email or another sign-in method
 
 Create a [Resend](https://resend.com) account, verify a domain, and create an
 API key. `EMAIL_FROM` has to be on the domain you verified. If it is not, every
-send fails and the only symptom is that invites never arrive.
+send fails and the only symptom is that invites never arrive. You can omit
+Resend when password, Google or GitHub sign-in is configured, but invitations
+and magic links will remain unavailable.
 
 ### 5. Apply the schema
 
@@ -152,6 +155,11 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 Generate the secret with `openssl rand -base64 32`. Never reuse the one from
 `.env.example`, which is public.
 
+The example above uses Resend as the required first-login path. You can instead
+set `ORBIT_PASSWORD_AUTH=true`, both Google OAuth variables, or both GitHub OAuth
+variables. Passkeys cannot bootstrap a new installation, and `ORBIT_DEV_LOGIN`
+is deliberately ignored in production.
+
 Two variables must **not** be set:
 
 - **`NEXT_PUBLIC_REALTIME_URL`.** In production the socket is always served from
@@ -180,9 +188,13 @@ wired up correctly. That single test covers more than any health check.
 The first person to sign in becomes the owner of a new workspace, and onboarding
 walks through naming it and creating the first team.
 
-Set up at least one sign-in method before you invite anyone. See
-[Configuration](configuration.md#authentication) for Google, GitHub, passkeys
-and magic links.
+The production preflight has already confirmed that at least one first-login
+method is configured. See [Configuration](configuration.md#authentication) for
+Google, GitHub, password authentication, passkeys and magic links.
+
+Complete one real sign-in before inviting anyone. The preflight cannot validate
+remote OAuth credentials or a Resend domain. Passkeys become available after an
+authenticated user registers one; they cannot create the first session.
 
 ## Run standalone Node (Preview)
 
@@ -274,6 +286,7 @@ version:
 - Fresh `BETTER_AUTH_SECRET`.
 - `ORBIT_DEV_LOGIN` unset.
 - `NEXT_PUBLIC_REALTIME_URL` unset.
+- A real production sign-in completed successfully.
 - Postgres, Redis and storage not reachable from the internet.
 - Every default credential from `docker-compose.yml` changed.
 - `ALLOWED_EMAIL_DOMAINS` set if only your organisation should get in.
@@ -288,6 +301,7 @@ version:
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and magic links never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
+| Build or startup says a first-login method is required | Configure password auth, a complete Google or GitHub pair, or Resend with a non-local sender |
 | Connection pool exhausted | `DATABASE_URL` points at the direct endpoint instead of the pooler |
 | Sign-in loops back to the login screen | `BETTER_AUTH_URL` does not exactly match the origin you are visiting |
 | Websocket never reaches 101 | `bunVersion` is set in `apps/web/vercel.json`, so functions run on Bun |

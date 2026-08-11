@@ -138,7 +138,11 @@ provider-neutral production support commitment.
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
 all of which have free tiers, so a small team can run it for nothing.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNoveum%2Forbit&root-directory=apps%2Fweb&env=DATABASE_URL,REDIS_URL,BETTER_AUTH_SECRET,BETTER_AUTH_URL,NEXT_PUBLIC_APP_URL&project-name=orbit&repository-name=orbit)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNoveum%2Forbit&root-directory=apps%2Fweb&env=DATABASE_URL,REDIS_URL,BETTER_AUTH_SECRET,BETTER_AUTH_URL,NEXT_PUBLIC_APP_URL,RESEND_API_KEY,EMAIL_FROM&project-name=orbit&repository-name=orbit)
+
+The button prompts for Resend so a fresh deployment can send magic links. You
+can instead configure password, Google or GitHub sign-in. Production refuses to
+build or start without one complete method; see [Authentication](docs/configuration.md#authentication).
 
 Two things that are not optional and produce confusing failures if you get them
 wrong:
