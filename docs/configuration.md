@@ -45,6 +45,18 @@ Do not add a `prepare` query option to `DATABASE_URL`. Orbit refuses that ambigu
 configuration and uses `DATABASE_PREPARED_STATEMENTS` as the single source of truth.
 Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
+## Scheduled maintenance
+
+| Variable | Notes |
+| --- | --- |
+| `CRON_SECRET` | Protects the daily sprint snapshot and operational pruning routes. Use a long random value in every deployed environment |
+
+Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
+routes. Without the secret, both routes refuse to run. The analytics route records
+one row per active sprint and sprint-local calendar day, then publishes the returned
+realtime actions. Sprint completion also records a final snapshot in the same
+transaction before unfinished work rolls into the next sprint.
+
 ## Realtime
 
 | Variable | Default | Notes |
@@ -190,6 +202,7 @@ base databases.
 DATABASE_URL=postgres://user:pass@runtime-db.example.com:5432/orbit?sslmode=require
 DATABASE_PREPARED_STATEMENTS=false
 REDIS_URL=rediss://default:pass@redis.example.com:6379
+CRON_SECRET=<openssl rand -base64 32>
 
 BETTER_AUTH_SECRET=<openssl rand -base64 32>
 BETTER_AUTH_URL=https://orbit.example.com

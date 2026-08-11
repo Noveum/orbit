@@ -32,6 +32,7 @@ import {
   captureCycleMembershipChange,
   lockCycleAssignmentTeam,
 } from '../analytics/membership.ts';
+import { writeCycleSnapshotsInTransaction } from '../analytics/snapshot.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -894,6 +895,10 @@ export async function completeCycle(
       throw conflict('That cycle is already complete.');
     }
 
+    const finalSnapshot = await writeCycleSnapshotsInTransaction(tx, {
+      now,
+      finalCycleId: cycle.id,
+    });
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
@@ -1013,6 +1018,7 @@ export async function completeCycle(
       nextCycle,
       rolledOverIssueIds: rolled.map((row) => row.id),
       actions: [
+        ...finalSnapshot.actions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,

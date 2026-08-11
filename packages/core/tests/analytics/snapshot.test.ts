@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { count, db, eq, schema } from '@orbit/db';
+import type { Database } from '@orbit/db';
+import { and, count, db, eq, schema } from '@orbit/db';
 import { writeCycleSnapshots } from '../../src/analytics/snapshot.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
 import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
-import { activeCycle } from '../../src/work/cycle-service.ts';
+import { activeCycle, completeCycle, getCycle } from '../../src/work/cycle-service.ts';
 
 let workspace: Workspace;
 let cycleId: string;
@@ -30,6 +31,34 @@ async function snapshotCount(): Promise<number> {
   return Number(row?.total ?? 0);
 }
 
+function databaseFailingAfterFinalSnapshot(finalCycleId: string): Database {
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== 'transaction') return Reflect.get(target, property, receiver);
+      const transaction: Database['transaction'] = async (callback) =>
+        await target.transaction(async (tx) => {
+          const result = await callback(tx);
+          const [snapshot] = await tx
+            .select({ id: schema.cycleProgressSnapshot.id })
+            .from(schema.cycleProgressSnapshot)
+            .where(
+              and(
+                eq(schema.cycleProgressSnapshot.cycleId, finalCycleId),
+                eq(schema.cycleProgressSnapshot.isFinal, true),
+              ),
+            )
+            .limit(1);
+          if (snapshot === undefined)
+            throw new Error('final snapshot was not in the close transaction');
+          throw new Error(
+            `rollback after final snapshot ${result === undefined ? 'void' : 'result'}`,
+          );
+        });
+      return transaction;
+    },
+  });
+}
+
 describe('writeCycleSnapshots', () => {
   it('bootstraps captured history for every assigned issue including archived work', async () => {
     const archivedId = await insertIssue(workspace, {
@@ -43,8 +72,8 @@ describe('writeCycleSnapshots', () => {
       .set({ archivedAt: new Date() })
       .where(eq(schema.issue.id, archivedId));
 
-    await writeCycleSnapshots(withinCycle);
-    await writeCycleSnapshots(withinCycle);
+    await writeCycleSnapshots({ now: withinCycle });
+    await writeCycleSnapshots({ now: withinCycle });
 
     const memberships = await db
       .select()
@@ -56,8 +85,8 @@ describe('writeCycleSnapshots', () => {
   });
 
   it('writes one row per active cycle per day with the correct tallies', async () => {
-    const result = await writeCycleSnapshots();
-    expect(result.count).toBeGreaterThanOrEqual(1);
+    const result = await writeCycleSnapshots({ now: withinCycle });
+    expect(result.captured).toBeGreaterThanOrEqual(1);
     expect(result.actions.some((action) => action.model === 'cycle')).toBe(true);
 
     const [snapshot] = await db
@@ -74,12 +103,12 @@ describe('writeCycleSnapshots', () => {
   });
 
   it('is idempotent on re-run, staying unique on (cycle_id, captured_on)', async () => {
-    await writeCycleSnapshots(withinCycle);
-    await writeCycleSnapshots(withinCycle);
+    await writeCycleSnapshots({ now: withinCycle });
+    await writeCycleSnapshots({ now: withinCycle });
     expect(await snapshotCount()).toBe(1);
 
     await insertIssue(workspace, { number: 5, state: 'Done', cycleId, estimate: 2 });
-    await writeCycleSnapshots(withinCycle);
+    await writeCycleSnapshots({ now: withinCycle });
     expect(await snapshotCount()).toBe(1);
 
     const [snapshot] = await db
@@ -88,5 +117,74 @@ describe('writeCycleSnapshots', () => {
       .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
     expect(snapshot?.totalIssues).toBe(4);
     expect(snapshot?.completedIssues).toBe(2);
+  });
+
+  it('captures the sprint local calendar day idempotently', async () => {
+    const first = new Date('2026-08-11T20:30:00.000Z');
+    const second = new Date('2026-08-11T21:00:00.000Z');
+    await db
+      .update(schema.cycle)
+      .set({
+        timezone: 'Asia/Kolkata',
+        startsAt: new Date('2026-08-10T00:00:00.000Z'),
+        endsAt: new Date('2026-08-20T00:00:00.000Z'),
+      })
+      .where(eq(schema.cycle.id, cycleId));
+
+    await writeCycleSnapshots({ now: first });
+    await writeCycleSnapshots({ now: second });
+
+    const rows = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.capturedOn).toBe('2026-08-12');
+    expect(rows[0]?.capturedAt.getTime()).toBe(second.getTime());
+    expect(rows[0]?.isFinal).toBe(false);
+  });
+
+  it('turns the local day row into the final pre-rollover snapshot during close', async () => {
+    const closedAt = withinCycle;
+    await writeCycleSnapshots({ now: closedAt });
+
+    await completeCycle(workspace.admin, cycleId, closedAt);
+
+    const rows = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.capturedAt.getTime()).toBe(closedAt.getTime());
+    expect(rows[0]?.isFinal).toBe(true);
+    expect(rows[0]?.totalIssues).toBe(3);
+    expect(rows[0]?.completedIssues).toBe(1);
+    expect(rows[0]?.startedIssues).toBe(1);
+    expect(rows[0]?.backlogIssues).toBe(1);
+  });
+
+  it('rolls the final snapshot back when a later close statement fails', async () => {
+    const failingDatabase = databaseFailingAfterFinalSnapshot(cycleId);
+
+    await expect(
+      completeCycle(workspace.admin, cycleId, withinCycle, failingDatabase),
+    ).rejects.toThrow('rollback after final snapshot result');
+
+    expect(await snapshotCount()).toBe(0);
+    expect((await getCycle(workspace.admin, cycleId)).completedAt).toBeNull();
+  });
+
+  it('does not tally an issue whose organization does not own the sprint', async () => {
+    const other = await createWorkspace('Vega');
+    const foreignIssueId = await insertIssue(other, { number: 1, state: 'Done' });
+    await db.update(schema.issue).set({ cycleId }).where(eq(schema.issue.id, foreignIssueId));
+
+    await writeCycleSnapshots({ now: withinCycle });
+
+    const [snapshot] = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
+    expect(snapshot?.totalIssues).toBe(3);
   });
 });
