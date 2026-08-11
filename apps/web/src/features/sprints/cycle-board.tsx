@@ -1,11 +1,10 @@
 import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
-import { ProgressBar } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
 import { buildBurnUp, burnUpMetric } from './burn-up.ts';
-import type { CycleView } from './data.ts';
+import type { AssigneeTally, CycleView, StateGroup } from './data.ts';
 
 function Tally({ label, value }: { readonly label: string; readonly value: number }) {
   return (
@@ -29,6 +28,94 @@ function ScopeChanges({ progress }: { readonly progress: CycleView['progress'] }
       {removed > 0 ? <span>{removed} removed</span> : null}
       {canceled > 0 ? <span>{canceled} cancelled</span> : null}
     </p>
+  );
+}
+
+function AssigneeTable({
+  groups,
+  assignees,
+}: {
+  readonly groups: readonly StateGroup[];
+  readonly assignees: readonly AssigneeTally[];
+}) {
+  const totals = groups.map((_, column) =>
+    assignees.reduce((sum, row) => sum + (row.points[column] ?? 0), 0),
+  );
+  const grand = totals.reduce((sum, value) => sum + value, 0);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-2xs tabular" data-testid="assignee-points">
+        <thead>
+          <tr className="border-border border-b">
+            <th className="py-1 pr-2 text-left font-medium text-faint">Assignee</th>
+            {groups.map((group) => (
+              <th key={group.stateId} className="px-1 py-1 text-right font-medium text-faint">
+                <span className="flex items-center justify-end gap-1">
+                  <span
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: group.color }}
+                    aria-hidden="true"
+                  />
+                  {group.name}
+                </span>
+              </th>
+            ))}
+            <th className="py-1 pl-2 text-right font-medium text-text">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assignees.map((assignee) => (
+            <tr key={assignee.id} className="border-border/60 border-b last:border-b-0">
+              <td className="py-1 pr-2">
+                <span className="flex items-center gap-1.5 text-muted">
+                  <Avatar name={assignee.name} src={assignee.image} size="xs" />
+                  <span className="truncate">{assignee.name}</span>
+                </span>
+              </td>
+              {groups.map((group, column) => {
+                const points = assignee.points[column] ?? 0;
+                return (
+                  <td
+                    key={group.stateId}
+                    data-testid={`assignee-${assignee.id}-${group.stateId}`}
+                    className={
+                      points === 0
+                        ? 'px-1 py-1 text-right text-faint'
+                        : 'px-1 py-1 text-right text-muted'
+                    }
+                  >
+                    {points}
+                  </td>
+                );
+              })}
+              <td
+                data-testid={`assignee-${assignee.id}-total`}
+                className="py-1 pl-2 text-right text-text"
+              >
+                {assignee.totalPoints}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-border border-t">
+            <td className="py-1 pr-2 text-faint">All</td>
+            {totals.map((points, column) => (
+              <td
+                key={groups[column]?.stateId ?? column}
+                className="px-1 py-1 text-right text-muted"
+              >
+                {points}
+              </td>
+            ))}
+            <td data-testid="assignee-grand-total" className="py-1 pl-2 text-right text-text">
+              {grand}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 
@@ -90,30 +177,11 @@ export function CycleAnalytics({ cycle }: { readonly cycle: CycleView }) {
       />
 
       <div className="flex flex-col gap-2.5">
-        <h3 className="font-medium text-dense text-text">Per assignee</h3>
+        <h3 className="font-medium text-dense text-text">Points per assignee</h3>
         {cycle.assignees.length === 0 ? (
           <p className="text-faint text-xs">Nothing assigned in this sprint.</p>
         ) : (
-          <ul className="flex flex-col gap-2.5">
-            {cycle.assignees.map((assignee) => (
-              <li key={assignee.id} className="flex flex-col gap-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 text-muted text-xs">
-                    <Avatar name={assignee.name} src={assignee.image} size="xs" />
-                    {assignee.name}
-                  </span>
-                  <span className="text-2xs text-faint tabular">
-                    {assignee.completed}/{assignee.scope}
-                  </span>
-                </span>
-                <ProgressBar
-                  completed={assignee.completed}
-                  scope={assignee.scope}
-                  label={`${assignee.name} completion`}
-                />
-              </li>
-            ))}
-          </ul>
+          <AssigneeTable groups={cycle.groups} assignees={cycle.assignees} />
         )}
       </div>
     </aside>

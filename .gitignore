@@ -32,3 +32,5 @@ next-env.d.ts
 .artifacts/
 .vercel
 .env*
+
+.claude/launch.json

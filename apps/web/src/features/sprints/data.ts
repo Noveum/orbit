@@ -35,8 +35,10 @@ export interface AssigneeTally {
   readonly id: string;
   readonly name: string;
   readonly image: string | null;
-  readonly scope: number;
-  readonly completed: number;
+  readonly points: number[];
+  readonly issues: number[];
+  readonly totalPoints: number;
+  readonly totalIssues: number;
 }
 
 export interface CycleView {
@@ -67,6 +69,7 @@ export interface CycleIssueRow {
   readonly stateName: string;
   readonly stateCategory: string;
   readonly stateColor: string;
+  readonly estimate: number | null;
   readonly assigneeId: string | null;
   readonly assigneeName: string | null;
   readonly assigneeImage: string | null;
@@ -85,9 +88,17 @@ function groupKey(row: CycleIssueRow): string {
   return `${row.stateCategory}:${row.stateName.trim().toLowerCase()}`;
 }
 
+interface AssigneeRows {
+  readonly id: string;
+  readonly name: string;
+  readonly image: string | null;
+  readonly points: Map<string, number>;
+  readonly issues: Map<string, number>;
+}
+
 export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssueBreakdown {
   const groups = new Map<string, StateGroup>();
-  const tallies = new Map<string, AssigneeTally>();
+  const tallies = new Map<string, AssigneeRows>();
 
   for (const row of rows) {
     const category = toCategory(row.stateCategory);
@@ -112,25 +123,39 @@ export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssue
     });
     groups.set(key, group);
 
-    if (assignee === null || category === 'canceled') continue;
+    if (assignee === null) continue;
     const tally = tallies.get(assignee.id) ?? {
       id: assignee.id,
       name: assignee.name,
       image: assignee.image,
-      scope: 0,
-      completed: 0,
+      points: new Map<string, number>(),
+      issues: new Map<string, number>(),
     };
-    tallies.set(assignee.id, {
-      ...tally,
-      scope: tally.scope + 1,
-      completed: tally.completed + (category === 'completed' ? 1 : 0),
-    });
+    tally.points.set(key, (tally.points.get(key) ?? 0) + (row.estimate ?? 0));
+    tally.issues.set(key, (tally.issues.get(key) ?? 0) + 1);
+    tallies.set(assignee.id, tally);
   }
 
-  return {
-    groups: [...groups.values()],
-    assignees: [...tallies.values()].sort((left, right) => right.scope - left.scope),
-  };
+  const order = [...groups.keys()];
+  const assignees = [...tallies.values()]
+    .map((tally) => {
+      const points = order.map((key) => tally.points.get(key) ?? 0);
+      const issues = order.map((key) => tally.issues.get(key) ?? 0);
+      return {
+        id: tally.id,
+        name: tally.name,
+        image: tally.image,
+        points,
+        issues,
+        totalPoints: points.reduce((sum, value) => sum + value, 0),
+        totalIssues: issues.reduce((sum, value) => sum + value, 0),
+      };
+    })
+    .sort(
+      (left, right) => right.totalPoints - left.totalPoints || right.totalIssues - left.totalIssues,
+    );
+
+  return { groups: [...groups.values()], assignees };
 }
 
 async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
@@ -145,6 +170,7 @@ async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
       stateCategory: schema.workflowState.category,
       stateColor: schema.workflowState.color,
       statePosition: schema.workflowState.position,
+      estimate: schema.issue.estimate,
       assigneeId: schema.user.id,
       assigneeName: schema.user.name,
       assigneeImage: schema.user.image,

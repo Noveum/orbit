@@ -28,8 +28,21 @@ function cycleWith(overrides: ProgressOverrides): CycleView {
     startsAt: '2026-01-01T00:00:00.000Z',
     endsAt: '2026-01-15T00:00:00.000Z',
     completedAt: null,
-    groups: [],
-    assignees: [{ id: 'member_1', name: 'Ada Lovelace', image: null, scope: 3, completed: 2 }],
+    groups: [
+      { stateId: 'state_todo', name: 'Todo', category: 'unstarted', color: '#6B7280', issues: [] },
+      { stateId: 'state_done', name: 'Done', category: 'completed', color: '#22C55E', issues: [] },
+    ],
+    assignees: [
+      {
+        id: 'member_1',
+        name: 'Ada Lovelace',
+        image: null,
+        points: [8, 5],
+        issues: [2, 1],
+        totalPoints: 13,
+        totalIssues: 3,
+      },
+    ],
     progress: {
       cycleId: 'cycle_1',
       scope: overrides.scope ?? 4,
@@ -143,10 +156,18 @@ describe('CycleAnalytics', () => {
     expect(screen.queryByTestId('sprint-scope-changes')).toBeNull();
   });
 
-  it('keeps the per assignee breakdown', () => {
+  it('breaks each assignee down by column and totals the row', () => {
     render(<CycleAnalytics cycle={cycleWith({})} />);
 
     expect(screen.getByText('Ada Lovelace')).toBeDefined();
-    expect(screen.getByText('2/3')).toBeDefined();
+    expect(screen.getByTestId('assignee-member_1-total').textContent).toBe('13');
+    expect(screen.getByTestId('assignee-grand-total').textContent).toBe('13');
+  });
+
+  it('says so when nobody is carrying anything', () => {
+    render(<CycleAnalytics cycle={{ ...cycleWith({}), assignees: [] }} />);
+
+    expect(screen.queryByTestId('assignee-points')).toBeNull();
+    expect(screen.getByText('Nothing assigned in this sprint.')).toBeDefined();
   });
 });
