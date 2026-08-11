@@ -43,6 +43,7 @@ export default async function SprintsPage({ searchParams }: PageProps) {
 
   const active = parseSprintTab(tab);
   const base = chosen === null ? '/sprints' : `/sprints?sprint=${chosen}`;
+  const outcome = sprint?.outcome ?? null;
 
   return (
     <div className="flex flex-col gap-6 px-6 py-6">
@@ -56,6 +57,12 @@ export default async function SprintsPage({ searchParams }: PageProps) {
       ) : (
         <>
           <SprintHeader sprint={sprint} canManage={canManage} />
+          {outcome === null ? null : (
+            <p className="text-muted text-xs tabular-nums" data-testid="sprint-outcome">
+              Closed with {outcome.completed} of {outcome.scope} done
+              {outcome.rolledOver > 0 ? `, ${outcome.rolledOver} rolled into the next sprint` : ''}.
+            </p>
+          )}
           <SprintTabs base={base} active={active} available={['board', 'insights']} />
           {active === 'insights' ? (
             <CycleAnalytics cycle={sprint} />

@@ -184,10 +184,12 @@ async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
   return breakDownCycleIssues(rows);
 }
 
+export type SprintPageView = CycleView & { readonly outcome: RecordedOutcome | null };
+
 export async function getActiveCycleView(
   principal: Principal,
   now: Date = new Date(),
-): Promise<CycleView | null> {
+): Promise<SprintPageView | null> {
   const cycle = await activeCycle(principal, now);
   if (cycle === undefined) return null;
   const [progress, issues] = await Promise.all([
@@ -204,6 +206,7 @@ export async function getActiveCycleView(
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
+    outcome: null,
   };
 }
 
@@ -258,7 +261,7 @@ export async function listPastSprintViews(
 export async function getSprintView(
   principal: Principal,
   number: number,
-): Promise<(CycleView & { readonly outcome: RecordedOutcome | null }) | null> {
+): Promise<SprintPageView | null> {
   const cycle = await getCycleByNumber(principal, number);
   if (cycle === null) return null;
   const [progress, issues, outcome] = await Promise.all([

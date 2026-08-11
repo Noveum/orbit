@@ -98,7 +98,7 @@ export type Project = z.infer<typeof projectSchema>;
 
 export const cycleSchema = z.object({
   id: z.string(),
-  teamId: z.string(),
+  teamId: z.string().nullable(),
   number: z.number(),
   name: z.string(),
   startsAt: timestamp,
