@@ -226,10 +226,10 @@ describe('two edits shifting the same run at once', () => {
       },
     });
 
-    const after = await getCycle(workspace.admin, second.id);
-    const movedByDays = (after.startsAt.getTime() - second.startsAt.getTime()) / DAY;
+    expect(outcome.status).toBe('rejected');
 
-    expect(['fulfilled', 'rejected']).toContain(outcome.status);
-    expect(movedByDays).toBeLessThanOrEqual(3);
+    const after = await getCycle(workspace.admin, second.id);
+    expect(after.startsAt.getTime()).toBe(second.startsAt.getTime());
+    expect(after.endsAt.getTime()).toBe(second.endsAt.getTime());
   });
 });

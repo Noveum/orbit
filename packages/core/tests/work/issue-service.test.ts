@@ -1203,6 +1203,37 @@ describe('an issue milestone has to belong to the project the issue is on', () =
     expect(updated.issue.milestoneId).toBe(here.milestoneId);
   });
 
+  it('drops the milestone when the patch moves the issue to another project', async () => {
+    const here = await projectWithMilestone('Leaving');
+    const there = await projectWithMilestone('Arriving');
+    const issue = await newIssue('Carried work', { projectId: here.projectId });
+    const marked = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+    expect(marked.issue.milestoneId).toBe(here.milestoneId);
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      projectId: there.projectId,
+    });
+
+    expect(updated.issue.projectId).toBe(there.projectId);
+    expect(updated.issue.milestoneId).toBeNull();
+  });
+
+  it('drops the milestone when the issue is taken off every project', async () => {
+    const here = await projectWithMilestone('Detaching');
+    const issue = await newIssue('Loosened work', { projectId: here.projectId });
+    const marked = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+    expect(marked.issue.milestoneId).toBe(here.milestoneId);
+
+    const updated = await updateIssue(workspace.admin, issue.id, { projectId: null });
+
+    expect(updated.issue.projectId).toBeNull();
+    expect(updated.issue.milestoneId).toBeNull();
+  });
+
   it('still takes a milestone of the project the issue is already on', async () => {
     const here = await projectWithMilestone('Steady');
     const issue = await newIssue('Already here', { projectId: here.projectId });

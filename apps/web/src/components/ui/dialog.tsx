@@ -26,6 +26,7 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
+          'max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain',
           'rounded-xl border border-border bg-surface p-5 shadow-pop',
           'data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in',
           className,
