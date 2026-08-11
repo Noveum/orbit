@@ -156,3 +156,15 @@ describe('the running sprint', () => {
     expect(await activeCycle(workspace.admin)).toBeUndefined();
   });
 });
+
+describe('an archived sprint', () => {
+  it('stays out of the list the workspace reads', async () => {
+    const cycle = await runningCycle();
+    await db
+      .update(schema.cycle)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.cycle.id, cycle.id));
+
+    expect((await listCycles(workspace.admin)).map((row) => row.id)).not.toContain(cycle.id);
+  });
+});

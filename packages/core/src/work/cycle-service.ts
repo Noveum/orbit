@@ -447,7 +447,12 @@ export async function listCycles(principal: Principal): Promise<CycleRow[]> {
   return await db
     .select()
     .from(schema.cycle)
-    .where(eq(schema.cycle.organizationId, principal.organizationId))
+    .where(
+      and(
+        eq(schema.cycle.organizationId, principal.organizationId),
+        isNull(schema.cycle.archivedAt),
+      ),
+    )
     .orderBy(asc(schema.cycle.number));
 }
 
