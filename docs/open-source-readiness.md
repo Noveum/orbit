@@ -66,6 +66,14 @@ make the repository a supported production release.
   misclassifies an opaque OAuth credential's HMAC integrity binding as password
   hashing. The reviewed false-positive classification awaits maintainer
   dismissal, so the pull request is not merge-ready.
+- [#294](https://github.com/Noveum/orbit/pull/294), DEP-004, rejects production
+  builds and starts unless password authentication, a complete Google or GitHub
+  credential pair, or Resend magic-link delivery with an explicit non-local
+  sender is configured. It tests rejected and successful startup through the
+  copied standalone artifact and documents first-user bootstrap limits. Status:
+  exact head `b21ad89648e3244f228a1f1a64b698040291c75b` contains current `main`,
+  passes full local verification and independent review, and awaits hosted
+  checks and required exact-head reviews, so the pull request is not merge-ready.
 - [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
   tracker. Status: in progress. It records completed work and remaining release
   requirements without changing application behavior.
@@ -122,9 +130,11 @@ make the repository a supported production release.
 - [ ] **DEP-003: Application containers.** **Status: open.** Add reproducible
   production images and a complete Compose profile for web, realtime, Postgres,
   Redis, and object storage.
-- [ ] **DEP-004: First-login validation.** **Status: open.** Refuse a production
-  start unless at least one complete authentication path is configured and
-  tested.
+- [ ] **DEP-004: First-login validation.** **Status: in progress in #294.**
+  Refuse a production build or start unless at least one complete authentication
+  path is configured. The branch adds regression and copied-artifact coverage
+  for rejected and valid configurations; hosted exact-head checks and reviews
+  remain pending.
 - [ ] **PORT-001: Neutral seed and import tooling.** **Status: partial through
   #281, #287, and #288.** Neutral demo data, unsafe importer quarantine, and
   destructive seed protection are complete. Remaining work includes
