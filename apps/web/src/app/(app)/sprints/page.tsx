@@ -1,6 +1,7 @@
 import { can } from '@orbit/shared/policy';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { CycleAnalytics, CycleBoard, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
 import {
@@ -16,6 +17,8 @@ import { SprintHistory } from '@/features/sprints/sprint-history.tsx';
 import { SprintSchedule } from '@/features/sprints/sprint-schedule.tsx';
 import { parseSprintTab, SprintTabs } from '@/features/sprints/sprint-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 
 export const metadata: Metadata = { title: 'Sprints' };
 
@@ -80,7 +83,20 @@ export default async function SprintsPage({ searchParams }: PageProps) {
       <SprintSchedule upcoming={upcoming} canManage={canManage} running={running !== null} />
 
       <section className="flex flex-col gap-2">
-        <h3 className="font-medium text-dense text-text">Past sprints</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-dense text-text">Past sprints</h3>
+          <Link
+            href="/sprints/all"
+            data-testid="sprint-browse-all"
+            className={cn(
+              'rounded-md px-2 py-1 text-muted text-xs outline-none',
+              'focus-visible:ring-2 focus-visible:ring-accent',
+              rowHover,
+            )}
+          >
+            Browse every sprint
+          </Link>
+        </div>
         <SprintHistory sprints={past} />
       </section>
     </div>

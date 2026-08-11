@@ -481,6 +481,35 @@ export async function listCycles(principal: Principal): Promise<CycleRow[]> {
     .orderBy(asc(schema.cycle.number));
 }
 
+export const SPRINT_PAGE_SIZE = 25;
+
+export async function pageOfCycles(
+  principal: Principal,
+  options: { page?: number; pageSize?: number } = {},
+): Promise<{ cycles: CycleRow[]; total: number; page: number; pageCount: number }> {
+  assertCan(principal, 'issue:read');
+  const pageSize = Math.min(Math.max(options.pageSize ?? SPRINT_PAGE_SIZE, 1), 100);
+  const belongs = and(
+    eq(schema.cycle.organizationId, principal.organizationId),
+    isNull(schema.cycle.archivedAt),
+  );
+
+  const [counted] = await db.select({ total: count() }).from(schema.cycle).where(belongs);
+  const total = counted?.total ?? 0;
+  const pageCount = Math.max(Math.ceil(total / pageSize), 1);
+  const page = Math.min(Math.max(options.page ?? 1, 1), pageCount);
+
+  const cycles = await db
+    .select()
+    .from(schema.cycle)
+    .where(belongs)
+    .orderBy(desc(schema.cycle.startsAt))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+
+  return { cycles, total, page, pageCount };
+}
+
 export async function getCycle(principal: Principal, cycleId: string): Promise<CycleRow> {
   assertCan(principal, 'issue:read');
   const [row] = await db

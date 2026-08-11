@@ -3,13 +3,14 @@ import {
   type CycleProgress,
   cycleProgress,
   getCycleByNumber,
+  pageOfCycles,
   pastCycles,
   type RecordedOutcome,
   sprintOutcome,
   sprintOutcomes,
   upcomingCycles,
 } from '@orbit/core';
-import { and, asc, db, eq, isNull, schema } from '@orbit/db';
+import { and, asc, count, db, eq, inArray, isNull, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import { STATE_CATEGORIES, STATE_CATEGORY_ORDER } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -260,6 +261,72 @@ export async function listPastSprintViews(
     completedAt: (cycle.completedAt ?? cycle.endsAt).toISOString(),
     outcome: outcomes[index] ?? null,
   }));
+}
+
+export interface SprintIndexEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly number: number;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly state: 'running' | 'upcoming' | 'finished';
+  readonly issues: number;
+}
+
+export interface SprintIndexPage {
+  readonly sprints: SprintIndexEntry[];
+  readonly total: number;
+  readonly page: number;
+  readonly pageCount: number;
+}
+
+function sprintState(
+  cycle: { completedAt: Date | null; startsAt: Date; endsAt: Date },
+  now: Date,
+): SprintIndexEntry['state'] {
+  if (cycle.completedAt !== null) return 'finished';
+  if (cycle.startsAt > now) return 'upcoming';
+  if (cycle.endsAt > now) return 'running';
+  return 'finished';
+}
+
+export async function listSprintIndex(
+  principal: Principal,
+  page: number,
+  now: Date = new Date(),
+): Promise<SprintIndexPage> {
+  const { cycles, total, page: current, pageCount } = await pageOfCycles(principal, { page });
+  if (cycles.length === 0) return { sprints: [], total, page: current, pageCount };
+
+  const counts = await db
+    .select({ cycleId: schema.issue.cycleId, total: count() })
+    .from(schema.issue)
+    .where(
+      and(
+        inArray(
+          schema.issue.cycleId,
+          cycles.map((cycle) => cycle.id),
+        ),
+        isNull(schema.issue.archivedAt),
+      ),
+    )
+    .groupBy(schema.issue.cycleId);
+  const byCycle = new Map(counts.map((row) => [row.cycleId, row.total]));
+
+  return {
+    total,
+    page: current,
+    pageCount,
+    sprints: cycles.map((cycle) => ({
+      id: cycle.id,
+      name: sprintLabel(cycle),
+      number: cycle.number,
+      startsAt: cycle.startsAt.toISOString(),
+      endsAt: cycle.endsAt.toISOString(),
+      state: sprintState(cycle, now),
+      issues: byCycle.get(cycle.id) ?? 0,
+    })),
+  };
 }
 
 export async function getSprintView(

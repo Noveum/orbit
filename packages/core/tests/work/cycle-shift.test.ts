@@ -10,6 +10,7 @@ import {
   completeCycle,
   createCycle,
   getCycle,
+  pageOfCycles,
   shiftFollowingCycles,
   updateCycle,
 } from '../../src/work/cycle-service.ts';
@@ -264,5 +265,58 @@ describe('an extension that is not a whole number of days', () => {
 
     const after = await getCycle(workspace.admin, second.id);
     expect(after.startsAt.getTime()).toBe(second.startsAt.getTime() + extendedBy);
+  });
+});
+
+describe('paging through the sprints of a workspace', () => {
+  it('hands back the newest first, a page at a time', async () => {
+    const seeded = (await pageOfCycles(workspace.admin)).total;
+    for (let index = 0; index < 5; index += 1) {
+      await scheduled(index * 20 + 40, index * 20 + 54);
+    }
+
+    const first = await pageOfCycles(workspace.admin, { page: 1, pageSize: 2 });
+    const second = await pageOfCycles(workspace.admin, { page: 2, pageSize: 2 });
+
+    expect(first.total).toBe(seeded + 5);
+    expect(first.pageCount).toBe(Math.ceil((seeded + 5) / 2));
+    expect(first.cycles).toHaveLength(2);
+    expect(first.cycles[0]?.startsAt.getTime()).toBeGreaterThan(
+      first.cycles[1]?.startsAt.getTime() ?? 0,
+    );
+    expect(second.cycles[0]?.startsAt.getTime()).toBeLessThan(
+      first.cycles[1]?.startsAt.getTime() ?? 0,
+    );
+  });
+
+  it('never runs off either end of the range', async () => {
+    await scheduled(40, 54);
+    const all = await pageOfCycles(workspace.admin);
+
+    const before = await pageOfCycles(workspace.admin, { page: 0 });
+    const beyond = await pageOfCycles(workspace.admin, { page: 999 });
+
+    expect(before.page).toBe(1);
+    expect(beyond.page).toBe(all.pageCount);
+    expect(beyond.cycles.length).toBeGreaterThan(0);
+  });
+
+  it('pages a long series without ever dividing by zero', async () => {
+    const page = await pageOfCycles(workspace.admin, { pageSize: 1 });
+
+    expect(page.pageCount).toBeGreaterThanOrEqual(1);
+    expect(page.page).toBe(1);
+  });
+
+  it('shows a workspace only its own sprints', async () => {
+    await scheduled(40, 54);
+    const other = await createWorkspace('Other');
+
+    const mine = await pageOfCycles(workspace.admin);
+    const theirs = await pageOfCycles(other.admin);
+
+    expect(mine.total).toBeGreaterThan(theirs.total);
+    const ids = new Set(mine.cycles.map((row) => row.id));
+    expect(theirs.cycles.every((row) => !ids.has(row.id))).toBe(true);
   });
 });
