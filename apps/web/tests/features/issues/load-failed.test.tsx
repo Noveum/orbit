@@ -6,14 +6,16 @@ afterEach(cleanup);
 
 describe('the state a surface shows when its request failed', () => {
   it('names what could not be read rather than claiming it is empty', () => {
-    render(<LoadFailed subject="this sprint" onRetry={() => undefined} testId="retry-x" />);
+    const retry = mock(() => undefined);
+    render(<LoadFailed subject="this sprint" onRetry={retry} testId="retry-x" />);
 
     expect(screen.getByText('Could not load this sprint')).toBeDefined();
     expect(screen.queryByText(/Nothing/)).toBeNull();
   });
 
   it('says plainly that unread is not the same as empty', () => {
-    render(<LoadFailed subject="your issues" onRetry={() => undefined} testId="retry-x" />);
+    const retry = mock(() => undefined);
+    render(<LoadFailed subject="your issues" onRetry={retry} testId="retry-x" />);
 
     expect(screen.getByText(/it is unread/)).toBeDefined();
   });

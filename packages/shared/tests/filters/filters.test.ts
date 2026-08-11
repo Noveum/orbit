@@ -274,6 +274,46 @@ describe('condition helpers', () => {
     expect(next.children).toHaveLength(1);
   });
 
+  it('steps past an empty group rather than spending the click on it', () => {
+    const withEmpty: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        { kind: 'group', combinator: 'or', children: [] },
+      ],
+    };
+
+    expect(conditionsOf(dropLastCondition(withEmpty))).toEqual([]);
+  });
+
+  it('steps past a group that only holds other empty groups', () => {
+    const hollow: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        {
+          kind: 'group',
+          combinator: 'or',
+          children: [{ kind: 'group', combinator: 'and', children: [] }],
+        },
+      ],
+    };
+
+    expect(conditionsOf(dropLastCondition(hollow))).toEqual([]);
+  });
+
+  it('has nothing to do when the filter holds no conditions at all', () => {
+    const hollow: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [{ kind: 'group', combinator: 'or', children: [] }],
+    };
+
+    expect(conditionsOf(dropLastCondition(hollow))).toEqual([]);
+  });
+
   it('removes one condition per call however deep the tree goes', () => {
     const deep: FilterGroup = {
       kind: 'group',

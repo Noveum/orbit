@@ -320,6 +320,7 @@ export function dropLastCondition(group: FilterGroup): FilterGroup {
   if (last === undefined) return group;
   const withoutLast = group.children.slice(0, -1);
   if (last.kind === 'condition') return { ...group, children: withoutLast };
+  if (countConditions(last) === 0) return dropLastCondition({ ...group, children: withoutLast });
   const trimmed = dropLastCondition(last);
   return {
     ...group,

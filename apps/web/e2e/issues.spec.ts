@@ -111,5 +111,33 @@ test('every issue surface says a failed request failed rather than looking empty
     await surface.close();
   }
 
+  const project = await context.newPage();
+  await project.goto(`${BASE}/projects`);
+  const projectHref = await project
+    .locator('a[href^="/projects/"]')
+    .filter({ hasNotText: /^$/ })
+    .first()
+    .getAttribute('href');
+  if (projectHref !== null && projectHref !== '/projects') {
+    await project.route('**/api/issues**', (route) =>
+      route.fulfill({ status: 500, body: '{"error":"boom"}' }),
+    );
+    await project.goto(`${BASE}${projectHref}/issues`);
+    await expect(project.getByTestId('retry-project-issues')).toBeVisible({ timeout: 30_000 });
+  }
+  await project.close();
+
+  const view = await context.newPage();
+  await view.goto(`${BASE}/views`);
+  const viewHref = await view.locator('a[href^="/views/"]').first().getAttribute('href');
+  if (viewHref !== null) {
+    await view.route('**/api/issues**', (route) =>
+      route.fulfill({ status: 500, body: '{"error":"boom"}' }),
+    );
+    await view.goto(`${BASE}${viewHref}`);
+    await expect(view.getByTestId('retry-saved-view')).toBeVisible({ timeout: 30_000 });
+  }
+  await view.close();
+
   await context.close();
 });
