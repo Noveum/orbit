@@ -2,7 +2,7 @@ import { can } from '@orbit/shared/policy';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { CycleAnalytics, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
+import { CycleAnalytics, CycleBoard, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
   getSprintView,
@@ -65,15 +65,15 @@ export default async function SprintsPage({ searchParams }: PageProps) {
               {outcome.rolledOver > 0 ? `, ${outcome.rolledOver} rolled into the next sprint` : ''}.
             </p>
           )}
-          <SprintTabs base={base} active={active} available={['board', 'insights']} />
-          {active === 'insights' ? (
-            <CycleAnalytics cycle={sprint} />
-          ) : (
+          <SprintTabs base={base} active={active} available={['board', 'list', 'insights']} />
+          {active === 'insights' ? <CycleAnalytics cycle={sprint} /> : null}
+          {active === 'board' ? <CycleBoard cycle={sprint} /> : null}
+          {active === 'list' ? (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
               <CycleIssueList cycle={sprint} />
               <CycleAnalytics cycle={sprint} />
             </div>
-          )}
+          ) : null}
         </>
       )}
 
