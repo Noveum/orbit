@@ -3,17 +3,24 @@
 -- A sprint used to belong to a team: cycle.team_id was not null and the number was unique
 -- per team, so every team had its own Sprint 1 running at the same time. A sprint now
 -- belongs to the workspace and holds work from any team or project, so the number has to be
--- unique per organization instead.
+-- unique per organization instead, and two open sprints may no longer overlap.
 --
 -- What it does, in order:
---   1. Merges the sprints that overlap in time into one, keeping the one holding the most
---      issues and moving every other sprint's issues onto it.
---   2. Archives the sprints that were emptied by the merge.
---   3. Renumbers what is left, oldest first, into one sequence per organization.
---   4. Makes team_id nullable and swaps the unique index onto (organization_id, number).
+--   1. Groups the open sprints of each workspace into runs that overlap in time. A run is a
+--      chain of sprints where each one starts before the previous one has ended.
+--   2. Merges each run into the sprint in it holding the most work, moving the issues of the
+--      others onto it. Sprints in different runs are left where they are, so a sprint
+--      planned for next month stays next month rather than being pulled into this one.
+--   3. Archives the sprints emptied by that merge.
+--   4. Renumbers what is left, oldest first, into one sequence per organization.
+--   5. Makes team_id nullable, clears it on the sprints that are still open, and swaps the
+--      unique index onto (organization_id, number).
 --
 -- Sprints that already finished keep their team_id, so past sprints still read as the team
--- that ran them. Sprints created from here on carry no team.
+-- that ran them. Sprints that are still open carry no team from here on.
+--
+-- No issue is deleted or detached: every issue either stays where it is or moves onto the
+-- sprint its own run was merged into.
 --
 -- Safe to run more than once. Every step checks first and the whole thing is one
 -- transaction, so a failure leaves the database exactly as it was.
@@ -29,48 +36,65 @@ alter table public.cycle alter column team_id drop not null;
 drop index if exists cycle_team_number_unique;
 drop index if exists cycle_team_dates_idx;
 
-with running as (
-  select
-    c.id,
-    c.organization_id,
-    c.starts_at,
-    c.ends_at,
-    count(i.id) as issue_count
-  from public.cycle c
-  left join public.issue i on i.cycle_id = c.id and i.archived_at is null
-  where c.completed_at is null and c.archived_at is null
-  group by c.id
+create temporary table sprint_runs on commit drop as
+with open_cycles as (
+  select id, organization_id, starts_at, ends_at
+  from public.cycle
+  where completed_at is null and archived_at is null
 ),
-winner as (
-  select distinct on (organization_id)
+marked as (
+  select
     id,
-    organization_id
-  from running
-  order by organization_id, issue_count desc, starts_at asc, id asc
+    organization_id,
+    starts_at,
+    ends_at,
+    case
+      when starts_at >= coalesce(
+        max(ends_at) over (
+          partition by organization_id
+          order by starts_at, id
+          rows between unbounded preceding and 1 preceding
+        ),
+        starts_at
+      ) then 1
+      else 0
+    end as opens_a_run
+  from open_cycles
 )
+select
+  id,
+  organization_id,
+  starts_at,
+  sum(opens_a_run) over (
+    partition by organization_id
+    order by starts_at, id
+    rows unbounded preceding
+  ) as run
+from marked;
+
+create temporary table sprint_run_winners on commit drop as
+select distinct on (r.organization_id, r.run)
+  r.id,
+  r.organization_id,
+  r.run
+from sprint_runs r
+left join public.issue i on i.cycle_id = r.id and i.archived_at is null
+group by r.organization_id, r.run, r.id, r.starts_at
+order by r.organization_id, r.run, count(i.id) desc, r.starts_at asc, r.id asc;
+
 update public.issue i
 set cycle_id = w.id
-from running r
-join winner w on w.organization_id = r.organization_id
+from sprint_runs r
+join sprint_run_winners w on w.organization_id = r.organization_id and w.run = r.run
 where i.cycle_id = r.id
   and i.cycle_id is distinct from w.id
   and i.archived_at is null;
 
-with winner as (
-  select distinct on (c.organization_id)
-    c.id,
-    c.organization_id
-  from public.cycle c
-  left join public.issue i on i.cycle_id = c.id and i.archived_at is null
-  where c.completed_at is null and c.archived_at is null
-  group by c.id
-  order by c.organization_id, count(i.id) desc, c.starts_at asc, c.id asc
-)
 update public.cycle c
 set archived_at = now()
-where c.completed_at is null
-  and c.archived_at is null
-  and not exists (select 1 from winner w where w.id = c.id)
+from sprint_runs r
+where r.id = c.id
+  and not exists (select 1 from sprint_run_winners w where w.id = c.id)
   and not exists (select 1 from public.issue i where i.cycle_id = c.id and i.archived_at is null);
 
 with ordered as (
@@ -87,7 +111,7 @@ where o.id = c.id and c.number is distinct from o.seq;
 
 update public.cycle
 set team_id = null
-where completed_at is null and archived_at is null;
+where completed_at is null and archived_at is null and team_id is not null;
 
 create unique index if not exists cycle_org_number_unique
   on public.cycle using btree (organization_id, number);

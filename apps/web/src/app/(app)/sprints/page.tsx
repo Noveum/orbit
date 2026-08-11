@@ -8,6 +8,7 @@ import {
   getSprintView,
   listPastSprintViews,
   listUpcomingCycleViews,
+  runningSprintNumber,
 } from '@/features/sprints/data.ts';
 import { NewSprintButton } from '@/features/sprints/sprint-actions.tsx';
 import { SprintHeader } from '@/features/sprints/sprint-header.tsx';
@@ -35,10 +36,11 @@ export default async function SprintsPage({ searchParams }: PageProps) {
   const { tab, sprint: wanted } = await searchParams;
   const chosen = sprintNumber(wanted);
 
-  const [sprint, upcoming, past] = await Promise.all([
+  const [sprint, upcoming, past, running] = await Promise.all([
     chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen),
     listUpcomingCycleViews(principal),
     listPastSprintViews(principal),
+    runningSprintNumber(principal),
   ]);
 
   const active = parseSprintTab(tab);
@@ -75,7 +77,7 @@ export default async function SprintsPage({ searchParams }: PageProps) {
         </>
       )}
 
-      <SprintSchedule upcoming={upcoming} canManage={canManage} running={sprint !== null} />
+      <SprintSchedule upcoming={upcoming} canManage={canManage} running={running !== null} />
 
       <section className="flex flex-col gap-2">
         <h3 className="font-medium text-dense text-text">Past sprints</h3>
