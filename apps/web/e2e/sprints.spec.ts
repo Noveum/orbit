@@ -78,3 +78,25 @@ test('the sprint board is the board every other surface uses, not one of its own
 
   await context.close();
 });
+
+test('a sprint whose tasks fail to load says so instead of looking empty', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 800 } });
+  const page = await signIn(context, 'alex@orbit.example');
+
+  let failing = true;
+  await page.route('**/api/issues?**', async (route) => {
+    if (failing) return await route.fulfill({ status: 500, body: '{"error":"boom"}' });
+    return await route.continue();
+  });
+
+  await page.goto(`${BASE}/sprints`);
+  const retry = page.getByTestId('retry-sprint-issues');
+  await expect(retry).toBeVisible();
+  await expect(page.getByTestId('sprint-issues')).not.toContainText('Nothing in this sprint yet');
+
+  failing = false;
+  await retry.click();
+  await expect(page.locator('[data-testid^="board-column-"]').first()).toBeVisible();
+
+  await context.close();
+});
