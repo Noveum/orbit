@@ -140,6 +140,7 @@ jobs:
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
+      ORBIT_PASSWORD_AUTH: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -175,22 +176,52 @@ jobs:
           } > "$artifact_root/orbit/.env"
           (
             cd "$artifact_root/orbit/apps/web"
-            unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL
+            unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
+            unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
+            unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
+            PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
+          ) > "$log_path" 2>&1 &
+          server_pid=$!
+          for attempt in $(seq 1 200); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+            if curl -fsS --connect-timeout 0.2 --max-time 0.2 http://127.0.0.1:3001/api/health 2>/dev/null | grep -q '"status":"ok"'; then
+              echo "Standalone server became healthy with an unusable authentication configuration" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$server_pid" 2>/dev/null; then
+            echo "Standalone server accepted an unusable authentication configuration" >&2
+            exit 1
+          fi
+          if wait "$server_pid"; then
+            echo "Standalone server accepted an unusable authentication configuration" >&2
+            exit 1
+          fi
+          server_pid=""
+          grep -Fq 'Production requires a usable first-login method.' "$log_path"
+          echo "ORBIT_PASSWORD_AUTH=true" >> "$artifact_root/orbit/.env"
+          : > "$log_path"
+          (
+            cd "$artifact_root/orbit/apps/web"
+            unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
+            unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
+            unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3001/api/health 2>/dev/null | grep -q '"status":"ok"'; then
+            if curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:3001/api/health 2>/dev/null | grep -q '"status":"ok"'; then
               break
             fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:3001/api/health | grep -q '"status":"ok"'
-          curl -fsS --output /dev/null http://127.0.0.1:3001/logo.png
+          curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:3001/api/health | grep -q '"status":"ok"'
+          curl -fsS --connect-timeout 2 --max-time 10 --output /dev/null http://127.0.0.1:3001/logo.png
           static_file="$(find "$artifact_root/orbit/apps/web/.next/standalone/apps/web/.next/static/chunks" -type f -name '*.js' -print -quit)"
           test -n "$static_file"
           static_path="${static_file#"$artifact_root/orbit/apps/web/.next/standalone/apps/web/.next"}"
-          curl -fsS --output /dev/null "http://127.0.0.1:3001/_next$static_path"
+          curl -fsS --connect-timeout 2 --max-time 10 --output /dev/null "http://127.0.0.1:3001/_next$static_path"
 
   e2e:
     name: End-to-end (Playwright)

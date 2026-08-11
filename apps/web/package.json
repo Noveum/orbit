@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --env-file=../../.env next dev --port 3000",
-    "build": "bun --env-file=../../.env ../../packages/db/src/check-drift.ts --guard-deploy && bun --env-file=../../.env next build && if [ \"${VERCEL:-}\" != \"1\" ]; then test -d .next/standalone/apps/web || { echo \"Missing standalone output\" >&2; exit 1; }; mkdir -p .next/standalone/apps/web/.next && cp -R public .next/standalone/apps/web/ && cp -R .next/static .next/standalone/apps/web/.next/; fi",
-    "start": "node --env-file=../../.env .next/standalone/apps/web/server.js",
+    "build": "bun --env-file=../../.env ../../packages/db/src/check-drift.ts --guard-deploy && bun --env-file=../../.env next build && if [ \"${VERCEL:-}\" != \"1\" ]; then test -d .next/standalone/apps/web || { echo \"Missing standalone output\" >&2; exit 1; }; mkdir -p .next/standalone/apps/web/.next && cp -R public .next/standalone/apps/web/ && cp -R .next/static .next/standalone/apps/web/.next/ && bun build src/start.ts --target=node --format=esm --outfile=.next/standalone/apps/web/start.mjs; fi",
+    "start": "node --env-file=../../.env .next/standalone/apps/web/start.mjs",
     "typecheck": "tsc --noEmit",
     "test": "bun --env-file=../../.env test tests --timeout 20000",
     "test:e2e": "bun --env-file=../../.env --bun playwright test"
