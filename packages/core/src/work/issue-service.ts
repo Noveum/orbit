@@ -595,14 +595,11 @@ async function assertCycleInWorkspace(
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
-    .select({ organizationId: schema.cycle.organizationId })
+    .select({ id: schema.cycle.id })
     .from(schema.cycle)
-    .where(eq(schema.cycle.id, cycleId))
+    .where(and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, organizationId)))
     .limit(1);
-  const cycle = requireRow(row, 'That sprint does not exist.');
-  if (cycle.organizationId !== organizationId) {
-    throw validationFailed('That sprint belongs to another workspace.');
-  }
+  requireRow(row, 'That sprint does not exist.');
 }
 
 async function projectTeamIds(executor: Executor, projectId: string): Promise<string[]> {

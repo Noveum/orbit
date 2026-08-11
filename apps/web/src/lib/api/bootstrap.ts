@@ -10,8 +10,6 @@ import { and, db, desc, eq, isNull, schema, sql } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 
-const RECENT_CYCLES = 12;
-
 export interface BootstrapQuery {
   readonly team?: string | undefined;
 }
@@ -28,7 +26,7 @@ async function boardColumnsForTeams(principal: Principal, teamIds: readonly stri
   }));
 }
 
-async function listRecentCycles(principal: Principal) {
+async function listWorkspaceCycles(principal: Principal) {
   return await db
     .select({
       id: schema.cycle.id,
@@ -46,8 +44,7 @@ async function listRecentCycles(principal: Principal) {
         isNull(schema.cycle.archivedAt),
       ),
     )
-    .orderBy(desc(schema.cycle.number))
-    .limit(RECENT_CYCLES);
+    .orderBy(desc(schema.cycle.number));
 }
 
 export async function bootstrapVersion(principal: Principal): Promise<string> {
@@ -85,7 +82,7 @@ export async function bootstrapPayloadFor(principal: Principal, resolved: Bootst
 
   const [states, cycles, labels, members, projects, links] = await Promise.all([
     boardColumnsForTeams(principal, teamIds),
-    listRecentCycles(principal),
+    listWorkspaceCycles(principal),
     listLabels(principal),
     listMembers(principal),
     listProjectsForTeams(principal, teamIds),

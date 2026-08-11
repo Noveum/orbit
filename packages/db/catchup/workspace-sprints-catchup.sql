@@ -13,8 +13,9 @@
 --      planned for next month stays next month rather than being pulled into this one.
 --   3. Archives the sprints emptied by that merge.
 --   4. Renumbers what is left, oldest first, into one sequence per organization.
---   5. Makes team_id nullable, clears it on the sprints that are still open, and swaps the
---      unique index onto (organization_id, number).
+--   5. Makes team_id nullable, points its foreign key at set null rather than cascade, clears
+--      it on the sprints that are still open, and swaps the unique index onto
+--      (organization_id, number).
 --
 -- Sprints that already finished keep their team_id, so past sprints still read as the team
 -- that ran them. Sprints that are still open carry no team from here on.
@@ -32,6 +33,14 @@
 begin;
 
 alter table public.cycle alter column team_id drop not null;
+
+-- The old foreign key deleted a team's sprints with the team. A sprint now outlives the team
+-- that used to run it, and the column is only the label that team left behind, so the delete
+-- action has to let go of the sprint rather than take it with it.
+alter table public.cycle drop constraint if exists cycle_team_id_team_id_fk;
+alter table public.cycle
+  add constraint cycle_team_id_team_id_fk
+  foreign key (team_id) references public.team (id) on delete set null;
 
 drop index if exists cycle_team_number_unique;
 drop index if exists cycle_team_dates_idx;

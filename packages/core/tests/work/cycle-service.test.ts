@@ -763,7 +763,7 @@ describe('cycle writes need the right role, not the right team', () => {
 
     await expect(
       updateIssue(workspace.admin, issue.id, { cycleId: theirs.id }),
-    ).rejects.toMatchObject({ code: 'validation_failed' });
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
 

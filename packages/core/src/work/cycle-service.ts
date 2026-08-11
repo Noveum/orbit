@@ -274,14 +274,32 @@ async function shiftFollowingWithin(
   const actor = await principalActor(tx, principal);
   const shifted: CycleRow[] = [];
 
+  const moving = new Set(movable.map((row) => row.id));
   for (const row of movable) {
+    const startsAt = addUtcDays(row.startsAt, days);
+    const endsAt = addUtcDays(row.endsAt, days);
+    const [landedOn] = await tx
+      .select({ id: schema.cycle.id, name: schema.cycle.name, number: schema.cycle.number })
+      .from(schema.cycle)
+      .where(
+        and(
+          eq(schema.cycle.organizationId, anchor.organizationId),
+          isNull(schema.cycle.archivedAt),
+          isNotNull(schema.cycle.completedAt),
+          lt(schema.cycle.startsAt, endsAt),
+          gt(schema.cycle.endsAt, startsAt),
+        ),
+      )
+      .limit(1);
+    if (landedOn !== undefined && !moving.has(landedOn.id)) {
+      throw conflict(`Moving those sprints would land on ${sprintLabel(landedOn)}.`, {
+        details: { cycleId: landedOn.id },
+      });
+    }
+
     const [moved] = await tx
       .update(schema.cycle)
-      .set({
-        startsAt: addUtcDays(row.startsAt, days),
-        endsAt: addUtcDays(row.endsAt, days),
-        syncId,
-      })
+      .set({ startsAt, endsAt, syncId })
       .where(eq(schema.cycle.id, row.id))
       .returning();
     shifted.push(requireRow(moved, 'That cycle does not exist.'));

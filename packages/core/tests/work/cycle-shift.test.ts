@@ -191,3 +191,19 @@ describe('an edit that shifts and then fails', () => {
     expect(after.startsAt.getTime()).toBe(second.startsAt.getTime() + 3 * DAY);
   });
 });
+
+describe('a shift that would land on a finished sprint', () => {
+  it('refuses rather than parking a sprint on top of one already closed', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+    const blocker = await scheduled(60, 74);
+    await completeCycle(workspace.admin, blocker.id);
+
+    await expect(
+      shiftFollowingCycles(workspace.admin, first.id, { after: first.endsAt, days: 30 }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    const untouched = await getCycle(workspace.admin, second.id);
+    expect(untouched.startsAt.getTime()).toBe(second.startsAt.getTime());
+  });
+});

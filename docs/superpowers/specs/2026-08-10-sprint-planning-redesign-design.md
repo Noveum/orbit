@@ -1,9 +1,22 @@
 # Sprint planning redesign
 
 Date: 2026-08-10
+Revised: 2026-08-11
 Branch: `claude/sprint-planning-redesign-ef9d1e`
 Delivery: one specification, six workstreams, one pull request each, landing in
 the order given at the end of this document.
+
+## What changed after the first draft
+
+This document first specified a sprint per team, with a workspace roll up
+listing one row per team and drilling into that team's sprint. That is not what
+shipped. A sprint belongs to the workspace: one sprint runs at a time and holds
+work from any team or project, `/sprints` is that sprint, and the team sprint
+routes redirect to it. `cycle.team_id` is nullable and survives only as the
+label a finished team sprint was run under.
+
+The sections below describe the shipped model. The roll up, the team switcher
+and the per team cadence are not part of it and are not planned.
 
 ## Why
 
@@ -76,15 +89,17 @@ Jira's contribution is the completion dialog: when a sprint closes with
 unfinished work you choose one destination for it, either the backlog or a
 named sprint, and that choice is what keeps its reports correct.
 
-We take team scoped cycles, velocity seeded capacity, cadence generation and
-the backlog exclusion from Linear, and the single destination completion
-dialog from Jira.
+We take velocity seeded capacity and the backlog exclusion from Linear, and the
+single destination completion dialog from Jira. We do not take Linear's team
+scoped cycles: a sprint here belongs to the workspace, because a company that
+plans one fortnight at a time wants one answer to what it is working on, not
+one per team.
 
 ## Decisions taken
 
 | Question | Decision |
 | --- | --- |
-| Page structure | Workspace roll up at `/sprints`, one row per team, drilling into a full per team sprint page |
+| Page structure | One sprint for the workspace at `/sprints`. Team sprint routes redirect to it |
 | Capacity unit | Points per person per sprint, seeded from velocity of the last three completed sprints, editable inline |
 | Cadence | Optional per team. Manual by default, opt in to auto generation |
 | Retrospective | Structured board, columns for went well, went badly, actions, with voting and convert to issue |
@@ -100,10 +115,9 @@ list in the application rather than only at sprint close.
 ## Information architecture
 
 ```
-/sprints                     Workspace roll up. One row per team. No panels, no charts.
-/team/[key]/sprint/active    The sprint page. Canonical home.
-/team/[key]/sprint/[number]  The same page for any sprint, past or future.
-/team/[key]/sprint/[number]/retro/[retroId]
+/sprints                     The sprint of the workspace. The canonical home.
+/sprints?sprint=<number>     Any sprint of the workspace, past or future.
+/team/[key]/sprint/*         Redirects to /sprints.
 ```
 
 The sprint page is a header plus five tabs.
@@ -120,15 +134,11 @@ The header carries the sprint name as an inline editable field, its dates, its
 duration, "day N of M", overall progress, and the Edit, Complete sprint and New
 sprint actions.
 
-Every sprint surface lives under the team that owns it, so the eight way
-duplication becomes structurally impossible rather than merely tidied away.
-
-The roll up row shows, per team: team key, active sprint name, dates, day N of
-M, committed and done points, and an at risk flag. Rows sort at risk first,
-then by soonest end date. A team with no running sprint shows a single row
-offering to start one. The row gains a capacity bar once workstream D lands,
-because capacity does not exist before then; until it does, the row shows
-progress alone.
+There is one sprint page because there is one sprint, so the eight way
+duplication becomes structurally impossible rather than merely tidied away. A
+sprint holds work from any team and any project, and the board folds the states
+that share a name across teams into one column, so nine teams do not draw nine
+Backlog columns.
 
 ## Data model
 
@@ -341,10 +351,8 @@ every issue in that sprint and replays its full activity history for the burn
 up. Eight teams is roughly twenty four sequential round trips to build a page
 nobody can plan with.
 
-`listSprintRollUp(principal, teams)` replaces this with one grouped aggregate
-across all active cycles, returning per team scope, committed points, completed
-points and capacity total. The roll up draws no charts, so it needs no burn up
-and no activity replay.
+One sprint replaces that with one read. The page loads the sprint the workspace
+is running, its progress and its issues, and nothing repeats per team.
 
 ## Motion and theming
 
@@ -409,7 +417,7 @@ Tests live in each package's own `tests/` tree mirroring `src/`, run with
 | `packages/core/tests/work/cycle-capacity.test.ts` | Velocity over three, fewer than three and zero completed sprints, the freeze on start, an override winning over an estimate, the team median fallback |
 | `packages/core/tests/work/cycle-service.test.ts` | Completion into each destination, uncommitted always returning to backlog, outcome snapshot correctness, cadence idempotency, no overlap |
 | `packages/core/tests/work/sprint-retro-service.test.ts` | Card lifecycle, vote uniqueness, convert to issue linkage, permission boundaries |
-| `apps/web/tests/features/sprints/` | Capacity rail arithmetic, completion dialog destinations, roll up row states, the uncommitted section |
+| `apps/web/tests/features/sprints/` | Capacity rail arithmetic, completion dialog destinations, the assignee points table, the uncommitted section |
 | `apps/web/e2e/sprints.spec.ts` | One full loop: set capacity, drag from backlog, start, bulk move a task to the next sprint, complete with a destination, open a retro, convert an action item |
 
 The per assignee tally gets an explicit test asserting it reports points, since
