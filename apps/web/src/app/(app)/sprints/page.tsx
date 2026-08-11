@@ -3,7 +3,7 @@ import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { CycleAnalytics, CycleBoard, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
+import { CycleAnalytics } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
   getSprintView,
@@ -14,6 +14,7 @@ import {
 import { NewSprintButton } from '@/features/sprints/sprint-actions.tsx';
 import { SprintHeader } from '@/features/sprints/sprint-header.tsx';
 import { SprintHistory } from '@/features/sprints/sprint-history.tsx';
+import { SprintIssues } from '@/features/sprints/sprint-issues.tsx';
 import { SprintSchedule } from '@/features/sprints/sprint-schedule.tsx';
 import { parseSprintTab, SprintTabs } from '@/features/sprints/sprint-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -69,14 +70,15 @@ export default async function SprintsPage({ searchParams }: PageProps) {
             </p>
           )}
           <SprintTabs base={base} active={active} available={['board', 'list', 'insights']} />
-          {active === 'insights' ? <CycleAnalytics cycle={sprint} /> : null}
-          {active === 'board' ? <CycleBoard cycle={sprint} /> : null}
-          {active === 'list' ? (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-              <CycleIssueList cycle={sprint} />
-              <CycleAnalytics cycle={sprint} />
-            </div>
-          ) : null}
+          {active === 'insights' ? (
+            <CycleAnalytics cycle={sprint} />
+          ) : (
+            <SprintIssues
+              cycleId={sprint.id}
+              sprintName={sprint.name}
+              layout={active === 'list' ? 'list' : 'board'}
+            />
+          )}
         </>
       )}
 

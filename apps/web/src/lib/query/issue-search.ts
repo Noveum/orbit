@@ -117,6 +117,15 @@ export function allIssuesSearch(
   return params.toString();
 }
 
+export function cycleIssuesSearch(
+  cycleId: string,
+  query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' },
+): string {
+  const params = searchParams(query);
+  params.set('cycleId', cycleId);
+  return params.toString();
+}
+
 export function projectIssuesSearch(
   projectId: string,
   query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' },

@@ -1,6 +1,7 @@
 export const ASSIGNED_SCOPE = 'assigned';
 export const ALL_SCOPE = 'all';
 export const PROJECT_SCOPE = 'project';
+export const CYCLE_SCOPE = 'cycle';
 
 export const ISSUES_ROOT = 'issues';
 export const BOARD_ROOT = 'board-page';
@@ -29,6 +30,7 @@ export const queryKeys = {
   allIssues: (filter = '') => ['issues', ALL_SCOPE, filter] as const,
   projectIssues: (projectId: string, filter = '') =>
     ['issues', PROJECT_SCOPE, projectId, filter] as const,
+  cycleIssues: (cycleId: string, filter = '') => ['issues', CYCLE_SCOPE, cycleId, filter] as const,
   issueCounts: (filter: string) => ['issue-counts', filter] as const,
   issueSummary: (search: string) => ['issue-summary', search] as const,
   issueFacets: (search: string) => ['issue-facets', search] as const,

@@ -54,3 +54,27 @@ test('the sprint a team page points at is the sprint of the workspace', async ({
 
   await context.close();
 });
+
+test('the sprint board is the board every other surface uses, not one of its own', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context, 'alex@orbit.example');
+
+  await page.goto(`${BASE}/sprints`);
+  await expect(page.getByTestId('sprint-issues')).toBeVisible();
+
+  const column = page.locator('[data-testid^="board-column-"]').first();
+  await expect(column).toBeVisible();
+
+  const card = page.locator('[data-testid^="issue-card-"]').first();
+  await expect(card).toBeVisible();
+
+  await expect(page.getByTestId('filter-bar').first()).toBeVisible();
+
+  await page.goto(`${BASE}/sprints?tab=list`);
+  await expect(page.getByTestId('sprint-issues')).toBeVisible();
+  await expect(page.getByTestId('issue-list').first()).toBeVisible();
+
+  await context.close();
+});
