@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants';
-import { assertProductionAuthenticationConfigured } from '@/lib/env';
+import {
+  assertProductionAuthenticationConfigured,
+  assertProductionStartupAuthenticationConfigured,
+} from '@/lib/env';
 import nextConfig from '../../next.config.ts';
 
 const productionEnvironment = {
@@ -35,6 +38,12 @@ describe('production authentication configuration', () => {
   it('rejects a deployment with no first-login path', () => {
     expect(() => assertProductionAuthenticationConfigured(productionEnvironment)).toThrow(
       'ORBIT_PASSWORD_AUTH',
+    );
+  });
+
+  it('treats standalone startup as production before Next initializes its server', () => {
+    expect(() => assertProductionStartupAuthenticationConfigured({})).toThrow(
+      'Production requires a usable first-login method.',
     );
   });
 

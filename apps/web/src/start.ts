@@ -1,5 +1,5 @@
-import { assertProductionAuthenticationConfigured } from '@/lib/env';
+import { assertProductionStartupAuthenticationConfigured } from '@/lib/env';
 
-assertProductionAuthenticationConfigured();
+assertProductionStartupAuthenticationConfigured();
 
 await import(new URL('./server.js', import.meta.url).href);

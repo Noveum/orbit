@@ -55,6 +55,12 @@ export function assertProductionAuthenticationConfigured(
   );
 }
 
+export function assertProductionStartupAuthenticationConfigured(
+  environment: Environment = process.env,
+): void {
+  assertProductionAuthenticationConfigured({ ...environment, NODE_ENV: 'production' });
+}
+
 const serverEnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(16),
   BETTER_AUTH_URL: z.url().default('http://localhost:3000'),
