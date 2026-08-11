@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { asc, db, eq, schema, sql } from '@orbit/db';
-import { z } from 'zod';
+import type { Database, Transaction } from '@orbit/db';
+import { and, asc, db, eq, schema, sql } from '@orbit/db';
+import * as databaseSchema from '@orbit/db/schema';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { bootstrapActiveCycleMemberships } from '../../src/analytics/membership.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
 import {
@@ -15,6 +18,7 @@ import {
   archiveIssue,
   bulkUpdateIssues,
   createIssue,
+  deleteIssue,
   moveIssue,
   updateIssue,
 } from '../../src/work/issue-service.ts';
@@ -22,9 +26,18 @@ import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
 let workspace: Workspace;
+let activeDatabaseUrl = '';
 
 beforeEach(async () => {
   await resetDatabase();
+  const [database] = await db.execute(sql<{ name: string }>`select current_database() as name`);
+  if (database === undefined) throw new Error('The test database could not be resolved.');
+  const configured = process.env['DATABASE_URL'];
+  if (configured === undefined || configured.length === 0)
+    throw new Error('DATABASE_URL is required.');
+  const resolved = new URL(configured);
+  resolved.pathname = `/${database['name']}`;
+  activeDatabaseUrl = resolved.toString();
   workspace = await createWorkspace('Nova');
 });
 
@@ -53,28 +66,107 @@ async function openMemberships(issueId: string) {
   return memberships.filter((entry) => entry.removedAt === null);
 }
 
-async function waitForRaceSetup(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1_000));
+interface RunningOperation<T> {
+  readonly result: Promise<T>;
+  readonly settled: () => boolean;
 }
 
-const workerResultSchema = z.object({ count: z.number().int().nonnegative() });
+function databaseUrl(): string {
+  if (activeDatabaseUrl.length === 0) throw new Error('The active test database is unresolved.');
+  return activeDatabaseUrl;
+}
 
-async function runMembershipWorker(input: unknown): Promise<number> {
-  const worker = new URL('./membership-race-worker.ts', import.meta.url).pathname;
-  const cwd = new URL('../..', import.meta.url).pathname;
-  const child = Bun.spawn(['bun', worker, JSON.stringify(input)], {
-    cwd,
-    env: { ...process.env, DATABASE_POOL_MAX: '5' },
-    stdout: 'pipe',
-    stderr: 'pipe',
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitingLockCount(executor: Transaction): Promise<number> {
+  const [row] = await executor.execute(sql<{ waiting: number }>`
+    select count(*)::int as waiting
+    from pg_stat_activity
+    where datname = current_database()
+      and pid <> pg_backend_pid()
+      and wait_event_type = 'Lock'
+  `);
+  return Number(row?.['waiting'] ?? 0);
+}
+
+async function waitForLockCount(
+  executor: Transaction,
+  count: number,
+  workers: readonly RunningOperation<unknown>[] = [],
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await waitingLockCount(executor)) >= count) return;
+    const settled = workers.find((worker) => worker.settled());
+    if (settled !== undefined) {
+      await settled.result;
+      throw new Error('A worker settled before reaching the expected database lock.');
+    }
+    await pause(10);
+  }
+  const activity = await executor.execute(sql<{
+    applicationName: string;
+    databaseName: string | null;
+    state: string | null;
+    waitEventType: string | null;
+  }>`
+    select application_name as "applicationName", datname as "databaseName", state,
+      wait_event_type as "waitEventType"
+    from pg_stat_activity
+    where pid <> pg_backend_pid()
+      and backend_type = 'client backend'
+  `);
+  throw new Error(`Expected ${count} database lock waiters: ${JSON.stringify(activity)}.`);
+}
+
+async function waitForWorkerOrLock(
+  executor: Transaction,
+  worker: RunningOperation<unknown>,
+  count: number,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (worker.settled() || (await waitingLockCount(executor)) >= count) return;
+    await pause(10);
+  }
+  throw new Error('The competing worker neither settled nor waited for a database lock.');
+}
+
+async function withHeldAdvisoryLock<T>(
+  key: number,
+  run: (executor: Transaction) => Promise<T>,
+): Promise<T> {
+  return await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${key})`);
+    return await run(tx);
   });
-  const [exitCode, output, errorOutput] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  if (exitCode !== 0) throw new Error(errorOutput || `Membership worker exited ${exitCode}.`);
-  return workerResultSchema.parse(JSON.parse(output)).count;
+}
+
+function trackOperation<T>(result: Promise<T>): RunningOperation<T> {
+  let isSettled = false;
+  return {
+    result: result.finally(() => {
+      isSettled = true;
+    }),
+    settled: () => isSettled,
+  };
+}
+
+function createIsolatedDatabase(): {
+  readonly database: Database;
+  readonly connect: () => Promise<void>;
+  readonly close: () => Promise<void>;
+} {
+  const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+  return {
+    database: drizzle({ client, schema: databaseSchema, casing: 'snake_case' }),
+    connect: async () => {
+      await client`select 1`;
+    },
+    close: async () => client.end(),
+  };
 }
 
 describe('sprint membership capture', () => {
@@ -166,6 +258,8 @@ describe('sprint membership capture', () => {
     });
     await db.execute(
       sql.raw(`
+      drop trigger if exists delay_cycle_assignment on issue;
+      drop function if exists delay_cycle_assignment();
       create function delay_cycle_assignment() returns trigger as $$
       begin
         perform pg_advisory_xact_lock(731107);
@@ -178,31 +272,27 @@ describe('sprint membership capture', () => {
     `),
     );
 
-    const moves: Promise<number>[] = [];
+    const firstConnection = createIsolatedDatabase();
+    const secondConnection = createIsolatedDatabase();
+    const moves: RunningOperation<unknown>[] = [];
     try {
-      await db.transaction(async (holder) => {
-        await holder.execute(sql`select pg_advisory_xact_lock(731107)`);
-        moves.push(
-          runMembershipWorker({
-            operation: 'update',
-            principal: workspace.admin,
-            issueId: issue.id,
-            cycleId: second.id,
-          }),
+      await Promise.all([firstConnection.connect(), secondConnection.connect()]);
+      await withHeldAdvisoryLock(731107, async (holder) => {
+        const firstMove = trackOperation(
+          updateIssue(workspace.admin, issue.id, { cycleId: second.id }, firstConnection.database),
         );
-        await waitForRaceSetup();
-        moves.push(
-          runMembershipWorker({
-            operation: 'update',
-            principal: workspace.admin,
-            issueId: issue.id,
-            cycleId: third.id,
-          }),
+        moves.push(firstMove);
+        await waitForLockCount(holder, 1, [firstMove]);
+        const secondMove = trackOperation(
+          updateIssue(workspace.admin, issue.id, { cycleId: third.id }, secondConnection.database),
         );
-        await waitForRaceSetup();
+        moves.push(secondMove);
+        await waitForLockCount(holder, 2, [firstMove, secondMove]);
       });
-      expect(await Promise.all(moves)).toEqual([1, 1]);
+      await Promise.all(moves.map((worker) => worker.result));
     } finally {
+      await Promise.allSettled(moves.map((worker) => worker.result));
+      await Promise.all([firstConnection.close(), secondConnection.close()]);
       await db.execute(
         sql.raw(`
         drop trigger delay_cycle_assignment on issue;
@@ -233,6 +323,8 @@ describe('sprint membership capture', () => {
     });
     await db.execute(
       sql.raw(`
+      drop trigger if exists delay_rollover_assignment on issue;
+      drop function if exists delay_rollover_assignment();
       create function delay_rollover_assignment() returns trigger as $$
       begin
         perform pg_advisory_xact_lock(731108);
@@ -245,31 +337,27 @@ describe('sprint membership capture', () => {
     `),
     );
 
-    const mutations: Promise<number>[] = [];
+    const firstConnection = createIsolatedDatabase();
+    const secondConnection = createIsolatedDatabase();
+    const mutations: RunningOperation<unknown>[] = [];
     try {
-      await db.transaction(async (holder) => {
-        await holder.execute(sql`select pg_advisory_xact_lock(731108)`);
-        mutations.push(
-          runMembershipWorker({
-            operation: 'complete',
-            principal: workspace.admin,
-            cycleId: first.id,
-            occurredAt: first.endsAt,
-          }),
+      await Promise.all([firstConnection.connect(), secondConnection.connect()]);
+      await withHeldAdvisoryLock(731108, async (holder) => {
+        const completion = trackOperation(
+          completeCycle(workspace.admin, first.id, first.endsAt, firstConnection.database),
         );
-        await waitForRaceSetup();
-        mutations.push(
-          runMembershipWorker({
-            operation: 'update',
-            principal: workspace.admin,
-            issueId: issue.id,
-            cycleId: third.id,
-          }),
+        mutations.push(completion);
+        await waitForLockCount(holder, 1, [completion]);
+        const move = trackOperation(
+          updateIssue(workspace.admin, issue.id, { cycleId: third.id }, secondConnection.database),
         );
-        await waitForRaceSetup();
+        mutations.push(move);
+        await waitForLockCount(holder, 2, [completion, move]);
       });
-      expect(await Promise.all(mutations)).toEqual([1, 1]);
+      await Promise.all(mutations.map((worker) => worker.result));
     } finally {
+      await Promise.allSettled(mutations.map((worker) => worker.result));
+      await Promise.all([firstConnection.close(), secondConnection.close()]);
       await db.execute(
         sql.raw(`
         drop trigger delay_rollover_assignment on issue;
@@ -365,6 +453,46 @@ describe('sprint membership capture', () => {
       rolloverCycleId: closed.nextCycle.id,
     });
     expect(outcomes.every((entry) => entry.closedAt.getTime() === closeTime.getTime())).toBe(true);
+  });
+
+  it('bootstraps missing current membership before closing the first observed sprint', async () => {
+    const cycle = await firstCycle();
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId: cycle.id,
+      estimate: 8,
+    });
+    const closeTime = new Date(cycle.endsAt.getTime() - 3_600_000);
+
+    const closed = await completeCycle(workspace.admin, cycle.id, closeTime);
+    const [membership] = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(
+        and(
+          eq(schema.cycleIssueMembership.issueId, issueId),
+          eq(schema.cycleIssueMembership.cycleId, cycle.id),
+        ),
+      );
+    const [outcome] = await db
+      .select()
+      .from(schema.cycleIssueOutcome)
+      .where(eq(schema.cycleIssueOutcome.issueId, issueId));
+
+    expect(membership).toMatchObject({
+      cycleId: cycle.id,
+      entryKind: 'bootstrap',
+      coverage: 'observed',
+    });
+    expect(membership?.removedAt?.getTime()).toBe(closeTime.getTime());
+    expect(outcome).toMatchObject({
+      cycleId: cycle.id,
+      planned: false,
+      estimateAtClose: 8,
+      outcome: 'carryover',
+      rolloverCycleId: closed.nextCycle.id,
+    });
   });
 
   it('rolls membership capture back when a later mutation write fails', async () => {
@@ -472,19 +600,31 @@ describe('sprint membership capture', () => {
     `),
     );
 
-    const attempts: Promise<number>[] = [];
+    const firstConnection = createIsolatedDatabase();
+    const secondConnection = createIsolatedDatabase();
+    const attempts: RunningOperation<number>[] = [];
     let counts: number[] = [];
     try {
-      await db.transaction(async (holder) => {
-        await holder.execute(sql`select pg_advisory_xact_lock(731109)`);
+      await Promise.all([firstConnection.connect(), secondConnection.connect()]);
+      await withHeldAdvisoryLock(731109, async (holder) => {
         attempts.push(
-          runMembershipWorker({ operation: 'bootstrap', occurredAt: observedAt }),
-          runMembershipWorker({ operation: 'bootstrap', occurredAt: observedAt }),
+          trackOperation(
+            firstConnection.database.transaction(async (tx) =>
+              bootstrapActiveCycleMemberships(tx, observedAt),
+            ),
+          ),
+          trackOperation(
+            secondConnection.database.transaction(async (tx) =>
+              bootstrapActiveCycleMemberships(tx, observedAt),
+            ),
+          ),
         );
-        await waitForRaceSetup();
+        await waitForLockCount(holder, 2, attempts);
       });
-      counts = await Promise.all(attempts);
+      counts = await Promise.all(attempts.map((worker) => worker.result));
     } finally {
+      await Promise.allSettled(attempts.map((worker) => worker.result));
+      await Promise.all([firstConnection.close(), secondConnection.close()]);
       await db.execute(
         sql.raw(`
         drop trigger delay_membership_bootstrap on cycle_issue_membership;
@@ -495,5 +635,127 @@ describe('sprint membership capture', () => {
 
     expect(counts.sort()).toEqual([0, 1]);
     expect(await openMemberships(issueId)).toHaveLength(1);
+  });
+
+  it('does not leave stale membership when bootstrap races sprint removal', async () => {
+    const cycle = await firstCycle();
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId: cycle.id,
+    });
+    const observedAt = new Date(cycle.startsAt.getTime() + 2 * 86_400_000);
+    await db.execute(
+      sql.raw(`
+      create function delay_bootstrap_before_removal() returns trigger as $$
+      begin
+        perform pg_advisory_xact_lock(731110);
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger delay_bootstrap_before_removal
+      before insert on cycle_issue_membership
+      for each row execute function delay_bootstrap_before_removal();
+    `),
+    );
+
+    const bootstrapConnection = createIsolatedDatabase();
+    const removalConnection = createIsolatedDatabase();
+    let bootstrap: RunningOperation<number> | undefined;
+    let removal: RunningOperation<unknown> | undefined;
+    try {
+      await Promise.all([bootstrapConnection.connect(), removalConnection.connect()]);
+      await withHeldAdvisoryLock(731110, async (holder) => {
+        bootstrap = trackOperation(
+          bootstrapConnection.database.transaction(async (tx) =>
+            bootstrapActiveCycleMemberships(tx, observedAt),
+          ),
+        );
+        await waitForLockCount(holder, 1, [bootstrap]);
+        removal = trackOperation(
+          updateIssue(workspace.admin, issueId, { cycleId: null }, removalConnection.database),
+        );
+        await waitForWorkerOrLock(holder, removal, 2);
+      });
+      if (bootstrap === undefined) throw new Error('The bootstrap operation did not start.');
+      if (removal === undefined) throw new Error('The removal operation did not start.');
+      await Promise.all([bootstrap.result, removal.result]);
+    } finally {
+      await Promise.allSettled(
+        [bootstrap, removal]
+          .filter((worker): worker is RunningOperation<unknown> => worker !== undefined)
+          .map((worker) => worker.result),
+      );
+      await Promise.all([bootstrapConnection.close(), removalConnection.close()]);
+      await db.execute(
+        sql.raw(`
+        drop trigger delay_bootstrap_before_removal on cycle_issue_membership;
+        drop function delay_bootstrap_before_removal();
+      `),
+      );
+    }
+
+    expect(await openMemberships(issueId)).toEqual([]);
+  });
+
+  it('does not leave membership when bootstrap races hard deletion', async () => {
+    const cycle = await firstCycle();
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId: cycle.id,
+    });
+    const observedAt = new Date(cycle.startsAt.getTime() + 2 * 86_400_000);
+    await db.execute(
+      sql.raw(`
+      create function delay_bootstrap_before_deletion() returns trigger as $$
+      begin
+        perform pg_advisory_xact_lock(731111);
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger delay_bootstrap_before_deletion
+      before insert on cycle_issue_membership
+      for each row execute function delay_bootstrap_before_deletion();
+    `),
+    );
+
+    const bootstrapConnection = createIsolatedDatabase();
+    const deletionConnection = createIsolatedDatabase();
+    let bootstrap: RunningOperation<number> | undefined;
+    let deletion: RunningOperation<unknown> | undefined;
+    try {
+      await Promise.all([bootstrapConnection.connect(), deletionConnection.connect()]);
+      await withHeldAdvisoryLock(731111, async (holder) => {
+        bootstrap = trackOperation(
+          bootstrapConnection.database.transaction(async (tx) =>
+            bootstrapActiveCycleMemberships(tx, observedAt),
+          ),
+        );
+        await waitForLockCount(holder, 1, [bootstrap]);
+        deletion = trackOperation(
+          deleteIssue(workspace.admin, issueId, deletionConnection.database),
+        );
+        await waitForWorkerOrLock(holder, deletion, 2);
+      });
+      if (bootstrap === undefined) throw new Error('The bootstrap operation did not start.');
+      if (deletion === undefined) throw new Error('The deletion operation did not start.');
+      await Promise.all([bootstrap.result, deletion.result]);
+    } finally {
+      await Promise.allSettled(
+        [bootstrap, deletion]
+          .filter((worker): worker is RunningOperation<unknown> => worker !== undefined)
+          .map((worker) => worker.result),
+      );
+      await Promise.all([bootstrapConnection.close(), deletionConnection.close()]);
+      await db.execute(
+        sql.raw(`
+        drop trigger delay_bootstrap_before_deletion on cycle_issue_membership;
+        drop function delay_bootstrap_before_deletion();
+      `),
+      );
+    }
+
+    expect(await openMemberships(issueId)).toEqual([]);
   });
 });

@@ -206,17 +206,45 @@ export async function bootstrapActiveCycleMemberships(
     );
   if (activeCycles.length === 0) return 0;
 
+  return await bootstrapCycleMemberships(
+    tx,
+    activeCycles.map((cycle) => cycle.id),
+    occurredAt,
+  );
+}
+
+export async function bootstrapCycleMemberships(
+  tx: Executor,
+  cycleIds: readonly string[],
+  occurredAt: Date,
+): Promise<number> {
+  if (cycleIds.length === 0) return 0;
+
+  const candidates = await tx
+    .select()
+    .from(schema.issue)
+    .where(and(inArray(schema.issue.cycleId, [...cycleIds])))
+    .orderBy(asc(schema.issue.id))
+    .for('update');
+  if (candidates.length === 0) return 0;
+
+  const teamIds = [...new Set(candidates.map((issue) => issue.teamId))].sort();
+  for (const teamId of teamIds) await lockCycleAssignmentTeam(tx, teamId);
+
   const issues = await tx
     .select()
     .from(schema.issue)
     .where(
       and(
         inArray(
-          schema.issue.cycleId,
-          activeCycles.map((cycle) => cycle.id),
+          schema.issue.id,
+          candidates.map((issue) => issue.id),
         ),
+        inArray(schema.issue.cycleId, [...cycleIds]),
       ),
-    );
+    )
+    .orderBy(asc(schema.issue.id))
+    .for('update');
   if (issues.length === 0) return 0;
 
   const existing = await tx

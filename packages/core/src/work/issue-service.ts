@@ -1,3 +1,4 @@
+import type { Database } from '@orbit/db';
 import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
@@ -1068,10 +1069,11 @@ export async function updateIssue(
   principal: Principal,
   issueId: string,
   patch: unknown,
+  database: Database = db,
 ): Promise<UpdatedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = issueUpdateSchema.parse(patch);
-  return await db.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
+  return await database.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
 }
 
 async function orderOf(executor: Executor, issueId: string | null): Promise<number | null> {
@@ -1421,10 +1423,14 @@ export async function unarchiveIssue(
   return await setArchived(principal, issueId, null);
 }
 
-export async function deleteIssue(principal: Principal, issueId: string): Promise<SyncAction[]> {
+export async function deleteIssue(
+  principal: Principal,
+  issueId: string,
+  database: Database = db,
+): Promise<SyncAction[]> {
   assertCan(principal, 'issue:delete');
 
-  return await db.transaction(async (tx) => {
+  return await database.transaction(async (tx) => {
     const current = await loadIssueForUpdate(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);

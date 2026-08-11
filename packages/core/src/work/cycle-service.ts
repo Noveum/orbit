@@ -1,3 +1,4 @@
+import type { Database } from '@orbit/db';
 import {
   and,
   asc,
@@ -26,6 +27,7 @@ import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
 import {
+  bootstrapCycleMemberships,
   captureCycleCloseOutcomes,
   captureCycleMembershipChange,
   lockCycleAssignmentTeam,
@@ -878,10 +880,11 @@ export async function completeCycle(
   principal: Principal,
   cycleId: string,
   now: Date = new Date(),
+  database: Database = db,
 ): Promise<CompletedCycle> {
   assertCan(principal, 'cycle:manage');
 
-  return await db.transaction(async (tx) => {
+  return await database.transaction(async (tx) => {
     const found = await requireCycleForUpdate(tx, principal, cycleId);
     await lockCycleIssues(tx, principal.organizationId, cycleId);
     await lockTeamCycles(tx, found.teamId);
@@ -965,6 +968,7 @@ export async function completeCycle(
       .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
       .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
 
+    await bootstrapCycleMemberships(tx, [cycle.id], now);
     await captureCycleCloseOutcomes(tx, {
       cycle,
       rolloverCycleId: nextCycle.id,
