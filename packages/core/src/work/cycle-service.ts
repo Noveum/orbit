@@ -23,7 +23,7 @@ import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
-import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
+import { cycleCreateSchema, cycleEditSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
@@ -171,13 +171,15 @@ export async function createCycle(
   });
 }
 
+const DAY_MS = 86_400_000;
+
 export async function updateCycle(
   principal: Principal,
   cycleId: string,
   input: unknown,
 ): Promise<{ cycle: CycleRow; actions: SyncAction[] }> {
   assertCan(principal, 'cycle:manage');
-  const parsed = cycleUpdateSchema.parse(input);
+  const parsed = cycleEditSchema.parse(input);
 
   return await db.transaction(async (tx) => {
     const current = await requireCycleForUpdate(tx, principal, cycleId);
@@ -186,6 +188,15 @@ export async function updateCycle(
     if (parsed.name !== undefined) values.name = parsed.name;
     if (parsed.startsAt !== undefined) values.startsAt = parsed.startsAt;
     if (parsed.endsAt !== undefined) values.endsAt = parsed.endsAt;
+
+    const days =
+      parsed.shiftFollowing === true && parsed.endsAt !== undefined
+        ? Math.round((parsed.endsAt.getTime() - current.endsAt.getTime()) / DAY_MS)
+        : 0;
+    const moved = await shiftFollowingWithin(tx, principal, current, {
+      after: current.endsAt,
+      days,
+    });
 
     if (parsed.startsAt !== undefined || parsed.endsAt !== undefined) {
       await assertCycleWindow(tx, {
@@ -212,6 +223,7 @@ export async function updateCycle(
     return {
       cycle,
       actions: [
+        ...moved.actions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -227,71 +239,81 @@ export async function updateCycle(
   });
 }
 
+async function shiftFollowingWithin(
+  tx: Executor,
+  principal: Principal,
+  anchor: CycleRow,
+  options: { readonly after: Date; readonly days: number },
+): Promise<{ shifted: CycleRow[]; actions: SyncAction[] }> {
+  const { after, days } = options;
+  if (days === 0) return { shifted: [], actions: [] };
+
+  await lockCycles(tx, anchor.organizationId);
+
+  const following = await tx
+    .select()
+    .from(schema.cycle)
+    .where(
+      and(
+        eq(schema.cycle.organizationId, anchor.organizationId),
+        isNull(schema.cycle.archivedAt),
+        gte(schema.cycle.startsAt, after),
+        ne(schema.cycle.id, anchor.id),
+      ),
+    )
+    .orderBy(asc(schema.cycle.startsAt));
+
+  const movable: CycleRow[] = [];
+  for (const row of following) {
+    if (row.completedAt !== null) break;
+    movable.push(row);
+  }
+  if (movable.length === 0) return { shifted: [], actions: [] };
+
+  const syncId = await nextSyncId(tx);
+  const actor = await principalActor(tx, principal);
+  const shifted: CycleRow[] = [];
+
+  for (const row of movable) {
+    const [moved] = await tx
+      .update(schema.cycle)
+      .set({
+        startsAt: addUtcDays(row.startsAt, days),
+        endsAt: addUtcDays(row.endsAt, days),
+        syncId,
+      })
+      .where(eq(schema.cycle.id, row.id))
+      .returning();
+    shifted.push(requireRow(moved, 'That cycle does not exist.'));
+  }
+
+  return {
+    shifted,
+    actions: shifted.map((row) =>
+      buildSyncAction({
+        syncId,
+        organizationId: principal.organizationId,
+        scopes: cycleScopes(row),
+        action: 'update',
+        model: 'cycle',
+        modelId: row.id,
+        data: row,
+        actor,
+      }),
+    ),
+  };
+}
+
 export async function shiftFollowingCycles(
   principal: Principal,
   cycleId: string,
   options: { readonly after: Date; readonly days: number },
 ): Promise<{ shifted: CycleRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'cycle:manage');
-  const { after, days } = options;
-  if (days === 0) return { shifted: [], actions: [] };
 
   return await db.transaction(async (tx) => {
     const anchor = await requireCycleForUpdate(tx, principal, cycleId);
-    await lockCycles(tx, anchor.organizationId);
-
-    const following = await tx
-      .select()
-      .from(schema.cycle)
-      .where(
-        and(
-          eq(schema.cycle.organizationId, anchor.organizationId),
-          isNull(schema.cycle.archivedAt),
-          gte(schema.cycle.startsAt, after),
-          ne(schema.cycle.id, anchor.id),
-        ),
-      )
-      .orderBy(asc(schema.cycle.startsAt));
-
-    const movable: CycleRow[] = [];
-    for (const row of following) {
-      if (row.completedAt !== null) break;
-      movable.push(row);
-    }
-    if (movable.length === 0) return { shifted: [], actions: [] };
-
-    const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
-    const shifted: CycleRow[] = [];
-
-    for (const row of movable) {
-      const [moved] = await tx
-        .update(schema.cycle)
-        .set({
-          startsAt: addUtcDays(row.startsAt, days),
-          endsAt: addUtcDays(row.endsAt, days),
-          syncId,
-        })
-        .where(eq(schema.cycle.id, row.id))
-        .returning();
-      shifted.push(requireRow(moved, 'That cycle does not exist.'));
-    }
-
-    return {
-      shifted,
-      actions: shifted.map((row) =>
-        buildSyncAction({
-          syncId,
-          organizationId: principal.organizationId,
-          scopes: cycleScopes(row),
-          action: 'update',
-          model: 'cycle',
-          modelId: row.id,
-          data: row,
-          actor,
-        }),
-      ),
-    };
+    return await shiftFollowingWithin(tx, principal, anchor, options);
   });
 }
 

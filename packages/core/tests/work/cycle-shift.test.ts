@@ -151,3 +151,43 @@ describe('shiftFollowingCycles', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('an edit that shifts and then fails', () => {
+  it('leaves the schedule exactly as it found it', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+    const third = await scheduled(48, 62);
+
+    await expect(
+      updateCycle(workspace.admin, first.id, {
+        startsAt: daysFromNow(40),
+        endsAt: daysFromNow(37),
+        shiftFollowing: true,
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    const anchor = await getCycle(workspace.admin, first.id);
+    const after = await getCycle(workspace.admin, second.id);
+    const last = await getCycle(workspace.admin, third.id);
+
+    expect(anchor.endsAt.getTime()).toBe(first.endsAt.getTime());
+    expect(after.startsAt.getTime()).toBe(second.startsAt.getTime());
+    expect(last.startsAt.getTime()).toBe(third.startsAt.getTime());
+  });
+
+  it('moves the anchor and the sprints after it together when it succeeds', async () => {
+    const first = await scheduled(20, 34);
+    const second = await scheduled(34, 48);
+
+    await updateCycle(workspace.admin, first.id, {
+      endsAt: daysFromNow(37),
+      shiftFollowing: true,
+    });
+
+    const anchor = await getCycle(workspace.admin, first.id);
+    const after = await getCycle(workspace.admin, second.id);
+
+    expect(anchor.endsAt.getTime()).toBe(daysFromNow(37).getTime());
+    expect(after.startsAt.getTime()).toBe(second.startsAt.getTime() + 3 * DAY);
+  });
+});

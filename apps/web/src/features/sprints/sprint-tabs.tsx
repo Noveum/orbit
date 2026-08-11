@@ -18,6 +18,11 @@ export function parseSprintTab(value: string | undefined): SprintTab {
   return SPRINT_TABS.find((tab) => tab === value) ?? 'board';
 }
 
+export function sprintTabHref(base: string, tab: SprintTab): string {
+  if (tab === 'board') return base;
+  return `${base}${base.includes('?') ? '&' : '?'}tab=${tab}`;
+}
+
 export function SprintTabs({
   base,
   active,
@@ -36,7 +41,7 @@ export function SprintTabs({
       {available.map((tab) => (
         <Link
           key={tab}
-          href={tab === 'board' ? base : `${base}?tab=${tab}`}
+          href={sprintTabHref(base, tab)}
           data-testid={`sprint-tab-${tab}`}
           aria-current={tab === active ? 'page' : undefined}
           className={cn(

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { cleanup, render, screen } from '@testing-library/react';
-import { parseSprintTab, SprintTabs } from '@/features/sprints/sprint-tabs.tsx';
+import { parseSprintTab, SprintTabs, sprintTabHref } from '@/features/sprints/sprint-tabs.tsx';
 
 afterEach(cleanup);
 
@@ -48,5 +48,19 @@ describe('SprintTabs', () => {
     expect(screen.getByTestId('sprint-tab-insights').getAttribute('href')).toBe(
       '/team/nov/sprint/1?tab=insights',
     );
+  });
+});
+
+describe('sprintTabHref', () => {
+  it('keeps the board on the bare base', () => {
+    expect(sprintTabHref('/sprints', 'board')).toBe('/sprints');
+  });
+
+  it('starts the query when the base carries none', () => {
+    expect(sprintTabHref('/sprints', 'insights')).toBe('/sprints?tab=insights');
+  });
+
+  it('joins onto a base that already selects a sprint', () => {
+    expect(sprintTabHref('/sprints?sprint=3', 'insights')).toBe('/sprints?sprint=3&tab=insights');
   });
 });

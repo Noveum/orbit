@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { CycleAnalytics, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
+  getSprintView,
   listPastSprintViews,
   listUpcomingCycleViews,
 } from '@/features/sprints/data.ts';
@@ -18,21 +19,30 @@ import { pageContext } from '@/lib/api/handler.ts';
 export const metadata: Metadata = { title: 'Sprints' };
 
 interface PageProps {
-  readonly searchParams: Promise<{ tab?: string }>;
+  readonly searchParams: Promise<{ tab?: string; sprint?: string }>;
+}
+
+const SPRINT_NUMBER = /^[1-9][0-9]{0,8}$/;
+
+function sprintNumber(value: string | undefined): number | null {
+  return value !== undefined && SPRINT_NUMBER.test(value) ? Number(value) : null;
 }
 
 export default async function SprintsPage({ searchParams }: PageProps) {
   const { principal } = await pageContext();
   const canManage = can(principal, 'cycle:manage');
 
-  const [sprint, upcoming, past, { tab }] = await Promise.all([
-    getActiveCycleView(principal),
+  const { tab, sprint: wanted } = await searchParams;
+  const chosen = sprintNumber(wanted);
+
+  const [sprint, upcoming, past] = await Promise.all([
+    chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen),
     listUpcomingCycleViews(principal),
     listPastSprintViews(principal),
-    searchParams,
   ]);
 
   const active = parseSprintTab(tab);
+  const base = chosen === null ? '/sprints' : `/sprints?sprint=${chosen}`;
 
   return (
     <div className="flex flex-col gap-6 px-6 py-6">
@@ -46,7 +56,7 @@ export default async function SprintsPage({ searchParams }: PageProps) {
       ) : (
         <>
           <SprintHeader sprint={sprint} canManage={canManage} />
-          <SprintTabs base="/sprints" active={active} available={['board', 'insights']} />
+          <SprintTabs base={base} active={active} available={['board', 'insights']} />
           {active === 'insights' ? (
             <CycleAnalytics cycle={sprint} />
           ) : (
