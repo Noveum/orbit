@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { SYNC_MODELS } from '@orbit/shared/events';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { getTableColumns, type SQL, type Table } from 'drizzle-orm';
 import { getTableConfig, PgDialect, type PgTable } from 'drizzle-orm/pg-core';
+import { db } from '../../src/index.ts';
 import * as schema from '../../src/schema/index.ts';
 
 type IndexConfig = ReturnType<typeof getTableConfig>['indexes'][number]['config'];
@@ -137,6 +139,88 @@ describe('list and search indexes', () => {
 });
 
 describe('domain invariants', () => {
+  it('exports immutable sprint analytics facts', () => {
+    expect(schema.cycleIssueMembership).toBeDefined();
+    expect(schema.cycleIssueOutcome).toBeDefined();
+    expect(schema.cycleProgressSnapshot.isFinal).toBeDefined();
+    expect(schema.cycleProgressSnapshot.capturedAt).toBeDefined();
+  });
+
+  it('allows membership intervals and rejects duplicate sprint outcomes', async () => {
+    const organizationId = randomUUIDv7();
+    const teamId = randomUUIDv7();
+    const cycleId = randomUUIDv7();
+    const issueId = randomUUIDv7();
+    const now = new Date('2026-08-11T00:00:00.000Z');
+    const rollback = new Error('rollback');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.insert(schema.organization).values({
+          id: organizationId,
+          name: 'Analytics test',
+          slug: organizationId,
+        });
+        await tx.insert(schema.team).values({
+          id: teamId,
+          organizationId,
+          name: 'Analytics',
+          key: organizationId.slice(0, 8),
+        });
+        await tx.insert(schema.cycle).values({
+          id: cycleId,
+          organizationId,
+          teamId,
+          number: 1,
+          startsAt: now,
+          endsAt: new Date(now.getTime() + 86_400_000),
+        });
+        await tx.insert(schema.cycleIssueMembership).values([
+          {
+            id: randomUUIDv7(),
+            organizationId,
+            teamId,
+            cycleId,
+            issueId,
+            issueIdentifier: 'AN-1',
+            addedAt: now,
+            removedAt: now,
+            entryKind: 'planned',
+          },
+          {
+            id: randomUUIDv7(),
+            organizationId,
+            teamId,
+            cycleId,
+            issueId,
+            issueIdentifier: 'AN-1',
+            addedAt: new Date(now.getTime() + 1),
+            entryKind: 'added',
+          },
+        ]);
+
+        const outcome = {
+          organizationId,
+          teamId,
+          cycleId,
+          issueId,
+          issueIdentifier: 'AN-1',
+          planned: true,
+          outcome: 'completed',
+          closedAt: now,
+        };
+        await tx.insert(schema.cycleIssueOutcome).values({ id: randomUUIDv7(), ...outcome });
+        await expect(
+          (async () => {
+            await tx.insert(schema.cycleIssueOutcome).values({ id: randomUUIDv7(), ...outcome });
+          })(),
+        ).rejects.toThrow();
+
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+  });
+
   it('records a durable workspace deletion request', () => {
     const deletionRequestedAt = getTableColumns(schema.organization).deletionRequestedAt;
     expect(deletionRequestedAt?.name).toBe('deletion_requested_at');

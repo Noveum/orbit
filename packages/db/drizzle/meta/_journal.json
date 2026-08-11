@@ -36,6 +36,13 @@
       "when": 1786300066208,
       "tag": "0004_clear_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786466247363,
+      "tag": "0005_low_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }
