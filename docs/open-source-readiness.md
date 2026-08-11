@@ -76,9 +76,9 @@ make the repository a supported production release.
   hashing. The reviewed false-positive classification awaits maintainer
   dismissal, so the pull request is not merge-ready.
 - [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
-  tracker. Status: exact head `3030be7` contains current `main`; hosted checks
-  and the exact-head external review are green. Full local exact-tree
-  verification and an accurate pull-request body remain pending, so it is not
+  tracker. Status: the branch contains current `main`, and pre-push lint and
+  typecheck pass. Full local exact-tree verification, hosted checks on the final
+  head, and an accurate pull-request body remain pending, so it is not
   merge-ready. It records completed work and remaining release requirements
   without changing application behavior.
 
