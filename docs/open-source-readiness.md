@@ -12,12 +12,12 @@ to the codebase.
 
 ## Status snapshot: 2026-08-11
 
-### Merged on `main`
+### Merged readiness implementation pull requests
 
 - [#280](https://github.com/Noveum/orbit/pull/280) defined the public Preview
   boundary, retained Noveum AI sponsorship and Apache-2.0 attribution, disabled
   Slack across supported product paths, kept GitHub available with corrected
-  permissions documentation, and removed tenant-specific Yodu operations.
+  permissions documentation, and removed tenant-specific operations.
 - [#281](https://github.com/Noveum/orbit/pull/281) replaced the built-in demo
   workspace, people, identifiers, domains, time zones, documentation examples,
   and end-to-end fixtures with neutral fictional data.
@@ -56,37 +56,26 @@ to the codebase.
   operator documentation records first-user bootstrap limits. It merged as
   `64f7972` after full local and hosted exact-head verification passed with no
   unresolved actionable review finding.
+- [#289](https://github.com/Noveum/orbit/pull/289) completed SEC-003 by
+  requiring explicit consent and RFC 7636 PKCE, binding access and refresh
+  credentials to immutable workspace grants, enforcing active scopes and
+  revocation, and consuming refresh credentials once. It merged as `4359717f`
+  after full local and hosted exact-head verification, CodeQL, and independent
+  security review passed with every review thread resolved.
 
 GitHub records show successful hosted CI and completion of required reviews on
 the merged heads. These pull requests reduce the known gaps, but they do not
 make the repository a supported production release.
 
-### Active open-source readiness pull requests
-
-- [#289](https://github.com/Noveum/orbit/pull/289), SEC-003, requires explicit
-  MCP consent and PKCE, preserves OAuth continuation through passwordless login,
-  binds issued credentials to an immutable grant, prevents issued token scopes
-  from exceeding that grant, and consumes refresh credentials once. Status:
-  exact head `d13252d` contains current `main`, passes full local verification,
-  independent review, and every hosted check except the expected individual
-  CodeQL gate. It has no unresolved ordinary review threads. The remaining
-  CodeQL
-  alert [#19](https://github.com/Noveum/orbit/security/code-scanning/19)
-  misclassifies an opaque OAuth credential's HMAC integrity binding as password
-  hashing. The reviewed false-positive classification awaits maintainer
-  dismissal, so the pull request is not merge-ready.
-- [#293](https://github.com/Noveum/orbit/pull/293) maintains this readiness
-  tracker. Status: the branch contains current `main`, and pre-push lint and
-  typecheck pass. Full local exact-tree verification, hosted checks on the final
-  head, and an accurate pull-request body remain pending, so it is not
-  merge-ready. It records completed work and remaining release requirements
-  without changing application behavior.
+The checklist currently has 4 of 19 P0 items complete, with 15 P0 items and all
+23 P1 items remaining. The 5 P2 items are explicitly deferred or tracked as
+follow-up work.
 
 ### Merge gate for this work
 
-- An unavailable optional review service may be replaced only by a documented
-  independent review of the exact diff. This does not waive hosted CI or review
-  thread clearance.
+- For this readiness sequence, maintainers approved a documented independent
+  review of the exact diff when the optional review service was unavailable.
+  Hosted CI and review-thread clearance remain required.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
   required exact-head review at its highest confidence level with no unresolved
   review threads, and pass an independent diff review before merge.
@@ -105,8 +94,8 @@ make the repository a supported production release.
 - P0 blocks a supported public Preview.
 - P1 blocks a stable supported release unless a documented, time-limited
   exception is accepted by maintainers.
-- P2 is follow-up work and does not belong in the first pull request unless it
-  directly supports a P0 or P1 fix.
+- P2 is follow-up work and does not block Preview or the first stable release
+  unless it directly supports a P0 or P1 fix.
 - Every behavioral fix needs a regression test. Every deployment claim needs a
   reproducible command or smoke test.
 
@@ -157,9 +146,9 @@ make the repository a supported production release.
 - [ ] **SEC-002: Invitation abuse controls.** **Status: open.** Add durable
   sender, tenant, IP, and recipient limits with resend cooldowns and provider-safe
   retries.
-- [ ] **SEC-003: Immutable MCP grants.** **Status: in progress in #289.** Bind
-  tokens to one grant and workspace, and revoke them when consent or scope
-  changes.
+- [x] **SEC-003: Immutable MCP grants.** **Status: complete in #289.** Access
+  and refresh credentials are bound to one workspace grant, active scope and
+  revocation are enforced, and refresh credentials are consumed once.
 - [x] **SEC-004: Integration callback authorization.** **Status: complete in
   #285.** Current administration permission is rechecked before provider exchange
   and again inside the serialized binding transaction.
@@ -263,10 +252,11 @@ make the repository a supported production release.
   ID token is emitted with HS256. Track the upstream correction and add
   interoperability coverage before relying on that metadata.
 - [ ] **MCP-003: Grant issuance race cleanup.** **Status: low-severity
-  follow-up.** An authorization-code and re-consent race can leave an unusable
-  orphan raw OAuth token row. There is no usable credential or cross-workspace
-  bypass, but a future persisted token-to-grant relation or grant locking should
-  prevent and clean up the orphan row.
+  follow-up.** Concurrent allow and deny decisions can let approval create a
+  valid grant while the losing denial path deletes no consent row but still
+  reports `access_denied`. Serialize the decisions or require the denial to
+  consume the pending consent row, then add a two-request regression. This does
+  not create cross-workspace access.
 - [ ] **REPO-002: Large module cleanup.** **Status: deferred.** Split oversized
   services and normalize test-support placement only after behavioral safety
   nets exist.
@@ -284,9 +274,10 @@ make the repository a supported production release.
 
 The full repository baseline audit was pinned to `f1bfdc3`, followed by a
 targeted delta review through `9f961a1`. Later readiness pull requests were
-reviewed and verified individually through current `main` at `64f7972`; this is
-not a claim that the full baseline audit was rerun after every intervening
-commit. The audit covered source, packages, schema, migrations, scripts, tests,
+reviewed and verified individually through current `main` at `4359717f` before
+this documentation-only tracker update; this is not a claim that the full
+baseline audit was rerun after every intervening commit. The audit covered
+source, packages, schema, migrations, scripts, tests,
 documentation, workflows, Docker configuration, tracked media, dependency
 advisories, and Git history secret patterns. It did not inspect production cloud
 accounts, bucket policy, database roles, Redis ACLs, DNS, TLS, live provider
