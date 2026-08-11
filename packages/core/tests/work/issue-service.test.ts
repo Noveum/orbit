@@ -159,12 +159,24 @@ describe('permissions', () => {
   });
 
   it('lets an admin delete', async () => {
-    const issue = await newIssue('Doomed');
+    const [cycle] = await db
+      .select()
+      .from(schema.cycle)
+      .where(eq(schema.cycle.teamId, workspace.teamId));
+    if (cycle === undefined) throw new Error('missing bootstrap cycle');
+    const issue = await newIssue('Doomed', { cycleId: cycle.id });
     const actions = await deleteIssue(workspace.admin, issue.id);
     expect(actions[0]?.action).toBe('delete');
     await expect(getIssue(workspace.admin, issue.id)).rejects.toMatchObject({
       code: 'not_found',
     });
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.issueId, issue.id));
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]?.issueIdentifier).toBe(issue.identifier);
+    expect(memberships[0]?.removedAt).not.toBeNull();
   });
 
   it('refuses a member of another team even though delete is in their role', async () => {

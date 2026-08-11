@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { and, asc, db, eq, schema } from '@orbit/db';
+import { and, asc, db, eq, schema, sql } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import { sprintOutcomeSchema } from '@orbit/shared/validators';
 import { cycleBurndown, teamVelocity } from '../../src/analytics/burndown.ts';
@@ -736,6 +736,52 @@ describe('cycle reads are team scoped', () => {
 });
 
 describe('cycle writes are team scoped', () => {
+  it('closes membership when deleting a sprint unassigns its issues', async () => {
+    const cycle = await firstCycle();
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Detached',
+      cycleId: cycle.id,
+    });
+
+    await db.execute(
+      sql.raw(`
+      create function require_closed_membership_before_cycle_delete() returns trigger as $$
+      begin
+        if not exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id
+        ) then
+          raise exception 'membership missing before cycle delete';
+        end if;
+        if exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id and removed_at is null
+        ) then
+          raise exception 'membership open before cycle delete';
+        end if;
+        return old;
+      end;
+      $$ language plpgsql;
+      create trigger require_closed_membership_before_cycle_delete
+      before delete on cycle
+      for each row execute function require_closed_membership_before_cycle_delete();
+    `),
+    );
+
+    try {
+      await deleteCycle(workspace.admin, cycle.id);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger require_closed_membership_before_cycle_delete on cycle;
+        drop function require_closed_membership_before_cycle_delete();
+      `),
+      );
+    }
+
+    const [detached] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
+    expect(detached?.cycleId).toBeNull();
+  });
+
   it('refuses a member of another team renaming or deleting a sprint', async () => {
     const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
     const { principal: outsider } = await addMember(workspace, 'member', {

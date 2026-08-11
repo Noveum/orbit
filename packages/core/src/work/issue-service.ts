@@ -32,6 +32,10 @@ import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
+import {
+  captureCreatedCycleMembership,
+  captureCycleMembershipChange,
+} from '../analytics/membership.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { dedupeAudience, restrictAudience, teamReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
@@ -770,6 +774,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       .returning();
     const issue = requireRow(created, 'The issue could not be created.');
 
+    await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
+
     await replaceLabels(tx, issue.id, parsed.labelIds);
     await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
     await appendActivities(tx, [
@@ -914,6 +920,18 @@ async function applyIssueUpdates(
       )
       .returning();
     for (const row of rows) updated.set(row.id, row);
+  }
+
+  for (const entry of changing) {
+    const issue = updated.get(entry.current.id);
+    if (issue === undefined || issue.cycleId === entry.current.cycleId) continue;
+    await captureCycleMembershipChange(tx, {
+      issue,
+      fromCycleId: entry.current.cycleId,
+      toCycleId: issue.cycleId,
+      occurredAt: now,
+      entryKind: 'added',
+    });
   }
 
   if (parsed.labelIds !== undefined) {
@@ -1211,6 +1229,16 @@ export async function moveIssue(
       .returning();
     const issue = requireRow(moved, 'That issue does not exist.');
 
+    if (issue.cycleId !== current.cycleId) {
+      await captureCycleMembershipChange(tx, {
+        issue,
+        fromCycleId: current.cycleId,
+        toCycleId: issue.cycleId,
+        occurredAt: now,
+        entryKind: 'added',
+      });
+    }
+
     if (changingTeam) await dropLabelsForeignToTeam(tx, principal.organizationId, issue.id, teamId);
 
     if (state.id !== current.stateId) {
@@ -1367,11 +1395,21 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const now = new Date();
     const orphaned = await tx
       .update(schema.issue)
-      .set({ parentId: null, updatedAt: new Date(), syncId })
+      .set({ parentId: null, updatedAt: now, syncId })
       .where(eq(schema.issue.parentId, issueId))
       .returning();
+    if (current.cycleId !== null) {
+      await captureCycleMembershipChange(tx, {
+        issue: current,
+        fromCycleId: current.cycleId,
+        toCycleId: null,
+        occurredAt: now,
+        entryKind: 'added',
+      });
+    }
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
     const labels = await labelIdsByIssue(

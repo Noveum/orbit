@@ -25,6 +25,10 @@ import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { cycleCreateSchema, cycleUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
+import {
+  captureCycleCloseOutcomes,
+  captureCycleMembershipChange,
+} from '../analytics/membership.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -307,11 +311,22 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
+    const now = new Date();
     const detached = await tx
       .update(schema.issue)
-      .set({ cycleId: null, updatedAt: new Date(), syncId })
+      .set({ cycleId: null, updatedAt: now, syncId })
       .where(eq(schema.issue.cycleId, cycleId))
       .returning();
+
+    for (const issue of detached) {
+      await captureCycleMembershipChange(tx, {
+        issue,
+        fromCycleId: cycleId,
+        toCycleId: null,
+        occurredAt: now,
+        entryKind: 'added',
+      });
+    }
 
     await tx.delete(schema.cycle).where(eq(schema.cycle.id, cycleId));
     return [
@@ -930,6 +945,12 @@ export async function completeCycle(
       .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
       .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
 
+    await captureCycleCloseOutcomes(tx, {
+      cycle,
+      rolloverCycleId: nextCycle.id,
+      occurredAt: now,
+    });
+
     const rolled = await tx
       .update(schema.issue)
       .set({ cycleId: nextCycle.id, updatedAt: now, syncId })
@@ -941,6 +962,16 @@ export async function completeCycle(
         ),
       )
       .returning();
+
+    for (const issue of rolled) {
+      await captureCycleMembershipChange(tx, {
+        issue,
+        fromCycleId: cycle.id,
+        toCycleId: nextCycle.id,
+        occurredAt: now,
+        entryKind: 'rollover',
+      });
+    }
 
     const [closed] = await tx
       .update(schema.cycle)
