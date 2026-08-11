@@ -25,7 +25,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -98,13 +98,36 @@ const notificationDeltaSchema = z.object({
 
 const unreadCountSchema = z.object({ unreadCount: z.number() });
 
+function toNotificationType(value: string): NotificationType {
+  return NOTIFICATION_TYPES.find((entry) => entry === value) ?? 'subscription_activity';
+}
+
+const inboxPageSchema = z.object({
+  notifications: z.array(
+    z.object({
+      id: z.string(),
+      type: z.string(),
+      entityType: z.string().default(''),
+      entityId: z.string().default(''),
+      actorName: z.string(),
+      title: z.string(),
+      body: z.string(),
+      url: z.string(),
+      read: z.boolean(),
+      snoozedUntil: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
+
 function toInboxItem(data: Record<string, unknown>): InboxItem | null {
   const parsed = notificationDeltaSchema.safeParse(data);
   if (!parsed.success) return null;
   const row = parsed.data;
   return {
     id: row.id,
-    type: NOTIFICATION_TYPES.find((entry) => entry === row.type) ?? 'subscription_activity',
+    type: toNotificationType(row.type),
     entityType: row.entityType,
     entityId: row.entityId,
     actorName: row.actorName,
@@ -168,6 +191,39 @@ export function applyNotificationDeltas(
   return actions
     .filter((action) => action.model === 'notification' && action.originClientId !== tabClientId)
     .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0 });
+}
+
+function LoadMoreRow({
+  loading,
+  onReach,
+}: {
+  readonly loading: boolean;
+  readonly onReach: () => void;
+}) {
+  const reach = useRef(onReach);
+  reach.current = onReach;
+
+  const watch = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) reach.current();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <button
+      ref={watch}
+      type="button"
+      onClick={onReach}
+      disabled={loading}
+      data-testid="inbox-load-more"
+      className="w-full px-3 py-3 text-center text-2xs text-faint transition-colors duration-[var(--duration-fast)] hover:text-muted"
+    >
+      {loading ? 'Loading older notifications' : 'Load older notifications'}
+    </button>
+  );
 }
 
 function NotificationBody({
@@ -272,6 +328,7 @@ export interface InboxViewProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
+  readonly nextCursor: string | null;
   readonly userId: string;
   readonly canWriteDocs: boolean;
   readonly canPublishDocs: boolean;
@@ -281,6 +338,7 @@ export function InboxView({
   items,
   unreadCount,
   unreadMentions,
+  nextCursor,
   userId,
   canWriteDocs,
   canPublishDocs,
@@ -288,6 +346,11 @@ export function InboxView({
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
+  const [cursor, setCursor] = useState<string | null>(nextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pagingError, setPagingError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const cursorRef = useRef<string | null>(nextCursor);
   const [tab, setTab] = useState<TabId>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -296,7 +359,9 @@ export function InboxView({
     setRows(items);
     setUnread(unreadCount);
     setMentions(unreadMentions);
-  }, [items, unreadCount, unreadMentions]);
+    setCursor(nextCursor);
+    cursorRef.current = nextCursor;
+  }, [items, unreadCount, unreadMentions, nextCursor]);
 
   useScopeSubscription([scopes.user(userId)]);
   useDeltaHandler(
@@ -321,6 +386,35 @@ export function InboxView({
   );
   const selectedIndex = visible.findIndex((row) => row.id === selectedId);
   const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
+
+  const loadMore = useCallback(async () => {
+    const from = cursorRef.current;
+    if (from === null || inFlight.current) return;
+    inFlight.current = true;
+    setLoadingMore(true);
+    try {
+      const page = await apiRequest<unknown>(
+        `/api/notifications?cursor=${encodeURIComponent(from)}`,
+      );
+      const parsed = inboxPageSchema.parse(page);
+      const older = parsed.notifications.map((row) => ({
+        ...row,
+        type: toNotificationType(row.type),
+      }));
+      setRows((list) => {
+        const known = new Set(list.map((row) => row.id));
+        return [...list, ...older.filter((item) => !known.has(item.id))];
+      });
+      cursorRef.current = parsed.nextCursor;
+      setCursor(parsed.nextCursor);
+      setPagingError(null);
+    } catch {
+      setPagingError('Could not load these. Check your connection and try again.');
+    } finally {
+      inFlight.current = false;
+      setLoadingMore(false);
+    }
+  }, []);
 
   const leaveDeletedIssue = useCallback(() => {
     if (current === undefined) return;
@@ -450,15 +544,15 @@ export function InboxView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-col gap-3 border-border border-b px-5 py-3">
+    <div className="flex min-h-0 flex-col md:h-full">
+      <header className="flex flex-col gap-2 border-border border-b px-5 py-2">
         {error === null ? null : (
           <p role="alert" className="text-danger text-xs" data-testid="inbox-error">
             {error}
           </p>
         )}
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h1 className="flex shrink-0 items-center gap-2 font-semibold text-base text-text">
             Inbox
             <Badge tone={unread > 0 ? 'accent' : 'neutral'} data-testid="inbox-unread-count">
               {unread} unread
@@ -469,7 +563,25 @@ export function InboxView({
               </Badge>
             ) : null}
           </h1>
-          <p className="hidden items-center gap-1.5 text-2xs text-faint sm:flex">
+          <nav className="flex items-center gap-1" aria-label="Inbox filters">
+            {TABS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => selectTab(entry.id)}
+                aria-current={tab === entry.id ? 'true' : undefined}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
+                  tab === entry.id
+                    ? 'bg-surface-2 font-medium text-text'
+                    : 'text-muted hover:bg-surface-2 hover:text-text',
+                )}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </nav>
+          <p className="ml-auto hidden items-center gap-1.5 text-2xs text-faint xl:flex">
             <Kbd keys={['J']} />
             <Kbd keys={['K']} /> move
             <Kbd keys={['U']} /> read
@@ -477,27 +589,9 @@ export function InboxView({
             <Kbd keys={['Backspace']} /> delete
           </p>
         </div>
-        <nav className="flex items-center gap-1" aria-label="Inbox filters">
-          {TABS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => selectTab(entry.id)}
-              aria-current={tab === entry.id ? 'true' : undefined}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
-                tab === entry.id
-                  ? 'bg-surface-2 font-medium text-text'
-                  : 'text-muted hover:bg-surface-2 hover:text-text',
-              )}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </nav>
       </header>
 
-      {visible.length === 0 ? (
+      {visible.length === 0 && cursor === null ? (
         <EmptyState
           icon={<Bell strokeWidth={1.75} aria-hidden="true" />}
           title="Inbox zero"
@@ -506,7 +600,7 @@ export function InboxView({
         />
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[22rem_minmax(0,1fr)]">
-          <ul className="flex min-h-0 flex-col overflow-y-auto border-border border-r">
+          <ul className="flex min-h-0 flex-col border-border md:overflow-y-auto md:border-r">
             {visible.map((row) => {
               const Icon = SOURCE_ICONS[row.type];
               return (
@@ -547,6 +641,20 @@ export function InboxView({
                 </li>
               );
             })}
+            {cursor === null ? null : (
+              <li key="load-more">
+                <LoadMoreRow loading={loadingMore} onReach={loadMore} />
+                {pagingError === null ? null : (
+                  <p
+                    role="alert"
+                    data-testid="inbox-paging-error"
+                    className="px-3 pb-3 text-center text-2xs text-danger"
+                  >
+                    {pagingError}
+                  </p>
+                )}
+              </li>
+            )}
           </ul>
 
           <section className="flex min-h-0 min-w-0 flex-col" data-testid="inbox-detail">

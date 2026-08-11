@@ -16,8 +16,17 @@ export const taskListClassName = cn(
   '[&_input[type=checkbox]]:size-3.5 [&_input[type=checkbox]]:accent-[var(--color-accent)]',
 );
 
+export const proseOverflowClassName = cn(
+  '[overflow-wrap:anywhere]',
+  '[&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:[overflow-wrap:normal]',
+  '[&_pre_code]:[overflow-wrap:normal]',
+  '[&_[data-table-scroll]]:max-w-full [&_[data-table-scroll]]:overflow-x-auto',
+  '[&_img]:h-auto [&_img]:max-w-full [&_video]:h-auto [&_video]:max-w-full',
+);
+
 export const docProseClassName = cn(
-  'prose-orbit max-w-none break-words text-base text-text leading-[1.75]',
+  'prose-orbit max-w-none text-base text-text leading-[1.75]',
+  proseOverflowClassName,
   '[&_h1]:mt-10 [&_h1]:mb-3 [&_h1]:scroll-mt-24 [&_h1]:font-semibold [&_h1]:text-text [&_h1]:text-xl [&_h1]:tracking-tight',
   '[&_h2]:mt-9 [&_h2]:mb-2.5 [&_h2]:scroll-mt-24 [&_h2]:font-semibold [&_h2]:text-lg [&_h2]:text-text [&_h2]:tracking-tight',
   '[&_h3]:mt-7 [&_h3]:mb-2 [&_h3]:scroll-mt-24 [&_h3]:font-medium [&_h3]:text-base [&_h3]:text-text',

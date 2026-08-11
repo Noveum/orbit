@@ -16,6 +16,7 @@ export default async function InboxPage() {
       items={inbox.items}
       unreadCount={inbox.unreadCount}
       unreadMentions={inbox.unreadMentions}
+      nextCursor={inbox.nextCursor}
       userId={context.principal.userId}
       organizationId={context.principal.organizationId}
       realtimeUrl={configuredRealtimeUrl()}
