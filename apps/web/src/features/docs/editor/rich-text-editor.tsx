@@ -188,6 +188,7 @@ export function RichTextEditor({
       handlePaste: (view, event) => {
         const clipboard = event.clipboardData;
         if (clipboard === null || clipboard.files.length > 0) return false;
+        if (view.state.selection.$from.parent.type.spec.code === true) return false;
         const html = markdownPasteHtml(clipboard.getData('text/plain'));
         if (html === null) return false;
         const container = document.createElement('div');

@@ -196,6 +196,22 @@ describe('pasting markdown', () => {
 
     await waitFor(() => expect(onChange.mock.calls.at(-1)?.[0]).toBe('Everything is fine now.'));
   });
+
+  it('keeps pasted markdown literal inside a code block', async () => {
+    const onChange = mock();
+    const editor = await mountEditor({ onChange });
+    const user = userEvent.setup();
+
+    await user.click(editor.view.dom);
+    editor.chain().setCodeBlock().run();
+    await user.paste('**text**');
+
+    await waitFor(() =>
+      expect(editor.view.dom.querySelector('code')?.textContent).toBe('**text**'),
+    );
+    expect(editor.view.dom.querySelector('strong')).toBeNull();
+    expect(onChange.mock.calls.at(-1)?.[0]).toContain('**text**');
+  });
 });
 
 describe('mention menu', () => {
