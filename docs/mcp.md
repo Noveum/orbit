@@ -246,6 +246,10 @@ Grants live under **Settings**, **Integrations**, **MCP**, where you can see
 which clients are connected, which workspace and scopes each got, and revoke
 any of them. Revocation is immediate.
 
+When upgrading from a build that issued unbound MCP credentials, existing
+clients must reconnect once. Orbit intentionally refuses those older raw
+credentials, so operators should notify users before deploying the upgrade.
+
 ## When it does not work
 
 **"401 Unauthorized" or a `WWW-Authenticate` challenge.** The token expired or

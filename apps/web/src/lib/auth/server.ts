@@ -8,7 +8,7 @@ import {
 import { db, eq, inArray, schema } from '@orbit/db';
 import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
-import { betterAuth } from 'better-auth';
+import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
@@ -31,6 +31,22 @@ export const MCP_SCOPES = [
 export const MCP_CONSENT_PATH = '/oauth/authorize';
 export const MCP_LOGIN_PATH = '/login';
 export const MCP_AUTHORIZE_START_PATH = '/api/oauth/start';
+export const MCP_TOKEN_RATE_LIMIT_PROBE_HEADER = 'x-orbit-mcp-token-rate-limit-probe';
+
+function mcpTokenRateLimitProbe() {
+  return {
+    id: 'orbit-mcp-token-rate-limit-probe' as const,
+    onRequest(request: Request) {
+      if (new URL(request.url).pathname !== '/api/auth/mcp/token') {
+        return Promise.resolve(undefined);
+      }
+      if (request.headers.get(MCP_TOKEN_RATE_LIMIT_PROBE_HEADER) !== '1') {
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve({ response: new Response(null, { status: 204 }) });
+    },
+  } satisfies BetterAuthPlugin;
+}
 
 const passkeyAssertionSchema = z.object({ response: z.object({ id: z.string().min(1) }) });
 
@@ -210,6 +226,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    mcpTokenRateLimitProbe(),
     passkey({ rpName: 'Orbit' }),
     magicLink({
       sendMagicLink: async ({ email, url, token }, request) => {
@@ -251,6 +268,7 @@ export const auth = betterAuth({
         loginPage: MCP_LOGIN_PATH,
         consentPage: MCP_CONSENT_PATH,
         allowDynamicClientRegistration: true,
+        requirePKCE: true,
         scopes: [...MCP_SCOPES],
       },
     }),

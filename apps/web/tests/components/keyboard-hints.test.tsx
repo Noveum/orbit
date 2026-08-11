@@ -134,6 +134,7 @@ function Surfaces({ extra }: { readonly extra?: ReactNode }) {
             unreadCount={0}
             unreadMentions={0}
             userId="user_1"
+            nextCursor={null}
             canWriteDocs
             canPublishDocs
           />

@@ -1,8 +1,10 @@
 import { db } from '@orbit/db';
-import { listInbox, unreadCounters } from '@orbit/services/notifications';
+import { listInbox, type NotificationRecord, unreadCounters } from '@orbit/services/notifications';
 import type { NotificationType } from '@orbit/shared/constants';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+
+export const INBOX_PAGE_SIZE = 50;
 
 export interface InboxItem {
   readonly id: string;
@@ -22,10 +24,27 @@ export interface InboxData {
   readonly items: InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
+  readonly nextCursor: string | null;
 }
 
 function toType(value: string): NotificationType {
   return NOTIFICATION_TYPES.find((entry) => entry === value) ?? 'subscription_activity';
+}
+
+export function toInboxItem(row: NotificationRecord): InboxItem {
+  return {
+    id: row.id,
+    type: toType(row.type),
+    entityType: row.entityType,
+    entityId: row.entityId,
+    actorName: row.actorName,
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    read: row.readAt !== null,
+    snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 export async function loadInbox(principal: Principal): Promise<InboxData> {
@@ -33,25 +52,14 @@ export async function loadInbox(principal: Principal): Promise<InboxData> {
     listInbox(db, {
       userId: principal.userId,
       organizationId: principal.organizationId,
-      limit: 50,
+      limit: INBOX_PAGE_SIZE,
     }),
     unreadCounters(db, principal.userId, principal.organizationId),
   ]);
   return {
     unreadCount: counters.total,
     unreadMentions: counters.mentions,
-    items: page.items.map((row) => ({
-      id: row.id,
-      type: toType(row.type),
-      entityType: row.entityType,
-      entityId: row.entityId,
-      actorName: row.actorName,
-      title: row.title,
-      body: row.body,
-      url: row.url,
-      read: row.readAt !== null,
-      snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-    })),
+    nextCursor: page.nextCursor,
+    items: page.items.map(toInboxItem),
   };
 }

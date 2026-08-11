@@ -228,6 +228,7 @@ function renderInbox(
               unreadCount={1}
               unreadMentions={0}
               userId="user_1"
+              nextCursor={null}
               canWriteDocs={docAccess.canWriteDocs}
               canPublishDocs={docAccess.canPublishDocs}
             />

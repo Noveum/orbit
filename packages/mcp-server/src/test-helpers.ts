@@ -3,13 +3,27 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createOrganization, recordMcpGrant, resolvePrincipal } from '@orbit/core';
+import {
+  bindMcpCredential,
+  createOrganization,
+  recordMcpGrant,
+  resolvePrincipal,
+  unbindMcpCredential,
+} from '@orbit/core';
 import { db, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { handleMcpRequest, MCP_PATH } from './server.ts';
 
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
+const MCP_TEST_SECRET = 'dev-secret-change-me-in-production-0123456789abcdef';
+
+function mcpTestSecret(): string {
+  const configured = process.env['BETTER_AUTH_SECRET'];
+  if (configured !== undefined && configured.length > 0) return configured;
+  process.env['BETTER_AUTH_SECRET'] = MCP_TEST_SECRET;
+  return MCP_TEST_SECRET;
+}
 
 export async function resetDatabase(): Promise<void> {
   const [current] = await db.execute<{ name: string }>(sql`select current_database() as name`);
@@ -93,6 +107,7 @@ export async function mintToken(
   name = 'Test client',
   scopes: string = MCP_TEST_SCOPES,
 ): Promise<string> {
+  const secret = mcpTestSecret();
   const clientId = `orbit_test_${randomUUID().replace(/-/g, '')}`;
   await db.insert(schema.oauthApplication).values({
     id: randomUUID(),
@@ -102,6 +117,7 @@ export async function mintToken(
     type: 'public',
     userId,
   });
+  const grantId = await recordMcpGrant({ clientId, userId, organizationId, scopes });
   const accessToken = token('at_');
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
@@ -113,8 +129,13 @@ export async function mintToken(
     userId,
     scopes,
   });
-  await recordMcpGrant({ clientId, userId, organizationId, scopes });
-  return accessToken;
+  return bindMcpCredential(accessToken, grantId, secret);
+}
+
+export function rawTokenOf(tokenValue: string): string {
+  const binding = unbindMcpCredential(tokenValue, mcpTestSecret());
+  if (binding === null) throw new Error('The test token has no MCP grant binding.');
+  return binding.credential;
 }
 
 export interface TestClient {
