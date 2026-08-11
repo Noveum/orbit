@@ -37,7 +37,7 @@ export function StandupBoard() {
   const [chosen, setChosen] = useState<string | null>(() => searchParams.get(PERSON_PARAM));
 
   const known =
-    !workspace.ready ||
+    chosen === null ||
     chosen === UNASSIGNED ||
     workspace.members.some((member) => member.id === chosen);
   const selectedId = known ? chosen : null;
@@ -68,8 +68,11 @@ export function StandupBoard() {
     [selectedId],
   );
 
-  const active = useAllIssues(query, scope);
-  const roster = useIssueSummary(summarySearch(null, query, 'assignee', WHOLE_WORKSPACE));
+  const active = useAllIssues(query, scope, workspace.ready);
+  const roster = useIssueSummary(
+    summarySearch(null, query, 'assignee', WHOLE_WORKSPACE),
+    workspace.ready,
+  );
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);

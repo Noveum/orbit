@@ -4,6 +4,7 @@ import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import { UserMinus, Users } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
 
 export const UNASSIGNED = UNSET_FILTER_VALUE;
@@ -21,10 +22,8 @@ const tile =
 const UNKNOWN_COUNT = '?';
 
 const selectedTile = 'border-accent bg-accent/10 text-text';
-const idleTile =
-  'border-border bg-surface text-muted hover:border-border-strong hover:bg-surface-2';
-const emptyTile =
-  'border-border bg-surface text-faint hover:border-border-strong hover:bg-surface-2';
+const idleTile = cn(cardHover, 'border-border bg-surface text-muted');
+const emptyTile = cn(cardHover, 'border-border bg-surface text-faint');
 
 function tileTone(selected: boolean, count: number | null): string {
   if (selected) return selectedTile;

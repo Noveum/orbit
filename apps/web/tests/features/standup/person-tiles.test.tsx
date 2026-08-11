@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PersonTiles } from '../../../src/features/standup/person-tiles.tsx';
@@ -16,9 +16,11 @@ const members: readonly Member[] = [
 
 const counts: Readonly<Record<string, number>> = { user_ada: 5, user_bo: 2 };
 
+let picks: (string | null)[] = [];
+
 function mount(
   selectedId: string | null,
-  onSelect: (id: string | null) => void = () => undefined,
+  onSelect: (id: string | null) => void = (id) => picks.push(id),
   shown: Readonly<Record<string, number>> | null = counts,
 ) {
   render(
@@ -27,6 +29,14 @@ function mount(
 }
 
 describe('PersonTiles', () => {
+  beforeEach(() => {
+    picks = [];
+  });
+
+  afterEach(() => {
+    expect(picks).toEqual([]);
+  });
+
   it('gives everybody a tile, with Everyone in front', () => {
     mount(null);
 
