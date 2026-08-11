@@ -250,10 +250,12 @@ describe('resolveCycle', () => {
     expect((await resolveCycle(admin, '  ACTIVE  ')).id).toBe(sprintOne);
   });
 
-  it('refuses a sprint that belongs to another team', async () => {
-    expect(await errorOf(() => resolveCycle(admin, sprintTwo))).toBe('not_found');
-    expect(await errorOf(() => resolveCycle(admin, sprintOne))).toBe('not_found');
-    expect(await errorOf(() => resolveCycle(admin, 'Sprint 2'))).toBe('not_found');
+  it('refuses a sprint that belongs to another workspace', async () => {
+    const vega = await createWorkspace('Vega');
+    const [theirs] = await listCycles(vega.admin);
+    if (theirs === undefined) throw new Error('vega has no sprint');
+
+    expect(await errorOf(() => resolveCycle(admin, theirs.id))).toBe('not_found');
   });
 
   it('refuses a reference that matches no sprint', async () => {
@@ -261,7 +263,7 @@ describe('resolveCycle', () => {
     expect(await errorOf(() => resolveCycle(admin, '9'))).toBe('not_found');
   });
 
-  it('refuses "active" on a team whose sprint has been closed', async () => {
-    expect(await errorOf(() => resolveCycle(admin, 'active'))).toBe('not_found');
+  it('resolves "active" to the sprint the workspace is running', async () => {
+    expect((await resolveCycle(admin, 'active')).id).toBe(sprintOne);
   });
 });

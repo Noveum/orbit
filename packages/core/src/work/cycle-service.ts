@@ -776,6 +776,7 @@ export interface CompletedCycle {
   readonly cycle: CycleRow;
   readonly nextCycle: CycleRow;
   readonly rolledOverIssueIds: string[];
+  readonly releasedIssueIds: string[];
   readonly actions: SyncAction[];
 }
 
@@ -1011,6 +1012,28 @@ export async function completeCycle(
       .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
       .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
 
+    const uncommittedStateIds = tx
+      .select({ id: schema.workflowState.id })
+      .from(schema.workflowState)
+      .where(
+        and(
+          eq(schema.workflowState.organizationId, cycle.organizationId),
+          sql`${schema.workflowState.category} in ('triage', 'backlog')`,
+        ),
+      );
+
+    const released = await tx
+      .update(schema.issue)
+      .set({ cycleId: null, updatedAt: now, syncId })
+      .where(
+        and(
+          eq(schema.issue.cycleId, cycleId),
+          isNull(schema.issue.archivedAt),
+          sql`${schema.issue.stateId} in ${uncommittedStateIds}`,
+        ),
+      )
+      .returning();
+
     const rolled = await tx
       .update(schema.issue)
       .set({ cycleId: nextCycle.id, updatedAt: now, syncId })
@@ -1038,6 +1061,7 @@ export async function completeCycle(
       cycle: completed,
       nextCycle,
       rolledOverIssueIds: rolled.map((row) => row.id),
+      releasedIssueIds: released.map((row) => row.id),
       actions: [
         buildSyncAction({
           syncId,
@@ -1049,7 +1073,7 @@ export async function completeCycle(
           data: completed,
           actor,
         }),
-        ...rolled.map((row) =>
+        ...[...released, ...rolled].map((row) =>
           buildSyncAction({
             syncId,
             organizationId: principal.organizationId,

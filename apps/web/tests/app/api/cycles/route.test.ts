@@ -247,11 +247,12 @@ describe('PATCH and DELETE /api/cycles/[id]', () => {
 describe('POST /api/cycles/[id]/complete', () => {
   it('closes the sprint and rolls the unfinished work into the next one', async () => {
     const { runningCycleId } = await freshSprint();
-    const [state] = await db
+    const states = await db
       .select()
       .from(schema.workflowState)
       .where(eq(schema.workflowState.teamId, workspace.teamId));
-    if (state === undefined) throw new Error('the team has no workflow state');
+    const state = states.find((row) => row.category === 'unstarted');
+    if (state === undefined) throw new Error('the team has no unstarted state');
     await db.insert(schema.issue).values({
       id: 'issue_rolls_over',
       organizationId: workspace.organizationId,

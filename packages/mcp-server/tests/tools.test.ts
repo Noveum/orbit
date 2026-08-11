@@ -455,7 +455,7 @@ describe('planning', () => {
 
   it('moves an issue into the active cycle and back out', async () => {
     const created = await newIssue('Plan into the cycle');
-    const active = await admin.result('active_cycle', { team: workspace.teamKey });
+    const active = await admin.result('active_cycle', {});
     const cycle = active['cycle'] as { id: string };
     expect(cycle).not.toBeNull();
 
@@ -475,12 +475,15 @@ describe('planning', () => {
   it('reports the scope, the points and the burn up of a sprint that is three days old', async () => {
     const created = await admin.result('create_team', { name: 'Burn Up', key: 'BURN' });
     const teamKey = (created['team'] as { key: string }).key;
-    const opened = await admin.result('active_cycle', { team: teamKey });
+    const opened = await admin.result('active_cycle', {});
     const sprint = opened['cycle'] as { id: string; startsAt: string };
     await admin.result('update_cycle', {
       cycleId: sprint.id,
       startsAt: new Date(Date.parse(sprint.startsAt) - 3 * 86_400_000).toISOString(),
     });
+
+    const baseline = await admin.result('cycle_progress', { cycle: 'active' });
+    const baseChanges = baseline['changes'] as { added: number; removed: number };
 
     const heavy = await newIssue('Rebuild the fan out', { team: teamKey, estimate: 5 });
     const light = await newIssue('Rename the banner', { team: teamKey, estimate: 3 });
@@ -489,14 +492,14 @@ describe('planning', () => {
     }
     await admin.result('update_issue', { issue: heavy.identifier, state: 'Done' });
 
-    const progress = await admin.result('cycle_progress', { team: teamKey, cycle: 'active' });
+    const progress = await admin.result('cycle_progress', { cycle: 'active' });
     expect(progress['scope']).toBe(2);
     expect(progress['completed']).toBe(1);
     expect(progress['points']).toEqual({ scope: 8, started: 0, completed: 5 });
-    expect(progress['changes']).toEqual({
-      added: 2,
+    expect(progress['changes']).toMatchObject({
+      added: baseChanges.added + 2,
       addedPoints: 8,
-      removed: 0,
+      removed: baseChanges.removed,
       removedPoints: 0,
     });
     const burnUp = progress['burnUp'] as { scope: number; scopePoints: number }[];
@@ -505,13 +508,13 @@ describe('planning', () => {
     expect(burnUp.at(-1)).toMatchObject({ completed: 1, completedPoints: 5 });
 
     await admin.result('move_to_cycle', { issue: light.identifier, cycle: null });
-    const afterPull = await admin.result('cycle_progress', { team: teamKey, cycle: 'active' });
+    const afterPull = await admin.result('cycle_progress', { cycle: 'active' });
     expect(afterPull['scope']).toBe(1);
     expect(afterPull['points']).toMatchObject({ scope: 5 });
-    expect(afterPull['changes']).toEqual({
-      added: 2,
+    expect(afterPull['changes']).toMatchObject({
+      added: baseChanges.added + 2,
       addedPoints: 8,
-      removed: 1,
+      removed: baseChanges.removed + 1,
       removedPoints: 3,
     });
     expect((afterPull['burnUp'] as { scope: number }[]).map((point) => point.scope)).toEqual([
@@ -519,8 +522,8 @@ describe('planning', () => {
     ]);
   });
 
-  it('lists cycles for a team', async () => {
-    const payload = await admin.result('list_cycles', { team: workspace.teamKey });
+  it('lists the sprints of the workspace', async () => {
+    const payload = await admin.result('list_cycles', {});
     expect((payload['cycles'] as unknown[]).length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -731,7 +734,7 @@ describe('sprints over mcp', () => {
   it('appends a sprint after the last one when it is given no dates', async () => {
     const team = await admin.result('create_team', { name: 'Appender', key: 'APND' });
     const teamKey = (team['team'] as { key: string }).key;
-    const before = await admin.result('list_cycles', { team: teamKey });
+    const before = await admin.result('list_cycles', {});
     const last = (before['cycles'] as { endsAt: string }[]).at(-1);
     if (last === undefined) throw new Error('the new team has no sprint');
 
@@ -743,23 +746,20 @@ describe('sprints over mcp', () => {
   });
 
   it('starts the sprint that follows the one it just closed, and refuses to start it twice', async () => {
-    const team = await admin.result('create_team', { name: 'Runway', key: 'RUNW' });
-    const teamKey = (team['team'] as { key: string }).key;
-
-    const opened = await admin.result('active_cycle', { team: teamKey });
+    const opened = await admin.result('active_cycle', {});
     const running = opened['cycle'] as { id: string };
 
     const closed = await admin.result('complete_cycle', { cycleId: running.id });
     const successor = closed['nextCycle'] as { id: string };
 
-    const between = await admin.result('active_cycle', { team: teamKey });
+    const between = await admin.result('active_cycle', {});
     expect(between['cycle']).toBeNull();
 
     const started = await admin.result('start_cycle', { cycleId: successor.id });
     const startsAt = Date.parse((started['cycle'] as { startsAt: string }).startsAt);
     expect(Math.abs(startsAt - Date.now())).toBeLessThan(60_000);
 
-    const after = await admin.result('active_cycle', { team: teamKey });
+    const after = await admin.result('active_cycle', {});
     expect((after['cycle'] as { id: string }).id).toBe(successor.id);
 
     const again = await admin.call('start_cycle', { cycleId: successor.id });
@@ -779,7 +779,7 @@ describe('sprints over mcp', () => {
     expect(denied.isError).toBe(true);
     expect(errorPayload(denied).code).toBe('forbidden');
 
-    const untouched = await admin.result('list_cycles', { team: workspace.teamKey });
+    const untouched = await admin.result('list_cycles', {});
     const rows = untouched['cycles'] as { id: string; startsAt: string }[];
     expect(rows.find((row) => row.id === sprint.id)?.startsAt).toBe(sprint.startsAt);
   });
