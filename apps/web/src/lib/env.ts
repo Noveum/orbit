@@ -8,6 +8,14 @@ const configured = (value: string | undefined): boolean =>
 const configuredPair = (environment: Environment, first: string, second: string): boolean =>
   configured(environment[first]) && configured(environment[second]);
 
+function senderDomainOf(value: string): string | null {
+  const angleAddress = /<([^<>]+)>$/.exec(value)?.[1];
+  const address = (angleAddress ?? value).trim();
+  const parsed = z.email().safeParse(address);
+  if (!parsed.success) return null;
+  return parsed.data.slice(parsed.data.lastIndexOf('@') + 1).toLowerCase();
+}
+
 export function assertProductionAuthenticationConfigured(
   environment: Environment = process.env,
 ): void {
@@ -26,10 +34,12 @@ export function assertProductionAuthenticationConfigured(
     'GITHUB_CLIENT_SECRET',
   );
   const emailFrom = environment['EMAIL_FROM']?.trim() ?? '';
+  const senderDomain = senderDomainOf(emailFrom);
   const magicLinkAuthentication =
     configured(environment['RESEND_API_KEY']) &&
-    configured(emailFrom) &&
-    !/@orbit\.local(?:>|$)/i.test(emailFrom);
+    senderDomain !== null &&
+    senderDomain !== 'localhost' &&
+    !senderDomain.endsWith('.local');
 
   if (
     passwordAuthentication ||

@@ -27,7 +27,7 @@ Both need the same infrastructure plus one complete first-login method.
 | Postgres 16 or newer | [Supabase](https://supabase.com) | Neon, Railway, RDS, your own |
 | Redis | [Upstash](https://upstash.com) | Any Redis 7 or newer, ElastiCache, your own |
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
-| Transactional email | [Resend](https://resend.com) | None. Orbit only supports Resend |
+| Transactional email (optional with password or OAuth) | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
 Email is used for magic links and invites. It is optional when password, Google
 or GitHub sign-in is configured. Production build and startup refuse to proceed
