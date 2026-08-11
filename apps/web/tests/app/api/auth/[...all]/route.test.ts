@@ -17,6 +17,7 @@ import { nativeFetchGlobals } from '../../../../../tests-preload.ts';
 
 const APP_ORIGIN = 'http://localhost:3000';
 const CALLBACK_URL = 'http://127.0.0.1:9000/callback';
+const VALID_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
 
 function authorizeRequest(search: URLSearchParams, cookie?: string): Request {
   const request = new Request(`${APP_ORIGIN}/api/auth/mcp/authorize?${search.toString()}`);
@@ -219,7 +220,7 @@ describe('MCP authorize PKCE boundary', () => {
         await db.delete(schema.session);
         const cookies = new Map<string, string>();
         const search = authorizeSearch('consent');
-        search.set('code_challenge', 'challenge');
+        search.set('code_challenge', VALID_PKCE_CHALLENGE);
         search.set('code_challenge_method', 'S256');
         const start = await GET(authorizeRequest(search));
         expect(start.status).toBe(302);
@@ -280,7 +281,7 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('rejects prompt=none for an authenticated request', async () => {
     const search = authorizeSearch('none');
-    search.set('code_challenge', 'challenge');
+    search.set('code_challenge', VALID_PKCE_CHALLENGE);
     search.set('code_challenge_method', 'S256');
     const response = await GET(authorizeRequest(search, cookie));
     expect(response.status).toBe(400);
@@ -294,15 +295,57 @@ describe('MCP authorize PKCE boundary', () => {
     expect(location.searchParams.get('error')).toBe('invalid_request');
   });
 
+  it('rejects code challenges that are not S256 digests', async () => {
+    const invalidChallenges = ['A'.repeat(42), 'A'.repeat(44), `${'A'.repeat(42)}=`];
+    for (const challenge of invalidChallenges) {
+      const search = authorizeSearch('consent');
+      search.set('code_challenge', challenge);
+      search.set('code_challenge_method', 'S256');
+      const response = await GET(authorizeRequest(search, cookie));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+    }
+    expect(await db.select().from(schema.verification)).toHaveLength(0);
+  });
+
   it('accepts an S256 challenge and continues to explicit consent', async () => {
     const search = authorizeSearch('consent');
-    search.set('code_challenge', 'challenge');
+    search.set('code_challenge', VALID_PKCE_CHALLENGE);
     search.set('code_challenge_method', 'S256');
     const response = await GET(authorizeRequest(search, cookie));
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get('location') ?? '', APP_ORIGIN);
     expect(location.pathname).toBe('/oauth/authorize');
     expect(location.searchParams.get('consent_code')).not.toBeNull();
+  });
+
+  it('rejects authorization code verifiers outside RFC 7636 syntax before consuming the code', async () => {
+    await withNativeFetchGlobals(async () => {
+      const invalidVerifiers = ['A'.repeat(42), 'A'.repeat(129), `${'A'.repeat(42)}%`];
+      for (const verifier of invalidVerifiers) {
+        const { code } = await finalizedAuthorizationCode(workspace);
+        const response = await authPost(
+          new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code,
+              client_id: 'client_test',
+              redirect_uri: CALLBACK_URL,
+              code_verifier: verifier,
+            }),
+          }),
+        );
+        expect(response.ok).toBe(false);
+        expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+        const [remaining] = await db
+          .select({ identifier: schema.verification.identifier })
+          .from(schema.verification)
+          .where(eq(schema.verification.identifier, code));
+        expect(remaining?.identifier).toBe(code);
+      }
+    });
   });
 
   it('binds authorization and refresh tokens to the consented workspace grant', async () => {

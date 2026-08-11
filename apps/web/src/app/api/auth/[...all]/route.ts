@@ -10,11 +10,14 @@ const handlers = toNextJsHandler(auth.handler);
 
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
 const MCP_TOKEN_PATH = '/api/auth/mcp/token';
+const mcpCodeChallengeSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const mcpCodeVerifierSchema = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
 
 const mcpTokenRequestSchema = z
   .object({
     grant_type: z.string().min(1),
     code: z.string().min(1).optional(),
+    code_verifier: z.string().optional(),
     refresh_token: z.string().min(1).optional(),
   })
   .catchall(z.string());
@@ -199,6 +202,9 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
     if (parsed.body.code === undefined) {
       return mcpTokenError('invalid_request', 'An authorization code is required.', 400);
     }
+    if (!mcpCodeVerifierSchema.safeParse(parsed.body.code_verifier).success) {
+      return mcpTokenError('invalid_request', 'The PKCE code verifier is invalid.', 400);
+    }
     const grantId = await authorizationCodeGrantId(parsed.body.code);
     if (grantId === null || !(await activeMcpGrant(grantId))) {
       return mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
@@ -235,6 +241,16 @@ export function GET(request: Request): Promise<Response> | Response {
     if (prompts.length !== 1 || prompts[0] !== 'consent') {
       return Response.json(
         { error: 'invalid_request', error_description: 'Explicit consent is required.' },
+        { status: 400, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+    const challenges = url.searchParams.getAll('code_challenge');
+    if (
+      challenges.length > 0 &&
+      (challenges.length !== 1 || !mcpCodeChallengeSchema.safeParse(challenges[0]).success)
+    ) {
+      return Response.json(
+        { error: 'invalid_request', error_description: 'The PKCE code challenge is invalid.' },
         { status: 400, headers: { 'cache-control': 'no-store' } },
       );
     }
