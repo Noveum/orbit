@@ -17,12 +17,12 @@ beforeEach(async () => {
 describe('what the sprint page loads for each tab', () => {
   it('leaves the burn up and the assignee tally out of the chrome the board needs', async () => {
     const chrome = await getActiveSprintChrome(workspace.admin);
+    if (chrome === null) throw new Error('the workspace opens with a sprint');
 
-    expect(chrome).not.toBeNull();
-    expect(hasSprintAnalytics(chrome!)).toBe(false);
-    expect(Object.keys(chrome ?? {})).not.toContain('progress');
-    expect(Object.keys(chrome ?? {})).not.toContain('groups');
-    expect(Object.keys(chrome ?? {})).not.toContain('assignees');
+    expect(hasSprintAnalytics(chrome)).toBe(false);
+    expect(Object.keys(chrome)).not.toContain('progress');
+    expect(Object.keys(chrome)).not.toContain('groups');
+    expect(Object.keys(chrome)).not.toContain('assignees');
   });
 
   it('still carries what the header renders', async () => {
@@ -38,12 +38,12 @@ describe('what the sprint page loads for each tab', () => {
   it('loads the burn up and the tally only when insights asks for them', async () => {
     await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Counted' });
     const full = await getActiveCycleView(workspace.admin);
+    if (full === null) throw new Error('the workspace opens with a sprint');
 
-    expect(full).not.toBeNull();
-    expect(hasSprintAnalytics(full!)).toBe(true);
-    expect(full?.progress.cycleId).toBe(full?.id ?? '');
-    expect(Array.isArray(full?.groups)).toBe(true);
-    expect(Array.isArray(full?.assignees)).toBe(true);
+    expect(hasSprintAnalytics(full)).toBe(true);
+    expect(full.progress.cycleId).toBe(full.id);
+    expect(Array.isArray(full.groups)).toBe(true);
+    expect(Array.isArray(full.assignees)).toBe(true);
   });
 
   it('agrees with itself about which sprint it is describing', async () => {

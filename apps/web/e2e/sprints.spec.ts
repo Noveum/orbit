@@ -100,3 +100,37 @@ test('a sprint whose tasks fail to load says so instead of looking empty', async
 
   await context.close();
 });
+
+test('a filter change whose request fails says so rather than showing the old board', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 800 } });
+  const page = await signIn(context, 'alex@orbit.example');
+
+  let failing = false;
+  await page.route('**/api/issues?**', async (route) => {
+    if (failing) return await route.fulfill({ status: 500, body: '{"error":"boom"}' });
+    return await route.continue();
+  });
+
+  await page.goto(`${BASE}/sprints`);
+  await expect(page.locator('[data-testid^="board-column-"]').first()).toBeVisible();
+
+  failing = true;
+  await page.keyboard.press('f');
+  await expect(page.getByTestId('filter-menu')).toBeVisible();
+  await page.getByTestId('filter-field-priority').click();
+  await page.getByTestId('filter-value-1').click();
+  await page.keyboard.press('Escape');
+
+  const retry = page.getByTestId('retry-sprint-issues');
+  await expect(retry).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('sprint-issues')).not.toContainText('Nothing in this sprint yet');
+  await expect(page.locator('[data-testid^="board-column-"]')).toHaveCount(0);
+
+  failing = false;
+  await retry.click();
+  await expect(page.locator('[data-testid^="board-column-"]').first()).toBeVisible();
+
+  await context.close();
+});
