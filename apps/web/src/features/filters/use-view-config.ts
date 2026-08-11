@@ -94,6 +94,22 @@ export function withViewParam(search: string, viewId: string | null): string {
   return `${search}${separator}${VIEW_PARAM}=${encodeURIComponent(viewId)}`;
 }
 
+export function withCarriedParams(search: string, live: string, carry: readonly string[]): string {
+  if (carry.length === 0) return search;
+  const source = new URLSearchParams(live);
+  const params = new URLSearchParams(search.replace(/^\?/, ''));
+  let carried = false;
+  for (const key of carry) {
+    const value = source.get(key);
+    if (value === null) continue;
+    params.set(key, value);
+    carried = true;
+  }
+  if (!carried) return search;
+  const merged = params.toString();
+  return merged.length === 0 ? '' : `?${merged}`;
+}
+
 export interface ViewConfigController {
   readonly config: ViewConfig;
   readonly setConfig: (next: ViewConfig) => void;
@@ -102,10 +118,13 @@ export interface ViewConfigController {
 
 export const URL_SYNC_DELAY_MS = 300;
 
+export const NO_CARRIED_PARAMS: readonly string[] = [];
+
 export function useViewConfig(
   teamId: string | null,
   layout: ViewLayoutMode,
   page: ViewPage = 'team',
+  carry: readonly string[] = NO_CARRIED_PARAMS,
 ): ViewConfigController {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -132,10 +151,11 @@ export function useViewConfig(
       syncTimer.current = undefined;
       nextWrite.current = null;
       if (window.location.pathname !== pathname) return;
-      syncedSearch.current = search.replace(/^\?/, '');
-      window.history.replaceState(null, '', `${pathname}${search}`);
+      const merged = withCarriedParams(search, window.location.search, carry);
+      syncedSearch.current = merged.replace(/^\?/, '');
+      window.history.replaceState(null, '', `${pathname}${merged}`);
     },
-    [pathname],
+    [pathname, carry],
   );
 
   const flush = useCallback(() => {
