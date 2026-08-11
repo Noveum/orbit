@@ -269,7 +269,7 @@ export interface SprintIndexEntry {
   readonly number: number;
   readonly startsAt: string;
   readonly endsAt: string;
-  readonly state: 'running' | 'upcoming' | 'finished';
+  readonly state: 'running' | 'upcoming' | 'finished' | 'overdue';
   readonly issues: number;
 }
 
@@ -286,7 +286,8 @@ function sprintState(
 ): SprintIndexEntry['state'] {
   if (cycle.completedAt !== null) return 'finished';
   if (cycle.startsAt > now) return 'upcoming';
-  return 'running';
+  if (cycle.endsAt > now) return 'running';
+  return 'overdue';
 }
 
 export async function listSprintIndex(

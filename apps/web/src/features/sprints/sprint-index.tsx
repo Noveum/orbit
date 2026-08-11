@@ -6,12 +6,14 @@ import type { SprintIndexEntry, SprintIndexPage } from './data.ts';
 const STATE_LABEL: Record<SprintIndexEntry['state'], string> = {
   running: 'Running',
   upcoming: 'Upcoming',
+  overdue: 'Past its end date',
   finished: 'Finished',
 };
 
 const STATE_TONE: Record<SprintIndexEntry['state'], string> = {
   running: 'bg-accent/15 text-accent',
   upcoming: 'bg-subtle text-muted',
+  overdue: 'bg-warning/15 text-warning',
   finished: 'bg-subtle text-faint',
 };
 

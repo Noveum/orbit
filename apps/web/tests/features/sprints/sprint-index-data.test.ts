@@ -45,9 +45,14 @@ describe('listSprintIndex', () => {
     expect((await entryFor(later.number))?.state).toBe('upcoming');
   });
 
-  it('calls a sprint finished once it has been closed, not merely because its dates passed', async () => {
+  it('calls a sprint past its end date overdue rather than running or finished', async () => {
     const overdue = await sprint(-40, -20);
-    expect((await entryFor(overdue.number))?.state).toBe('running');
+
+    expect((await entryFor(overdue.number))?.state).toBe('overdue');
+  });
+
+  it('calls a sprint finished only once it has been closed', async () => {
+    const overdue = await sprint(-40, -20);
 
     await db
       .update(schema.cycle)
@@ -55,6 +60,17 @@ describe('listSprintIndex', () => {
       .where(eq(schema.cycle.id, overdue.id));
 
     expect((await entryFor(overdue.number))?.state).toBe('finished');
+  });
+
+  it('never calls two sprints running at once', async () => {
+    await sprint(-40, -20);
+    await sprint(30, 44);
+
+    const page = await listSprintIndex(workspace.admin, 1);
+    const running = page.sprints.filter((row) => row.state === 'running');
+
+    expect(running).toHaveLength(1);
+    expect(running[0]?.number).toBe((await activeCycle(workspace.admin))?.number);
   });
 
   it('counts the live issues each sprint holds and leaves archived ones out', async () => {
