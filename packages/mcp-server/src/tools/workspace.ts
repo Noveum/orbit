@@ -17,7 +17,7 @@ import {
 import type { Principal } from '@orbit/shared/policy';
 import { issueRefSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
-import { resolveCycle, resolveProject, resolveTeam } from '../resolve.ts';
+import { resolveCycle, resolveProject } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
 
 const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
@@ -232,13 +232,11 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
         'Remove a sprint. Its issues survive and fall back to no sprint, which is what descoping a cancelled sprint needs.',
       readOnly: false,
       inputSchema: {
-        team: z.string().min(1).describe('Team key like "ENG", team name, or team id.'),
         sprint: z.string().min(1).describe('Sprint name, number or id.'),
       },
     },
     async (args) => {
-      const team = await resolveTeam(principal, args.team);
-      const cycle = await resolveCycle(principal, team.id, args.sprint);
+      const cycle = await resolveCycle(principal, args.sprint);
       const actions = await deleteCycle(principal, cycle.id);
       await publish(actions);
       return { deleted: cycle.name };

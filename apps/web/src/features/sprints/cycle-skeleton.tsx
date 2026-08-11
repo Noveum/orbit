@@ -103,6 +103,35 @@ function CyclePanelSkeleton() {
   );
 }
 
+const ROLL_UP_ROWS = ['first', 'second', 'third', 'fourth'];
+
+export function SprintRollUpSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 px-6 py-6" data-testid="sprint-roll-up-skeleton">
+      <header className="flex flex-col gap-1">
+        <Skeleton className="h-6 w-32" />
+        <Skeleton className="h-3 w-80 max-w-full" />
+      </header>
+      <ul className="flex flex-col gap-1.5">
+        {ROLL_UP_ROWS.map((row) => (
+          <li
+            key={row}
+            className="flex flex-col gap-1.5 rounded-lg border border-border px-3 py-2.5"
+          >
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-5 w-10 rounded-full" />
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-2 w-24" />
+              <Skeleton className="ml-auto h-2 w-16" />
+            </div>
+            <Skeleton className="h-1.5 w-full rounded-full" />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function CycleSkeleton({ panels = 2 }: { readonly panels?: number }) {
   const ids = PANEL_IDS.slice(0, Math.max(1, panels));
   return (

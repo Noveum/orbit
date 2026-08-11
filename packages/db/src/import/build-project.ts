@@ -126,7 +126,6 @@ function buildLabels(
 
 function buildCycles(
   entry: PlaneProjectExport,
-  teamId: string,
   createdAt: Date,
   context: BuildContext,
   rows: ImportRows,
@@ -138,7 +137,7 @@ function buildCycles(
       at(right.start_date ?? right.created_at, createdAt).getTime(),
   );
 
-  ordered.forEach((cycle, index) => {
+  for (const cycle of ordered) {
     const cycleId = id();
     cycleIds.set(cycle.id, cycleId);
     const startsAt = at(cycle.start_date ?? cycle.created_at, createdAt);
@@ -146,8 +145,8 @@ function buildCycles(
     rows.cycles.push({
       id: cycleId,
       organizationId: context.organizationId,
-      teamId,
-      number: index + 1,
+      teamId: null,
+      number: rows.cycles.length + 1,
       name: cycle.name,
       startsAt,
       endsAt,
@@ -155,7 +154,7 @@ function buildCycles(
       syncId: 0,
       createdAt: at(cycle.created_at, createdAt),
     });
-  });
+  }
 
   return cycleIds;
 }
@@ -468,7 +467,7 @@ export function buildProject(
 
   rows.projectTeams.push({ id: id(), projectId, teamId });
 
-  const cycleIds = buildCycles(entry, teamId, createdAt, context, rows);
+  const cycleIds = buildCycles(entry, createdAt, context, rows);
   const milestoneIds = buildMilestones(entry, projectId, createdAt, context, rows);
 
   const skippedDrafts = buildIssues(

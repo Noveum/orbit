@@ -58,7 +58,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const assignableProjects = projectsForTeam(workspace.projects, issue.teamId, issue.projectId);
   const milestonesQuery = useMilestones(issue.projectId);
   const milestones = milestonesQuery.data ?? [];
-  const cycles = workspace.cycles.filter((cycle) => cycle.teamId === issue.teamId);
+  const cycles = workspace.cycles;
   const cycle = cycles.find((entry) => entry.id === issue.cycleId);
   const teamLabels = workspace.labels.filter(
     (label) => label.teamId === null || label.teamId === issue.teamId,

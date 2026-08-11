@@ -25,7 +25,7 @@ export const issueCreateSchema = z.object({
   description: markdownSchema.default(''),
   stateId: idSchema.optional(),
   priority: prioritySchema.default(0),
-  assigneeId: idSchema.nullable().default(null),
+  assigneeId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().default(null),
   milestoneId: idSchema.nullable().default(null),
   cycleId: idSchema.nullable().default(null),

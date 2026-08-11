@@ -252,8 +252,7 @@ async function buildIssuePatch(
         : await milestoneIdFor(principal, patch, currentProjectId, args.milestone);
   }
   if (args.cycle !== undefined) {
-    patch['cycleId'] =
-      args.cycle === null ? null : (await resolveCycle(principal, teamId, args.cycle)).id;
+    patch['cycleId'] = args.cycle === null ? null : (await resolveCycle(principal, args.cycle)).id;
   }
   if (args.parent !== undefined) {
     patch['parentId'] = args.parent === null ? null : (await getIssue(principal, args.parent)).id;
@@ -383,8 +382,7 @@ async function buildIssueFilter(
     filter['stateId'] = await resolveStateId(principal, teamId, args.state);
   }
   if (args.cycle !== undefined) {
-    if (teamId === undefined) throw validationFailed('Pass a team when filtering by cycle.');
-    filter['cycleId'] = (await resolveCycle(principal, teamId, args.cycle)).id;
+    filter['cycleId'] = (await resolveCycle(principal, args.cycle)).id;
   }
   return filter;
 }

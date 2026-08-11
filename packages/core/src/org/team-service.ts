@@ -72,17 +72,25 @@ export async function allocateTeamKey(
 
 export async function createFirstCycle(
   executor: Executor,
-  params: { organizationId: string; teamId: string; syncId: number; now?: Date },
+  params: { organizationId: string; syncId: number; now?: Date },
 ): Promise<CycleRow> {
+  const [existing] = await executor
+    .select()
+    .from(schema.cycle)
+    .where(eq(schema.cycle.organizationId, params.organizationId))
+    .orderBy(asc(schema.cycle.number))
+    .limit(1);
+  if (existing !== undefined) return existing;
+
   const startsAt = startOfUtcDay(params.now ?? new Date());
   const [row] = await executor
     .insert(schema.cycle)
     .values({
       id: newId(),
       organizationId: params.organizationId,
-      teamId: params.teamId,
+      teamId: null,
       number: 1,
-      name: 'Sprint 1',
+      name: '',
       startsAt,
       endsAt: addUtcDays(startsAt, 14),
       syncId: params.syncId,
@@ -138,7 +146,6 @@ export async function bootstrapTeam(
   });
   const cycle = await createFirstCycle(executor, {
     organizationId: params.organizationId,
-    teamId: team.id,
     syncId: params.syncId,
   });
 

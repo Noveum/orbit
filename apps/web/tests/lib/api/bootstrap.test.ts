@@ -60,7 +60,7 @@ beforeAll(async () => {
     id: 'cycle_platform',
     organizationId: nova.organizationId,
     teamId: novaSecondTeam,
-    number: 1,
+    number: 50,
     name: 'Platform cycle',
     startsAt: new Date('2026-01-01T00:00:00.000Z'),
     endsAt: new Date('2026-01-15T00:00:00.000Z'),
@@ -164,6 +164,18 @@ describe('bootstrapPayload never leaks another workspace', () => {
     expect(fallback.activeTeamId).toBe(chosen.teams[0]?.id ?? null);
   });
 
+  it('shows every member the sprints of the workspace, whichever teams they joined', async () => {
+    const joiner = await addMember(nova, 'member', {
+      name: 'Sprint Reader',
+      teamIds: [nova.teamId],
+    });
+
+    const payload = await bootstrapPayload(joiner.principal, {});
+
+    expect(payload.cycles.map((cycle) => cycle.id)).toContain('cycle_platform');
+    expect(payload.cycles.map((cycle) => cycle.id)).not.toContain('cycle_crossed_wires');
+  });
+
   it('shows a member only the teams they joined', async () => {
     const joiner = await addMember(nova, 'member', {
       name: 'One Team Only',
@@ -175,8 +187,8 @@ describe('bootstrapPayload never leaks another workspace', () => {
     expect(payload.teams.map((team) => team.id)).toEqual([nova.teamId]);
     expect(payload.states.every((state) => state.teamId === nova.teamId)).toBe(true);
     expect(payload.states.map((state) => state.name)).not.toContain('Platform only');
-    expect(payload.cycles.every((cycle) => cycle.teamId === nova.teamId)).toBe(true);
-    expect(payload.cycles.map((cycle) => cycle.id)).not.toContain('cycle_platform');
+    expect(payload.cycles.map((cycle) => cycle.id)).toContain('cycle_platform');
+    expect(payload.cycles.map((cycle) => cycle.id)).not.toContain('cycle_crossed_wires');
     expect(payload.projects.map((project) => project.id).sort()).toEqual(
       [novaProject, novaSharedProject].sort(),
     );

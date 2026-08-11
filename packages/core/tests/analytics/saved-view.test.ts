@@ -22,7 +22,7 @@ let cycleId: string;
 beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  const cycle = await activeCycle(workspace.admin, workspace.teamId);
+  const cycle = await activeCycle(workspace.admin);
   if (cycle === undefined) throw new Error('expected a bootstrap active cycle');
   cycleId = cycle.id;
 });

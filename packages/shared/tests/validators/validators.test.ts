@@ -60,8 +60,19 @@ describe('create schemas still apply their defaults', () => {
     const parsed = issueCreateSchema.parse({ teamId: 'team_1', title: 'Ship it' });
     expect(parsed.priority).toBe(0);
     expect(parsed.description).toBe('');
-    expect(parsed.assigneeId).toBeNull();
     expect(parsed.labelIds).toEqual([]);
+  });
+
+  it('leaves an omitted assignee undefined so the service can tell it from a deliberate none', () => {
+    const omitted = issueCreateSchema.parse({ teamId: 'team_1', title: 'Ship it' });
+    const cleared = issueCreateSchema.parse({
+      teamId: 'team_1',
+      title: 'Ship it',
+      assigneeId: null,
+    });
+
+    expect(omitted.assigneeId).toBeUndefined();
+    expect(cleared.assigneeId).toBeNull();
   });
 });
 

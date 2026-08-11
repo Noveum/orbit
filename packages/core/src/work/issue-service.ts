@@ -592,21 +592,17 @@ export interface CreatedIssue {
   readonly actions: SyncAction[];
 }
 
-async function assertCycleInTeam(
+async function assertCycleInWorkspace(
   executor: Executor,
   organizationId: string,
-  teamId: string,
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
-    .select({ teamId: schema.cycle.teamId, organizationId: schema.cycle.organizationId })
+    .select({ id: schema.cycle.id })
     .from(schema.cycle)
-    .where(eq(schema.cycle.id, cycleId))
+    .where(and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, organizationId)))
     .limit(1);
-  const cycle = requireRow(row, 'That sprint does not exist.');
-  if (cycle.organizationId !== organizationId || cycle.teamId !== teamId) {
-    throw validationFailed('That sprint belongs to another team.');
-  }
+  requireRow(row, 'That sprint does not exist.');
 }
 
 async function projectTeamIds(executor: Executor, projectId: string): Promise<string[]> {
@@ -703,7 +699,7 @@ async function assertAssignableToTeam(
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
-    await assertCycleInTeam(executor, organizationId, teamId, cycleId);
+    await assertCycleInWorkspace(executor, organizationId, cycleId);
   }
   if (projectId !== undefined && projectId !== null) {
     await assertProjectInTeam(executor, organizationId, teamId, projectId);
@@ -732,7 +728,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
-    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
+    const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -759,7 +756,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         stateId: state.id,
         priority: parsed.priority,
         creatorId: principal.userId,
-        assigneeId: parsed.assigneeId,
+        assigneeId,
         projectId: parsed.projectId,
         milestoneId: parsed.milestoneId,
         cycleId: parsed.cycleId,
@@ -774,7 +771,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const issue = requireRow(created, 'The issue could not be created.');
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
+    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -1132,7 +1129,6 @@ async function carryToTeam(
   values.teamId = team.id;
   values.number = number;
   values.identifier = issueIdentifier(team.key, number);
-  values.cycleId = null;
   if (await projectFitsTeam(executor, team.id, current.projectId)) return;
   values.projectId = null;
   values.milestoneId = null;

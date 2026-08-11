@@ -92,7 +92,7 @@ describe('listActivity', () => {
     expect(rows.every((row) => row.actorName.length > 0)).toBe(true);
     expect(rows.map(describeActivity)).toEqual([
       'created the issue',
-      'moved from Todo to In Progress',
+      'moved from Triage to In Progress',
     ]);
   });
 });

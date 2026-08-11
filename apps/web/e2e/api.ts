@@ -54,14 +54,12 @@ export async function createIssue(
 
 export async function createSprint(
   page: Page,
-  teamId: string,
   name: string,
 ): Promise<{ id: string; number: number }> {
   const body = await json(page, '/api/cycles', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      teamId,
       name,
       startsAt: '2033-04-03T00:00:00.000Z',
       endsAt: '2033-04-17T00:00:00.000Z',

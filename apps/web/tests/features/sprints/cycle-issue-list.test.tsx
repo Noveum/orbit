@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { CycleIssueList } from '../../../src/features/cycles/cycle-board.tsx';
-import type { CycleView } from '../../../src/features/cycles/data.ts';
+import { CycleIssueList } from '../../../src/features/sprints/cycle-board.tsx';
+import { breakDownCycleIssues, type CycleView } from '../../../src/features/sprints/data.ts';
 
 const cycle = {
   id: 'cycle_1',
@@ -72,5 +72,43 @@ describe('CycleIssueList', () => {
 
     const row = screen.getByTestId('sprint-issue-ENG-42');
     expect(row.className).toContain('focus-visible:ring');
+  });
+});
+
+describe('states that share a name across teams', () => {
+  it('shows one group, not one per team', () => {
+    const { groups } = breakDownCycleIssues([
+      {
+        id: 'a',
+        identifier: 'NOV-1',
+        title: 'From Noveum',
+        priority: 0,
+        stateId: 'state_nov_backlog',
+        stateName: 'Backlog',
+        stateCategory: 'backlog',
+        stateColor: '#9CA3AF',
+        estimate: null,
+        assigneeId: null,
+        assigneeName: null,
+        assigneeImage: null,
+      },
+      {
+        id: 'b',
+        identifier: 'AM-1',
+        title: 'From API market',
+        priority: 0,
+        stateId: 'state_am_backlog',
+        stateName: 'Backlog',
+        stateCategory: 'backlog',
+        stateColor: '#9CA3AF',
+        estimate: null,
+        assigneeId: null,
+        assigneeName: null,
+        assigneeImage: null,
+      },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.issues.map((issue) => issue.identifier)).toEqual(['NOV-1', 'AM-1']);
   });
 });

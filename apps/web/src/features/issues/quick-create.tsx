@@ -4,7 +4,7 @@ import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { ChevronRight } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -57,7 +57,7 @@ function compatibleTeamId(
 
 function ScopePickers({
   projects,
-  teamCycles,
+  cycles,
   projectId,
   estimate,
   cycleId,
@@ -66,7 +66,7 @@ function ScopePickers({
   onCycle,
 }: {
   readonly projects: readonly Project[];
-  readonly teamCycles: readonly Cycle[];
+  readonly cycles: readonly Cycle[];
   readonly projectId: string | null;
   readonly estimate: number | null;
   readonly cycleId: string | null;
@@ -115,16 +115,16 @@ function ScopePickers({
         options={[
           {
             id: 'none',
-            label: teamCycles.length === 0 ? 'No sprints on this team' : 'No sprint',
+            label: cycles.length === 0 ? 'No sprints yet' : 'No sprint',
           },
-          ...teamCycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
+          ...cycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
         ]}
         selected={cycleId === null ? ['none'] : [cycleId]}
         onSelect={(value) => onCycle(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-cycle">
           {(() => {
-            const found = teamCycles.find((cycle) => cycle.id === cycleId);
+            const found = cycles.find((cycle) => cycle.id === cycleId);
             return found === undefined ? 'Sprint' : sprintLabel(found);
           })()}
         </button>
@@ -193,7 +193,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     if (firstTeamId === null || !projectSupportsTeam(selectedProject, firstTeamId))
       setProjectId(null);
     setEstimate(null);
-    setCycleId(null);
     setLabelIds([]);
   }, [firstTeamId, open, projectId, projects, teamId, teams]);
 
@@ -244,10 +243,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
-  const teamCycles = useMemo(
-    () => cycles.filter((cycle) => cycle.teamId === teamId),
-    [cycles, teamId],
-  );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
   useEffect(() => {
@@ -273,7 +268,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
       setTeamId(nextTeamId);
       setStateId(null);
       setEstimate(null);
-      setCycleId(null);
       setLabelIds([]);
     }
     setProjectId(nextProjectId);
@@ -394,7 +388,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                   setStateId(null);
                   if (!projectSupportsTeam(selectedProject, id)) setProjectId(null);
                   setEstimate(null);
-                  setCycleId(null);
                   setLabelIds([]);
                 }}
               >
@@ -481,7 +474,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
               <ScopePickers
                 projects={projects}
-                teamCycles={teamCycles}
+                cycles={cycles}
                 projectId={projectId}
                 estimate={estimate}
                 cycleId={cycleId}

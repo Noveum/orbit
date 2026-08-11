@@ -70,13 +70,7 @@ export function useIssueViewModel({
     [issues, config.display, workspace.stateById],
   );
 
-  const cycles = useMemo(
-    () =>
-      scopeToTeam && teamId !== null
-        ? workspace.cycles.filter((cycle) => cycle.teamId === teamId)
-        : workspace.cycles,
-    [workspace.cycles, teamId, scopeToTeam],
-  );
+  const cycles = workspace.cycles;
 
   const remap = merged !== null && config.groupBy === 'state' ? merged.idMap : undefined;
 

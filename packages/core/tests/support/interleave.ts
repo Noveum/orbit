@@ -6,7 +6,7 @@ const WAIT_TIMEOUT_MS = 10_000;
 export type RawClient = ReturnType<typeof postgres>;
 
 export interface LockCrossing<T> {
-  readonly teamId: string;
+  readonly organizationId: string;
   readonly race: () => Promise<T>;
   readonly interlope: (client: RawClient) => Promise<void>;
 }
@@ -54,7 +54,7 @@ async function awaitOneWaiter(client: RawClient): Promise<void> {
   );
 }
 
-export async function raceAcrossTeamCycleLock<T>(
+export async function raceAcrossCycleLock<T>(
   crossing: LockCrossing<T>,
 ): Promise<PromiseSettledResult<T>> {
   const client = postgres(requireDatabaseUrl(), {
@@ -64,7 +64,7 @@ export async function raceAcrossTeamCycleLock<T>(
   });
   try {
     await client.unsafe('begin');
-    await client`select pg_advisory_xact_lock(hashtext(${`cycle:${crossing.teamId}`}))`;
+    await client`select pg_advisory_xact_lock(hashtext(${`cycle:${crossing.organizationId}`}))`;
     const racing = settle(crossing.race());
     try {
       await awaitOneWaiter(client);

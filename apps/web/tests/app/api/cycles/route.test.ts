@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { completeCycle, createCycle, createTeam, listCycles } from '@orbit/core';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { activeCycle, completeCycle, createCycle, listCycles } from '@orbit/core';
 import {
   addMember,
   createWorkspace,
@@ -12,7 +12,6 @@ import { mockSession } from '../../../../tests-support.ts';
 
 let workspace: Workspace;
 let contributorUserId: string;
-let outsiderUserId: string;
 
 interface Signed {
   user: { id: string; name: string; email: string };
@@ -30,7 +29,7 @@ const complete = await import('../../../../src/app/api/cycles/[id]/complete/rout
 
 const cycleSchema = z.object({
   id: z.string(),
-  teamId: z.string(),
+  teamId: z.string().nullable(),
   name: z.string(),
   startsAt: z.string(),
   endsAt: z.string(),
@@ -63,15 +62,14 @@ function daysFromNow(days: number): Date {
   return new Date(Date.now() + days * 86_400_000);
 }
 
-let teamCounter = 0;
-
-async function freshTeam(): Promise<{ teamId: string; runningCycleId: string }> {
-  teamCounter += 1;
-  const bootstrap = await createTeam(workspace.admin, {
-    name: `Squad ${teamCounter}`,
-    key: `SQ${teamCounter}`,
+async function freshSprint(): Promise<{ runningCycleId: string }> {
+  const running = await activeCycle(workspace.admin);
+  if (running !== undefined) return { runningCycleId: running.id };
+  const created = await createCycle(workspace.admin, {
+    startsAt: daysFromNow(-1),
+    endsAt: daysFromNow(13),
   });
-  return { teamId: bootstrap.team.id, runningCycleId: bootstrap.cycle.id };
+  return { runningCycleId: created.cycle.id };
 }
 
 async function storedCycle(id: string) {
@@ -80,33 +78,23 @@ async function storedCycle(id: string) {
   return row;
 }
 
-beforeAll(async () => {
+beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
 
   const contributor = await addMember(workspace, 'contributor', { name: 'Cass Contributor' });
   contributorUserId = contributor.user.id;
 
-  const away = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-  const outsider = await addMember(workspace, 'member', {
-    name: 'Otto Outsider',
-    teamIds: [away.team.id],
-  });
-  outsiderUserId = outsider.user.id;
-});
-
-beforeEach(() => {
   asUser(workspace.adminUser.id, 'Ada Admin');
 });
 
 describe('POST /api/cycles', () => {
-  it('appends a sprint after the last one when the client sends only a team', async () => {
-    const { teamId } = await freshTeam();
-    const before = await listCycles(workspace.admin, teamId);
+  it('appends a sprint after the last one when the client sends no dates', async () => {
+    const before = await listCycles(workspace.admin);
     const last = before.at(-1);
-    if (last === undefined) throw new Error('the new team has no sprint');
+    if (last === undefined) throw new Error('the workspace has no sprint');
 
-    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', { teamId }));
+    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', {}));
     const payload = cycleEnvelope.parse(await response.json());
 
     expect(response.status).toBe(200);
@@ -117,41 +105,27 @@ describe('POST /api/cycles', () => {
   });
 
   it('refuses a role that cannot manage sprints', async () => {
-    const { teamId } = await freshTeam();
-    const before = await listCycles(workspace.admin, teamId);
+    const before = await listCycles(workspace.admin);
     asUser(contributorUserId, 'Cass Contributor');
 
-    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', { teamId }));
+    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', {}));
 
     expect(response.status).toBe(403);
     expect(errorEnvelope.parse(await response.json()).error.code).toBe('forbidden');
-    expect(await listCycles(workspace.admin, teamId)).toHaveLength(before.length);
-  });
-
-  it('refuses a member who is not on the team', async () => {
-    const { teamId } = await freshTeam();
-    const before = await listCycles(workspace.admin, teamId);
-    asUser(outsiderUserId, 'Otto Outsider');
-
-    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', { teamId }));
-
-    expect(response.status).toBe(403);
-    expect(await listCycles(workspace.admin, teamId)).toHaveLength(before.length);
+    expect(await listCycles(workspace.admin)).toHaveLength(before.length);
   });
 
   it('answers 401 when nobody is signed in', async () => {
-    const { teamId } = await freshTeam();
     signedIn.value = null;
-    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', { teamId }));
+    const response = await cycles.POST(postTo('http://localhost:3000/api/cycles', {}));
     expect(response.status).toBe(401);
   });
 });
 
 describe('POST /api/cycles/[id]/start', () => {
   it('takes the start date off the server clock and ignores whatever the client sent', async () => {
-    const { teamId, runningCycleId } = await freshTeam();
+    const { runningCycleId } = await freshSprint();
     const planned = await createCycle(workspace.admin, {
-      teamId,
       name: 'Later',
       startsAt: daysFromNow(40),
       endsAt: daysFromNow(54),
@@ -177,8 +151,7 @@ describe('POST /api/cycles/[id]/start', () => {
   });
 
   it('refuses to start a second sprint while one is running', async () => {
-    const { teamId } = await freshTeam();
-    const planned = await createCycle(workspace.admin, { teamId, name: 'Queued' });
+    const planned = await createCycle(workspace.admin, { name: 'Queued' });
 
     const response = await start.POST(
       postTo(`http://localhost:3000/api/cycles/${planned.cycle.id}/start`),
@@ -193,8 +166,7 @@ describe('POST /api/cycles/[id]/start', () => {
   });
 
   it('refuses a role that cannot manage sprints, leaving the dates alone', async () => {
-    const { teamId } = await freshTeam();
-    const planned = await createCycle(workspace.admin, { teamId, name: 'Hands off' });
+    const planned = await createCycle(workspace.admin, { name: 'Hands off' });
     asUser(contributorUserId, 'Cass Contributor');
 
     const response = await start.POST(
@@ -208,10 +180,9 @@ describe('POST /api/cycles/[id]/start', () => {
     );
   });
 
-  it('refuses a member of another team', async () => {
-    const { teamId } = await freshTeam();
-    const planned = await createCycle(workspace.admin, { teamId, name: 'Not yours' });
-    asUser(outsiderUserId, 'Otto Outsider');
+  it('refuses a role that cannot manage sprints from starting one', async () => {
+    const planned = await createCycle(workspace.admin, { name: 'Not yours' });
+    asUser(contributorUserId, 'Cass Contributor');
 
     const response = await start.POST(
       postTo(`http://localhost:3000/api/cycles/${planned.cycle.id}/start`),
@@ -235,8 +206,7 @@ describe('POST /api/cycles/[id]/start', () => {
 
 describe('PATCH and DELETE /api/cycles/[id]', () => {
   it('renames a sprint for someone who may manage sprints', async () => {
-    const { teamId } = await freshTeam();
-    const planned = await createCycle(workspace.admin, { teamId, name: 'Before' });
+    const planned = await createCycle(workspace.admin, { name: 'Before' });
 
     const response = await cycleById.PATCH(
       new Request(`http://localhost:3000/api/cycles/${planned.cycle.id}`, {
@@ -252,8 +222,7 @@ describe('PATCH and DELETE /api/cycles/[id]', () => {
   });
 
   it('refuses a rename and a delete from a role that cannot manage sprints', async () => {
-    const { teamId } = await freshTeam();
-    const planned = await createCycle(workspace.admin, { teamId, name: 'Untouchable' });
+    const planned = await createCycle(workspace.admin, { name: 'Untouchable' });
     asUser(contributorUserId, 'Cass Contributor');
 
     const renamed = await cycleById.PATCH(
@@ -277,16 +246,17 @@ describe('PATCH and DELETE /api/cycles/[id]', () => {
 
 describe('POST /api/cycles/[id]/complete', () => {
   it('closes the sprint and rolls the unfinished work into the next one', async () => {
-    const { teamId, runningCycleId } = await freshTeam();
-    const [state] = await db
+    const { runningCycleId } = await freshSprint();
+    const states = await db
       .select()
       .from(schema.workflowState)
-      .where(eq(schema.workflowState.teamId, teamId));
-    if (state === undefined) throw new Error('the team has no workflow state');
+      .where(eq(schema.workflowState.teamId, workspace.teamId));
+    const state = states.find((row) => row.category === 'unstarted');
+    if (state === undefined) throw new Error('the team has no unstarted state');
     await db.insert(schema.issue).values({
       id: 'issue_rolls_over',
       organizationId: workspace.organizationId,
-      teamId,
+      teamId: workspace.teamId,
       number: 1,
       identifier: 'SQ-1',
       title: 'Carried',
@@ -319,7 +289,7 @@ describe('POST /api/cycles/[id]/complete', () => {
   });
 
   it('refuses a role that cannot manage sprints and leaves the sprint open', async () => {
-    const { runningCycleId } = await freshTeam();
+    const { runningCycleId } = await freshSprint();
     asUser(contributorUserId, 'Cass Contributor');
 
     const response = await complete.POST(

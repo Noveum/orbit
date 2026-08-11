@@ -216,38 +216,34 @@ async function seedLabels(): Promise<Map<string, string>> {
 }
 
 async function seedCycles(teams: Map<string, TeamRecord>): Promise<Map<string, string>> {
-  const cycles = new Map<string, string>();
-  for (const [key, team] of teams) {
-    const current = id();
-    cycles.set(key, current);
-    await db.insert(schema.cycle).values([
-      {
-        id: current,
-        organizationId: ORGANIZATION_ID,
-        teamId: team.id,
-        number: 12,
-        name: '',
-        startsAt: daysAgo(6),
-        endsAt: daysAhead(8),
-        completedAt: null,
-        syncId: 0,
-        createdAt: daysAgo(30),
-      },
-      {
-        id: id(),
-        organizationId: ORGANIZATION_ID,
-        teamId: team.id,
-        number: 13,
-        name: '',
-        startsAt: daysAhead(9),
-        endsAt: daysAhead(23),
-        completedAt: null,
-        syncId: 0,
-        createdAt: daysAgo(30),
-      },
-    ]);
-  }
-  return cycles;
+  const current = id();
+  await db.insert(schema.cycle).values([
+    {
+      id: current,
+      organizationId: ORGANIZATION_ID,
+      teamId: null,
+      number: 12,
+      name: '',
+      startsAt: daysAgo(6),
+      endsAt: daysAhead(8),
+      completedAt: null,
+      syncId: 0,
+      createdAt: daysAgo(30),
+    },
+    {
+      id: id(),
+      organizationId: ORGANIZATION_ID,
+      teamId: null,
+      number: 13,
+      name: '',
+      startsAt: daysAhead(9),
+      endsAt: daysAhead(23),
+      completedAt: null,
+      syncId: 0,
+      createdAt: daysAgo(30),
+    },
+  ]);
+  return new Map([...teams.keys()].map((key) => [key, current]));
 }
 
 interface ProjectRecord {

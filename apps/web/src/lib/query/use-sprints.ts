@@ -9,7 +9,7 @@ import { apiFetch, messageOf } from './fetcher.ts';
 
 const sprintSchema = z.object({
   id: z.string(),
-  teamId: z.string(),
+  teamId: z.string().nullable(),
   number: z.number(),
   name: z.string(),
   startsAt: z.string(),
@@ -28,10 +28,9 @@ const closedEnvelope = z.object({
 const deletedEnvelope = z.object({ deleted: z.boolean() });
 
 export interface SprintDraft {
-  readonly teamId: string;
-  readonly name?: string;
-  readonly startsAt?: string;
-  readonly endsAt?: string;
+  readonly name?: string | undefined;
+  readonly startsAt?: string | undefined;
+  readonly endsAt?: string | undefined;
 }
 
 export interface SprintEdit {
@@ -39,6 +38,7 @@ export interface SprintEdit {
   readonly name?: string;
   readonly startsAt?: string;
   readonly endsAt?: string;
+  readonly shiftFollowing?: boolean;
 }
 
 function useRefreshSprints(): () => void {

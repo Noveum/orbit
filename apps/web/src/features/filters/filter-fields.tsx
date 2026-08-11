@@ -154,7 +154,7 @@ export function buildFilterFields(
   const labels = workspace.labels.filter(
     (label) => label.teamId === null || teamId === null || label.teamId === teamId,
   );
-  const cycles = workspace.cycles.filter((cycle) => teamId === null || cycle.teamId === teamId);
+  const cycles = workspace.cycles;
   const estimates = [0, 1, 2, 3, 5, 8, 13];
 
   const definitions: Omit<FilterFieldDefinition, 'label' | 'icon'>[] = [

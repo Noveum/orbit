@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
-import type { CycleView, UpcomingCycleView } from '@/features/cycles/data.ts';
+import type { CycleView, UpcomingCycleView } from '@/features/sprints/data.ts';
 
 const calls: { url: string; method: string; body: string | undefined }[] = [];
 const originalFetch = globalThis.fetch;
@@ -44,17 +44,13 @@ mock.module('next/navigation', () => ({
   }),
 }));
 
-const { CyclePanel } = await import('@/features/cycles/cycle-board.tsx');
-
-const TEAM = { id: 'team_eng', key: 'ENG', name: 'Engineering' };
+const { SprintHeader } = await import('@/features/sprints/sprint-header.tsx');
+const { SprintSchedule } = await import('@/features/sprints/sprint-schedule.tsx');
 
 const RUNNING: CycleView = {
   id: 'cycle_running',
   name: 'Sprint 4',
   number: 4,
-  teamId: TEAM.id,
-  teamKey: TEAM.key,
-  teamName: TEAM.name,
   startsAt: '2026-01-01T00:00:00.000Z',
   endsAt: '2026-01-15T00:00:00.000Z',
   completedAt: null,
@@ -66,6 +62,7 @@ const RUNNING: CycleView = {
     started: 0,
     completed: 0,
     canceled: 0,
+    uncommitted: { issues: 0, points: 0 },
     estimated: 0,
     points: { scope: 0, started: 0, completed: 0 },
     changes: { added: 0, addedPoints: 0, removed: 0, removedPoints: 0 },
@@ -81,7 +78,6 @@ const UPCOMING: UpcomingCycleView[] = [
     name: 'Sprint 5',
     startsAt: '2026-02-01T00:00:00.000Z',
     endsAt: '2026-02-15T00:00:00.000Z',
-    teamKey: TEAM.key,
   },
 ];
 
@@ -99,12 +95,13 @@ function renderPanel(options: {
   );
   render(
     <Wrapper>
-      <CyclePanel
-        cycle={options.cycle}
+      {options.cycle === null ? null : (
+        <SprintHeader sprint={options.cycle} canManage={options.canManage} />
+      )}
+      <SprintSchedule
         upcoming={options.upcoming ?? UPCOMING}
-        team={TEAM}
         canManage={options.canManage}
-        runningSprintId={options.runningSprintId ?? null}
+        running={(options.runningSprintId ?? null) !== null}
       />
     </Wrapper>,
   );
@@ -124,7 +121,7 @@ describe('sprint controls on the sprint panel', () => {
   it('hides every control from somebody whose role cannot manage sprints', () => {
     renderPanel({ cycle: RUNNING, canManage: false, runningSprintId: RUNNING.id });
 
-    expect(screen.queryByTestId('sprint-new-team_eng')).toBeNull();
+    expect(screen.queryByTestId('sprint-new')).toBeNull();
     expect(screen.queryByTestId('sprint-complete-cycle_running')).toBeNull();
     expect(screen.queryByTestId('sprint-edit-cycle_running')).toBeNull();
     expect(screen.queryByTestId('sprint-start-cycle_next')).toBeNull();
@@ -134,7 +131,7 @@ describe('sprint controls on the sprint panel', () => {
   it('offers create, edit and complete while a sprint is running', () => {
     renderPanel({ cycle: RUNNING, canManage: true, runningSprintId: RUNNING.id });
 
-    expect(screen.getByTestId('sprint-new-team_eng')).toBeVisible();
+    expect(screen.getByTestId('sprint-new')).toBeVisible();
     expect(screen.getByTestId('sprint-edit-cycle_running')).toBeVisible();
     expect(screen.getByTestId('sprint-complete-cycle_running')).toBeVisible();
     expect(screen.queryByTestId('sprint-start-cycle_next')).toBeNull();
@@ -144,7 +141,7 @@ describe('sprint controls on the sprint panel', () => {
     renderPanel({ cycle: null, canManage: true });
 
     expect(screen.getByTestId('sprint-start-cycle_next')).toBeVisible();
-    expect(screen.getByTestId('sprint-new-team_eng')).toBeVisible();
+    expect(screen.getByTestId('sprint-new')).toBeVisible();
   });
 
   it('leaves a closed sprint alone rather than offering to complete it again', () => {
@@ -168,16 +165,16 @@ describe('sprint controls on the sprint panel', () => {
     await waitFor(() => expect(refreshes).toHaveLength(1));
   });
 
-  it('creates a sprint with nothing but the team when the dates are left empty', async () => {
+  it('creates a sprint with an empty body when the dates are left empty', async () => {
     renderPanel({ cycle: RUNNING, canManage: true });
     const user = userEvent.setup();
 
-    await user.click(screen.getByTestId('sprint-new-team_eng'));
+    await user.click(screen.getByTestId('sprint-new'));
     await user.click(await screen.findByTestId('sprint-create-dialog-submit'));
 
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]?.url).toBe('/api/cycles');
-    expect(calls[0]?.body).toBe(JSON.stringify({ teamId: 'team_eng' }));
+    expect(calls[0]?.body).toBe(JSON.stringify({}));
   });
 
   it('sends only the name when a sprint is renamed and its dates are left alone', async () => {
@@ -211,7 +208,7 @@ describe('sprint controls on the sprint panel', () => {
     expect(JSON.parse(calls[0]?.body ?? '{}')).not.toHaveProperty('startsAt');
   });
 
-  it('sends the day the user actually moved', async () => {
+  it('sends the day the user actually moved and nothing they left alone', async () => {
     renderPanel({ cycle: RUNNING, canManage: true });
     const user = userEvent.setup();
 
@@ -222,7 +219,7 @@ describe('sprint controls on the sprint panel', () => {
     await user.click(screen.getByTestId('sprint-edit-dialog-submit'));
 
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]?.body).toBe(JSON.stringify({ name: 'Sprint 4', endsAt: '2026-01-22' }));
+    expect(calls[0]?.body).toBe(JSON.stringify({ endsAt: '2026-01-22' }));
   });
 
   it('deletes a planned sprint only after the confirmation is taken', async () => {

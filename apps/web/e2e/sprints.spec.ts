@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
-import { completeSprint, createSprint, teamIdByKey } from './api.ts';
+import { completeSprint, createSprint } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -18,39 +18,39 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
   const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/sprints`);
-  await expect(page.getByRole('heading', { name: 'Sprints', level: 1 })).toBeVisible();
-
-  const teamId = await teamIdByKey(page, 'ENG');
+  await expect(page.getByTestId('sprint-tabs').first()).toBeVisible();
+  await expect(page.getByTestId('sprint-name').first()).toBeVisible();
 
   const label = `Regression sprint ${Date.now()}`;
-  const sprint = await createSprint(page, teamId, label);
+  const sprint = await createSprint(page, label);
 
   await completeSprint(page, sprint.id);
 
   await page.goto(`${BASE}/sprints`);
-  const engPanels = page.getByTestId(`sprint-history-eng-${sprint.number}`);
-  await expect(engPanels).toHaveCount(1);
-  const entry = engPanels.first();
+  const entry = page.getByTestId(`sprint-history-${sprint.number}`).first();
   await expect(entry).toBeVisible();
   await expect(entry).toContainText(label);
 
   await entry.click();
-  await expect(page).toHaveURL(`${BASE}/team/eng/sprint/${sprint.number}`);
-  await expect(page.getByTestId('sprint-outcome')).toBeVisible();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(label);
+  await expect(page).toHaveURL(`${BASE}/sprints?sprint=${sprint.number}`);
+  await expect(page.getByTestId('sprint-outcome').first()).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText(label);
 
   await context.close();
 });
 
-test('the old cycle urls still land on the sprint pages', async ({ browser }) => {
+test('the sprint a team page points at is the sprint of the workspace', async ({ browser }) => {
   const context = await browser.newContext();
   const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/cycles`);
   await expect(page).toHaveURL(`${BASE}/sprints`);
 
-  await page.goto(`${BASE}/team/eng/cycle/active`);
-  await expect(page).toHaveURL(`${BASE}/team/eng/sprint/active`);
+  await page.goto(`${BASE}/team/eng/sprint/active`);
+  await expect(page).toHaveURL(`${BASE}/sprints`);
+
+  await page.goto(`${BASE}/team/eng/sprint/1`);
+  await expect(page).toHaveURL(`${BASE}/sprints`);
 
   await context.close();
 });

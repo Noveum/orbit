@@ -63,7 +63,6 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
   const activeCycles = await db
     .select({
       id: schema.cycle.id,
-      teamId: schema.cycle.teamId,
       organizationId: schema.cycle.organizationId,
     })
     .from(schema.cycle)
@@ -155,7 +154,7 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
       buildSyncAction({
         syncId,
         organizationId: cycle.organizationId,
-        scopes: [scopes.organization(cycle.organizationId), scopes.team(cycle.teamId)],
+        scopes: [scopes.organization(cycle.organizationId)],
         action: 'update',
         model: 'cycle',
         modelId: cycle.id,

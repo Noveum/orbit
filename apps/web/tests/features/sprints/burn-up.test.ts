@@ -6,7 +6,7 @@ import {
   cycleDayCount,
   elapsedDayCount,
   idealLine,
-} from '../../../src/features/cycles/burn-up.ts';
+} from '../../../src/features/sprints/burn-up.ts';
 
 const STARTS = new Date('2026-07-13T00:00:00.000Z');
 const ENDS = new Date('2026-07-27T00:00:00.000Z');

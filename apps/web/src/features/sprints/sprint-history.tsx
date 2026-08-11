@@ -66,8 +66,8 @@ export function SprintHistory({ sprints }: { readonly sprints: readonly PastSpri
       {sprints.map((sprint) => (
         <li key={sprint.id}>
           <Link
-            href={`/team/${sprint.teamKey.toLowerCase()}/sprint/${sprint.number}`}
-            data-testid={`sprint-history-${sprint.teamKey.toLowerCase()}-${sprint.number}`}
+            href={`/sprints?sprint=${sprint.number}`}
+            data-testid={`sprint-history-${sprint.number}`}
             className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 transition-colors duration-[var(--duration-instant)] hover:bg-surface-2 motion-reduce:transition-none"
           >
             <div className="flex items-baseline justify-between gap-3">

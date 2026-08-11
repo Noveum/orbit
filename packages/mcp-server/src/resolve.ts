@@ -16,6 +16,7 @@ import {
 } from '@orbit/core';
 import { conflict, notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 
 function matches(candidates: readonly (string | null | undefined)[], ref: string): boolean {
   const needle = ref.trim().toLowerCase();
@@ -135,18 +136,14 @@ export async function resolveMilestone(
   return found;
 }
 
-export async function resolveCycle(
-  principal: Principal,
-  teamId: string,
-  ref: string,
-): Promise<CycleRow> {
+export async function resolveCycle(principal: Principal, ref: string): Promise<CycleRow> {
   if (ref.trim().toLowerCase() === 'active') {
-    const current = await activeCycle(principal, teamId);
-    if (current === undefined) throw notFound('That team has no active cycle.');
+    const current = await activeCycle(principal);
+    if (current === undefined) throw notFound('This workspace has no active sprint.');
     return current;
   }
-  const cycles = await listCycles(principal, teamId);
-  const found = pick(cycles, ref, (cycle) => [cycle.id, cycle.name, String(cycle.number)]);
-  if (found === undefined) throw notFound(`No cycle matches "${ref}" on that team.`);
+  const cycles = await listCycles(principal);
+  const found = pick(cycles, ref, (cycle) => [cycle.id, sprintLabel(cycle), String(cycle.number)]);
+  if (found === undefined) throw notFound(`No sprint matches "${ref}".`);
   return found;
 }

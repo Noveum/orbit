@@ -424,7 +424,7 @@ describe('the new issue dialog', () => {
     expect(created.mock.calls[0]?.[0]).toMatchObject({
       teamId: 'team_des',
       projectId: 'proj_2',
-      cycleId: null,
+      cycleId: 'cycle_1',
       estimate: null,
       labelIds: [],
     });
@@ -577,7 +577,7 @@ describe('the new issue dialog', () => {
     expect(created.mock.calls[0]?.[0]).toMatchObject({
       teamId: 'team_des',
       projectId: null,
-      cycleId: null,
+      cycleId: 'cycle_1',
       estimate: null,
       labelIds: [],
     });
@@ -718,7 +718,7 @@ describe('the new issue dialog', () => {
     expect(created.mock.calls[0]?.[0]?.['projectId']).toBe('proj_3');
   });
 
-  it('drops the sprint and the project from the team that was left behind', async () => {
+  it('keeps the sprint but drops the project from the team that was left behind', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = {
       ...buildWorkspace(),
@@ -738,12 +738,12 @@ describe('the new issue dialog', () => {
     await user.click(await screen.findByText('Design'));
     await user.click(screen.getByTestId('quick-create-submit'));
 
-    expect(created.mock.calls[0]?.[0]?.['cycleId']).toBeNull();
+    expect(created.mock.calls[0]?.[0]?.['cycleId']).toBe('cycle_1');
     expect(created.mock.calls[0]?.[0]?.['projectId']).toBeNull();
   });
 });
 
-describe('the pickers when a team owns nothing yet', () => {
+describe('the pickers when the workspace owns nothing yet', () => {
   it('says the workspace has no projects rather than showing an empty menu', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = { ...buildWorkspace(), projects: [] };
@@ -754,14 +754,14 @@ describe('the pickers when a team owns nothing yet', () => {
     expect(await screen.findByText('No projects in this workspace')).toBeTruthy();
   });
 
-  it('says the team has no sprints rather than showing an empty menu', async () => {
+  it('says the workspace has no sprints rather than showing an empty menu', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = { ...buildWorkspace(), cycles: [] };
     open();
 
     await user.click(screen.getByTestId('quick-create-cycle'));
 
-    expect(await screen.findByText('No sprints on this team')).toBeTruthy();
+    expect(await screen.findByText('No sprints yet')).toBeTruthy();
   });
 });
 

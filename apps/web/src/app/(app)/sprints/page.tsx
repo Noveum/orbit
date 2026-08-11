@@ -1,66 +1,104 @@
 import { can } from '@orbit/shared/policy';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { CyclePanel } from '@/features/cycles/cycle-board.tsx';
+import { CycleAnalytics, CycleBoard, CycleIssueList } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
+  getSprintView,
   listPastSprintViews,
   listUpcomingCycleViews,
-} from '@/features/cycles/data.ts';
-import { SprintHistory } from '@/features/cycles/sprint-history.tsx';
+  runningSprintNumber,
+} from '@/features/sprints/data.ts';
+import { NewSprintButton } from '@/features/sprints/sprint-actions.tsx';
+import { SprintHeader } from '@/features/sprints/sprint-header.tsx';
+import { SprintHistory } from '@/features/sprints/sprint-history.tsx';
+import { SprintSchedule } from '@/features/sprints/sprint-schedule.tsx';
+import { parseSprintTab, SprintTabs } from '@/features/sprints/sprint-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
-import { listTeamsForPrincipal } from '@/lib/workspace.ts';
+import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 
 export const metadata: Metadata = { title: 'Sprints' };
 
-export default async function SprintsPage() {
+interface PageProps {
+  readonly searchParams: Promise<{ tab?: string; sprint?: string }>;
+}
+
+const SPRINT_NUMBER = /^[1-9][0-9]{0,8}$/;
+
+function sprintNumber(value: string | undefined): number | null {
+  return value !== undefined && SPRINT_NUMBER.test(value) ? Number(value) : null;
+}
+
+export default async function SprintsPage({ searchParams }: PageProps) {
   const { principal } = await pageContext();
-  const teams = await listTeamsForPrincipal(principal);
-
-  if (teams.length === 0) {
-    return (
-      <EmptyState
-        icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
-        title="No teams yet"
-        description="Sprints belong to a team. Create one in workspace settings first."
-      />
-    );
-  }
-
   const canManage = can(principal, 'cycle:manage');
-  const panels = await Promise.all(
-    teams.map(async (team) => ({
-      team,
-      cycle: await getActiveCycleView(principal, team),
-      upcoming: await listUpcomingCycleViews(principal, team),
-      past: await listPastSprintViews(principal, team),
-    })),
-  );
+
+  const { tab, sprint: wanted } = await searchParams;
+  const chosen = sprintNumber(wanted);
+
+  const [sprint, upcoming, past, running] = await Promise.all([
+    chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen),
+    listUpcomingCycleViews(principal),
+    listPastSprintViews(principal),
+    runningSprintNumber(principal),
+  ]);
+
+  const active = parseSprintTab(tab);
+  const base = chosen === null ? '/sprints' : `/sprints?sprint=${chosen}`;
+  const outcome = sprint?.outcome ?? null;
 
   return (
-    <div className="flex flex-col gap-10 px-6 py-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-semibold text-lg text-text">Sprints</h1>
-        <p className="text-muted text-xs">
-          Every team runs its own cadence. Active sprints first, upcoming below.
-        </p>
-      </header>
-      {panels.map((panel) => (
-        <section key={panel.team.id} className="flex flex-col gap-4">
-          <CyclePanel
-            cycle={panel.cycle}
-            upcoming={panel.upcoming}
-            team={panel.team}
-            canManage={canManage}
-            runningSprintId={panel.cycle?.id ?? null}
-          />
-          <div className="flex flex-col gap-2">
-            <h3 className="font-medium text-dense text-text">Past sprints</h3>
-            <SprintHistory sprints={panel.past} />
-          </div>
-        </section>
-      ))}
+    <div className="flex flex-col gap-6 px-6 py-6">
+      {sprint === null ? (
+        <EmptyState
+          icon={<RefreshCcw strokeWidth={1.75} aria-hidden="true" />}
+          title="No sprint running"
+          description="A sprint covers the whole workspace and holds work from every team."
+          action={canManage ? <NewSprintButton /> : null}
+        />
+      ) : (
+        <>
+          <SprintHeader sprint={sprint} canManage={canManage} />
+          {outcome === null ? null : (
+            <p className="text-muted text-xs tabular-nums" data-testid="sprint-outcome">
+              Closed with {outcome.completed} of {outcome.scope} done
+              {outcome.rolledOver > 0 ? `, ${outcome.rolledOver} rolled into the next sprint` : ''}.
+            </p>
+          )}
+          <SprintTabs base={base} active={active} available={['board', 'list', 'insights']} />
+          {active === 'insights' ? <CycleAnalytics cycle={sprint} /> : null}
+          {active === 'board' ? <CycleBoard cycle={sprint} /> : null}
+          {active === 'list' ? (
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+              <CycleIssueList cycle={sprint} />
+              <CycleAnalytics cycle={sprint} />
+            </div>
+          ) : null}
+        </>
+      )}
+
+      <SprintSchedule upcoming={upcoming} canManage={canManage} running={running !== null} />
+
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-dense text-text">Past sprints</h3>
+          <Link
+            href="/sprints/all"
+            data-testid="sprint-browse-all"
+            className={cn(
+              'rounded-md px-2 py-1 text-muted text-xs outline-none',
+              'focus-visible:ring-2 focus-visible:ring-accent',
+              rowHover,
+            )}
+          >
+            Browse every sprint
+          </Link>
+        </div>
+        <SprintHistory sprints={past} />
+      </section>
     </div>
   );
 }
