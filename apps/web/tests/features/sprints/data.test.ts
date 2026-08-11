@@ -125,3 +125,54 @@ describe('breakDownCycleIssues', () => {
     expect(breakdown.assignees).toHaveLength(2);
   });
 });
+
+describe('the column order of a sprint breakdown', () => {
+  it('runs backlog and todo ahead of the started columns whatever order the rows arrive in', () => {
+    const breakdown = breakDownCycleIssues([
+      row({ id: '1', ...DONE, estimate: 8 }),
+      row({
+        id: '2',
+        stateId: 'state_wip',
+        stateName: 'In Progress',
+        stateCategory: 'started',
+        estimate: 4,
+      }),
+      row({
+        id: '3',
+        stateId: 'state_backlog',
+        stateName: 'Backlog',
+        stateCategory: 'backlog',
+        estimate: 2,
+      }),
+      row({ id: '4', estimate: 1 }),
+    ]);
+
+    expect(breakdown.groups.map((group) => group.name)).toEqual([
+      'Backlog',
+      'Todo',
+      'In Progress',
+      'Done',
+    ]);
+  });
+
+  it('keeps every assignee row aligned to that same order', () => {
+    const breakdown = breakDownCycleIssues([
+      row({ id: '1', ...DONE, estimate: 8 }),
+      row({
+        id: '2',
+        stateId: 'state_backlog',
+        stateName: 'Backlog',
+        stateCategory: 'backlog',
+        estimate: 2,
+      }),
+      row({ id: '3', estimate: 1 }),
+    ]);
+
+    const columns = breakdown.groups.map((group) => group.name);
+    const tally = breakdown.assignees[0];
+
+    expect(columns).toEqual(['Backlog', 'Todo', 'Done']);
+    expect(tally?.points).toEqual([2, 1, 8]);
+    expect(tally?.totalPoints).toBe(11);
+  });
+});

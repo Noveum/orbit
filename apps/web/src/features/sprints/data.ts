@@ -11,7 +11,7 @@ import {
 } from '@orbit/core';
 import { and, asc, db, eq, isNull, schema } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
-import { STATE_CATEGORIES } from '@orbit/shared/constants';
+import { STATE_CATEGORIES, STATE_CATEGORY_ORDER } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
 
@@ -136,7 +136,11 @@ export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssue
     tallies.set(assignee.id, tally);
   }
 
-  const order = [...groups.keys()];
+  const ranked = [...groups.entries()].sort(
+    ([, left], [, right]) =>
+      STATE_CATEGORY_ORDER[left.category] - STATE_CATEGORY_ORDER[right.category],
+  );
+  const order = ranked.map(([key]) => key);
   const assignees = [...tallies.values()]
     .map((tally) => {
       const points = order.map((key) => tally.points.get(key) ?? 0);
@@ -155,7 +159,7 @@ export function breakDownCycleIssues(rows: readonly CycleIssueRow[]): CycleIssue
       (left, right) => right.totalPoints - left.totalPoints || right.totalIssues - left.totalIssues,
     );
 
-  return { groups: [...groups.values()], assignees };
+  return { groups: ranked.map(([, group]) => group), assignees };
 }
 
 async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {

@@ -45,7 +45,10 @@ function AssigneeTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-2xs tabular" data-testid="assignee-points">
+      <table
+        className="w-full min-w-max border-collapse text-2xs tabular"
+        data-testid="assignee-points"
+      >
         <thead>
           <tr className="border-border border-b">
             <th className="py-1 pr-2 text-left font-medium text-faint">Assignee</th>
