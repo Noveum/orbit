@@ -49,6 +49,24 @@ const workspace: WorkspaceData = {
       icon: 'box',
       teamIds: ['team_eng'],
     },
+    {
+      id: 'project_growth',
+      slug: 'growth',
+      name: 'Growth',
+      status: 'started',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: ['team_growth'],
+    },
+    {
+      id: 'project_company',
+      slug: 'company',
+      name: 'Company wide',
+      status: 'started',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: [],
+    },
   ],
   cycles: [
     {
@@ -250,6 +268,42 @@ describe('the milestone row on the issue properties panel', () => {
     );
 
     expect(await screen.findByTestId('hotkey-names')).toHaveTextContent('Change milestone');
+  });
+});
+
+describe('the project row on the issue properties panel', () => {
+  it('offers only the projects the issue team can be put on', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ projectId: null }));
+
+    await user.click(screen.getByTestId('property-project'));
+    const menu = await screen.findByTestId('menu-project');
+
+    expect(within(menu).getByText('Launch')).toBeInTheDocument();
+    expect(within(menu).getByText('Company wide')).toBeInTheDocument();
+    expect(within(menu).queryByText('Growth')).toBeNull();
+  });
+
+  it('sets the project the user picks', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ projectId: null }));
+
+    await user.click(screen.getByTestId('property-project'));
+    const menu = await screen.findByTestId('menu-project');
+    await user.click(within(menu).getByText('Company wide'));
+
+    await waitFor(() => expect(patches).toEqual([{ projectId: 'project_company' }]));
+  });
+
+  it('keeps showing a project the issue already sits on even when the team moved away', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ projectId: 'project_growth' }));
+
+    expect(screen.getByTestId('property-project')).toHaveTextContent('Growth');
+    await user.click(screen.getByTestId('property-project'));
+    const menu = await screen.findByTestId('menu-project');
+
+    expect(within(menu).getByText('Growth')).toBeInTheDocument();
   });
 });
 

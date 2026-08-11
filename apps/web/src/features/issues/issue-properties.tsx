@@ -17,6 +17,7 @@ import { DueDateField } from './due-date-field.tsx';
 import { useIssueDeletion } from './issue-deletion.tsx';
 import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
+import { projectsForTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
@@ -54,6 +55,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const assignee =
     issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId);
   const project = workspace.projects.find((entry) => entry.id === issue.projectId);
+  const assignableProjects = projectsForTeam(workspace.projects, issue.teamId, issue.projectId);
   const milestonesQuery = useMilestones(issue.projectId);
   const milestones = milestonesQuery.data ?? [];
   const cycles = workspace.cycles.filter((cycle) => cycle.teamId === issue.teamId);
@@ -246,7 +248,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
       <ProjectProperty
         issue={issue}
         project={project}
-        projects={workspace.projects}
+        projects={assignableProjects}
         open={openMenu === 'project'}
         onOpenChange={toggle('project')}
         onSelect={(projectId) => patch({ projectId })}
@@ -335,6 +337,7 @@ function ProjectProperty({
       <div className="flex items-center gap-1">
         <PropertyMenu
           title="Project"
+          testId="menu-project"
           open={open}
           onOpenChange={onOpenChange}
           options={[
