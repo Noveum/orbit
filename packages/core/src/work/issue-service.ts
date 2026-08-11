@@ -334,7 +334,10 @@ function collectIssueChanges(
   track('priority', patch.priority);
   track('assigneeId', patch.assigneeId);
   track('projectId', patch.projectId);
-  track('milestoneId', patch.milestoneId);
+  track(
+    'milestoneId',
+    patch.milestoneId === undefined && values.projectId !== undefined ? null : patch.milestoneId,
+  );
   track('cycleId', patch.cycleId);
   track('parentId', patch.parentId);
   track('estimate', patch.estimate);
