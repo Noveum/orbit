@@ -6,7 +6,10 @@ import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { CycleAnalytics } from '@/features/sprints/cycle-board.tsx';
 import {
   getActiveCycleView,
+  getActiveSprintChrome,
+  getSprintChrome,
   getSprintView,
+  hasSprintAnalytics,
   listPastSprintViews,
   listUpcomingCycleViews,
   runningSprintNumber,
@@ -39,15 +42,23 @@ export default async function SprintsPage({ searchParams }: PageProps) {
 
   const { tab, sprint: wanted } = await searchParams;
   const chosen = sprintNumber(wanted);
+  const active = parseSprintTab(tab);
+
+  const loadSprint = () => {
+    if (active !== 'insights') {
+      return chosen === null
+        ? getActiveSprintChrome(principal)
+        : getSprintChrome(principal, chosen);
+    }
+    return chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen);
+  };
 
   const [sprint, upcoming, past, running] = await Promise.all([
-    chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen),
+    loadSprint(),
     listUpcomingCycleViews(principal),
     listPastSprintViews(principal),
     runningSprintNumber(principal),
   ]);
-
-  const active = parseSprintTab(tab);
   const base = chosen === null ? '/sprints' : `/sprints?sprint=${chosen}`;
   const outcome = sprint?.outcome ?? null;
 
@@ -70,7 +81,7 @@ export default async function SprintsPage({ searchParams }: PageProps) {
             </p>
           )}
           <SprintTabs base={base} active={active} available={['board', 'list', 'insights']} />
-          {active === 'insights' ? (
+          {hasSprintAnalytics(sprint) ? (
             <CycleAnalytics cycle={sprint} />
           ) : (
             <SprintIssues

@@ -189,7 +189,41 @@ async function loadCycleIssues(cycleId: string): Promise<CycleIssueBreakdown> {
   return breakDownCycleIssues(rows);
 }
 
+export interface SprintChrome {
+  readonly id: string;
+  readonly name: string;
+  readonly number: number;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly completedAt: string | null;
+}
+
+export type SprintChromeView = SprintChrome & { readonly outcome: RecordedOutcome | null };
 export type SprintPageView = CycleView & { readonly outcome: RecordedOutcome | null };
+
+export function hasSprintAnalytics(
+  sprint: SprintChromeView | SprintPageView,
+): sprint is SprintPageView {
+  return 'progress' in sprint;
+}
+
+function chromeOf(cycle: {
+  id: string;
+  name: string;
+  number: number;
+  startsAt: Date;
+  endsAt: Date;
+  completedAt: Date | null;
+}): SprintChrome {
+  return {
+    id: cycle.id,
+    name: sprintLabel(cycle),
+    number: cycle.number,
+    startsAt: cycle.startsAt.toISOString(),
+    endsAt: cycle.endsAt.toISOString(),
+    completedAt: cycle.completedAt?.toISOString() ?? null,
+  };
+}
 
 export async function getActiveCycleView(
   principal: Principal,
@@ -202,17 +236,29 @@ export async function getActiveCycleView(
     loadCycleIssues(cycle.id),
   ]);
   return {
-    id: cycle.id,
-    name: sprintLabel(cycle),
-    number: cycle.number,
-    startsAt: cycle.startsAt.toISOString(),
-    endsAt: cycle.endsAt.toISOString(),
-    completedAt: cycle.completedAt?.toISOString() ?? null,
+    ...chromeOf(cycle),
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
     outcome: null,
   };
+}
+
+export async function getActiveSprintChrome(
+  principal: Principal,
+  now: Date = new Date(),
+): Promise<SprintChromeView | null> {
+  const cycle = await activeCycle(principal, now);
+  return cycle === undefined ? null : { ...chromeOf(cycle), outcome: null };
+}
+
+export async function getSprintChrome(
+  principal: Principal,
+  number: number,
+): Promise<SprintChromeView | null> {
+  const cycle = await getCycleByNumber(principal, number);
+  if (cycle === null) return null;
+  return { ...chromeOf(cycle), outcome: await sprintOutcome(principal, cycle.id) };
 }
 
 export async function runningSprintNumber(
@@ -341,12 +387,7 @@ export async function getSprintView(
     sprintOutcome(principal, cycle.id),
   ]);
   return {
-    id: cycle.id,
-    name: sprintLabel(cycle),
-    number: cycle.number,
-    startsAt: cycle.startsAt.toISOString(),
-    endsAt: cycle.endsAt.toISOString(),
-    completedAt: cycle.completedAt?.toISOString() ?? null,
+    ...chromeOf(cycle),
     progress,
     groups: issues.groups,
     assignees: issues.assignees,
