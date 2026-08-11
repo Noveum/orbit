@@ -238,6 +238,33 @@ describe('an inbox with more notifications than one page', () => {
     expect(screen.getByTestId('inbox-load-more')).toBeInTheDocument();
   });
 
+  it('can still reach older pages when a filter matches nothing loaded yet', async () => {
+    const user = userEvent.setup();
+    pages = { 'cursor-1': olderPage(['n51'], null) };
+    renderInbox([item('n1', { read: true })], 'cursor-1');
+
+    await user.click(screen.getByRole('button', { name: 'Unread' }));
+    expect(screen.queryByRole('button', { name: /Notification n1/ })).toBeNull();
+
+    const offer = screen.getByTestId('inbox-load-more');
+    expect(offer).toBeInTheDocument();
+
+    await user.click(offer);
+    await waitFor(() => {
+      expect(requests.some((path) => path.includes('cursor=cursor-1'))).toBe(true);
+    });
+  });
+
+  it('says inbox zero only when there is nothing left to fetch', async () => {
+    const user = userEvent.setup();
+    renderInbox([item('n1', { read: true })], null);
+
+    await user.click(screen.getByRole('button', { name: 'Unread' }));
+
+    expect(screen.getByText('Inbox zero')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-load-more')).toBeNull();
+  });
+
   it('leaves a failed save alone when a page loads, they are separate complaints', async () => {
     const user = userEvent.setup();
     renderInbox([item('n1', { read: false })], 'cursor-1');

@@ -591,7 +591,7 @@ export function InboxView({
         </div>
       </header>
 
-      {visible.length === 0 ? (
+      {visible.length === 0 && cursor === null ? (
         <EmptyState
           icon={<Bell strokeWidth={1.75} aria-hidden="true" />}
           title="Inbox zero"
