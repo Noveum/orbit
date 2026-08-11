@@ -31,6 +31,30 @@ async function snapshotCount(): Promise<number> {
 }
 
 describe('writeCycleSnapshots', () => {
+  it('bootstraps captured history for every assigned issue including archived work', async () => {
+    const archivedId = await insertIssue(workspace, {
+      number: 5,
+      state: 'Todo',
+      cycleId,
+      estimate: 2,
+    });
+    await db
+      .update(schema.issue)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.issue.id, archivedId));
+
+    await writeCycleSnapshots(withinCycle);
+    await writeCycleSnapshots(withinCycle);
+
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.cycleId, cycleId));
+    expect(memberships).toHaveLength(4);
+    expect(memberships.every((entry) => entry.coverage === 'observed')).toBe(true);
+    expect(memberships.some((entry) => entry.issueId === archivedId)).toBe(true);
+  });
+
   it('writes one row per active cycle per day with the correct tallies', async () => {
     const result = await writeCycleSnapshots();
     expect(result.count).toBeGreaterThanOrEqual(1);

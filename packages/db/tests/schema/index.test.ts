@@ -144,16 +144,20 @@ describe('domain invariants', () => {
     expect(schema.cycleIssueOutcome).toBeDefined();
     expect(schema.cycleProgressSnapshot.isFinal).toBeDefined();
     expect(schema.cycleProgressSnapshot.capturedAt).toBeDefined();
+    const openMembership = partialIndexOf(
+      schema.cycleIssueMembership,
+      'cycle_issue_membership_one_open_per_issue_unique',
+    );
+    expect(columnNamesOf(openMembership)).toEqual(['issue_id']);
+    expect(predicateOf(openMembership)).toBe('"cycle_issue_membership"."removed_at" is null');
   });
 
-  it('allows membership intervals and rejects duplicate sprint outcomes', async () => {
+  it('allows closed membership intervals and rejects a second open interval', async () => {
     const organizationId = randomUUIDv7();
     const teamId = randomUUIDv7();
     const cycleId = randomUUIDv7();
     const issueId = randomUUIDv7();
     const now = new Date('2026-08-11T00:00:00.000Z');
-    const rollback = new Error('rollback');
-
     await expect(
       db.transaction(async (tx) => {
         await tx.insert(schema.organization).values({
@@ -198,7 +202,48 @@ describe('domain invariants', () => {
             entryKind: 'added',
           },
         ]);
+        await tx.insert(schema.cycleIssueMembership).values({
+          id: randomUUIDv7(),
+          organizationId,
+          teamId,
+          cycleId,
+          issueId,
+          issueIdentifier: 'AN-1',
+          addedAt: new Date(now.getTime() + 2),
+          entryKind: 'added',
+        });
+      }),
+    ).rejects.toThrow();
+  });
 
+  it('rejects duplicate sprint outcomes', async () => {
+    const organizationId = randomUUIDv7();
+    const teamId = randomUUIDv7();
+    const cycleId = randomUUIDv7();
+    const issueId = randomUUIDv7();
+    const now = new Date('2026-08-11T00:00:00.000Z');
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.insert(schema.organization).values({
+          id: organizationId,
+          name: 'Analytics test',
+          slug: organizationId,
+        });
+        await tx.insert(schema.team).values({
+          id: teamId,
+          organizationId,
+          name: 'Analytics',
+          key: organizationId.slice(0, 8),
+        });
+        await tx.insert(schema.cycle).values({
+          id: cycleId,
+          organizationId,
+          teamId,
+          number: 1,
+          startsAt: now,
+          endsAt: new Date(now.getTime() + 86_400_000),
+        });
         const outcome = {
           organizationId,
           teamId,
@@ -210,15 +255,9 @@ describe('domain invariants', () => {
           closedAt: now,
         };
         await tx.insert(schema.cycleIssueOutcome).values({ id: randomUUIDv7(), ...outcome });
-        await expect(
-          (async () => {
-            await tx.insert(schema.cycleIssueOutcome).values({ id: randomUUIDv7(), ...outcome });
-          })(),
-        ).rejects.toThrow();
-
-        throw rollback;
+        await tx.insert(schema.cycleIssueOutcome).values({ id: randomUUIDv7(), ...outcome });
       }),
-    ).rejects.toBe(rollback);
+    ).rejects.toThrow();
   });
 
   it('records a durable workspace deletion request', () => {

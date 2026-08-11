@@ -35,6 +35,7 @@ import { appendActivities, principalActor } from '../activity/activity-service.t
 import {
   captureCreatedCycleMembership,
   captureCycleMembershipChange,
+  lockCycleAssignmentTeam,
 } from '../analytics/membership.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { dedupeAudience, restrictAudience, teamReaderIds } from '../notifications/audience.ts';
@@ -365,6 +366,24 @@ async function loadIssue(
   return issue;
 }
 
+async function loadIssueForUpdate(
+  executor: Executor,
+  principal: Principal,
+  issueId: string,
+): Promise<IssueRow> {
+  const [row] = await executor
+    .select()
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, principal.organizationId)),
+    )
+    .for('update')
+    .limit(1);
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
+}
+
 async function replaceLabelsFor(
   executor: Executor,
   issueIds: readonly string[],
@@ -600,13 +619,21 @@ async function assertCycleInTeam(
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
-    .select({ teamId: schema.cycle.teamId, organizationId: schema.cycle.organizationId })
+    .select({
+      teamId: schema.cycle.teamId,
+      organizationId: schema.cycle.organizationId,
+      completedAt: schema.cycle.completedAt,
+      archivedAt: schema.cycle.archivedAt,
+    })
     .from(schema.cycle)
     .where(eq(schema.cycle.id, cycleId))
     .limit(1);
   const cycle = requireRow(row, 'That sprint does not exist.');
   if (cycle.organizationId !== organizationId || cycle.teamId !== teamId) {
     throw validationFailed('That sprint belongs to another team.');
+  }
+  if (cycle.completedAt !== null || cycle.archivedAt !== null) {
+    throw validationFailed('That sprint is no longer open.');
   }
 }
 
@@ -704,6 +731,7 @@ async function assertAssignableToTeam(
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
+    await lockCycleAssignmentTeam(executor, teamId);
     await assertCycleInTeam(executor, organizationId, teamId, cycleId);
   }
   if (projectId !== undefined && projectId !== null) {
@@ -828,7 +856,9 @@ async function loadIssues(
     .from(schema.issue)
     .where(
       and(inArray(schema.issue.id, [...issueIds]), eq(schema.issue.organizationId, organizationId)),
-    );
+    )
+    .orderBy(asc(schema.issue.id))
+    .for('update');
   return new Map(rows.map((row) => [row.id, row]));
 }
 
@@ -886,6 +916,10 @@ async function applyIssueUpdates(
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue[]> {
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  if (parsed.cycleId !== undefined && parsed.cycleId !== null) {
+    const teamIds = [...new Set([...loaded.values()].map((issue) => issue.teamId))].sort();
+    for (const teamId of teamIds) await lockCycleAssignmentTeam(tx, teamId);
+  }
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
   const context: UpdateContext = { tx, principal, parsed, state, now };
@@ -1189,7 +1223,7 @@ export async function moveIssue(
   const parsed = issueMoveSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal, issueId);
+    const current = await loadIssueForUpdate(tx, principal, issueId);
 
     const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
     const teamId = team.id;
@@ -1391,7 +1425,7 @@ export async function deleteIssue(principal: Principal, issueId: string): Promis
   assertCan(principal, 'issue:delete');
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal, issueId);
+    const current = await loadIssueForUpdate(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);

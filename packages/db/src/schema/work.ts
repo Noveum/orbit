@@ -293,6 +293,9 @@ export const cycleIssueMembership = pgTable(
     index('cycle_issue_membership_cycle_added_idx').on(table.cycleId, table.addedAt),
     index('cycle_issue_membership_cycle_removed_idx').on(table.cycleId, table.removedAt),
     index('cycle_issue_membership_issue_added_idx').on(table.issueId, table.addedAt),
+    uniqueIndex('cycle_issue_membership_one_open_per_issue_unique')
+      .on(table.issueId)
+      .where(sql`${table.removedAt} is null`),
   ],
 );
 

@@ -12,7 +12,7 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createCycle } from '../../src/work/cycle-service.ts';
+import { completeCycle, createCycle } from '../../src/work/cycle-service.ts';
 import {
   archiveIssue,
   bulkUpdateIssues,
@@ -131,6 +131,73 @@ describe('createIssue', () => {
     expect(action?.scopes).not.toContain(scopes.organization(workspace.organizationId));
     expect(action?.actor.id).toBe(workspace.admin.userId);
     expect(() => new Date(action?.at ?? '')).not.toThrow();
+  });
+
+  it('rejects every assignment API after a sprint closes', async () => {
+    const [cycle] = await db
+      .select()
+      .from(schema.cycle)
+      .where(eq(schema.cycle.teamId, workspace.teamId));
+    if (cycle === undefined) throw new Error('missing bootstrap cycle');
+    await completeCycle(workspace.admin, cycle.id);
+    const updateTarget = await newIssue('Update target');
+    const moveTarget = await newIssue('Move target');
+    const bulkTarget = await newIssue('Bulk target');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Closed create',
+        cycleId: cycle.id,
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      updateIssue(workspace.admin, updateTarget.id, { cycleId: cycle.id }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      moveIssue(workspace.admin, moveTarget.id, { cycleId: cycle.id }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      bulkUpdateIssues(workspace.admin, {
+        issueIds: [bulkTarget.id],
+        patch: { cycleId: cycle.id },
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('rejects every assignment API for an archived sprint', async () => {
+    const [cycle] = await db
+      .select()
+      .from(schema.cycle)
+      .where(eq(schema.cycle.teamId, workspace.teamId));
+    if (cycle === undefined) throw new Error('missing bootstrap cycle');
+    await db
+      .update(schema.cycle)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.cycle.id, cycle.id));
+    const updateTarget = await newIssue('Archived update target');
+    const moveTarget = await newIssue('Archived move target');
+    const bulkTarget = await newIssue('Archived bulk target');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Archived create',
+        cycleId: cycle.id,
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      updateIssue(workspace.admin, updateTarget.id, { cycleId: cycle.id }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      moveIssue(workspace.admin, moveTarget.id, { cycleId: cycle.id }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      bulkUpdateIssues(workspace.admin, {
+        issueIds: [bulkTarget.id],
+        patch: { cycleId: cycle.id },
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 });
 

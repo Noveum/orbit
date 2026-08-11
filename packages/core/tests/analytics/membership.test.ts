@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { asc, db, eq, schema, sql } from '@orbit/db';
+import { z } from 'zod';
 import { bootstrapActiveCycleMemberships } from '../../src/analytics/membership.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
 import {
@@ -10,7 +11,13 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { completeCycle, createCycle, listCycles } from '../../src/work/cycle-service.ts';
-import { archiveIssue, createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import {
+  archiveIssue,
+  bulkUpdateIssues,
+  createIssue,
+  moveIssue,
+  updateIssue,
+} from '../../src/work/issue-service.ts';
 import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
@@ -36,6 +43,38 @@ function errorMessages(error: unknown): string[] {
     cursor = 'cause' in cursor ? cursor.cause : undefined;
   }
   return messages;
+}
+
+async function openMemberships(issueId: string) {
+  const memberships = await db
+    .select()
+    .from(schema.cycleIssueMembership)
+    .where(eq(schema.cycleIssueMembership.issueId, issueId));
+  return memberships.filter((entry) => entry.removedAt === null);
+}
+
+async function waitForRaceSetup(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+}
+
+const workerResultSchema = z.object({ count: z.number().int().nonnegative() });
+
+async function runMembershipWorker(input: unknown): Promise<number> {
+  const worker = new URL('./membership-race-worker.ts', import.meta.url).pathname;
+  const cwd = new URL('../..', import.meta.url).pathname;
+  const child = Bun.spawn(['bun', worker, JSON.stringify(input)], {
+    cwd,
+    env: { ...process.env, DATABASE_POOL_MAX: '5' },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [exitCode, output, errorOutput] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (exitCode !== 0) throw new Error(errorOutput || `Membership worker exited ${exitCode}.`);
+  return workerResultSchema.parse(JSON.parse(output)).count;
 }
 
 describe('sprint membership capture', () => {
@@ -72,6 +111,175 @@ describe('sprint membership capture', () => {
     expect(memberships[1]?.removedAt?.getTime()).toBe(second.endsAt.getTime());
     expect(memberships[2]?.entryKind).toBe('rollover');
     expect(memberships[2]?.estimateAtAdd).toBe(3);
+  });
+
+  it('captures regrouped moves and bulk sprint updates', async () => {
+    const first = await firstCycle();
+    const { cycle: second } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: first.endsAt,
+      endsAt: new Date(first.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { cycle: third } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: second.endsAt,
+      endsAt: new Date(second.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Every mutation path',
+      cycleId: first.id,
+    });
+
+    await moveIssue(workspace.admin, issue.id, { cycleId: second.id });
+    await bulkUpdateIssues(workspace.admin, {
+      issueIds: [issue.id],
+      patch: { cycleId: third.id },
+    });
+
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.issueId, issue.id))
+      .orderBy(asc(schema.cycleIssueMembership.addedAt));
+    expect(memberships.map((entry) => entry.cycleId)).toEqual([first.id, second.id, third.id]);
+    expect(await openMemberships(issue.id)).toHaveLength(1);
+    expect((await openMemberships(issue.id))[0]?.cycleId).toBe(third.id);
+  });
+
+  it('serializes concurrent moves so one issue has one open sprint', async () => {
+    const first = await firstCycle();
+    const { cycle: second } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: first.endsAt,
+      endsAt: new Date(first.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { cycle: third } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: second.endsAt,
+      endsAt: new Date(second.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Concurrent move',
+      cycleId: first.id,
+    });
+    await db.execute(
+      sql.raw(`
+      create function delay_cycle_assignment() returns trigger as $$
+      begin
+        perform pg_advisory_xact_lock(731107);
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger delay_cycle_assignment
+      before update on issue
+      for each row execute function delay_cycle_assignment();
+    `),
+    );
+
+    const moves: Promise<number>[] = [];
+    try {
+      await db.transaction(async (holder) => {
+        await holder.execute(sql`select pg_advisory_xact_lock(731107)`);
+        moves.push(
+          runMembershipWorker({
+            operation: 'update',
+            principal: workspace.admin,
+            issueId: issue.id,
+            cycleId: second.id,
+          }),
+        );
+        await waitForRaceSetup();
+        moves.push(
+          runMembershipWorker({
+            operation: 'update',
+            principal: workspace.admin,
+            issueId: issue.id,
+            cycleId: third.id,
+          }),
+        );
+        await waitForRaceSetup();
+      });
+      expect(await Promise.all(moves)).toEqual([1, 1]);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger delay_cycle_assignment on issue;
+        drop function delay_cycle_assignment();
+      `),
+      );
+    }
+
+    expect(await openMemberships(issue.id)).toHaveLength(1);
+  });
+
+  it('serializes rollover against a concurrent move', async () => {
+    const first = await firstCycle();
+    const { cycle: second } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: first.endsAt,
+      endsAt: new Date(first.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { cycle: third } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: second.endsAt,
+      endsAt: new Date(second.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Rollover race',
+      cycleId: first.id,
+    });
+    await db.execute(
+      sql.raw(`
+      create function delay_rollover_assignment() returns trigger as $$
+      begin
+        perform pg_advisory_xact_lock(731108);
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger delay_rollover_assignment
+      before update on issue
+      for each row execute function delay_rollover_assignment();
+    `),
+    );
+
+    const mutations: Promise<number>[] = [];
+    try {
+      await db.transaction(async (holder) => {
+        await holder.execute(sql`select pg_advisory_xact_lock(731108)`);
+        mutations.push(
+          runMembershipWorker({
+            operation: 'complete',
+            principal: workspace.admin,
+            cycleId: first.id,
+            occurredAt: first.endsAt,
+          }),
+        );
+        await waitForRaceSetup();
+        mutations.push(
+          runMembershipWorker({
+            operation: 'update',
+            principal: workspace.admin,
+            issueId: issue.id,
+            cycleId: third.id,
+          }),
+        );
+        await waitForRaceSetup();
+      });
+      expect(await Promise.all(mutations)).toEqual([1, 1]);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger delay_rollover_assignment on issue;
+        drop function delay_rollover_assignment();
+      `),
+      );
+    }
+
+    expect(await openMemberships(issue.id)).toHaveLength(1);
+    expect((await openMemberships(issue.id))[0]?.cycleId).toBe(third.id);
   });
 
   it('freezes completed, incomplete, canceled, removed, and carryover outcomes at close', async () => {
@@ -237,5 +445,55 @@ describe('sprint membership capture', () => {
       estimateAtAdd: 5,
     });
     expect(membership?.addedAt.getTime()).toBe(observedAt.getTime());
+  });
+
+  it('keeps concurrent bootstrap retries to one open membership', async () => {
+    const cycle = await firstCycle();
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId: cycle.id,
+      estimate: 5,
+    });
+    const observedAt = new Date(cycle.startsAt.getTime() + 2 * 86_400_000);
+    await db.execute(
+      sql.raw(`
+      drop trigger if exists delay_membership_bootstrap on cycle_issue_membership;
+      drop function if exists delay_membership_bootstrap();
+      create function delay_membership_bootstrap() returns trigger as $$
+      begin
+        perform pg_advisory_xact_lock(731109);
+        return new;
+      end;
+      $$ language plpgsql;
+      create trigger delay_membership_bootstrap
+      before insert on cycle_issue_membership
+      for each row execute function delay_membership_bootstrap();
+    `),
+    );
+
+    const attempts: Promise<number>[] = [];
+    let counts: number[] = [];
+    try {
+      await db.transaction(async (holder) => {
+        await holder.execute(sql`select pg_advisory_xact_lock(731109)`);
+        attempts.push(
+          runMembershipWorker({ operation: 'bootstrap', occurredAt: observedAt }),
+          runMembershipWorker({ operation: 'bootstrap', occurredAt: observedAt }),
+        );
+        await waitForRaceSetup();
+      });
+      counts = await Promise.all(attempts);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger delay_membership_bootstrap on cycle_issue_membership;
+        drop function delay_membership_bootstrap();
+      `),
+      );
+    }
+
+    expect(counts.sort()).toEqual([0, 1]);
+    expect(await openMemberships(issueId)).toHaveLength(1);
   });
 });

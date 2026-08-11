@@ -28,6 +28,7 @@ import { principalActor } from '../activity/activity-service.ts';
 import {
   captureCycleCloseOutcomes,
   captureCycleMembershipChange,
+  lockCycleAssignmentTeam,
 } from '../analytics/membership.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { requireTeam } from '../org/team-service.ts';
@@ -44,7 +45,20 @@ function cycleScopes(row: CycleRow): string[] {
 }
 
 async function lockTeamCycles(executor: Executor, teamId: string): Promise<void> {
-  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${teamId}`}))`);
+  await lockCycleAssignmentTeam(executor, teamId);
+}
+
+async function lockCycleIssues(
+  executor: Executor,
+  organizationId: string,
+  cycleId: string,
+): Promise<void> {
+  await executor
+    .select({ id: schema.issue.id })
+    .from(schema.issue)
+    .where(and(eq(schema.issue.organizationId, organizationId), eq(schema.issue.cycleId, cycleId)))
+    .orderBy(asc(schema.issue.id))
+    .for('update');
 }
 
 async function requireCycleForUpdate(
@@ -306,7 +320,11 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
   assertCan(principal, 'cycle:manage');
 
   return await db.transaction(async (tx) => {
+    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, principal.organizationId, cycleId);
+    await lockTeamCycles(tx, found.teamId);
     const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, principal.organizationId, cycleId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -865,8 +883,10 @@ export async function completeCycle(
 
   return await db.transaction(async (tx) => {
     const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, principal.organizationId, cycleId);
     await lockTeamCycles(tx, found.teamId);
     const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, principal.organizationId, cycleId);
     if (cycle.completedAt !== null) {
       throw conflict('That cycle is already complete.');
     }

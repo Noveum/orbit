@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte, schema } from '@orbit/db';
+import { and, asc, eq, gt, inArray, isNull, lte, schema, sql } from '@orbit/db';
 import type { Executor } from '../internal.ts';
 import { newId } from '../internal.ts';
 import type { IssueRow } from '../work/issue-fields.ts';
@@ -19,6 +19,24 @@ interface OpenMembershipInput {
   readonly coverage: 'captured' | 'observed';
 }
 
+function membershipValues(input: OpenMembershipInput) {
+  return {
+    id: newId(),
+    organizationId: input.issue.organizationId,
+    teamId: input.issue.teamId,
+    cycleId: input.cycleId,
+    issueId: input.issue.id,
+    issueIdentifier: input.issue.identifier,
+    addedAt: input.occurredAt,
+    entryKind: input.entryKind,
+    estimateAtAdd: input.issue.estimate,
+    assigneeIdAtAdd: input.issue.assigneeId,
+    projectIdAtAdd: input.issue.projectId,
+    milestoneIdAtAdd: input.issue.milestoneId,
+    coverage: input.coverage,
+  };
+}
+
 interface CycleCloseInput {
   readonly cycle: {
     readonly id: string;
@@ -31,6 +49,10 @@ interface CycleCloseInput {
 }
 
 type Outcome = 'completed' | 'incomplete' | 'canceled' | 'removed' | 'carryover';
+
+export async function lockCycleAssignmentTeam(tx: Executor, teamId: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${teamId}`}))`);
+}
 
 async function closeOpenMembership(
   tx: Executor,
@@ -50,21 +72,7 @@ async function closeOpenMembership(
 }
 
 async function openMembership(tx: Executor, input: OpenMembershipInput): Promise<void> {
-  await tx.insert(schema.cycleIssueMembership).values({
-    id: newId(),
-    organizationId: input.issue.organizationId,
-    teamId: input.issue.teamId,
-    cycleId: input.cycleId,
-    issueId: input.issue.id,
-    issueIdentifier: input.issue.identifier,
-    addedAt: input.occurredAt,
-    entryKind: input.entryKind,
-    estimateAtAdd: input.issue.estimate,
-    assigneeIdAtAdd: input.issue.assigneeId,
-    projectIdAtAdd: input.issue.projectId,
-    milestoneIdAtAdd: input.issue.milestoneId,
-    coverage: input.coverage,
-  });
+  await tx.insert(schema.cycleIssueMembership).values(membershipValues(input));
 }
 
 export async function captureCreatedCycleMembership(
@@ -134,11 +142,17 @@ export async function captureCycleCloseOutcomes(
       ),
     );
   const currentById = new Map(current.map((entry) => [entry.issue.id, entry]));
+  const membershipsByIssue = new Map<string, typeof memberships>();
+  for (const membership of memberships) {
+    const intervals = membershipsByIssue.get(membership.issueId) ?? [];
+    intervals.push(membership);
+    membershipsByIssue.set(membership.issueId, intervals);
+  }
   const commitmentCutoff = input.cycle.startsAt.getTime() + 24 * 3_600_000;
 
   await tx.insert(schema.cycleIssueOutcome).values(
     issueIds.map((issueId) => {
-      const intervals = memberships.filter((entry) => entry.issueId === issueId);
+      const intervals = membershipsByIssue.get(issueId) ?? [];
       const first = intervals[0];
       if (first === undefined) throw new Error('Sprint membership disappeared during close.');
       const plannedMembership = intervals.find(
@@ -201,7 +215,6 @@ export async function bootstrapActiveCycleMemberships(
           schema.issue.cycleId,
           activeCycles.map((cycle) => cycle.id),
         ),
-        isNull(schema.issue.archivedAt),
       ),
     );
   if (issues.length === 0) return 0;
@@ -225,15 +238,24 @@ export async function bootstrapActiveCycleMemberships(
   const missing = issues.filter(
     (issue) => issue.cycleId !== null && !openKeys.has(`${issue.id}:${issue.cycleId}`),
   );
-  for (const issue of missing) {
-    if (issue.cycleId === null) continue;
-    await openMembership(tx, {
-      issue,
-      cycleId: issue.cycleId,
-      occurredAt,
-      entryKind: 'bootstrap',
-      coverage: 'observed',
-    });
-  }
-  return missing.length;
+  const values = missing.flatMap((issue) =>
+    issue.cycleId === null
+      ? []
+      : [
+          membershipValues({
+            issue,
+            cycleId: issue.cycleId,
+            occurredAt,
+            entryKind: 'bootstrap',
+            coverage: 'observed',
+          }),
+        ],
+  );
+  if (values.length === 0) return 0;
+  const inserted = await tx
+    .insert(schema.cycleIssueMembership)
+    .values(values)
+    .onConflictDoNothing()
+    .returning({ id: schema.cycleIssueMembership.id });
+  return inserted.length;
 }

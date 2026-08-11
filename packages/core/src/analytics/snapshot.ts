@@ -5,6 +5,7 @@ import { scopes } from '@orbit/shared/events';
 import { newId, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { bootstrapActiveCycleMemberships } from './membership.ts';
 
 const SNAPSHOT_ACTOR: Actor = { type: 'system', id: 'snapshot', name: 'Sprint snapshot' };
 
@@ -59,6 +60,7 @@ export interface SnapshotResult {
 
 export async function writeCycleSnapshots(now: Date = new Date()): Promise<SnapshotResult> {
   const capturedOn = startOfUtcDay(now).toISOString().slice(0, 10);
+  await db.transaction(async (tx) => bootstrapActiveCycleMemberships(tx, now));
 
   const activeCycles = await db
     .select({
