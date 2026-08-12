@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
@@ -165,6 +166,10 @@ function assertSignUpAllowed(email: string): void {
   }
 }
 
+function signInCodeIdempotencyKey(email: string, otp: string): string {
+  return `sign-in-code:${createHash('sha256').update(`${email}:${otp}`).digest('hex')}`;
+}
+
 export const auth = betterAuth({
   appName: 'Orbit',
   baseURL: serverEnv().BETTER_AUTH_URL,
@@ -241,7 +246,7 @@ export const auth = betterAuth({
           html: content.html,
           text: content.text,
           template: 'sign-in-code',
-          idempotencyKey: `sign-in-code:${email}:${otp}`,
+          idempotencyKey: signInCodeIdempotencyKey(email, otp),
         });
       },
     }),

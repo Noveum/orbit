@@ -15,6 +15,11 @@ describe('password authentication', () => {
     );
   });
 
+  it('stores sign in codes as hashes', () => {
+    const plugin = auth.options.plugins?.find((candidate) => candidate.id === 'email-otp');
+    expect(plugin?.options).toMatchObject({ storeOTP: 'hashed' });
+  });
+
   it('exposes the MCP OAuth provider for one-click clients', () => {
     expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
       expect.arrayContaining(['mcp']),
