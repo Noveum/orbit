@@ -16,8 +16,8 @@ export interface EmailContent {
   readonly text: string;
 }
 
-export interface MagicLinkProps {
-  readonly url: string;
+export interface SignInCodeProps {
+  readonly code: string;
   readonly email: string;
 }
 
@@ -94,19 +94,26 @@ function Excerpt({ text }: { readonly text: string }) {
   );
 }
 
-export async function magicLinkEmail(props: MagicLinkProps): Promise<EmailContent> {
-  const subject = 'Your Orbit sign in link';
+export async function signInCodeEmail(props: SignInCodeProps): Promise<EmailContent> {
+  const subject = 'Your Orbit sign in code';
   const html = await render(
     <Layout
-      preview="Sign in to Orbit"
+      preview={`${props.code} is your Orbit sign in code`}
       heading="Sign in to Orbit"
-      footer={`This link was requested for ${props.email}. It expires shortly and can be used once.`}
+      footer={`This code was requested for ${props.email}. It expires in five minutes and can be used once.`}
     >
-      <Text style={paragraphStyle}>Click the button below to sign in. No password needed.</Text>
-      <Button href={props.url} style={buttonStyle}>
-        Sign in to Orbit
-      </Button>
-      <LinkLine url={props.url} />
+      <Text style={paragraphStyle}>Enter this code to sign in. No password needed.</Text>
+      <Text
+        style={{
+          ...cardStyle,
+          fontSize: '28px',
+          fontWeight: 700,
+          letterSpacing: '0.2em',
+          textAlign: 'center',
+        }}
+      >
+        {props.code}
+      </Text>
     </Layout>,
   );
   return {
@@ -115,10 +122,10 @@ export async function magicLinkEmail(props: MagicLinkProps): Promise<EmailConten
     text: [
       'Sign in to Orbit',
       '',
-      `Use this link to sign in as ${props.email}:`,
-      props.url,
+      `Use this code to sign in as ${props.email}:`,
+      props.code,
       '',
-      'The link expires shortly and can be used once.',
+      'The code expires in five minutes and can be used once.',
     ].join('\n'),
   };
 }

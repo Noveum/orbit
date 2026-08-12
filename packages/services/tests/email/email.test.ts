@@ -13,11 +13,11 @@ import {
   inviteAcceptedEmail,
   inviteEmail,
   issueAssignedEmail,
-  magicLinkEmail,
   mentionEmail,
   ResendTransport,
   resetPasswordEmail,
   sendEmail,
+  signInCodeEmail,
 } from '../../src/email/index.ts';
 import { withRollback } from '../../src/test-database.ts';
 
@@ -32,15 +32,15 @@ class RecordingTransport implements EmailTransport {
 }
 
 describe('templates', () => {
-  it('renders the magic link email with the url in html and text', async () => {
-    const content = await magicLinkEmail({
-      url: 'https://orbit.local/auth/magic?token=abc123',
+  it('renders the sign in code in html and text', async () => {
+    const content = await signInCodeEmail({
+      code: '123456',
       email: 'ada@orbit.local',
     });
-    expect(content.subject).toBe('Your Orbit sign in link');
-    expect(content.html).toContain('https://orbit.local/auth/magic?token=abc123');
+    expect(content.subject).toBe('Your Orbit sign in code');
+    expect(content.html).toContain('123456');
     expect(content.html).toContain('#5A63C8');
-    expect(content.text).toContain('https://orbit.local/auth/magic?token=abc123');
+    expect(content.text).toContain('123456');
     expect(content.text).toContain('ada@orbit.local');
   });
 
