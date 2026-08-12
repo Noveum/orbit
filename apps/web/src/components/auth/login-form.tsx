@@ -338,6 +338,7 @@ export function LoginForm({
     }
     sendOtp();
   };
+  const emailCodeButtonSubmits = !passwordEnabled || otpSent;
 
   return (
     <div className="flex w-full max-w-[22rem] flex-col gap-5">
@@ -429,19 +430,18 @@ export function LoginForm({
           />
         ) : null}
         <Button
-          type={passwordEnabled && !otpSent ? 'button' : 'submit'}
+          type={emailCodeButtonSubmits ? 'submit' : 'button'}
           variant="secondary"
           size="md"
           block
           disabled={pending !== null || email.length === 0 || (otpSent && otp.length !== 6)}
-          {...(passwordEnabled
-            ? {
+          {...(emailCodeButtonSubmits
+            ? {}
+            : {
                 onClick: () => {
-                  if (otpSent) verifyOtp();
-                  else sendOtp();
+                  sendOtp();
                 },
-              }
-            : {})}
+              })}
         >
           {pending === 'otp-send' || pending === 'otp-verify' ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />

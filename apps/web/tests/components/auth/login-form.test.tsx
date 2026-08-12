@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 const requestPasswordReset = mock();
 const sendVerificationOtp = mock();
@@ -8,6 +9,8 @@ const signInEmailOtp = mock();
 const toast = mock();
 const originalLocation = window.location;
 const assign = mock();
+
+await restoreModulesAfterThisFile(['@/components/ui/toast.tsx']);
 
 Object.defineProperty(window, 'location', {
   configurable: true,
@@ -150,6 +153,7 @@ describe('LoginForm', () => {
     await waitFor(() => {
       expect(assign).toHaveBeenCalledWith('/my-issues');
     });
+    expect(signInEmailOtp).toHaveBeenCalledTimes(1);
   });
 
   it('verifies the code when Enter is pressed with password auth enabled', async () => {
