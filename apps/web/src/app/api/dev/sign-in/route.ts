@@ -1,4 +1,4 @@
-import { db, desc, eq, ilike, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import { devSignInSchema } from '@orbit/shared/validators';
 import { NextResponse } from 'next/server';
@@ -28,21 +28,11 @@ export async function POST(request: Request): Promise<Response> {
 
     const forwarded = new Headers(request.headers);
     forwarded.set(DEV_LOGIN_HEADER, '1');
-    await auth.api.signInMagicLink({
-      body: { email, callbackURL: '/' },
-      headers: forwarded,
+    const otp = await auth.api.createVerificationOTP({
+      body: { email, type: 'sign-in' },
     });
-
-    const [pending] = await db
-      .select({ identifier: schema.verification.identifier })
-      .from(schema.verification)
-      .where(ilike(schema.verification.value, `%${email}%`))
-      .orderBy(desc(schema.verification.createdAt))
-      .limit(1);
-    if (pending === undefined) throw notFound('Could not mint a dev session.');
-
-    const verified = await auth.api.magicLinkVerify({
-      query: { token: pending.identifier, callbackURL: '/' },
+    const verified = await auth.api.signInEmailOTP({
+      body: { email, otp },
       headers: forwarded,
       asResponse: true,
     });

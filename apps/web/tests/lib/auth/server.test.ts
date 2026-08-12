@@ -11,7 +11,7 @@ describe('password authentication', () => {
 
   it('keeps the passwordless methods available', () => {
     expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
-      expect.arrayContaining(['passkey', 'magic-link', 'organization']),
+      expect.arrayContaining(['passkey', 'email-otp', 'organization']),
     );
   });
 
