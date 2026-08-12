@@ -63,7 +63,7 @@ Open <http://localhost:3000>.
 
 `.env.example` sets `ORBIT_DEV_LOGIN=1`, which puts a list of the seeded users
 on the login screen and signs you in with one click. No email, no password, no
-waiting for a magic link.
+waiting for a sign-in code.
 
 Start as **`alex@orbit.example`**, who is an admin on all three teams and sees
 everything.

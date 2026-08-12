@@ -94,7 +94,7 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 ## Email
 
 Not an integration you connect, but worth listing since it carries invites and
-magic links. Ordinary event notifications are currently in-app only.
+sign-in codes. Ordinary event notifications are currently in-app only.
 
 Orbit sends through [Resend](https://resend.com) only.
 

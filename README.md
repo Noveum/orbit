@@ -90,7 +90,7 @@ yourself and never depend on us at all.
 | **MCP server** | AI agents read the board and file work, with your permissions, over OAuth |
 | **Notifications** | In-app inbox, with per-event preferences and quiet hours |
 | **GitHub** | Pull requests linked to the issues they close |
-| **Auth** | Passkeys, Google, GitHub, magic links. Password optional and off by default |
+| **Auth** | Passkeys, Google, GitHub, email OTP. Password optional and off by default |
 | **Roles** | Admin, member, contributor and guest, enforced on the server |
 | **Themes** | Light and dark, both first class |
 
@@ -140,7 +140,7 @@ all of which have free tiers, so a small team can run it for nothing.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNoveum%2Forbit&root-directory=apps%2Fweb&env=DATABASE_URL,REDIS_URL,BETTER_AUTH_SECRET,BETTER_AUTH_URL,NEXT_PUBLIC_APP_URL,RESEND_API_KEY,EMAIL_FROM&project-name=orbit&repository-name=orbit)
 
-The button prompts for Resend so a fresh deployment can send magic links. You
+The button prompts for Resend so a fresh deployment can send sign-in codes. You
 can instead configure password, Google or GitHub sign-in. Production refuses to
 build or start without one complete method; see [Authentication](docs/configuration.md#authentication).
 

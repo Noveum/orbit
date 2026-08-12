@@ -83,7 +83,7 @@ bun run db:seed
 on `http://localhost:3000` it has to be exactly that, not `127.0.0.1`, not a
 trailing slash, not `https`.
 
-### Magic links and invites never arrive
+### Sign-in codes and invites never arrive
 
 `EMAIL_FROM` is not on a domain verified in Resend, or `RESEND_API_KEY` is
 missing. Every send fails silently from the user's point of view.

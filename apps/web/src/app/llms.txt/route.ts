@@ -28,7 +28,7 @@ export function GET(): Response {
 ## Links
 
 - [Landing page](${base}/)
-- [Sign in](${absoluteUrl('/login')}) with Google, GitHub, a passkey, or a magic link
+- [Sign in](${absoluteUrl('/login')}) with Google, GitHub, a passkey, or an email code
 - [Source code](https://github.com/Noveum/orbit)
 - [Documentation](https://github.com/Noveum/orbit/tree/main/docs)
 - [Self-hosting guide](https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md)

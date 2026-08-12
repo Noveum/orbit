@@ -175,7 +175,7 @@ describe('sendEmail idempotency', () => {
           html: '<p>Hello</p>',
           text: 'Hello',
           idempotencyKey: key,
-          template: 'magic-link',
+          template: 'sign-in-code',
         },
         transport,
       );
@@ -183,7 +183,7 @@ describe('sendEmail idempotency', () => {
       expect(record.status).toBe('sent');
       expect(record.providerId).toBe('prov_1');
       expect(record.sentAt).not.toBeNull();
-      expect(record.template).toBe('magic-link');
+      expect(record.template).toBe('sign-in-code');
     });
   });
 
@@ -197,7 +197,7 @@ describe('sendEmail idempotency', () => {
         html: '<p>Hello</p>',
         text: 'Hello',
         idempotencyKey: key,
-        template: 'magic-link',
+        template: 'sign-in-code',
       };
       const first = await sendEmail(tx, message, transport);
       const second = await sendEmail(tx, { ...message, subject: 'Different' }, transport);
@@ -226,7 +226,7 @@ describe('sendEmail idempotency', () => {
             html: '<p>Hello</p>',
             text: 'Hello',
             idempotencyKey: key,
-            template: 'magic-link',
+            template: 'sign-in-code',
           },
           transport,
         ),
@@ -252,7 +252,7 @@ describe('sendEmail idempotency', () => {
             html: '<p>Hello</p>',
             text: 'Hello',
             idempotencyKey: 'k',
-            template: 'magic-link',
+            template: 'sign-in-code',
           },
           new RecordingTransport(),
         ),
