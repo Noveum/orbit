@@ -1,5 +1,6 @@
 'use client';
 
+import { signInCodeRequestSchema, signInCodeVerifySchema } from '@orbit/shared/validators';
 import { Fingerprint, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
@@ -291,7 +292,11 @@ export function LoginForm({
 
   const sendOtp = () =>
     withPending('otp-send', async () => {
-      const result = await authClient.emailOtp.sendVerificationOtp({ email, type: 'sign-in' });
+      const input = signInCodeRequestSchema.parse({ email });
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: input.email,
+        type: 'sign-in',
+      });
       if (result.error) throw new Error(result.error.message ?? 'Could not send the code.');
       setOtpSent(true);
       toast({
@@ -302,7 +307,8 @@ export function LoginForm({
 
   const verifyOtp = () =>
     withPending('otp-verify', async () => {
-      const result = await authClient.signIn.emailOtp({ email, otp });
+      const input = signInCodeVerifySchema.parse({ email, otp });
+      const result = await authClient.signIn.emailOtp(input);
       if (result.error) throw new Error(result.error.message ?? 'That code is invalid or expired.');
       window.location.assign(callbackUrl);
     });
@@ -322,12 +328,12 @@ export function LoginForm({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (passwordEnabled) {
-      submitPassword();
-      return;
-    }
     if (otpSent) {
       verifyOtp();
+      return;
+    }
+    if (passwordEnabled) {
+      submitPassword();
       return;
     }
     sendOtp();
@@ -404,7 +410,7 @@ export function LoginForm({
             setOtpSent(false);
           }}
         />
-        {passwordEnabled ? (
+        {passwordEnabled && !otpSent ? (
           <PasswordField
             creatingAccount={creatingAccount}
             value={password}
@@ -413,7 +419,7 @@ export function LoginForm({
             disabled={pending !== null || email.length === 0 || password.length === 0}
           />
         ) : null}
-        {passwordEnabled && !creatingAccount ? (
+        {passwordEnabled && !creatingAccount && !otpSent ? (
           <ForgotPasswordButton
             sending={pending === 'forgot'}
             disabled={pending !== null || email.length === 0}
@@ -423,7 +429,7 @@ export function LoginForm({
           />
         ) : null}
         <Button
-          type={passwordEnabled ? 'button' : 'submit'}
+          type={passwordEnabled && !otpSent ? 'button' : 'submit'}
           variant="secondary"
           size="md"
           block

@@ -104,7 +104,7 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 ```
 
 `EMAIL_FROM` must be on a domain verified in Resend. If it is not, every send
-fails, and the only symptom anyone sees is that invites never arrive.
+fails, including sign-in codes and invitations.
 
 ## Webhooks out
 

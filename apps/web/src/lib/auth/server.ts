@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
@@ -167,7 +167,10 @@ function assertSignUpAllowed(email: string): void {
 }
 
 function signInCodeIdempotencyKey(email: string, otp: string): string {
-  return `sign-in-code:${createHash('sha256').update(`${email}:${otp}`).digest('hex')}`;
+  const digest = createHmac('sha256', serverEnv().BETTER_AUTH_SECRET)
+    .update(`${email}:${otp}`)
+    .digest('hex');
+  return `sign-in-code:${digest}`;
 }
 
 export const auth = betterAuth({

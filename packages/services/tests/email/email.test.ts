@@ -40,7 +40,11 @@ describe('templates', () => {
     expect(content.subject).toBe('Your Orbit sign in code');
     expect(content.html).toContain('123456');
     expect(content.html).toContain('#5A63C8');
+    expect(content.html).toContain('expires in five minutes');
+    expect(content.html).toContain('can be used once');
     expect(content.text).toContain('123456');
+    expect(content.text).toContain('expires in five minutes');
+    expect(content.text).toContain('can be used once');
     expect(content.text).toContain('ada@orbit.local');
   });
 

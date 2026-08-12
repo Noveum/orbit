@@ -111,8 +111,8 @@ RESEND_API_KEY=re_xxxxxxxxx
 EMAIL_FROM="Orbit <orbit@example.com>"
 ```
 
-If `EMAIL_FROM` is not on a verified domain every send fails, and the only
-symptom users see is that invites never arrive.
+If `EMAIL_FROM` is not on a verified domain every send fails, and users see
+missing sign-in codes and invitations.
 
 The sender in `.env.example` is local-only. Replace it before relying on Resend
 for production authentication.
