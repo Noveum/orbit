@@ -259,17 +259,11 @@ describe('MCP authorize PKCE boundary', () => {
         });
         verify.headers.set('cookie', cookieHeader(cookies));
         const verified = await authPost(verify);
-        expect(verified.status).toBe(200);
+        expect(verified.status).toBe(302);
         storeResponseCookies(cookies, verified);
-
-        const resume = new Request(callbackUrl ?? '', {
-          headers: { cookie: cookieHeader(cookies) },
-        });
-        const resumedAuthorization = await GET(resume);
-        expect(resumedAuthorization.status).toBe(302);
-        expect(
-          new URL(resumedAuthorization.headers.get('location') ?? '', APP_ORIGIN).pathname,
-        ).toBe('/oauth/authorize');
+        expect(new URL(verified.headers.get('location') ?? '', APP_ORIGIN).pathname).toBe(
+          '/oauth/authorize',
+        );
 
         const records = await db
           .select({ value: schema.verification.value })
