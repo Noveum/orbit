@@ -1,9 +1,13 @@
 'use client';
 
-import { Users } from 'lucide-react';
+import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
+import { UserMinus, Users } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
+import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
+
+export const UNASSIGNED = UNSET_FILTER_VALUE;
 
 export interface PersonTilesProps {
   readonly members: readonly Member[];
@@ -18,10 +22,18 @@ const tile =
 const UNKNOWN_COUNT = '?';
 
 const selectedTile = 'border-accent bg-accent/10 text-text';
-const idleTile =
-  'border-border bg-surface text-muted hover:border-border-strong hover:bg-surface-2';
+const idleTile = cn(cardHover, 'border-border bg-surface text-muted');
+const emptyTile = cn(cardHover, 'border-border bg-surface text-faint');
+
+function tileTone(selected: boolean, count: number | null): string {
+  if (selected) return selectedTile;
+  return count === 0 ? emptyTile : idleTile;
+}
 
 export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTilesProps) {
+  const countOf = (key: string): number | null => (counts === null ? null : (counts[key] ?? 0));
+  const unassigned = countOf(UNASSIGNED);
+
   return (
     <div
       data-testid="standup-tiles"
@@ -39,7 +51,7 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
       </button>
       {members.map((member) => {
         const selected = member.id === selectedId;
-        const count = counts === null ? null : (counts[member.id] ?? 0);
+        const count = countOf(member.id);
         return (
           <button
             key={member.id}
@@ -48,23 +60,46 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
             aria-pressed={selected}
             title={member.name}
             onClick={() => onSelect(selected ? null : member.id)}
-            className={cn(tile, selected ? selectedTile : idleTile)}
+            className={cn(tile, tileTone(selected, count))}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
             <span className="max-w-28 truncate">{member.name}</span>
-            {count === null || count > 0 ? (
-              <span
-                data-numeric
-                data-testid={`standup-tile-count-${member.id}`}
-                title={count === null ? 'Workload counts are unavailable' : undefined}
-                className="text-faint"
-              >
-                {count ?? UNKNOWN_COUNT}
-              </span>
-            ) : null}
+            <TileCount tileId={member.id} count={count} />
           </button>
         );
       })}
+      {unassigned === null || unassigned > 0 ? (
+        <button
+          type="button"
+          data-testid={`standup-tile-${UNASSIGNED}`}
+          aria-pressed={selectedId === UNASSIGNED}
+          title="Issues nobody owns"
+          onClick={() => onSelect(selectedId === UNASSIGNED ? null : UNASSIGNED)}
+          className={cn(tile, tileTone(selectedId === UNASSIGNED, unassigned))}
+        >
+          <UserMinus className="size-3.5" aria-hidden="true" />
+          Unassigned
+          <TileCount tileId={UNASSIGNED} count={unassigned} />
+        </button>
+      ) : null}
     </div>
+  );
+}
+
+interface TileCountProps {
+  readonly tileId: string;
+  readonly count: number | null;
+}
+
+function TileCount({ tileId, count }: TileCountProps) {
+  return (
+    <span
+      data-numeric
+      data-testid={`standup-tile-count-${tileId}`}
+      title={count === null ? 'Workload counts are unavailable' : undefined}
+      className="text-faint"
+    >
+      {count ?? UNKNOWN_COUNT}
+    </span>
   );
 }

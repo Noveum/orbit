@@ -1434,7 +1434,13 @@ function buildScopeFilters(
   if (filter.milestoneId !== undefined) {
     filters.push(eq(schema.issue.milestoneId, filter.milestoneId));
   }
-  if (filter.assigneeId !== undefined) filters.push(eq(schema.issue.assigneeId, filter.assigneeId));
+  if (filter.assigneeId !== undefined) {
+    filters.push(
+      filter.assigneeId === UNSET_FILTER_VALUE
+        ? isNull(schema.issue.assigneeId)
+        : eq(schema.issue.assigneeId, filter.assigneeId),
+    );
+  }
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
   if (filter.stateCategory !== undefined) {
