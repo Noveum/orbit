@@ -279,13 +279,29 @@ describe('AnalyticsCockpit', () => {
   it('uses points consistently in project and people lenses', () => {
     const projectQuery = analyticsQuerySchema.parse({ lens: 'projects', measure: 'points' });
     const projectView = renderCockpit(projectQuery, projects);
-    expect(screen.getByText('13/34')).toBeVisible();
+    expect(screen.getByText('13 / 34')).toBeVisible();
     projectView.unmount();
 
     const peopleQuery = analyticsQuerySchema.parse({ lens: 'people', measure: 'points' });
     renderCockpit(peopleQuery, people);
     expect(screen.getAllByText('8').length).toBeGreaterThan(0);
     expect(screen.getAllByText('5').length).toBeGreaterThan(0);
+  });
+
+  it('keeps project and person selection inside analytics URL state', async () => {
+    const user = userEvent.setup();
+    const projectQuery = analyticsQuerySchema.parse({ lens: 'projects' });
+    const projectView = renderCockpit(projectQuery, projects);
+    await user.click(screen.getByRole('button', { name: /Platform, 5 of 13 issues/ }));
+    expect(window.location.search).toContain(`projectId=${projectId}`);
+    expect(window.location.search).toContain('lens=projects');
+    projectView.unmount();
+
+    const peopleQuery = analyticsQuerySchema.parse({ lens: 'people' });
+    renderCockpit(peopleQuery, people);
+    await user.click(screen.getByRole('button', { name: /Ada, 3 assigned, 2 completed/ }));
+    expect(window.location.search).toContain(`personId=${personId}`);
+    expect(window.location.search).toContain('lens=people');
   });
 
   it('sums delivery buckets across the selected period', () => {

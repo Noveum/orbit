@@ -1,6 +1,5 @@
 'use client';
 
-import type { FilterNode } from '@orbit/shared/filters';
 import {
   ANALYTICS_LENSES,
   type AnalyticsLens,
@@ -11,12 +10,10 @@ import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { AnalyticsTabs } from './analytics-tabs.tsx';
 import { AnalyticsToolbar } from './analytics-toolbar.tsx';
-import type {
-  AnalyticsPeopleResponse,
-  AnalyticsProjectsResponse,
-  AnalyticsResponseByLens,
-} from './contracts.ts';
+import type { AnalyticsResponseByLens } from './contracts.ts';
 import { OverviewLens } from './overview-lens.tsx';
+import { PeopleLens } from './people-lens.tsx';
+import { ProjectsLens } from './projects-lens.tsx';
 import { searchParamsForAnalytics } from './query-state.ts';
 import { SprintLens } from './sprint-lens.tsx';
 import { useAnalyticsQuery } from './use-analytics-query.ts';
@@ -29,173 +26,16 @@ function writeUrl(query: AnalyticsQuery) {
   window.history.replaceState(null, '', search.length === 0 ? path : `${path}?${search}`);
 }
 
-function ProjectsContent({
-  data,
-  query,
-}: {
-  readonly data: AnalyticsProjectsResponse;
-  readonly query: AnalyticsQuery;
-}) {
-  return (
-    <section className="overflow-hidden rounded-lg border border-border bg-surface">
-      <div className="border-border border-b px-4 py-3">
-        <h2 className="font-medium text-sm text-text">Project portfolio</h2>
-        <p className="mt-1 text-muted text-xs">Scope, progress, health, and delivery risk.</p>
-      </div>
-      {data.projects.length === 0 ? (
-        <p className="p-10 text-center text-muted text-sm">No projects match this view.</p>
-      ) : (
-        <div className="divide-y divide-border">
-          {data.projects.slice(0, 10).map((project) => (
-            <div
-              className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3"
-              key={project.id}
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium text-sm text-text">{project.name}</p>
-                <p className="text-faint text-xs">
-                  {project.status} · {project.health}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-text text-xs">
-                  {query.measure === 'points' ? project.completedPoints : project.completedIssues}/
-                  {query.measure === 'points' ? project.scopePoints : project.scopeIssues}
-                </p>
-                <p className="text-faint text-2xs">completed</p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-text text-xs">{project.blocked}</p>
-                <p className="text-faint text-2xs">blocked</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function PeopleContent({
-  data,
-  query,
-}: {
-  readonly data: AnalyticsPeopleResponse;
-  readonly query: AnalyticsQuery;
-}) {
-  const focused = data.focused;
-  const points = query.measure === 'points';
-  const selectedByFilter = selectedAssignees(query.filter).length === 1;
-  return (
-    <div className="grid gap-4">
-      {focused === null ? null : (
-        <section className="rounded-lg border border-accent/40 bg-surface p-4">
-          <p className="text-accent text-xs">
-            {query.focus.personId === undefined && !selectedByFilter
-              ? 'My work'
-              : 'Selected person'}
-          </p>
-          <h2 className="mt-1 font-medium text-base text-text">{focused.person.name}</h2>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div>
-              <p className="font-semibold text-xl text-text">
-                {points ? focused.currentPoints : focused.currentAssignments}
-              </p>
-              <p className="text-faint text-xs">Assigned now</p>
-            </div>
-            <div>
-              <p className="font-semibold text-xl text-text">
-                {points ? focused.completedPoints : focused.completedIssues}
-              </p>
-              <p className="text-faint text-xs">Completed</p>
-            </div>
-            <div>
-              <p className="font-semibold text-xl text-text">
-                {(points
-                  ? focused.averageThroughputPoints
-                  : focused.averageThroughputIssues
-                ).toFixed(1)}
-              </p>
-              <p className="text-faint text-xs">Avg per active week</p>
-            </div>
-            <div>
-              <p className="font-semibold text-xl text-text">
-                {points ? focused.currentWipPoints : focused.currentWip}
-              </p>
-              <p className="text-faint text-xs">Work in progress</p>
-            </div>
-          </div>
-        </section>
-      )}
-      <section className="overflow-hidden rounded-lg border border-border bg-surface">
-        <div className="border-border border-b px-4 py-3">
-          <h2 className="font-medium text-sm text-text">People</h2>
-          <p className="mt-1 text-muted text-xs">
-            Workspace workload and delivery, sorted alphabetically.
-          </p>
-        </div>
-        <div className="divide-y divide-border">
-          {data.people.slice(0, 12).map((person) => (
-            <div
-              className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3"
-              key={person.person.id}
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium text-sm text-text">{person.person.name}</p>
-                <p className="text-faint text-xs">{person.person.status}</p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-text text-xs">
-                  {points ? person.currentPoints : person.currentAssignments}
-                </p>
-                <p className="text-faint text-2xs">assigned</p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-text text-xs">
-                  {points ? person.completedPoints : person.completedIssues}
-                </p>
-                <p className="text-faint text-2xs">completed</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function constrainedAssignees(node: FilterNode): ReadonlySet<string> | null {
-  if (node.kind === 'condition') {
-    if (node.property !== 'assignee' || node.operator !== 'in' || node.negate) return null;
-    return new Set(node.values);
-  }
-  const sets = node.children.map(constrainedAssignees);
-  if (node.combinator === 'or') {
-    if (sets.some((set) => set === null)) return null;
-    return new Set(sets.flatMap((set) => (set === null ? [] : [...set])));
-  }
-  const known = sets.filter((set): set is ReadonlySet<string> => set !== null);
-  if (known.length === 0) return null;
-  const values = new Set(known[0]);
-  for (const set of known.slice(1)) {
-    for (const value of values) {
-      if (!set.has(value)) values.delete(value);
-    }
-  }
-  return values;
-}
-
-function selectedAssignees(filter: AnalyticsQuery['filter']): readonly string[] {
-  const selected = constrainedAssignees(filter);
-  return selected === null ? [] : [...selected];
-}
-
 function LensContent({
   data,
   query,
+  onFocusProject,
+  onFocusPerson,
 }: {
   readonly data: AnalyticsResponseByLens[AnalyticsLens];
   readonly query: AnalyticsQuery;
+  readonly onFocusProject: (projectId: string) => void;
+  readonly onFocusPerson: (personId: string) => void;
 }) {
   switch (data.lens) {
     case 'overview':
@@ -203,9 +43,9 @@ function LensContent({
     case 'sprints':
       return <SprintLens data={data} query={query} />;
     case 'projects':
-      return <ProjectsContent data={data} query={query} />;
+      return <ProjectsLens data={data} onFocusProject={onFocusProject} query={query} />;
     case 'people':
-      return <PeopleContent data={data} query={query} />;
+      return <PeopleLens data={data} onFocusPerson={onFocusPerson} query={query} />;
   }
 }
 
@@ -243,7 +83,14 @@ export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: Anal
       </div>
     );
   } else {
-    content = <LensContent data={result.data} query={query} />;
+    content = (
+      <LensContent
+        data={result.data}
+        onFocusPerson={(personId) => update({ focus: { ...query.focus, personId } })}
+        onFocusProject={(projectId) => update({ focus: { ...query.focus, projectId } })}
+        query={query}
+      />
+    );
   }
 
   return (
