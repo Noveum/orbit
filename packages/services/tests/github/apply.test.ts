@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  account,
+  githubPullRequest,
+  githubPullRequestActivity,
   githubRepositorySync,
   gitLink,
   integration,
@@ -13,7 +16,7 @@ import {
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
-import { applyGithubEvent } from '../../src/github/apply.ts';
+import { applyGithubEvent, upsertGithubPullRequestHistory } from '../../src/github/apply.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
 interface Fixture {
@@ -51,6 +54,20 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
 
   const creatorId = `usr_creator_${suffix}`;
   const assigneeId = `usr_assignee_${suffix}`;
+  await tx.insert(account).values([
+    {
+      id: `acc_creator_${suffix}`,
+      accountId: '500',
+      providerId: 'github',
+      userId: creatorId,
+    },
+    {
+      id: `acc_assignee_${suffix}`,
+      accountId: '900',
+      providerId: 'github',
+      userId: assigneeId,
+    },
+  ]);
   await tx.insert(member).values([
     {
       id: `mem_creator_${suffix}`,
@@ -139,6 +156,7 @@ function prEvent(overrides: {
     body: {
       action: overrides.action ?? 'opened',
       pull_request: {
+        id: 7007,
         number: 7,
         title: overrides.title ?? 'Rework dashboard',
         body: overrides.body ?? null,
@@ -146,9 +164,11 @@ function prEvent(overrides: {
         draft: overrides.draft ?? false,
         merged: overrides.merged ?? false,
         state: overrides.state ?? 'open',
-        head: { ref: overrides.headRef ?? 'eng-3-dashboard' },
+        head: { ref: overrides.headRef ?? 'eng-3-dashboard', sha: 'abc123' },
         base: { ref: 'main' },
         user: { login: 'octocat', id: 500 },
+        created_at: '2026-08-13T01:00:00.000Z',
+        updated_at: '2026-08-13T02:00:00.000Z',
       },
       repository: { id: 99, full_name: 'acme/web' },
       sender: { login: 'octocat', id: 500 },
@@ -253,7 +273,7 @@ describe('applyGithubEvent', () => {
     });
   });
 
-  it('still links nothing when no identifier appears anywhere, description included', async () => {
+  it('mirrors an unlinked pull request when no identifier appears anywhere', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
 
@@ -269,6 +289,15 @@ describe('applyGithubEvent', () => {
       expect(result.handled).toBe(true);
       const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
       expect(links).toHaveLength(0);
+      const pulls = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pulls).toHaveLength(1);
+      expect(pulls[0]?.repositoryId).toBe('99');
+      expect(pulls[0]?.number).toBe(7);
+      expect(pulls[0]?.title).toBe('Tidy the dashboard');
+      expect(result.ignoredReason).toBeNull();
     });
   });
 
@@ -296,6 +325,38 @@ describe('applyGithubEvent', () => {
       await applyGithubEvent(tx, prEvent({}));
       const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
       expect(links).toHaveLength(1);
+    });
+  });
+
+  it('keeps distinct lifecycle events for the same pull request', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      const opened = prEvent({
+        headRef: 'chore/tidy',
+        title: 'Tidy the dashboard',
+        body: 'No Orbit identifier.',
+      });
+      const ready = prEvent({
+        action: 'ready_for_review',
+        headRef: 'chore/tidy',
+        title: 'Tidy the dashboard',
+        body: 'No Orbit identifier.',
+      });
+
+      const applied = await applyGithubEvent(tx, opened);
+      await applyGithubEvent(tx, ready);
+
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+      const activities = await tx
+        .select()
+        .from(githubPullRequestActivity)
+        .where(eq(githubPullRequestActivity.pullRequestId, pullRequestId));
+
+      expect(activities.map((activity) => activity.action).sort()).toEqual([
+        'opened',
+        'ready_for_review',
+      ]);
     });
   });
 
@@ -407,6 +468,35 @@ describe('applyGithubEvent', () => {
       expect(checks.notificationEvents.some((event) => event.type === 'pr_checks_failed')).toBe(
         true,
       );
+      const [failedPull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(failedPull?.checkStatus).toBe('failure');
+
+      await applyGithubEvent(tx, {
+        eventName: 'check_run',
+        body: {
+          action: 'completed',
+          check_run: {
+            id: 81,
+            name: 'verify',
+            status: 'completed',
+            conclusion: 'success',
+            html_url: 'https://github.com/acme/web/actions/runs/81',
+            head_sha: '',
+            pull_requests: [{ number: 7 }],
+            check_suite: { head_branch: 'eng-3-dashboard' },
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+      const [passingPull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(passingPull?.checkStatus).toBe('success');
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Review');
     });
   });
@@ -446,9 +536,21 @@ describe('applyGithubEvent', () => {
     });
   });
 
-  it('does not link an unlinked pull request from an identifier in a comment', async () => {
+  it('stores and notifies the author about a comment on an unlinked pull request', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
+      const opened = prEvent({
+        headRef: 'chore/unlinked',
+        title: 'Unlinked work',
+        body: 'No Orbit identifier.',
+      });
+      const openedBody = opened.body as {
+        pull_request: { number: number; html_url: string; head: { ref: string } };
+      };
+      openedBody.pull_request.number = 88;
+      openedBody.pull_request.html_url = 'https://github.com/acme/web/pull/88';
+      openedBody.pull_request.head.ref = 'chore/unlinked';
+      await applyGithubEvent(tx, opened);
       const result = await applyGithubEvent(tx, {
         eventName: 'issue_comment',
         body: {
@@ -468,11 +570,251 @@ describe('applyGithubEvent', () => {
         },
       });
 
-      expect(result.ignoredReason).toBe('no_matching_issue');
-      expect(result.notificationEvents).toHaveLength(0);
+      expect(result.ignoredReason).toBeNull();
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.entityType).toBe('github_pull_request');
+      expect(result.notificationEvents[0]?.userIds).toEqual([fixture.creatorId]);
+      expect(result.notificationEvents[0]?.url).toMatch(/^\/pulls\//);
       expect(
         await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId)),
       ).toHaveLength(0);
+      const pulls = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pulls).toHaveLength(1);
+      const activities = await tx
+        .select()
+        .from(githubPullRequestActivity)
+        .where(eq(githubPullRequestActivity.pullRequestId, pulls[0]?.id ?? 'missing'));
+      expect(activities).toHaveLength(2);
+      const comment = activities.find((activity) => activity.type === 'comment');
+      expect(comment?.body).toBe('Maybe this is related to ENG-3.');
+    });
+  });
+
+  it('notifies a mapped workspace reviewer about an unlinked pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const requested = prEvent({
+        action: 'review_requested',
+        headRef: 'chore/unlinked',
+        title: 'Unlinked work',
+        body: 'No Orbit identifier.',
+      });
+      const requestedBody = requested.body as Record<string, unknown>;
+      requestedBody['requested_reviewer'] = { login: 'assignee', id: 900 };
+
+      const result = await applyGithubEvent(tx, requested);
+
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.type).toBe('pr_review_requested');
+      expect(result.notificationEvents[0]?.userIds).toEqual([fixture.assigneeId]);
+      expect(result.notificationEvents[0]?.entityId).toBe(result.pullRequests[0]?.id);
+    });
+  });
+
+  it('does not notify a mapped GitHub user after they leave the workspace', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.delete(member).where(eq(member.userId, fixture.creatorId));
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          action: 'closed',
+          merged: true,
+          state: 'closed',
+          headRef: 'chore/unlinked',
+          title: 'Unlinked work',
+          body: 'No Orbit identifier.',
+        }),
+      );
+
+      expect(result.notificationEvents).toHaveLength(0);
+    });
+  });
+
+  it('backfills review, comment, and check history idempotently', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+      const entries = [
+        {
+          externalId: 'comment:11',
+          type: 'comment' as const,
+          actor: { login: 'ada', id: 1 },
+          body: 'Please add a regression test.',
+          url: 'https://github.com/acme/web/pull/7#issuecomment-11',
+          state: 'created',
+          path: null,
+          line: null,
+          occurredAt: '2026-08-13T01:00:00.000Z',
+        },
+        {
+          externalId: 'review:12',
+          type: 'review' as const,
+          actor: { login: 'grace', id: 2 },
+          body: 'Approved.',
+          url: 'https://github.com/acme/web/pull/7#pullrequestreview-12',
+          state: 'approved',
+          path: null,
+          line: null,
+          occurredAt: '2026-08-13T02:00:00.000Z',
+        },
+        {
+          externalId: 'check_run:13:completed:failure',
+          type: 'checks' as const,
+          actor: { login: 'github-actions', id: 0 },
+          body: 'verify',
+          url: 'https://github.com/acme/web/actions/runs/13',
+          state: 'failure',
+          path: null,
+          line: null,
+          occurredAt: '2026-08-13T03:00:00.000Z',
+        },
+        {
+          externalId: 'check_run:14:completed:success',
+          type: 'checks' as const,
+          actor: { login: 'github-actions', id: 0 },
+          body: 'verify',
+          url: 'https://github.com/acme/web/actions/runs/14',
+          state: 'success',
+          path: null,
+          line: null,
+          occurredAt: '2026-08-13T04:00:00.000Z',
+        },
+      ];
+
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries,
+      });
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries,
+      });
+
+      const activities = await tx
+        .select()
+        .from(githubPullRequestActivity)
+        .where(eq(githubPullRequestActivity.pullRequestId, pullRequestId));
+      expect(activities).toHaveLength(5);
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.state).toBe('approved');
+      expect(pull?.checkStatus).toBe('success');
+      expect(pull?.historySyncedAt).not.toBeNull();
+    });
+  });
+
+  it('clears an approved decision when GitHub reports the review was dismissed', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'review:21',
+            type: 'review',
+            actor: { login: 'grace', id: 2 },
+            body: 'Approved.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-21',
+            state: 'approved',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T03:00:00.000Z',
+          },
+        ],
+      });
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'review:22',
+            type: 'review',
+            actor: { login: 'grace', id: 2 },
+            body: 'No longer applies.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-22',
+            state: 'dismissed',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T04:00:00.000Z',
+          },
+        ],
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.reviewDecision).toBeNull();
+      expect(pull?.state).toBe('open');
+    });
+  });
+
+  it('records a late review event without letting it replace a newer decision', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+
+      const reviewEvent = (input: {
+        readonly id: number;
+        readonly state: string;
+        readonly submittedAt: string;
+      }) => ({
+        eventName: 'pull_request_review',
+        body: {
+          action: 'submitted',
+          review: {
+            id: input.id,
+            state: input.state,
+            submitted_at: input.submittedAt,
+            user: { login: 'rev', id: 900 },
+          },
+          pull_request: {
+            id: 7007,
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            base: { ref: 'main' },
+            updated_at: input.submittedAt,
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'rev', id: 900 },
+        },
+      });
+
+      await applyGithubEvent(
+        tx,
+        reviewEvent({ id: 31, state: 'approved', submittedAt: '2026-08-13T04:00:00.000Z' }),
+      );
+      await applyGithubEvent(
+        tx,
+        reviewEvent({
+          id: 30,
+          state: 'changes_requested',
+          submittedAt: '2026-08-13T03:00:00.000Z',
+        }),
+      );
+
+      const [pull] = await tx.select().from(githubPullRequest);
+      expect(pull?.reviewDecision).toBe('approved');
+      expect(pull?.state).toBe('approved');
+      const activities = await tx.select().from(githubPullRequestActivity);
+      expect(activities.filter((activity) => activity.type === 'review')).toHaveLength(2);
     });
   });
 
@@ -564,7 +906,7 @@ describe('saying why a delivery changed nothing', () => {
     });
   });
 
-  it('names a branch that mentions no issue, so the delivery is not mistaken for a failure', async () => {
+  it('processes a pull request that names no issue because the mirror is independent', async () => {
     await withRollback(async (tx) => {
       await seed(tx);
       const result = await applyGithubEvent(
@@ -573,7 +915,8 @@ describe('saying why a delivery changed nothing', () => {
       );
 
       expect(result.handled).toBe(true);
-      expect(result.ignoredReason).toBe('no_issue_identifier');
+      expect(result.ignoredReason).toBeNull();
+      expect(result.pullRequests).toHaveLength(1);
     });
   });
 

@@ -521,13 +521,13 @@ describe('telling a delivery that landed from one that was dropped', () => {
     expect(row?.error).toBe('repository_not_connected');
   });
 
-  it('records a branch that names no issue separately from a failure', async () => {
+  it('processes a branch that names no issue into the first-class mirror', async () => {
     const response = await POST(signed(pullRequestBody('chore/tidy-up'), 'delivery-nomatch'));
 
     expect(response.status).toBe(200);
     const row = await deliveryRow('delivery-nomatch');
-    expect(row?.status).toBe('ignored');
-    expect(row?.error).toBe('no_issue_identifier');
+    expect(row?.status).toBe('processed');
+    expect(row?.error).toBeNull();
   });
 
   it('still marks a delivery that did the work as processed, with no reason', async () => {
@@ -542,14 +542,10 @@ describe('telling a delivery that landed from one that was dropped', () => {
 
 describe('events that reach no handler', () => {
   const NEVER_HANDLED = [
-    'check_run',
     'workflow_job',
-    'workflow_run',
-    'status',
     'repository_dispatch',
     'issues',
     'push',
-    'pull_request_review_thread',
     'sub_issues',
     'create',
     'delete',
@@ -570,7 +566,7 @@ describe('events that reach no handler', () => {
     const response = await POST(
       request(raw, {
         'x-hub-signature-256': sign(raw, 'the-wrong-secret'),
-        'x-github-event': 'check_run',
+        'x-github-event': 'workflow_job',
         'x-github-delivery': 'delivery-unhandled-forged',
       }),
     );
@@ -688,7 +684,7 @@ describe('the whole path from a delivery to the pulls page', () => {
 
     const after = await loadPullRequests(workspace.admin);
     expect(after).toHaveLength(1);
-    expect(after[0]?.issueIdentifier).toBe('ORB-3');
+    expect(after[0]?.linkedIssues[0]?.identifier).toBe('ORB-3');
     expect(after[0]?.state).toBe('open');
   });
 
@@ -722,14 +718,16 @@ describe('the whole path from a delivery to the pulls page', () => {
     expect(rows[0]?.merged).toBe(true);
   });
 
-  it('leaves a branch that names no issue off the page and says why on the delivery', async () => {
+  it('shows a pull request that names no Orbit issue as unlinked', async () => {
     const { loadPullRequests } = await import('../../../../../src/features/pulls/data.ts');
 
     await POST(signed(pullRequestBody('chore/tidy-up'), 'delivery-unnamed'));
 
-    expect(await loadPullRequests(workspace.admin)).toHaveLength(0);
+    const pulls = await loadPullRequests(workspace.admin);
+    expect(pulls).toHaveLength(1);
+    expect(pulls[0]?.linkedIssues).toHaveLength(0);
     const row = await deliveryRow('delivery-unnamed');
-    expect(row?.status).toBe('ignored');
-    expect(row?.error).toBe('no_issue_identifier');
+    expect(row?.status).toBe('processed');
+    expect(row?.error).toBeNull();
   });
 });

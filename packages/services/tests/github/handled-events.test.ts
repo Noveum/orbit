@@ -44,18 +44,13 @@ describe('the events the webhook accepts', () => {
     const unhandled = SENT_BY_GITHUB.filter((eventName) => !handlesGithubEvent(eventName));
 
     expect(unhandled).toEqual([
-      'check_run',
       'create',
       'delete',
       'issues',
-      'pull_request_review_comment',
-      'pull_request_review_thread',
       'push',
       'repository_dispatch',
-      'status',
       'sub_issues',
       'workflow_job',
-      'workflow_run',
     ]);
   });
 
@@ -112,6 +107,61 @@ describe('the events the webhook accepts', () => {
           head_branch: 'orb-3',
           pull_requests: [{ number: 7 }],
         },
+        repository,
+        sender,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseGithubEvent('check_run', {
+        action: 'completed',
+        check_run: {
+          id: 81,
+          name: 'verify',
+          status: 'completed',
+          conclusion: 'success',
+          html_url: 'https://github.com/acme/web/runs/81',
+          head_sha: 'abc123',
+          pull_requests: [{ number: 7 }],
+          check_suite: { head_branch: 'orb-3' },
+        },
+        repository,
+        sender,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseGithubEvent('status', {
+        id: 82,
+        sha: 'abc123',
+        state: 'failure',
+        context: 'deploy/preview',
+        description: 'Preview failed',
+        target_url: 'https://example.com/status/82',
+        repository,
+        sender,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseGithubEvent('workflow_run', {
+        action: 'completed',
+        workflow_run: {
+          id: 83,
+          name: 'CI',
+          status: 'completed',
+          conclusion: 'success',
+          html_url: 'https://github.com/acme/web/actions/runs/83',
+          head_branch: 'orb-3',
+          head_sha: 'abc123',
+          pull_requests: [{ number: 7 }],
+        },
+        repository,
+        sender,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseGithubEvent('pull_request_review_thread', {
+        action: 'resolved',
+        thread: { id: 84, resolved_by: sender, updated_at: '2026-08-13T00:00:00.000Z' },
+        pull_request: pullRequest,
         repository,
         sender,
       }),

@@ -483,6 +483,66 @@ describe('refreshWorkspaceRepositories', () => {
     expect(notifications).toHaveLength(0);
   });
 
+  it('backfills open pull requests that do not name an Orbit issue', async () => {
+    const stub: GithubStub = {
+      ...NOVEUM_STUB,
+      pullRequests: {
+        'Noveum/ai-gateway': [
+          {
+            id: 731,
+            node_id: 'PR_kwDO731',
+            number: 73,
+            title: 'Improve repository caching',
+            body: 'No Orbit issue is associated with this pull request.',
+            html_url: 'https://github.com/Noveum/ai-gateway/pull/73',
+            draft: false,
+            state: 'open',
+            head: { ref: 'improve-repository-caching', sha: 'abc123' },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+            created_at: '2026-08-13T00:00:00.000Z',
+            updated_at: '2026-08-13T01:00:00.000Z',
+          },
+        ],
+      },
+    };
+    await install(workspace, NOVEUM, stub);
+    const repository = (await listGithubCatalogue(db, workspace.organizationId)).find(
+      (entry) => entry.fullName === 'Noveum/ai-gateway',
+    );
+    if (repository === undefined) throw new Error('the installed repository is missing');
+    await db.transaction(async (tx) =>
+      linkGithubRepository(tx, {
+        organizationId: workspace.organizationId,
+        repositoryId: repository.repositoryId,
+        projectId: null,
+        linkedById: workspace.adminUser.id,
+      }),
+    );
+    const installations = await listGithubInstallations(db, workspace.organizationId);
+
+    await refreshWorkspaceRepositories({
+      installations,
+      force: true,
+      config: CONFIG,
+      fetch: githubFetch(stub),
+    });
+
+    const pulls = await db
+      .select()
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.organizationId, workspace.organizationId));
+    expect(pulls).toHaveLength(1);
+    expect(pulls[0]?.number).toBe(73);
+    expect(pulls[0]?.headSha).toBe('abc123');
+    expect(
+      await db
+        .select()
+        .from(schema.gitLink)
+        .where(eq(schema.gitLink.organizationId, workspace.organizationId)),
+    ).toHaveLength(0);
+  });
+
   it('leaves the cache in place when GitHub is unreachable', async () => {
     await install(workspace, NOVEUM);
     const installations = await listGithubInstallations(db, workspace.organizationId);

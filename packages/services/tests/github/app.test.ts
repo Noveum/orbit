@@ -4,6 +4,7 @@ import {
   exchangeGithubUserCode,
   fetchGithubInstallation,
   fetchGithubOpenPullRequests,
+  fetchGithubPullRequestHistory,
   fetchInstalledRepositories,
   forgetGithubInstallationTokens,
   GITHUB_MAX_REPOSITORY_PAGES,
@@ -146,15 +147,114 @@ describe('fetchGithubOpenPullRequests', () => {
     expect(pages).toEqual([1, 2]);
     expect(pulls).toHaveLength(101);
     expect(pulls[0]).toEqual({
+      externalId: '0',
+      nodeId: '',
       number: 1,
       title: 'Pull 1-0',
       body: 'Links ORB-3',
       url: 'https://github.com/Noveum/orbit/pull/1',
       headRef: 'orb-3-branch-0',
+      headSha: '',
       baseRef: 'main',
       draft: false,
       author: { login: 'octocat', id: 500 },
+      createdAt: null,
+      updatedAt: null,
     });
+  });
+});
+
+describe('fetchGithubPullRequestHistory', () => {
+  it('loads conversation comments, reviews, inline comments, and checks', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_history' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith('/issues/7/comments')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 11,
+              body: 'Please add a test.',
+              html_url: 'https://github.com/acme/web/pull/7#issuecomment-11',
+              user: { login: 'ada', id: 1 },
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T01:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/pulls/7/reviews')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 12,
+              state: 'APPROVED',
+              body: 'Looks good.',
+              html_url: 'https://github.com/acme/web/pull/7#pullrequestreview-12',
+              user: { login: 'grace', id: 2 },
+              submitted_at: '2026-08-13T02:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/pulls/7/comments')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 13,
+              body: 'This can be simpler.',
+              html_url: 'https://github.com/acme/web/pull/7#discussion_r13',
+              user: { login: 'linus', id: 3 },
+              path: 'src/index.ts',
+              line: 42,
+              created_at: '2026-08-13T03:00:00.000Z',
+              updated_at: '2026-08-13T03:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/commits/abc123/check-runs')) {
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 14,
+                name: 'verify',
+                status: 'completed',
+                conclusion: 'success',
+                html_url: 'https://github.com/acme/web/actions/runs/14',
+                started_at: '2026-08-13T04:00:00.000Z',
+                completed_at: '2026-08-13T05:00:00.000Z',
+              },
+            ],
+          }),
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const history = await fetchGithubPullRequestHistory({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      number: 7,
+      headSha: 'abc123',
+      fetch: fetchImpl,
+    });
+
+    expect(history.map((entry) => entry.type)).toEqual([
+      'comment',
+      'review',
+      'review_comment',
+      'checks',
+    ]);
+    expect(history[2]?.path).toBe('src/index.ts');
+    expect(history[2]?.line).toBe(42);
+    expect(history[3]?.state).toBe('success');
   });
 });
 

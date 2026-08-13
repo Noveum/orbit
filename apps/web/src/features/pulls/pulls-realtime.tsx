@@ -14,6 +14,8 @@ export interface PullsRealtimeProps {
   readonly realtimeUrl: string;
   readonly reach: GithubReach;
   readonly canManageIntegrations: boolean;
+  readonly currentPage: number;
+  readonly hasMore: boolean;
 }
 
 export function PullsRealtime({
@@ -23,6 +25,8 @@ export function PullsRealtime({
   realtimeUrl,
   reach,
   canManageIntegrations,
+  currentPage,
+  hasMore,
 }: PullsRealtimeProps) {
   const fetchTicket = useCallback(() => fetchRealtimeTicket(organizationId), [organizationId]);
   const socketUrl =
@@ -36,6 +40,8 @@ export function PullsRealtime({
         userId={userId}
         reach={reach}
         canManageIntegrations={canManageIntegrations}
+        currentPage={currentPage}
+        hasMore={hasMore}
       />
     </RealtimeProvider>
   );

@@ -162,6 +162,25 @@ describe('opening a notification', () => {
       '/issue/ENG-3',
     );
   });
+
+  it('opens an unlinked pull request in the Orbit activity view', () => {
+    renderInbox([
+      item({
+        type: 'pr_comment',
+        entityType: 'github_pull_request',
+        entityId: 'pr_1',
+        title: 'New comment on Fix the socket',
+        body: 'Please add a regression test.',
+        url: '/pulls/pr_1',
+        externalUrl: 'https://github.com/Noveum/orbit/pull/307#issuecomment-1',
+      }),
+    ]);
+
+    expect(screen.getByRole('link', { name: 'Open pull request' })).toHaveAttribute(
+      'href',
+      '/pulls/pr_1',
+    );
+  });
 });
 
 describe('opening a notification in the Unread tab', () => {

@@ -81,6 +81,11 @@ function matchesTab(item: InboxItem, tab: TabId): boolean {
   return true;
 }
 
+function openLabel(item: InboxItem): string {
+  if (!isPullRequestNotification(item.type)) return 'Open in Orbit';
+  return item.entityType === 'github_pull_request' ? 'Open pull request' : 'Open issue';
+}
+
 const SNOOZE_HOURS = 24;
 
 const notificationDeltaSchema = z.object({
@@ -317,7 +322,7 @@ function NotificationDetail({
             onClick={onOpen}
             className="rounded-sm text-accent text-2xs hover:underline"
           >
-            {isPullRequestNotification(item.type) ? 'Open issue' : 'Open in Orbit'}
+            {openLabel(item)}
           </Link>
         </span>
       </div>

@@ -58,6 +58,36 @@ async function repository(
   return repositoryId;
 }
 
+async function mirroredPull(
+  integrationId: string,
+  repositoryId: string,
+  number: number,
+): Promise<string> {
+  const [repositorySync] = await db
+    .select({ id: schema.githubRepositorySync.id })
+    .from(schema.githubRepositorySync)
+    .where(
+      and(
+        eq(schema.githubRepositorySync.integrationId, integrationId),
+        eq(schema.githubRepositorySync.repositoryId, repositoryId),
+      ),
+    )
+    .limit(1);
+  if (repositorySync === undefined) throw new Error('the repository is not tracked');
+  const id = `ghp_${randomUUIDv7()}`;
+  await db.insert(schema.githubPullRequest).values({
+    id,
+    organizationId: workspace.organizationId,
+    repositorySyncId: repositorySync.id,
+    repositoryId,
+    repositoryName: 'noveum/orbit',
+    number,
+    title: `Pull ${number}`,
+    url: `https://github.com/noveum/orbit/pull/${number}`,
+  });
+  return id;
+}
+
 async function catalogued(
   integrationId: string,
   repositoryId: string,
@@ -186,8 +216,11 @@ describe('githubReach', () => {
 });
 
 describe('loadPullRequests', () => {
-  it('rechecks current team membership instead of trusting a stale principal', async () => {
+  it('keeps the PR visible but hides linked task context after team access is removed', async () => {
     const teammate = await addMember(workspace, 'member');
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    await mirroredPull(integrationId, repositoryId, 51);
     const issueId = `iss_${randomUUIDv7()}`;
     await db.insert(schema.issue).values({
       id: issueId,
@@ -214,11 +247,18 @@ describe('loadPullRequests', () => {
 
     await db.delete(schema.teamMember).where(eq(schema.teamMember.userId, teammate.user.id));
 
-    expect(await loadPullRequests(teammate.principal)).toHaveLength(0);
-    expect(await loadPullRequests(workspace.admin)).toHaveLength(1);
+    const teammatePulls = await loadPullRequests(teammate.principal);
+    expect(teammatePulls).toHaveLength(1);
+    expect(teammatePulls[0]?.linkedIssues).toHaveLength(0);
+    const adminPulls = await loadPullRequests(workspace.admin);
+    expect(adminPulls).toHaveLength(1);
+    expect(adminPulls[0]?.linkedIssues[0]?.identifier).toBe('REA-51');
   });
 
   it('does not trust a stale admin principal after the admin leaves the workspace', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    await mirroredPull(integrationId, repositoryId, 52);
     const issueId = `iss_${randomUUIDv7()}`;
     await db.insert(schema.issue).values({
       id: issueId,

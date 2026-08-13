@@ -1,10 +1,12 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as realtimeReact from '@orbit/realtime-client/react';
 import type { PullRequestRow } from '@/features/pulls/data.ts';
 import { render, screen, within } from '@/test/render.tsx';
 
+const refresh = mock(() => undefined);
+
 mock.module('next/navigation', () => ({
-  useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
+  useRouter: () => ({ push: mock(), replace: mock(), refresh, prefetch: mock() }),
   usePathname: () => '/pulls',
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({}),
@@ -28,10 +30,23 @@ const pull: PullRequestRow = {
   state: 'open',
   draft: false,
   merged: false,
-  issueIdentifier: 'ENG-12',
-  issueTitle: 'Reconnect banner never clears',
+  authorLogin: 'octocat',
+  reviewDecision: null,
+  checkStatus: 'success',
+  activityCount: 4,
+  linkedIssues: [
+    {
+      identifier: 'ENG-12',
+      title: 'Reconnect banner never clears',
+      project: { id: 'project_1', name: 'Realtime reliability', slug: 'realtime-reliability' },
+    },
+  ],
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
+
+beforeEach(() => {
+  refresh.mockClear();
+});
 
 describe('PullsView', () => {
   it('links the issue behind each pull request, identifier and title together', () => {
@@ -44,14 +59,56 @@ describe('PullsView', () => {
     expect(link.textContent).toContain('Reconnect banner never clears');
   });
 
-  it('keeps the pull request itself pointing at the forge', () => {
+  it('opens the Orbit activity view from the pull request title', () => {
     render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
 
     const row = screen.getByRole('listitem');
-    const forge = within(row).getByRole('link', {
+    const overview = within(row).getByRole('link', {
       name: 'Buffer the socket until the hub attaches',
     });
-    expect(forge).toHaveAttribute('href', 'https://github.com/noveum/orbit/pull/42');
+    expect(overview).toHaveAttribute('href', '/pulls/link_1');
+  });
+
+  it('keeps an explicit link to the pull request on GitHub', () => {
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    expect(screen.getByRole('link', { name: 'Open on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/noveum/orbit/pull/42',
+    );
+  });
+
+  it('shows the linked project beside the linked Orbit task', () => {
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    expect(screen.getByRole('link', { name: 'Realtime reliability' })).toHaveAttribute(
+      'href',
+      '/projects/realtime-reliability',
+    );
+  });
+
+  it('refreshes pull request state when the workspace regains focus', () => {
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    window.dispatchEvent(new Event('focus'));
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('provides explicit navigation when more pull requests exist', () => {
+    render(
+      <PullsView
+        pulls={[pull]}
+        userId="user_1"
+        reach="connected"
+        canManageIntegrations
+        currentPage={2}
+        hasMore
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Previous' })).toHaveAttribute('href', '/pulls');
+    expect(screen.getByRole('link', { name: 'Next' })).toHaveAttribute('href', '/pulls?page=3');
   });
 });
 
@@ -80,14 +137,14 @@ describe('the empty pull request page explaining itself', () => {
     expect(screen.queryByText('No repository is being tracked')).not.toBeInTheDocument();
   });
 
-  it('says what makes a pull request link once every repository is tracked', () => {
+  it('says the mirror is waiting once every repository is tracked', () => {
     render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
 
-    expect(screen.getByText('No pull requests linked to your issues')).toBeInTheDocument();
-    expect(screen.getByText(/branch or title names an issue/)).toBeInTheDocument();
+    expect(screen.getByText('No pull requests have synced yet')).toBeInTheDocument();
+    expect(screen.getByText(/tracked repositories/)).toBeInTheDocument();
   });
 
-  it('offers the route to integrations even when naming is the only thing left to fix', () => {
+  it('offers the route to integrations when a connected mirror stays empty', () => {
     render(<PullsView pulls={[]} userId="user_1" reach="connected" canManageIntegrations />);
 
     expect(screen.getByTestId('pulls-connect-github')).toHaveAttribute(
@@ -96,13 +153,13 @@ describe('the empty pull request page explaining itself', () => {
     );
   });
 
-  it('names the untracked repository as well as naming, never one instead of the other', () => {
+  it('explains that additional repositories still need to be tracked', () => {
     render(
       <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
     );
 
-    expect(screen.getByText(/has to name an issue/)).toBeInTheDocument();
-    expect(screen.getByText(/reports the delivery as accepted/)).toBeInTheDocument();
+    expect(screen.getByText(/additional repositories/)).toBeInTheDocument();
+    expect(screen.getByText(/refresh to import their open pull requests/)).toBeInTheDocument();
     expect(screen.getByTestId('pulls-connect-github')).toBeInTheDocument();
   });
 
@@ -116,18 +173,16 @@ describe('the empty pull request page explaining itself', () => {
       />,
     );
 
-    expect(screen.getByText(/workspace admin picks which ones to track/)).toBeInTheDocument();
+    expect(screen.getByText(/workspace admin chooses which repositories/)).toBeInTheDocument();
     expect(screen.queryByTestId('pulls-connect-github')).not.toBeInTheDocument();
   });
 
-  it('never asserts naming is the only remaining cause while a repository is untracked', () => {
+  it('never requires an Orbit issue identifier for an untracked repository', () => {
     render(
       <PullsView pulls={[]} userId="user_1" reach="repositories_untracked" canManageIntegrations />,
     );
 
-    expect(
-      screen.queryByText(/Copy branch name on an issue gives you one that matches/),
-    ).toBeNull();
+    expect(screen.queryByText(/name an issue/)).toBeNull();
   });
 
   it('sends a member who cannot manage integrations to an admin rather than a dead end', () => {

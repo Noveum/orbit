@@ -153,25 +153,44 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
               fullName: repository.repositoryName,
             },
             pullRequest: {
+              externalId: pullRequest.externalId,
+              nodeId: pullRequest.nodeId,
               number: pullRequest.number,
               title: pullRequest.title,
               body: pullRequest.body,
               url: pullRequest.url,
               headRef: pullRequest.headRef,
+              headSha: pullRequest.headSha,
               baseRef: pullRequest.baseRef,
               draft: pullRequest.draft,
               merged: false,
               closed: false,
+              author: pullRequest.author,
+              createdAt: pullRequest.createdAt,
+              updatedAt: pullRequest.updatedAt,
             },
             review: null,
             requestedReviewer: null,
             checks: null,
             comment: null,
+            activity: {
+              externalId:
+                pullRequest.externalId.length === 0
+                  ? `pull_request:${pullRequest.number}:backfill`
+                  : `pull_request:${pullRequest.externalId}`,
+              type: 'pull_request',
+              body: '',
+              url: pullRequest.url,
+              state: 'synchronize',
+              path: null,
+              line: null,
+              occurredAt: pullRequest.updatedAt,
+            },
             sender: pullRequest.author,
           },
           ...(input.now === undefined ? {} : { now: input.now }),
         });
-        applied += outcome.gitLinks.length;
+        applied += outcome.pullRequests.length;
       }
     });
   }

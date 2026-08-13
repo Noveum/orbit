@@ -81,6 +81,12 @@ describe('applyCatchup against a real database', () => {
           id text primary key,
           organization_id text not null references public.organization(id)
         );
+        create table public.github_repository_sync (
+          id text primary key
+        );
+        create table public.git_link (
+          id text primary key
+        );
         create index doc_collection_org_idx on public.doc_collection (organization_id);
         create type public.notification_reason as enum ('mentioned', 'manual');
       `)
@@ -136,6 +142,36 @@ describe('applyCatchup against a real database', () => {
       `;
     });
     expect(row?.hit).toBe(true);
+  }, 30_000);
+
+  it('creates the GitHub pull request mirror and is clean on a second run', async () => {
+    await applyCatchup(urlFor(SCRATCH), 'github-pull-request-mirror.sql');
+    await applyCatchup(urlFor(SCRATCH), 'github-pull-request-mirror.sql');
+
+    const tables = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql<{ table_name: string }[]>`
+        select table_name from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('github_pull_request', 'github_pull_request_activity')
+        order by table_name
+      `,
+    );
+    const columns = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'git_link'
+      `,
+    );
+
+    expect(tables.map((row) => row.table_name)).toEqual([
+      'github_pull_request',
+      'github_pull_request_activity',
+    ]);
+    expect(columns.some((row) => row.column_name === 'pull_request_id')).toBe(true);
   }, 30_000);
 
   it('refuses a file outside the catchup directory before it opens anything', async () => {
