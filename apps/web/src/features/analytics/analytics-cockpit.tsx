@@ -1,5 +1,6 @@
 'use client';
 
+import type { SavedAnalyticsViewPayload } from '@orbit/core';
 import {
   ANALYTICS_LENSES,
   type AnalyticsLens,
@@ -15,6 +16,7 @@ import { OverviewLens } from './overview-lens.tsx';
 import { PeopleLens } from './people-lens.tsx';
 import { ProjectsLens } from './projects-lens.tsx';
 import { searchParamsForAnalytics } from './query-state.ts';
+import { SavedViewBar } from './saved-view-bar.tsx';
 import { SprintLens } from './sprint-lens.tsx';
 import { useAnalyticsQuery } from './use-analytics-query.ts';
 
@@ -49,7 +51,19 @@ function LensContent({
   }
 }
 
-export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: AnalyticsQuery }) {
+export function AnalyticsCockpit({
+  initialQuery,
+  savedViews = [],
+  canManageViews = false,
+  canManageAllViews = false,
+  currentUserId = null,
+}: {
+  readonly initialQuery: AnalyticsQuery;
+  readonly savedViews?: readonly SavedAnalyticsViewPayload[];
+  readonly canManageViews?: boolean;
+  readonly canManageAllViews?: boolean;
+  readonly currentUserId?: string | null;
+}) {
   const [query, setQuery] = useState(initialQuery);
   const result = useAnalyticsQuery(query);
   const update = (patch: Partial<AnalyticsQuery>) => {
@@ -116,6 +130,14 @@ export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: Anal
       <div className="sticky top-0 z-20 rounded-lg border border-border bg-background/95 p-2 shadow-sm backdrop-blur">
         <AnalyticsToolbar query={query} onChange={update} onReset={reset} />
       </div>
+      <SavedViewBar
+        canManage={canManageViews}
+        canManageAll={canManageAllViews}
+        currentUserId={currentUserId}
+        onApply={(saved) => update(saved)}
+        query={query}
+        views={savedViews}
+      />
       {ANALYTICS_LENSES.map((lens) => (
         <div
           aria-labelledby={`analytics-tab-${lens}`}

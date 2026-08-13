@@ -11,6 +11,7 @@ import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { scopes, syncCatchupSchema } from '@orbit/shared/events';
 import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
@@ -62,12 +63,24 @@ const BOOTSTRAP_MODELS: ReadonlySet<SyncModel> = new Set<SyncModel>([
 ]);
 
 const DOC_MODELS: ReadonlySet<SyncModel> = new Set<SyncModel>(['doc', 'doc_collection']);
+const ANALYTICS_MODELS: ReadonlySet<SyncModel> = new Set<SyncModel>([
+  'issue',
+  'cycle',
+  'project',
+  'milestone',
+  'workflow_state',
+  'label',
+  'member',
+  'team',
+  'view',
+]);
 
 function noop(): undefined {
   return undefined;
 }
 
 interface RootInvalidations {
+  analytics: boolean;
   counts: boolean;
   boards: boolean;
   bootstrap: boolean;
@@ -239,6 +252,7 @@ function routeAction(
 }
 
 function flushRoots(client: QueryClient, roots: RootInvalidations): void {
+  if (roots.analytics) client.invalidateQueries({ queryKey: [ANALYTICS_ROOT] }).catch(noop);
   if (roots.counts) {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
     client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(noop);
@@ -293,6 +307,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
     (actions: readonly SyncAction[]) => {
       const tabClientId = clientId();
       const roots: RootInvalidations = {
+        analytics: false,
         counts: false,
         boards: false,
         bootstrap: false,
@@ -304,6 +319,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       };
 
       for (const action of actions) {
+        if (ANALYTICS_MODELS.has(action.model)) roots.analytics = true;
         if (isOwnEcho(action, tabClientId)) continue;
         routeAction(client, action, currentUserId, roots);
       }

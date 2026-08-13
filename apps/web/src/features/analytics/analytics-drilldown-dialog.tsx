@@ -191,6 +191,14 @@ export function AnalyticsDrilldownDialog({
         </DialogHeader>
         {body}
         <DialogFooter>
+          <Button asChild size="sm" variant="secondary">
+            <a
+              download="orbit-analytics-evidence.csv"
+              href={`/api/analytics/export?${searchParamsForDrilldown(baseQuery).toString()}`}
+            >
+              Export exact evidence
+            </a>
+          </Button>
           {result.hasNextPage ? (
             <Button
               disabled={result.isFetchingNextPage}

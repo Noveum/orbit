@@ -152,6 +152,9 @@ export interface AnalyticsDrilldownPage {
   readonly nextCursor: string | null;
   readonly limit: number;
   readonly asOf: string;
+  readonly from: string;
+  readonly to: string;
+  readonly timezone: string;
 }
 
 export interface AnalyticsDrilldownInput {
@@ -1114,6 +1117,9 @@ export async function listAnalyticsDrilldown(
     nextCursor,
     limit,
     asOf: resolved.asOf.toISOString(),
+    from: resolved.from.toISOString(),
+    to: resolved.to.toISOString(),
+    timezone: resolved.timezone,
   };
 }
 

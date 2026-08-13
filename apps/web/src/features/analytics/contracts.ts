@@ -418,6 +418,9 @@ export const analyticsDrilldownResponseSchema = z.object({
   nextCursor: z.string().nullable(),
   limit: z.number().int().min(1).max(200),
   asOf: dateTimeSchema,
+  from: dateTimeSchema,
+  to: dateTimeSchema,
+  timezone: z.string().min(1),
 });
 
 export const analyticsLensResponseSchemas = {

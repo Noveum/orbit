@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { analyticsQuerySchema } from '@orbit/shared/validators';
 import {
   createCheckpoint,
   createSavedAnalyticsView,
   deleteSavedAnalyticsView,
   listCheckpoints,
   listSavedAnalyticsViews,
+  savedAnalyticsQuery,
   updateSavedAnalyticsView,
 } from '../../src/analytics/saved-view.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
@@ -38,6 +40,78 @@ describe('saved analytics views', () => {
     const listed = await listSavedAnalyticsViews(workspace.admin);
     expect(listed.map((row) => row.id)).toContain(view.id);
     expect(listed.find((row) => row.id === view.id)?.name).toBe('Assignee load');
+  });
+
+  it('restores the complete versioned planning query', async () => {
+    const query = analyticsQuerySchema.parse({
+      version: 1,
+      lens: 'people',
+      range: { preset: 'custom', from: '2026-08-01', to: '2026-08-14' },
+      compare: 'previous_period',
+      measure: 'points',
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'project',
+            operator: 'in',
+            values: ['00000000-0000-7000-8000-000000000001'],
+            negate: false,
+          },
+        ],
+      },
+      includeArchived: true,
+      includeCanceled: false,
+      focus: { personId: workspace.admin.userId },
+    });
+    const { view } = await createSavedAnalyticsView(workspace.admin, {
+      name: 'My launch work',
+      config: { kind: 'dashboard', version: 1, query, pinned: true },
+    });
+
+    expect(savedAnalyticsQuery(view)).toEqual({
+      kind: 'dashboard',
+      version: 1,
+      query,
+      pinned: true,
+    });
+  });
+
+  it('migrates a legacy measure-only dashboard to version one defaults', async () => {
+    const { view } = await createSavedAnalyticsView(workspace.admin, {
+      name: 'Legacy points',
+      config: { measure: 'points' },
+    });
+
+    expect(savedAnalyticsQuery(view)).toMatchObject({
+      kind: 'dashboard',
+      version: 1,
+      query: { lens: 'overview', measure: 'points', range: { preset: 'auto' } },
+      pinned: false,
+    });
+  });
+
+  it('keeps one pinned default for each owner', async () => {
+    const query = analyticsQuerySchema.parse({ lens: 'projects' });
+    const { view: first } = await createSavedAnalyticsView(workspace.admin, {
+      name: 'First default',
+      config: { kind: 'dashboard', version: 1, query, pinned: true },
+    });
+    const { view: second } = await createSavedAnalyticsView(workspace.admin, {
+      name: 'Second default',
+      config: { kind: 'dashboard', version: 1, query, pinned: true },
+    });
+
+    const listed = await listSavedAnalyticsViews(workspace.admin);
+    const firstListed = listed.find((row) => row.id === first.id);
+    const secondListed = listed.find((row) => row.id === second.id);
+    if (firstListed === undefined || secondListed === undefined) {
+      throw new Error('expected both saved views to be listed');
+    }
+    expect(savedAnalyticsQuery(firstListed)?.pinned).toBe(false);
+    expect(savedAnalyticsQuery(secondListed)?.pinned).toBe(true);
   });
 
   it('renames a saved view through its owner', async () => {

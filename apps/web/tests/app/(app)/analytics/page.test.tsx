@@ -52,6 +52,7 @@ mock.module(DATA_MODULE, () => ({
     client.setQueryData(analyticsKeys.lens('overview', query), payload);
     return Promise.resolve(dehydrate(client));
   },
+  loadSavedViews: () => Promise.resolve([]),
 }));
 
 mock.module(HANDLER_MODULE, () => ({

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
+import type { SavedAnalyticsViewPayload } from '@orbit/core';
 import { analyticsQuerySchema } from '@orbit/shared/validators';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { ToastProvider } from '../../../src/components/ui/toast.tsx';
 import { AnalyticsCockpit } from '../../../src/features/analytics/analytics-cockpit.tsx';
 import { analyticsKeys } from '../../../src/features/analytics/analytics-keys.ts';
 import type {
@@ -198,14 +200,21 @@ function renderCockpit(
     | AnalyticsSprintsResponse
     | AnalyticsProjectsResponse
     | AnalyticsPeopleResponse = overview,
+  savedViews: readonly SavedAnalyticsViewPayload[] = [],
 ) {
   const client = createQueryClient();
   client.setQueryDefaults(analyticsKeys.root, { enabled: false });
   client.setQueryData(analyticsKeys.lens(query.lens, query), response);
   function Wrapper({ children }: { readonly children: ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <ToastProvider>{children}</ToastProvider>
+      </QueryClientProvider>
+    );
   }
-  return render(<AnalyticsCockpit initialQuery={query} />, { wrapper: Wrapper });
+  return render(<AnalyticsCockpit initialQuery={query} savedViews={savedViews} />, {
+    wrapper: Wrapper,
+  });
 }
 
 describe('AnalyticsCockpit', () => {
@@ -477,5 +486,40 @@ describe('AnalyticsCockpit', () => {
 
     expect(screen.getByText('Selected person')).toBeVisible();
     expect(screen.queryByText('My work')).not.toBeInTheDocument();
+  });
+
+  it('restores a complete saved analytics query', async () => {
+    const user = userEvent.setup();
+    const savedQuery = analyticsQuerySchema.parse({
+      lens: 'people',
+      range: { preset: 'last_90_days' },
+      compare: 'previous_period',
+      measure: 'points',
+      includeArchived: true,
+      focus: { personId },
+    });
+    renderCockpit(undefined, overview, [
+      {
+        id: 'saved_1',
+        name: 'My quarter',
+        scopeType: 'workspace',
+        scopeId: null,
+        kind: 'dashboard',
+        config: { kind: 'dashboard', version: 1, query: savedQuery, pinned: true },
+        shared: false,
+        ownerId: personId,
+        createdAt: asOf,
+        updatedAt: asOf,
+      },
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'My quarter' }));
+
+    expect(window.location.search).toContain('lens=people');
+    expect(window.location.search).toContain('range=last_90_days');
+    expect(window.location.search).toContain('compare=previous_period');
+    expect(window.location.search).toContain('measure=points');
+    expect(window.location.search).toContain('includeArchived=1');
+    expect(window.location.search).toContain(`personId=${personId}`);
   });
 });
