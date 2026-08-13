@@ -66,7 +66,7 @@ export const analyticsQuerySchema = z.object({
 
 export const analyticsDrilldownQuerySchema = analyticsQuerySchema.extend({
   cohort: analyticsDrilldownCohortSchema,
-  cursor: z.string().max(256).optional(),
+  cursor: z.string().max(1024).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 

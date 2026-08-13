@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { and, asc, db, eq, gt, isNotNull, isNull, schema, sql } from '@orbit/db';
-import { PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
+import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
 import { validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -92,6 +92,16 @@ export interface AnalyticsDrilldownInput {
 
 interface CursorValue {
   readonly id: string;
+  readonly resolution: CursorResolution;
+}
+
+interface CursorResolution {
+  readonly asOf: string;
+  readonly from: string;
+  readonly to: string;
+  readonly comparisonFrom: string | null;
+  readonly comparisonTo: string | null;
+  readonly timezone: string;
 }
 
 interface AggregateRow {
@@ -239,6 +249,43 @@ function dimensionCohortPredicate(
   return null;
 }
 
+function validIdCohort(value: string, prefix: string, special: ReadonlySet<string>): boolean {
+  const match = new RegExp(`^${prefix}:(.+)$`, 'i').exec(value);
+  const suffix = match?.[1];
+  return suffix !== undefined && (special.has(suffix) || UUID_PATTERN.test(suffix));
+}
+
+function validDimensionCohort(value: string): boolean {
+  if (validIdCohort(value, 'state', new Set(['other']))) return true;
+  if (validIdCohort(value, 'project', new Set(['none', 'other']))) return true;
+  if (validIdCohort(value, 'outlier', new Set())) return true;
+  const priority = /^priority:(\d+)$/.exec(value);
+  return priority !== null && PRIORITIES.some((entry) => String(entry) === priority[1]);
+}
+
+function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCohort {
+  const bucketed: ReadonlySet<string> = new Set([
+    'delivery-created',
+    'delivery-completed',
+    'delivery-open',
+  ]);
+  const unbucketed: ReadonlySet<string> = new Set(
+    ANALYTICS_OVERVIEW_COHORTS.filter((key) => !bucketed.has(key)),
+  );
+  if (bucketed.has(cohort.cohort)) {
+    if (cohort.bucket === undefined)
+      throw validationFailed('That analytics cohort needs a bucket.');
+    return cohort;
+  }
+  if (unbucketed.has(cohort.cohort)) {
+    if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
+    return cohort;
+  }
+  if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
+  if (validDimensionCohort(cohort.cohort)) return cohort;
+  throw validationFailed('That analytics cohort is not supported.');
+}
+
 function openPredicate(): SQL {
   return sql`${schema.workflowState.category} not in ('completed', 'canceled')`;
 }
@@ -365,47 +412,64 @@ function cursorSecret(context: AnalyticsServiceContext): string {
   return secret;
 }
 
-function cursorBinding(
+function cursorRequestBinding(
   principal: Principal,
-  resolved: ResolvedAnalyticsQuery,
+  query: AnalyticsQuery,
   cohort: AnalyticsDrilldownCohort,
 ): string {
   return JSON.stringify({
     organizationId: principal.organizationId,
     query: {
-      version: resolved.version,
-      lens: resolved.lens,
-      range: resolved.range,
-      compare: resolved.compare,
-      measure: resolved.measure,
-      filter: resolved.filter,
-      includeArchived: resolved.includeArchived,
-      includeCanceled: resolved.includeCanceled,
-      focus: resolved.focus,
-    },
-    resolved: {
-      asOf: resolved.asOf.toISOString(),
-      from: resolved.from.toISOString(),
-      to: resolved.to.toISOString(),
-      comparisonFrom: resolved.comparisonFrom?.toISOString() ?? null,
-      comparisonTo: resolved.comparisonTo?.toISOString() ?? null,
-      timezone: resolved.timezone,
-      measure: resolved.measure,
+      version: query.version,
+      lens: query.lens,
+      range: query.range,
+      compare: query.compare,
+      measure: query.measure,
+      filter: query.filter,
+      includeArchived: query.includeArchived,
+      includeCanceled: query.includeCanceled,
+      focus: query.focus,
     },
     cohort: cohort.cohort,
     bucket: cohort.bucket ?? null,
   });
 }
 
+function cursorResolution(resolved: ResolvedAnalyticsQuery): CursorResolution {
+  return {
+    asOf: resolved.asOf.toISOString(),
+    from: resolved.from.toISOString(),
+    to: resolved.to.toISOString(),
+    comparisonFrom: resolved.comparisonFrom?.toISOString() ?? null,
+    comparisonTo: resolved.comparisonTo?.toISOString() ?? null,
+    timezone: resolved.timezone,
+  };
+}
+
 function cursorSignature(body: string, binding: string, secret: string): Buffer {
   return createHmac('sha256', secret).update(binding).update('.').update(body).digest();
 }
 
-function encodeCursor(row: PageRow, binding: string, secret: string): string {
-  const body = Buffer.from(JSON.stringify({ id: row.id } satisfies CursorValue), 'utf8').toString(
-    'base64url',
-  );
+function encodeCursor(
+  row: PageRow,
+  resolution: CursorResolution,
+  binding: string,
+  secret: string,
+): string {
+  const value: CursorValue = { id: row.id, resolution };
+  const body = Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
   return `${body}.${cursorSignature(body, binding, secret).toString('base64url')}`;
+}
+
+function cursorDate(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('invalid');
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) throw new Error('invalid');
+  return value;
+}
+
+function nullableCursorDate(value: unknown): string | null {
+  return value === null ? null : cursorDate(value);
 }
 
 function decodeCursor(cursor: string, binding: string, secret: string): CursorValue {
@@ -426,10 +490,28 @@ function decodeCursor(cursor: string, binding: string, secret: string): CursorVa
     const parsed: unknown = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     if (typeof parsed !== 'object' || parsed === null) throw new Error('invalid');
     const value = parsed as Partial<CursorValue>;
-    if (typeof value.id !== 'string' || !UUID_PATTERN.test(value.id)) {
+    const resolution = value.resolution as Partial<CursorResolution> | undefined;
+    if (
+      typeof value.id !== 'string' ||
+      !UUID_PATTERN.test(value.id) ||
+      resolution === undefined ||
+      typeof resolution.timezone !== 'string' ||
+      resolution.timezone.length === 0 ||
+      resolution.timezone.length > 64
+    ) {
       throw new Error('invalid');
     }
-    return { id: value.id };
+    return {
+      id: value.id,
+      resolution: {
+        asOf: cursorDate(resolution.asOf),
+        from: cursorDate(resolution.from),
+        to: cursorDate(resolution.to),
+        comparisonFrom: nullableCursorDate(resolution.comparisonFrom),
+        comparisonTo: nullableCursorDate(resolution.comparisonTo),
+        timezone: resolution.timezone,
+      },
+    };
   } catch (cause) {
     throw validationFailed('That analytics page cursor is not valid.', { cause });
   }
@@ -440,9 +522,28 @@ export async function listAnalyticsDrilldown(
   input: AnalyticsDrilldownInput,
   context: AnalyticsServiceContext = {},
 ): Promise<AnalyticsDrilldownPage> {
-  const resolved = await resolveOverviewQuery(principal, input.query, context);
+  assertCan(principal, 'analytics:read');
+  const semanticCohort = validateCohort(input.cohort);
+  const secret = cursorSecret(context);
+  const binding = cursorRequestBinding(principal, input.query, semanticCohort);
+  const cursor = input.cursor === undefined ? null : decodeCursor(input.cursor, binding, secret);
+  const resolutionContext =
+    cursor === null
+      ? context
+      : {
+          ...context,
+          now: new Date(cursor.resolution.asOf),
+          timezone: cursor.resolution.timezone,
+        };
+  const resolved = await resolveOverviewQuery(principal, input.query, resolutionContext);
+  if (
+    cursor !== null &&
+    JSON.stringify(cursor.resolution) !== JSON.stringify(cursorResolution(resolved))
+  ) {
+    throw validationFailed('That analytics page cursor is not valid.');
+  }
   const base = baseAnalyticsPredicate(principal, resolved);
-  const cohort = cohortPredicate(resolved, input.cohort, base);
+  const cohort = cohortPredicate(resolved, semanticCohort, base);
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isFinite(requestedLimit)
     ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(requestedLimit)))
@@ -468,9 +569,6 @@ export async function listAnalyticsDrilldown(
     join workflow_state on workflow_state.id = issue.state_id
     where ${base} and ${cohort}
   `);
-  const secret = cursorSecret(context);
-  const binding = cursorBinding(principal, resolved, input.cohort);
-  const cursor = input.cursor === undefined ? null : decodeCursor(input.cursor, binding, secret);
   const cursorPredicate = cursor === null ? sql`true` : gt(schema.issue.id, cursor.id);
   const rows = await db.execute<PageRow>(sql`
     select
@@ -506,9 +604,11 @@ export async function listAnalyticsDrilldown(
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   const nextCursor =
-    rows.length > limit && last !== undefined ? encodeCursor(last, binding, secret) : null;
+    rows.length > limit && last !== undefined
+      ? encodeCursor(last, cursorResolution(resolved), binding, secret)
+      : null;
   return {
-    predicate: predicateLabel(input.cohort),
+    predicate: predicateLabel(semanticCohort),
     total: Number(aggregate?.['total'] ?? 0),
     totalValue: Number(aggregate?.['total_value'] ?? 0),
     details: {
