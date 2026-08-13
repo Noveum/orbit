@@ -8,7 +8,7 @@ import {
   verifyMcpAccessToken,
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, desc, eq, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
@@ -231,34 +231,36 @@ describe('MCP authorize PKCE boundary', () => {
         const callbackUrl = mcpContinueUrl(Object.fromEntries(loginLocation.searchParams));
         expect(callbackUrl).toBeDefined();
 
-        const beginLogin = new Request(`${APP_ORIGIN}/api/auth/sign-in/magic-link`, {
+        const beginLogin = new Request(`${APP_ORIGIN}/api/auth/email-otp/send-verification-otp`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             origin: APP_ORIGIN,
             [DEV_LOGIN_HEADER]: '1',
           },
-          body: JSON.stringify({ email: workspace.adminUser.email, callbackURL: callbackUrl }),
+          body: JSON.stringify({ email: workspace.adminUser.email, type: 'sign-in' }),
         });
         beginLogin.headers.set('cookie', cookieHeader(cookies));
         const loginStarted = await authPost(beginLogin);
         expect(loginStarted.status).toBe(200);
         storeResponseCookies(cookies, loginStarted);
 
-        const [pending] = await db
-          .select({ identifier: schema.verification.identifier })
-          .from(schema.verification)
-          .orderBy(desc(schema.verification.createdAt))
-          .limit(1);
-        if (pending === undefined) throw new Error('the magic link token was not stored');
-        const verifyUrl = new URL(`${APP_ORIGIN}/api/auth/magic-link/verify`);
-        verifyUrl.searchParams.set('token', pending.identifier);
-        verifyUrl.searchParams.set('callbackURL', callbackUrl ?? '');
-        const verify = new Request(verifyUrl);
-        verify.headers.set(DEV_LOGIN_HEADER, '1');
+        const otp = await auth.api.createVerificationOTP({
+          body: { email: workspace.adminUser.email, type: 'sign-in' },
+        });
+        const verify = new Request(`${APP_ORIGIN}/api/auth/sign-in/email-otp`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            origin: APP_ORIGIN,
+            [DEV_LOGIN_HEADER]: '1',
+          },
+          body: JSON.stringify({ email: workspace.adminUser.email, otp }),
+        });
         verify.headers.set('cookie', cookieHeader(cookies));
-        const verified = await GET(verify);
+        const verified = await authPost(verify);
         expect(verified.status).toBe(302);
+        storeResponseCookies(cookies, verified);
         expect(new URL(verified.headers.get('location') ?? '', APP_ORIGIN).pathname).toBe(
           '/oauth/authorize',
         );

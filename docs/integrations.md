@@ -94,7 +94,7 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 ## Email
 
 Not an integration you connect, but worth listing since it carries invites and
-magic links. Ordinary event notifications are currently in-app only.
+sign-in codes. Ordinary event notifications are currently in-app only.
 
 Orbit sends through [Resend](https://resend.com) only.
 
@@ -104,7 +104,7 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 ```
 
 `EMAIL_FROM` must be on a domain verified in Resend. If it is not, every send
-fails, and the only symptom anyone sees is that invites never arrive.
+fails, including sign-in codes and invitations.
 
 ## Webhooks out
 

@@ -25,7 +25,7 @@ The core is done and in daily use.
 - **Realtime everywhere**, scoped so delivery matches read permission.
 - **Command palette and keyboard shortcuts** for every action.
 - **Notifications and an inbox**, with per-event preferences and quiet hours.
-- **Auth**: passkeys, Google, GitHub, magic links, optional password.
+- **Auth**: passkeys, Google, GitHub, email OTP, optional password.
 - **Roles and permissions**: admin, member, contributor, guest.
 - **MCP server** over OAuth, with sixty odd tools and scoped access.
 - **GitHub** pull request linking.

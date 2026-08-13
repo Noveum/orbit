@@ -106,7 +106,7 @@ domain verified in Resend, otherwise every send fails.
 - **Socket lifetime.** A socket never outlives its session. Signing out publishes a session revocation on
   the control channel and the hub closes that connection, and the hub also sweeps the sessions behind every
   open connection on an interval, so an expired or deleted session is dropped even when nothing announced it.
-- **Auth.** better-auth. Passkeys, Google, GitHub, magic link. Email and password is
+- **Auth.** better-auth. Passkeys, Google, GitHub, email OTP. Email and password is
   optional, off unless `ORBIT_PASSWORD_AUTH=true`, hashed with `@node-rs/argon2` (argon2id),
   rate limited, and never a replacement for the passwordless methods.
 - **MCP auth.** OAuth only, no API keys. The web app hosts the OAuth server through the better-auth

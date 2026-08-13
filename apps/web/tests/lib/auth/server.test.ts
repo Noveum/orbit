@@ -11,8 +11,13 @@ describe('password authentication', () => {
 
   it('keeps the passwordless methods available', () => {
     expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
-      expect.arrayContaining(['passkey', 'magic-link', 'organization']),
+      expect.arrayContaining(['passkey', 'email-otp', 'organization']),
     );
+  });
+
+  it('stores sign in codes as hashes', () => {
+    const plugin = auth.options.plugins?.find((candidate) => candidate.id === 'email-otp');
+    expect(plugin?.options).toMatchObject({ storeOTP: 'hashed' });
   });
 
   it('exposes the MCP OAuth provider for one-click clients', () => {

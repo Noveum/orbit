@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PersonTiles } from '../../../src/features/standup/person-tiles.tsx';
@@ -16,9 +16,11 @@ const members: readonly Member[] = [
 
 const counts: Readonly<Record<string, number>> = { user_ada: 5, user_bo: 2 };
 
+let picks: (string | null)[] = [];
+
 function mount(
   selectedId: string | null,
-  onSelect: (id: string | null) => void = () => undefined,
+  onSelect: (id: string | null) => void = (id) => picks.push(id),
   shown: Readonly<Record<string, number>> | null = counts,
 ) {
   render(
@@ -27,6 +29,14 @@ function mount(
 }
 
 describe('PersonTiles', () => {
+  beforeEach(() => {
+    picks = [];
+  });
+
+  afterEach(() => {
+    expect(picks).toEqual([]);
+  });
+
   it('gives everybody a tile, with Everyone in front', () => {
     mount(null);
 
@@ -96,10 +106,38 @@ describe('PersonTiles', () => {
     expect(screen.getByTestId('standup-tile-count-user_bo').textContent).toBe('2');
   });
 
-  it('leaves the count off somebody carrying nothing rather than showing a zero', () => {
+  it('says zero for somebody carrying nothing under the filters in force', () => {
     mount(null);
 
-    expect(screen.queryByTestId('standup-tile-count-user_cy')).toBeNull();
+    expect(screen.getByTestId('standup-tile-count-user_cy').textContent).toBe('0');
+  });
+
+  it('offers the unowned work as a tile of its own when there is any', () => {
+    mount(null, () => undefined, { ...counts, none: 3 });
+
+    expect(screen.getByTestId('standup-tile-count-none').textContent).toBe('3');
+  });
+
+  it('leaves the unassigned tile out when every issue has an owner', () => {
+    mount(null);
+
+    expect(screen.queryByTestId('standup-tile-none')).toBeNull();
+  });
+
+  it('hands back the unassigned key when the unowned tile is clicked', async () => {
+    const user = userEvent.setup();
+    let picked: string | null | undefined;
+    mount(
+      null,
+      (id) => {
+        picked = id;
+      },
+      { ...counts, none: 3 },
+    );
+
+    await user.click(screen.getByTestId('standup-tile-none'));
+
+    expect(picked).toBe('none');
   });
 
   it('says the counts are unknown rather than passing a failed lookup off as nobody working', () => {

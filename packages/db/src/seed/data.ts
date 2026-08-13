@@ -237,7 +237,7 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
     team: 'ENG',
     title: 'Passkey sign in fails on Safari when no credential is registered',
     description:
-      'Safari throws `NotAllowedError` instead of resolving empty. Catch it and fall back to the magic link field without showing an error.',
+      'Safari throws `NotAllowedError` instead of resolving empty. Catch it and fall back to the email code field without showing an error.',
     state: 'In Progress',
     priority: 1,
     assignee: 'casey',

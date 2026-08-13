@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
@@ -6,13 +7,13 @@ import {
   publishSessionRevoked,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
-import { inviteEmail, magicLinkEmail, resetPasswordEmail, sendEmail } from '@orbit/services/email';
+import { inviteEmail, resetPasswordEmail, sendEmail, signInCodeEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
-import { magicLink, mcp, organization } from 'better-auth/plugins';
+import { emailOTP, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
@@ -165,6 +166,13 @@ function assertSignUpAllowed(email: string): void {
   }
 }
 
+function signInCodeIdempotencyKey(email: string, otp: string): string {
+  const digest = createHmac('sha256', serverEnv().BETTER_AUTH_SECRET)
+    .update(`${email}:${otp}`)
+    .digest('hex');
+  return `sign-in-code:${digest}`;
+}
+
 export const auth = betterAuth({
   appName: 'Orbit',
   baseURL: serverEnv().BETTER_AUTH_URL,
@@ -228,18 +236,20 @@ export const auth = betterAuth({
   plugins: [
     mcpTokenRateLimitProbe(),
     passkey({ rpName: 'Orbit' }),
-    magicLink({
-      sendMagicLink: async ({ email, url, token }, request) => {
-        if (isDevLoginRequest(request)) return;
+    emailOTP({
+      storeOTP: 'hashed',
+      sendVerificationOTP: async ({ email, otp, type }, context) => {
+        if (isDevLoginRequest(context)) return;
+        if (type !== 'sign-in') return;
         assertSignUpAllowed(email);
-        const content = await magicLinkEmail({ url, email });
+        const content = await signInCodeEmail({ code: otp, email });
         await sendEmail(db, {
           to: email,
           subject: content.subject,
           html: content.html,
           text: content.text,
-          template: 'magic-link',
-          idempotencyKey: `magic-link:${token}`,
+          template: 'sign-in-code',
+          idempotencyKey: signInCodeIdempotencyKey(email, otp),
         });
       },
     }),

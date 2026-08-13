@@ -639,6 +639,27 @@ describe('listIssues', () => {
     expect(byIdentifier.issues[0]?.identifier).toBe('NOVA-1');
   });
 
+  it('narrows to the issues nobody owns when the assignee scope asks for none', async () => {
+    const { user: assignee } = await addMember(workspace, 'member');
+    await newIssue('Owned', { assigneeId: assignee.id });
+    const orphan = await newIssue('Nobody owns this', { assigneeId: null });
+
+    const unassigned = await listIssues(workspace.admin, { assigneeId: 'none' });
+
+    expect(unassigned.issues.map((issue) => issue.id)).toEqual([orphan.id]);
+  });
+
+  it('counts the unowned issues under the same key the facets use', async () => {
+    const { user: assignee } = await addMember(workspace, 'member');
+    await newIssue('Owned', { assigneeId: assignee.id });
+    await newIssue('Nobody owns this', { assigneeId: null });
+
+    const summary = await getIssueSummary(workspace.admin, { groupBy: 'assignee' });
+
+    expect(summary.groupTotals['none']).toBe(1);
+    expect(summary.groupTotals[assignee.id]).toBe(1);
+  });
+
   it('leaves the description out of list rows and keeps it for an explicit full select', async () => {
     await newIssue('Heavy issue', { description: 'A body long enough to matter on the wire.' });
 

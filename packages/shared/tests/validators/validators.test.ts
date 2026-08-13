@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from '../../src/constants/index.ts';
 import {
   bootstrapQuerySchema,
   cycleCreateSchema,
@@ -52,6 +53,22 @@ describe('update schemas never invent values', () => {
     expect(issueUpdateSchema.safeParse({ priority: 9 }).success).toBe(false);
     expect(issueUpdateSchema.safeParse({ title: '' }).success).toBe(false);
     expect(labelUpdateSchema.safeParse({ color: 'red' }).success).toBe(false);
+  });
+});
+
+describe('issue descriptions', () => {
+  it('accepts pasted file contents while keeping a bounded request size', () => {
+    expect(issueUpdateSchema.safeParse({ description: 'x'.repeat(150_000) }).success).toBe(true);
+    expect(
+      issueUpdateSchema.safeParse({
+        description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      issueUpdateSchema.safeParse({
+        description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
   });
 });
 

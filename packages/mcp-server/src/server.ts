@@ -67,6 +67,7 @@ function rpcError(status: number, message: string, headers: Record<string, strin
 
 export interface McpRequestOptions {
   readonly publicUrl: string;
+  readonly dispatch?: ((request: Request) => Promise<Response>) | undefined;
 }
 
 async function dispatch(request: Request): Promise<Response> {
@@ -105,10 +106,12 @@ export async function handleMcpRequest(
   }
 
   try {
-    return await dispatch(request);
+    return await (options.dispatch ?? dispatch)(request);
   } catch (error: unknown) {
     const domain = toDomainError(error);
-    logger.error('request failed', { code: domain.code, ...errorFields(error) });
+    const fields = { code: domain.code, ...errorFields(error) };
+    if (domain.status >= 500) logger.error('request failed', fields);
+    else logger.warn('request rejected', fields);
     const safe = domain.status >= 500 ? 'Something went wrong on our side.' : domain.message;
     const headers =
       domain.status === 401 ? { 'WWW-Authenticate': wwwAuthenticate(options.publicUrl) } : {};

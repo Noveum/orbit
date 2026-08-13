@@ -1,8 +1,7 @@
-import { beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { verifyMcpAccessToken } from '@orbit/core';
 import { and, db, eq, schema } from '@orbit/db';
-import { DomainError } from '@orbit/shared/errors';
-import { MCP_PATH } from '../src/server.ts';
+import { DomainError, internal } from '@orbit/shared/errors';
 import {
   callMcp,
   connect,
@@ -15,11 +14,28 @@ import {
   type TestWorkspace,
 } from '../src/test-helpers.ts';
 
+const logged = { errors: [] as string[], warnings: [] as string[] };
+const loggerModule = await import('../src/logger.ts');
+mock.module('../src/logger.ts', () => ({
+  ...loggerModule,
+  logger: {
+    info: () => undefined,
+    warn: (message: string) => logged.warnings.push(message),
+    error: (message: string) => logged.errors.push(message),
+  },
+}));
+
+const { handleMcpRequest, MCP_PATH } = await import('../src/server.ts');
+
 let workspace: TestWorkspace;
 
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
+});
+
+afterAll(() => {
+  mock.module('../src/logger.ts', () => loggerModule);
 });
 
 async function clientIdOf(token: string): Promise<string> {
@@ -127,12 +143,40 @@ describe('access token verification', () => {
 });
 
 describe('http transport', () => {
-  it('challenges an unauthenticated request with WWW-Authenticate', async () => {
-    const response = await post({});
+  it('challenges an unauthenticated request without reporting an expected rejection as an error', async () => {
+    logged.errors.length = 0;
+    logged.warnings.length = 0;
+    const response = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      }),
+      { publicUrl: 'http://localhost:3000' },
+    );
     expect(response.status).toBe(401);
     const challenge = response.headers.get('www-authenticate') ?? '';
     expect(challenge).toContain('Bearer resource_metadata=');
     expect(challenge).toContain('/.well-known/oauth-protected-resource/mcp');
+    expect(logged.errors).toEqual([]);
+    expect(logged.warnings).toEqual(['request rejected']);
+    await response.body?.cancel();
+  });
+
+  it('logs an unexpected server failure as an error rather than a warning', async () => {
+    logged.errors.length = 0;
+    logged.warnings.length = 0;
+    const response = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, { method: 'POST' }),
+      {
+        publicUrl: 'http://localhost:3000',
+        dispatch: () => Promise.reject(internal('Forced server failure.')),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(logged.errors).toEqual(['request failed']);
+    expect(logged.warnings).toEqual([]);
     await response.body?.cancel();
   });
 
