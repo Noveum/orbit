@@ -392,6 +392,7 @@ export function resolveAnalyticsQuery(
   const comparison = comparisonRange(query.compare, selected, context, relevance);
   return {
     ...query,
+    asOf: new Date(context.now.getTime()),
     resolvedRange: selected.range,
     comparisonRange: comparison,
     from: selected.range.from,

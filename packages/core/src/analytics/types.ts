@@ -58,6 +58,7 @@ export interface AnalyticsResolutionContext {
 }
 
 export interface ResolvedAnalyticsQuery extends AnalyticsQuery {
+  readonly asOf: Date;
   readonly resolvedRange: AnalyticsDateRange;
   readonly comparisonRange: AnalyticsDateRange | null;
   readonly from: Date;
