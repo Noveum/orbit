@@ -10,7 +10,7 @@
 - Blocked work is current open work with a stored `blocked_by` relation.
 - Overdue work is current open work whose due date is before the reporting day in the resolved timezone.
 - Stale work is current open work whose update time is more than 14 days before `asOf`.
-- Scope added in range means entered project in range. Captured project-change activities count at their movement time. Creation counts against the project reconstructed from the earliest later project change, or uses the current project when no history exists. `scopeAddedCoverage` labels captured, current-project, and mixed attribution.
+- Scope added in range means entered project in range. Captured project-change activities count at their movement time. Creation counts against the project reconstructed from the earliest later project change. A captured null origin remains unassigned, while only a complete absence of project history falls back to the current project. `scopeAddedCoverage` labels captured, current-project, and mixed attribution.
 - Completed in range uses the current final completion timestamp in the half-open reporting interval.
 - The next milestone is the first incomplete or empty milestone in stable project order. A completed milestone does not hide a later empty milestone.
 - Project and milestone advanced filters use the same normalized issue predicate as every aggregate and drilldown. An explicitly selected empty milestone keeps its project and empty focused milestone row visible.
@@ -51,9 +51,9 @@ The consolidated project metrics statement completed in 0.330 ms after 3.332 ms 
 
 ## GREEN
 
-- GREEN: the focused Task 9 suite passed 9 tests with 62 assertions after review fixes.
+- GREEN: the focused Task 9 suite passed 10 tests with 67 assertions after final review fixes.
 - GREEN: focused overview, drilldown, and project regressions passed 18 tests with 158 assertions before the final reconciliation expansion.
-- GREEN: the full core real-PostgreSQL suite passed 897 tests with 2,458 assertions after review fixes.
+- GREEN: the full core real-PostgreSQL suite passed 898 tests with 2,463 assertions after final review fixes.
 - The first monorepo verification passed every static and type gate, then found five existing web sprint tests running against a stale local base database that lacked `cycle_progress_snapshot.captured_at`.
 - `bun run db:test-setup` refreshed all six base test schemas before the final isolated verification run.
 - The fresh-lane monorepo verification again passed every static and type gate and 1,961 web tests, then reported the same five existing sprint index, start, complete, and snapshot failures. A standalone run reproduced only those five failures with 24 related tests passing. Read-only inspection confirmed that both the web template and disposable lane lacked `cycle_issue_membership` and `cycle_progress_snapshot.captured_at`. The schema setup command exited successfully without materializing those objects, while direct Drizzle push reached an existing rename conflict that requires an interactive terminal. The Task 9 focused suite and full core suite remained green. No Task 9 file is on those failing web paths.
@@ -63,3 +63,5 @@ The consolidated project metrics statement completed in 0.330 ms after 3.332 ms 
 Task 9 tests cover manual health labeling, status and target dates, issue and point progress, mixed estimates, open and completed work, blocked, overdue, stale, and unestimated counts, range additions and completions, multi-team projects, next milestone selection, empty milestones, project and milestone filters, archived toggles, workspace-wide guest, contributor, member, and admin visibility, organization isolation, stable portfolio ordering and bounds, and semantic risk, milestone, and delivery reconciliation through drilldown.
 
 Review regression tests additionally cover AND mismatch, nested OR and negation, stale focus, actual Alpha completion with Beta selected as next, project-at-creation reconstruction for moves before and after the reporting range, explicit entry coverage, Asia/Kolkata and America/New_York bucket labels, strict completed-in-bucket parsing, and completed-in-bucket drilldown reconciliation.
+
+The final history regression distinguishes a captured null project origin from a missing activity row. It proves that a later move into Beta does not rewrite the creation project, its cohort excludes that issue, and a truly history-free issue still uses current-project attribution with the matching coverage label.

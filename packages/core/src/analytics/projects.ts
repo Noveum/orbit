@@ -412,16 +412,16 @@ async function projectAddedStats(
       where ${base}
     ), entries as (
       select issue.id as issue_id,
-        coalesce(
-          (
+        case when exists (
+          select 1 from issue_activity project_history
+          where project_history.issue_id = issue.id and project_history.field = 'projectId'
+        ) then (
             select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
             from issue_activity first_project
             where first_project.issue_id = issue.id and first_project.field = 'projectId'
             order by first_project.created_at, first_project.id
             limit 1
-          ),
-          issue.project_id
-        ) as project_id,
+          ) else issue.project_id end as project_id,
         issue.estimate,
         not exists (
           select 1 from issue_activity project_history
@@ -747,16 +747,16 @@ async function deliveryRows(
         ) or (
           issue.created_at >= buckets.bucket_start
           and issue.created_at < buckets.bucket_end
-          and coalesce(
-            (
+          and case when exists (
+            select 1 from issue_activity project_history
+            where project_history.issue_id = issue.id and project_history.field = 'projectId'
+          ) then (
               select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
               from issue_activity first_project
               where first_project.issue_id = issue.id and first_project.field = 'projectId'
               order by first_project.created_at, first_project.id
               limit 1
-            ),
-            issue.project_id
-          ) = ${projectId}
+            ) else issue.project_id end = ${projectId}
         )
       ) as added,
       count(issue.id) filter (

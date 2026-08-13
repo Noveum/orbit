@@ -385,17 +385,18 @@ function projectAddedPredicate(projectId: string, from: Date, to: Date): SQL<unk
     or (
       ${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz
       and ${schema.issue.createdAt} < ${to.toISOString()}::timestamptz
-      and coalesce(
-        (
+      and case when exists (
+        select 1 from issue_activity project_history
+        where project_history.issue_id = ${schema.issue.id}
+          and project_history.field = 'projectId'
+      ) then (
           select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
           from issue_activity first_project
           where first_project.issue_id = ${schema.issue.id}
             and first_project.field = 'projectId'
           order by first_project.created_at, first_project.id
           limit 1
-        ),
-        ${schema.issue.projectId}
-      ) = ${projectId}
+        ) else ${schema.issue.projectId} end = ${projectId}
     )
   )`;
 }

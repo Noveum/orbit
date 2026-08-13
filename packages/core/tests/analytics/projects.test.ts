@@ -69,7 +69,7 @@ function query(
 
 async function projectActivity(
   issueId: string,
-  from: { readonly id: string; readonly name: string },
+  from: { readonly id: string; readonly name: string } | null,
   to: { readonly id: string; readonly name: string },
   createdAt: string,
 ): Promise<void> {
@@ -139,6 +139,47 @@ beforeEach(async () => {
 });
 
 describe('loadProjectAnalytics', () => {
+  it('distinguishes a captured null project origin from missing project history', async () => {
+    const beta = await createProject(workspace.admin, {
+      name: 'Beta',
+      teamIds: [workspace.teamId],
+    });
+    const fallback = await createProject(workspace.admin, {
+      name: 'Current fallback',
+      teamIds: [workspace.teamId],
+    });
+    const fromUnassigned = await issue(
+      workspace.admin,
+      { title: 'Unassigned at creation' },
+      { createdAt: new Date('2026-08-04T00:00:00.000Z') },
+    );
+    await db
+      .update(schema.issue)
+      .set({ projectId: beta.project.id })
+      .where(eq(schema.issue.id, fromUnassigned));
+    await projectActivity(fromUnassigned, null, beta.project, '2026-08-12T00:00:00.000Z');
+    await issue(
+      workspace.admin,
+      { title: 'No activity fallback', projectId: fallback.project.id },
+      { createdAt: new Date('2026-08-05T00:00:00.000Z') },
+    );
+
+    const result = await loadProjectAnalytics(workspace.admin, query(), { now, timezone: 'UTC' });
+    const betaRow = projectRow(result, beta.project.id);
+    const fallbackRow = projectRow(result, fallback.project.id);
+    const betaEvidence = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: betaRow.cohorts.scopeAdded },
+      { now, timezone: 'UTC', cursorSecret: 'project-analytics-secret' },
+    );
+
+    expect(betaRow.scopeAddedIssues).toBe(0);
+    expect(betaRow.scopeAddedCoverage).toBe('captured');
+    expect(betaEvidence.total).toBe(0);
+    expect(fallbackRow.scopeAddedIssues).toBe(1);
+    expect(fallbackRow.scopeAddedCoverage).toBe('current_project');
+  });
+
   it('preserves nested filter logic and never lets focus bypass the active predicate', async () => {
     const alpha = await createProject(workspace.admin, {
       name: 'Alpha',
