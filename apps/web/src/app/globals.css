@@ -3,6 +3,10 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  --analytics-series-1: var(--color-accent);
+  --analytics-series-2: var(--color-success);
+  --analytics-series-3: var(--color-warning);
+  --analytics-series-4: var(--color-muted);
   --print-bg: oklch(100% 0 0);
   --print-fg: oklch(0% 0 0);
   --orbit-fluid: clamp(0rem, calc((100vw - 80rem) / 80), 1rem);
