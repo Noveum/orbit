@@ -10,7 +10,7 @@ export interface AnalyticsDateRange {
 }
 
 export interface AnalyticsCoverage {
-  readonly kind: 'live' | 'observed' | 'reconstructed' | 'frozen';
+  readonly kind: 'live' | 'captured' | 'observed' | 'reconstructed' | 'frozen';
   readonly from: string | null;
   readonly asOf: string;
 }

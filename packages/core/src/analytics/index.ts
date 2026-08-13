@@ -7,4 +7,5 @@ export * from './overview.ts';
 export * from './saved-view.ts';
 export * from './schemas.ts';
 export * from './snapshot.ts';
+export * from './sprints.ts';
 export * from './types.ts';
