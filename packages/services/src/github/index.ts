@@ -425,7 +425,7 @@ function parseCheckSuiteEvent(body: unknown): NormalizedGithubEvent | null {
     review: null,
     requestedReviewer: null,
     checks: {
-      failed: ['failure', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
+      failed: ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
         (parsed.check_suite.conclusion ?? '').toLowerCase(),
       ),
       headBranch: parsed.check_suite.head_branch ?? '',

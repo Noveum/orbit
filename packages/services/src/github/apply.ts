@@ -603,6 +603,7 @@ async function applyToIssue(
   const notificationEvents: NotificationEvent[] = [];
 
   if (event.comment !== null && event.pullRequest !== null) {
+    if (event.action !== 'created') return { actions, notificationEvents, gitLink: null };
     notificationEvents.push(commentNotification({ linked, event, actor, repo, audienceUserIds }));
     return { actions, notificationEvents, gitLink: null };
   }
@@ -627,6 +628,7 @@ async function applyToIssue(
           eq(gitLink.issueId, linked.id),
           eq(gitLink.provider, 'github'),
           eq(gitLink.kind, 'pull_request'),
+          eq(gitLink.repository, event.repository.fullName),
           eq(gitLink.number, pr.number),
         ),
       ),

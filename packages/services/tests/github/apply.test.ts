@@ -209,6 +209,27 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps same-number pull requests from different repositories separate', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(gitLink).values({
+        id: randomUUIDv7(),
+        organizationId: fixture.organizationId,
+        issueId: fixture.issueId,
+        kind: 'pull_request',
+        externalId: `legacy:${randomUUIDv7()}`,
+        number: 7,
+        repository: 'acme/api',
+        url: 'https://github.com/acme/api/pull/7',
+      });
+
+      await applyGithubEvent(tx, prEvent({}));
+
+      const links = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(links.map((link) => link.repository).sort()).toEqual(['acme/api', 'acme/web']);
+    });
+  });
+
   it('ignores an identifier that is only mentioned, not declared', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -457,7 +478,7 @@ describe('applyGithubEvent', () => {
         body: {
           action: 'completed',
           check_suite: {
-            conclusion: 'failure',
+            conclusion: 'error',
             head_branch: 'eng-3-dashboard',
             pull_requests: [{ number: 7 }],
           },
@@ -533,6 +554,27 @@ describe('applyGithubEvent', () => {
         'https://github.com/acme/web/pull/7#issuecomment-1',
       );
       expect(result.notificationEvents[0]?.entityId).toBe(fixture.issueId);
+
+      const edited = await applyGithubEvent(tx, {
+        eventName: 'issue_comment',
+        body: {
+          action: 'edited',
+          issue: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+          },
+          comment: {
+            body: 'Updated wording.',
+            html_url: 'https://github.com/acme/web/pull/7#issuecomment-1',
+            user: { login: 'reviewer', id: 901 },
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'reviewer', id: 901 },
+        },
+      });
+      expect(edited.notificationEvents).toEqual([]);
     });
   });
 
