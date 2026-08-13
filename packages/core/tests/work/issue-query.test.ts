@@ -12,7 +12,6 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { addDays } from '../../src/work/issue-predicates.ts';
 import { buildIssueWhere, type IssueVisibility } from '../../src/work/issue-query.ts';
 import {
   archiveIssue,
@@ -24,7 +23,7 @@ import { createLabel } from '../../src/work/label-service.ts';
 import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
 
-const now = new Date('2026-08-13T17:45:00.000Z');
+const injectedNow = new Date('2036-08-13T17:45:00.000Z');
 
 let workspace: Workspace;
 
@@ -45,7 +44,13 @@ async function titlesMatching(
   const rows = await db
     .select({ title: schema.issue.title })
     .from(schema.issue)
-    .where(buildIssueWhere(principal, { visibility, filter: parsedFilter(input), now }))
+    .where(
+      buildIssueWhere(principal, {
+        visibility,
+        filter: parsedFilter(input),
+        now: injectedNow,
+      }),
+    )
     .orderBy(asc(schema.issue.title));
   return rows.map((row) => row.title);
 }
@@ -187,7 +192,7 @@ describe('buildIssueWhere predicate parity', () => {
     }
   });
 
-  it('keeps labels, milestones, blocked relations, unset values, nested groups, and relative dates aligned', async () => {
+  it('keeps labels, milestones, blocked relations, unset values, and nested groups aligned', async () => {
     const { label } = await createLabel(workspace.admin, {
       name: 'Urgent',
       color: '#ff0000',
@@ -208,7 +213,6 @@ describe('buildIssueWhere predicate parity', () => {
       projectId: project.id,
       milestoneId: milestone.id,
       labelIds: [label.id],
-      dueDate: addDays('2026-08-13', 9),
     });
     const blocker = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
@@ -237,16 +241,6 @@ describe('buildIssueWhere predicate parity', () => {
         }),
         ['Matching issue', 'Unset issue'],
       ],
-      [
-        group({
-          kind: 'condition',
-          property: 'due',
-          operator: 'relative',
-          relative: { unit: 'week', offset: 2, direction: 'future' },
-          negate: false,
-        }),
-        ['Matching issue'],
-      ],
     ];
 
     for (const [filter, expected] of cases) {
@@ -254,5 +248,29 @@ describe('buildIssueWhere predicate parity', () => {
       expect(await titlesMatching(workspace.admin, 'team', input)).toEqual(expected);
       expect(await listedTitles(workspace.admin, input)).toEqual(expected);
     }
+  });
+
+  it('evaluates relative filters from the supplied clock', async () => {
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Inside supplied window',
+      dueDate: '2036-08-22',
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Outside supplied window',
+      dueDate: '2036-09-12',
+    });
+    const filter = group({
+      kind: 'condition',
+      property: 'due',
+      operator: 'relative',
+      relative: { unit: 'week', offset: 2, direction: 'future' },
+      negate: false,
+    });
+
+    expect(await titlesMatching(workspace.admin, 'team', { filter })).toEqual([
+      'Inside supplied window',
+    ]);
   });
 });
