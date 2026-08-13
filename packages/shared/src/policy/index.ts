@@ -85,12 +85,14 @@ export interface Principal {
   readonly teamIds: readonly string[];
 }
 
+const NO_PERMISSIONS: readonly Permission[] = [];
+
 export function permissionsFor(role: OrgRole): readonly Permission[] {
-  return PERMISSIONS_BY_ROLE[role];
+  return PERMISSIONS_BY_ROLE[role] ?? NO_PERMISSIONS;
 }
 
 export function can(principal: Principal, permission: Permission): boolean {
-  return PERMISSIONS_BY_ROLE[principal.role].includes(permission);
+  return permissionsFor(principal.role).includes(permission);
 }
 
 export function assertCan(principal: Principal, permission: Permission): void {
