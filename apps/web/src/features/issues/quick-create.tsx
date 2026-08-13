@@ -3,8 +3,9 @@
 import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
-import { ChevronRight } from 'lucide-react';
+import { Box, ChevronRight, RefreshCw, Tag } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -19,6 +20,7 @@ import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
 import type { Cycle, Issue, Project } from '@/lib/query/schemas.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
 import {
   attachPending,
   holdAttachment,
@@ -82,13 +84,19 @@ function ScopePickers({
           {
             id: 'none',
             label: projects.length === 0 ? 'No projects in this workspace' : 'No project',
+            icon: <Box className="size-3.5 text-muted" aria-hidden="true" />,
           },
-          ...projects.map((project) => ({ id: project.id, label: project.name })),
+          ...projects.map((project) => ({
+            id: project.id,
+            label: project.name,
+            icon: <Box className="size-3.5 text-muted" aria-hidden="true" />,
+          })),
         ]}
         selected={projectId === null ? ['none'] : [projectId]}
         onSelect={(value) => onProject(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-project">
+          <Box className="size-3.5" aria-hidden="true" />
           {projects.find((project) => project.id === projectId)?.name ?? 'Project'}
         </button>
       </PropertyMenu>
@@ -96,17 +104,19 @@ function ScopePickers({
       <PropertyMenu
         title="Estimate"
         options={[
-          { id: 'none', label: 'No estimate' },
+          { id: 'none', label: estimateLabel(null), icon: <EstimateGlyph points={null} /> },
           ...DEFAULT_ESTIMATE_SCALE.map((points) => ({
             id: String(points),
-            label: `${points} points`,
+            label: estimateLabel(points),
+            icon: <EstimateGlyph points={points} />,
           })),
         ]}
         selected={estimate === null ? ['none'] : [String(estimate)]}
         onSelect={(value) => onEstimate(value === 'none' ? null : Number(value))}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-estimate">
-          {estimate === null ? 'Estimate' : `${estimate} points`}
+          <EstimateGlyph points={estimate} />
+          {estimate === null ? 'Estimate' : estimateLabel(estimate)}
         </button>
       </PropertyMenu>
 
@@ -116,13 +126,19 @@ function ScopePickers({
           {
             id: 'none',
             label: cycles.length === 0 ? 'No sprints yet' : 'No sprint',
+            icon: <RefreshCw className="size-3.5 text-muted" aria-hidden="true" />,
           },
-          ...cycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
+          ...cycles.map((cycle) => ({
+            id: cycle.id,
+            label: sprintLabel(cycle),
+            icon: <RefreshCw className="size-3.5 text-muted" aria-hidden="true" />,
+          })),
         ]}
         selected={cycleId === null ? ['none'] : [cycleId]}
         onSelect={(value) => onCycle(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-cycle">
+          <RefreshCw className="size-3.5" aria-hidden="true" />
           {(() => {
             const found = cycles.find((cycle) => cycle.id === cycleId);
             return found === undefined ? 'Sprint' : sprintLabel(found);
@@ -244,6 +260,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
   const selectedState = teamStates.find((state) => state.id === stateId);
+  const assignee = members.find((member) => member.id === assigneeId);
 
   useEffect(() => {
     if (projectId === null || teamId === null) return;
@@ -406,8 +423,13 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 selected={stateId === null ? [] : [stateId]}
                 onSelect={setStateId}
               >
-                <button type="button" className={chipClassName}>
-                  {selectedState === undefined ? null : (
+                <button type="button" className={chipClassName} data-testid="quick-create-status">
+                  {selectedState === undefined ? (
+                    <span
+                      className="size-3.5 rounded-full border border-border border-dashed"
+                      aria-hidden="true"
+                    />
+                  ) : (
                     <StateGlyph category={selectedState.category} color={selectedState.color} />
                   )}
                   {selectedState?.name ?? 'Status'}
@@ -434,13 +456,25 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 title="Assignee"
                 options={[
                   { id: 'none', label: 'No assignee' },
-                  ...members.map((member) => ({ id: member.id, label: member.name })),
+                  ...members.map((member) => ({
+                    id: member.id,
+                    label: member.name,
+                    icon: <Avatar name={member.name} src={member.image} size="xs" />,
+                  })),
                 ]}
                 selected={assigneeId === null ? ['none'] : [assigneeId]}
                 onSelect={(value) => setAssigneeId(value === 'none' ? null : value)}
               >
-                <button type="button" className={chipClassName}>
-                  {members.find((member) => member.id === assigneeId)?.name ?? 'Assignee'}
+                <button type="button" className={chipClassName} data-testid="quick-create-assignee">
+                  {assignee === undefined ? (
+                    <span
+                      className="size-3.5 rounded-full border border-border border-dashed"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Avatar name={assignee.name} src={assignee.image} size="xs" />
+                  )}
+                  {assignee?.name ?? 'Assignee'}
                 </button>
               </PropertyMenu>
 
@@ -467,7 +501,8 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                   )
                 }
               >
-                <button type="button" className={chipClassName}>
+                <button type="button" className={chipClassName} data-testid="quick-create-labels">
+                  <Tag className="size-3.5" aria-hidden="true" />
                   {labelIds.length === 0 ? 'Labels' : `${labelIds.length} labels`}
                 </button>
               </PropertyMenu>

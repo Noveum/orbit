@@ -790,3 +790,43 @@ describe('story points on a new issue', () => {
     expect(created.mock.calls[0]?.[0]?.['estimate']).toBeNull();
   });
 });
+
+describe('the property chips on the new issue dialog', () => {
+  it('gives every chip a glyph, so the row does not read as one icon and six words', () => {
+    workspace = buildWorkspace();
+    open();
+
+    const chips = [
+      'quick-create-status',
+      'quick-create-assignee',
+      'quick-create-labels',
+      'quick-create-project',
+      'quick-create-estimate',
+      'quick-create-cycle',
+    ];
+
+    for (const chip of chips) {
+      const leading = screen.getByTestId(chip).firstElementChild;
+      expect(leading?.tagName.toLowerCase()).toMatch(/^(svg|span)$/);
+      expect(leading?.textContent).toBe('');
+    }
+  });
+
+  it('reads the estimate chip in the singular at one point', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('1 point'));
+
+    expect(screen.getByTestId('quick-create-estimate')).toHaveTextContent('1 point');
+  });
+
+  it('still shows no formatting toolbar above the description', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(screen.queryByTestId('quick-create-description-toolbar')).toBeNull();
+  });
+});
