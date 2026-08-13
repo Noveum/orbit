@@ -1,3 +1,13 @@
+import type {
+  AnalyticsDrilldownQuery,
+  AnalyticsLens,
+  AnalyticsQuery,
+} from '@orbit/shared/validators';
+import {
+  canonicalAnalyticsQuery,
+  canonicalDrilldownQuery,
+} from '@/features/analytics/query-state.ts';
+
 export const ASSIGNED_SCOPE = 'assigned';
 export const ALL_SCOPE = 'all';
 export const PROJECT_SCOPE = 'project';
@@ -20,6 +30,7 @@ export const VIEWS_ROOT = 'views';
 export const MILESTONES_ROOT = 'milestones';
 export const SEARCH_ROOT = 'search';
 export const VIEW_PREFERENCES_ROOT = 'view-preferences';
+export const ANALYTICS_ROOT = 'analytics';
 
 export const queryKeys = {
   bootstrap: (teamKey: string | null) => ['bootstrap', teamKey ?? 'default'] as const,
@@ -49,4 +60,12 @@ export const queryKeys = {
   docVersions: (docId: string) => ['doc', docId, 'versions'] as const,
   views: () => ['views'] as const,
   milestones: (projectId: string) => ['milestones', projectId] as const,
+} as const;
+
+export const analyticsKeys = {
+  root: [ANALYTICS_ROOT] as const,
+  lens: (lens: AnalyticsLens, query: AnalyticsQuery) =>
+    [ANALYTICS_ROOT, 'lens', lens, canonicalAnalyticsQuery(query)] as const,
+  drilldown: (query: AnalyticsDrilldownQuery) =>
+    [ANALYTICS_ROOT, 'drilldown', canonicalDrilldownQuery(query)] as const,
 } as const;
