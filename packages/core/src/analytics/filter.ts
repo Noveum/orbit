@@ -87,6 +87,15 @@ function startOfCalendarDate(date: CalendarDate, timezone: string): Date {
   throw new RangeError(`The calendar date does not exist in ${timezone}.`);
 }
 
+export function reportingCalendar(now: Date, timezone: string) {
+  const valid = validTimezone(timezone);
+  const current = dateParts(validDate(now, 'The reporting clock'), valid);
+  return {
+    today: `${String(current.year).padStart(4, '0')}-${String(current.month).padStart(2, '0')}-${String(current.day).padStart(2, '0')}`,
+    startOfDay: (day: string): Date => startOfCalendarDate(parseCalendarDate(day), valid),
+  };
+}
+
 function parseCalendarDate(value: string): CalendarDate {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   const year = Number(match?.[1]);

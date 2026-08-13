@@ -3,6 +3,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import type { IssueFilterInput } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
+import type { FilterContext } from './issue-predicates.ts';
 import { buildFilterFilters } from './issue-predicates.ts';
 
 export type IssueVisibility = 'team' | 'workspace-analytics';
@@ -11,6 +12,7 @@ export interface IssueWhereInput {
   readonly visibility: IssueVisibility;
   readonly filter: IssueFilterInput;
   readonly now: Date;
+  readonly calendar?: FilterContext['calendar'];
   readonly advancedFilter?: 'include' | 'omit';
 }
 
@@ -90,7 +92,10 @@ export function buildIssueWhere(principal: Principal, input: IssueWhereInput): S
     ...directFilters(principal, input.filter),
     ...(input.advancedFilter === 'omit'
       ? []
-      : buildFilterFilters(input.filter.filter, { now: input.now })),
+      : buildFilterFilters(input.filter.filter, {
+          now: input.now,
+          ...(input.calendar === undefined ? {} : { calendar: input.calendar }),
+        })),
   ];
   return and(...filters) ?? sql`false`;
 }

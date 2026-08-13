@@ -89,4 +89,45 @@ describe('listAnalyticsDrilldown', () => {
       ),
     ).rejects.toThrow();
   });
+
+  it('rejects tampered cursors and reuse across query, date, and organization bindings', async () => {
+    for (const title of ['First', 'Second']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    const context = { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' };
+    const page = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'current' }, limit: 1 },
+      context,
+    );
+    if (page.nextCursor === null) throw new Error('Missing cursor.');
+    const finalCharacter = page.nextCursor.at(-1);
+    const tampered = `${page.nextCursor.slice(0, -1)}${finalCharacter === 'a' ? 'b' : 'a'}`;
+    const changedQuery = analyticsQuerySchema.parse({ ...query(), measure: 'points' });
+    const changedDate = analyticsQuerySchema.parse({
+      ...query(),
+      range: { preset: 'custom', from: '2026-08-02', to: '2026-08-11' },
+    });
+    const outside = await createWorkspace('Outside');
+
+    for (const [principal, reusedQuery, cursor] of [
+      [workspace.admin, query(), tampered],
+      [workspace.admin, changedQuery, page.nextCursor],
+      [workspace.admin, changedDate, page.nextCursor],
+      [outside.admin, query(), page.nextCursor],
+    ] as const) {
+      await expect(
+        listAnalyticsDrilldown(
+          principal,
+          {
+            query: reusedQuery,
+            cohort: { cohort: 'current' },
+            cursor,
+            limit: 1,
+          },
+          context,
+        ),
+      ).rejects.toThrow('cursor');
+    }
+  });
 });

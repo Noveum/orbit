@@ -16,6 +16,8 @@ import type {
   ResolvedAnalyticsQuery,
 } from './types.ts';
 
+export const ANALYTICS_DISTRIBUTION_CAP = 8;
+
 export type AnalyticsMetricDetail = 'cycleTimeP50' | 'cycleTimeP85';
 
 export type AnalyticsMetricReconciliation =
@@ -77,6 +79,7 @@ interface CardRow {
   readonly cycle_p85: number | string | null;
   readonly comparison_cycle_p50: number | string | null;
   readonly comparison_cycle_p85: number | string | null;
+  readonly comparison_cycle_count: number | string;
 }
 
 interface HealthRow {
@@ -141,6 +144,11 @@ function amount(row: CardRow | undefined, key: keyof CardRow): number {
   return Number(row?.[key] ?? 0);
 }
 
+function optionalAmount(row: CardRow | undefined, key: keyof CardRow): number | null {
+  const value = row?.[key];
+  return value === null || value === undefined ? null : Number(value);
+}
+
 async function healthCards(
   principal: Principal,
   resolved: ResolvedAnalyticsQuery,
@@ -199,14 +207,15 @@ async function throughputCards(
       count(*) filter (where ${comparison}) as comparison_total,
       coalesce(sum(${weight}) filter (where ${comparison}), 0) as comparison_value,
       count(*) filter (where ${current} and ${validCycle}) as cycle_count,
+      count(*) filter (where ${comparison} and ${validCycle}) as comparison_cycle_count,
       coalesce(percentile_cont(0.5) within group (order by ${duration})
         filter (where ${current} and ${validCycle}), 0) as cycle_p50,
       coalesce(percentile_cont(0.85) within group (order by ${duration})
         filter (where ${current} and ${validCycle}), 0) as cycle_p85,
-      coalesce(percentile_cont(0.5) within group (order by ${duration})
-        filter (where ${comparison} and ${validCycle}), 0) as comparison_cycle_p50,
-      coalesce(percentile_cont(0.85) within group (order by ${duration})
-        filter (where ${comparison} and ${validCycle}), 0) as comparison_cycle_p85
+      percentile_cont(0.5) within group (order by ${duration})
+        filter (where ${comparison} and ${validCycle}) as comparison_cycle_p50,
+      percentile_cont(0.85) within group (order by ${duration})
+        filter (where ${comparison} and ${validCycle}) as comparison_cycle_p85
     from issue
     join workflow_state on workflow_state.id = issue.state_id
     where ${base}
@@ -218,10 +227,11 @@ async function throughputCards(
       comparison_total: 0,
       comparison_value: 0,
       cycle_count: 0,
+      comparison_cycle_count: 0,
       cycle_p50: 0,
       cycle_p85: 0,
-      comparison_cycle_p50: 0,
-      comparison_cycle_p85: 0,
+      comparison_cycle_p50: null,
+      comparison_cycle_p85: null,
     }
   );
 }
@@ -233,24 +243,42 @@ async function distributions(
   const base = baseAnalyticsPredicate(principal, resolved);
   const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
   return await db.execute<DistributionRow>(sql`
-    select 'state' as dimension, workflow_state.id, workflow_state.name as label,
-      coalesce(sum(${weight}), 0) as value, count(*) as issue_count
-    from issue join workflow_state on workflow_state.id = issue.state_id
-    where ${base}
-    group by workflow_state.id, workflow_state.name
-    union all
-    select 'project', coalesce(project.id, 'none'), coalesce(project.name, 'No project'),
-      coalesce(sum(${weight}), 0), count(*)
-    from issue join workflow_state on workflow_state.id = issue.state_id
-    left join project on project.id = issue.project_id
-    where ${base}
-    group by project.id, project.name
-    union all
-    select 'priority', issue.priority::text, issue.priority::text,
-      coalesce(sum(${weight}), 0), count(*)
-    from issue join workflow_state on workflow_state.id = issue.state_id
-    where ${base}
-    group by issue.priority
+    with filtered as materialized (
+      select workflow_state.id as state_id, workflow_state.name as state_name,
+        coalesce(project.id, 'none') as project_id,
+        coalesce(project.name, 'No project') as project_name,
+        issue.priority::text as priority_id, ${weight} as weight
+      from issue
+      join workflow_state on workflow_state.id = issue.state_id
+      left join project on project.id = issue.project_id
+      where ${base}
+    ), dimensioned as (
+      select dimensions.dimension, dimensions.id, dimensions.label, filtered.weight
+      from filtered
+      cross join lateral (values
+        ('state', filtered.state_id, filtered.state_name),
+        ('project', filtered.project_id, filtered.project_name),
+        ('priority', filtered.priority_id, filtered.priority_id)
+      ) dimensions(dimension, id, label)
+    ), grouped as (
+      select dimension, id, label, sum(weight) as value, count(*) as issue_count
+      from dimensioned
+      group by dimension, id, label
+    ), ranked as (
+      select grouped.*,
+        row_number() over (partition by dimension order by value desc, id asc) as rank
+      from grouped
+    ), collapsed as (
+      select dimension,
+        case when rank <= ${ANALYTICS_DISTRIBUTION_CAP} then id else 'other' end as id,
+        case when rank <= ${ANALYTICS_DISTRIBUTION_CAP} then label else 'Other' end as label,
+        value, issue_count
+      from ranked
+    )
+    select dimension, id, label, sum(value) as value, sum(issue_count) as issue_count
+    from collapsed
+    group by dimension, id, label
+    order by dimension, value desc, id asc
   `);
 }
 
@@ -283,6 +311,7 @@ async function deliverySeries(
       coalesce(sum(${weight}) filter (
         where issue.created_at < buckets.bucket_end
           and (issue.completed_at is null or issue.completed_at >= buckets.bucket_end)
+          and (issue.canceled_at is null or issue.canceled_at > buckets.bucket_end)
       ), 0) as open
     from buckets
     left join filtered issue on issue.created_at < buckets.bucket_end
@@ -340,6 +369,8 @@ export async function loadAnalyticsOverview(
   const throughputValue = amount(throughput, 'current_value');
   const cycleP50 = amount(throughput, 'cycle_p50');
   const cycleP85 = amount(throughput, 'cycle_p85');
+  const comparisonCycleP50 = optionalAmount(throughput, 'comparison_cycle_p50');
+  const comparisonCycleP85 = optionalAmount(throughput, 'comparison_cycle_p85');
   const unit = resolved.measure;
   const cards: AnalyticsOverviewMetric[] = [
     metric({
@@ -367,9 +398,8 @@ export async function loadAnalyticsOverview(
       label: 'Median cycle time',
       value: cycleP50,
       unit: 'days',
-      comparisonDelta: comparisonExists
-        ? cycleP50 - amount(throughput, 'comparison_cycle_p50')
-        : null,
+      comparisonDelta:
+        comparisonExists && comparisonCycleP50 !== null ? cycleP50 - comparisonCycleP50 : null,
       cohort: { cohort: 'cycle-time' },
       cohortCount: amount(throughput, 'cycle_count'),
       detail: 'cycleTimeP50',
@@ -379,9 +409,8 @@ export async function loadAnalyticsOverview(
       label: 'Cycle time p85',
       value: cycleP85,
       unit: 'days',
-      comparisonDelta: comparisonExists
-        ? cycleP85 - amount(throughput, 'comparison_cycle_p85')
-        : null,
+      comparisonDelta:
+        comparisonExists && comparisonCycleP85 !== null ? cycleP85 - comparisonCycleP85 : null,
       cohort: { cohort: 'cycle-time' },
       cohortCount: amount(throughput, 'cycle_count'),
       detail: 'cycleTimeP85',

@@ -13,6 +13,7 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { archiveIssue, createIssue, setRelation } from '../../src/work/issue-service.ts';
+import { createProject } from '../../src/work/project-service.ts';
 
 const now = new Date('2026-08-13T12:00:00.000Z');
 
@@ -32,6 +33,7 @@ async function issue(
     readonly teamId?: string;
     readonly title: string;
     readonly stateId?: string;
+    readonly projectId?: string;
     readonly estimate?: number | null;
     readonly priority?: number;
     readonly dueDate?: Date | null;
@@ -48,6 +50,7 @@ async function issue(
     teamId: input.teamId ?? workspace.teamId,
     title: input.title,
     stateId: input.stateId,
+    projectId: input.projectId,
     estimate: input.estimate,
     priority: input.priority,
     dueDate: input.dueDate,
@@ -77,6 +80,67 @@ beforeEach(async () => {
 });
 
 describe('loadAnalyticsOverview', () => {
+  it('evaluates named and relative date filters in the reporting timezone', async () => {
+    await issue(
+      workspace.admin,
+      { title: 'New York today' },
+      { createdAt: new Date('2026-08-02T01:00:00.000Z') },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'New York tomorrow' },
+      { createdAt: new Date('2026-08-02T05:00:00.000Z') },
+    );
+    const todayQuery = analyticsQuerySchema.parse({
+      ...query(),
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'created',
+            operator: 'in',
+            values: ['today'],
+            negate: false,
+          },
+        ],
+      },
+    });
+    const relativeQuery = analyticsQuerySchema.parse({
+      ...query(),
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'created',
+            operator: 'relative',
+            relative: { unit: 'day', offset: 1, direction: 'past' },
+            negate: false,
+          },
+        ],
+      },
+    });
+    const context = {
+      now: new Date('2026-08-02T02:00:00.000Z'),
+      timezone: 'America/New_York',
+      cursorSecret: 'analytics-test-secret',
+    };
+
+    for (const filteredQuery of [todayQuery, relativeQuery]) {
+      const overview = await loadAnalyticsOverview(workspace.admin, filteredQuery, context);
+      const drilldown = await listAnalyticsDrilldown(
+        workspace.admin,
+        { query: filteredQuery, cohort: { cohort: 'current' } },
+        context,
+      );
+      expect(overview.state.reduce((sum, bucket) => sum + bucket.value, 0)).toBe(1);
+      expect(drilldown.issues.map((entry) => entry.title)).toEqual(['New York today']);
+    }
+  });
+
   it('reconciles current and interval cards with semantic drilldowns', async () => {
     const todo = stateNamed(workspace, 'Todo');
     const started = stateNamed(workspace, 'In Progress');
@@ -154,7 +218,9 @@ describe('loadAnalyticsOverview', () => {
       if (metric.reconciliation.kind === 'total') {
         expect(metric.value).toBe(drilldown.totalValue);
       } else {
-        expect(metric.value).toBe(drilldown.details[metric.reconciliation.detail]);
+        const detail = drilldown.details[metric.reconciliation.detail];
+        if (detail === null) throw new Error('Missing cycle time detail.');
+        expect(metric.value).toBe(detail);
       }
     }
     for (const bucket of [...overview.state, ...overview.projects, ...overview.priorities]) {
@@ -239,6 +305,110 @@ describe('loadAnalyticsOverview', () => {
       comparisonDelta: 3,
     });
     expect(card(overview, 'unestimated')).toMatchObject({ value: 1, unit: 'issues' });
+  });
+
+  it('bounds project distribution and reconciles the Other cohort', async () => {
+    for (let index = 0; index < 10; index += 1) {
+      const { project } = await createProject(workspace.admin, {
+        name: `Project ${String(index).padStart(2, '0')}`,
+        teamIds: [workspace.teamId],
+      });
+      await issue(
+        workspace.admin,
+        { title: `Issue ${index}`, projectId: project.id },
+        { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+      );
+    }
+    const overview = await loadAnalyticsOverview(workspace.admin, query(), {
+      now,
+      timezone: 'UTC',
+    });
+    const other = overview.projects.find((bucket) => bucket.label === 'Other');
+    if (other === undefined) throw new Error('Missing Other project bucket.');
+    const drilldown = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: other.cohort, limit: 100 },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(overview.projects).toHaveLength(9);
+    expect(other.value).toBe(2);
+    expect(drilldown.totalValue).toBe(other.value);
+  });
+
+  it('excludes issues canceled at a delivery boundary and includes later cancellations', async () => {
+    const canceled = stateNamed(workspace, 'Canceled');
+    const atBoundary = await issue(
+      workspace.admin,
+      { title: 'Canceled at boundary', stateId: canceled.id },
+      { createdAt: new Date('2026-08-01T01:00:00.000Z') },
+    );
+    const afterBoundary = await issue(
+      workspace.admin,
+      { title: 'Canceled after boundary', stateId: canceled.id },
+      { createdAt: new Date('2026-08-01T02:00:00.000Z') },
+    );
+    await db
+      .update(schema.issue)
+      .set({ canceledAt: new Date('2026-08-02T00:00:00.000Z') })
+      .where(eq(schema.issue.id, atBoundary));
+    await db
+      .update(schema.issue)
+      .set({ canceledAt: new Date('2026-08-02T00:00:01.000Z') })
+      .where(eq(schema.issue.id, afterBoundary));
+    const includedQuery = analyticsQuerySchema.parse({ ...query(), includeCanceled: true });
+    const overview = await loadAnalyticsOverview(workspace.admin, includedQuery, {
+      now,
+      timezone: 'UTC',
+    });
+    const point = overview.delivery.find((entry) => entry.date === '2026-08-01');
+    if (point === undefined) throw new Error('Missing delivery point.');
+    const drilldown = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: includedQuery, cohort: point.openCohort },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(point.open).toBe(1);
+    expect(drilldown.issues.map((entry) => entry.title)).toEqual(['Canceled after boundary']);
+  });
+
+  it('keeps empty and malformed comparison cycle data nullable', async () => {
+    const done = stateNamed(workspace, 'Done');
+    await issue(
+      workspace.admin,
+      { title: 'Current valid cycle', stateId: done.id },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        startedAt: new Date('2026-08-02T00:00:00.000Z'),
+        completedAt: new Date('2026-08-04T00:00:00.000Z'),
+      },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'Previous malformed cycle', stateId: done.id },
+      {
+        createdAt: new Date('2026-07-24T00:00:00.000Z'),
+        startedAt: new Date('2026-07-30T00:00:00.000Z'),
+        completedAt: new Date('2026-07-28T00:00:00.000Z'),
+      },
+    );
+    const overview = await loadAnalyticsOverview(workspace.admin, query(), {
+      now,
+      timezone: 'UTC',
+    });
+    const cycleP50 = card(overview, 'cycle_time_p50');
+    const comparison = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'comparison-throughput' } },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(cycleP50.value).toBe(2);
+    expect(cycleP50.comparisonDelta).toBeNull();
+    expect(comparison.details.validCycleCount).toBe(0);
+    expect(comparison.details.cycleTimeP50).toBeNull();
+    expect(comparison.issues[0]?.cycleTimeDays).toBeNull();
   });
 
   it('honors archived and canceled toggles across overview and drilldown', async () => {
