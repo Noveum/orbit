@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { analyticsQuerySchema } from '@orbit/shared/validators';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { AnalyticsCockpit } from '../../../src/features/analytics/analytics-cockpit.tsx';
@@ -388,6 +388,42 @@ describe('AnalyticsCockpit', () => {
 
     expect(window.location.search).toContain('priority');
     expect(window.location.search).not.toContain(projectId);
+  });
+
+  it('renders explicit boundaries for sibling Boolean groups', () => {
+    const condition = (property: 'project' | 'priority', value: string) => ({
+      kind: 'condition' as const,
+      property,
+      operator: 'in' as const,
+      values: [value],
+      negate: false,
+    });
+    const query = analyticsQuerySchema.parse({
+      filter: {
+        kind: 'group',
+        combinator: 'or',
+        children: [
+          {
+            kind: 'group',
+            combinator: 'and',
+            children: [condition('project', projectId), condition('priority', '1')],
+          },
+          {
+            kind: 'group',
+            combinator: 'and',
+            children: [condition('project', `${projectId.slice(0, -1)}3`)],
+          },
+        ],
+      },
+    });
+    renderCockpit(query, overview);
+
+    const firstGroup = screen.getByTestId('filter-group-0');
+    const secondGroup = screen.getByTestId('filter-group-1');
+    expect(firstGroup).toHaveAccessibleName('Match all filter group');
+    expect(secondGroup).toHaveAccessibleName('Match all filter group');
+    expect(within(firstGroup).getByText('Priority is Urgent')).toBeVisible();
+    expect(within(secondGroup).queryByText('Priority is Urgent')).not.toBeInTheDocument();
   });
 
   it('uses selected-person copy for explicit focus and links tabs to their panel', () => {

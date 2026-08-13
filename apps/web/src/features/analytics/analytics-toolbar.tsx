@@ -13,30 +13,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select.tsx';
-import { buildFilterFields, describeCondition } from '@/features/filters/filter-fields.tsx';
+import {
+  buildFilterFields,
+  describeCondition,
+  type FilterFieldDefinition,
+} from '@/features/filters/filter-fields.tsx';
 import { FilterMenu } from '@/features/filters/filter-menu.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { DateRangePicker } from './date-range-picker.tsx';
-
-interface ConditionEntry {
-  readonly condition: FilterCondition;
-  readonly path: readonly number[];
-  readonly context: string;
-}
-
-function conditionEntries(
-  group: FilterGroup,
-  path: readonly number[] = [],
-  parents: readonly string[] = [],
-): ConditionEntry[] {
-  const context = [...parents, group.combinator === 'and' ? 'All' : 'Any'];
-  return group.children.flatMap((child, index) => {
-    const childPath = [...path, index];
-    return child.kind === 'condition'
-      ? [{ condition: child, path: childPath, context: context.join(' › ') }]
-      : conditionEntries(child, childPath, context);
-  });
-}
 
 function removeAtPath(group: FilterGroup, path: readonly number[]): FilterGroup {
   const [index, ...rest] = path;
@@ -73,6 +57,101 @@ function conditionFrom(group: FilterGroup): FilterCondition | null {
   return child?.kind === 'condition' ? child : null;
 }
 
+interface FilterExpressionProps {
+  readonly group: FilterGroup;
+  readonly root: FilterGroup;
+  readonly path: readonly number[];
+  readonly fields: readonly FilterFieldDefinition[];
+  readonly editingPath: string | null;
+  readonly setEditingPath: (path: string | null) => void;
+  readonly onChange: (filter: FilterGroup) => void;
+}
+
+function ConditionChip({
+  condition,
+  path,
+  root,
+  fields,
+  editingPath,
+  setEditingPath,
+  onChange,
+}: Omit<FilterExpressionProps, 'group'> & { readonly condition: FilterCondition }) {
+  const pathKey = path.join('.');
+  const description = describeCondition(condition, fields);
+  const isolated: FilterGroup = {
+    kind: 'group',
+    combinator: 'and',
+    children: [condition],
+  };
+  return (
+    <span className="flex h-7 items-center rounded-md border border-border bg-surface-2 text-xs">
+      <FilterMenu
+        anchor={
+          <button
+            aria-label={`Edit filter: ${description}`}
+            className="h-full px-2 text-text hover:bg-surface-3"
+            onClick={() => setEditingPath(pathKey)}
+            type="button"
+          >
+            {description}
+          </button>
+        }
+        facets={undefined}
+        fields={fields}
+        filter={isolated}
+        onChange={(next) => {
+          const nextCondition = conditionFrom(next);
+          onChange(
+            nextCondition === null
+              ? removeAtPath(root, path)
+              : replaceAtPath(root, path, nextCondition),
+          );
+        }}
+        onOpenChange={(open) => setEditingPath(open ? pathKey : null)}
+        open={editingPath === pathKey}
+        startProperty={condition.property}
+      />
+      <button
+        aria-label={`Remove filter: ${description}`}
+        className="flex h-full items-center border-border border-l px-1.5 text-faint hover:text-text"
+        onClick={() => onChange(removeAtPath(root, path))}
+        type="button"
+      >
+        <X aria-hidden="true" className="size-3" />
+      </button>
+    </span>
+  );
+}
+
+function FilterExpression(props: FilterExpressionProps) {
+  const { group, path } = props;
+  const pathKey = path.length === 0 ? 'root' : path.join('.');
+  const conjunction = group.combinator === 'and' ? 'and' : 'or';
+  return (
+    <fieldset
+      className="inline-flex flex-wrap items-center gap-1 rounded-md border border-border bg-background px-1 py-1"
+      data-testid={`filter-group-${pathKey}`}
+    >
+      <legend className="float-left px-1 text-faint text-2xs uppercase">
+        Match {group.combinator === 'and' ? 'all' : 'any'} filter group
+      </legend>
+      {group.children.map((child, index) => {
+        const childPath = [...path, index];
+        return (
+          <span className="inline-flex items-center gap-1" key={childPath.join('.')}>
+            {index === 0 ? null : <span className="px-0.5 text-faint text-2xs">{conjunction}</span>}
+            {child.kind === 'condition' ? (
+              <ConditionChip {...props} condition={child} path={childPath} />
+            ) : (
+              <FilterExpression {...props} group={child} path={childPath} />
+            )}
+          </span>
+        );
+      })}
+    </fieldset>
+  );
+}
+
 export function AnalyticsToolbar({
   query,
   onChange,
@@ -85,7 +164,6 @@ export function AnalyticsToolbar({
   const workspace = useWorkspace();
   const [filterOpen, setFilterOpen] = useState(false);
   const [editingPath, setEditingPath] = useState<string | null>(null);
-  const conditions = conditionEntries(query.filter);
   const fields = useMemo(
     () => buildFilterFields(workspace, null, FILTER_PROPERTIES, { workspaceWide: true }),
     [workspace],
@@ -119,58 +197,17 @@ export function AnalyticsToolbar({
           <SelectItem value="points">Points</SelectItem>
         </SelectContent>
       </Select>
-      {conditions.map((entry) => {
-        const pathKey = entry.path.join('.');
-        const description = describeCondition(entry.condition, fields);
-        const isolated: FilterGroup = {
-          kind: 'group',
-          combinator: 'and',
-          children: [entry.condition],
-        };
-        return (
-          <span
-            className="flex h-7 items-center rounded-md border border-border bg-surface-2 text-xs"
-            key={pathKey}
-          >
-            <span className="border-border border-r px-1.5 text-faint">{entry.context}</span>
-            <FilterMenu
-              anchor={
-                <button
-                  aria-label={`Edit filter: ${description}`}
-                  className="h-full px-2 text-text hover:bg-surface-3"
-                  onClick={() => setEditingPath(pathKey)}
-                  type="button"
-                >
-                  {description}
-                </button>
-              }
-              facets={undefined}
-              fields={fields}
-              filter={isolated}
-              onChange={(next) => {
-                const condition = conditionFrom(next);
-                onChange({
-                  filter:
-                    condition === null
-                      ? removeAtPath(query.filter, entry.path)
-                      : replaceAtPath(query.filter, entry.path, condition),
-                });
-              }}
-              onOpenChange={(open) => setEditingPath(open ? pathKey : null)}
-              open={editingPath === pathKey}
-              startProperty={entry.condition.property}
-            />
-            <button
-              aria-label={`Remove filter: ${description}`}
-              className="flex h-full items-center border-border border-l px-1.5 text-faint hover:text-text"
-              onClick={() => onChange({ filter: removeAtPath(query.filter, entry.path) })}
-              type="button"
-            >
-              <X aria-hidden="true" className="size-3" />
-            </button>
-          </span>
-        );
-      })}
+      {query.filter.children.length === 0 ? null : (
+        <FilterExpression
+          editingPath={editingPath}
+          fields={fields}
+          group={query.filter}
+          onChange={(filter) => onChange({ filter })}
+          path={[]}
+          root={query.filter}
+          setEditingPath={setEditingPath}
+        />
+      )}
       <FilterMenu
         anchor={
           <Button

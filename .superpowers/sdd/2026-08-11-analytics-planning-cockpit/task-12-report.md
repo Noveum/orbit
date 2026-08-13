@@ -41,3 +41,7 @@ The second review found that copied nested filter trees were visible but not saf
 The toolbar now describes the complete operator, value, and negation for every condition, shows its All or Any nesting context, and edits or removes conditions by structural path without flattening the Boolean tree. Workspace analytics builds state options across every team. People uses Selected person for an explicit focus or a single assignee-constrained filter. Every tab now owns a persistent panel element while only the active panel renders data.
 
 Focused review coverage passes 15 of 15 across cockpit and filter-field tests. The combined Task 12 and Task 13 foundation check passes 18 of 18 with 66 assertions, and web typecheck is green.
+
+## Review round 3
+
+The third review identified that flattened ancestry labels did not distinguish sibling Boolean groups with the same depth. Filters now render as nested fieldsets with explicit Match all or Match any legends, visible and accessible group boundaries, and conjunctions between siblings. A regression fixture distinguishes two sibling Match all groups inside one Match any root. Focused Task 12 tests pass 16 of 16 with 52 assertions and web typecheck is green.
