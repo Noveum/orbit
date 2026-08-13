@@ -432,6 +432,7 @@ export function RichTextEditor({
           compact={toolbar === 'compact'}
           collapsed={toolbarCollapsed}
           className={toolbar === 'compact' ? 'mb-2 border-border border-b pb-2' : ''}
+          canUpload={onUpload !== undefined}
           onPickFile={() => fileRef.current?.click()}
           testId={`${testId}-toolbar`}
           leading={toolbarLeading}

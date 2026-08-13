@@ -211,4 +211,45 @@ describe('comment attachments', () => {
     );
     expect(screen.getByTestId('comment-composer-file')).toBeInTheDocument();
   });
+
+  it('puts an attach control on the compact toolbar, not only behind paste and drop', () => {
+    render(
+      <CommentComposer
+        members={members}
+        onSubmit={mock()}
+        onUpload={() =>
+          Promise.resolve({ url: '/api/files/x', fileName: 'x.txt', contentType: 'text/plain' })
+        }
+      />,
+    );
+
+    expect(screen.getByLabelText('Attach image or file')).toBeInTheDocument();
+  });
+
+  it('offers no attach control when the composer cannot take uploads', () => {
+    render(<CommentComposer members={members} onSubmit={mock()} />);
+
+    expect(screen.queryByLabelText('Attach image or file')).toBeNull();
+  });
+
+  it('opens the file picker when the attach control is pressed', async () => {
+    const user = userEvent.setup();
+    render(
+      <CommentComposer
+        members={members}
+        onSubmit={mock()}
+        onUpload={() =>
+          Promise.resolve({ url: '/api/files/x', fileName: 'x.txt', contentType: 'text/plain' })
+        }
+      />,
+    );
+
+    const input = screen.getByTestId('comment-composer-file');
+    const opened = mock();
+    input.addEventListener('click', opened);
+
+    await user.click(screen.getByLabelText('Attach image or file'));
+
+    expect(opened).toHaveBeenCalled();
+  });
 });

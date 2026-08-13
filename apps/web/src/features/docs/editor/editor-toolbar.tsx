@@ -11,7 +11,6 @@ import {
   Heading2,
   Heading3,
   Highlighter,
-  Image as ImageIcon,
   Info,
   Italic,
   Lightbulb,
@@ -22,6 +21,7 @@ import {
   type LucideIcon,
   Minus,
   OctagonAlert,
+  Paperclip,
   Quote,
   Redo2,
   Strikethrough,
@@ -83,6 +83,7 @@ function insertCallout(editor: Editor, tone: CalloutTone): void {
 export interface EditorToolbarProps {
   readonly editor: Editor;
   readonly onPickFile: () => void;
+  readonly canUpload?: boolean;
   readonly compact?: boolean;
   readonly className?: string;
   readonly testId?: string;
@@ -94,6 +95,7 @@ export interface EditorToolbarProps {
 export function EditorToolbar({
   editor,
   onPickFile,
+  canUpload = false,
   compact = false,
   collapsed = false,
   className,
@@ -331,9 +333,20 @@ export function EditorToolbar({
               icon={Minus}
               onPress={() => editor.chain().focus().setHorizontalRule().run()}
             />
-            <ToolbarButton label="Image or file" icon={ImageIcon} onPress={onPickFile} />
           </>
         )}
+
+        {canUpload ? (
+          <>
+            {compact ? <Divider /> : null}
+            <ToolbarButton
+              label="Attach image or file"
+              icon={Paperclip}
+              onPress={onPickFile}
+              testId={`${testId}-attach`}
+            />
+          </>
+        ) : null}
 
         <Divider />
 
@@ -360,6 +373,7 @@ interface ToolbarButtonProps {
   readonly active?: boolean;
   readonly disabled?: boolean;
   readonly shortcut?: readonly string[];
+  readonly testId?: string;
 }
 
 function ToolbarButton({
@@ -369,12 +383,14 @@ function ToolbarButton({
   active,
   disabled,
   shortcut,
+  testId,
 }: ToolbarButtonProps) {
   const button = (
     <button
       type="button"
       aria-label={label}
       aria-pressed={active}
+      data-testid={testId}
       disabled={disabled}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onPress}
