@@ -68,6 +68,22 @@ describe('createCycle', () => {
       }),
     ).rejects.toMatchObject({ code: 'conflict' });
   });
+
+  it('stores only valid IANA timezones on create and update', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      teamId: workspace.teamId,
+      startsAt: daysFromNow(20),
+      endsAt: daysFromNow(34),
+      timezone: 'America/New_York',
+    });
+    expect(cycle.timezone).toBe('America/New_York');
+
+    const updated = await updateCycle(workspace.admin, cycle.id, { timezone: 'Asia/Kolkata' });
+    expect(updated.cycle.timezone).toBe('Asia/Kolkata');
+    await expect(
+      updateCycle(workspace.admin, cycle.id, { timezone: 'Mars/Olympus' }),
+    ).rejects.toThrow();
+  });
 });
 
 describe('activeCycle and upcomingCycles', () => {

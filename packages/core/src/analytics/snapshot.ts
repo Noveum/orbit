@@ -1,5 +1,5 @@
 import type { Transaction } from '@orbit/db';
-import { and, count, db, eq, gt, inArray, isNull, lte, schema, sql } from '@orbit/db';
+import { and, count, db, eq, gt, isNull, lte, or, schema, sql } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -54,12 +54,18 @@ function bucketFor(category: StateCategory): keyof Tally {
 }
 
 function localDate(now: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
+  const options: Intl.DateTimeFormatOptions = {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(now);
+  };
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: timezone });
+  } catch {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+  }
+  const parts = formatter.formatToParts(now);
   const year = parts.find((part) => part.type === 'year')?.value;
   const month = parts.find((part) => part.type === 'month')?.value;
   const day = parts.find((part) => part.type === 'day')?.value;
@@ -110,9 +116,19 @@ export async function writeCycleSnapshotsInTransaction(
   if (activeCycles.length === 0) return { captured: 0, actions: [] };
 
   const cycleIds = activeCycles.map((cycle) => cycle.id);
+  const issueMatchesCycle = or(
+    ...activeCycles.map((cycle) =>
+      and(
+        eq(schema.issue.cycleId, cycle.id),
+        eq(schema.issue.organizationId, cycle.organizationId),
+        eq(schema.issue.teamId, cycle.teamId),
+      ),
+    ),
+  );
   const rows = await tx
     .select({
       organizationId: schema.issue.organizationId,
+      teamId: schema.issue.teamId,
       cycleId: schema.issue.cycleId,
       category: schema.workflowState.category,
       issues: count(),
@@ -120,8 +136,13 @@ export async function writeCycleSnapshotsInTransaction(
     })
     .from(schema.issue)
     .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .where(and(inArray(schema.issue.cycleId, cycleIds), isNull(schema.issue.archivedAt)))
-    .groupBy(schema.issue.organizationId, schema.issue.cycleId, schema.workflowState.category);
+    .where(and(issueMatchesCycle, isNull(schema.issue.archivedAt)))
+    .groupBy(
+      schema.issue.organizationId,
+      schema.issue.teamId,
+      schema.issue.cycleId,
+      schema.workflowState.category,
+    );
 
   const cyclesById = new Map(activeCycles.map((cycle) => [cycle.id, cycle]));
   const tallies = new Map<string, Tally>();
@@ -129,7 +150,12 @@ export async function writeCycleSnapshotsInTransaction(
   for (const row of rows) {
     if (row.cycleId === null) continue;
     const cycle = cyclesById.get(row.cycleId);
-    if (cycle === undefined || cycle.organizationId !== row.organizationId) continue;
+    if (
+      cycle === undefined ||
+      cycle.organizationId !== row.organizationId ||
+      cycle.teamId !== row.teamId
+    )
+      continue;
     const tally = tallies.get(row.cycleId);
     if (tally === undefined) continue;
     const issues = Number(row.issues);

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte, schema, sql } from '@orbit/db';
+import { and, asc, eq, gt, inArray, isNull, lte, or, schema, sql } from '@orbit/db';
 import type { Executor } from '../internal.ts';
 import { newId } from '../internal.ts';
 import type { IssueRow } from '../work/issue-fields.ts';
@@ -123,7 +123,13 @@ export async function captureCycleCloseOutcomes(
   const memberships = await tx
     .select()
     .from(schema.cycleIssueMembership)
-    .where(eq(schema.cycleIssueMembership.cycleId, input.cycle.id))
+    .where(
+      and(
+        eq(schema.cycleIssueMembership.organizationId, input.cycle.organizationId),
+        eq(schema.cycleIssueMembership.teamId, input.cycle.teamId),
+        eq(schema.cycleIssueMembership.cycleId, input.cycle.id),
+      ),
+    )
     .orderBy(asc(schema.cycleIssueMembership.addedAt));
   if (memberships.length === 0) return;
 
@@ -138,6 +144,7 @@ export async function captureCycleCloseOutcomes(
     .where(
       and(
         eq(schema.issue.organizationId, input.cycle.organizationId),
+        eq(schema.issue.teamId, input.cycle.teamId),
         inArray(schema.issue.id, issueIds),
       ),
     );
@@ -220,10 +227,29 @@ export async function bootstrapCycleMemberships(
 ): Promise<number> {
   if (cycleIds.length === 0) return 0;
 
+  const cycles = await tx
+    .select({
+      id: schema.cycle.id,
+      organizationId: schema.cycle.organizationId,
+      teamId: schema.cycle.teamId,
+    })
+    .from(schema.cycle)
+    .where(inArray(schema.cycle.id, [...cycleIds]));
+  if (cycles.length === 0) return 0;
+  const issueMatchesCycle = or(
+    ...cycles.map((cycle) =>
+      and(
+        eq(schema.issue.cycleId, cycle.id),
+        eq(schema.issue.organizationId, cycle.organizationId),
+        eq(schema.issue.teamId, cycle.teamId),
+      ),
+    ),
+  );
+
   const candidates = await tx
     .select()
     .from(schema.issue)
-    .where(and(inArray(schema.issue.cycleId, [...cycleIds])))
+    .where(issueMatchesCycle)
     .orderBy(asc(schema.issue.id))
     .for('update');
   if (candidates.length === 0) return 0;
@@ -240,7 +266,7 @@ export async function bootstrapCycleMemberships(
           schema.issue.id,
           candidates.map((issue) => issue.id),
         ),
-        inArray(schema.issue.cycleId, [...cycleIds]),
+        issueMatchesCycle,
       ),
     )
     .orderBy(asc(schema.issue.id))

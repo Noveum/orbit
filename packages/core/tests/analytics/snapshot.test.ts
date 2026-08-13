@@ -3,8 +3,10 @@ import type { Database } from '@orbit/db';
 import { and, count, db, eq, schema } from '@orbit/db';
 import { writeCycleSnapshots } from '../../src/analytics/snapshot.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
+import { createTeam } from '../../src/org/team-service.ts';
 import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
 import { activeCycle, completeCycle, getCycle } from '../../src/work/cycle-service.ts';
+import { createIssue } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
 let cycleId: string;
@@ -144,6 +146,98 @@ describe('writeCycleSnapshots', () => {
     expect(rows[0]?.isFinal).toBe(false);
   });
 
+  it('captures every local day across a daylight-saving transition at six-hour cadence', async () => {
+    await db
+      .update(schema.cycle)
+      .set({
+        timezone: 'America/New_York',
+        startsAt: new Date('2026-03-01T00:00:00.000Z'),
+        endsAt: new Date('2026-03-20T00:00:00.000Z'),
+      })
+      .where(eq(schema.cycle.id, cycleId));
+    const invocations = [
+      '2026-03-07T06:00:00.000Z',
+      '2026-03-07T12:00:00.000Z',
+      '2026-03-07T18:00:00.000Z',
+      '2026-03-08T00:00:00.000Z',
+      '2026-03-08T06:00:00.000Z',
+      '2026-03-08T12:00:00.000Z',
+      '2026-03-08T18:00:00.000Z',
+      '2026-03-09T00:00:00.000Z',
+      '2026-03-09T06:00:00.000Z',
+      '2026-03-09T12:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-10T00:00:00.000Z',
+      '2026-03-10T06:00:00.000Z',
+    ];
+
+    for (const invocation of invocations) {
+      await writeCycleSnapshots({ now: new Date(invocation) });
+    }
+
+    const rows = await db
+      .select({ capturedOn: schema.cycleProgressSnapshot.capturedOn })
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
+    expect(rows.map((row) => row.capturedOn).sort()).toEqual([
+      '2026-03-07',
+      '2026-03-08',
+      '2026-03-09',
+      '2026-03-10',
+    ]);
+  });
+
+  it('isolates legacy invalid timezones and uses UTC for their local date', async () => {
+    const invalid = await createWorkspace('InvalidTimezone');
+    const invalidCycle = await activeCycle(invalid.admin, invalid.teamId);
+    if (invalidCycle === undefined) throw new Error('expected a second active sprint');
+    const capturedAt = new Date('2026-08-11T23:30:00.000Z');
+    await db
+      .update(schema.cycle)
+      .set({
+        timezone: 'Mars/Olympus',
+        startsAt: new Date('2026-08-01T00:00:00.000Z'),
+        endsAt: new Date('2026-08-20T00:00:00.000Z'),
+      })
+      .where(eq(schema.cycle.id, invalidCycle.id));
+    await db
+      .update(schema.cycle)
+      .set({
+        startsAt: new Date('2026-08-01T00:00:00.000Z'),
+        endsAt: new Date('2026-08-20T00:00:00.000Z'),
+      })
+      .where(eq(schema.cycle.id, cycleId));
+
+    await writeCycleSnapshots({ now: capturedAt });
+
+    const rows = await db
+      .select({
+        cycleId: schema.cycleProgressSnapshot.cycleId,
+        capturedOn: schema.cycleProgressSnapshot.capturedOn,
+      })
+      .from(schema.cycleProgressSnapshot);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.cycleId === invalidCycle.id)?.capturedOn).toBe('2026-08-11');
+    expect(rows.some((row) => row.cycleId === cycleId)).toBe(true);
+  });
+
+  it('uses UTC for a legacy invalid timezone so sprint close cannot be blocked', async () => {
+    await db
+      .update(schema.cycle)
+      .set({ timezone: 'Mars/Olympus' })
+      .where(eq(schema.cycle.id, cycleId));
+
+    await completeCycle(workspace.admin, cycleId, withinCycle);
+
+    const [snapshot] = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
+    expect(snapshot?.capturedOn).toBe(withinCycle.toISOString().slice(0, 10));
+    expect(snapshot?.isFinal).toBe(true);
+    expect((await getCycle(workspace.admin, cycleId)).completedAt).not.toBeNull();
+  });
+
   it('turns the local day row into the final pre-rollover snapshot during close', async () => {
     const closedAt = withinCycle;
     await writeCycleSnapshots({ now: closedAt });
@@ -174,10 +268,19 @@ describe('writeCycleSnapshots', () => {
     expect((await getCycle(workspace.admin, cycleId)).completedAt).toBeNull();
   });
 
-  it('does not tally an issue whose organization does not own the sprint', async () => {
+  it('does not capture or count assignments outside the sprint organization and team', async () => {
     const other = await createWorkspace('Vega');
     const foreignIssueId = await insertIssue(other, { number: 1, state: 'Done' });
+    const sibling = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
+    const siblingIssue = await createIssue(workspace.admin, {
+      teamId: sibling.team.id,
+      title: 'Wrong team assignment',
+    });
     await db.update(schema.issue).set({ cycleId }).where(eq(schema.issue.id, foreignIssueId));
+    await db
+      .update(schema.issue)
+      .set({ cycleId })
+      .where(eq(schema.issue.id, siblingIssue.issue.id));
 
     await writeCycleSnapshots({ now: withinCycle });
 
@@ -186,5 +289,20 @@ describe('writeCycleSnapshots', () => {
       .from(schema.cycleProgressSnapshot)
       .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
     expect(snapshot?.totalIssues).toBe(3);
+    const memberships = await db
+      .select({ issueId: schema.cycleIssueMembership.issueId })
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.cycleId, cycleId));
+    expect(memberships.some((row) => row.issueId === foreignIssueId)).toBe(false);
+    expect(memberships.some((row) => row.issueId === siblingIssue.issue.id)).toBe(false);
+
+    await completeCycle(workspace.admin, cycleId, withinCycle);
+
+    const outcomes = await db
+      .select({ issueId: schema.cycleIssueOutcome.issueId })
+      .from(schema.cycleIssueOutcome)
+      .where(eq(schema.cycleIssueOutcome.cycleId, cycleId));
+    expect(outcomes.some((row) => row.issueId === foreignIssueId)).toBe(false);
+    expect(outcomes.some((row) => row.issueId === siblingIssue.issue.id)).toBe(false);
   });
 });

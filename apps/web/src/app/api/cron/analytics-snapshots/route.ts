@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { writeCycleSnapshots } from '@orbit/core';
 import { publish } from '@/lib/api/handler.ts';
 
@@ -8,9 +8,8 @@ function presented(request: Request): string {
 }
 
 function matches(offered: string, expected: string): boolean {
-  const left = Buffer.from(offered, 'utf8');
-  const right = Buffer.from(expected, 'utf8');
-  if (left.length !== right.length) return false;
+  const left = createHash('sha256').update(offered, 'utf8').digest();
+  const right = createHash('sha256').update(expected, 'utf8').digest();
   return timingSafeEqual(left, right);
 }
 
