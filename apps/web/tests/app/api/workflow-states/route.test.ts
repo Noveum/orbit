@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { createTeam } from '@orbit/core';
+import { createTeam, DEFAULT_WORKFLOW_STATES } from '@orbit/core';
 import {
   addMember,
   createWorkspace,
@@ -111,7 +111,7 @@ describe('POST /api/workflow-states', () => {
     const payload = z.object({ state: stateSchema }).parse(await response.json());
 
     expect(response.status).toBe(200);
-    expect(payload.state.position).toBe(7);
+    expect(payload.state.position).toBe(DEFAULT_WORKFLOW_STATES.length);
     expect(published.at(-1)?.scopes).toEqual([scopes.team(nova.teamId)]);
   });
 
@@ -127,10 +127,10 @@ describe('POST /api/workflow-states', () => {
     );
     const payload = z.object({ state: stateSchema }).parse(await response.json());
 
-    expect(payload.state.position).toBe(7);
-    expect((await statesOf(nova.teamId)).map((state) => state.position)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7,
-    ]);
+    expect(payload.state.position).toBe(DEFAULT_WORKFLOW_STATES.length);
+    expect((await statesOf(nova.teamId)).map((state) => state.position)).toEqual(
+      Array.from({ length: DEFAULT_WORKFLOW_STATES.length + 1 }, (_, index) => index),
+    );
   });
 
   it('refuses a contributor and writes nothing', async () => {
@@ -146,7 +146,7 @@ describe('POST /api/workflow-states', () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await statesOf(nova.teamId)).toHaveLength(7);
+    expect(await statesOf(nova.teamId)).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
     expect(published).toHaveLength(0);
   });
 
@@ -161,7 +161,7 @@ describe('POST /api/workflow-states', () => {
     );
 
     expect(response.status).toBe(404);
-    expect(await statesOf(vega.teamId)).toHaveLength(7);
+    expect(await statesOf(vega.teamId)).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
   });
 });
 
@@ -351,7 +351,9 @@ describe('POST /api/workflow-states/reorder', () => {
     expect(response.status).toBe(200);
     const after = await statesOf(nova.teamId);
     expect(after.map((state) => state.id)).toEqual(flipped);
-    expect(after.map((state) => state.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(after.map((state) => state.position)).toEqual(
+      Array.from({ length: DEFAULT_WORKFLOW_STATES.length }, (_, index) => index),
+    );
   });
 
   it('refuses a contributor even with a perfectly formed order', async () => {

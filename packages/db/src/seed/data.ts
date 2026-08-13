@@ -106,6 +106,7 @@ export const SEED_STATES: readonly SeedState[] = [
   { name: 'In Review', category: 'review', color: '#4CB782' },
   { name: 'Done', category: 'completed', color: '#7B83EB' },
   { name: 'Canceled', category: 'canceled', color: '#6E7385' },
+  { name: 'Duplicate', category: 'canceled', color: '#94A3B8' },
 ];
 
 export const SEED_LABELS: readonly { name: string; color: string }[] = [

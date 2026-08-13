@@ -15,6 +15,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
+import { DEFAULT_WORKFLOW_STATES } from '../../src/work/workflow-state-service.ts';
 
 let workspace: Workspace;
 
@@ -24,15 +25,15 @@ beforeEach(async () => {
 });
 
 describe('createOrganization', () => {
-  it('bootstraps the org, an admin member, a default team, seven states, and labels', async () => {
+  it('bootstraps the org, an admin member, a default team, the default states, and labels', async () => {
     const user = await createUser('Nia New');
     const bootstrap = await createOrganization(user.id, { name: 'Comet', slug: 'comet' });
 
     expect(bootstrap.member.role).toBe('admin');
     expect(bootstrap.team.key).toBe('COMET');
-    expect(bootstrap.states).toHaveLength(7);
-    expect(bootstrap.states.map((state) => state.category).sort()).toEqual(
-      [...STATE_CATEGORIES].sort(),
+    expect(bootstrap.states).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
+    expect(new Set(bootstrap.states.map((state) => state.category))).toEqual(
+      new Set(STATE_CATEGORIES),
     );
     expect(bootstrap.labels.length).toBeGreaterThan(0);
 
@@ -150,7 +151,7 @@ describe('teams', () => {
   it('creates a team with its states and first cycle, and dedupes the key', async () => {
     const created = await createTeam(workspace.admin, { name: 'Design', key: 'NOVA' });
     expect(created.team.key).toBe('NOVA2');
-    expect(created.states).toHaveLength(7);
+    expect(created.states).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
     expect(created.cycle.number).toBe(1);
     expect(created.actions[0]?.scopes).toContain(scopes.team(created.team.id));
 

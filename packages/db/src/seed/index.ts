@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { STATE_CATEGORY_ORDER, unique } from '@orbit/shared';
+import { unique } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import {
   DEMO_WORKSPACE_TIMEZONE,
@@ -163,7 +163,7 @@ async function seedTeams(userIds: Map<string, string>): Promise<Map<string, Team
     });
 
     const states = new Map<string, string>();
-    const stateRows = SEED_STATES.map((state) => {
+    const stateRows = SEED_STATES.map((state, position) => {
       const stateId = id();
       states.set(state.name, stateId);
       return {
@@ -173,7 +173,7 @@ async function seedTeams(userIds: Map<string, string>): Promise<Map<string, Team
         name: state.name,
         category: state.category,
         color: state.color,
-        position: STATE_CATEGORY_ORDER[state.category],
+        position,
         syncId: 0,
         createdAt: daysAgo(200),
       };

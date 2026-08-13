@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { DEFAULT_WORKFLOW_STATES } from '@orbit/core';
 import {
   addMember,
   connect,
@@ -155,16 +156,7 @@ const SMOKE: readonly SmokeCase[] = [
     tool: 'reorder_states',
     args: () => ({
       team: state['team'],
-      order: [
-        'Blocked',
-        'Triage',
-        'Backlog',
-        'Todo',
-        'In Progress',
-        'In Review',
-        'Done',
-        'Canceled',
-      ],
+      order: ['Blocked', ...DEFAULT_WORKFLOW_STATES.map((entry) => entry.name)],
     }),
     expect: hasRows('states'),
   },

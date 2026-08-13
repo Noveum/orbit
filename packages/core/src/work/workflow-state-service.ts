@@ -32,6 +32,7 @@ export const DEFAULT_WORKFLOW_STATES: readonly {
   { name: 'In Review', category: 'review', color: '#8B5CF6' },
   { name: 'Done', category: 'completed', color: '#22C55E' },
   { name: 'Canceled', category: 'canceled', color: '#EF4444' },
+  { name: 'Duplicate', category: 'canceled', color: '#94A3B8' },
 ];
 
 const NAME_TAKEN = 'That team already has a status with that name.';

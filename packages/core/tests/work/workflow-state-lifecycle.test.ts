@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { asc, db, eq, schema } from '@orbit/db';
+import { isOpenCategory } from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -13,6 +14,7 @@ import { createIssue } from '../../src/work/issue-service.ts';
 import { createLabel } from '../../src/work/label-service.ts';
 import {
   createWorkflowState,
+  DEFAULT_WORKFLOW_STATES,
   deleteWorkflowState,
   listWorkflowStates,
   listWorkflowStatesForTeams,
@@ -62,10 +64,11 @@ describe('the board order is the server position, contiguous and complete', () =
       position: 0,
     });
 
-    expect(created.state.position).toBe(7);
-    expect((await statesOf(workspace.teamId)).map((state) => state.position)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7,
-    ]);
+    const defaults = DEFAULT_WORKFLOW_STATES.length;
+    expect(created.state.position).toBe(defaults);
+    expect((await statesOf(workspace.teamId)).map((state) => state.position)).toEqual(
+      Array.from({ length: defaults + 1 }, (_, index) => index),
+    );
   });
 
   it('refuses an order that leaves a status out, so no two columns collide', async () => {
@@ -127,7 +130,9 @@ describe('the board order is the server position, contiguous and complete', () =
 
     const after = await statesOf(workspace.teamId);
     expect(after.map((state) => state.id)).toEqual(flipped);
-    expect(after.map((state) => state.position)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(after.map((state) => state.position)).toEqual(
+      Array.from({ length: DEFAULT_WORKFLOW_STATES.length }, (_, index) => index),
+    );
     expect(new Map(after.map((state) => [state.id, state.category]))).toEqual(
       new Map(before.map((state) => [state.id, state.category])),
     );
@@ -488,7 +493,7 @@ describe('the server is the gate, whatever the caller sends', () => {
     ]);
 
     expect(new Set(asked.map((state) => state.teamId))).toEqual(new Set([workspace.teamId]));
-    expect(asked).toHaveLength(7);
+    expect(asked).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
   });
 
   it('gives an admin every team it asks for and still stops at the workspace edge', async () => {
@@ -517,5 +522,35 @@ describe('the server is the gate, whatever the caller sends', () => {
     ).toBe('not_found');
     expect(await errorOf(() => deleteWorkflowState(workspace.admin, target.id))).toBe('not_found');
     expect((await statesOf(vega.teamId))[0]?.name).toBe(target.name);
+  });
+});
+
+describe('the statuses a new team starts with', () => {
+  it('includes a Duplicate status, so a repeat report can be closed as one', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const names = design.states.map((state) => state.name);
+
+    expect(names).toContain('Duplicate');
+  });
+
+  it('files Duplicate as canceled, so it closes the issue and leaves the open counts alone', () => {
+    const duplicate = DEFAULT_WORKFLOW_STATES.find((state) => state.name === 'Duplicate');
+
+    expect(duplicate?.category).toBe('canceled');
+    expect(isOpenCategory(duplicate?.category ?? 'unstarted')).toBe(false);
+  });
+
+  it('keeps Duplicate last, after Canceled', () => {
+    const names = DEFAULT_WORKFLOW_STATES.map((state) => state.name);
+
+    expect(names.at(-1)).toBe('Duplicate');
+    expect(names.indexOf('Duplicate')).toBeGreaterThan(names.indexOf('Canceled'));
+  });
+
+  it('gives Duplicate its own position on the board rather than reusing the Canceled one', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const positions = design.states.map((state) => state.position);
+
+    expect(new Set(positions).size).toBe(design.states.length);
   });
 });

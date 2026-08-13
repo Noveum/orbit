@@ -21,6 +21,7 @@ import {
 } from '../../src/work/view-service.ts';
 import {
   createWorkflowState,
+  DEFAULT_WORKFLOW_STATES,
   defaultStateFor,
   deleteWorkflowState,
   listWorkflowStates,
@@ -36,17 +37,14 @@ beforeEach(async () => {
 });
 
 describe('workflow states', () => {
-  it('lists the seven bootstrap states in position order', async () => {
+  it('lists the bootstrap states in position order', async () => {
     const states = await listWorkflowStates(workspace.admin, workspace.teamId);
-    expect(states.map((state) => state.category)).toEqual([
-      'triage',
-      'backlog',
-      'unstarted',
-      'started',
-      'review',
-      'completed',
-      'canceled',
-    ]);
+    expect(states.map((state) => state.name)).toEqual(
+      DEFAULT_WORKFLOW_STATES.map((state) => state.name),
+    );
+    expect(states.map((state) => state.category)).toEqual(
+      DEFAULT_WORKFLOW_STATES.map((state) => state.category),
+    );
   });
 
   it('resolves a default state for a category', async () => {
@@ -61,7 +59,7 @@ describe('workflow states', () => {
       category: 'started',
       color: '#EF4444',
     });
-    expect(created.state.position).toBe(7);
+    expect(created.state.position).toBe(DEFAULT_WORKFLOW_STATES.length);
     expect(created.actions[0]?.model).toBe('workflow_state');
 
     const renamed = await updateWorkflowState(workspace.admin, created.state.id, {
@@ -77,7 +75,7 @@ describe('workflow states', () => {
       teamId: workspace.teamId,
       stateIds: ids,
     });
-    expect(reordered.states).toHaveLength(8);
+    expect(reordered.states).toHaveLength(DEFAULT_WORKFLOW_STATES.length + 1);
     const after = await listWorkflowStates(workspace.admin, workspace.teamId);
     expect(after.map((state) => state.id)).toEqual(ids);
   });
@@ -96,7 +94,9 @@ describe('workflow states', () => {
   it('deletes an empty state', async () => {
     const actions = await deleteWorkflowState(workspace.admin, stateNamed(workspace, 'Triage').id);
     expect(actions[0]?.action).toBe('delete');
-    expect(await listWorkflowStates(workspace.admin, workspace.teamId)).toHaveLength(6);
+    expect(await listWorkflowStates(workspace.admin, workspace.teamId)).toHaveLength(
+      DEFAULT_WORKFLOW_STATES.length - 1,
+    );
   });
 
   it('refuses a contributor', async () => {

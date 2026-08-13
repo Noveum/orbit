@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { createTeam, listLabels, listWorkflowStates } from '@orbit/core';
+import { createTeam, DEFAULT_WORKFLOW_STATES, listLabels, listWorkflowStates } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import {
   addMember,
@@ -106,7 +106,7 @@ describe('the state tools reach the same service the app does', () => {
       }),
     );
 
-    expect(created.position).toBe(7);
+    expect(created.position).toBe(DEFAULT_WORKFLOW_STATES.length);
     const listed = statesOf(await admin.result('list_states', { team: workspace.teamKey }));
     expect(listed.map((state) => state.name)).toContain('Blocked');
   });
@@ -140,7 +140,9 @@ describe('the state tools reach the same service the app does', () => {
       }),
     );
     expect(full.map((state) => state.name)).toEqual(before.map((state) => state.name).reverse());
-    expect(full.map((state) => state.position)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(full.map((state) => state.position)).toEqual(
+      Array.from({ length: before.length }, (_, index) => index),
+    );
   });
 
   it('refuses to delete a status that still holds issues until moveTo names one', async () => {
