@@ -9,7 +9,12 @@ import { issueFilterSchema } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { buildIssueWhere } from '../work/issue-query.ts';
-import { bucketDates, reportingCalendar, resolveAnalyticsQuery } from './filter.ts';
+import {
+  bucketDates,
+  calendarDateLabel,
+  reportingCalendar,
+  resolveAnalyticsQuery,
+} from './filter.ts';
 import type { AnalyticsResolutionContext, ResolvedAnalyticsQuery } from './types.ts';
 
 const MAX_LIMIT = 200;
@@ -47,6 +52,7 @@ const PROJECT_COHORT_METRICS = [
   'delivery-scope',
   'delivery-started',
   'delivery-completed',
+  'delivery-completed-bucket',
   'delivery-open',
   'delivery-added',
 ] as const;
@@ -365,9 +371,7 @@ function openPredicate(): SQL {
 
 function projectAddedPredicate(projectId: string, from: Date, to: Date): SQL<unknown> {
   return sql`(
-    (${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz
-      and ${schema.issue.createdAt} < ${to.toISOString()}::timestamptz)
-    or exists (
+    exists (
       select 1 from issue_activity project_activity
       where project_activity.issue_id = ${schema.issue.id}
         and project_activity.field = 'projectId'
@@ -378,12 +382,27 @@ function projectAddedPredicate(projectId: string, from: Date, to: Date): SQL<unk
         and project_activity.created_at >= ${from.toISOString()}::timestamptz
         and project_activity.created_at < ${to.toISOString()}::timestamptz
     )
+    or (
+      ${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz
+      and ${schema.issue.createdAt} < ${to.toISOString()}::timestamptz
+      and coalesce(
+        (
+          select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
+          from issue_activity first_project
+          where first_project.issue_id = ${schema.issue.id}
+            and first_project.field = 'projectId'
+          order by first_project.created_at, first_project.id
+          limit 1
+        ),
+        ${schema.issue.projectId}
+      ) = ${projectId}
+    )
   )`;
 }
 
 function bucketRange(resolved: ResolvedAnalyticsQuery, bucket: string): [Date, Date] {
   const starts = bucketDates(resolved.resolvedRange, resolved.bucket);
-  const index = starts.findIndex((date) => date.toISOString().slice(0, 10) === bucket);
+  const index = starts.findIndex((date) => calendarDateLabel(date, resolved.timezone) === bucket);
   if (index < 0) throw validationFailed('That analytics bucket is not valid.');
   const from = starts[index];
   if (from === undefined) throw validationFailed('That analytics bucket is not valid.');
@@ -436,9 +455,7 @@ function projectRiskPredicate(
     case 'unestimated':
       return and(projectId, openPredicate(), isNull(schema.issue.estimate)) ?? sql`false`;
     case 'added':
-      return (
-        and(projectId, projectAddedPredicate(planning.id, resolved.from, resolved.to)) ?? sql`false`
-      );
+      return projectAddedPredicate(planning.id, resolved.from, resolved.to);
     case 'completed-range':
       return (
         and(
@@ -486,6 +503,15 @@ function projectDeliveryPredicate(
           sql`${schema.issue.completedAt} < ${to.toISOString()}::timestamptz`,
         ) ?? sql`false`
       );
+    case 'delivery-completed-bucket':
+      return (
+        and(
+          projectId,
+          isNotNull(schema.issue.completedAt),
+          sql`${schema.issue.completedAt} >= ${from.toISOString()}::timestamptz`,
+          sql`${schema.issue.completedAt} < ${to.toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
     case 'delivery-open':
       return (
         and(
@@ -496,13 +522,7 @@ function projectDeliveryPredicate(
         ) ?? sql`false`
       );
     case 'delivery-added':
-      return (
-        and(
-          projectId,
-          sql`${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz`,
-          sql`${schema.issue.createdAt} < ${to.toISOString()}::timestamptz`,
-        ) ?? sql`false`
-      );
+      return projectAddedPredicate(planning.id, from, to);
     default:
       return sql`false`;
   }

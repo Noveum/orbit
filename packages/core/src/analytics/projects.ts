@@ -1,4 +1,4 @@
-import { and, asc, db, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
+import { and, asc, db, eq, isNull, not, or, schema, sql } from '@orbit/db';
 import {
   PROJECT_HEALTHS,
   PROJECT_STATUSES,
@@ -9,7 +9,7 @@ import type { Principal } from '@orbit/shared/policy';
 import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import { baseAnalyticsPredicate, resolveOverviewQuery } from './drilldown.ts';
-import { bucketDates } from './filter.ts';
+import { bucketDates, calendarDateLabel } from './filter.ts';
 import type { AnalyticsCoverage } from './types.ts';
 
 export const PROJECT_ANALYTICS_LIMIT = 100;
@@ -31,6 +31,7 @@ export interface ProjectTeamRef {
 }
 
 export type EstimateCoverage = 'none' | 'mixed' | 'complete';
+export type ProjectEntryCoverage = 'captured' | 'current_project' | 'mixed';
 
 export interface ProjectRiskCohorts {
   readonly current: AnalyticsDrilldownCohort;
@@ -70,6 +71,7 @@ export interface ProjectAnalyticsRow {
   readonly unestimated: number;
   readonly scopeAddedIssues: number;
   readonly scopeAddedPoints: number;
+  readonly scopeAddedCoverage: ProjectEntryCoverage;
   readonly completedInRangeIssues: number;
   readonly completedInRangePoints: number;
   readonly estimateCoverage: EstimateCoverage;
@@ -92,6 +94,7 @@ export interface ProjectDeliveryPoint {
   readonly completedCohort: AnalyticsDrilldownCohort;
   readonly openCohort: AnalyticsDrilldownCohort;
   readonly addedCohort: AnalyticsDrilldownCohort;
+  readonly completedInBucketCohort: AnalyticsDrilldownCohort;
 }
 
 export interface ProjectMilestoneAnalyticsRow {
@@ -165,10 +168,16 @@ interface ProjectStatRow {
   readonly stale: number | string;
   readonly unestimated: number | string;
   readonly estimated: number | string;
-  readonly scope_added_issues: number | string;
-  readonly scope_added_points: number | string;
   readonly completed_range_issues: number | string;
   readonly completed_range_points: number | string;
+}
+
+interface ProjectAddedRow {
+  readonly [key: string]: unknown;
+  readonly project_id: string;
+  readonly scope_added_issues: number | string;
+  readonly scope_added_points: number | string;
+  readonly current_project_entries: number | string;
 }
 
 interface NextMilestoneRow {
@@ -203,7 +212,10 @@ interface MilestoneRow {
 }
 
 type AnalyticsFilterNode = AnalyticsQuery['filter']['children'][number];
-type AnalyticsFilterCondition = Extract<AnalyticsFilterNode, { readonly kind: 'condition' }>;
+interface PlanningSelection {
+  readonly matches: SQL<unknown>;
+  readonly anchored: SQL<unknown>;
+}
 
 function validProjectHealth(value: string): ProjectHealth {
   return PROJECT_HEALTHS.find((entry) => entry === value) ?? 'no_update';
@@ -213,53 +225,56 @@ function validProjectStatus(value: string): ProjectStatus {
   return PROJECT_STATUSES.find((entry) => entry === value) ?? 'backlog';
 }
 
-function filterConditions(node: AnalyticsFilterNode): readonly AnalyticsFilterCondition[] {
-  if (node.kind === 'condition') return [node];
-  return node.children.flatMap(filterConditions);
+function combineSelection(
+  node: Extract<AnalyticsFilterNode, { readonly kind: 'group' }>,
+  selections: readonly PlanningSelection[],
+): PlanningSelection {
+  const combine = node.combinator === 'or' ? or : and;
+  const matches = combine(...selections.map((selection) => selection.matches)) ?? sql`false`;
+  const anchored = or(...selections.map((selection) => selection.anchored)) ?? sql`false`;
+  return { matches, anchored };
 }
 
-function positivePlanningIds(query: AnalyticsQuery): {
-  readonly projectIds: readonly string[];
-  readonly milestoneIds: readonly string[];
-  readonly hasConditions: boolean;
-} {
-  const projectIds = new Set<string>();
-  const milestoneIds = new Set<string>();
-  const conditions = query.filter.children.flatMap(filterConditions);
-  for (const condition of conditions) {
-    if (condition.operator !== 'in' || condition.negate) continue;
-    let destination: Set<string> | undefined;
-    if (condition.property === 'project') destination = projectIds;
-    if (condition.property === 'milestone') destination = milestoneIds;
-    if (destination === undefined) continue;
-    for (const value of condition.values) if (UUID_PATTERN.test(value)) destination.add(value);
+function planningSelection(
+  node: AnalyticsFilterNode,
+  projectId: SQL<unknown>,
+  milestoneId?: SQL<unknown>,
+): PlanningSelection {
+  if (node.kind === 'group') {
+    return combineSelection(
+      node,
+      node.children.map((child) => planningSelection(child, projectId, milestoneId)),
+    );
   }
+  if (node.operator !== 'in') return { matches: sql`false`, anchored: sql`false` };
+  const ids = node.values.filter((value) => UUID_PATTERN.test(value));
+  if (ids.length === 0) return { matches: sql`false`, anchored: sql`false` };
+  let positive: SQL<unknown> | undefined;
+  if (node.property === 'project') positive = sql`${projectId} in ${ids}`;
+  if (node.property === 'milestone') {
+    positive =
+      milestoneId === undefined
+        ? sql`exists (
+            select 1 from milestone planning_milestone
+            where planning_milestone.project_id = ${projectId}
+              and planning_milestone.id in ${ids}
+          )`
+        : sql`${milestoneId} in ${ids}`;
+  }
+  if (positive === undefined) return { matches: sql`false`, anchored: sql`false` };
   return {
-    projectIds: [...projectIds],
-    milestoneIds: [...milestoneIds],
-    hasConditions: conditions.length > 0,
+    matches: node.negate ? not(positive) : positive,
+    anchored: node.negate ? sql`false` : positive,
   };
 }
 
-function explicitProjectPredicate(
-  planning: ReturnType<typeof positivePlanningIds>,
-): SQL<unknown> | undefined {
-  const filters: SQL<unknown>[] = [];
-  if (planning.projectIds.length > 0) {
-    filters.push(inArray(schema.project.id, [...planning.projectIds]));
-  }
-  if (planning.milestoneIds.length > 0) {
-    filters.push(
-      inArray(
-        schema.project.id,
-        db
-          .select({ id: schema.milestone.projectId })
-          .from(schema.milestone)
-          .where(inArray(schema.milestone.id, [...planning.milestoneIds])),
-      ),
-    );
-  }
-  return filters.length === 0 ? undefined : or(...filters);
+function explicitSelection(selection: PlanningSelection): SQL<unknown> {
+  return and(selection.matches, selection.anchored) ?? sql`false`;
+}
+
+function containsMilestoneCondition(node: AnalyticsFilterNode): boolean {
+  if (node.kind === 'condition') return node.property === 'milestone';
+  return node.children.some(containsMilestoneCondition);
 }
 
 async function projectRows(
@@ -267,19 +282,15 @@ async function projectRows(
   query: AnalyticsQuery,
   base: SQL<unknown>,
 ): Promise<readonly ProjectBaseRow[]> {
-  const planning = positivePlanningIds(query);
-  const explicit = explicitProjectPredicate(planning);
+  const selection = planningSelection(query.filter, sql`${schema.project.id}`);
+  const explicit = explicitSelection(selection);
   const issueMatch = sql`exists (
     select 1 from issue
     join workflow_state on workflow_state.id = issue.state_id
     where ${base} and issue.project_id = ${schema.project.id}
   )`;
-  const focus =
-    query.focus.projectId === undefined ? undefined : eq(schema.project.id, query.focus.projectId);
   const eligibility =
-    planning.hasConditions || focus !== undefined
-      ? (or(issueMatch, explicit, focus) ?? sql`false`)
-      : sql`true`;
+    query.filter.children.length === 0 ? sql`true` : (or(issueMatch, explicit) ?? sql`false`);
   const filters: SQL<unknown>[] = [
     eq(schema.project.organizationId, principal.organizationId),
     eligibility,
@@ -337,25 +348,6 @@ async function teamsByProject(
   return grouped;
 }
 
-function activityProjectId(): SQL<unknown> {
-  return sql`coalesce(project_activity.to_value ->> 'id', project_activity.to_value #>> '{}')`;
-}
-
-function projectAddedPredicate(from: Date, to: Date): SQL<unknown> {
-  return sql`(
-    (issue.created_at >= ${from.toISOString()}::timestamptz
-      and issue.created_at < ${to.toISOString()}::timestamptz)
-    or exists (
-      select 1 from issue_activity project_activity
-      where project_activity.issue_id = issue.id
-        and project_activity.field = 'projectId'
-        and ${activityProjectId()} = issue.project_id
-        and project_activity.created_at >= ${from.toISOString()}::timestamptz
-        and project_activity.created_at < ${to.toISOString()}::timestamptz
-    )
-  )`;
-}
-
 async function projectStats(
   projectIds: readonly string[],
   base: SQL<unknown>,
@@ -365,7 +357,6 @@ async function projectStats(
   to: Date,
 ): Promise<ReadonlyMap<string, ProjectStatRow>> {
   if (projectIds.length === 0) return new Map();
-  const added = projectAddedPredicate(from, to);
   const open = sql`workflow_state.category not in ('completed', 'canceled')`;
   const wip = sql`workflow_state.category in ('started', 'review')`;
   const completed = sql`workflow_state.category = 'completed'`;
@@ -391,8 +382,6 @@ async function projectStats(
       count(*) filter (where ${open} and issue.updated_at < ${staleBefore}::timestamptz) as stale,
       count(*) filter (where ${open} and issue.estimate is null) as unestimated,
       count(*) filter (where issue.estimate is not null) as estimated,
-      count(*) filter (where ${added}) as scope_added_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${added}), 0) as scope_added_points,
       count(*) filter (
         where issue.completed_at >= ${from.toISOString()}::timestamptz
           and issue.completed_at < ${to.toISOString()}::timestamptz
@@ -409,25 +398,109 @@ async function projectStats(
   return new Map(rows.map((row) => [row.project_id, row]));
 }
 
-async function nextMilestones(
+async function projectAddedStats(
   projectIds: readonly string[],
+  base: SQL<unknown>,
+  from: Date,
+  to: Date,
+): Promise<ReadonlyMap<string, ProjectAddedRow>> {
+  if (projectIds.length === 0) return new Map();
+  const rows = await db.execute<ProjectAddedRow>(sql`
+    with filtered as materialized (
+      select issue.* from issue
+      join workflow_state on workflow_state.id = issue.state_id
+      where ${base}
+    ), entries as (
+      select issue.id as issue_id,
+        coalesce(
+          (
+            select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
+            from issue_activity first_project
+            where first_project.issue_id = issue.id and first_project.field = 'projectId'
+            order by first_project.created_at, first_project.id
+            limit 1
+          ),
+          issue.project_id
+        ) as project_id,
+        issue.estimate,
+        not exists (
+          select 1 from issue_activity project_history
+          where project_history.issue_id = issue.id and project_history.field = 'projectId'
+        ) as current_project_entry
+      from filtered issue
+      where issue.created_at >= ${from.toISOString()}::timestamptz
+        and issue.created_at < ${to.toISOString()}::timestamptz
+      union all
+      select issue.id as issue_id,
+        coalesce(project_entry.to_value ->> 'id', project_entry.to_value #>> '{}') as project_id,
+        issue.estimate,
+        false as current_project_entry
+      from filtered issue
+      join issue_activity project_entry on project_entry.issue_id = issue.id
+      where project_entry.field = 'projectId'
+        and project_entry.created_at >= ${from.toISOString()}::timestamptz
+        and project_entry.created_at < ${to.toISOString()}::timestamptz
+    ), deduplicated as (
+      select project_id, issue_id, max(estimate) as estimate,
+        bool_or(current_project_entry) as current_project_entry
+      from entries
+      where project_id in ${projectIds}
+      group by project_id, issue_id
+    )
+    select project_id,
+      count(*) as scope_added_issues,
+      coalesce(sum(coalesce(estimate, 0)), 0) as scope_added_points,
+      count(*) filter (where current_project_entry) as current_project_entries
+    from deduplicated
+    group by project_id
+  `);
+  return new Map(rows.map((row) => [row.project_id, row]));
+}
+
+async function nextMilestones(
+  organizationId: string,
+  projectIds: readonly string[],
+  query: AnalyticsQuery,
   base: SQL<unknown>,
 ): Promise<ReadonlyMap<string, NextMilestoneRow>> {
   if (projectIds.length === 0) return new Map();
+  const selection = planningSelection(
+    query.filter,
+    sql`${schema.milestone.projectId}`,
+    sql`${schema.milestone.id}`,
+  );
+  const selectedPredicate = containsMilestoneCondition(query.filter)
+    ? (or(
+        sql`exists (
+          select 1 from issue
+          join workflow_state on workflow_state.id = issue.state_id
+          where ${base} and issue.milestone_id = ${schema.milestone.id}
+        )`,
+        explicitSelection(selection),
+      ) ?? sql`false`)
+    : sql`true`;
+  const archivePredicate = query.includeArchived ? sql`true` : sql`issue.archived_at is null`;
+  const canceledPredicate = query.includeCanceled
+    ? sql`true`
+    : sql`workflow_state.category <> 'canceled'`;
   const rows = await db.execute<NextMilestoneRow>(sql`
-    with filtered as materialized (
+    with actual as materialized (
       select issue.milestone_id, workflow_state.category
       from issue
       join workflow_state on workflow_state.id = issue.state_id
-      where ${base} and issue.project_id in ${projectIds}
+      where issue.organization_id = ${organizationId}
+        and issue.project_id in ${projectIds}
+        and ${archivePredicate}
+        and ${canceledPredicate}
     ), milestone_progress as (
       select milestone.project_id, milestone.id, milestone.name, milestone.target_date,
         milestone.sort_order, milestone.created_at,
-        count(filtered.milestone_id) as scope,
-        count(filtered.milestone_id) filter (where filtered.category = 'completed') as completed
+        count(actual.milestone_id) as scope,
+        count(actual.milestone_id) filter (where actual.category = 'completed') as completed
       from milestone
-      left join filtered on filtered.milestone_id = milestone.id
+      left join actual on actual.milestone_id = milestone.id
       where milestone.project_id in ${projectIds}
+        and ${selectedPredicate}
       group by milestone.id
     ), ranked as (
       select milestone_progress.*,
@@ -478,20 +551,34 @@ function emptyStat(projectId: string): ProjectStatRow {
     stale: 0,
     unestimated: 0,
     estimated: 0,
-    scope_added_issues: 0,
-    scope_added_points: 0,
     completed_range_issues: 0,
     completed_range_points: 0,
   };
 }
 
+function emptyAdded(projectId: string): ProjectAddedRow {
+  return {
+    project_id: projectId,
+    scope_added_issues: 0,
+    scope_added_points: 0,
+    current_project_entries: 0,
+  };
+}
+
+function projectEntryCoverage(added: number, current: number): ProjectEntryCoverage {
+  if (added === 0 || current === 0) return 'captured';
+  return added === current ? 'current_project' : 'mixed';
+}
+
 function analyticsRow(
   project: ProjectBaseRow,
   stats: ReadonlyMap<string, ProjectStatRow>,
+  addedStats: ReadonlyMap<string, ProjectAddedRow>,
   teams: ReadonlyMap<string, readonly ProjectTeamRef[]>,
   milestones: ReadonlyMap<string, NextMilestoneRow>,
 ): ProjectAnalyticsRow {
   const stat = stats.get(project.id) ?? emptyStat(project.id);
+  const added = addedStats.get(project.id) ?? emptyAdded(project.id);
   const scopeIssues = Number(stat.scope_issues);
   const next = milestones.get(project.id);
   return {
@@ -521,8 +608,12 @@ function analyticsRow(
     overdue: Number(stat.overdue),
     stale: Number(stat.stale),
     unestimated: Number(stat.unestimated),
-    scopeAddedIssues: Number(stat.scope_added_issues),
-    scopeAddedPoints: Number(stat.scope_added_points),
+    scopeAddedIssues: Number(added.scope_added_issues),
+    scopeAddedPoints: Number(added.scope_added_points),
+    scopeAddedCoverage: projectEntryCoverage(
+      Number(added.scope_added_issues),
+      Number(added.current_project_entries),
+    ),
     completedInRangeIssues: Number(stat.completed_range_issues),
     completedInRangePoints: Number(stat.completed_range_points),
     estimateCoverage: estimateCoverage(scopeIssues, Number(stat.estimated)),
@@ -533,28 +624,27 @@ function analyticsRow(
   };
 }
 
-function explicitMilestoneIds(query: AnalyticsQuery): readonly string[] {
-  return positivePlanningIds(query).milestoneIds;
-}
-
 async function milestoneRows(
   organizationId: string,
   projectId: string,
   query: AnalyticsQuery,
   base: SQL<unknown>,
 ): Promise<readonly MilestoneRow[]> {
-  const selected = explicitMilestoneIds(query);
-  const selectedPredicate =
-    selected.length === 0
-      ? sql`true`
-      : or(
-          inArray(schema.milestone.id, [...selected]),
-          sql`exists (
-            select 1 from issue
-            join workflow_state on workflow_state.id = issue.state_id
-            where ${base} and issue.milestone_id = ${schema.milestone.id}
-          )`,
-        );
+  const selection = planningSelection(
+    query.filter,
+    sql`${schema.milestone.projectId}`,
+    sql`${schema.milestone.id}`,
+  );
+  const selectedPredicate = containsMilestoneCondition(query.filter)
+    ? (or(
+        sql`exists (
+          select 1 from issue
+          join workflow_state on workflow_state.id = issue.state_id
+          where ${base} and issue.milestone_id = ${schema.milestone.id}
+        )`,
+        explicitSelection(selection),
+      ) ?? sql`false`)
+    : sql`true`;
   return await db.execute<MilestoneRow>(sql`
     with filtered as materialized (
       select issue.id, issue.milestone_id, issue.estimate, workflow_state.category
@@ -616,7 +706,7 @@ async function deliveryRows(
   const starts = bucketDates(resolved.resolvedRange, resolved.bucket);
   const values = starts.map((start, index) => {
     const end = starts[index + 1] ?? resolved.to;
-    return sql`(${start.toISOString()}::timestamptz, ${end.toISOString()}::timestamptz, ${start.toISOString().slice(0, 10)})`;
+    return sql`(${start.toISOString()}::timestamptz, ${end.toISOString()}::timestamptz, ${calendarDateLabel(start, resolved.timezone)})`;
   });
   if (values.length === 0) return [];
   return await db.execute<DeliveryRow>(sql`
@@ -624,29 +714,54 @@ async function deliveryRows(
     filtered as materialized (
       select issue.* from issue
       join workflow_state on workflow_state.id = issue.state_id
-      where ${base} and issue.project_id = ${projectId}
+      where ${base}
     )
     select buckets.date,
       count(issue.id) filter (
         where issue.created_at < buckets.bucket_end
+          and issue.project_id = ${projectId}
           and (issue.canceled_at is null or issue.canceled_at >= buckets.bucket_end)
       ) as scope,
       count(issue.id) filter (
-        where issue.started_at is not null and issue.started_at < buckets.bucket_end
+        where issue.project_id = ${projectId}
+          and issue.started_at is not null and issue.started_at < buckets.bucket_end
       ) as started,
       count(issue.id) filter (
-        where issue.completed_at is not null and issue.completed_at < buckets.bucket_end
+        where issue.project_id = ${projectId}
+          and issue.completed_at is not null and issue.completed_at < buckets.bucket_end
       ) as completed,
       count(issue.id) filter (
         where issue.created_at < buckets.bucket_end
+          and issue.project_id = ${projectId}
           and (issue.completed_at is null or issue.completed_at >= buckets.bucket_end)
           and (issue.canceled_at is null or issue.canceled_at >= buckets.bucket_end)
       ) as open,
       count(issue.id) filter (
-        where issue.created_at >= buckets.bucket_start and issue.created_at < buckets.bucket_end
+        where exists (
+          select 1 from issue_activity project_entry
+          where project_entry.issue_id = issue.id
+            and project_entry.field = 'projectId'
+            and coalesce(project_entry.to_value ->> 'id', project_entry.to_value #>> '{}') = ${projectId}
+            and project_entry.created_at >= buckets.bucket_start
+            and project_entry.created_at < buckets.bucket_end
+        ) or (
+          issue.created_at >= buckets.bucket_start
+          and issue.created_at < buckets.bucket_end
+          and coalesce(
+            (
+              select coalesce(first_project.from_value ->> 'id', first_project.from_value #>> '{}')
+              from issue_activity first_project
+              where first_project.issue_id = issue.id and first_project.field = 'projectId'
+              order by first_project.created_at, first_project.id
+              limit 1
+            ),
+            issue.project_id
+          ) = ${projectId}
+        )
       ) as added,
       count(issue.id) filter (
-        where issue.completed_at >= buckets.bucket_start and issue.completed_at < buckets.bucket_end
+        where issue.project_id = ${projectId}
+          and issue.completed_at >= buckets.bucket_start and issue.completed_at < buckets.bucket_end
       ) as completed_in_bucket
     from buckets
     left join filtered issue on issue.created_at < buckets.bucket_end
@@ -669,6 +784,10 @@ function mapDelivery(projectId: string, row: DeliveryRow): ProjectDeliveryPoint 
     completedCohort: { cohort: `project-delivery-completed:${projectId}`, bucket: row.date },
     openCohort: { cohort: `project-delivery-open:${projectId}`, bucket: row.date },
     addedCohort: { cohort: `project-delivery-added:${projectId}`, bucket: row.date },
+    completedInBucketCohort: {
+      cohort: `project-delivery-completed-bucket:${projectId}`,
+      bucket: row.date,
+    },
   };
 }
 
@@ -713,12 +832,13 @@ export async function loadProjectAnalytics(
   const base = baseAnalyticsPredicate(principal, resolved);
   const baseRows = await projectRows(principal, query, base);
   const projectIds = baseRows.map((row) => row.id);
-  const [teams, stats, next] = await Promise.all([
+  const [teams, stats, addedStats, next] = await Promise.all([
     teamsByProject(projectIds),
     projectStats(projectIds, base, resolved.asOf, resolved.timezone, resolved.from, resolved.to),
-    nextMilestones(projectIds, base),
+    projectAddedStats(projectIds, base, resolved.from, resolved.to),
+    nextMilestones(principal.organizationId, projectIds, query, base),
   ]);
-  const projects = baseRows.map((row) => analyticsRow(row, stats, teams, next));
+  const projects = baseRows.map((row) => analyticsRow(row, stats, addedStats, teams, next));
   const focusId = query.focus.projectId;
   const focusedProject =
     focusId === undefined ? undefined : projects.find((project) => project.id === focusId);

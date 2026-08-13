@@ -28,6 +28,9 @@ function query(
     readonly milestoneId?: string;
     readonly includeArchived?: boolean;
     readonly focusProjectId?: string;
+    readonly filter?: AnalyticsQuery['filter'];
+    readonly from?: string;
+    readonly to?: string;
   } = {},
 ): AnalyticsQuery {
   const children: AnalyticsQuery['filter']['children'][number][] = [];
@@ -51,12 +54,36 @@ function query(
   }
   return analyticsQuerySchema.parse({
     lens: 'projects',
-    range: { preset: 'custom', from: '2026-08-01', to: '2026-08-10' },
+    range: {
+      preset: 'custom',
+      from: input.from ?? '2026-08-01',
+      to: input.to ?? '2026-08-10',
+    },
     compare: 'none',
     measure: input.measure ?? 'issues',
     includeArchived: input.includeArchived ?? false,
-    filter: { kind: 'group', combinator: 'and', children },
+    filter: input.filter ?? { kind: 'group', combinator: 'and', children },
     focus: input.focusProjectId === undefined ? {} : { projectId: input.focusProjectId },
+  });
+}
+
+async function projectActivity(
+  issueId: string,
+  from: { readonly id: string; readonly name: string },
+  to: { readonly id: string; readonly name: string },
+  createdAt: string,
+): Promise<void> {
+  await db.insert(schema.issueActivity).values({
+    id: newId(),
+    organizationId: workspace.organizationId,
+    issueId,
+    actorType: 'user',
+    actorId: workspace.adminUser.id,
+    actorName: workspace.adminUser.name,
+    field: 'projectId',
+    fromValue: from,
+    toValue: to,
+    createdAt: new Date(createdAt),
   });
 }
 
@@ -112,6 +139,255 @@ beforeEach(async () => {
 });
 
 describe('loadProjectAnalytics', () => {
+  it('preserves nested filter logic and never lets focus bypass the active predicate', async () => {
+    const alpha = await createProject(workspace.admin, {
+      name: 'Alpha',
+      teamIds: [workspace.teamId],
+    });
+    const beta = await createProject(workspace.admin, {
+      name: 'Beta',
+      teamIds: [workspace.teamId],
+    });
+    const betaMilestone = await createMilestone(workspace.admin, {
+      projectId: beta.project.id,
+      name: 'Beta milestone',
+    });
+    await issue(
+      workspace.admin,
+      { title: 'Alpha work', projectId: alpha.project.id },
+      { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'Beta work', projectId: beta.project.id },
+      { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+    );
+    const condition = (
+      property: 'project' | 'milestone',
+      values: readonly string[],
+      negate = false,
+    ): AnalyticsQuery['filter']['children'][number] => ({
+      kind: 'condition',
+      property,
+      operator: 'in',
+      values: [...values],
+      negate,
+    });
+    const mismatch = query({
+      focusProjectId: beta.project.id,
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          condition('project', [alpha.project.id]),
+          condition('milestone', [betaMilestone.milestone.id]),
+        ],
+      },
+    });
+    const nested = query({
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          condition('project', [alpha.project.id]),
+          {
+            kind: 'group',
+            combinator: 'or',
+            children: [
+              condition('milestone', [betaMilestone.milestone.id]),
+              condition('project', [alpha.project.id], true),
+            ],
+          },
+        ],
+      },
+    });
+    const focusedMismatch = await loadProjectAnalytics(workspace.admin, mismatch, {
+      now,
+      timezone: 'UTC',
+    });
+    const nestedMismatch = await loadProjectAnalytics(workspace.admin, nested, {
+      now,
+      timezone: 'UTC',
+    });
+    const staleFocus = await loadProjectAnalytics(
+      workspace.admin,
+      query({ projectId: alpha.project.id, focusProjectId: beta.project.id }),
+      { now, timezone: 'UTC' },
+    );
+
+    expect(focusedMismatch.projects).toEqual([]);
+    expect(focusedMismatch.focused).toBeNull();
+    expect(nestedMismatch.projects).toEqual([]);
+    expect(staleFocus.projects.map((row) => row.id)).toEqual([alpha.project.id]);
+    expect(staleFocus.focused).toBeNull();
+  });
+
+  it('chooses the next milestone from actual scope before applying explicit milestone selection', async () => {
+    const project = await createProject(workspace.admin, {
+      name: 'Launch',
+      teamIds: [workspace.teamId],
+    });
+    const alpha = await createMilestone(workspace.admin, {
+      projectId: project.project.id,
+      name: 'Alpha',
+    });
+    const beta = await createMilestone(workspace.admin, {
+      projectId: project.project.id,
+      name: 'Beta',
+    });
+    await issue(
+      workspace.admin,
+      {
+        title: 'Alpha complete',
+        projectId: project.project.id,
+        milestoneId: alpha.milestone.id,
+        stateId: stateNamed(workspace, 'Done').id,
+      },
+      {
+        createdAt: new Date('2026-07-01T00:00:00.000Z'),
+        completedAt: new Date('2026-07-02T00:00:00.000Z'),
+      },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'Beta open', projectId: project.project.id, milestoneId: beta.milestone.id },
+      { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+    );
+
+    const all = await loadProjectAnalytics(
+      workspace.admin,
+      query({ focusProjectId: project.project.id }),
+      { now, timezone: 'UTC' },
+    );
+    const selected = await loadProjectAnalytics(
+      workspace.admin,
+      query({ milestoneId: beta.milestone.id, focusProjectId: project.project.id }),
+      { now, timezone: 'UTC' },
+    );
+
+    expect(projectRow(all, project.project.id).nextMilestoneId).toBe(beta.milestone.id);
+    expect(all.focused?.milestones).toEqual([
+      expect.objectContaining({ id: alpha.milestone.id, scopeIssues: 1, completedIssues: 1 }),
+      expect.objectContaining({ id: beta.milestone.id, scopeIssues: 1, completedIssues: 0 }),
+    ]);
+    expect(projectRow(selected, project.project.id).nextMilestoneId).toBe(beta.milestone.id);
+    expect(selected.focused?.milestones).toEqual([
+      expect.objectContaining({ id: beta.milestone.id, scopeIssues: 1, completedIssues: 0 }),
+    ]);
+  });
+
+  it('attributes scope entry from project history and reconciles exact evidence', async () => {
+    const alpha = await createProject(workspace.admin, {
+      name: 'Alpha',
+      teamIds: [workspace.teamId],
+    });
+    const beta = await createProject(workspace.admin, {
+      name: 'Beta',
+      teamIds: [workspace.teamId],
+    });
+    const movedIn = await issue(
+      workspace.admin,
+      { title: 'Moved in during range', projectId: beta.project.id },
+      { createdAt: new Date('2026-07-01T00:00:00.000Z') },
+    );
+    await projectActivity(movedIn, alpha.project, beta.project, '2026-08-05T00:00:00.000Z');
+    const movedAfter = await issue(
+      workspace.admin,
+      { title: 'Created in Alpha then moved later', projectId: beta.project.id },
+      { createdAt: new Date('2026-08-03T00:00:00.000Z') },
+    );
+    await projectActivity(movedAfter, alpha.project, beta.project, '2026-08-12T00:00:00.000Z');
+    const movedBefore = await issue(
+      workspace.admin,
+      { title: 'Moved before range', projectId: beta.project.id },
+      { createdAt: new Date('2026-07-01T00:00:00.000Z') },
+    );
+    await projectActivity(movedBefore, alpha.project, beta.project, '2026-07-15T00:00:00.000Z');
+    await issue(
+      workspace.admin,
+      { title: 'Current-project attribution', projectId: beta.project.id },
+      { createdAt: new Date('2026-08-04T00:00:00.000Z') },
+    );
+
+    const result = await loadProjectAnalytics(workspace.admin, query(), { now, timezone: 'UTC' });
+    const alphaRow = projectRow(result, alpha.project.id);
+    const betaRow = projectRow(result, beta.project.id);
+
+    expect(alphaRow.scopeAddedIssues).toBe(1);
+    expect(betaRow.scopeAddedIssues).toBe(2);
+    expect(betaRow.scopeAddedCoverage).toBe('mixed');
+    for (const row of [alphaRow, betaRow]) {
+      const drilldown = await listAnalyticsDrilldown(
+        workspace.admin,
+        { query: query(), cohort: row.cohorts.scopeAdded },
+        { now, timezone: 'UTC', cursorSecret: 'project-analytics-secret' },
+      );
+      expect(drilldown.total).toBe(row.scopeAddedIssues);
+    }
+  });
+
+  it('labels delivery buckets in the reporting calendar and reconciles bucket completions', async () => {
+    const project = await createProject(workspace.admin, {
+      name: 'Calendar launch',
+      teamIds: [workspace.teamId],
+    });
+    await issue(
+      workspace.admin,
+      {
+        title: 'Local completion',
+        projectId: project.project.id,
+        stateId: stateNamed(workspace, 'Done').id,
+      },
+      {
+        createdAt: new Date('2026-07-31T19:00:00.000Z'),
+        completedAt: new Date('2026-08-01T04:00:00.000Z'),
+      },
+    );
+    const kolkata = await loadProjectAnalytics(
+      workspace.admin,
+      query({ focusProjectId: project.project.id, from: '2026-08-01', to: '2026-08-03' }),
+      { now, timezone: 'Asia/Kolkata' },
+    );
+    const dst = await loadProjectAnalytics(
+      workspace.admin,
+      query({ focusProjectId: project.project.id, from: '2026-03-07', to: '2026-03-10' }),
+      { now, timezone: 'America/New_York' },
+    );
+    const first = kolkata.focused?.delivery[0];
+    if (first === undefined) throw new Error('Missing Kolkata delivery bucket.');
+
+    expect(kolkata.focused?.delivery.map((point) => point.date)).toEqual([
+      '2026-08-01',
+      '2026-08-02',
+      '2026-08-03',
+    ]);
+    expect(dst.focused?.delivery.map((point) => point.date)).toEqual([
+      '2026-03-07',
+      '2026-03-08',
+      '2026-03-09',
+      '2026-03-10',
+    ]);
+    const completed = await listAnalyticsDrilldown(
+      workspace.admin,
+      {
+        query: query({ from: '2026-08-01', to: '2026-08-03' }),
+        cohort: first.completedInBucketCohort,
+      },
+      { now, timezone: 'Asia/Kolkata', cursorSecret: 'project-analytics-secret' },
+    );
+    expect(completed.total).toBe(first.completedInBucket);
+    await expect(
+      listAnalyticsDrilldown(
+        workspace.admin,
+        {
+          query: query({ from: '2026-08-01', to: '2026-08-03' }),
+          cohort: { cohort: first.completedInBucketCohort.cohort },
+        },
+        { now, timezone: 'Asia/Kolkata', cursorSecret: 'project-analytics-secret' },
+      ),
+    ).rejects.toThrow('needs a bucket');
+  });
+
   it('summarizes manual health, progress, risk, scope additions, and focused milestone evidence', async () => {
     const secondTeam = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
     const created = await createProject(workspace.admin, {

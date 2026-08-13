@@ -46,6 +46,11 @@ function dateParts(date: Date, timezone: string): CalendarDate {
   return { year, month, day };
 }
 
+export function calendarDateLabel(date: Date, timezone: string): string {
+  const value = dateParts(validDate(date, 'The calendar date'), validTimezone(timezone));
+  return `${String(value.year).padStart(4, '0')}-${String(value.month).padStart(2, '0')}-${String(value.day).padStart(2, '0')}`;
+}
+
 function dateTimeAsUtc(date: Date, timezone: string): number {
   const parts = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {
     timeZone: timezone,

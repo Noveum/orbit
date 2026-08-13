@@ -10,7 +10,7 @@
 - Blocked work is current open work with a stored `blocked_by` relation.
 - Overdue work is current open work whose due date is before the reporting day in the resolved timezone.
 - Stale work is current open work whose update time is more than 14 days before `asOf`.
-- Scope added in range includes issues created in the selected project during the half-open reporting interval and captured moves into that project during the same interval.
+- Scope added in range means entered project in range. Captured project-change activities count at their movement time. Creation counts against the project reconstructed from the earliest later project change, or uses the current project when no history exists. `scopeAddedCoverage` labels captured, current-project, and mixed attribution.
 - Completed in range uses the current final completion timestamp in the half-open reporting interval.
 - The next milestone is the first incomplete or empty milestone in stable project order. A completed milestone does not hide a later empty milestone.
 - Project and milestone advanced filters use the same normalized issue predicate as every aggregate and drilldown. An explicitly selected empty milestone keeps its project and empty focused milestone row visible.
@@ -20,7 +20,13 @@
 
 Focused detail returns a bounded delivery series, milestone rows, and recent manual health updates. Delivery bucket starts come from the shared resolver and retain the existing 120-bucket ceiling. Each delivery point exposes cumulative scope, started, completed, and open counts plus bucket additions and completions. Milestone progress exposes issue and point percentages independently and returns null rather than a fake percentage for empty scope.
 
-Every project risk, range metric, delivery point, and milestone row carries a semantic cohort accepted by `listAnalyticsDrilldown`. The drilldown combines that cohort with the same normalized query and workspace analytics predicate, so evidence totals reconcile without returning raw issue rows in the portfolio payload.
+Every project risk, range metric, delivery point, and milestone row carries a semantic cohort accepted by `listAnalyticsDrilldown`. Cumulative completion and completion inside one delivery bucket use distinct strict cohorts. The drilldown combines each cohort with the same normalized query and workspace analytics predicate, so evidence totals reconcile without returning raw issue rows in the portfolio payload.
+
+Project selection preserves the normalized Boolean filter tree. Matching issue rows use the complete shared predicate. Explicit empty project and milestone selection evaluates nested AND, OR, and negation structure instead of flattening positive identifiers. Focus only selects detail from the eligible portfolio and never bypasses an active filter.
+
+Next milestone selection computes actual non-canceled milestone scope independently from the current issue filter. Explicit milestone logic is then applied consistently to the summary choice and focused rows, so a completed earlier milestone cannot become an apparent empty milestone when a later selected milestone is next.
+
+Delivery bucket labels use the resolved reporting calendar rather than UTC date slicing. This keeps local dates stable in positive-offset zones and across daylight-saving transitions.
 
 ## Bounds and ordering
 
@@ -45,9 +51,9 @@ The consolidated project metrics statement completed in 0.330 ms after 3.332 ms 
 
 ## GREEN
 
-- GREEN: the focused Task 9 suite passed 5 tests with 44 assertions.
+- GREEN: the focused Task 9 suite passed 9 tests with 62 assertions after review fixes.
 - GREEN: focused overview, drilldown, and project regressions passed 18 tests with 158 assertions before the final reconciliation expansion.
-- GREEN: the full core real-PostgreSQL suite passed 893 tests with 2,440 assertions.
+- GREEN: the full core real-PostgreSQL suite passed 897 tests with 2,458 assertions after review fixes.
 - The first monorepo verification passed every static and type gate, then found five existing web sprint tests running against a stale local base database that lacked `cycle_progress_snapshot.captured_at`.
 - `bun run db:test-setup` refreshed all six base test schemas before the final isolated verification run.
 - The fresh-lane monorepo verification again passed every static and type gate and 1,961 web tests, then reported the same five existing sprint index, start, complete, and snapshot failures. A standalone run reproduced only those five failures with 24 related tests passing. Read-only inspection confirmed that both the web template and disposable lane lacked `cycle_issue_membership` and `cycle_progress_snapshot.captured_at`. The schema setup command exited successfully without materializing those objects, while direct Drizzle push reached an existing rename conflict that requires an interactive terminal. The Task 9 focused suite and full core suite remained green. No Task 9 file is on those failing web paths.
@@ -55,3 +61,5 @@ The consolidated project metrics statement completed in 0.330 ms after 3.332 ms 
 ## DONE
 
 Task 9 tests cover manual health labeling, status and target dates, issue and point progress, mixed estimates, open and completed work, blocked, overdue, stale, and unestimated counts, range additions and completions, multi-team projects, next milestone selection, empty milestones, project and milestone filters, archived toggles, workspace-wide guest, contributor, member, and admin visibility, organization isolation, stable portfolio ordering and bounds, and semantic risk, milestone, and delivery reconciliation through drilldown.
+
+Review regression tests additionally cover AND mismatch, nested OR and negation, stale focus, actual Alpha completion with Beta selected as next, project-at-creation reconstruction for moves before and after the reporting range, explicit entry coverage, Asia/Kolkata and America/New_York bucket labels, strict completed-in-bucket parsing, and completed-in-bucket drilldown reconciliation.
