@@ -34,6 +34,39 @@ export const ANALYTICS_OVERVIEW_COHORTS = [
   'delivery-open',
 ] as const;
 
+const PROJECT_COHORT_METRICS = [
+  'current',
+  'open',
+  'completed',
+  'blocked',
+  'overdue',
+  'stale',
+  'unestimated',
+  'added',
+  'completed-range',
+  'delivery-scope',
+  'delivery-started',
+  'delivery-completed',
+  'delivery-open',
+  'delivery-added',
+] as const;
+
+type ProjectCohortMetric = (typeof PROJECT_COHORT_METRICS)[number];
+
+interface ProjectCohort {
+  readonly kind: 'project';
+  readonly metric: ProjectCohortMetric;
+  readonly id: string;
+}
+
+interface MilestoneCohort {
+  readonly kind: 'milestone';
+  readonly metric: 'current' | 'completed';
+  readonly id: string;
+}
+
+type PlanningCohort = ProjectCohort | MilestoneCohort;
+
 export type AnalyticsOverviewCohortKey =
   | (typeof ANALYTICS_OVERVIEW_COHORTS)[number]
   | `state:${string}`
@@ -263,6 +296,35 @@ function validDimensionCohort(value: string): boolean {
   return priority !== null && PRIORITIES.some((entry) => String(entry) === priority[1]);
 }
 
+function planningCohort(value: string): PlanningCohort | null {
+  const project = /^project-([a-z-]+):(.+)$/.exec(value);
+  const projectMetric = project?.[1];
+  const projectId = project?.[2];
+  if (
+    projectMetric !== undefined &&
+    projectId !== undefined &&
+    UUID_PATTERN.test(projectId) &&
+    PROJECT_COHORT_METRICS.some((metric) => metric === projectMetric)
+  ) {
+    return { kind: 'project', metric: projectMetric as ProjectCohortMetric, id: projectId };
+  }
+  const milestone = /^milestone-(current|completed):(.+)$/.exec(value);
+  const milestoneMetric = milestone?.[1];
+  const milestoneId = milestone?.[2];
+  if (
+    milestoneMetric !== undefined &&
+    milestoneId !== undefined &&
+    UUID_PATTERN.test(milestoneId)
+  ) {
+    return {
+      kind: 'milestone',
+      metric: milestoneMetric === 'completed' ? 'completed' : 'current',
+      id: milestoneId,
+    };
+  }
+  return null;
+}
+
 function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCohort {
   const bucketed: ReadonlySet<string> = new Set([
     'delivery-created',
@@ -281,6 +343,17 @@ function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCoh
     if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
     return cohort;
   }
+  const planning = planningCohort(cohort.cohort);
+  if (planning !== null) {
+    const bucketedProject = planning.kind === 'project' && planning.metric.startsWith('delivery-');
+    if (bucketedProject && cohort.bucket === undefined) {
+      throw validationFailed('That analytics cohort needs a bucket.');
+    }
+    if (!bucketedProject && cohort.bucket !== undefined) {
+      throw validationFailed('That analytics cohort has no bucket.');
+    }
+    return cohort;
+  }
   if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
   if (validDimensionCohort(cohort.cohort)) return cohort;
   throw validationFailed('That analytics cohort is not supported.');
@@ -288,6 +361,24 @@ function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCoh
 
 function openPredicate(): SQL {
   return sql`${schema.workflowState.category} not in ('completed', 'canceled')`;
+}
+
+function projectAddedPredicate(projectId: string, from: Date, to: Date): SQL<unknown> {
+  return sql`(
+    (${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz
+      and ${schema.issue.createdAt} < ${to.toISOString()}::timestamptz)
+    or exists (
+      select 1 from issue_activity project_activity
+      where project_activity.issue_id = ${schema.issue.id}
+        and project_activity.field = 'projectId'
+        and coalesce(
+          project_activity.to_value ->> 'id',
+          project_activity.to_value #>> '{}'
+        ) = ${projectId}
+        and project_activity.created_at >= ${from.toISOString()}::timestamptz
+        and project_activity.created_at < ${to.toISOString()}::timestamptz
+    )
+  )`;
 }
 
 function bucketRange(resolved: ResolvedAnalyticsQuery, bucket: string): [Date, Date] {
@@ -299,11 +390,148 @@ function bucketRange(resolved: ResolvedAnalyticsQuery, bucket: string): [Date, D
   return [from, starts[index + 1] ?? resolved.to];
 }
 
+function projectRiskPredicate(
+  resolved: ResolvedAnalyticsQuery,
+  planning: ProjectCohort,
+  projectId: SQL<unknown>,
+): SQL<unknown> {
+  switch (planning.metric) {
+    case 'current':
+      return projectId;
+    case 'open':
+      return and(projectId, openPredicate()) ?? sql`false`;
+    case 'completed':
+      return and(projectId, sql`${schema.workflowState.category} = 'completed'`) ?? sql`false`;
+    case 'blocked':
+      return (
+        and(
+          projectId,
+          openPredicate(),
+          sql`exists (
+            select 1 from issue_relation project_risk_relation
+            where project_risk_relation.issue_id = ${schema.issue.id}
+              and project_risk_relation.type = 'blocked_by'
+          )`,
+        ) ?? sql`false`
+      );
+    case 'overdue':
+      return (
+        and(
+          projectId,
+          openPredicate(),
+          isNotNull(schema.issue.dueDate),
+          sql`${schema.issue.dueDate} < (${resolved.asOf.toISOString()}::timestamptz at time zone ${resolved.timezone})::date`,
+        ) ?? sql`false`
+      );
+    case 'stale':
+      return (
+        and(
+          projectId,
+          openPredicate(),
+          sql`${schema.issue.updatedAt} < ${new Date(
+            resolved.asOf.getTime() - STALE_DAYS * 86_400_000,
+          ).toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    case 'unestimated':
+      return and(projectId, openPredicate(), isNull(schema.issue.estimate)) ?? sql`false`;
+    case 'added':
+      return (
+        and(projectId, projectAddedPredicate(planning.id, resolved.from, resolved.to)) ?? sql`false`
+      );
+    case 'completed-range':
+      return (
+        and(
+          projectId,
+          isNotNull(schema.issue.completedAt),
+          sql`${schema.issue.completedAt} >= ${resolved.from.toISOString()}::timestamptz`,
+          sql`${schema.issue.completedAt} < ${resolved.to.toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    default:
+      return sql`false`;
+  }
+}
+
+function projectDeliveryPredicate(
+  resolved: ResolvedAnalyticsQuery,
+  cohort: AnalyticsDrilldownCohort,
+  planning: ProjectCohort,
+  projectId: SQL<unknown>,
+): SQL<unknown> {
+  if (cohort.bucket === undefined) return sql`false`;
+  const [from, to] = bucketRange(resolved, cohort.bucket);
+  switch (planning.metric) {
+    case 'delivery-scope':
+      return (
+        and(
+          projectId,
+          sql`${schema.issue.createdAt} < ${to.toISOString()}::timestamptz`,
+          sql`(${schema.issue.canceledAt} is null or ${schema.issue.canceledAt} >= ${to.toISOString()}::timestamptz)`,
+        ) ?? sql`false`
+      );
+    case 'delivery-started':
+      return (
+        and(
+          projectId,
+          isNotNull(schema.issue.startedAt),
+          sql`${schema.issue.startedAt} < ${to.toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    case 'delivery-completed':
+      return (
+        and(
+          projectId,
+          isNotNull(schema.issue.completedAt),
+          sql`${schema.issue.completedAt} < ${to.toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    case 'delivery-open':
+      return (
+        and(
+          projectId,
+          sql`${schema.issue.createdAt} < ${to.toISOString()}::timestamptz`,
+          sql`(${schema.issue.completedAt} is null or ${schema.issue.completedAt} >= ${to.toISOString()}::timestamptz)`,
+          sql`(${schema.issue.canceledAt} is null or ${schema.issue.canceledAt} >= ${to.toISOString()}::timestamptz)`,
+        ) ?? sql`false`
+      );
+    case 'delivery-added':
+      return (
+        and(
+          projectId,
+          sql`${schema.issue.createdAt} >= ${from.toISOString()}::timestamptz`,
+          sql`${schema.issue.createdAt} < ${to.toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    default:
+      return sql`false`;
+  }
+}
+
+function planningCohortPredicate(
+  resolved: ResolvedAnalyticsQuery,
+  cohort: AnalyticsDrilldownCohort,
+  planning: PlanningCohort,
+): SQL<unknown> {
+  if (planning.kind === 'milestone') {
+    const milestoneId = eq(schema.issue.milestoneId, planning.id);
+    return planning.metric === 'completed'
+      ? (and(milestoneId, sql`${schema.workflowState.category} = 'completed'`) ?? sql`false`)
+      : milestoneId;
+  }
+  const projectId = eq(schema.issue.projectId, planning.id);
+  return planning.metric.startsWith('delivery-')
+    ? projectDeliveryPredicate(resolved, cohort, planning, projectId)
+    : projectRiskPredicate(resolved, planning, projectId);
+}
+
 export function cohortPredicate(
   resolved: ResolvedAnalyticsQuery,
   cohort: AnalyticsDrilldownCohort,
   base?: SQL<unknown>,
 ): SQL<unknown> {
+  const planning = planningCohort(cohort.cohort);
+  if (planning !== null) return planningCohortPredicate(resolved, cohort, planning);
   const dimension = dimensionCohortPredicate(resolved, cohort, base);
   if (dimension !== null) return dimension;
   const interval = (column: PgColumn): SQL =>
