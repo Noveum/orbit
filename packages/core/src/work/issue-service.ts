@@ -1,5 +1,5 @@
 import type { Database } from '@orbit/db';
-import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
+import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
   ISSUE_RELATION_TYPES,
@@ -56,7 +56,7 @@ import {
   issueScopes,
   stateTimestamps,
 } from './issue-fields.ts';
-import { buildFilterFilters, today } from './issue-predicates.ts';
+import { buildIssueWhere } from './issue-query.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
@@ -71,6 +71,7 @@ export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
+export { visibleTeamFilters } from './issue-query.ts';
 export { REBALANCE_THRESHOLD };
 
 export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
@@ -1492,83 +1493,6 @@ const {
 
 export const ISSUE_LIST_COLUMNS = listColumns;
 
-export function visibleTeamFilters(principal: Principal): SQL[] {
-  if (principal.role === 'admin') return [];
-  if (principal.teamIds.length === 0) return [sql`false`];
-  return [inArray(schema.issue.teamId, [...principal.teamIds])];
-}
-
-function buildScopeFilters(
-  principal: Principal,
-  filter: ReturnType<typeof issueListSchema.parse>,
-): SQL[] {
-  const organizationId = principal.organizationId;
-  const filters: SQL[] = [
-    eq(schema.issue.organizationId, organizationId),
-    ...visibleTeamFilters(principal),
-  ];
-  if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
-  if (filter.projectId !== undefined) filters.push(eq(schema.issue.projectId, filter.projectId));
-  if (filter.cycleId !== undefined) filters.push(eq(schema.issue.cycleId, filter.cycleId));
-  if (filter.milestoneId !== undefined) {
-    filters.push(eq(schema.issue.milestoneId, filter.milestoneId));
-  }
-  if (filter.assigneeId !== undefined) filters.push(eq(schema.issue.assigneeId, filter.assigneeId));
-  if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
-  if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
-  if (filter.stateCategory !== undefined) {
-    filters.push(
-      inArray(
-        schema.issue.stateId,
-        db
-          .select({ id: schema.workflowState.id })
-          .from(schema.workflowState)
-          .where(
-            and(
-              eq(schema.workflowState.organizationId, organizationId),
-              eq(schema.workflowState.category, filter.stateCategory),
-            ),
-          ),
-      ),
-    );
-  }
-  if (filter.labelId !== undefined) {
-    filters.push(
-      inArray(
-        schema.issue.id,
-        db
-          .select({ id: schema.issueLabel.issueId })
-          .from(schema.issueLabel)
-          .where(eq(schema.issueLabel.labelId, filter.labelId)),
-      ),
-    );
-  }
-  if (filter.query !== undefined && filter.query.trim().length > 0) {
-    const term = `%${filter.query.trim()}%`;
-    const matches = or(
-      ilike(schema.issue.title, term),
-      ilike(schema.issue.description, term),
-      ilike(schema.issue.identifier, term),
-    );
-    if (matches !== undefined) filters.push(matches);
-  }
-  if (!filter.includeArchived) filters.push(isNull(schema.issue.archivedAt));
-  if (!filter.includeSubIssues && filter.parentId === undefined) {
-    filters.push(isNull(schema.issue.parentId));
-  }
-  return filters;
-}
-
-function buildIssueFilters(
-  principal: Principal,
-  filter: ReturnType<typeof issueListSchema.parse>,
-): SQL[] {
-  return [
-    ...buildScopeFilters(principal, filter),
-    ...buildFilterFilters(filter.filter, { today: today() }),
-  ];
-}
-
 type OrderKey = ReturnType<typeof issueListSchema.parse>['orderBy'];
 
 const ORDERINGS: Record<
@@ -1657,7 +1581,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = buildIssueFilters(principal, filter);
+  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -1690,7 +1614,7 @@ export async function getIssueCounts(
 ): Promise<{ stateId: string; total: number }[]> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const filters = buildIssueFilters(principal, filter);
+  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
   return await db
     .select({ stateId: schema.issue.stateId, total: count() })
     .from(schema.issue)
@@ -1920,7 +1844,11 @@ export async function listBoardGroups(
   const filter = boardSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
   const column = FACET_COLUMNS[filter.groupBy]();
-  const matching = and(...buildIssueFilters(principal, filter));
+  const matching = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+  });
 
   const ranked = db
     .select({
@@ -1994,7 +1922,11 @@ export async function getIssueSummary(
 ): Promise<IssueSummary> {
   assertCan(principal, 'issue:read');
   const filter = summarySchema.parse(input);
-  const matching = and(...buildIssueFilters(principal, filter));
+  const matching = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+  });
 
   const [matchedStates, groupTotals] = await Promise.all([
     db
@@ -2021,7 +1953,12 @@ export async function getIssueFacets(
 ): Promise<IssueFacets> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const scope = and(...buildScopeFilters(principal, filter));
+  const scope = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+    advancedFilter: 'omit',
+  });
 
   const [scopeTotal, facets] = await Promise.all([
     db.select({ total: count() }).from(schema.issue).where(scope),

@@ -33,7 +33,7 @@ export function addDays(day: string, count: number): string {
 }
 
 export interface FilterContext {
-  readonly today: string;
+  readonly now: Date;
 }
 
 function anyOf(clauses: readonly SQL[]): SQL | null {
@@ -252,17 +252,18 @@ function namedDateClause(
   context: FilterContext,
 ): SQL | null {
   const column = DATE_COLUMNS[property];
+  const currentDay = today(context.now);
   switch (value) {
     case UNSET_FILTER_VALUE:
       return isNull(column);
     case 'any':
       return isNotNull(column);
     case 'overdue':
-      return dayBounds(column, null, addDays(context.today, -1));
+      return dayBounds(column, null, addDays(currentDay, -1));
     case 'today':
-      return dayBounds(column, context.today, context.today);
+      return dayBounds(column, currentDay, currentDay);
     case 'this_week':
-      return dayBounds(column, context.today, addDays(context.today, 7));
+      return dayBounds(column, currentDay, addDays(currentDay, 7));
     default:
       return null;
   }
@@ -292,7 +293,7 @@ function relativeDatePredicate(
   negate: boolean,
   context: FilterContext,
 ): SQL | null {
-  const range = resolveRelativeRange(relative, context.today);
+  const range = resolveRelativeRange(relative, today(context.now));
   const positive = dayBounds(DATE_COLUMNS[property], range.from, range.to);
   if (positive === null) return null;
   return negate ? negateWithNulls(positive, DATE_COLUMNS[property], false) : positive;
