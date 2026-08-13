@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
 import {
-  completeCycle,
   createCycle,
   createLabel,
   createProject,
@@ -11,6 +10,7 @@ import {
   listTeams,
 } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 import {
   resolveCycle,
   resolveLabelIds,
@@ -37,11 +37,9 @@ let borealisSlug: string;
 let flakyLabelId: string;
 let sturdyLabelId: string;
 let teammateId: string;
-let operationsId: string;
-let engineeringSprintOne: string;
-let engineeringSprintTwo: string;
-let engineeringSprintThree: string;
-let designSprintOne: string;
+let sprintOne: string;
+let sprintTwo: string;
+let sprintThree: string;
 
 function daysFromNow(days: number): Date {
   return new Date(Date.now() + days * 86_400_000);
@@ -71,32 +69,20 @@ beforeAll(async () => {
   const teammate = await addMember(workspace, 'member', 'Bea Builder');
   teammateId = teammate.user.id;
 
-  const operations = await createTeam(admin, { name: 'Operations', key: 'OPS' });
-  operationsId = operations.team.id;
+  const [bootstrap] = await listCycles(admin);
+  if (bootstrap === undefined) throw new Error('the workspace has no sprint');
+  sprintOne = bootstrap.id;
 
-  const [bootstrapEngineering] = await listCycles(admin, engineeringId);
-  if (bootstrapEngineering === undefined) throw new Error('the engineering team has no cycle');
-  engineeringSprintOne = bootstrapEngineering.id;
-  const [bootstrapDesign] = await listCycles(admin, designId);
-  if (bootstrapDesign === undefined) throw new Error('the design team has no cycle');
-  designSprintOne = bootstrapDesign.id;
-
-  const sprintTwo = await createCycle(admin, {
-    teamId: engineeringId,
+  const sprintTwoCreated = await createCycle(admin, {
     startsAt: daysFromNow(20),
     endsAt: daysFromNow(34),
   });
-  engineeringSprintTwo = sprintTwo.cycle.id;
-  const sprintThree = await createCycle(admin, {
-    teamId: engineeringId,
+  sprintTwo = sprintTwoCreated.cycle.id;
+  const sprintThreeCreated = await createCycle(admin, {
     startsAt: daysFromNow(40),
     endsAt: daysFromNow(54),
   });
-  engineeringSprintThree = sprintThree.cycle.id;
-
-  const [bootstrapOperations] = await listCycles(admin, operationsId);
-  if (bootstrapOperations === undefined) throw new Error('the operations team has no cycle');
-  await completeCycle(admin, bootstrapOperations.id);
+  sprintThree = sprintThreeCreated.cycle.id;
 });
 
 async function errorOf(run: () => Promise<unknown>): Promise<string> {
@@ -228,62 +214,56 @@ describe('resolveStateId', () => {
   });
 });
 
-describe('the cycle fixture holds more than one sprint on the asking team', () => {
-  it('gives engineering three sprints, only the first of which is running', async () => {
-    const sprints = await listCycles(admin, engineeringId);
+describe('the cycle fixture holds more than one sprint', () => {
+  it('gives the workspace three sprints, only the first of which is running', async () => {
+    const sprints = await listCycles(admin);
 
-    expect(sprints.map((sprint) => sprint.id)).toEqual([
-      engineeringSprintOne,
-      engineeringSprintTwo,
-      engineeringSprintThree,
+    expect(sprints.map((sprint) => sprint.id)).toEqual([sprintOne, sprintTwo, sprintThree]);
+    expect(sprints.map((sprint) => sprintLabel(sprint))).toEqual([
+      'Sprint 1',
+      'Sprint 2',
+      'Sprint 3',
     ]);
-    expect(sprints.map((sprint) => sprint.name)).toEqual(['Sprint 1', 'Sprint 2', 'Sprint 3']);
   });
 });
 
 describe('resolveCycle', () => {
   it('picks the third sprint by its name, its number and its id', async () => {
-    expect((await resolveCycle(admin, engineeringId, 'Sprint 3')).id).toBe(engineeringSprintThree);
-    expect((await resolveCycle(admin, engineeringId, '3')).id).toBe(engineeringSprintThree);
-    expect((await resolveCycle(admin, engineeringId, engineeringSprintThree)).id).toBe(
-      engineeringSprintThree,
-    );
+    expect((await resolveCycle(admin, 'Sprint 3')).id).toBe(sprintThree);
+    expect((await resolveCycle(admin, '3')).id).toBe(sprintThree);
+    expect((await resolveCycle(admin, sprintThree)).id).toBe(sprintThree);
   });
 
   it('picks the middle sprint rather than whatever comes first in the list', async () => {
-    expect((await resolveCycle(admin, engineeringId, 'Sprint 2')).id).toBe(engineeringSprintTwo);
-    expect((await resolveCycle(admin, engineeringId, '2')).id).toBe(engineeringSprintTwo);
+    expect((await resolveCycle(admin, 'Sprint 2')).id).toBe(sprintTwo);
+    expect((await resolveCycle(admin, '2')).id).toBe(sprintTwo);
   });
 
   it('ignores case and surrounding space', async () => {
-    expect((await resolveCycle(admin, engineeringId, '  sprint 3  ')).id).toBe(
-      engineeringSprintThree,
-    );
-    expect((await resolveCycle(admin, engineeringId, 'SPRINT 2')).id).toBe(engineeringSprintTwo);
+    expect((await resolveCycle(admin, '  sprint 3  ')).id).toBe(sprintThree);
+    expect((await resolveCycle(admin, 'SPRINT 2')).id).toBe(sprintTwo);
   });
 
   it('reads "active" as the sprint running on the team it was asked about', async () => {
-    expect((await resolveCycle(admin, engineeringId, 'active')).id).toBe(engineeringSprintOne);
-    expect((await resolveCycle(admin, designId, 'active')).id).toBe(designSprintOne);
-    expect((await resolveCycle(admin, engineeringId, '  ACTIVE  ')).id).toBe(engineeringSprintOne);
+    expect((await resolveCycle(admin, 'active')).id).toBe(sprintOne);
+    expect((await resolveCycle(admin, 'active')).id).toBe(sprintOne);
+    expect((await resolveCycle(admin, '  ACTIVE  ')).id).toBe(sprintOne);
   });
 
-  it('refuses a sprint that belongs to another team', async () => {
-    expect(await errorOf(() => resolveCycle(admin, designId, engineeringSprintTwo))).toBe(
-      'not_found',
-    );
-    expect(await errorOf(() => resolveCycle(admin, engineeringId, designSprintOne))).toBe(
-      'not_found',
-    );
-    expect(await errorOf(() => resolveCycle(admin, designId, 'Sprint 2'))).toBe('not_found');
+  it('refuses a sprint that belongs to another workspace', async () => {
+    const vega = await createWorkspace('Vega');
+    const [theirs] = await listCycles(vega.admin);
+    if (theirs === undefined) throw new Error('vega has no sprint');
+
+    expect(await errorOf(() => resolveCycle(admin, theirs.id))).toBe('not_found');
   });
 
   it('refuses a reference that matches no sprint', async () => {
-    expect(await errorOf(() => resolveCycle(admin, engineeringId, 'Sprint 9'))).toBe('not_found');
-    expect(await errorOf(() => resolveCycle(admin, engineeringId, '9'))).toBe('not_found');
+    expect(await errorOf(() => resolveCycle(admin, 'Sprint 9'))).toBe('not_found');
+    expect(await errorOf(() => resolveCycle(admin, '9'))).toBe('not_found');
   });
 
-  it('refuses "active" on a team whose sprint has been closed', async () => {
-    expect(await errorOf(() => resolveCycle(admin, operationsId, 'active'))).toBe('not_found');
+  it('resolves "active" to the sprint the workspace is running', async () => {
+    expect((await resolveCycle(admin, 'active')).id).toBe(sprintOne);
   });
 });

@@ -19,6 +19,7 @@ import {
   boardSearch,
   columnParamFor,
   columnSearch,
+  cycleIssuesSearch,
   DEFAULT_ISSUE_QUERY,
   EMPTY_ISSUE_SCOPE,
   groupColumnSearch,
@@ -249,6 +250,19 @@ export function useProjectIssues(
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.projectIssues(projectId ?? 'none', search), search),
     enabled: projectId !== null,
+    select: flattenIssuePages,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useCycleIssues(
+  cycleId: string | null,
+  query: IssueQuery = { ...DEFAULT_ISSUE_QUERY, orderBy: 'manual' },
+) {
+  const search = cycleId === null ? '' : cycleIssuesSearch(cycleId, query);
+  return useInfiniteQuery({
+    ...pagedIssueOptions(queryKeys.cycleIssues(cycleId ?? 'none', search), search),
+    enabled: cycleId !== null,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
   });

@@ -2,11 +2,12 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { SearchX, WifiOff } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
-import { DisplayMenu } from '@/features/filters/display-menu.tsx';
+import { FilterBar } from '@/features/filters/filter-bar.tsx';
 import { type IssueGroup, mergedStateResolver } from '@/features/filters/grouping.ts';
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
@@ -14,20 +15,48 @@ import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { Board, type StateResolver } from '@/features/issues/board.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
-import { facetsSearch } from '@/lib/query/issue-search.ts';
+import { summarySearch } from '@/lib/query/issue-search.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
-import { useAllIssues, useIssueFacets } from '@/lib/query/use-issues.ts';
-import { PersonTiles } from './person-tiles.tsx';
+import { useAllIssues, useIssueSummary } from '@/lib/query/use-issues.ts';
+import { PersonTiles, UNASSIGNED } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
 const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
 
+export const PERSON_PARAM = 'person';
+
+const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM];
+
 export function StandupBoard() {
   const workspace = useWorkspace();
-  const { config, setConfig } = useViewConfig(null, 'board', 'standup');
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { config, setConfig } = useViewConfig(null, 'board', 'standup', CARRIED_PARAMS);
   const controls = useProvideViewControls('standup', 'board', config);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(() => searchParams.get(PERSON_PARAM));
+
+  const known =
+    chosen === null ||
+    chosen === UNASSIGNED ||
+    workspace.members.some((member) => member.id === chosen);
+  const selectedId = known ? chosen : null;
+
+  const selectPerson = useCallback(
+    (next: string | null) => {
+      setChosen(next);
+      const params = new URLSearchParams(window.location.search);
+      if (next === null) params.delete(PERSON_PARAM);
+      else params.set(PERSON_PARAM, next);
+      const search = params.toString();
+      window.history.replaceState(
+        null,
+        '',
+        `${pathname}${search.length === 0 ? '' : `?${search}`}`,
+      );
+    },
+    [pathname],
+  );
 
   const query = useMemo(
     () => ({ filter: config.filter, orderBy: config.orderBy }),
@@ -39,12 +68,15 @@ export function StandupBoard() {
     [selectedId],
   );
 
-  const active = useAllIssues(query, scope);
-  const roster = useIssueFacets(facetsSearch(null, WHOLE_WORKSPACE));
+  const active = useAllIssues(query, scope, workspace.ready);
+  const roster = useIssueSummary(
+    summarySearch(null, query, 'assignee', WHOLE_WORKSPACE),
+    workspace.ready,
+  );
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
-  const counts = roster.isError ? null : (roster.data?.facets.assignee ?? null);
+  const counts = roster.isError ? null : (roster.data?.groupTotals ?? null);
 
   const model = useIssueViewModel({
     teamId: null,
@@ -85,16 +117,21 @@ export function StandupBoard() {
             members={members}
             selectedId={selectedId}
             counts={counts}
-            onSelect={setSelectedId}
-          />
-          <DisplayMenu
-            config={config}
-            capability={controls.capability}
-            modified={controls.displayModified}
-            onChange={setConfig}
+            onSelect={selectPerson}
           />
         </div>
       </div>
+
+      <FilterBar
+        teamId={null}
+        teamName="Standup"
+        layout="board"
+        config={config}
+        onChange={setConfig}
+        controls={controls}
+        facets={model.facets}
+        showSaveView={false}
+      />
 
       <StandupBody
         loading={active.isPending}

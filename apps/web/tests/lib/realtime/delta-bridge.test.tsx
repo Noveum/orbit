@@ -197,6 +197,79 @@ describe('DeltaBridge ordering', () => {
   });
 });
 
+describe('DeltaBridge workspace sprint membership', () => {
+  const cycleId = 'cycle_workspace';
+
+  function cycleRows(client: QueryClient): Issue[] {
+    const pages = client.getQueryData<IssuePages>(queryKeys.cycleIssues(cycleId));
+    return (pages?.pages ?? []).flatMap((page) => page.issues);
+  }
+
+  it('adds an issue from any team to its workspace sprint cache', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [{ issues: [], nextCursor: null }],
+      pageParams: [null],
+    });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'insert',
+          modelId: 'issue_design',
+          data: issue({
+            id: 'issue_design',
+            teamId: 'team_design',
+            identifier: 'DSGN-4',
+            cycleId,
+            syncId: 30,
+          }),
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(cycleRows(client).map((row) => row.id)).toEqual(['issue_design']);
+  });
+
+  it('keeps a cross-team sprint issue when an unrelated field changes', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [
+        {
+          issues: [issue({ teamId: 'team_design', cycleId })],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null],
+    });
+
+    act(() =>
+      capturedHandler?.([action({ data: { id: 'issue_1', title: 'Still here', syncId: 30 } })]),
+    );
+
+    expect(cycleRows(client)).toHaveLength(1);
+    expect(cycleRows(client)[0]?.title).toBe('Still here');
+  });
+
+  it('removes an issue only when it leaves that workspace sprint', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [
+        {
+          issues: [issue({ teamId: 'team_design', cycleId })],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null],
+    });
+
+    act(() => capturedHandler?.([action({ data: { id: 'issue_1', cycleId: null, syncId: 30 } })]));
+
+    expect(cycleRows(client)).toEqual([]);
+  });
+});
+
 describe('DeltaBridge root invalidation', () => {
   it('invalidates the bootstrap root once for a burst of org config models', () => {
     const client = mount();

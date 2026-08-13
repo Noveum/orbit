@@ -31,16 +31,45 @@ interface SprintFormValues {
   readonly name: string;
   readonly startsAt: string;
   readonly endsAt: string;
+  readonly shiftFollowing: boolean;
 }
 
-const EMPTY_FORM: SprintFormValues = { name: '', startsAt: '', endsAt: '' };
+const EMPTY_FORM: SprintFormValues = {
+  name: '',
+  startsAt: '',
+  endsAt: '',
+  shiftFollowing: false,
+};
+
+const DURATIONS = [1, 2, 3, 4] as const;
+
+const DAY = 86_400_000;
 
 function utcDay(iso: string): string {
   return iso.slice(0, 10);
 }
 
 function formOf(sprint: SprintSummary): SprintFormValues {
-  return { name: sprint.name, startsAt: utcDay(sprint.startsAt), endsAt: utcDay(sprint.endsAt) };
+  return {
+    name: sprint.name,
+    startsAt: utcDay(sprint.startsAt),
+    endsAt: utcDay(sprint.endsAt),
+    shiftFollowing: false,
+  };
+}
+
+export function endAfterWeeks(startsAt: string, weeks: number): string {
+  const start = Date.parse(`${startsAt}T00:00:00.000Z`);
+  if (Number.isNaN(start)) return '';
+  return new Date(start + weeks * 7 * DAY).toISOString().slice(0, 10);
+}
+
+export function weeksBetween(startsAt: string, endsAt: string): number | null {
+  const start = Date.parse(`${startsAt}T00:00:00.000Z`);
+  const end = Date.parse(`${endsAt}T00:00:00.000Z`);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  const days = Math.round((end - start) / DAY);
+  return days > 0 && days % 7 === 0 ? days / 7 : null;
 }
 
 interface SprintDialogProps {
@@ -52,6 +81,7 @@ interface SprintDialogProps {
   readonly initial: SprintFormValues;
   readonly pending: boolean;
   readonly testId: string;
+  readonly offerShift: boolean;
   readonly onSubmit: (values: SprintFormValues) => void;
 }
 
@@ -64,9 +94,11 @@ function SprintDialog({
   initial,
   pending,
   testId,
+  offerShift,
   onSubmit,
 }: SprintDialogProps) {
   const [values, setValues] = useState(initial);
+  const weeks = weeksBetween(values.startsAt, values.endsAt);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -74,6 +106,7 @@ function SprintDialog({
       name: values.name.trim(),
       startsAt: values.startsAt,
       endsAt: values.endsAt,
+      shiftFollowing: values.shiftFollowing,
     });
   };
 
@@ -124,6 +157,39 @@ function SprintDialog({
               />
             </label>
           </div>
+
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="text-2xs text-faint">Duration</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {DURATIONS.map((count) => (
+                <Button
+                  key={count}
+                  type="button"
+                  size="sm"
+                  variant={weeks === count ? 'secondary' : 'ghost'}
+                  disabled={values.startsAt.length === 0}
+                  data-testid={`${testId}-weeks-${count}`}
+                  onClick={() =>
+                    setValues({ ...values, endsAt: endAfterWeeks(values.startsAt, count) })
+                  }
+                >
+                  {count} {count === 1 ? 'week' : 'weeks'}
+                </Button>
+              ))}
+            </div>
+          </fieldset>
+
+          {offerShift ? (
+            <label className="flex items-center gap-2 text-2xs text-muted">
+              <input
+                type="checkbox"
+                checked={values.shiftFollowing}
+                data-testid={`${testId}-shift`}
+                onChange={(event) => setValues({ ...values, shiftFollowing: event.target.checked })}
+              />
+              Move later sprints by the same amount
+            </label>
+          ) : null}
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
@@ -192,9 +258,8 @@ function ConfirmDialog({
   );
 }
 
-function draftFrom(teamId: string, values: SprintFormValues) {
+function draftFrom(values: SprintFormValues) {
   return {
-    teamId,
     ...(values.name.length === 0 ? {} : { name: values.name }),
     ...(values.startsAt.length === 0 ? {} : { startsAt: values.startsAt }),
     ...(values.endsAt.length === 0 ? {} : { endsAt: values.endsAt }),
@@ -207,21 +272,23 @@ function movedDay(day: string, was: string): boolean {
 
 function editFrom(sprint: SprintSummary, values: SprintFormValues) {
   const before = formOf(sprint);
+  const endMoved = movedDay(values.endsAt, before.endsAt);
   return {
     id: sprint.id,
-    ...(values.name.length === 0 ? {} : { name: values.name }),
+    ...(values.name === before.name ? {} : { name: values.name }),
     ...(movedDay(values.startsAt, before.startsAt) ? { startsAt: values.startsAt } : {}),
-    ...(movedDay(values.endsAt, before.endsAt) ? { endsAt: values.endsAt } : {}),
+    ...(endMoved ? { endsAt: values.endsAt } : {}),
+    ...(endMoved && values.shiftFollowing ? { shiftFollowing: true } : {}),
   };
 }
 
-export function NewSprintButton({ teamId }: { readonly teamId: string }) {
+export function NewSprintButton() {
   const [open, setOpen] = useState(false);
   const create = useCreateSprint();
 
   return (
     <>
-      <Button size="sm" data-testid={`sprint-new-${teamId}`} onClick={() => setOpen(true)}>
+      <Button size="sm" data-testid="sprint-new" onClick={() => setOpen(true)}>
         <Plus className="size-3.5" aria-hidden="true" />
         New sprint
       </Button>
@@ -235,8 +302,9 @@ export function NewSprintButton({ teamId }: { readonly teamId: string }) {
           initial={EMPTY_FORM}
           pending={create.isPending}
           testId="sprint-create-dialog"
+          offerShift={false}
           onSubmit={(values) => {
-            create.mutate(draftFrom(teamId, values), { onSuccess: () => setOpen(false) });
+            create.mutate(draftFrom(values), { onSuccess: () => setOpen(false) });
           }}
         />
       ) : null}
@@ -269,6 +337,7 @@ export function EditSprintButton({ sprint }: { readonly sprint: SprintSummary })
           initial={formOf(sprint)}
           pending={update.isPending}
           testId="sprint-edit-dialog"
+          offerShift={true}
           onSubmit={(values) => {
             update.mutate(editFrom(sprint, values), { onSuccess: () => setOpen(false) });
           }}

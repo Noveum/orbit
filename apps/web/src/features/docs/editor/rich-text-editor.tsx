@@ -1,6 +1,7 @@
 'use client';
 
 import type { Editor } from '@tiptap/core';
+import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough } from 'lucide-react';
 import type { Ref } from 'react';
@@ -20,7 +21,7 @@ import { cn } from '@/lib/cn.ts';
 import type { Member } from '@/lib/query/schemas.ts';
 import { docProseClassName } from '../doc-body.tsx';
 import { findTrigger, matchSlashCommands, type SlashCommand } from './commands.ts';
-import { editorHtmlFrom } from './editor-content.ts';
+import { editorHtmlFrom, markdownPasteHtml } from './editor-content.ts';
 import { EditorToolbar } from './editor-toolbar.tsx';
 import { editorExtensions, type MenuKey, type MenuKeyHandlerRef } from './extensions.ts';
 import { docToMarkdown } from './markdown.ts';
@@ -183,6 +184,18 @@ export function RichTextEditor({
         'aria-label': ariaLabel,
         role: 'textbox',
         'aria-multiline': 'true',
+      },
+      handlePaste: (view, event) => {
+        const clipboard = event.clipboardData;
+        if (clipboard === null || clipboard.files.length > 0) return false;
+        if (view.state.selection.$from.parent.type.spec.code === true) return false;
+        const html = markdownPasteHtml(clipboard.getData('text/plain'));
+        if (html === null) return false;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const slice = ProseMirrorDOMParser.fromSchema(view.state.schema).parseSlice(container);
+        view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+        return true;
       },
     },
     onUpdate: ({ editor: instance }) => {

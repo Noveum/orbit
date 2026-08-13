@@ -251,18 +251,18 @@ function sprintRelevance(
   }
   const onlyActive = active.length === 1 ? active[0] : undefined;
   const anchor = explicitCycle ?? onlyActive ?? null;
-  const teamIds = [...new Set(cycles.map((cycle) => cycle.teamId))];
+  const teamIds = [...new Set(cycles.map((cycle) => cycle.teamId).filter((id) => id !== null))];
   const teamId =
-    anchor?.teamId ??
-    context.selectedTeamId ??
-    (teamIds.length === 1 ? (teamIds[0] ?? null) : null);
+    anchor === null
+      ? (context.selectedTeamId ?? (teamIds.length === 1 ? (teamIds[0] ?? null) : null))
+      : anchor.teamId;
   return { cycles, active, anchor, teamId };
 }
 
 function latestCompletedSprint(
   cycles: readonly AnalyticsSprint[],
   now: Date,
-  teamId: string,
+  teamId: string | null,
   before: AnalyticsSprint | null,
 ): AnalyticsSprint | null {
   const eligible = cycles.filter((cycle) => {
@@ -319,10 +319,12 @@ function selectedRange(
         : { range: sprintRange(onlyActive), sprint: onlyActive };
     case 'previous_sprint': {
       const reference = onlyActive ?? relevance.anchor;
-      const previous =
-        relevance.teamId === null
-          ? null
-          : latestCompletedSprint(context.cycles, context.now, relevance.teamId, reference);
+      const previous = latestCompletedSprint(
+        context.cycles,
+        context.now,
+        relevance.teamId,
+        reference,
+      );
       const selected = previous;
       return selected === null
         ? { range: trailingDays(context.now, 30, reportingTimezone), sprint: null }
@@ -376,7 +378,6 @@ function comparisonRange(
   if (resolvedCompare === 'previous_period') return previousEqualRange(selected.range);
   const reference = selected.sprint ?? relevance.anchor;
   const teamId = selected.sprint?.teamId ?? relevance.teamId;
-  if (teamId === null) return null;
   const previous = latestCompletedSprint(context.cycles, context.now, teamId, reference);
   return previous === null ? null : sprintRange(previous);
 }

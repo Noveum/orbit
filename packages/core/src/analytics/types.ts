@@ -39,7 +39,7 @@ export interface AnalyticsFreshness {
 
 export interface AnalyticsSprint {
   readonly id: string;
-  readonly teamId: string;
+  readonly teamId: string | null;
   readonly timezone: string;
   readonly startsAt: Date;
   readonly endsAt: Date;

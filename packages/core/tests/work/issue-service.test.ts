@@ -55,14 +55,41 @@ async function newIssue(title: string, overrides: Record<string, unknown> = {}) 
 }
 
 describe('createIssue', () => {
-  it('allocates sequential identifiers and defaults to the first unstarted state', async () => {
+  it('allocates sequential identifiers and starts a new issue in triage', async () => {
     const first = await newIssue('First');
     const second = await newIssue('Second');
 
     expect(first.identifier).toBe('NOVA-1');
     expect(second.identifier).toBe('NOVA-2');
-    expect(first.stateId).toBe(stateNamed(workspace, 'Todo').id);
+    expect(first.stateId).toBe(stateNamed(workspace, 'Triage').id);
     expect(first.creatorId).toBe(workspace.admin.userId);
+  });
+
+  it('assigns a new issue to whoever created it', async () => {
+    const issue = await newIssue('Mine by default');
+
+    expect(issue.assigneeId).toBe(workspace.admin.userId);
+  });
+
+  it('still honours an assignee that was asked for', async () => {
+    const { principal } = await addMember(workspace, 'member');
+    const issue = await newIssue('Theirs', { assigneeId: principal.userId });
+
+    expect(issue.assigneeId).toBe(principal.userId);
+  });
+
+  it('leaves an issue unassigned when null was asked for on purpose', async () => {
+    const issue = await newIssue('Nobody', { assigneeId: null });
+
+    expect(issue.assigneeId).toBeNull();
+  });
+
+  it('still honours a status that was asked for', async () => {
+    const issue = await newIssue('Started already', {
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+
+    expect(issue.stateId).toBe(stateNamed(workspace, 'Todo').id);
   });
 
   it('allocates unique numbers under concurrency', async () => {
@@ -137,7 +164,7 @@ describe('createIssue', () => {
     const [cycle] = await db
       .select()
       .from(schema.cycle)
-      .where(eq(schema.cycle.teamId, workspace.teamId));
+      .where(eq(schema.cycle.organizationId, workspace.organizationId));
     if (cycle === undefined) throw new Error('missing bootstrap cycle');
     await completeCycle(workspace.admin, cycle.id);
     const updateTarget = await newIssue('Update target');
@@ -169,7 +196,7 @@ describe('createIssue', () => {
     const [cycle] = await db
       .select()
       .from(schema.cycle)
-      .where(eq(schema.cycle.teamId, workspace.teamId));
+      .where(eq(schema.cycle.organizationId, workspace.organizationId));
     if (cycle === undefined) throw new Error('missing bootstrap cycle');
     await db
       .update(schema.cycle)
@@ -229,7 +256,7 @@ describe('permissions', () => {
     const [cycle] = await db
       .select()
       .from(schema.cycle)
-      .where(eq(schema.cycle.teamId, workspace.teamId));
+      .where(eq(schema.cycle.organizationId, workspace.organizationId));
     if (cycle === undefined) throw new Error('missing bootstrap cycle');
     const issue = await newIssue('Doomed', { cycleId: cycle.id });
     const actions = await deleteIssue(workspace.admin, issue.id);
@@ -595,21 +622,21 @@ describe('moveIssue', () => {
     expect(entries.some((entry) => entry.field === 'cycleId')).toBe(true);
   });
 
-  it('refuses a sprint that belongs to another team', async () => {
-    const { team } = await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
+  it('takes the workspace sprint whichever team the issue is on', async () => {
+    await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: team.id,
       startsAt: new Date('2030-05-01').toISOString(),
       endsAt: new Date('2030-05-15').toISOString(),
     });
-    const issue = await newIssue('Wrong team sprint');
+    const issue = await newIssue('Any team sprint');
 
-    await expect(moveIssue(workspace.admin, issue.id, { cycleId: cycle.id })).rejects.toThrow();
+    const moved = await moveIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    expect(moved.issue.cycleId).toBe(cycle.id);
   });
 
-  it('drops the sprint and project links that belong to the team it left', async () => {
+  it('keeps the sprint and drops the project links that belong to the team it left', async () => {
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2030-01-01').toISOString(),
       endsAt: new Date('2030-01-15').toISOString(),
     });
@@ -633,7 +660,7 @@ describe('moveIssue', () => {
     });
 
     expect(moved.issue.teamId).toBe(team.id);
-    expect(moved.issue.cycleId).toBeNull();
+    expect(moved.issue.cycleId).toBe(cycle.id);
     expect(moved.issue.projectId).toBeNull();
     expect(moved.issue.milestoneId).toBeNull();
   });
@@ -689,6 +716,27 @@ describe('listIssues', () => {
 
     const byIdentifier = await listIssues(workspace.admin, { query: 'NOVA-1' });
     expect(byIdentifier.issues[0]?.identifier).toBe('NOVA-1');
+  });
+
+  it('narrows to the issues nobody owns when the assignee scope asks for none', async () => {
+    const { user: assignee } = await addMember(workspace, 'member');
+    await newIssue('Owned', { assigneeId: assignee.id });
+    const orphan = await newIssue('Nobody owns this', { assigneeId: null });
+
+    const unassigned = await listIssues(workspace.admin, { assigneeId: 'none' });
+
+    expect(unassigned.issues.map((issue) => issue.id)).toEqual([orphan.id]);
+  });
+
+  it('counts the unowned issues under the same key the facets use', async () => {
+    const { user: assignee } = await addMember(workspace, 'member');
+    await newIssue('Owned', { assigneeId: assignee.id });
+    await newIssue('Nobody owns this', { assigneeId: null });
+
+    const summary = await getIssueSummary(workspace.admin, { groupBy: 'assignee' });
+
+    expect(summary.groupTotals['none']).toBe(1);
+    expect(summary.groupTotals[assignee.id]).toBe(1);
   });
 
   it('leaves the description out of list rows and keeps it for an explicit full select', async () => {
@@ -774,15 +822,15 @@ describe('listIssues', () => {
     const counts = await getIssueCounts(workspace.admin, { teamId: workspace.teamId });
     const byState = new Map(counts.map((row) => [row.stateId, row.total]));
     expect(byState.get(stateNamed(workspace, 'Done').id)).toBe(1);
-    expect(byState.get(stateNamed(workspace, 'Todo').id)).toBe(1);
+    expect(byState.get(stateNamed(workspace, 'Triage').id)).toBe(1);
   });
 });
 
 describe('getIssueSummary', () => {
   it('reports the filtered total beside the unfiltered scope, so nothing has to be crawled', async () => {
     const mine = await newIssue('Mine');
-    await newIssue('Theirs');
-    await newIssue('Also theirs');
+    await newIssue('Theirs', { assigneeId: null });
+    await newIssue('Also theirs', { assigneeId: null });
     await updateIssue(workspace.admin, mine.id, { assigneeId: workspace.admin.userId });
 
     const summary = await getIssueSummary(workspace.admin, {
@@ -810,7 +858,7 @@ describe('getIssueSummary', () => {
 
   it('counts every facet value across the whole scope, not just a loaded page', async () => {
     const done = await newIssue('Shipped');
-    await newIssue('Waiting');
+    await newIssue('Waiting', { assigneeId: null });
     await updateIssue(workspace.admin, done.id, {
       stateId: stateNamed(workspace, 'Done').id,
       assigneeId: workspace.admin.userId,
@@ -820,7 +868,7 @@ describe('getIssueSummary', () => {
     const { facets } = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
 
     expect(facets.state[stateNamed(workspace, 'Done').id]).toBe(1);
-    expect(facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(facets.state[stateNamed(workspace, 'Triage').id]).toBe(1);
     expect(facets.assignee[workspace.admin.userId]).toBe(1);
     expect(facets.assignee['none']).toBe(1);
     expect(facets.creator[workspace.admin.userId]).toBe(2);
@@ -859,7 +907,7 @@ describe('getIssueSummary', () => {
 
     const scoped = await getIssueFacets(workspace.admin, { teamId: workspace.teamId });
     expect(scoped.scopeTotal).toBe(2);
-    expect(scoped.facets.state[stateNamed(workspace, 'Todo').id]).toBe(1);
+    expect(scoped.facets.state[stateNamed(workspace, 'Triage').id]).toBe(1);
   });
 
   it('reads every column facet in one grouping sets pass instead of one query each', () => {
@@ -1280,6 +1328,37 @@ describe('an issue milestone has to belong to the project the issue is on', () =
 
     expect(updated.issue.projectId).toBe(here.projectId);
     expect(updated.issue.milestoneId).toBe(here.milestoneId);
+  });
+
+  it('drops the milestone when the patch moves the issue to another project', async () => {
+    const here = await projectWithMilestone('Leaving');
+    const there = await projectWithMilestone('Arriving');
+    const issue = await newIssue('Carried work', { projectId: here.projectId });
+    const marked = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+    expect(marked.issue.milestoneId).toBe(here.milestoneId);
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      projectId: there.projectId,
+    });
+
+    expect(updated.issue.projectId).toBe(there.projectId);
+    expect(updated.issue.milestoneId).toBeNull();
+  });
+
+  it('drops the milestone when the issue is taken off every project', async () => {
+    const here = await projectWithMilestone('Detaching');
+    const issue = await newIssue('Loosened work', { projectId: here.projectId });
+    const marked = await updateIssue(workspace.admin, issue.id, {
+      milestoneId: here.milestoneId,
+    });
+    expect(marked.issue.milestoneId).toBe(here.milestoneId);
+
+    const updated = await updateIssue(workspace.admin, issue.id, { projectId: null });
+
+    expect(updated.issue.projectId).toBeNull();
+    expect(updated.issue.milestoneId).toBeNull();
   });
 
   it('still takes a milestone of the project the issue is already on', async () => {

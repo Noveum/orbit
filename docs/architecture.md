@@ -197,7 +197,7 @@ One file means an audit is reading one file.
 
 ## Auth
 
-better-auth. Passkeys, Google, GitHub and magic links. Email and password is off
+Orbit uses better-auth. Passkeys, Google, GitHub and email OTP. Email and password is off
 unless `ORBIT_PASSWORD_AUTH=true`, hashed with argon2id, rate limited, and never
 a replacement for the passwordless methods.
 

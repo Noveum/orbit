@@ -1,5 +1,6 @@
 'use client';
 
+import { sprintLabel } from '@orbit/shared/utils';
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
@@ -9,7 +10,7 @@ import { apiFetch, messageOf } from './fetcher.ts';
 
 const sprintSchema = z.object({
   id: z.string(),
-  teamId: z.string(),
+  teamId: z.string().nullable(),
   number: z.number(),
   name: z.string(),
   startsAt: z.string(),
@@ -28,10 +29,9 @@ const closedEnvelope = z.object({
 const deletedEnvelope = z.object({ deleted: z.boolean() });
 
 export interface SprintDraft {
-  readonly teamId: string;
-  readonly name?: string;
-  readonly startsAt?: string;
-  readonly endsAt?: string;
+  readonly name?: string | undefined;
+  readonly startsAt?: string | undefined;
+  readonly endsAt?: string | undefined;
 }
 
 export interface SprintEdit {
@@ -39,6 +39,7 @@ export interface SprintEdit {
   readonly name?: string;
   readonly startsAt?: string;
   readonly endsAt?: string;
+  readonly shiftFollowing?: boolean;
 }
 
 function useRefreshSprints(): () => void {
@@ -131,7 +132,7 @@ export function useCompleteSprint() {
         description:
           rolled === 0
             ? 'Nothing was left unfinished.'
-            : `${rolled} ${rolled === 1 ? 'issue' : 'issues'} rolled into ${result.nextCycle.name}.`,
+            : `${rolled} ${rolled === 1 ? 'issue' : 'issues'} rolled into ${sprintLabel(result.nextCycle)}.`,
       });
       refresh();
     },

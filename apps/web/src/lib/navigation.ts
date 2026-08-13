@@ -80,7 +80,6 @@ function teamLinks(key: string, openIssues?: number): NavLink[] {
       ...(openIssues === undefined ? {} : { count: openIssues }),
     },
     { href: `/team/${key}/board`, label: 'Board', icon: Target },
-    { href: `/team/${key}/sprint/active`, label: 'Active sprint', icon: RefreshCcw },
   ];
 }
 
@@ -152,7 +151,6 @@ export function buildSidebarNav(teams: readonly ShellTeam[], inboxCount = 0): Si
             count: team.openIssues,
           },
           { href: `/team/${key}/board`, label: 'Board', icon: Target },
-          { href: `/team/${key}/sprint/active`, label: 'Active sprint', icon: RefreshCcw },
         ],
       };
     }),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from '../../src/constants/index.ts';
 import {
   bootstrapQuerySchema,
   cycleCreateSchema,
@@ -55,13 +56,40 @@ describe('update schemas never invent values', () => {
   });
 });
 
+describe('issue descriptions', () => {
+  it('accepts pasted file contents while keeping a bounded request size', () => {
+    expect(issueUpdateSchema.safeParse({ description: 'x'.repeat(150_000) }).success).toBe(true);
+    expect(
+      issueUpdateSchema.safeParse({
+        description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      issueUpdateSchema.safeParse({
+        description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('create schemas still apply their defaults', () => {
   it('fills defaults the caller omitted', () => {
     const parsed = issueCreateSchema.parse({ teamId: 'team_1', title: 'Ship it' });
     expect(parsed.priority).toBe(0);
     expect(parsed.description).toBe('');
-    expect(parsed.assigneeId).toBeNull();
     expect(parsed.labelIds).toEqual([]);
+  });
+
+  it('leaves an omitted assignee undefined so the service can tell it from a deliberate none', () => {
+    const omitted = issueCreateSchema.parse({ teamId: 'team_1', title: 'Ship it' });
+    const cleared = issueCreateSchema.parse({
+      teamId: 'team_1',
+      title: 'Ship it',
+      assigneeId: null,
+    });
+
+    expect(omitted.assigneeId).toBeUndefined();
+    expect(cleared.assigneeId).toBeNull();
   });
 });
 

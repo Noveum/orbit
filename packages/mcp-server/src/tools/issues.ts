@@ -20,6 +20,7 @@ import {
 import { db, eq, inArray, schema } from '@orbit/db';
 import {
   base64LengthFor,
+  ISSUE_DESCRIPTION_MAX_LENGTH,
   ISSUE_RELATION_TYPES,
   MAX_INLINE_UPLOAD_BYTES,
   STATE_CATEGORIES,
@@ -88,7 +89,11 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
       inputSchema: {
         team: z.string().min(1).describe('Team key like "ENG", team name, or team id.'),
         title: z.string().min(1).max(255).describe('One line summary of the work.'),
-        description: z.string().max(100_000).optional().describe('Markdown body of the issue.'),
+        description: z
+          .string()
+          .max(ISSUE_DESCRIPTION_MAX_LENGTH)
+          .optional()
+          .describe('Markdown body of the issue.'),
         state: z.string().min(1).optional().describe('Workflow state name or id on that team.'),
         priority: priorityRef.optional(),
         assignee: z
@@ -137,7 +142,11 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
       inputSchema: {
         issue: issueRef,
         title: z.string().min(1).max(255).optional(),
-        description: z.string().max(100_000).optional().describe('Replaces the markdown body.'),
+        description: z
+          .string()
+          .max(ISSUE_DESCRIPTION_MAX_LENGTH)
+          .optional()
+          .describe('Replaces the markdown body.'),
         state: z
           .string()
           .min(1)
@@ -252,8 +261,7 @@ async function buildIssuePatch(
         : await milestoneIdFor(principal, patch, currentProjectId, args.milestone);
   }
   if (args.cycle !== undefined) {
-    patch['cycleId'] =
-      args.cycle === null ? null : (await resolveCycle(principal, teamId, args.cycle)).id;
+    patch['cycleId'] = args.cycle === null ? null : (await resolveCycle(principal, args.cycle)).id;
   }
   if (args.parent !== undefined) {
     patch['parentId'] = args.parent === null ? null : (await getIssue(principal, args.parent)).id;
@@ -383,8 +391,7 @@ async function buildIssueFilter(
     filter['stateId'] = await resolveStateId(principal, teamId, args.state);
   }
   if (args.cycle !== undefined) {
-    if (teamId === undefined) throw validationFailed('Pass a team when filtering by cycle.');
-    filter['cycleId'] = (await resolveCycle(principal, teamId, args.cycle)).id;
+    filter['cycleId'] = (await resolveCycle(principal, args.cycle)).id;
   }
   return filter;
 }

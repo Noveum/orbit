@@ -65,6 +65,29 @@ function expectRange(
 }
 
 describe('resolveAnalyticsQuery', () => {
+  it('uses workspace sprint history when cycle team attribution is absent', () => {
+    const workspaceCurrent = { ...currentSprint, teamId: null };
+    const workspacePrevious = { ...previousSprint, teamId: null };
+    const resolved = resolveAnalyticsQuery(query(), context([workspacePrevious, workspaceCurrent]));
+
+    expect(resolved.selectedSprintId).toBe(workspaceCurrent.id);
+    expectRange(
+      resolved.comparisonRange as { readonly from: Date; readonly to: Date },
+      '2024-02-19T05:00:00.000Z',
+      '2024-03-04T05:00:00.000Z',
+    );
+  });
+
+  it('does not treat a workspace sprint as a selected team sprint', () => {
+    const workspaceCurrent = { ...currentSprint, teamId: null };
+    const resolved = resolveAnalyticsQuery(
+      query(),
+      context([workspaceCurrent], { selectedTeamId: 'team_one' }),
+    );
+
+    expect(resolved.selectedSprintId).toBeNull();
+  });
+
   it('uses the only active sprint as the zero-configuration range', () => {
     const resolved = resolveAnalyticsQuery(query(), context([previousSprint, currentSprint]));
 

@@ -98,7 +98,6 @@ export async function writeCycleSnapshotsInTransaction(
   const activeCycles = await tx
     .select({
       id: schema.cycle.id,
-      teamId: schema.cycle.teamId,
       organizationId: schema.cycle.organizationId,
       timezone: schema.cycle.timezone,
     })
@@ -121,14 +120,12 @@ export async function writeCycleSnapshotsInTransaction(
       and(
         eq(schema.issue.cycleId, cycle.id),
         eq(schema.issue.organizationId, cycle.organizationId),
-        eq(schema.issue.teamId, cycle.teamId),
       ),
     ),
   );
   const rows = await tx
     .select({
       organizationId: schema.issue.organizationId,
-      teamId: schema.issue.teamId,
       cycleId: schema.issue.cycleId,
       category: schema.workflowState.category,
       issues: count(),
@@ -136,13 +133,15 @@ export async function writeCycleSnapshotsInTransaction(
     })
     .from(schema.issue)
     .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .where(and(issueMatchesCycle, isNull(schema.issue.archivedAt)))
-    .groupBy(
-      schema.issue.organizationId,
-      schema.issue.teamId,
-      schema.issue.cycleId,
-      schema.workflowState.category,
-    );
+    .where(
+      and(
+        issueMatchesCycle,
+        eq(schema.workflowState.organizationId, schema.issue.organizationId),
+        eq(schema.workflowState.teamId, schema.issue.teamId),
+        isNull(schema.issue.archivedAt),
+      ),
+    )
+    .groupBy(schema.issue.organizationId, schema.issue.cycleId, schema.workflowState.category);
 
   const cyclesById = new Map(activeCycles.map((cycle) => [cycle.id, cycle]));
   const tallies = new Map<string, Tally>();
@@ -150,12 +149,7 @@ export async function writeCycleSnapshotsInTransaction(
   for (const row of rows) {
     if (row.cycleId === null) continue;
     const cycle = cyclesById.get(row.cycleId);
-    if (
-      cycle === undefined ||
-      cycle.organizationId !== row.organizationId ||
-      cycle.teamId !== row.teamId
-    )
-      continue;
+    if (cycle === undefined || cycle.organizationId !== row.organizationId) continue;
     const tally = tallies.get(row.cycleId);
     if (tally === undefined) continue;
     const issues = Number(row.issues);
@@ -220,7 +214,7 @@ export async function writeCycleSnapshotsInTransaction(
       buildSyncAction({
         syncId,
         organizationId: cycle.organizationId,
-        scopes: [scopes.organization(cycle.organizationId), scopes.team(cycle.teamId)],
+        scopes: [scopes.organization(cycle.organizationId)],
         action: 'update',
         model: 'cycle',
         modelId: cycle.id,

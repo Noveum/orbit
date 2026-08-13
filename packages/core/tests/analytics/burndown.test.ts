@@ -4,7 +4,7 @@ import {
   cycleBurndown,
   cycleChurn,
   cycleFlowMetrics,
-  teamVelocity,
+  workspaceVelocity,
 } from '../../src/analytics/burndown.ts';
 import { insertIssue, utc } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
@@ -21,7 +21,6 @@ async function makeCycle(): Promise<string> {
   await db.insert(schema.cycle).values({
     id,
     organizationId: workspace.organizationId,
-    teamId: workspace.teamId,
     number: 90,
     name: 'Fixture cycle',
     startsAt: START,
@@ -268,13 +267,13 @@ describe('cycleFlowMetrics', () => {
   });
 });
 
-describe('teamVelocity', () => {
+describe('workspaceVelocity', () => {
   it('reports planned and completed work per cycle', async () => {
     await insertIssue(workspace, { number: 1, state: 'Done', cycleId, createdAt: START });
     await insertIssue(workspace, { number: 2, state: 'Done', cycleId, createdAt: START });
     await insertIssue(workspace, { number: 3, state: 'Todo', cycleId, createdAt: START });
 
-    const velocity = await teamVelocity(workspace.admin, workspace.teamId);
+    const velocity = await workspaceVelocity(workspace.admin);
     const point = velocity.find((entry) => entry.cycleId === cycleId);
     expect(point?.planned).toBe(3);
     expect(point?.completed).toBe(2);

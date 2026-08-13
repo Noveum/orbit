@@ -15,7 +15,7 @@ let withinCycle: Date;
 beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  const cycle = await activeCycle(workspace.admin, workspace.teamId);
+  const cycle = await activeCycle(workspace.admin);
   if (cycle === undefined) throw new Error('expected a bootstrap active cycle');
   cycleId = cycle.id;
   withinCycle = new Date(cycle.startsAt.getTime() + 86_400_000);
@@ -189,7 +189,7 @@ describe('writeCycleSnapshots', () => {
 
   it('isolates legacy invalid timezones and uses UTC for their local date', async () => {
     const invalid = await createWorkspace('InvalidTimezone');
-    const invalidCycle = await activeCycle(invalid.admin, invalid.teamId);
+    const invalidCycle = await activeCycle(invalid.admin);
     if (invalidCycle === undefined) throw new Error('expected a second active sprint');
     const capturedAt = new Date('2026-08-11T23:30:00.000Z');
     await db
@@ -268,13 +268,13 @@ describe('writeCycleSnapshots', () => {
     expect((await getCycle(workspace.admin, cycleId)).completedAt).toBeNull();
   });
 
-  it('does not capture or count assignments outside the sprint organization and team', async () => {
+  it('captures every workspace team and excludes corrupt cross-workspace assignments', async () => {
     const other = await createWorkspace('Vega');
     const foreignIssueId = await insertIssue(other, { number: 1, state: 'Done' });
     const sibling = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
     const siblingIssue = await createIssue(workspace.admin, {
       teamId: sibling.team.id,
-      title: 'Wrong team assignment',
+      title: 'Sibling team assignment',
     });
     await db.update(schema.issue).set({ cycleId }).where(eq(schema.issue.id, foreignIssueId));
     await db
@@ -288,21 +288,26 @@ describe('writeCycleSnapshots', () => {
       .select()
       .from(schema.cycleProgressSnapshot)
       .where(eq(schema.cycleProgressSnapshot.cycleId, cycleId));
-    expect(snapshot?.totalIssues).toBe(3);
+    expect(snapshot?.totalIssues).toBe(4);
     const memberships = await db
       .select({ issueId: schema.cycleIssueMembership.issueId })
       .from(schema.cycleIssueMembership)
       .where(eq(schema.cycleIssueMembership.cycleId, cycleId));
     expect(memberships.some((row) => row.issueId === foreignIssueId)).toBe(false);
-    expect(memberships.some((row) => row.issueId === siblingIssue.issue.id)).toBe(false);
+    expect(memberships.some((row) => row.issueId === siblingIssue.issue.id)).toBe(true);
 
     await completeCycle(workspace.admin, cycleId, withinCycle);
 
     const outcomes = await db
-      .select({ issueId: schema.cycleIssueOutcome.issueId })
+      .select({
+        issueId: schema.cycleIssueOutcome.issueId,
+        teamId: schema.cycleIssueOutcome.teamId,
+      })
       .from(schema.cycleIssueOutcome)
       .where(eq(schema.cycleIssueOutcome.cycleId, cycleId));
     expect(outcomes.some((row) => row.issueId === foreignIssueId)).toBe(false);
-    expect(outcomes.some((row) => row.issueId === siblingIssue.issue.id)).toBe(false);
+    expect(outcomes.find((row) => row.issueId === siblingIssue.issue.id)?.teamId).toBe(
+      sibling.team.id,
+    );
   });
 });

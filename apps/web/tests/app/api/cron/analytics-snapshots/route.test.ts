@@ -65,7 +65,7 @@ beforeEach(async () => {
 describe('GET /api/cron/analytics-snapshots', () => {
   it('refuses a caller with no authorization without writing or publishing', async () => {
     const workspace = await createWorkspace('Nova');
-    const cycle = await core.activeCycle(workspace.admin, workspace.teamId);
+    const cycle = await core.activeCycle(workspace.admin);
     if (cycle === undefined) throw new Error('expected an active sprint');
 
     const response = await GET(request());
@@ -77,7 +77,7 @@ describe('GET /api/cron/analytics-snapshots', () => {
 
   it('refuses the wrong secret without writing or publishing', async () => {
     const workspace = await createWorkspace('Nova');
-    const cycle = await core.activeCycle(workspace.admin, workspace.teamId);
+    const cycle = await core.activeCycle(workspace.admin);
     if (cycle === undefined) throw new Error('expected an active sprint');
 
     const response = await GET(request('Bearer definitely-not-the-secret-value'));
@@ -107,7 +107,7 @@ describe('GET /api/cron/analytics-snapshots', () => {
 
   it('captures active sprints and publishes the returned actions', async () => {
     const workspace = await createWorkspace('Nova');
-    const cycle = await core.activeCycle(workspace.admin, workspace.teamId);
+    const cycle = await core.activeCycle(workspace.admin);
     if (cycle === undefined) throw new Error('expected an active sprint');
 
     const response = await GET(request(`Bearer ${SECRET}`));
@@ -141,7 +141,7 @@ describe('GET /api/cron/analytics-snapshots', () => {
 
   it('keeps one local-day row when Vercel retries the same run', async () => {
     const workspace = await createWorkspace('Nova');
-    const cycle = await core.activeCycle(workspace.admin, workspace.teamId);
+    const cycle = await core.activeCycle(workspace.admin);
     if (cycle === undefined) throw new Error('expected an active sprint');
 
     const first = await GET(request(`Bearer ${SECRET}`));

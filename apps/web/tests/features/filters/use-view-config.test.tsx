@@ -31,6 +31,17 @@ function Harness() {
   return null;
 }
 
+const CARRIED: readonly string[] = ['person'];
+
+function CarryingHarness() {
+  const { config, setConfig } = useViewConfig('team_1', 'list', 'team', CARRIED);
+  captured = {
+    orderBy: config.orderBy,
+    setOrderBy: (value) => setConfig({ ...config, orderBy: value }),
+  };
+  return null;
+}
+
 async function wait(ms: number): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,6 +139,38 @@ describe('useViewConfig url sync', () => {
 
     expect(urlSearch()).toContain('view=view_1');
     expect(urlSearch()).toContain('order=priority');
+  });
+
+  it('carries a param the page owns through a write it did not make', async () => {
+    setUrl('person=user_bo');
+    render(<CarryingHarness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    await wait(URL_SYNC_DELAY_MS + 80);
+
+    expect(urlSearch()).toContain('person=user_bo');
+    expect(urlSearch()).toContain('order=priority');
+  });
+
+  it('carries the value the url holds when the write fires, not when it was queued', async () => {
+    render(<CarryingHarness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    window.history.replaceState(null, '', '/team/eng/issues?person=user_bo');
+    await wait(URL_SYNC_DELAY_MS + 80);
+
+    expect(urlSearch()).toContain('person=user_bo');
+    expect(urlSearch()).toContain('order=priority');
+  });
+
+  it('leaves a param no page claims out of the url', async () => {
+    setUrl('stray=1');
+    render(<Harness />);
+
+    act(() => captured?.setOrderBy('priority'));
+    await wait(URL_SYNC_DELAY_MS + 80);
+
+    expect(urlSearch()).toBe('order=priority');
   });
 
   it('writes nothing when the config already matches the url', async () => {

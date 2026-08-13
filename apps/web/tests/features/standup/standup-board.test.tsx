@@ -9,10 +9,12 @@ import { emptyFacets } from '@/lib/query/schemas.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
+let search = '';
+
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
   usePathname: () => '/standup',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(search),
 }));
 
 mock.module('@/features/comments/viewer-presence.tsx', () => ({
@@ -95,6 +97,13 @@ const BO_ISSUE = issue({
   assigneeId: bo.id,
   creatorId: bo.id,
 });
+const ORPHAN_ISSUE = issue({
+  id: 'issue_orphan',
+  identifier: 'ENG-3',
+  number: 3,
+  title: 'Nobody owns this',
+  assigneeId: null,
+});
 
 function buildWorkspace(): WorkspaceData {
   return {
@@ -137,31 +146,52 @@ function json(body: unknown, status = 200): Response {
 interface Served {
   readonly listUrls: string[];
   readonly facetUrls: string[];
+  readonly rosterUrls: string[];
 }
 
-function serve(options: { failList?: boolean; failFacets?: boolean } = {}): Served {
+const ISSUES = [ADA_ISSUE, BO_ISSUE, ORPHAN_ISSUE];
+
+function ownedBy(assignee: string | null): readonly Issue[] {
+  if (assignee === null) return ISSUES;
+  if (assignee === 'none') return ISSUES.filter((row) => row.assigneeId === null);
+  return ISSUES.filter((row) => row.assigneeId === assignee);
+}
+
+function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Served {
   const listUrls: string[] = [];
   const facetUrls: string[] = [];
+  const rosterUrls: string[] = [];
 
   globalThis.fetch = mock((input: string | URL | Request) => {
     const url = String(input);
     const path = url.split('?')[0] ?? url;
+    const params = new URL(url, 'http://localhost:3000').searchParams;
     const assignee = assigneeIdIn(url);
 
     if (path === '/api/issues/facets') {
       facetUrls.push(url);
-      if (options.failFacets === true) {
-        return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
-      }
       const counts = assignee === null ? { [ada.id]: 5, [bo.id]: 2 } : { [assignee]: 7 };
       return Promise.resolve(
-        json({ scopeTotal: 7, facets: { ...emptyFacets(), assignee: counts } }),
+        json({ scopeTotal: 8, facets: { ...emptyFacets(), assignee: counts } }),
       );
     }
 
     if (path === '/api/issues/summary') {
+      if (params.get('groupBy') === 'assignee') {
+        rosterUrls.push(url);
+        if (options.failRoster === true) {
+          return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
+        }
+        return Promise.resolve(
+          json({
+            total: 8,
+            byState: {},
+            groupTotals: { [ada.id]: 5, [bo.id]: 2, none: 1 },
+          }),
+        );
+      }
       return Promise.resolve(
-        json({ total: assignee === null ? 2 : 1, byState: {}, groupTotals: {} }),
+        json({ total: ownedBy(assignee).length, byState: {}, groupTotals: {} }),
       );
     }
 
@@ -170,16 +200,13 @@ function serve(options: { failList?: boolean; failFacets?: boolean } = {}): Serv
       if (options.failList === true) {
         return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
       }
-      const rows = [ADA_ISSUE, BO_ISSUE].filter(
-        (row) => assignee === null || row.assigneeId === assignee,
-      );
-      return Promise.resolve(json({ issues: rows, nextCursor: null }));
+      return Promise.resolve(json({ issues: ownedBy(assignee), nextCursor: null }));
     }
 
     return Promise.resolve(json({}));
   }) as unknown as typeof fetch;
 
-  return { listUrls, facetUrls };
+  return { listUrls, facetUrls, rosterUrls };
 }
 
 function mountBoard(): void {
@@ -208,8 +235,16 @@ function tileCount(userId: string): string | null {
   return screen.queryByTestId(`standup-tile-count-${userId}`)?.textContent ?? null;
 }
 
+const PRIORITY_FILTER = JSON.stringify({
+  kind: 'group',
+  combinator: 'and',
+  children: [{ kind: 'condition', property: 'priority', operator: 'in', values: ['1'] }],
+});
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  search = '';
+  window.history.replaceState(null, '', '/standup');
 });
 
 describe('StandupBoard', () => {
@@ -285,7 +320,7 @@ describe('StandupBoard', () => {
 
   it('marks the tile counts unknown when the roster lookup fails, not zero', async () => {
     workspace = buildWorkspace();
-    serve({ failFacets: true });
+    serve({ failRoster: true });
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
@@ -304,5 +339,96 @@ describe('StandupBoard', () => {
     await screen.findByTestId('retry-standup');
 
     expect(screen.queryByTestId('standup-kanban')).toBeNull();
+  });
+
+  it('counts the roster under the filters in force, not the whole workspace', async () => {
+    workspace = buildWorkspace();
+    search = `filter=${encodeURIComponent(PRIORITY_FILTER)}`;
+    const served = serve();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+
+    expect(served.rosterUrls.length).toBeGreaterThan(0);
+    expect(served.rosterUrls.every((url) => url.includes('filter='))).toBe(true);
+    expect(served.rosterUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
+  });
+
+  it('offers the issues nobody owns as their own tile', async () => {
+    workspace = buildWorkspace();
+    const served = serve();
+    const user = userEvent.setup();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+    expect(tileCount('none')).toBe('1');
+
+    await user.click(screen.getByTestId('standup-tile-none'));
+
+    await waitFor(() => {
+      expect(served.listUrls.some((url) => assigneeIdIn(url) === 'none')).toBe(true);
+    });
+    await waitFor(() => {
+      expect(cardShown('ENG-3')).toBe(true);
+    });
+    expect(cardShown('ENG-1')).toBe(false);
+  });
+
+  it('writes the picked person into the url so a reload keeps them', async () => {
+    workspace = buildWorkspace();
+    serve();
+    const user = userEvent.setup();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+    await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
+
+    await waitFor(() => {
+      expect(window.location.search).toContain(`person=${bo.id}`);
+    });
+
+    await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
+
+    await waitFor(() => {
+      expect(window.location.search).not.toContain('person=');
+    });
+  });
+
+  it('opens on the person the url names', async () => {
+    workspace = buildWorkspace();
+    search = `person=${bo.id}`;
+    const served = serve();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+
+    expect(served.listUrls.every((url) => assigneeIdIn(url) === bo.id)).toBe(true);
+    expect(screen.getByTestId(`standup-tile-${bo.id}`).getAttribute('aria-pressed')).toBe('true');
+    expect(cardShown('ENG-1')).toBe(false);
+    expect(cardShown('ENG-2')).toBe(true);
+  });
+
+  it('falls back to everyone when the url names somebody who is not a member', async () => {
+    workspace = buildWorkspace();
+    search = 'person=user_ghost';
+    const served = serve();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+
+    expect(served.listUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
+    expect(screen.getByTestId('standup-tile-everyone').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('gives the board the same filter bar every other issue view has', async () => {
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
+
+    await screen.findByTestId('standup-kanban');
+
+    expect(screen.getByTestId('filter-bar')).toBeTruthy();
+    expect(screen.getByTestId('add-filter')).toBeTruthy();
+    expect(screen.queryByTestId('save-view')).toBeNull();
   });
 });

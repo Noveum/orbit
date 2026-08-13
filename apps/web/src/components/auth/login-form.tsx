@@ -1,5 +1,6 @@
 'use client';
 
+import { signInCodeRequestSchema, signInCodeVerifySchema } from '@orbit/shared/validators';
 import { Fingerprint, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
@@ -18,7 +19,15 @@ export interface LoginFormProps {
   readonly passwordEnabled?: boolean;
 }
 
-type Pending = 'passkey' | 'google' | 'github' | 'magic-link' | 'password' | 'forgot' | null;
+type Pending =
+  | 'passkey'
+  | 'google'
+  | 'github'
+  | 'otp-send'
+  | 'otp-verify'
+  | 'password'
+  | 'forgot'
+  | null;
 
 function messageOf(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.length > 0) return error.message;
@@ -145,6 +154,87 @@ function ForgotPasswordButton({
   );
 }
 
+interface OtpFieldsProps {
+  readonly sent: boolean;
+  readonly value: string;
+  readonly pending: boolean;
+  readonly onChange: (value: string) => void;
+  readonly onResend: () => void;
+  readonly onChangeEmail: () => void;
+}
+
+function OtpFields({ sent, value, pending, onChange, onResend, onChangeEmail }: OtpFieldsProps) {
+  if (!sent) return null;
+  return (
+    <>
+      <label htmlFor="login-otp" className="sr-only">
+        Sign in code
+      </label>
+      <Input
+        id="login-otp"
+        type="text"
+        name="otp"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        required
+        minLength={6}
+        maxLength={6}
+        pattern="[0-9]{6}"
+        placeholder="6-digit code"
+        value={value}
+        onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, 6))}
+      />
+      <div className="flex items-center justify-between text-xs">
+        <button
+          type="button"
+          className="text-muted underline-offset-2 hover:underline"
+          disabled={pending}
+          onClick={onResend}
+        >
+          Resend code
+        </button>
+        <button
+          type="button"
+          className="text-muted underline-offset-2 hover:underline"
+          disabled={pending}
+          onClick={onChangeEmail}
+        >
+          Use another email
+        </button>
+      </div>
+    </>
+  );
+}
+
+function LoginFooter({
+  passwordEnabled,
+  creatingAccount,
+  onToggleAccount,
+}: {
+  readonly passwordEnabled: boolean;
+  readonly creatingAccount: boolean;
+  readonly onToggleAccount: () => void;
+}) {
+  return (
+    <>
+      {passwordEnabled ? (
+        <button
+          type="button"
+          className="text-center text-muted text-xs underline-offset-2 hover:underline"
+          onClick={onToggleAccount}
+        >
+          {creatingAccount ? 'I already have an account' : 'Create an account with a password'}
+        </button>
+      ) : null}
+      <p className="text-center text-2xs text-faint">
+        {passwordEnabled
+          ? 'Passkeys and email codes still work. Sessions expire after 30 days.'
+          : 'Orbit never asks for a password. Sessions expire after 30 days.'}
+      </p>
+    </>
+  );
+}
+
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
@@ -153,10 +243,11 @@ export function LoginForm({
   const { toast } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
   const [name, setName] = useState('');
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
-  const [linkSent, setLinkSent] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
 
   const withPending = async (kind: Exclude<Pending, null>, run: () => Promise<void>) => {
     setPending(kind);
@@ -199,15 +290,27 @@ export function LoginForm({
       window.location.assign(callbackUrl);
     });
 
-  const sendMagicLink = () =>
-    withPending('magic-link', async () => {
-      const result = await authClient.signIn.magicLink({ email, callbackURL: callbackUrl });
-      if (result.error) throw new Error(result.error.message ?? 'Could not send the link.');
-      setLinkSent(true);
+  const sendOtp = () =>
+    withPending('otp-send', async () => {
+      const input = signInCodeRequestSchema.parse({ email });
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email: input.email,
+        type: 'sign-in',
+      });
+      if (result.error) throw new Error(result.error.message ?? 'Could not send the code.');
+      setOtpSent(true);
       toast({
         title: 'Check your email',
-        description: `A sign in link is on its way to ${email}.`,
+        description: `A sign in code is on its way to ${email}.`,
       });
+    });
+
+  const verifyOtp = () =>
+    withPending('otp-verify', async () => {
+      const input = signInCodeVerifySchema.parse({ email, otp });
+      const result = await authClient.signIn.emailOtp(input);
+      if (result.error) throw new Error(result.error.message ?? 'That code is invalid or expired.');
+      window.location.assign(callbackUrl);
     });
 
   const forgotPassword = () =>
@@ -225,12 +328,17 @@ export function LoginForm({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (otpSent) {
+      verifyOtp();
+      return;
+    }
     if (passwordEnabled) {
       submitPassword();
       return;
     }
-    sendMagicLink();
+    sendOtp();
   };
+  const emailCodeButtonSubmits = !passwordEnabled || otpSent;
 
   return (
     <div className="flex w-full max-w-[22rem] flex-col gap-5">
@@ -286,9 +394,24 @@ export function LoginForm({
           required
           placeholder="you@company.com"
           value={email}
+          disabled={otpSent}
           onChange={(event) => setEmail(event.target.value)}
         />
-        {passwordEnabled ? (
+        <OtpFields
+          sent={otpSent}
+          value={otp}
+          pending={pending !== null}
+          onChange={setOtp}
+          onResend={() => {
+            setOtp('');
+            sendOtp();
+          }}
+          onChangeEmail={() => {
+            setOtp('');
+            setOtpSent(false);
+          }}
+        />
+        {passwordEnabled && !otpSent ? (
           <PasswordField
             creatingAccount={creatingAccount}
             value={password}
@@ -297,7 +420,7 @@ export function LoginForm({
             disabled={pending !== null || email.length === 0 || password.length === 0}
           />
         ) : null}
-        {passwordEnabled && !creatingAccount ? (
+        {passwordEnabled && !creatingAccount && !otpSent ? (
           <ForgotPasswordButton
             sending={pending === 'forgot'}
             disabled={pending !== null || email.length === 0}
@@ -307,46 +430,33 @@ export function LoginForm({
           />
         ) : null}
         <Button
-          type={passwordEnabled ? 'button' : 'submit'}
+          type={emailCodeButtonSubmits ? 'submit' : 'button'}
           variant="secondary"
           size="md"
           block
-          disabled={pending !== null || email.length === 0}
-          {...(passwordEnabled
-            ? {
+          disabled={pending !== null || email.length === 0 || (otpSent && otp.length !== 6)}
+          {...(emailCodeButtonSubmits
+            ? {}
+            : {
                 onClick: () => {
-                  sendMagicLink();
+                  sendOtp();
                 },
-              }
-            : {})}
+              })}
         >
-          {pending === 'magic-link' ? (
+          {pending === 'otp-send' || pending === 'otp-verify' ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           ) : (
             <MailCheck className="size-4" aria-hidden="true" />
           )}
-          Email me a link
+          {otpSent ? 'Verify code' : 'Email me a code'}
         </Button>
-        {linkSent ? (
-          <output className="text-center text-success text-xs">Link sent. Check your inbox.</output>
-        ) : null}
       </form>
 
-      {passwordEnabled ? (
-        <button
-          type="button"
-          className="text-center text-muted text-xs underline-offset-2 hover:underline"
-          onClick={() => setCreatingAccount((current) => !current)}
-        >
-          {creatingAccount ? 'I already have an account' : 'Create an account with a password'}
-        </button>
-      ) : null}
-
-      <p className="text-center text-2xs text-faint">
-        {passwordEnabled
-          ? 'Passkeys and links still work. Sessions expire after 30 days.'
-          : 'Orbit never asks for a password. Sessions expire after 30 days.'}
-      </p>
+      <LoginFooter
+        passwordEnabled={passwordEnabled}
+        creatingAccount={creatingAccount}
+        onToggleAccount={() => setCreatingAccount((current) => !current)}
+      />
     </div>
   );
 }

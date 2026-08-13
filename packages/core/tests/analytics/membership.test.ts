@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import type { Database, Transaction } from '@orbit/db';
-import { and, asc, db, eq, schema, sql } from '@orbit/db';
+import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
 import * as databaseSchema from '@orbit/db/schema';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { bootstrapActiveCycleMemberships } from '../../src/analytics/membership.ts';
+import {
+  bootstrapActiveCycleMemberships,
+  bootstrapCycleMemberships,
+} from '../../src/analytics/membership.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
+import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -42,7 +46,7 @@ beforeEach(async () => {
 });
 
 async function firstCycle() {
-  const [cycle] = await listCycles(workspace.admin, workspace.teamId);
+  const [cycle] = await listCycles(workspace.admin);
   if (cycle === undefined) throw new Error('missing bootstrap cycle');
   return cycle;
 }
@@ -188,6 +192,7 @@ describe('sprint membership capture', () => {
       title: 'Move with the sprint',
       cycleId: first.id,
       estimate: 3,
+      stateId: stateNamed(workspace, 'Todo').id,
     });
     await updateIssue(workspace.admin, created.issue.id, { cycleId: second.id });
     await completeCycle(workspace.admin, second.id, second.endsAt);
@@ -422,6 +427,7 @@ describe('sprint membership capture', () => {
       title: 'Carryover',
       cycleId: cycle.id,
       estimate: 13,
+      stateId: stateNamed(workspace, 'Todo').id,
     });
     const closeTime = new Date(cycle.endsAt.getTime() - 3_600_000);
 
@@ -453,6 +459,53 @@ describe('sprint membership capture', () => {
       rolloverCycleId: closed.nextCycle.id,
     });
     expect(outcomes.every((entry) => entry.closedAt.getTime() === closeTime.getTime())).toBe(true);
+  });
+
+  it('attributes one workspace sprint to each issue team through close and rollover', async () => {
+    const cycle = await firstCycle();
+    const sibling = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
+    const first = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Primary team work',
+      cycleId: cycle.id,
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+    const siblingTodo = sibling.states.find((state) => state.name === 'Todo');
+    if (siblingTodo === undefined) throw new Error('missing sibling Todo state');
+    const second = await createIssue(workspace.admin, {
+      teamId: sibling.team.id,
+      title: 'Sibling team work',
+      cycleId: cycle.id,
+      stateId: siblingTodo.id,
+    });
+
+    const closed = await completeCycle(workspace.admin, cycle.id, cycle.endsAt);
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(inArray(schema.cycleIssueMembership.issueId, [first.issue.id, second.issue.id]));
+    const outcomes = await db
+      .select()
+      .from(schema.cycleIssueOutcome)
+      .where(eq(schema.cycleIssueOutcome.cycleId, cycle.id));
+    const membershipTeams = new Map(
+      memberships
+        .filter((entry) => entry.cycleId === cycle.id)
+        .map((entry) => [entry.issueId, entry.teamId]),
+    );
+    const outcomeTeams = new Map(outcomes.map((entry) => [entry.issueId, entry.teamId]));
+
+    expect(membershipTeams.get(first.issue.id)).toBe(workspace.teamId);
+    expect(membershipTeams.get(second.issue.id)).toBe(sibling.team.id);
+    expect(outcomeTeams.get(first.issue.id)).toBe(workspace.teamId);
+    expect(outcomeTeams.get(second.issue.id)).toBe(sibling.team.id);
+    expect(closed.rolledOverIssueIds.toSorted()).toEqual(
+      [first.issue.id, second.issue.id].toSorted(),
+    );
+    expect(await openMemberships(first.issue.id)).toHaveLength(1);
+    expect(await openMemberships(second.issue.id)).toHaveLength(1);
+    expect((await openMemberships(first.issue.id))[0]?.cycleId).toBe(closed.nextCycle.id);
+    expect((await openMemberships(second.issue.id))[0]?.cycleId).toBe(closed.nextCycle.id);
   });
 
   it('bootstraps missing current membership before closing the first observed sprint', async () => {
@@ -490,6 +543,58 @@ describe('sprint membership capture', () => {
       cycleId: cycle.id,
       planned: false,
       estimateAtClose: 8,
+      outcome: 'carryover',
+      rolloverCycleId: closed.nextCycle.id,
+    });
+  });
+
+  it('repairs a stale source membership before closing and rolling the assigned sprint', async () => {
+    const source = await firstCycle();
+    const { cycle: destination } = await createCycle(workspace.admin, {
+      startsAt: source.endsAt,
+      endsAt: new Date(source.endsAt.getTime() + 14 * 86_400_000),
+    });
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId: destination.id,
+      estimate: 5,
+    });
+    await db.insert(schema.cycleIssueMembership).values({
+      id: 'membership_stale_source',
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      cycleId: source.id,
+      issueId,
+      issueIdentifier: 'NOVA-1',
+      addedAt: source.startsAt,
+      entryKind: 'added',
+      coverage: 'captured',
+    });
+
+    const repaired = await db.transaction(async (tx) =>
+      bootstrapCycleMemberships(tx, [destination.id], destination.startsAt),
+    );
+    const closed = await completeCycle(workspace.admin, destination.id, destination.endsAt);
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.issueId, issueId));
+    const [outcome] = await db
+      .select()
+      .from(schema.cycleIssueOutcome)
+      .where(eq(schema.cycleIssueOutcome.issueId, issueId));
+
+    expect(repaired).toBe(1);
+    expect(memberships.filter((entry) => entry.removedAt === null)).toHaveLength(1);
+    expect(memberships.find((entry) => entry.cycleId === source.id)?.removedAt).not.toBeNull();
+    expect(memberships.find((entry) => entry.cycleId === destination.id)?.removedAt).not.toBeNull();
+    expect(
+      memberships.find((entry) => entry.cycleId === closed.nextCycle.id)?.removedAt,
+    ).toBeNull();
+    expect(outcome).toMatchObject({
+      cycleId: destination.id,
+      issueId,
       outcome: 'carryover',
       rolloverCycleId: closed.nextCycle.id,
     });

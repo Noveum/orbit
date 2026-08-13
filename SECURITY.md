@@ -44,7 +44,7 @@ If you self-host, track `main` or a recent tag. There is no backporting.
 
 In scope:
 
-- Authentication and session handling, including passkeys, magic links, OAuth
+- Authentication and session handling, including passkeys, email OTP, OAuth
   and the dev login route.
 - Authorization. Anything that lets a user read or change something their role
   in `packages/shared/src/policy` should not allow, or that crosses a workspace

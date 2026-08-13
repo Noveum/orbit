@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { idSchema } from './common.ts';
 
 const instantSchema = z.union([z.string().trim().min(1), z.date()]).pipe(z.coerce.date());
 
@@ -20,8 +19,7 @@ export const ianaTimezoneSchema = z
   .refine(isIanaTimezone, 'Use a valid IANA timezone.');
 
 export const cycleCreateSchema = z.object({
-  teamId: idSchema,
-  name: z.string().trim().min(1).max(120).optional(),
+  name: z.string().trim().max(120).optional(),
   timezone: ianaTimezoneSchema.optional(),
   startsAt: instantSchema.optional(),
   endsAt: instantSchema.optional(),
@@ -29,12 +27,16 @@ export const cycleCreateSchema = z.object({
 
 export const cycleUpdateSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: z.string().trim().max(120),
     timezone: ianaTimezoneSchema,
     startsAt: instantSchema,
     endsAt: instantSchema,
   })
   .partial();
+
+export const cycleEditSchema = cycleUpdateSchema.extend({
+  shiftFollowing: z.boolean().optional(),
+});
 
 export type CycleCreateInput = z.infer<typeof cycleCreateSchema>;
 
@@ -51,7 +53,6 @@ export const sprintOutcomeSchema = z.object({
 });
 
 export const cycleListQuerySchema = z.object({
-  teamId: idSchema.optional(),
   status: z.enum(['all', 'past']).default('all'),
   limit: z.coerce.number().int().min(1).max(50).default(12),
 });

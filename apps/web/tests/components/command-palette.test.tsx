@@ -105,7 +105,6 @@ describe('command palette', () => {
       /Go to Docs/,
       /Go to Engineering issues/,
       /Go to Engineering board/,
-      /Go to Engineering active sprint/,
       /Go to Settings/,
     ]) {
       expect(await screen.findByRole('option', { name: label })).toBeInTheDocument();

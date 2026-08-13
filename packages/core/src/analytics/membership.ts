@@ -41,7 +41,6 @@ interface CycleCloseInput {
   readonly cycle: {
     readonly id: string;
     readonly organizationId: string;
-    readonly teamId: string;
     readonly startsAt: Date;
   };
   readonly rolloverCycleId: string;
@@ -51,7 +50,14 @@ interface CycleCloseInput {
 type Outcome = 'completed' | 'incomplete' | 'canceled' | 'removed' | 'carryover';
 
 export async function lockCycleAssignmentTeam(tx: Executor, teamId: string): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${teamId}`}))`);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle-team:${teamId}`}))`);
+}
+
+export async function lockCycleAssignmentWorkspace(
+  tx: Executor,
+  organizationId: string,
+): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${organizationId}`}))`);
 }
 
 async function closeOpenMembership(
@@ -112,6 +118,7 @@ function closeOutcome(
   if (!hasOpenMembership || category === undefined) return 'removed';
   if (category === 'completed') return 'completed';
   if (category === 'canceled') return 'canceled';
+  if (category === 'triage' || category === 'backlog') return 'incomplete';
   if (archivedAt !== null) return 'incomplete';
   return 'carryover';
 }
@@ -126,7 +133,6 @@ export async function captureCycleCloseOutcomes(
     .where(
       and(
         eq(schema.cycleIssueMembership.organizationId, input.cycle.organizationId),
-        eq(schema.cycleIssueMembership.teamId, input.cycle.teamId),
         eq(schema.cycleIssueMembership.cycleId, input.cycle.id),
       ),
     )
@@ -144,7 +150,8 @@ export async function captureCycleCloseOutcomes(
     .where(
       and(
         eq(schema.issue.organizationId, input.cycle.organizationId),
-        eq(schema.issue.teamId, input.cycle.teamId),
+        eq(schema.workflowState.organizationId, schema.issue.organizationId),
+        eq(schema.workflowState.teamId, schema.issue.teamId),
         inArray(schema.issue.id, issueIds),
       ),
     );
@@ -177,7 +184,7 @@ export async function captureCycleCloseOutcomes(
       return {
         id: newId(),
         organizationId: input.cycle.organizationId,
-        teamId: input.cycle.teamId,
+        teamId: issue?.teamId ?? first.teamId,
         cycleId: input.cycle.id,
         issueId,
         issueIdentifier: issue?.identifier ?? first.issueIdentifier,
@@ -194,6 +201,16 @@ export async function captureCycleCloseOutcomes(
       };
     }),
   );
+  await tx
+    .update(schema.cycleIssueMembership)
+    .set({ removedAt: input.occurredAt })
+    .where(
+      and(
+        eq(schema.cycleIssueMembership.organizationId, input.cycle.organizationId),
+        eq(schema.cycleIssueMembership.cycleId, input.cycle.id),
+        isNull(schema.cycleIssueMembership.removedAt),
+      ),
+    );
 }
 
 export async function bootstrapActiveCycleMemberships(
@@ -231,7 +248,6 @@ export async function bootstrapCycleMemberships(
     .select({
       id: schema.cycle.id,
       organizationId: schema.cycle.organizationId,
-      teamId: schema.cycle.teamId,
     })
     .from(schema.cycle)
     .where(inArray(schema.cycle.id, [...cycleIds]));
@@ -241,7 +257,6 @@ export async function bootstrapCycleMemberships(
       and(
         eq(schema.issue.cycleId, cycle.id),
         eq(schema.issue.organizationId, cycle.organizationId),
-        eq(schema.issue.teamId, cycle.teamId),
       ),
     ),
   );
@@ -255,6 +270,10 @@ export async function bootstrapCycleMemberships(
   if (candidates.length === 0) return 0;
 
   const teamIds = [...new Set(candidates.map((issue) => issue.teamId))].sort();
+  const organizationIds = [...new Set(candidates.map((issue) => issue.organizationId))].sort();
+  for (const organizationId of organizationIds) {
+    await lockCycleAssignmentWorkspace(tx, organizationId);
+  }
   for (const teamId of teamIds) await lockCycleAssignmentTeam(tx, teamId);
 
   const issues = await tx
@@ -275,6 +294,7 @@ export async function bootstrapCycleMemberships(
 
   const existing = await tx
     .select({
+      id: schema.cycleIssueMembership.id,
       issueId: schema.cycleIssueMembership.issueId,
       cycleId: schema.cycleIssueMembership.cycleId,
     })
@@ -288,7 +308,21 @@ export async function bootstrapCycleMemberships(
         isNull(schema.cycleIssueMembership.removedAt),
       ),
     );
-  const openKeys = new Set(existing.map((entry) => `${entry.issueId}:${entry.cycleId}`));
+  const currentCycleByIssue = new Map(issues.map((issue) => [issue.id, issue.cycleId]));
+  const staleIds = existing
+    .filter((entry) => currentCycleByIssue.get(entry.issueId) !== entry.cycleId)
+    .map((entry) => entry.id);
+  if (staleIds.length > 0) {
+    await tx
+      .update(schema.cycleIssueMembership)
+      .set({ removedAt: occurredAt })
+      .where(inArray(schema.cycleIssueMembership.id, staleIds));
+  }
+  const openKeys = new Set(
+    existing
+      .filter((entry) => currentCycleByIssue.get(entry.issueId) === entry.cycleId)
+      .map((entry) => `${entry.issueId}:${entry.cycleId}`),
+  );
   const missing = issues.filter(
     (issue) => issue.cycleId !== null && !openKeys.has(`${issue.id}:${issue.cycleId}`),
   );

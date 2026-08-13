@@ -161,6 +161,59 @@ describe('attaching a file from the slash menu', () => {
   });
 });
 
+describe('pasting markdown', () => {
+  it('inserts formatted blocks and emits canonical markdown', async () => {
+    const onChange = mock();
+    const editor = await mountEditor({ onChange });
+    const source = [
+      '## Plan',
+      '',
+      'Read the **release notes** in [the docs](https://orbit.test/docs).',
+      '',
+      '- [ ] Ship it',
+    ].join('\n');
+
+    const user = userEvent.setup();
+    await user.click(editor.view.dom);
+    await user.paste(source);
+
+    await waitFor(() => expect(onChange.mock.calls.at(-1)?.[0]).toBe(source));
+    expect(editor.view.dom.querySelector('h2')?.textContent).toBe('Plan');
+    expect(editor.view.dom.querySelector('strong')?.textContent).toBe('release notes');
+    expect(editor.view.dom.querySelector('a')?.getAttribute('href')).toBe(
+      'https://orbit.test/docs',
+    );
+    expect(editor.view.dom.querySelector('ul[data-type="taskList"]')).not.toBeNull();
+  });
+
+  it('leaves ordinary pasted text on the native editor path', async () => {
+    const onChange = mock();
+    const editor = await mountEditor({ onChange });
+
+    const user = userEvent.setup();
+    await user.click(editor.view.dom);
+    await user.paste('Everything is fine now.');
+
+    await waitFor(() => expect(onChange.mock.calls.at(-1)?.[0]).toBe('Everything is fine now.'));
+  });
+
+  it('keeps pasted markdown literal inside a code block', async () => {
+    const onChange = mock();
+    const editor = await mountEditor({ onChange });
+    const user = userEvent.setup();
+
+    await user.click(editor.view.dom);
+    editor.chain().setCodeBlock().run();
+    await user.paste('**text**');
+
+    await waitFor(() =>
+      expect(editor.view.dom.querySelector('code')?.textContent).toBe('**text**'),
+    );
+    expect(editor.view.dom.querySelector('strong')).toBeNull();
+    expect(onChange.mock.calls.at(-1)?.[0]).toContain('**text**');
+  });
+});
+
 describe('mention menu', () => {
   it('offers members and inserts a handle without leaving a trigger character', async () => {
     const onChange = mock();

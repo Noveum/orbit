@@ -20,3 +20,9 @@ export const setPasswordSchema = z.object({
 export type SetPasswordInput = z.infer<typeof setPasswordSchema>;
 
 export const devSignInSchema = z.object({ email: emailSchema });
+
+export const signInCodeRequestSchema = z.object({ email: emailSchema });
+
+export const signInCodeVerifySchema = signInCodeRequestSchema.extend({
+  otp: z.string().regex(/^\d{6}$/),
+});

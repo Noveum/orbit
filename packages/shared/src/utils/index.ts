@@ -2,6 +2,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { SORT_ORDER_STEP } from '../constants/index.ts';
 
 export * from './doc-anchor.ts';
+export * from './error-fields.ts';
 export * from './highlight.ts';
 
 export function slugify(input: string): string {

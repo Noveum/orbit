@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createIssue } from '@orbit/core';
 import { addMember } from '@orbit/core/test-support';
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
+import { issueEnvelopeSchema } from '@/lib/query/schemas.ts';
 import {
   actorFor,
   buildIssueRoutesWorld,
@@ -38,6 +40,49 @@ describe('PATCH /api/issues/[id]', () => {
 
     expect(response.status).toBe(200);
     expect(issueSchema.parse(await response.json()).issue.dueDate).toBe('2031-03-04');
+  });
+
+  it('stores a large pasted description', async () => {
+    const description = 'x'.repeat(150_000);
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${world.second.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ description }),
+      }),
+      contextFor(world.second.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(issueEnvelopeSchema.parse(await response.json()).issue.description).toBe(description);
+  });
+
+  it('explains when a description exceeds the request limit', async () => {
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${world.second.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1),
+        }),
+      }),
+      contextFor(world.second.id),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'validation_failed',
+        message: 'Description must be 500,000 characters or fewer.',
+        details: {
+          issues: [
+            {
+              code: 'too_big',
+              path: ['description'],
+              message: 'Description must be 500,000 characters or fewer.',
+            },
+          ],
+        },
+      },
+    });
   });
 
   it('stores a parent the client sends', async () => {

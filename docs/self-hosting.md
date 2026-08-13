@@ -29,7 +29,7 @@ Both need the same infrastructure plus one complete first-login method.
 | S3-compatible storage | Cloudflare R2 | AWS S3, Backblaze B2, MinIO, Supabase Storage |
 | Transactional email (optional with password or OAuth) | [Resend](https://resend.com) | None. Orbit only supports Resend |
 
-Email is used for magic links and invites. It is optional when password, Google
+Email is used for sign-in codes and invites. It is optional when password, Google
 or GitHub sign-in is configured. Production build and startup refuse to proceed
 when none of those methods can bootstrap the first user.
 
@@ -94,7 +94,7 @@ Create a [Resend](https://resend.com) account, verify a domain, and create an
 API key. `EMAIL_FROM` has to be on the domain you verified. If it is not, every
 send fails and the only symptom is that invites never arrive. You can omit
 Resend when password, Google or GitHub sign-in is configured, but invitations
-and magic links will remain unavailable.
+and email OTP will remain unavailable.
 
 ### 5. Apply the schema
 
@@ -190,7 +190,7 @@ walks through naming it and creating the first team.
 
 The production preflight has already confirmed that at least one first-login
 method is configured. See [Configuration](configuration.md#authentication) for
-Google, GitHub, password authentication, passkeys and magic links.
+Google, GitHub, password authentication, passkeys and email OTP.
 
 Complete one real sign-in before inviting anyone. The preflight cannot validate
 remote OAuth credentials or a Resend domain. Passkeys become available after an
@@ -300,7 +300,7 @@ version:
 | Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
-| Invites and magic links never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
+| Invites and sign-in codes never arrive | `EMAIL_FROM` is not on a domain verified in Resend |
 | Build or startup says a first-login method is required | Configure password auth, a complete Google or GitHub pair, or Resend with a non-local sender |
 | Connection pool exhausted | `DATABASE_URL` points at the direct endpoint instead of the pooler |
 | Sign-in loops back to the login screen | `BETTER_AUTH_URL` does not exactly match the origin you are visiting |

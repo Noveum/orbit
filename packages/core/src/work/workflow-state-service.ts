@@ -169,6 +169,8 @@ export async function initialStateFor(
   executor: Executor,
   teamId: string,
 ): Promise<WorkflowStateRow> {
+  const triage = await defaultStateFor(executor, teamId, 'triage');
+  if (triage !== undefined) return triage;
   const unstarted = await defaultStateFor(executor, teamId, 'unstarted');
   if (unstarted !== undefined) return unstarted;
   const backlog = await defaultStateFor(executor, teamId, 'backlog');

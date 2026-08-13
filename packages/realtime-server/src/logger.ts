@@ -1,3 +1,5 @@
+import { safeErrorFields } from '@orbit/shared/utils';
+
 type LogFields = Record<string, unknown>;
 
 type LogLevel = 'info' | 'warn' | 'error';
@@ -23,6 +25,4 @@ export const logger = {
   error: (message: string, fields?: LogFields): void => write('error', message, fields),
 };
 
-export function errorFields(error: unknown): LogFields {
-  return { error: error instanceof Error ? error.message : String(error) };
-}
+export const errorFields = safeErrorFields;

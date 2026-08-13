@@ -6,11 +6,10 @@ export async function GET(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     const query = cycleListQuerySchema.parse(searchParamsOf(request));
-    if (query.teamId === undefined) return { cycles: [] };
     if (query.status === 'past') {
-      return { cycles: await pastCycles(principal, query.teamId, query.limit) };
+      return { cycles: await pastCycles(principal, query.limit) };
     }
-    return { cycles: await listCycles(principal, query.teamId) };
+    return { cycles: await listCycles(principal) };
   });
 }
 

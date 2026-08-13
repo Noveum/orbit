@@ -4,7 +4,7 @@ import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { ChevronRight } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -26,6 +26,7 @@ import {
   releasePending,
 } from './pending-attachments.ts';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
+import { projectSupportsTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
@@ -44,12 +45,6 @@ function pendingLabel(count: number): string {
   return `${count} ${noun} will be attached once the issue is created.`;
 }
 
-function projectSupportsTeam(project: Project | undefined, teamId: string): boolean {
-  return (
-    project !== undefined && (project.teamIds.length === 0 || project.teamIds.includes(teamId))
-  );
-}
-
 function compatibleTeamId(
   project: Project,
   currentTeamId: string | null,
@@ -62,7 +57,7 @@ function compatibleTeamId(
 
 function ScopePickers({
   projects,
-  teamCycles,
+  cycles,
   projectId,
   estimate,
   cycleId,
@@ -71,7 +66,7 @@ function ScopePickers({
   onCycle,
 }: {
   readonly projects: readonly Project[];
-  readonly teamCycles: readonly Cycle[];
+  readonly cycles: readonly Cycle[];
   readonly projectId: string | null;
   readonly estimate: number | null;
   readonly cycleId: string | null;
@@ -120,16 +115,16 @@ function ScopePickers({
         options={[
           {
             id: 'none',
-            label: teamCycles.length === 0 ? 'No sprints on this team' : 'No sprint',
+            label: cycles.length === 0 ? 'No sprints yet' : 'No sprint',
           },
-          ...teamCycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
+          ...cycles.map((cycle) => ({ id: cycle.id, label: sprintLabel(cycle) })),
         ]}
         selected={cycleId === null ? ['none'] : [cycleId]}
         onSelect={(value) => onCycle(value === 'none' ? null : value)}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-cycle">
           {(() => {
-            const found = teamCycles.find((cycle) => cycle.id === cycleId);
+            const found = cycles.find((cycle) => cycle.id === cycleId);
             return found === undefined ? 'Sprint' : sprintLabel(found);
           })()}
         </button>
@@ -198,7 +193,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     if (firstTeamId === null || !projectSupportsTeam(selectedProject, firstTeamId))
       setProjectId(null);
     setEstimate(null);
-    setCycleId(null);
     setLabelIds([]);
   }, [firstTeamId, open, projectId, projects, teamId, teams]);
 
@@ -249,10 +243,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   const teamStates = statesForTeam(states, teamId);
   const teamLabels = labels.filter((label) => label.teamId === null || label.teamId === teamId);
-  const teamCycles = useMemo(
-    () => cycles.filter((cycle) => cycle.teamId === teamId),
-    [cycles, teamId],
-  );
   const selectedState = teamStates.find((state) => state.id === stateId);
 
   useEffect(() => {
@@ -278,7 +268,6 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
       setTeamId(nextTeamId);
       setStateId(null);
       setEstimate(null);
-      setCycleId(null);
       setLabelIds([]);
     }
     setProjectId(nextProjectId);
@@ -328,10 +317,13 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="quick-create" className="max-w-xl">
+      <DialogContent
+        data-testid="quick-create"
+        className="flex max-w-xl flex-col overflow-y-hidden"
+      >
         <DialogTitle className="sr-only">Create issue</DialogTitle>
         <p
-          className="flex items-center gap-1.5 text-2xs text-faint"
+          className="flex shrink-0 items-center gap-1.5 text-2xs text-faint"
           data-testid="quick-create-crumb"
         >
           <span className="rounded-sm bg-surface-2 px-1.5 py-0.5 text-text">
@@ -349,144 +341,151 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               submit();
             }
           }}
-          className="flex flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3"
         >
-          <Input
-            ref={titleRef}
-            autoFocus
-            data-testid="quick-create-title"
-            placeholder="Issue title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) event.preventDefault();
-            }}
-            className="h-9 border-0 px-0 font-medium text-base shadow-none"
-          />
-          <RichTextEditor
-            key={composerKey}
-            value={description}
-            onChange={setDescription}
-            members={members}
-            placeholder="Add a description, markdown works."
-            ariaLabel="Issue description"
-            testId="quick-create-description"
-            onUpload={hold}
-          />
-          {pending.length === 0 ? null : (
-            <output className="text-2xs text-faint" data-testid="quick-create-pending">
-              {pendingLabel(pending.length)}
-            </output>
-          )}
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <PropertyMenu
-              title="Team"
-              options={teams.map((team) => ({ id: team.id, label: team.name }))}
-              selected={teamId === null ? [] : [teamId]}
-              onSelect={(id) => {
-                const selectedProject = projects.find((project) => project.id === projectId);
-                setTeamId(id);
-                setStateId(null);
-                if (!projectSupportsTeam(selectedProject, id)) setProjectId(null);
-                setEstimate(null);
-                setCycleId(null);
-                setLabelIds([]);
+          <div
+            className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1"
+            data-testid="quick-create-scroll"
+          >
+            <Input
+              ref={titleRef}
+              autoFocus
+              data-testid="quick-create-title"
+              placeholder="Issue title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
+                  event.preventDefault();
               }}
-            >
-              <button type="button" className={chipClassName} data-testid="quick-create-team">
-                {teams.find((team) => team.id === teamId)?.key ?? 'Team'}
-              </button>
-            </PropertyMenu>
-
-            <PropertyMenu
-              title="Status"
-              options={teamStates.map((state) => ({
-                id: state.id,
-                label: state.name,
-                icon: <StateGlyph category={state.category} color={state.color} />,
-              }))}
-              selected={stateId === null ? [] : [stateId]}
-              onSelect={setStateId}
-            >
-              <button type="button" className={chipClassName}>
-                {selectedState === undefined ? null : (
-                  <StateGlyph category={selectedState.category} color={selectedState.color} />
-                )}
-                {selectedState?.name ?? 'Status'}
-              </button>
-            </PropertyMenu>
-
-            <PropertyMenu
-              title="Priority"
-              options={PRIORITIES.map((value) => ({
-                id: String(value),
-                label: priorityLabel(value),
-                icon: <PriorityGlyph priority={value} />,
-              }))}
-              selected={[String(priority)]}
-              onSelect={(value) => setPriority(Number(value))}
-            >
-              <button type="button" className={chipClassName}>
-                <PriorityGlyph priority={priority} />
-                {priorityLabel(priority)}
-              </button>
-            </PropertyMenu>
-
-            <PropertyMenu
-              title="Assignee"
-              options={[
-                { id: 'none', label: 'No assignee' },
-                ...members.map((member) => ({ id: member.id, label: member.name })),
-              ]}
-              selected={assigneeId === null ? ['none'] : [assigneeId]}
-              onSelect={(value) => setAssigneeId(value === 'none' ? null : value)}
-            >
-              <button type="button" className={chipClassName}>
-                {members.find((member) => member.id === assigneeId)?.name ?? 'Assignee'}
-              </button>
-            </PropertyMenu>
-
-            <PropertyMenu
-              title="Labels"
-              multiple
-              options={teamLabels.map((label) => ({
-                id: label.id,
-                label: label.name,
-                icon: (
-                  <span
-                    className="size-2 rounded-full"
-                    style={{ backgroundColor: label.color }}
-                    aria-hidden="true"
-                  />
-                ),
-              }))}
-              selected={labelIds}
-              onSelect={(id) =>
-                setLabelIds((current) =>
-                  current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
-                )
-              }
-            >
-              <button type="button" className={chipClassName}>
-                {labelIds.length === 0 ? 'Labels' : `${labelIds.length} labels`}
-              </button>
-            </PropertyMenu>
-
-            <ScopePickers
-              projects={projects}
-              teamCycles={teamCycles}
-              projectId={projectId}
-              estimate={estimate}
-              cycleId={cycleId}
-              onProject={selectProject}
-              onEstimate={setEstimate}
-              onCycle={setCycleId}
+              className="h-9 border-0 px-0 font-medium text-base shadow-none"
             />
+            <RichTextEditor
+              key={composerKey}
+              value={description}
+              onChange={setDescription}
+              members={members}
+              placeholder="Add a description, markdown works."
+              ariaLabel="Issue description"
+              testId="quick-create-description"
+              onUpload={hold}
+            />
+            {pending.length === 0 ? null : (
+              <output className="text-2xs text-faint" data-testid="quick-create-pending">
+                {pendingLabel(pending.length)}
+              </output>
+            )}
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <PropertyMenu
+                title="Team"
+                options={teams.map((team) => ({ id: team.id, label: team.name }))}
+                selected={teamId === null ? [] : [teamId]}
+                onSelect={(id) => {
+                  const selectedProject = projects.find((project) => project.id === projectId);
+                  setTeamId(id);
+                  setStateId(null);
+                  if (!projectSupportsTeam(selectedProject, id)) setProjectId(null);
+                  setEstimate(null);
+                  setLabelIds([]);
+                }}
+              >
+                <button type="button" className={chipClassName} data-testid="quick-create-team">
+                  {teams.find((team) => team.id === teamId)?.key ?? 'Team'}
+                </button>
+              </PropertyMenu>
+
+              <PropertyMenu
+                title="Status"
+                options={teamStates.map((state) => ({
+                  id: state.id,
+                  label: state.name,
+                  icon: <StateGlyph category={state.category} color={state.color} />,
+                }))}
+                selected={stateId === null ? [] : [stateId]}
+                onSelect={setStateId}
+              >
+                <button type="button" className={chipClassName}>
+                  {selectedState === undefined ? null : (
+                    <StateGlyph category={selectedState.category} color={selectedState.color} />
+                  )}
+                  {selectedState?.name ?? 'Status'}
+                </button>
+              </PropertyMenu>
+
+              <PropertyMenu
+                title="Priority"
+                options={PRIORITIES.map((value) => ({
+                  id: String(value),
+                  label: priorityLabel(value),
+                  icon: <PriorityGlyph priority={value} />,
+                }))}
+                selected={[String(priority)]}
+                onSelect={(value) => setPriority(Number(value))}
+              >
+                <button type="button" className={chipClassName}>
+                  <PriorityGlyph priority={priority} />
+                  {priorityLabel(priority)}
+                </button>
+              </PropertyMenu>
+
+              <PropertyMenu
+                title="Assignee"
+                options={[
+                  { id: 'none', label: 'No assignee' },
+                  ...members.map((member) => ({ id: member.id, label: member.name })),
+                ]}
+                selected={assigneeId === null ? ['none'] : [assigneeId]}
+                onSelect={(value) => setAssigneeId(value === 'none' ? null : value)}
+              >
+                <button type="button" className={chipClassName}>
+                  {members.find((member) => member.id === assigneeId)?.name ?? 'Assignee'}
+                </button>
+              </PropertyMenu>
+
+              <PropertyMenu
+                title="Labels"
+                multiple
+                options={teamLabels.map((label) => ({
+                  id: label.id,
+                  label: label.name,
+                  icon: (
+                    <span
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: label.color }}
+                      aria-hidden="true"
+                    />
+                  ),
+                }))}
+                selected={labelIds}
+                onSelect={(id) =>
+                  setLabelIds((current) =>
+                    current.includes(id)
+                      ? current.filter((entry) => entry !== id)
+                      : [...current, id],
+                  )
+                }
+              >
+                <button type="button" className={chipClassName}>
+                  {labelIds.length === 0 ? 'Labels' : `${labelIds.length} labels`}
+                </button>
+              </PropertyMenu>
+
+              <ScopePickers
+                projects={projects}
+                cycles={cycles}
+                projectId={projectId}
+                estimate={estimate}
+                cycleId={cycleId}
+                onProject={selectProject}
+                onEstimate={setEstimate}
+                onCycle={setCycleId}
+              />
+            </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-border border-t pt-3">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-border border-t pt-3">
             <span className="mr-auto flex items-center gap-1 text-2xs text-faint">
               <Kbd keys={['mod', 'enter']} /> to create
             </span>

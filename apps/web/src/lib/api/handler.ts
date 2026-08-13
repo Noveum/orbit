@@ -66,10 +66,29 @@ export async function pageContext(options: ContextOptions = {}): Promise<ApiCont
   return context;
 }
 
+function validationIssues(error: ZodError): {
+  readonly code: string;
+  readonly path: string[];
+  readonly message: string;
+}[] {
+  return error.issues.map((issue) => ({
+    code: issue.code,
+    path: issue.path.map(String),
+    message: issue.message,
+  }));
+}
+
 function toResponse(error: unknown): Response {
   if (error instanceof ZodError) {
+    const issues = validationIssues(error);
     return Response.json(
-      { error: { code: 'validation_failed', message: 'Check the highlighted fields.' } },
+      {
+        error: {
+          code: 'validation_failed',
+          message: issues[0]?.message ?? 'That request contains invalid fields.',
+          details: { issues },
+        },
+      },
       { status: 422 },
     );
   }

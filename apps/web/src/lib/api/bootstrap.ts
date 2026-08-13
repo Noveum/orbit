@@ -6,11 +6,9 @@ import {
   listWorkflowStatesForTeams,
   projectTeamLinks,
 } from '@orbit/core';
-import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
+import { and, db, desc, eq, isNull, schema, sql } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-
-const CYCLES_PER_TEAM = 6;
 
 export interface BootstrapQuery {
   readonly team?: string | undefined;
@@ -28,9 +26,8 @@ async function boardColumnsForTeams(principal: Principal, teamIds: readonly stri
   }));
 }
 
-async function listRecentCyclesForTeams(principal: Principal, teamIds: readonly string[]) {
-  if (teamIds.length === 0) return [];
-  const ranked = db
+async function listWorkspaceCycles(principal: Principal) {
+  return await db
     .select({
       id: schema.cycle.id,
       teamId: schema.cycle.teamId,
@@ -39,32 +36,15 @@ async function listRecentCyclesForTeams(principal: Principal, teamIds: readonly 
       startsAt: schema.cycle.startsAt,
       endsAt: schema.cycle.endsAt,
       completedAt: schema.cycle.completedAt,
-      rank: sql<number>`row_number() over (partition by ${schema.cycle.teamId} order by ${schema.cycle.number} desc)`.as(
-        'rank',
-      ),
     })
     .from(schema.cycle)
     .where(
       and(
         eq(schema.cycle.organizationId, principal.organizationId),
-        inArray(schema.cycle.teamId, [...teamIds]),
+        isNull(schema.cycle.archivedAt),
       ),
     )
-    .as('ranked');
-
-  return await db
-    .select({
-      id: ranked.id,
-      teamId: ranked.teamId,
-      number: ranked.number,
-      name: ranked.name,
-      startsAt: ranked.startsAt,
-      endsAt: ranked.endsAt,
-      completedAt: ranked.completedAt,
-    })
-    .from(ranked)
-    .where(sql`${ranked.rank} <= ${CYCLES_PER_TEAM}`)
-    .orderBy(asc(ranked.teamId), asc(ranked.number));
+    .orderBy(desc(schema.cycle.number));
 }
 
 export async function bootstrapVersion(principal: Principal): Promise<string> {
@@ -102,7 +82,7 @@ export async function bootstrapPayloadFor(principal: Principal, resolved: Bootst
 
   const [states, cycles, labels, members, projects, links] = await Promise.all([
     boardColumnsForTeams(principal, teamIds),
-    listRecentCyclesForTeams(principal, teamIds),
+    listWorkspaceCycles(principal),
     listLabels(principal),
     listMembers(principal),
     listProjectsForTeams(principal, teamIds),

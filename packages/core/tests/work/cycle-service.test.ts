@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { and, asc, db, eq, schema, sql } from '@orbit/db';
+import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
+import { sprintLabel } from '@orbit/shared/utils';
 import { sprintOutcomeSchema } from '@orbit/shared/validators';
-import { cycleBurndown, teamVelocity } from '../../src/analytics/burndown.ts';
 import { createTeam } from '../../src/org/team-service.ts';
+import { catchUp } from '../../src/realtime/backfill.ts';
 import {
   addMember,
   createWorkspace,
@@ -28,7 +29,7 @@ import {
   updateCycle,
 } from '../../src/work/cycle-service.ts';
 import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
-import { raceAcrossTeamCycleLock } from '../support/interleave.ts';
+import { raceAcrossCycleLock } from '../support/interleave.ts';
 
 let workspace: Workspace;
 
@@ -42,62 +43,72 @@ function daysFromNow(days: number): Date {
 }
 
 async function firstCycle() {
-  const [cycle] = await listCycles(workspace.admin, workspace.teamId);
+  const [cycle] = await listCycles(workspace.admin);
   if (cycle === undefined) throw new Error('missing bootstrap cycle');
   return cycle;
 }
 
 describe('createCycle', () => {
-  it('numbers sprints in sequence and names them', async () => {
+  it('numbers sprints in sequence and labels them from the number', async () => {
     const { cycle, actions } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: daysFromNow(20),
       endsAt: daysFromNow(34),
     });
     expect(cycle.number).toBe(2);
-    expect(cycle.name).toBe('Sprint 2');
-    expect(actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+    expect(cycle.name).toBe('');
+    expect(cycle.teamId).toBeNull();
+    expect(sprintLabel(cycle)).toBe('Sprint 2');
+    expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
+  });
+
+  it('keeps a name someone chose', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      name: 'Hardening',
+      startsAt: daysFromNow(20),
+      endsAt: daysFromNow(34),
+    });
+    expect(cycle.name).toBe('Hardening');
+    expect(sprintLabel(cycle)).toBe('Hardening');
+  });
+
+  it('stores a valid timezone and refuses an unknown one', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      timezone: 'America/New_York',
+      startsAt: daysFromNow(20),
+      endsAt: daysFromNow(34),
+    });
+    expect(cycle.timezone).toBe('America/New_York');
+
+    await expect(
+      createCycle(workspace.admin, {
+        timezone: 'Mars/Olympus',
+        startsAt: daysFromNow(40),
+        endsAt: daysFromNow(54),
+      }),
+    ).rejects.toBeDefined();
   });
 
   it('refuses a cycle that ends before it starts', async () => {
     await expect(
       createCycle(workspace.admin, {
-        teamId: workspace.teamId,
         startsAt: daysFromNow(10),
         endsAt: daysFromNow(2),
       }),
     ).rejects.toMatchObject({ code: 'conflict' });
-  });
-
-  it('stores only valid IANA timezones on create and update', async () => {
-    const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
-      startsAt: daysFromNow(20),
-      endsAt: daysFromNow(34),
-      timezone: 'America/New_York',
-    });
-    expect(cycle.timezone).toBe('America/New_York');
-
-    const updated = await updateCycle(workspace.admin, cycle.id, { timezone: 'Asia/Kolkata' });
-    expect(updated.cycle.timezone).toBe('Asia/Kolkata');
-    await expect(
-      updateCycle(workspace.admin, cycle.id, { timezone: 'Mars/Olympus' }),
-    ).rejects.toThrow();
   });
 });
 
 describe('activeCycle and upcomingCycles', () => {
   it('finds the running cycle and the future ones', async () => {
     const bootstrap = await firstCycle();
-    const active = await activeCycle(workspace.admin, workspace.teamId);
+    const active = await activeCycle(workspace.admin);
     expect(active?.id).toBe(bootstrap.id);
 
     await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: daysFromNow(20),
       endsAt: daysFromNow(34),
     });
-    const upcoming = await upcomingCycles(workspace.admin, workspace.teamId);
+    const upcoming = await upcomingCycles(workspace.admin);
     expect(upcoming).toHaveLength(1);
     expect(upcoming[0]?.number).toBe(2);
   });
@@ -108,7 +119,6 @@ describe('cycle window invariant', () => {
     const bootstrap = await firstCycle();
     await expect(
       createCycle(workspace.admin, {
-        teamId: workspace.teamId,
         startsAt: new Date(bootstrap.endsAt.getTime() - 86_400_000),
         endsAt: new Date(bootstrap.endsAt.getTime() + 86_400_000),
       }),
@@ -118,19 +128,19 @@ describe('cycle window invariant', () => {
   it('accepts a cycle that starts exactly when the previous one ends', async () => {
     const bootstrap = await firstCycle();
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: bootstrap.endsAt,
       endsAt: new Date(bootstrap.endsAt.getTime() + 14 * 86_400_000),
     });
     expect(cycle.number).toBe(2);
   });
 
-  it('scopes the overlap rule to one team', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
+  it('applies the overlap rule across the whole workspace', async () => {
+    await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
     const window = { startsAt: daysFromNow(20), endsAt: daysFromNow(34) };
-    await createCycle(workspace.admin, { teamId: workspace.teamId, ...window });
-    const { cycle } = await createCycle(workspace.admin, { teamId: other.team.id, ...window });
-    expect(cycle.teamId).toBe(other.team.id);
+    await createCycle(workspace.admin, { ...window });
+    await expect(createCycle(workspace.admin, { ...window })).rejects.toMatchObject({
+      code: 'conflict',
+    });
   });
 
   it('lets a finished sprint hand its calendar back', async () => {
@@ -138,7 +148,6 @@ describe('cycle window invariant', () => {
     await completeCycle(workspace.admin, bootstrap.id);
 
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       name: 'Second attempt',
       startsAt: bootstrap.startsAt,
       endsAt: bootstrap.endsAt,
@@ -151,7 +160,6 @@ describe('cycle window invariant', () => {
   it('derives a two week window when no end date is given', async () => {
     const startsAt = daysFromNow(30);
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt,
     });
     expect(cycle.endsAt.getTime()).toBe(startsAt.getTime() + 14 * 86_400_000);
@@ -159,23 +167,18 @@ describe('cycle window invariant', () => {
 
   it('appends a sprint after the last one when no dates are given at all', async () => {
     const bootstrap = await firstCycle();
-    const { cycle } = await createCycle(workspace.admin, { teamId: workspace.teamId });
+    const { cycle } = await createCycle(workspace.admin, {});
 
     expect(cycle.startsAt.getTime()).toBe(bootstrap.endsAt.getTime());
     expect(cycle.endsAt.getTime()).toBe(bootstrap.endsAt.getTime() + 14 * 86_400_000);
 
-    const { cycle: third } = await createCycle(workspace.admin, { teamId: workspace.teamId });
+    const { cycle: third } = await createCycle(workspace.admin, {});
     expect(third.startsAt.getTime()).toBe(cycle.endsAt.getTime());
   });
 
-  it('starts an appended sprint today when the team has no sprint left in the future', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Platform', key: 'PLAT' });
+  it('starts an appended sprint today when nothing is left in the future', async () => {
     const now = new Date('2038-03-09T11:00:00.000Z');
-    const { cycle } = await createCycle(
-      workspace.admin,
-      { teamId: other.team.id, name: 'Way ahead' },
-      now,
-    );
+    const { cycle } = await createCycle(workspace.admin, { name: 'Way ahead' }, now);
     expect(cycle.startsAt.toISOString()).toBe('2038-03-09T00:00:00.000Z');
   });
 });
@@ -210,7 +213,6 @@ describe('updateCycle', () => {
   it('refuses dates that overlap a neighbouring cycle', async () => {
     const bootstrap = await firstCycle();
     const { cycle: next } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: bootstrap.endsAt,
       endsAt: new Date(bootstrap.endsAt.getTime() + 14 * 86_400_000),
     });
@@ -229,12 +231,71 @@ describe('updateCycle', () => {
     });
     expect(shifted.endsAt.getTime()).toBe(cycle.endsAt.getTime() + 86_400_000);
   });
+
+  it('updates a valid timezone and refuses an unknown one', async () => {
+    const cycle = await firstCycle();
+    const { cycle: updated } = await updateCycle(workspace.admin, cycle.id, {
+      timezone: 'Asia/Kolkata',
+    });
+    expect(updated.timezone).toBe('Asia/Kolkata');
+
+    await expect(
+      updateCycle(workspace.admin, cycle.id, { timezone: 'UTC+05:30' }),
+    ).rejects.toBeDefined();
+  });
+});
+
+describe('deleteCycle', () => {
+  it('closes membership before deleting a sprint and detaching its issues', async () => {
+    const cycle = await firstCycle();
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Detached',
+      cycleId: cycle.id,
+    });
+
+    await db.execute(
+      sql.raw(`
+      create function require_closed_membership_before_cycle_delete() returns trigger as $$
+      begin
+        if not exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id
+        ) then
+          raise exception 'membership missing before cycle delete';
+        end if;
+        if exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id and removed_at is null
+        ) then
+          raise exception 'membership open before cycle delete';
+        end if;
+        return old;
+      end;
+      $$ language plpgsql;
+      create trigger require_closed_membership_before_cycle_delete
+      before delete on cycle
+      for each row execute function require_closed_membership_before_cycle_delete();
+    `),
+    );
+
+    try {
+      await deleteCycle(workspace.admin, cycle.id);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger require_closed_membership_before_cycle_delete on cycle;
+        drop function require_closed_membership_before_cycle_delete();
+      `),
+      );
+    }
+
+    const [detached] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
+    expect(detached?.cycleId).toBeNull();
+  });
 });
 
 describe('startCycle', () => {
   async function plannedSprint() {
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       name: 'Planned',
       startsAt: daysFromNow(30),
       endsAt: daysFromNow(44),
@@ -251,9 +312,9 @@ describe('startCycle', () => {
 
     expect(cycle.startsAt.getTime()).toBe(at.getTime());
     expect(cycle.endsAt.getTime()).toBe(planned.endsAt.getTime());
-    expect(actions[0]?.scopes).toEqual([scopes.team(workspace.teamId)]);
+    expect(actions[0]?.scopes).toEqual([scopes.organization(workspace.organizationId)]);
 
-    const running = await activeCycle(workspace.admin, workspace.teamId, at);
+    const running = await activeCycle(workspace.admin, at);
     expect(running?.id).toBe(planned.id);
   });
 
@@ -267,7 +328,7 @@ describe('startCycle', () => {
 
     const untouched = await getCycle(workspace.admin, planned.id);
     expect(untouched.startsAt.getTime()).toBe(planned.startsAt.getTime());
-    expect((await activeCycle(workspace.admin, workspace.teamId))?.id).toBe(running.id);
+    expect((await activeCycle(workspace.admin))?.id).toBe(running.id);
   });
 
   it('refuses a sprint that is already under way', async () => {
@@ -292,7 +353,6 @@ describe('startCycle', () => {
     const later = await plannedSprint();
     await completeCycle(workspace.admin, (await firstCycle()).id);
     await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       name: 'In between',
       startsAt: daysFromNow(16),
       endsAt: daysFromNow(20),
@@ -303,18 +363,12 @@ describe('startCycle', () => {
     });
   });
 
-  it('refuses a role that cannot manage sprints, and a member of another team', async () => {
+  it('refuses a role that cannot manage sprints', async () => {
     const planned = await plannedSprint();
     await completeCycle(workspace.admin, (await firstCycle()).id);
 
     const contributor = await addMember(workspace, 'contributor');
     await expect(startCycle(contributor.principal, planned.id)).rejects.toMatchObject({
-      code: 'forbidden',
-    });
-
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const outsider = await addMember(workspace, 'member', { teamIds: [other.team.id] });
-    await expect(startCycle(outsider.principal, planned.id)).rejects.toMatchObject({
       code: 'forbidden',
     });
 
@@ -343,8 +397,8 @@ describe('startCycle', () => {
       const planned = await readyToStart();
       const closedAt = daysFromNow(1);
 
-      const outcome = await raceAcrossTeamCycleLock({
-        teamId: workspace.teamId,
+      const outcome = await raceAcrossCycleLock({
+        organizationId: workspace.organizationId,
         race: () => startCycle(workspace.admin, planned.id, daysFromNow(20)),
         interlope: async (client) => {
           await client`update cycle set completed_at = ${closedAt} where id = ${planned.id}`;
@@ -364,8 +418,8 @@ describe('startCycle', () => {
       const movedStart = daysFromNow(16);
       const movedEnd = daysFromNow(18);
 
-      const outcome = await raceAcrossTeamCycleLock({
-        teamId: workspace.teamId,
+      const outcome = await raceAcrossCycleLock({
+        organizationId: workspace.organizationId,
         race: () => startCycle(workspace.admin, planned.id, daysFromNow(20)),
         interlope: async (client) => {
           await client`
@@ -389,9 +443,24 @@ describe('cycleProgress', () => {
   it('reports scope, started, completed, and a day by day burn up', async () => {
     const cycle = await firstCycle();
     const created = await Promise.all([
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'A', cycleId: cycle.id }),
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'B', cycleId: cycle.id }),
-      createIssue(workspace.admin, { teamId: workspace.teamId, title: 'C', cycleId: cycle.id }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'A',
+        cycleId: cycle.id,
+      }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'B',
+        cycleId: cycle.id,
+      }),
+      createIssue(workspace.admin, {
+        stateId: stateNamed(workspace, 'Todo').id,
+        teamId: workspace.teamId,
+        title: 'C',
+        cycleId: cycle.id,
+      }),
     ]);
     const [a, b] = created;
     if (a === undefined || b === undefined) throw new Error('missing issues');
@@ -450,11 +519,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope up on the day work was added and not before', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const late = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Added later',
     });
@@ -471,11 +542,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope down on the day work was pulled out', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const pulled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Pulled out',
       cycleId: cycle.id,
@@ -494,11 +567,13 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('steps the scope up on the day an issue was filed straight into the running sprint', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
     });
     const filed = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Filed mid sprint',
       cycleId: cycle.id,
@@ -516,12 +591,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('keeps cancelled work in the scope until the day it was cancelled', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Cancelled mid sprint',
       cycleId: cycle.id,
@@ -541,12 +618,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves work cancelled without a recorded time out of the sprint from the first day', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Cancelled at an unknown time',
       cycleId: cycle.id,
@@ -566,12 +645,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves cancelled work out of the scope and counts it on its own', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Kept',
       cycleId: cycle.id,
       estimate: 3,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Dropped',
       cycleId: cycle.id,
@@ -592,6 +673,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('adds points up from the estimates and counts a missing estimate as zero', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -601,6 +683,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     const running = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Running',
       cycleId: cycle.id,
@@ -610,6 +693,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       stateId: stateNamed(workspace, 'In Progress').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Unsized',
       cycleId: cycle.id,
@@ -625,6 +709,7 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('keeps the days an issue sat in the sprint when it is pulled out after the sprint ends', async () => {
     const cycle = await firstCycle();
     const carried = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Carried the whole sprint',
       cycleId: cycle.id,
@@ -644,12 +729,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('leaves work parked in the sprint after it ended out of every day it ran', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Planned',
       cycleId: cycle.id,
       estimate: 2,
     });
     const late = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Parked here once the sprint was over',
       estimate: 5,
@@ -667,12 +754,14 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
   it('reports work pulled out before the sprint ended as removed, and stops counting it that day', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Stayed',
       cycleId: cycle.id,
       estimate: 2,
     });
     const pulled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Pulled out before the end',
       cycleId: cycle.id,
@@ -694,11 +783,13 @@ describe('completeCycle', () => {
   it('rolls unfinished issues into the next cycle and closes the current one', async () => {
     const cycle = await firstCycle();
     const open = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Still open',
       cycleId: cycle.id,
     });
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -730,20 +821,57 @@ describe('completeCycle', () => {
       code: 'conflict',
     });
   });
+
+  it('publishes the canonical close after its final snapshot for reconnect safety', async () => {
+    const cycle = await firstCycle();
+    const rolled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
+      teamId: workspace.teamId,
+      title: 'Roll forward',
+      cycleId: cycle.id,
+    });
+    const released = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Backlog').id,
+      teamId: workspace.teamId,
+      title: 'Return to backlog',
+      cycleId: cycle.id,
+    });
+    const cursor = (await catchUp(workspace.admin, 0)).syncId;
+
+    const result = await completeCycle(workspace.admin, cycle.id);
+    const [snapshot] = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycle.id));
+    const changedIssues = await db
+      .select()
+      .from(schema.issue)
+      .where(inArray(schema.issue.id, [rolled.issue.id, released.issue.id]));
+    const replay = await catchUp(workspace.admin, cursor);
+    const replayedClose = replay.actions.find(
+      (action) => action.model === 'cycle' && action.modelId === cycle.id,
+    );
+
+    expect(snapshot?.syncId).toBeLessThan(result.cycle.syncId);
+    expect(new Set(result.actions.map((action) => action.syncId))).toEqual(
+      new Set([result.cycle.syncId]),
+    );
+    expect(
+      result.actions.filter((action) => action.model === 'cycle' && action.modelId === cycle.id),
+    ).toHaveLength(1);
+    expect(changedIssues.every((issue) => issue.syncId === result.cycle.syncId)).toBe(true);
+    expect(replayedClose?.syncId).toBe(result.cycle.syncId);
+    expect(replay.actions.map((action) => action.syncId)).toEqual(
+      replay.actions.map((action) => action.syncId).toSorted((left, right) => left - right),
+    );
+  });
 });
 
-describe('cycle reads are team scoped', () => {
-  it('refuses a team the reader is not on and a team in another workspace', async () => {
-    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+describe('cycle reads are workspace scoped', () => {
+  it('refuses a sprint that belongs to another workspace', async () => {
     const vega = await createWorkspace('Vega');
 
-    await expect(listCycles(guest.principal, team.id)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(listCycles(workspace.admin, vega.teamId)).rejects.toMatchObject({
-      code: 'not_found',
-    });
-
-    const [foreign] = await listCycles(vega.admin, vega.teamId);
+    const [foreign] = await listCycles(vega.admin);
     if (foreign === undefined) throw new Error('missing seeded cycle');
     await expect(getCycle(workspace.admin, foreign.id)).rejects.toMatchObject({
       code: 'not_found',
@@ -751,113 +879,53 @@ describe('cycle reads are team scoped', () => {
   });
 });
 
-describe('cycle writes are team scoped', () => {
-  it('closes membership when deleting a sprint unassigns its issues', async () => {
-    const cycle = await firstCycle();
-    const { issue } = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Detached',
-      cycleId: cycle.id,
-    });
-
-    await db.execute(
-      sql.raw(`
-      create function require_closed_membership_before_cycle_delete() returns trigger as $$
-      begin
-        if not exists (
-          select 1 from cycle_issue_membership where cycle_id = old.id
-        ) then
-          raise exception 'membership missing before cycle delete';
-        end if;
-        if exists (
-          select 1 from cycle_issue_membership where cycle_id = old.id and removed_at is null
-        ) then
-          raise exception 'membership open before cycle delete';
-        end if;
-        return old;
-      end;
-      $$ language plpgsql;
-      create trigger require_closed_membership_before_cycle_delete
-      before delete on cycle
-      for each row execute function require_closed_membership_before_cycle_delete();
-    `),
-    );
-
-    try {
-      await deleteCycle(workspace.admin, cycle.id);
-    } finally {
-      await db.execute(
-        sql.raw(`
-        drop trigger require_closed_membership_before_cycle_delete on cycle;
-        drop function require_closed_membership_before_cycle_delete();
-      `),
-      );
-    }
-
-    const [detached] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
-    expect(detached?.cycleId).toBeNull();
-  });
-
-  it('refuses a member of another team renaming or deleting a sprint', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { principal: outsider } = await addMember(workspace, 'member', {
-      teamIds: [other.team.id],
-    });
+describe('cycle writes need the right role, not the right team', () => {
+  it('lets any member of the workspace rename a sprint and refuses a contributor', async () => {
+    const { principal: member } = await addMember(workspace, 'member');
+    const { principal: contributor } = await addMember(workspace, 'contributor');
     const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2030-01-06T00:00:00.000Z'),
       endsAt: new Date('2030-01-20T00:00:00.000Z'),
     });
 
-    await expect(updateCycle(outsider, cycle.id, { name: 'Hijacked' })).rejects.toMatchObject({
+    const { cycle: renamed } = await updateCycle(member, cycle.id, { name: 'Hardening' });
+    expect(renamed.name).toBe('Hardening');
+
+    await expect(updateCycle(contributor, cycle.id, { name: 'Nope' })).rejects.toMatchObject({
       code: 'forbidden',
     });
-    await expect(deleteCycle(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
-
-    const still = await getCycle(workspace.admin, cycle.id);
-    expect(still.name).not.toBe('Hijacked');
   });
 
-  it('refuses putting an issue into another team sprint', async () => {
+  it('takes an issue from any team into the workspace sprint', async () => {
     const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { cycle: theirs } = await createCycle(workspace.admin, {
-      teamId: other.team.id,
+    const { cycle } = await createCycle(workspace.admin, {
       startsAt: new Date('2030-01-06T00:00:00.000Z'),
       endsAt: new Date('2030-01-20T00:00:00.000Z'),
     });
     const { issue } = await createIssue(workspace.admin, {
+      teamId: other.team.id,
+      title: 'From another team',
+    });
+
+    const { issue: moved } = await updateIssue(workspace.admin, issue.id, { cycleId: cycle.id });
+
+    expect(moved.cycleId).toBe(cycle.id);
+    expect(moved.teamId).toBe(other.team.id);
+  });
+
+  it('refuses a sprint that belongs to another workspace', async () => {
+    const vega = await createWorkspace('Vega');
+    const [theirs] = await listCycles(vega.admin);
+    if (theirs === undefined) throw new Error('vega has no sprint');
+    const { issue } = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Mine',
     });
 
     await expect(
       updateIssue(workspace.admin, issue.id, { cycleId: theirs.id }),
-    ).rejects.toMatchObject({ code: 'validation_failed' });
-
-    await expect(
-      createIssue(workspace.admin, {
-        teamId: workspace.teamId,
-        title: 'Also mine',
-        cycleId: theirs.id,
-      }),
-    ).rejects.toMatchObject({ code: 'validation_failed' });
-  });
-
-  it('keeps burndown and velocity inside the team', async () => {
-    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
-    const { principal: outsider } = await addMember(workspace, 'member', {
-      teamIds: [other.team.id],
-    });
-    const { cycle } = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
-      startsAt: new Date('2030-01-06T00:00:00.000Z'),
-      endsAt: new Date('2030-01-20T00:00:00.000Z'),
-    });
-
-    await expect(cycleBurndown(outsider, cycle.id)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(teamVelocity(outsider, workspace.teamId)).rejects.toMatchObject({
-      code: 'forbidden',
-    });
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
 
@@ -865,6 +933,7 @@ describe('a finished sprint keeps its own history', () => {
   it('records what it shipped, because the rollover empties it of unfinished work', async () => {
     const cycle = await firstCycle();
     const shipped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -874,6 +943,7 @@ describe('a finished sprint keeps its own history', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     const dropped = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Dropped',
       cycleId: cycle.id,
@@ -883,6 +953,7 @@ describe('a finished sprint keeps its own history', () => {
       stateId: stateNamed(workspace, 'Canceled').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Not finished',
       cycleId: cycle.id,
@@ -910,35 +981,34 @@ describe('a finished sprint keeps its own history', () => {
     const cycle = await firstCycle();
     await completeCycle(workspace.admin, cycle.id);
 
-    const past = await pastCycles(workspace.admin, workspace.teamId);
+    const past = await pastCycles(workspace.admin);
     expect(past.map((row) => row.id)).toEqual([cycle.id]);
     expect(past[0]?.completedAt).not.toBeNull();
   });
 
   it('finds a sprint by its number, which is the handle a url can carry', async () => {
     const cycle = await firstCycle();
-    const found = await getCycleByNumber(workspace.admin, workspace.teamId, cycle.number);
+    const found = await getCycleByNumber(workspace.admin, cycle.number);
     expect(found?.id).toBe(cycle.id);
-    expect(await getCycleByNumber(workspace.admin, workspace.teamId, 9999)).toBeNull();
+    expect(await getCycleByNumber(workspace.admin, 9999)).toBeNull();
   });
 
-  it('keeps another team out of the history it asks for', async () => {
+  it('keeps another workspace out of the history it asks for', async () => {
     const outsider = await createWorkspace('Vega');
-    await expect(pastCycles(outsider.admin, workspace.teamId)).rejects.toMatchObject({
-      code: 'not_found',
-    });
+    const theirs = await pastCycles(outsider.admin);
+    const mine = await pastCycles(workspace.admin);
+    const ids = new Set(mine.map((cycle) => cycle.id));
+    expect(theirs.some((cycle) => ids.has(cycle.id))).toBe(false);
   });
 });
 
 describe('the sprint that follows a completed one', () => {
   it('does not overlap a sprint that already exists later in the calendar', async () => {
     const later = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2033-04-03T00:00:00.000Z'),
       endsAt: new Date('2033-04-17T00:00:00.000Z'),
     });
     const earlier = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2033-03-20T00:00:00.000Z'),
       endsAt: new Date('2033-04-01T00:00:00.000Z'),
     });
@@ -946,7 +1016,7 @@ describe('the sprint that follows a completed one', () => {
     const closed = await completeCycle(workspace.admin, earlier.cycle.id);
     const successor = closed.nextCycle;
 
-    const rows = await listCycles(workspace.admin, workspace.teamId);
+    const rows = await listCycles(workspace.admin);
     const windows = rows
       .map((row) => ({ from: row.startsAt.getTime(), to: row.endsAt.getTime() }))
       .sort((left, right) => left.from - right.from);
@@ -960,12 +1030,10 @@ describe('the sprint that follows a completed one', () => {
 
   it('adopts the sprint already scheduled next rather than minting another', async () => {
     const first = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2034-01-02T00:00:00.000Z'),
       endsAt: new Date('2034-01-16T00:00:00.000Z'),
     });
     const planned = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2034-01-16T00:00:00.000Z'),
       endsAt: new Date('2034-01-30T00:00:00.000Z'),
     });
@@ -977,12 +1045,11 @@ describe('the sprint that follows a completed one', () => {
   it('numbers a minted successor above every sprint the team has', async () => {
     const first = await firstCycle();
     await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2035-06-05T00:00:00.000Z'),
       endsAt: new Date('2035-06-19T00:00:00.000Z'),
     });
     const closed = await completeCycle(workspace.admin, first.id);
-    const all = await listCycles(workspace.admin, workspace.teamId);
+    const all = await listCycles(workspace.admin);
     const numbers = all.map((row) => row.number);
     expect(new Set(numbers).size).toBe(numbers.length);
     expect(closed.nextCycle.number).toBe(Math.max(...numbers));
@@ -993,6 +1060,7 @@ describe('two people closing the same sprint at once', () => {
   it('lets one through, refuses the other, and leaves a single successor', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Carried',
       cycleId: cycle.id,
@@ -1007,7 +1075,7 @@ describe('two people closing the same sprint at once', () => {
     expect(won).toHaveLength(1);
     expect(lost).toHaveLength(1);
 
-    const all = await listCycles(workspace.admin, workspace.teamId);
+    const all = await listCycles(workspace.admin);
     const closed = all.filter((row) => row.completedAt !== null);
     expect(closed).toHaveLength(1);
     expect(closed[0]?.id).toBe(cycle.id);
@@ -1018,14 +1086,12 @@ describe('two people closing the same sprint at once', () => {
 
   it('mints a successor when the only later sprint has already been closed', async () => {
     const later = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2036-02-02T00:00:00.000Z'),
       endsAt: new Date('2036-02-16T00:00:00.000Z'),
     });
     await completeCycle(workspace.admin, later.cycle.id);
 
     const earlier = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: new Date('2036-01-05T00:00:00.000Z'),
       endsAt: new Date('2036-01-19T00:00:00.000Z'),
     });
@@ -1041,6 +1107,7 @@ describe('sprintOutcome', () => {
   it('hands back what was recorded when the sprint was closed', async () => {
     const cycle = await firstCycle();
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Shipped',
       cycleId: cycle.id,
@@ -1056,6 +1123,7 @@ describe('sprintOutcome', () => {
   it('counts a sprint closed before outcomes were recorded, rather than saying nothing', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -1065,6 +1133,7 @@ describe('sprintOutcome', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Left over',
       cycleId: cycle.id,
@@ -1094,6 +1163,7 @@ describe('sprintOutcomes', () => {
   it('answers for a page of sprints in one pass, recorded or counted', async () => {
     const first = await firstCycle();
     const one = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'In the first',
       cycleId: first.id,
@@ -1105,11 +1175,11 @@ describe('sprintOutcomes', () => {
     const closedFirst = await completeCycle(workspace.admin, first.id);
 
     const second = await createCycle(workspace.admin, {
-      teamId: workspace.teamId,
       startsAt: daysFromNow(200),
       endsAt: daysFromNow(214),
     });
     const two = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'In the second',
       cycleId: second.cycle.id,
@@ -1140,6 +1210,7 @@ describe('sprintOutcomes', () => {
   it('counts the sprint when the stored snapshot is malformed rather than trusting it', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -1164,6 +1235,7 @@ describe('sprintOutcomes', () => {
   it('counts only what is still in the sprint, since a rollover moved the rest away', async () => {
     const cycle = await firstCycle();
     const done = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Finished',
       cycleId: cycle.id,
@@ -1173,6 +1245,7 @@ describe('sprintOutcomes', () => {
       stateId: stateNamed(workspace, 'Done').id,
     });
     await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
       teamId: workspace.teamId,
       title: 'Rolled over',
       cycleId: cycle.id,

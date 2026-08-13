@@ -211,9 +211,7 @@ export const cycle = pgTable(
     organizationId: text('organization_id')
       .notNull()
       .references(() => organization.id, { onDelete: 'cascade' }),
-    teamId: text('team_id')
-      .notNull()
-      .references(() => team.id, { onDelete: 'cascade' }),
+    teamId: text('team_id').references(() => team.id, { onDelete: 'set null' }),
     number: integer('number').notNull(),
     name: text('name').notNull().default(''),
     timezone: text('timezone').notNull().default('UTC'),
@@ -227,8 +225,8 @@ export const cycle = pgTable(
     archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('cycle_team_number_unique').on(table.teamId, table.number),
-    index('cycle_team_dates_idx').on(table.teamId, table.startsAt),
+    uniqueIndex('cycle_org_number_unique').on(table.organizationId, table.number),
+    index('cycle_org_dates_idx').on(table.organizationId, table.startsAt),
   ],
 );
 

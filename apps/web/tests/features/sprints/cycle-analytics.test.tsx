@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { BurnUpPoint } from '@orbit/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import { CHART_HEIGHT, CHART_PADDING } from '../../../src/features/charts/geometry.ts';
-import { CycleAnalytics } from '../../../src/features/cycles/cycle-board.tsx';
-import type { CycleView } from '../../../src/features/cycles/data.ts';
+import { CycleAnalytics } from '../../../src/features/sprints/cycle-board.tsx';
+import type { CycleView } from '../../../src/features/sprints/data.ts';
 
 interface ProgressOverrides {
   readonly scope?: number;
   readonly canceled?: number;
+  readonly uncommitted?: { issues: number; points: number };
   readonly estimated?: number;
   readonly points?: { scope: number; started: number; completed: number };
   readonly changes?: { added: number; addedPoints: number; removed: number; removedPoints: number };
@@ -24,20 +25,31 @@ function cycleWith(overrides: ProgressOverrides): CycleView {
     id: 'cycle_1',
     name: 'Sprint 4',
     number: 4,
-    teamId: 'team_1',
-    teamKey: 'ENG',
-    teamName: 'Engineering',
     startsAt: '2026-01-01T00:00:00.000Z',
     endsAt: '2026-01-15T00:00:00.000Z',
     completedAt: null,
-    groups: [],
-    assignees: [{ id: 'member_1', name: 'Ada Lovelace', image: null, scope: 3, completed: 2 }],
+    groups: [
+      { stateId: 'state_todo', name: 'Todo', category: 'unstarted', color: '#6B7280', issues: [] },
+      { stateId: 'state_done', name: 'Done', category: 'completed', color: '#22C55E', issues: [] },
+    ],
+    assignees: [
+      {
+        id: 'member_1',
+        name: 'Ada Lovelace',
+        image: null,
+        points: [8, 5],
+        issues: [2, 1],
+        totalPoints: 13,
+        totalIssues: 3,
+      },
+    ],
     progress: {
       cycleId: 'cycle_1',
       scope: overrides.scope ?? 4,
       started: 1,
       completed: 2,
       canceled: overrides.canceled ?? 0,
+      uncommitted: overrides.uncommitted ?? { issues: 0, points: 0 },
       estimated: overrides.estimated ?? 0,
       points: overrides.points ?? { scope: 0, started: 0, completed: 0 },
       changes: overrides.changes ?? { added: 0, addedPoints: 0, removed: 0, removedPoints: 0 },
@@ -144,10 +156,18 @@ describe('CycleAnalytics', () => {
     expect(screen.queryByTestId('sprint-scope-changes')).toBeNull();
   });
 
-  it('keeps the per assignee breakdown', () => {
+  it('breaks each assignee down by column and totals the row', () => {
     render(<CycleAnalytics cycle={cycleWith({})} />);
 
     expect(screen.getByText('Ada Lovelace')).toBeDefined();
-    expect(screen.getByText('2/3')).toBeDefined();
+    expect(screen.getByTestId('assignee-member_1-total').textContent).toBe('13');
+    expect(screen.getByTestId('assignee-grand-total').textContent).toBe('13');
+  });
+
+  it('says so when nobody is carrying anything', () => {
+    render(<CycleAnalytics cycle={{ ...cycleWith({}), assignees: [] }} />);
+
+    expect(screen.queryByTestId('assignee-points')).toBeNull();
+    expect(screen.getByText('Nothing assigned in this sprint.')).toBeDefined();
   });
 });

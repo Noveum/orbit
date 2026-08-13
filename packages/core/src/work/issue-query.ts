@@ -1,4 +1,5 @@
 import { and, db, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
+import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import type { IssueFilterInput } from '@orbit/shared/validators';
@@ -39,7 +40,13 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   if (filter.milestoneId !== undefined) {
     filters.push(eq(schema.issue.milestoneId, filter.milestoneId));
   }
-  if (filter.assigneeId !== undefined) filters.push(eq(schema.issue.assigneeId, filter.assigneeId));
+  if (filter.assigneeId !== undefined) {
+    filters.push(
+      filter.assigneeId === UNSET_FILTER_VALUE
+        ? isNull(schema.issue.assigneeId)
+        : eq(schema.issue.assigneeId, filter.assigneeId),
+    );
+  }
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
   if (filter.stateCategory !== undefined) {

@@ -158,7 +158,7 @@ describe('buildIssueWhere predicate parity', () => {
     const [cycle] = await db
       .select()
       .from(schema.cycle)
-      .where(eq(schema.cycle.teamId, workspace.teamId))
+      .where(eq(schema.cycle.organizationId, workspace.organizationId))
       .limit(1);
     if (cycle === undefined) throw new Error('missing cycle');
     const match = await createIssue(workspace.admin, {
@@ -179,9 +179,9 @@ describe('buildIssueWhere predicate parity', () => {
       [{ cycleId: cycle.id }, ['Searchable launch']],
       [{ milestoneId: milestone.id }, ['Searchable launch']],
       [{ assigneeId: assignee.user.id }, ['Searchable launch']],
-      [{ stateId: stateNamed(workspace, 'Todo').id }, ['Distractor', 'Searchable launch']],
+      [{ stateId: stateNamed(workspace, 'Todo').id }, ['Searchable launch']],
       [{ parentId: match.issue.id }, []],
-      [{ stateCategory: 'unstarted' }, ['Distractor', 'Searchable launch']],
+      [{ stateCategory: 'unstarted' }, ['Searchable launch']],
       [{ labelId: label.id }, ['Searchable launch']],
       [{ query: 'launch' }, ['Searchable launch']],
     ];

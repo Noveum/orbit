@@ -83,7 +83,11 @@ describe('workflow states', () => {
   });
 
   it('refuses to delete a state that still holds issues', async () => {
-    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Parked' });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parked',
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
     await expect(
       deleteWorkflowState(workspace.admin, stateNamed(workspace, 'Todo').id),
     ).rejects.toMatchObject({ code: 'conflict' });

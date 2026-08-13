@@ -289,7 +289,7 @@ describe('the built-in views select the issues they promise', () => {
 
   it('keeps only issues with nobody assigned in the unassigned view', async () => {
     const { user: teammate } = await addMember(workspace, 'member', { name: 'Teammate' });
-    await issueNamed('Nobody owns this');
+    await issueNamed('Nobody owns this', { assigneeId: null });
     await issueNamed('Someone owns this', { assigneeId: teammate.id });
 
     expect(await titlesFor('virtual:unassigned')).toEqual(['Nobody owns this']);

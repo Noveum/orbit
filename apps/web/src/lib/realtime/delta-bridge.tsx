@@ -19,6 +19,7 @@ import {
   BOARD_ROOT,
   BOOTSTRAP_ROOT,
   COMMENTS_ROOT,
+  CYCLE_SCOPE,
   DOC_COMMENTS_ROOT,
   DOC_ROOT,
   DOCS_HOME_ROOT,
@@ -90,6 +91,11 @@ function membershipOf(key: QueryKey): IssueBelongs | null {
     const projectId = key[2];
     if (typeof projectId !== 'string') return null;
     return (issue: Issue) => issue.projectId === projectId && belongsInList(search, issue);
+  }
+  if (scope === CYCLE_SCOPE) {
+    const cycleId = key[2];
+    if (typeof cycleId !== 'string') return null;
+    return (issue: Issue) => issue.cycleId === cycleId && belongsInList(search, issue);
   }
   if (scope === ALL_SCOPE) return (issue: Issue) => belongsInList(search, issue);
   return (issue: Issue) => issue.teamId === scope && belongsInList(search, issue);

@@ -6,6 +6,7 @@ import {
   matchSlashCommands,
   SLASH_COMMANDS,
 } from '../../../../src/features/docs/editor/commands.ts';
+import { markdownPasteHtml } from '../../../../src/features/docs/editor/editor-content.ts';
 import {
   editorExtensions,
   type MenuKey,
@@ -230,5 +231,18 @@ describe('toEditorHtml', () => {
 
     expect(html).not.toMatch(/<p>\s*<\/p>/);
     expect(html).toContain('data-checked="false"');
+  });
+});
+
+describe('markdownPasteHtml', () => {
+  it('recognises rendered markdown formatting', () => {
+    expect(markdownPasteHtml('## Plan')).toContain('<h2>Plan</h2>');
+    expect(markdownPasteHtml('Read **this**')).toContain('<strong>this</strong>');
+    expect(markdownPasteHtml('- [ ] Ship it')).toContain('data-type="taskList"');
+  });
+
+  it('leaves plain text for the native paste handler', () => {
+    expect(markdownPasteHtml('Everything is fine now.')).toBeNull();
+    expect(markdownPasteHtml('snake_case_name stays whole')).toBeNull();
   });
 });

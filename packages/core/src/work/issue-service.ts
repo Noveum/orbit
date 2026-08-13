@@ -37,6 +37,7 @@ import {
   captureCreatedCycleMembership,
   captureCycleMembershipChange,
   lockCycleAssignmentTeam,
+  lockCycleAssignmentWorkspace,
 } from '../analytics/membership.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { dedupeAudience, restrictAudience, teamReaderIds } from '../notifications/audience.ts';
@@ -341,7 +342,10 @@ function collectIssueChanges(
   track('priority', patch.priority);
   track('assigneeId', patch.assigneeId);
   track('projectId', patch.projectId);
-  track('milestoneId', patch.milestoneId);
+  track(
+    'milestoneId',
+    patch.milestoneId === undefined && values.projectId !== undefined ? null : patch.milestoneId,
+  );
   track('cycleId', patch.cycleId);
   track('parentId', patch.parentId);
   track('estimate', patch.estimate);
@@ -614,26 +618,21 @@ export interface CreatedIssue {
   readonly actions: SyncAction[];
 }
 
-async function assertCycleInTeam(
+async function assertCycleInWorkspace(
   executor: Executor,
   organizationId: string,
-  teamId: string,
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
     .select({
-      teamId: schema.cycle.teamId,
-      organizationId: schema.cycle.organizationId,
+      id: schema.cycle.id,
       completedAt: schema.cycle.completedAt,
       archivedAt: schema.cycle.archivedAt,
     })
     .from(schema.cycle)
-    .where(eq(schema.cycle.id, cycleId))
+    .where(and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, organizationId)))
     .limit(1);
   const cycle = requireRow(row, 'That sprint does not exist.');
-  if (cycle.organizationId !== organizationId || cycle.teamId !== teamId) {
-    throw validationFailed('That sprint belongs to another team.');
-  }
   if (cycle.completedAt !== null || cycle.archivedAt !== null) {
     throw validationFailed('That sprint is no longer open.');
   }
@@ -733,8 +732,9 @@ async function assertAssignableToTeam(
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
+    await lockCycleAssignmentWorkspace(executor, organizationId);
     await lockCycleAssignmentTeam(executor, teamId);
-    await assertCycleInTeam(executor, organizationId, teamId, cycleId);
+    await assertCycleInWorkspace(executor, organizationId, cycleId);
   }
   if (projectId !== undefined && projectId !== null) {
     await assertProjectInTeam(executor, organizationId, teamId, projectId);
@@ -763,7 +763,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
-    await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
+    const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -790,7 +791,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         stateId: state.id,
         priority: parsed.priority,
         creatorId: principal.userId,
-        assigneeId: parsed.assigneeId,
+        assigneeId,
         projectId: parsed.projectId,
         milestoneId: parsed.milestoneId,
         cycleId: parsed.cycleId,
@@ -807,7 +808,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, parsed.assigneeId], syncId);
+    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -918,7 +919,8 @@ async function applyIssueUpdates(
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue[]> {
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
-  if (parsed.cycleId !== undefined && parsed.cycleId !== null) {
+  if (parsed.cycleId !== undefined) {
+    await lockCycleAssignmentWorkspace(tx, principal.organizationId);
     const teamIds = [...new Set([...loaded.values()].map((issue) => issue.teamId))].sort();
     for (const teamId of teamIds) await lockCycleAssignmentTeam(tx, teamId);
   }
@@ -1184,7 +1186,6 @@ async function carryToTeam(
   values.teamId = team.id;
   values.number = number;
   values.identifier = issueIdentifier(team.key, number);
-  values.cycleId = null;
   if (await projectFitsTeam(executor, team.id, current.projectId)) return;
   values.projectId = null;
   values.milestoneId = null;
@@ -1193,6 +1194,79 @@ async function carryToTeam(
 interface Landing {
   readonly sortOrder: number | null;
   readonly rebalanced: IssueRow[];
+}
+
+type MoveInput = z.infer<typeof issueMoveSchema>;
+
+async function lockMoveCycleAssignments(
+  executor: Executor,
+  organizationId: string,
+  current: IssueRow,
+  teamId: string,
+  parsed: MoveInput,
+): Promise<void> {
+  const changingTeam = teamId !== current.teamId;
+  if (parsed.cycleId === undefined && !(changingTeam && current.cycleId !== null)) return;
+  await lockCycleAssignmentWorkspace(executor, organizationId);
+  const teamIds = [...new Set([current.teamId, teamId])].sort();
+  for (const lockedTeamId of teamIds) await lockCycleAssignmentTeam(executor, lockedTeamId);
+}
+
+async function moveValues(
+  executor: Executor,
+  current: IssueRow,
+  team: TeamRow,
+  state: Awaited<ReturnType<typeof stateOf>>,
+  landing: Landing,
+  now: Date,
+): Promise<IssueValues> {
+  const values: IssueValues = landing.sortOrder === null ? {} : { sortOrder: landing.sortOrder };
+  if (team.id !== current.teamId) await carryToTeam(executor, current, team, values);
+  if (state.id === current.stateId) return values;
+  values.stateId = state.id;
+  Object.assign(values, applyStateTimestamps(current, state.category, now));
+  return values;
+}
+
+async function captureMovedIssueMembership(
+  executor: Executor,
+  current: IssueRow,
+  issue: IssueRow,
+  occurredAt: Date,
+): Promise<void> {
+  if (issue.cycleId === current.cycleId && issue.teamId === current.teamId) return;
+  await captureCycleMembershipChange(executor, {
+    issue,
+    fromCycleId: current.cycleId,
+    toCycleId: issue.cycleId,
+    occurredAt,
+    entryKind: 'added',
+  });
+}
+
+async function recordMovedIssueState(
+  executor: Executor,
+  input: {
+    readonly current: IssueRow;
+    readonly state: Awaited<ReturnType<typeof stateOf>>;
+    readonly organizationId: string;
+    readonly issueId: string;
+    readonly actor: Actor;
+    readonly syncId: number;
+  },
+): Promise<void> {
+  if (input.state.id === input.current.stateId) return;
+  await appendActivities(executor, [
+    {
+      organizationId: input.organizationId,
+      issueId: input.issueId,
+      actor: input.actor,
+      field: 'stateId',
+      from: await describeValue(executor, 'stateId', input.current.stateId),
+      to: { id: input.state.id, name: input.state.name },
+      syncId: input.syncId,
+    },
+  ]);
 }
 
 async function landingOrder(
@@ -1244,12 +1318,8 @@ export async function moveIssue(
 
     const now = new Date();
     const changingTeam = teamId !== current.teamId;
-    const values: IssueValues = landing.sortOrder === null ? {} : { sortOrder: landing.sortOrder };
-    if (changingTeam) await carryToTeam(tx, current, team, values);
-    if (state.id !== current.stateId) {
-      values.stateId = state.id;
-      Object.assign(values, applyStateTimestamps(current, state.category, now));
-    }
+    await lockMoveCycleAssignments(tx, principal.organizationId, current, teamId, parsed);
+    const values = await moveValues(tx, current, team, state, landing, now);
 
     await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, teamId, {
@@ -1266,31 +1336,18 @@ export async function moveIssue(
       .returning();
     const issue = requireRow(moved, 'That issue does not exist.');
 
-    if (issue.cycleId !== current.cycleId) {
-      await captureCycleMembershipChange(tx, {
-        issue,
-        fromCycleId: current.cycleId,
-        toCycleId: issue.cycleId,
-        occurredAt: now,
-        entryKind: 'added',
-      });
-    }
+    await captureMovedIssueMembership(tx, current, issue, now);
 
     if (changingTeam) await dropLabelsForeignToTeam(tx, principal.organizationId, issue.id, teamId);
 
-    if (state.id !== current.stateId) {
-      await appendActivities(tx, [
-        {
-          organizationId: principal.organizationId,
-          issueId,
-          actor,
-          field: 'stateId',
-          from: await describeValue(tx, 'stateId', current.stateId),
-          to: { id: state.id, name: state.name },
-          syncId,
-        },
-      ]);
-    }
+    await recordMovedIssueState(tx, {
+      current,
+      state,
+      organizationId: principal.organizationId,
+      issueId,
+      actor,
+      syncId,
+    });
 
     await recordRegroupings(tx, {
       organizationId: principal.organizationId,
@@ -1433,6 +1490,10 @@ export async function deleteIssue(
 
   return await database.transaction(async (tx) => {
     const current = await loadIssueForUpdate(tx, principal, issueId);
+    if (current.cycleId !== null) {
+      await lockCycleAssignmentWorkspace(tx, principal.organizationId);
+      await lockCycleAssignmentTeam(tx, current.teamId);
+    }
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);

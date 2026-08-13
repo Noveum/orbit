@@ -16,34 +16,28 @@ import {
   type ScopePoint,
   scopeSeries,
   stateGroupBreakdown,
-  teamVelocity,
   toSavedAnalyticsViewPayload,
   type VelocityPoint,
   workDistribution,
+  workspaceVelocity,
 } from '@orbit/core';
-import { and, db, desc, eq, inArray, isNull, type SQL, schema, sql } from '@orbit/db';
+import { and, db, desc, eq, isNull, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
+import { sprintLabel } from '@orbit/shared/utils';
 
 const WORKSPACE: AnalyticsScope = { type: 'workspace' };
 
 export interface CycleOption {
   readonly id: string;
   readonly label: string;
-  readonly teamName: string;
   readonly active: boolean;
 }
 
 function estimateName(key: string): string {
   if (key === 'none' || key === '0') return 'No estimate';
   return `${key} pt${key === '1' ? '' : 's'}`;
-}
-
-function visibleCycleTeams(principal: Principal): SQL | undefined {
-  if (principal.role === 'admin') return undefined;
-  if (principal.teamIds.length === 0) return sql`false`;
-  return inArray(schema.cycle.teamId, [...principal.teamIds]);
 }
 
 export async function loadCycleOptions(
@@ -58,15 +52,12 @@ export async function loadCycleOptions(
       startsAt: schema.cycle.startsAt,
       endsAt: schema.cycle.endsAt,
       completedAt: schema.cycle.completedAt,
-      teamName: schema.team.name,
     })
     .from(schema.cycle)
-    .innerJoin(schema.team, eq(schema.team.id, schema.cycle.teamId))
     .where(
       and(
         eq(schema.cycle.organizationId, principal.organizationId),
         isNull(schema.cycle.archivedAt),
-        visibleCycleTeams(principal),
       ),
     )
     .orderBy(desc(schema.cycle.startsAt))
@@ -74,8 +65,7 @@ export async function loadCycleOptions(
 
   return rows.map((row) => ({
     id: row.id,
-    label: `${row.teamName} · ${row.name.length > 0 ? row.name : `Cycle ${row.number}`}`,
-    teamName: row.teamName,
+    label: sprintLabel(row),
     active:
       row.completedAt === null &&
       row.startsAt.getTime() <= now.getTime() &&
@@ -137,7 +127,7 @@ export async function loadCycleBundle(
 ): Promise<CycleBundle> {
   assertCan(principal, 'project:read');
   const [cycle] = await db
-    .select({ teamId: schema.cycle.teamId })
+    .select({ id: schema.cycle.id })
     .from(schema.cycle)
     .where(
       and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, principal.organizationId)),
@@ -150,7 +140,7 @@ export async function loadCycleBundle(
     cycleChurn(principal, cycleId),
     cycleFlowMetrics(principal, cycleId),
     listCheckpoints(principal, cycleId),
-    teamVelocity(principal, cycle.teamId, measure),
+    workspaceVelocity(principal, measure),
   ]);
 
   return { measure, burndown, churn, flow, checkpoints, velocity };
