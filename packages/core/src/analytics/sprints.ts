@@ -90,7 +90,8 @@ export interface SprintFlowDistributions {
   readonly leadTime: Distribution;
   readonly cycleTime: Distribution;
   readonly completed: number;
-  readonly cycleTimeCoverage: 'current-column' | 'unavailable';
+  readonly leadTimeCoverage: 'current-row' | 'unavailable';
+  readonly cycleTimeCoverage: 'current-column' | 'reconstructed-current-column' | 'unavailable';
 }
 
 export interface SprintDetail {
@@ -153,6 +154,7 @@ interface SprintFacts {
   readonly cycle: CycleRow;
   readonly issues: readonly IssueFact[];
   readonly snapshots: readonly SnapshotRow[];
+  readonly stateCategories: ReadonlyMap<string, string>;
 }
 
 function summaryOf(cycle: CycleRow): SprintSummary {
@@ -214,11 +216,45 @@ function parseEstimate(value: unknown): number | null {
   return null;
 }
 
-function committed(fact: IssueFact): boolean {
-  if (fact.outcome !== null) {
-    return fact.outcome.outcome !== 'canceled' && fact.outcome.outcome !== 'incomplete';
+function categoryFromValue(value: unknown, categories: ReadonlyMap<string, string>): string | null {
+  const id = parseReferenceId(value);
+  if (id !== null) {
+    const byId = categories.get(id);
+    if (byId !== undefined) return byId;
   }
-  return fact.category !== 'triage' && fact.category !== 'backlog' && fact.category !== 'canceled';
+  let name: string | null = null;
+  if (typeof value === 'string') name = value;
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'name' in value &&
+    typeof value.name === 'string'
+  ) {
+    name = value.name;
+  }
+  return name === null ? null : (categories.get(`name:${name.trim().toLowerCase()}`) ?? null);
+}
+
+function categoryAt(fact: IssueFact, facts: SprintFacts, at: Date, now: Date): string | null {
+  const changes = fact.activities.filter((activity) => activity.field === 'stateId');
+  const first = changes[0];
+  let category =
+    first === undefined ? null : categoryFromValue(first.fromValue, facts.stateCategories);
+  for (const change of changes) {
+    if (change.createdAt.getTime() >= at.getTime()) break;
+    category = categoryFromValue(change.toValue, facts.stateCategories) ?? category;
+  }
+  if (category !== null) return category;
+  if (at.getTime() < endOfFacts(facts, now).getTime()) return null;
+  if (fact.outcome?.outcome === 'completed') return 'completed';
+  if (fact.outcome?.outcome === 'canceled') return 'canceled';
+  if (fact.outcome?.outcome === 'incomplete') return 'backlog';
+  return fact.category;
+}
+
+function committedAt(fact: IssueFact, facts: SprintFacts, at: Date, now: Date): boolean {
+  const category = categoryAt(fact, facts, at, now);
+  return category === null || !['triage', 'backlog', 'canceled'].includes(category);
 }
 
 function insideAt(fact: IssueFact, at: Date): boolean {
@@ -260,6 +296,20 @@ function assigneeAt(fact: IssueFact, at: Date, frozen: boolean): string | null {
   return assigneeId;
 }
 
+function teamAt(fact: IssueFact, at: Date, frozen: boolean): string {
+  const timestamp = at.getTime();
+  const membership = [...fact.memberships]
+    .filter(
+      (entry) =>
+        entry.addedAt.getTime() < timestamp &&
+        (entry.removedAt === null || entry.removedAt.getTime() >= timestamp),
+    )
+    .sort((left, right) => right.addedAt.getTime() - left.addedAt.getTime())[0];
+  if (membership !== undefined) return membership.teamId;
+  if (frozen && fact.outcome !== null) return fact.outcome.teamId;
+  return fact.teamId;
+}
+
 function completionAt(fact: IssueFact): Date | null {
   return fact.outcome?.completedAt ?? fact.completedAt;
 }
@@ -273,9 +323,12 @@ function valueAt(fact: IssueFact, at: Date, measure: AnalyticsQuery['measure']):
   return estimateAt(fact, at) ?? 0;
 }
 
-function coverageOf(facts: SprintFacts): AnalyticsCoverage {
-  const asOf = (facts.cycle.completedAt ?? new Date()).toISOString();
-  if (facts.cycle.completedAt !== null && facts.issues.some((fact) => fact.outcome !== null)) {
+function coverageOf(facts: SprintFacts, now: Date): AnalyticsCoverage {
+  const asOf = (facts.cycle.completedAt ?? now).toISOString();
+  const issueIds = new Set(facts.issues.map((fact) => fact.issueId));
+  const outcomesComplete = issueIds.size > 0 && facts.issues.every((fact) => fact.outcome !== null);
+  const hasFinalSnapshot = facts.snapshots.some((snapshot) => snapshot.isFinal);
+  if (facts.cycle.completedAt !== null && outcomesComplete && hasFinalSnapshot) {
     return { kind: 'frozen', from: facts.cycle.startsAt.toISOString(), asOf };
   }
   const memberships = facts.issues.flatMap((fact) => fact.memberships);
@@ -286,7 +339,20 @@ function coverageOf(facts: SprintFacts): AnalyticsCoverage {
     (earliest, row) => (row.addedAt < earliest ? row.addedAt : earliest),
     memberships[0]?.addedAt ?? facts.cycle.startsAt,
   );
-  const kind = memberships.every((row) => row.coverage === 'captured') ? 'captured' : 'observed';
+  let kind: AnalyticsCoverage['kind'] = 'reconstructed';
+  if (facts.cycle.completedAt === null) {
+    const stateHistoryCovered = facts.issues.every((fact) =>
+      fact.activities.some(
+        (activity) =>
+          activity.field === 'stateId' &&
+          categoryFromValue(activity.fromValue, facts.stateCategories) !== null,
+      ),
+    );
+    kind =
+      memberships.every((row) => row.coverage === 'captured') && stateHistoryCovered
+        ? 'captured'
+        : 'observed';
+  }
   return { kind, from: first.toISOString(), asOf };
 }
 
@@ -303,7 +369,9 @@ function timeForDay(day: string, facts: SprintFacts, now: Date): Date {
   return next < end ? next : end;
 }
 
-function completedBy(fact: IssueFact, at: Date): boolean {
+function completedBy(fact: IssueFact, facts: SprintFacts, at: Date, now: Date): boolean {
+  const category = categoryAt(fact, facts, at, now);
+  if (category !== null) return category === 'completed';
   const completedAt = completionAt(fact);
   return completedAt !== null && completedAt.getTime() < at.getTime();
 }
@@ -313,10 +381,11 @@ function burnFor(
   measure: AnalyticsQuery['measure'],
   now: Date,
   personId: string | null,
+  teamId: string | null = null,
 ): SprintBurnPoint[] {
   const startDay = dateText(facts.cycle.startsAt, facts.cycle.timezone);
   const lastDay = dateText(endOfFacts(facts, now), facts.cycle.timezone);
-  const coverage = coverageOf(facts).kind;
+  const coverage = coverageOf(facts, now).kind;
   const points: SprintBurnPoint[] = [];
   let workingDay = 0;
   for (
@@ -329,13 +398,15 @@ function burnFor(
     const at = timeForDay(day, facts, now);
     const eligible = facts.issues.filter(
       (fact) =>
-        committed(fact) &&
+        committedAt(fact, facts, at, now) &&
         insideAt(fact, at) &&
-        (personId === null || assigneeAt(fact, at, facts.cycle.completedAt !== null) === personId),
+        (personId === null ||
+          assigneeAt(fact, at, facts.cycle.completedAt !== null) === personId) &&
+        (teamId === null || teamAt(fact, at, facts.cycle.completedAt !== null) === teamId),
     );
     const scope = eligible.reduce((sum, fact) => sum + valueAt(fact, at, measure), 0);
     const completed = eligible
-      .filter((fact) => completedBy(fact, at))
+      .filter((fact) => completedBy(fact, facts, at, now))
       .reduce((sum, fact) => sum + valueAt(fact, at, measure), 0);
     const started = eligible
       .filter((fact) => {
@@ -347,8 +418,10 @@ function burnFor(
     const dayEnd = reportingCalendar(at, facts.cycle.timezone).startOfDay(addDate(day, 1));
     const attributed = (membership: MembershipRow): boolean => {
       const fact = facts.issues.find((entry) => entry.issueId === membership.issueId);
-      if (fact === undefined || personId === null) return personId === null;
-      return assigneeAt(fact, membership.addedAt, false) === personId;
+      if (fact === undefined) return false;
+      const personMatches =
+        personId === null || assigneeAt(fact, membership.addedAt, false) === personId;
+      return personMatches && (teamId === null || membership.teamId === teamId);
     };
     const added = facts.issues
       .flatMap((fact) => fact.memberships)
@@ -436,10 +509,12 @@ function cohortsOf(facts: SprintFacts, now: Date): SprintCohorts {
   const cutoff = facts.cycle.startsAt.getTime() + PLANNED_WINDOW_MILLISECONDS;
   const events = membershipEvents(facts, now);
   const planned = facts.issues.filter((fact) => {
-    if (!committed(fact)) return false;
     if (fact.outcome !== null) return fact.outcome.planned;
     return fact.memberships.some(
-      (entry) => entry.coverage === 'captured' && entry.addedAt.getTime() <= cutoff,
+      (entry) =>
+        entry.coverage === 'captured' &&
+        entry.addedAt.getTime() <= cutoff &&
+        committedAt(fact, facts, new Date(cutoff), now),
     );
   });
   const completed = facts.issues.filter((fact) => {
@@ -454,7 +529,9 @@ function cohortsOf(facts: SprintFacts, now: Date): SprintCohorts {
   const incomplete = facts.issues.filter(
     (fact) =>
       fact.outcome?.outcome === 'incomplete' ||
-      (fact.outcome === null && committed(fact) && completionAt(fact) === null),
+      (fact.outcome === null &&
+        committedAt(fact, facts, endOfFacts(facts, now), now) &&
+        !completedBy(fact, facts, endOfFacts(facts, now), now)),
   );
   return {
     planned: planned.map((fact) => fact.issueId),
@@ -473,11 +550,13 @@ function summaryFor(
   measure: AnalyticsQuery['measure'],
   now: Date,
   personId: string | null,
+  teamId: string | null = null,
 ): SprintMeasureSummary {
   const at = endOfFacts(facts, now);
   const personFacts = facts.issues.filter(
     (fact) =>
-      personId === null || assigneeAt(fact, at, facts.cycle.completedAt !== null) === personId,
+      (personId === null || assigneeAt(fact, at, facts.cycle.completedAt !== null) === personId) &&
+      (teamId === null || teamAt(fact, at, facts.cycle.completedAt !== null) === teamId),
   );
   const sumCohort = (ids: readonly string[]): number =>
     personFacts
@@ -486,18 +565,22 @@ function summaryFor(
   const last = burn.at(-1);
   const events = membershipEvents(facts, now);
   const attributedEvents = (rows: readonly MembershipRow[]): MembershipRow[] =>
-    personId === null
-      ? [...rows]
-      : rows.filter((row) => {
-          const fact = facts.issues.find((entry) => entry.issueId === row.issueId);
-          return fact !== undefined && assigneeAt(fact, row.addedAt, false) === personId;
-        });
+    rows.filter((row) => {
+      const fact = facts.issues.find((entry) => entry.issueId === row.issueId);
+      if (fact === undefined) return false;
+      return (
+        (personId === null || assigneeAt(fact, row.addedAt, false) === personId) &&
+        (teamId === null || row.teamId === teamId)
+      );
+    });
   const eventValue = (rows: readonly MembershipRow[]): number =>
     attributedEvents(rows).reduce(
       (sum, row) => sum + (measure === 'issues' ? 1 : (row.estimateAtAdd ?? 0)),
       0,
     );
-  const currentFacts = personFacts.filter((fact) => committed(fact) && insideAt(fact, at));
+  const currentFacts = personFacts.filter(
+    (fact) => committedAt(fact, facts, at, now) && insideAt(fact, at),
+  );
   return {
     planned: sumCohort(cohorts.planned),
     currentScope: last?.scope ?? 0,
@@ -523,11 +606,17 @@ function flowFor(facts: SprintFacts): SprintFlowDistributions {
     if (end === null || start === null || end < start) return [];
     return [(end.getTime() - start.getTime()) / DAY_MILLISECONDS];
   });
+  let cycleTimeCoverage: SprintFlowDistributions['cycleTimeCoverage'] = 'unavailable';
+  if (cycle.length > 0) {
+    cycleTimeCoverage =
+      facts.cycle.completedAt === null ? 'current-column' : 'reconstructed-current-column';
+  }
   return {
     leadTime: distributionOf(lead),
     cycleTime: distributionOf(cycle),
     completed: completed.length,
-    cycleTimeCoverage: cycle.length === 0 ? 'unavailable' : 'current-column',
+    leadTimeCoverage: lead.length === 0 ? 'unavailable' : 'current-row',
+    cycleTimeCoverage,
   };
 }
 
@@ -558,23 +647,21 @@ function detailFor(
       name: names.get(personId) ?? 'Former member',
       burn: personBurn,
       summary: summaryFor(facts, personBurn, cohorts, measure, now, personId),
-      coverage: coverageOf(facts),
+      coverage: coverageOf(facts, now),
     };
   });
-  const teamIds = unique(facts.issues.map((fact) => fact.teamId));
+  const teamIds = unique(
+    facts.issues.flatMap((fact) => [
+      fact.teamId,
+      ...fact.memberships.map((row) => row.teamId),
+      ...(fact.outcome === null ? [] : [fact.outcome.teamId]),
+    ]),
+  );
   const teams = teamIds.map((teamId) => {
-    const issueIds = new Set(
-      facts.issues.filter((fact) => fact.teamId === teamId).map((fact) => fact.issueId),
-    );
-    const teamFacts: SprintFacts = {
-      ...facts,
-      issues: facts.issues.filter((fact) => issueIds.has(fact.issueId)),
-    };
-    const teamBurn = burnFor(teamFacts, measure, now, null);
-    const teamCohorts = cohortsOf(teamFacts, now);
+    const teamBurn = burnFor(facts, measure, now, null, teamId);
     return {
       id: teamId,
-      summary: summaryFor(teamFacts, teamBurn, teamCohorts, measure, now, null),
+      summary: summaryFor(facts, teamBurn, cohorts, measure, now, null, teamId),
     };
   });
   return {
@@ -587,7 +674,7 @@ function detailFor(
     teams,
     people,
     flow: flowFor(facts),
-    coverage: coverageOf(facts),
+    coverage: coverageOf(facts, now),
   };
 }
 
@@ -656,14 +743,32 @@ async function loadFacts(cycles: readonly CycleRow[]): Promise<{
   const currentRows = [
     ...new Map([...current, ...assigned].map((row) => [row.issue.id, row])).values(),
   ];
+  const allIssueIds = unique([...issueIds, ...currentRows.map((row) => row.issue.id)]);
   const activities =
-    issueIds.length === 0
+    allIssueIds.length === 0
       ? []
       : await db
           .select()
           .from(schema.issueActivity)
-          .where(inArray(schema.issueActivity.issueId, issueIds))
+          .where(inArray(schema.issueActivity.issueId, allIssueIds))
           .orderBy(asc(schema.issueActivity.createdAt), asc(schema.issueActivity.id));
+  const organizationIds = unique(cycles.map((cycle) => cycle.organizationId));
+  const states =
+    organizationIds.length === 0
+      ? []
+      : await db
+          .select({
+            id: schema.workflowState.id,
+            name: schema.workflowState.name,
+            category: schema.workflowState.category,
+          })
+          .from(schema.workflowState)
+          .where(inArray(schema.workflowState.organizationId, organizationIds));
+  const stateCategories = new Map<string, string>();
+  for (const state of states) {
+    stateCategories.set(state.id, state.category);
+    stateCategories.set(`name:${state.name.trim().toLowerCase()}`, state.category);
+  }
   const currentById = new Map(currentRows.map((row) => [row.issue.id, row]));
   const outcomeByKey = new Map(outcomes.map((row) => [`${row.cycleId}:${row.issueId}`, row]));
   const membershipsByCycle = new Map<string, MembershipRow[]>();
@@ -713,6 +818,7 @@ async function loadFacts(cycles: readonly CycleRow[]): Promise<{
       cycle,
       issues,
       snapshots: snapshots.filter((row) => row.cycleId === cycle.id),
+      stateCategories,
     });
   }
   const personIds = unique(
@@ -736,17 +842,18 @@ async function loadFacts(cycles: readonly CycleRow[]): Promise<{
 function formulas(): SprintFormulaMetadata {
   return {
     planned:
-      'Captured sprint membership entered before the sprint start or within 24 hours after it. Observed bootstrap rows are not called planned.',
+      'Captured sprint membership entered before the sprint start or within 24 hours after it. Known triage, backlog, or canceled state at commitment is excluded; missing state-at-entry coverage is retained as membership-planned rather than inferred from current state.',
     scope:
-      'Committed membership active at the observation time. Triage, backlog, and canceled work are excluded.',
-    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Current-day values include captured membership and issue facts after the latest snapshot.',
-    leadTime: 'Issue creation to completion for issues whose creation fact is still available.',
+      'Membership active at the observation time, excluding triage, backlog, or canceled work only where a state transition or observation establishes that category.',
+    burn: 'Remaining equals scope minus completed on each sprint local calendar day. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
+    leadTime:
+      'Current issue-row creation to durable completion for issues whose creation row remains available; deleted rows are unavailable.',
     cycleTime:
-      'Current recorded start to completion. Historical first-start is not reconstructed when that fact is unavailable.',
+      'Current mutable startedAt column to completion. Completed sprint values are labeled reconstructed-current-column, never frozen, because close outcomes do not retain first start.',
     points:
       'Null estimates contribute zero points and remain counted in the explicit unestimated issue total.',
     coverage:
-      'Captured uses mutation facts, observed includes bootstrap facts, frozen uses close outcomes, and reconstructed is labeled when immutable facts are absent.',
+      'Captured requires captured active membership facts, observed includes bootstrap or missing entry-state facts, frozen requires outcomes for every relevant issue plus a final snapshot, and completed partial history is reconstructed.',
   };
 }
 
@@ -779,17 +886,36 @@ export async function loadSprintAnalytics(
     ) ??
     cycles.find((cycle) => cycle.completedAt !== null);
   if (selected === undefined) throw new Error('No sprint is available for analytics.');
-  const previous = cycles.find(
-    (cycle) =>
-      cycle.id !== selected.id &&
-      cycle.number < selected.number &&
-      cycle.completedAt !== null &&
-      cycle.teamId === selected.teamId,
-  );
+  const previous = cycles
+    .filter(
+      (cycle) =>
+        cycle.id !== selected.id &&
+        cycle.archivedAt === null &&
+        cycle.completedAt !== null &&
+        cycle.completedAt <= resolved.asOf &&
+        cycle.endsAt <= selected.startsAt,
+    )
+    .sort(
+      (left, right) =>
+        right.endsAt.getTime() - left.endsAt.getTime() ||
+        (right.completedAt?.getTime() ?? 0) - (left.completedAt?.getTime() ?? 0) ||
+        right.id.localeCompare(left.id),
+    )[0];
   const velocityCycles = cycles
-    .filter((cycle) => cycle.completedAt !== null && cycle.number <= selected.number)
-    .slice(0, VELOCITY_LIMIT)
-    .reverse();
+    .filter(
+      (cycle) =>
+        cycle.archivedAt === null &&
+        cycle.completedAt !== null &&
+        cycle.completedAt <= resolved.asOf,
+    )
+    .sort(
+      (left, right) =>
+        (left.completedAt?.getTime() ?? 0) - (right.completedAt?.getTime() ?? 0) ||
+        left.endsAt.getTime() - right.endsAt.getTime() ||
+        left.number - right.number ||
+        left.id.localeCompare(right.id),
+    )
+    .slice(-VELOCITY_LIMIT);
   const wanted = [selected, ...(previous === undefined ? [] : [previous]), ...velocityCycles];
   const uniqueCycles = [...new Map(wanted.map((cycle) => [cycle.id, cycle])).values()];
   const loaded = await loadFacts(uniqueCycles);

@@ -2,23 +2,24 @@
 
 ## Shared truth
 
-`loadSprintAnalytics(principal, query, context)` is the canonical sprint analytics service for the analytics and sprint surfaces. The legacy `cycleBurndown` API delegates to this service and only adapts its return shape, so there is one scope, completion, and remaining-work formula.
+`loadSprintAnalytics(principal, query, context)` is the shared core contract ready for analytics and sprint consumers. The legacy analytics `cycleBurndown` API delegates to this service and only adapts its return shape, so existing analytics uses one scope, completion, and remaining-work formula. The sprint page still calls `cycleProgress`; wiring that UI and My Work to this contract remains future Task 14 work.
 
 - Sprint scope comes from captured membership intervals. Legacy direct assignments without intervals are labeled observed rather than reconstructed as planned.
-- Planned work entered through a captured membership before sprint start or within 24 hours after start. Observed bootstrap rows never become planned by inference.
+- Planned work entered through a captured membership before sprint start or within 24 hours after start. A known triage, backlog, or canceled category at entry excludes it. When entry-state coverage is absent, the result retains membership-planned scope and labels coverage observed instead of applying current state backward.
 - Added and removed counts are event counts, so a same-day add and remove remains visible even when net scope is unchanged. Re-additions create distinct intervals.
-- Triage, backlog, and canceled work is not committed sprint scope.
+- Triage, backlog, and canceled work exits committed scope at its recorded transition. A reverse transition enters scope at that event. Current categories and close outcomes are never projected backward over earlier days.
+- Completion and reopen state transitions form temporal completion episodes, so active burn decreases on completion and rises again on reopen.
 - Current-day burn combines membership facts with current issue completion, estimate, and assignment facts, so completion moves the graph before the next daily snapshot.
-- Completed sprint result and person attribution prefer frozen outcome facts. Rollover membership and outcome facts identify carryover.
+- Completed sprint result and person attribution prefer membership intervals and frozen outcome facts at their applicable observation times. Rollover membership and outcome facts identify carryover.
 - Points treat null estimates as zero while the summary exposes the explicit unestimated issue count.
 - Burn dates use the sprint timezone. Calendar-day and Monday-to-Friday working-day indices are returned so a previous sprint can be aligned without pretending weekends are working days.
-- Lead time is issue creation to completion. Cycle time is the currently recorded start to completion. The service reports `unavailable` rather than inventing a historical first start when the source fact is absent.
-- Formula metadata is returned for UI tooltips and coverage is labeled captured, observed, frozen, or reconstructed.
+- Lead time is the retained current issue-row creation time to durable completion and is unavailable for deleted rows. Cycle time is the mutable current `startedAt` column to completion. Completed sprint cycle time is explicitly `reconstructed-current-column`, never frozen, because outcomes do not retain a first-start fact.
+- Formula metadata is returned for UI tooltips. Frozen coverage requires outcomes for every relevant issue and a final snapshot; partial completed history is reconstructed, and missing entry-state or bootstrap facts remain observed.
 - Overall burn, per-team summaries, per-person burn, and optional person focus use the same facts. Person focus is resolved from `focus.personId` or a single positive assignee filter.
 
 ## Coverage
 
-Real-Postgres tests cover local-day completion between snapshots, same-day net-zero churn, removal history, re-addition intervals, the captured 24-hour rule, uncommitted work, issue and point measures, null estimates, rollover and carryover, frozen previous results, first-sprint state, workspace cross-team attribution, archived history, assignee changes, personal burn, and current My work.
+Real-Postgres tests cover local-day completion between snapshots, completion and reopen episodes, forward-only committed-state transitions, same-day net-zero churn, removal history, re-addition intervals, the captured 24-hour rule, unknown entry-state coverage, issue and point measures, null estimates, rollover and carryover, complete and partial frozen outcomes, temporal previous selection, as-of velocity bounds, first-sprint state, workspace cross-team interval attribution, archived history, assignee changes, personal burn, and current My Work.
 
 Existing membership and cycle suites additionally cover direct moves between sprints, rollover capture, deletion ordering, bootstrap repair, cross-workspace isolation, final snapshots, and daylight-saving snapshot days.
 
@@ -38,7 +39,8 @@ A representative membership aggregation was inspected with `EXPLAIN (ANALYZE, BU
 ## Verification
 
 - RED: sprint analytics test import failed because `analytics/sprints.ts` and `loadSprintAnalytics` did not exist.
-- GREEN: focused sprint and legacy burndown compatibility passed 16 tests with 58 assertions.
-- GREEN: expanded full core real-Postgres suite passed 878 tests with 2,376 assertions across 62 files.
-- GREEN: core typecheck, lint, comment policy, source byte check, shipped Bun import check, dependency dedupe, and diff check passed.
-- Three monorepo verify attempts passed every static and type gate but reported package-level parallel test interference: the first two had the same five web sprint database-order failures, and the third additionally had one database catchup hook timeout at 30 seconds. The full web suite immediately passed on the exact same isolated lane when run alone with its package environment. The full core suite and focused Task 8 suite passed separately. No Task 8 or legacy burndown test failed in any run.
+- Review RED: five focused regressions demonstrated backward-applied current status, missing reopen episodes, number-based previous selection, and incorrectly frozen partial outcomes.
+- GREEN: focused sprint and legacy burndown compatibility passed 22 tests with 70 assertions.
+- GREEN: lint, comment policy, source byte check, shipped Bun import check, dependency dedupe, monorepo typecheck, and diff check passed.
+- The expanded full core real-Postgres run passed 883 of 884 tests with 2,382 assertions. Its only failure was an existing legacy burndown fixture `beforeEach` timeout followed by a foreign-key error after another test reset its organization. That exact legacy suite and the focused sprint suite pass together in isolation.
+- Three monorepo verify attempts passed every static and type gate but reported package-level parallel test interference: the first two had the same five web sprint database-order failures, and the third additionally had one database catchup hook timeout at 30 seconds. The full web suite immediately passed on the exact same isolated lane when run alone with its package environment. Focused Task 8 and legacy burndown compatibility pass together on an isolated database lane.
