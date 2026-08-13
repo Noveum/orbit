@@ -33,6 +33,28 @@ function page(nextCursor: string | null, identifier: string) {
         project: null,
         assignee: null,
       },
+      ...(nextCursor === null
+        ? []
+        : [
+            {
+              id: '00000000-0000-7000-8000-000000000003',
+              identifier: 'ORB-3',
+              title: 'Earlier evidence',
+              priority: 1,
+              estimate: 1,
+              dueDate: null,
+              updatedAt: '2026-08-12T12:00:00.000Z',
+              completedAt: null,
+              cycleTimeDays: null,
+              state: {
+                id: '00000000-0000-7000-8000-000000000004',
+                name: 'Todo',
+                category: 'unstarted',
+              },
+              project: null,
+              assignee: null,
+            },
+          ]),
     ],
     nextCursor,
     limit: 1,
@@ -65,7 +87,7 @@ afterEach(() => {
 });
 
 describe('AnalyticsDrilldownDialog', () => {
-  test('loads signed pages, preserves export parity, and restores focus', async () => {
+  test('loads signed sortable evidence pages with context and restores focus', async () => {
     const requests: string[] = [];
     globalThis.fetch = mock((input: string | URL | Request) => {
       const url = String(input);
@@ -85,10 +107,14 @@ describe('AnalyticsDrilldownDialog', () => {
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Completed work' })).toBeVisible();
     expect(await screen.findByText('Ship analytics')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Export CSV' })).toHaveAttribute(
-      'href',
-      expect.stringContaining('cohort=completed'),
-    );
+    expect(screen.getByText(/Predicate: completed/)).toBeVisible();
+    expect(screen.getByText(/Data through Aug 13, 2026/)).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Export CSV' })).not.toBeInTheDocument();
+
+    const evidence = screen.getByRole('table', { name: 'Completed work evidence' });
+    expect(evidence.querySelector('tbody tr')?.textContent).toContain('ORB-1');
+    await user.click(screen.getByRole('button', { name: 'Updated' }));
+    expect(evidence.querySelector('tbody tr')?.textContent).toContain('ORB-3');
 
     await user.click(screen.getByRole('button', { name: 'Load more' }));
     expect(await screen.findByText('Fix sprint burn')).toBeVisible();

@@ -31,7 +31,7 @@ interface ActivePoint {
 interface LinePlotProps {
   readonly label: string;
   readonly series: readonly PlotSeries[];
-  readonly onActivate: (cohort: AnalyticsDrilldownCohort) => void;
+  readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
   readonly valueFormatter?: (value: number) => string;
 }
 
@@ -98,7 +98,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
         setActive(null);
         return true;
       case 'Enter':
-        if (activePoint !== null) onActivate(activePoint.cohort);
+        if (activePoint !== null) onActivate?.(activePoint.cohort);
         return true;
       default:
         return false;
@@ -135,21 +135,25 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
             { id: 'series', label: 'Series' },
             { id: 'value', label: 'Value', align: 'right' },
           ]}
-          onActivate={(row) => {
-            for (let seriesIndex = 0; seriesIndex < series.length; seriesIndex += 1) {
-              const pointIndex = series[seriesIndex]?.points.findIndex(
-                (point) => point.id === row.id,
-              );
-              if (pointIndex !== undefined && pointIndex >= 0) {
-                const point = series[seriesIndex]?.points[pointIndex];
-                if (point !== undefined) {
-                  setActive({ seriesIndex, pointIndex });
-                  onActivate(point.cohort);
-                }
-                return;
-              }
-            }
-          }}
+          {...(onActivate === undefined
+            ? {}
+            : {
+                onActivate: (row: AnalyticsDataRow) => {
+                  for (let seriesIndex = 0; seriesIndex < series.length; seriesIndex += 1) {
+                    const pointIndex = series[seriesIndex]?.points.findIndex(
+                      (point) => point.id === row.id,
+                    );
+                    if (pointIndex !== undefined && pointIndex >= 0) {
+                      const point = series[seriesIndex]?.points[pointIndex];
+                      if (point !== undefined) {
+                        setActive({ seriesIndex, pointIndex });
+                        onActivate(point.cohort);
+                      }
+                      return;
+                    }
+                  }
+                },
+              })}
           rows={rows}
           {...(activePoint === null ? {} : { activeRowId: activePoint.id })}
         />
@@ -167,7 +171,6 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
       <svg
         aria-label={label}
         className="h-52 w-full outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-        onBlur={() => setActive(null)}
         onFocus={() => {
           if (active === null && (series[0]?.points.length ?? 0) > 0) {
             setActive({ seriesIndex: 0, pointIndex: 0 });
@@ -176,7 +179,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
         onClick={(event) => {
           const next = pointFromTarget(event.target);
           const point = pointAt(series, next);
-          if (point !== null) onActivate(point.cohort);
+          if (point !== null) onActivate?.(point.cohort);
         }}
         onKeyDown={(event) => {
           if (handleKeyDown(event.key)) event.preventDefault();
@@ -185,6 +188,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
           const next = pointFromTarget(event.target);
           if (next !== null) setActive(next);
         }}
+        onPointerLeave={() => setActive(null)}
         role="application"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The SVG is the chart's single keyboard focus surface.
         tabIndex={0}

@@ -91,4 +91,37 @@ describe('LinePlot', () => {
       'true',
     );
   });
+
+  test('supports exact hover and keyboard inspection without issue activation', async () => {
+    const user = userEvent.setup();
+    render(<LinePlot label="Sprint burn" series={series} />);
+
+    await user.hover(screen.getByTestId('plot-hit-2026-08-11-completed'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 7');
+
+    await user.tab();
+    await user.keyboard('{ArrowRight}{Enter}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 7');
+    expect(screen.queryByRole('button', { name: 'Aug 11, Completed 7' })).not.toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /Aug 11 Completed 7/ })).toBeVisible();
+  });
+
+  test('keeps keyboard position across evidence focus and clears pointer-only hover', async () => {
+    const user = userEvent.setup();
+    render(<LinePlot label="Delivery trend" onActivate={mock()} series={series} />);
+
+    const plot = screen.getByRole('application', { name: 'Delivery trend' });
+    await user.tab();
+    expect(plot).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 11');
+    await user.tab();
+    await user.tab({ shift: true });
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 11');
+
+    await user.hover(screen.getByTestId('plot-hit-2026-08-10-created'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Created 6');
+    await user.unhover(screen.getByRole('application', { name: 'Delivery trend' }));
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
 });

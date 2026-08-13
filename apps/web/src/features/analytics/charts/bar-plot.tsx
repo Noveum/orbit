@@ -3,6 +3,7 @@
 import type { AnalyticsDrilldownCohort } from '@orbit/shared/validators';
 import { useState } from 'react';
 import { chartY } from '@/features/charts/geometry.ts';
+import { type AnalyticsDataRow, AnalyticsDataTable } from './analytics-data-table.tsx';
 import { ChartTooltip } from './chart-tooltip.tsx';
 import type { PlotPoint } from './line-plot.tsx';
 import { PlotFrame } from './plot-frame.tsx';
@@ -20,8 +21,13 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
   const max = Math.max(1, ...points.map((point) => point.value));
   const width = 320;
   const height = 132;
-  const gap = 4;
-  const barWidth = Math.max(2, (width - gap * (points.length + 1)) / Math.max(points.length, 1));
+  const gap = Math.min(4, width / Math.max(points.length * 3 + 1, 1));
+  const barWidth = (width - gap * (points.length + 1)) / Math.max(points.length, 1);
+  const rows: AnalyticsDataRow[] = points.map((point) => ({
+    id: point.id,
+    label: `${label} ${valueFormatter(point.value)}`,
+    cells: { label: point.label, value: valueFormatter(point.value) },
+  }));
 
   function move(index: number) {
     if (points.length === 0) return;
@@ -43,6 +49,25 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
       }
       label={label}
       seriesLabels={[label]}
+      table={
+        <AnalyticsDataTable
+          ariaLabel={`${label} data`}
+          columns={[
+            { id: 'label', label: 'Category' },
+            { id: 'value', label: 'Value', align: 'right' },
+          ]}
+          onActivate={(row) => {
+            const index = points.findIndex((point) => point.id === row.id);
+            const selected = points[index];
+            if (selected !== undefined) {
+              setActiveIndex(index);
+              onActivate(selected.cohort);
+            }
+          }}
+          rows={rows}
+          {...(activePoint === undefined ? {} : { activeRowId: activePoint.id })}
+        />
+      }
       tooltip={
         activePoint === undefined ? null : (
           <ChartTooltip
@@ -79,6 +104,7 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
           const index = indexFromTarget(event.target);
           if (index !== null) setActiveIndex(index);
         }}
+        onPointerLeave={() => setActiveIndex(null)}
         role="application"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The SVG is the chart's single keyboard focus surface.
         tabIndex={0}
@@ -86,7 +112,9 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
       >
         <title>{label}</title>
         {points.map((point, index) => {
-          const y = chartY(point.value, max, height);
+          const valueY = chartY(point.value, max, height);
+          const barHeight = Math.max(2, height - 6 - valueY);
+          const y = height - 6 - barHeight;
           const isActive = activeIndex === index;
           return (
             <rect
@@ -94,7 +122,7 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
               data-point-index={index}
               data-testid={`plot-hit-${point.id}`}
               fill={isActive ? 'var(--color-accent)' : 'var(--color-accent-soft)'}
-              height={height - 6 - y}
+              height={barHeight}
               key={point.id}
               rx="2"
               width={barWidth}
