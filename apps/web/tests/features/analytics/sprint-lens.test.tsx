@@ -104,11 +104,14 @@ describe('SprintLens', () => {
     );
 
     await user.hover(screen.getByTestId('plot-hit-2026-08-14-remaining'));
-    expect(screen.getByRole('tooltip')).toHaveTextContent('Remaining 7');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Remaining 7 points');
     expect(screen.getByText('Added').parentElement).toHaveTextContent('Added 2');
     expect(screen.getByText('Removed').parentElement).toHaveTextContent('Removed 1');
     expect(screen.getByText('Creation to completion.')).toBeVisible();
     expect(screen.getByText('Start to completion.')).toBeVisible();
+    expect(screen.getByText('Lead time p85')).toBeVisible();
+    expect(screen.getByText('7d')).toBeVisible();
+    expect(screen.getByText('Cycle time p85')).toBeVisible();
     expect(screen.getByText(/comparison will appear after this sprint closes/i)).toBeVisible();
     expect(screen.getByText(/2 unestimated issues contribute zero points/i)).toBeVisible();
 
@@ -170,5 +173,37 @@ describe('SprintLens', () => {
 
     expect(screen.getByText('Selected person sprint burn')).toBeVisible();
     expect(screen.queryByText('My sprint burn')).not.toBeInTheDocument();
+    expect(screen.getByText(/assigned to Ada over this sprint/i)).toBeVisible();
+    expect(screen.queryByText(/assigned to you/i)).not.toBeInTheDocument();
+  });
+
+  test('shows unavailable flow honestly and explains a closed first sprint', () => {
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          selected: { ...sprint, completedAt: '2026-08-27T00:00:00.000Z' },
+          current:
+            data.current === null
+              ? null
+              : {
+                  ...data.current,
+                  sprint: { ...sprint, completedAt: '2026-08-27T00:00:00.000Z' },
+                  flow: {
+                    ...flow,
+                    leadTime: { count: 0, p50: 0, p85: 0, min: 0, max: 0, average: 0 },
+                    cycleTime: { count: 0, p50: 0, p85: 0, min: 0, max: 0, average: 0 },
+                    completed: 0,
+                    leadTimeCoverage: 'unavailable',
+                    cycleTimeCoverage: 'unavailable',
+                  },
+                },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    expect(screen.getAllByText('Not available').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/no earlier sprint is available for comparison/i)).toBeVisible();
   });
 });

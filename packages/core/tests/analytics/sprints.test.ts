@@ -6,7 +6,7 @@ import {
   type SprintAnalytics,
   type SprintDetail,
 } from '../../src/analytics/sprints.ts';
-import { insertIssue } from '../../src/analytics/test-fixtures.ts';
+import { createProjectRow, insertIssue } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -185,6 +185,71 @@ describe('loadSprintAnalytics', () => {
     expect(currentOf(result).burn.map((point) => point.remaining)).toEqual([1, 0]);
     expect(currentOf(result).burn[1]?.completed).toBe(1);
     expect(result.formulas.burn).toContain('local calendar day');
+  });
+
+  it('applies visible issue filters to sprint scope without treating sprint selection as a filter', async () => {
+    const cycleId = await cycle(1, '2026-03-01T00:00:00.000Z', '2026-03-15T00:00:00.000Z');
+    const includedProject = await createProjectRow(workspace, 'Included');
+    const excludedProject = await createProjectRow(workspace, 'Excluded');
+    const included = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      projectId: includedProject,
+    });
+    const excluded = await insertIssue(workspace, {
+      number: 2,
+      state: 'Todo',
+      cycleId,
+      projectId: excludedProject,
+    });
+    await membership(cycleId, included, { addedAt: '2026-02-28T00:00:00.000Z' });
+    await membership(cycleId, excluded, { addedAt: '2026-02-28T00:00:00.000Z' });
+    const query = analyticsQuerySchema.parse({
+      lens: 'sprints',
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'cycle',
+            operator: 'in',
+            values: [cycleId],
+            negate: false,
+          },
+          {
+            kind: 'condition',
+            property: 'project',
+            operator: 'in',
+            values: [includedProject],
+            negate: false,
+          },
+        ],
+      },
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, query, {
+      now: new Date('2026-03-03T12:00:00.000Z'),
+    });
+
+    expect(currentOf(result).summary.currentScope).toBe(1);
+    expect(currentOf(result).cohorts.planned).toEqual([included]);
+  });
+
+  it('bounds unusually long sprint histories while preserving the first and current day', async () => {
+    const cycleId = await cycle(1, '2020-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z');
+    const issueId = await insertIssue(workspace, { number: 1, state: 'Todo', cycleId });
+    await membership(cycleId, issueId, { addedAt: '2019-12-31T00:00:00.000Z' });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    });
+    const burn = currentOf(result).burn;
+
+    expect(burn.length).toBeLessThanOrEqual(120);
+    expect(burn[0]?.date).toBe('2020-01-01');
+    expect(burn.at(-1)?.date).toBe('2026-08-14');
   });
 
   it('keeps removal history, counts net-zero churn, and supports re-addition intervals', async () => {

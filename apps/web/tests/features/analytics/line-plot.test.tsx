@@ -124,4 +124,36 @@ describe('LinePlot', () => {
     await user.unhover(screen.getByRole('application', { name: 'Delivery trend' }));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
+
+  test('aligns series on an explicit shared numeric domain', () => {
+    render(
+      <LinePlot
+        label="Working day comparison"
+        series={[
+          {
+            id: 'current',
+            label: 'Current',
+            points: [
+              { ...series[0].points[0], id: 'current-1', x: 1 },
+              { ...series[0].points[1], id: 'current-2', x: 2 },
+            ],
+          },
+          {
+            id: 'previous',
+            label: 'Previous',
+            points: [
+              { ...series[1].points[0], id: 'previous-1', x: 1 },
+              { ...series[1].points[1], id: 'previous-2', x: 2 },
+              { ...series[1].points[0], id: 'previous-3', x: 3 },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('plot-hit-current-2')).toHaveAttribute(
+      'cx',
+      screen.getByTestId('plot-hit-previous-2').getAttribute('cx'),
+    );
+  });
 });

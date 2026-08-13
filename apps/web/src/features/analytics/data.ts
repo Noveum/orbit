@@ -44,6 +44,7 @@ import {
   analyticsDrilldownWireResponse,
   analyticsWireResponse,
 } from './contracts.ts';
+import { selectedAssigneeIds } from './person-focus.ts';
 
 const WORKSPACE: AnalyticsScope = { type: 'workspace' };
 
@@ -177,18 +178,9 @@ export async function loadSprintsAnalyticsData(
 
 function sprintQueryForPrincipal(principal: Principal, query: AnalyticsQuery): AnalyticsQuery {
   if (query.focus.personId !== undefined) return query;
-  let hasAssignee = false;
-  const visit = (node: AnalyticsQuery['filter']['children'][number]): void => {
-    if (node.kind === 'group') {
-      for (const child of node.children) visit(child);
-      return;
-    }
-    if (node.property === 'assignee' && node.operator === 'in' && !node.negate) {
-      hasAssignee = true;
-    }
-  };
-  for (const child of query.filter.children) visit(child);
-  return hasAssignee ? query : { ...query, focus: { ...query.focus, personId: principal.userId } };
+  return selectedAssigneeIds(query).length > 0
+    ? query
+    : { ...query, focus: { ...query.focus, personId: principal.userId } };
 }
 
 export async function loadSelectedSprintAnalyticsData(

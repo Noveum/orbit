@@ -2,7 +2,7 @@
 
 import type { AnalyticsDrilldownCohort } from '@orbit/shared/validators';
 import { useState } from 'react';
-import { chartX, chartY, linePath } from '@/features/charts/geometry.ts';
+import { chartX, chartY } from '@/features/charts/geometry.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './analytics-data-table.tsx';
 import { ChartTooltip } from './chart-tooltip.tsx';
 import { PlotFrame } from './plot-frame.tsx';
@@ -15,6 +15,7 @@ export interface PlotPoint {
   readonly label: string;
   readonly value: number;
   readonly cohort: AnalyticsDrilldownCohort;
+  readonly x?: number;
 }
 
 export interface PlotSeries {
@@ -40,12 +41,16 @@ function pointAt(series: readonly PlotSeries[], active: ActivePoint | null): Plo
   return series[active.seriesIndex]?.points[active.pointIndex] ?? null;
 }
 
-function announcementOf(series: readonly PlotSeries[], active: ActivePoint | null): string {
+function announcementOf(
+  series: readonly PlotSeries[],
+  active: ActivePoint | null,
+  valueFormatter: (value: number) => string,
+): string {
   const point = pointAt(series, active);
   const activeSeries = active === null ? undefined : series[active.seriesIndex];
   return point === null || activeSeries === undefined
     ? ''
-    : `${point.label}, ${activeSeries.label} ${point.value}`;
+    : `${point.label}, ${activeSeries.label} ${valueFormatter(point.value)}`;
 }
 
 export function LinePlot({ label, series, onActivate, valueFormatter = String }: LinePlotProps) {
@@ -53,6 +58,24 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
   const activePoint = pointAt(series, active);
   const activeSeries = active === null ? undefined : series[active.seriesIndex];
   const max = Math.max(1, ...series.flatMap((entry) => entry.points.map((point) => point.value)));
+  const explicitX = series.flatMap((entry) =>
+    entry.points.flatMap((point) => (point.x === undefined ? [] : [point.x])),
+  );
+  const minimumX = Math.min(...explicitX);
+  const maximumX = Math.max(...explicitX);
+  const xFor = (point: PlotPoint, index: number, count: number): number => {
+    if (point.x === undefined || explicitX.length === 0 || minimumX === maximumX) {
+      return chartX(index, count);
+    }
+    return 6 + ((point.x - minimumX) * (WIDTH - 12)) / (maximumX - minimumX);
+  };
+  const pathFor = (entry: PlotSeries): string =>
+    entry.points
+      .map((point, index) => {
+        const command = index === 0 ? 'M' : 'L';
+        return `${command}${xFor(point, index, entry.points.length).toFixed(2)} ${chartY(point.value, max).toFixed(2)}`;
+      })
+      .join(' ');
 
   function movePoint(index: number) {
     const seriesIndex = active?.seriesIndex ?? 0;
@@ -124,7 +147,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
 
   return (
     <PlotFrame
-      announcement={announcementOf(series, active)}
+      announcement={announcementOf(series, active, valueFormatter)}
       label={label}
       seriesLabels={series.map((entry) => entry.label)}
       table={
@@ -206,10 +229,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
         {series.map((entry, seriesIndex) => (
           <g key={entry.id}>
             <path
-              d={linePath(
-                entry.points.map((point) => point.value),
-                max,
-              )}
+              d={pathFor(entry)}
               fill="none"
               stroke={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
               strokeLinecap="round"
@@ -222,7 +242,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
                 active?.seriesIndex === seriesIndex && active.pointIndex === pointIndex;
               return (
                 <circle
-                  cx={chartX(pointIndex, entry.points.length)}
+                  cx={xFor(point, pointIndex, entry.points.length)}
                   cy={chartY(point.value, max)}
                   data-active={isActive ? 'true' : 'false'}
                   data-point-index={pointIndex}
@@ -245,8 +265,16 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
             stroke="var(--color-border-strong)"
             strokeDasharray="2 2"
             vectorEffect="non-scaling-stroke"
-            x1={chartX(active.pointIndex, activeSeries?.points.length ?? 1)}
-            x2={chartX(active.pointIndex, activeSeries?.points.length ?? 1)}
+            x1={
+              activeSeries === undefined
+                ? 0
+                : xFor(activePoint, active.pointIndex, activeSeries.points.length)
+            }
+            x2={
+              activeSeries === undefined
+                ? 0
+                : xFor(activePoint, active.pointIndex, activeSeries.points.length)
+            }
             y1="6"
             y2={HEIGHT - 6}
           />

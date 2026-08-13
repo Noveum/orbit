@@ -26,6 +26,15 @@ Flow formulas are displayed beside their values: lead time is creation to comple
 - `@orbit/web` typecheck: passed.
 - Targeted Biome, comment policy, source byte policy, shipped Bun import policy, dependency policy, em dash scan, and diff checks: passed.
 
+## Review fixes
+
+The fresh review identified seven truthfulness and boundedness issues. Sprint facts now apply every visible non-cycle issue filter while treating the selected sprint as context rather than a second restriction. The current and previous burn series share a working-day x-domain and the comparison is trimmed to elapsed working days. Boolean assignee selection now distinguishes a real person constraint from a non-constraining OR, so My work cannot name another developer.
+
+Flow time displays p50 and p85 with source coverage and says Not available when there is no valid sample. Tooltips, live announcements, data tables, personal burn, and velocity name the selected issue or point unit. A completed first sprint explains that no earlier sprint exists. Burn generation and rendering are capped at 120 sampled calendar boundaries while preserving the first and current day and aggregating scope changes across sampled intervals.
+
+- Review RED: project-filtered sprint scope returned 2 instead of 1; a ten-year sprint rendered 2,418 points; non-constraining assignee OR omitted principal focus; flow rendered 0d; selected-person copy said assigned to you; and series used independent x spacing.
+- Review GREEN: sprint core tests 21 passed with 56 assertions; focused web tests 23 passed with 93 assertions; full core passed 913 tests with 2,524 assertions; core and web typechecks passed.
+
 ## Scope boundary
 
 Project and People lens visualizations remain Task 15. Saved views, exact cohort CSV export, and aggregate realtime invalidation remain Task 16. End-to-end performance checks and review screenshots remain Task 17.

@@ -1,16 +1,22 @@
 import { and, asc, db, desc, eq, inArray, schema } from '@orbit/db';
-import type { AnalyticsQuery } from '@orbit/shared';
+import type { AnalyticsQuery, FilterGroup, FilterNode } from '@orbit/shared';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
-import { type AnalyticsServiceContext, resolveOverviewQuery } from './drilldown.ts';
+import {
+  type AnalyticsServiceContext,
+  baseAnalyticsPredicate,
+  resolveOverviewQuery,
+} from './drilldown.ts';
 import { reportingCalendar } from './filter.ts';
 import { type Distribution, distributionOf, idealRemaining } from './math.ts';
-import type { AnalyticsCoverage } from './types.ts';
+import { selectedAssigneeIds } from './person-attribution.ts';
+import type { AnalyticsCoverage, ResolvedAnalyticsQuery } from './types.ts';
 
 const DAY_MILLISECONDS = 86_400_000;
 const PLANNED_WINDOW_MILLISECONDS = DAY_MILLISECONDS;
 const VELOCITY_LIMIT = 6;
+const MAX_BURN_POINTS = 120;
 
 type CycleRow = typeof schema.cycle.$inferSelect;
 type MembershipRow = typeof schema.cycleIssueMembership.$inferSelect;
@@ -173,17 +179,47 @@ function summaryOf(cycle: CycleRow): SprintSummary {
 
 function selectedPersonId(query: AnalyticsQuery): string | null {
   if (query.focus.personId !== undefined) return query.focus.personId;
-  const found: string[] = [];
-  const visit = (node: AnalyticsQuery['filter']['children'][number]): void => {
-    if (node.kind === 'group') {
-      for (const child of node.children) visit(child);
-      return;
-    }
-    if (node.property !== 'assignee' || node.operator !== 'in' || node.negate) return;
-    found.push(...node.values.filter((value) => value !== 'unset'));
-  };
-  for (const child of query.filter.children) visit(child);
-  return found.length === 1 ? (found[0] ?? null) : null;
+  const selected = selectedAssigneeIds(query).filter((value) => value !== 'unassigned');
+  return selected.length === 1 ? (selected[0] ?? null) : null;
+}
+
+function withoutCycleFilter(node: FilterNode): FilterNode | true {
+  if (node.kind === 'condition') return node.property === 'cycle' ? true : node;
+  const children = node.children.map(withoutCycleFilter);
+  if (node.combinator === 'or' && children.some((child) => child === true)) return true;
+  const retained = children.filter((child): child is FilterNode => child !== true);
+  if (retained.length === 0) return true;
+  return { ...node, children: retained };
+}
+
+function sprintIssueFilter(query: AnalyticsQuery): FilterGroup | null {
+  const filtered = withoutCycleFilter(query.filter);
+  if (filtered === true) return null;
+  return filtered.kind === 'group'
+    ? filtered
+    : { kind: 'group', combinator: 'and', children: [filtered] };
+}
+
+async function matchingIssueIds(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  query: AnalyticsQuery,
+): Promise<ReadonlySet<string> | null> {
+  const filter = sprintIssueFilter(query);
+  if (filter === null) return null;
+  const rows = await db
+    .select({ id: schema.issue.id })
+    .from(schema.issue)
+    .innerJoin(
+      schema.workflowState,
+      and(
+        eq(schema.workflowState.id, schema.issue.stateId),
+        eq(schema.workflowState.organizationId, schema.issue.organizationId),
+        eq(schema.workflowState.teamId, schema.issue.teamId),
+      ),
+    )
+    .where(baseAnalyticsPredicate(principal, { ...resolved, filter }));
+  return new Set(rows.map((row) => row.id));
 }
 
 function dateText(value: Date, timezone: string): string {
@@ -194,6 +230,25 @@ function addDate(day: string, amount: number): string {
   const value = new Date(`${day}T00:00:00.000Z`);
   value.setUTCDate(value.getUTCDate() + amount);
   return value.toISOString().slice(0, 10);
+}
+
+function calendarDaysBetween(first: string, last: string): number {
+  return Math.max(
+    1,
+    Math.round(
+      (Date.parse(`${last}T00:00:00.000Z`) - Date.parse(`${first}T00:00:00.000Z`)) /
+        DAY_MILLISECONDS,
+    ) + 1,
+  );
+}
+
+function sampledDayIndexes(dayCount: number): number[] {
+  if (dayCount <= MAX_BURN_POINTS) {
+    return Array.from({ length: dayCount }, (_, index) => index);
+  }
+  return Array.from({ length: MAX_BURN_POINTS }, (_, index) =>
+    Math.round((index * (dayCount - 1)) / (MAX_BURN_POINTS - 1)),
+  );
 }
 
 function isWorkingDay(day: string): boolean {
@@ -408,14 +463,12 @@ function burnFor(
   const lastDay = dateText(endOfFacts(facts, now), facts.cycle.timezone);
   const coverage = coverageOf(facts, now).kind;
   const points: SprintBurnPoint[] = [];
-  let workingDay = 0;
-  for (
-    let day = startDay, calendarDay = 1;
-    day <= lastDay;
-    day = addDate(day, 1), calendarDay += 1
-  ) {
+  const dayIndexes = sampledDayIndexes(calendarDaysBetween(startDay, lastDay));
+  for (let pointIndex = 0; pointIndex < dayIndexes.length; pointIndex += 1) {
+    const dayIndex = dayIndexes[pointIndex] ?? 0;
+    const day = addDate(startDay, dayIndex);
     const working = isWorkingDay(day);
-    if (working) workingDay += 1;
+    const workingDay = workingDaysBetween(startDay, day);
     const at = timeForDay(day, facts, now);
     const eligible = facts.issues.filter(
       (fact) =>
@@ -435,7 +488,10 @@ function burnFor(
         return value !== null && value < at;
       })
       .reduce((sum, fact) => sum + valueAt(fact, at, measure), 0);
-    const dayStart = reportingCalendar(at, facts.cycle.timezone).startOfDay(day);
+    const previousDayIndex = dayIndexes[pointIndex - 1];
+    const bucketStart =
+      previousDayIndex === undefined ? startDay : addDate(startDay, previousDayIndex + 1);
+    const dayStart = reportingCalendar(at, facts.cycle.timezone).startOfDay(bucketStart);
     const dayEnd = reportingCalendar(at, facts.cycle.timezone).startOfDay(addDate(day, 1));
     const attributed = (membership: MembershipRow): boolean => {
       const fact = facts.issues.find((entry) => entry.issueId === membership.issueId);
@@ -466,7 +522,7 @@ function burnFor(
       }, 0);
     points.push({
       date: day,
-      calendarDay,
+      calendarDay: dayIndex + 1,
       workingDay: working ? workingDay : null,
       scope,
       started,
@@ -487,15 +543,22 @@ function burnFor(
     ...point,
     ideal:
       point.workingDay === null
-        ? (points[point.calendarDay - 2]?.ideal ?? initialScope)
+        ? idealRemaining(
+            initialScope,
+            workingDaysBetween(startDay, point.date) - 1,
+            plannedWorkingDays - 1,
+          )
         : idealRemaining(initialScope, point.workingDay - 1, plannedWorkingDays - 1),
   }));
 }
 
 function workingDaysBetween(first: string, last: string): number {
-  let count = 0;
-  for (let day = first; day <= last; day = addDate(day, 1)) {
-    if (isWorkingDay(day)) count += 1;
+  const days = calendarDaysBetween(first, last);
+  const fullWeeks = Math.floor(days / 7);
+  let count = fullWeeks * 5;
+  const remainder = days % 7;
+  for (let offset = 0; offset < remainder; offset += 1) {
+    if (isWorkingDay(addDate(first, fullWeeks * 7 + offset))) count += 1;
   }
   return count;
 }
@@ -699,12 +762,15 @@ function detailFor(
   };
 }
 
-async function loadFacts(cycles: readonly CycleRow[]): Promise<{
+async function loadFacts(
+  cycles: readonly CycleRow[],
+  allowedIssueIds: ReadonlySet<string> | null,
+): Promise<{
   readonly facts: ReadonlyMap<string, SprintFacts>;
   readonly names: ReadonlyMap<string, string>;
 }> {
   const cycleIds = cycles.map((cycle) => cycle.id);
-  const memberships =
+  const allMemberships =
     cycleIds.length === 0
       ? []
       : await db
@@ -712,13 +778,21 @@ async function loadFacts(cycles: readonly CycleRow[]): Promise<{
           .from(schema.cycleIssueMembership)
           .where(inArray(schema.cycleIssueMembership.cycleId, cycleIds))
           .orderBy(asc(schema.cycleIssueMembership.addedAt), asc(schema.cycleIssueMembership.id));
-  const outcomes =
+  const allOutcomes =
     cycleIds.length === 0
       ? []
       : await db
           .select()
           .from(schema.cycleIssueOutcome)
           .where(inArray(schema.cycleIssueOutcome.cycleId, cycleIds));
+  const memberships =
+    allowedIssueIds === null
+      ? allMemberships
+      : allMemberships.filter((row) => allowedIssueIds.has(row.issueId));
+  const outcomes =
+    allowedIssueIds === null
+      ? allOutcomes
+      : allOutcomes.filter((row) => allowedIssueIds.has(row.issueId));
   const snapshots =
     cycleIds.length === 0
       ? []
@@ -763,7 +837,7 @@ async function loadFacts(cycles: readonly CycleRow[]): Promise<{
           .where(inArray(schema.issue.cycleId, cycleIds));
   const currentRows = [
     ...new Map([...current, ...assigned].map((row) => [row.issue.id, row])).values(),
-  ];
+  ].filter((row) => allowedIssueIds === null || allowedIssueIds.has(row.issue.id));
   const allIssueIds = unique([...issueIds, ...currentRows.map((row) => row.issue.id)]);
   const activities =
     allIssueIds.length === 0
@@ -958,7 +1032,8 @@ export async function loadSprintAnalytics(
     .slice(-VELOCITY_LIMIT);
   const wanted = [selected, ...(previous === undefined ? [] : [previous]), ...velocityCycles];
   const uniqueCycles = [...new Map(wanted.map((cycle) => [cycle.id, cycle])).values()];
-  const loaded = await loadFacts(uniqueCycles);
+  const allowedIssueIds = await matchingIssueIds(principal, resolved, query);
+  const loaded = await loadFacts(uniqueCycles, allowedIssueIds);
   const selectedFacts = loaded.facts.get(selected.id);
   if (selectedFacts === undefined) throw new Error('The selected sprint facts are unavailable.');
   const current = detailFor(selectedFacts, query.measure, resolved.asOf, loaded.names);

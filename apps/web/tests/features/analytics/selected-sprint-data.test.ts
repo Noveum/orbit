@@ -64,4 +64,39 @@ describe('selected sprint analytics data', () => {
     expect(receivedQuery).toMatchObject({ focus: { personId: principal.userId } });
     expect(result.lens).toBe('sprints');
   });
+
+  test('keeps the current user focus when an assignee appears inside a non-constraining OR', async () => {
+    const { loadSelectedSprintAnalyticsData } = await import(
+      '../../../src/features/analytics/data.ts'
+    );
+    await loadSelectedSprintAnalyticsData(
+      principal,
+      analyticsQuerySchema.parse({
+        lens: 'sprints',
+        filter: {
+          kind: 'group',
+          combinator: 'or',
+          children: [
+            {
+              kind: 'condition',
+              property: 'assignee',
+              operator: 'in',
+              values: ['00000000-0000-7000-8000-000000000099'],
+              negate: false,
+            },
+            {
+              kind: 'condition',
+              property: 'project',
+              operator: 'in',
+              values: ['00000000-0000-7000-8000-000000000098'],
+              negate: false,
+            },
+          ],
+        },
+      }),
+      selectedSprintId,
+    );
+
+    expect(receivedQuery).toMatchObject({ focus: { personId: principal.userId } });
+  });
 });
