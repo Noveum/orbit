@@ -94,4 +94,31 @@ describe('workspace sprint migration', () => {
 
     expect(created?.team_id).toBeNull();
   });
+
+  it('installs people attribution indexes from migrations', async () => {
+    const indexes = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ indexname: string; indexdef: string }[]>`
+        select indexname, indexdef from pg_indexes
+        where schemaname = 'public'
+          and indexname in (
+            'cycle_issue_outcome_completion_attribution_idx',
+            'issue_activity_assignee_attribution_idx'
+          )
+      `,
+    );
+    const named = new Map(indexes.map((row) => [row.indexname, row.indexdef]));
+    expect(named.get('cycle_issue_outcome_completion_attribution_idx')).toContain(
+      '(organization_id, issue_id, completed_at, closed_at)',
+    );
+    expect(named.get('cycle_issue_outcome_completion_attribution_idx')).toContain(
+      "WHERE (outcome = 'completed'::text)",
+    );
+    expect(named.get('issue_activity_assignee_attribution_idx')).toContain(
+      '(organization_id, issue_id, created_at)',
+    );
+    expect(named.get('issue_activity_assignee_attribution_idx')).toContain(
+      "WHERE (field = 'assigneeId'::text)",
+    );
+  });
 });

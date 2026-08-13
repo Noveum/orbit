@@ -132,6 +132,26 @@ describe('list and search indexes', () => {
     }
   });
 
+  it('indexes completion attribution evidence by organization issue and time', () => {
+    const outcome = partialIndexOf(
+      schema.cycleIssueOutcome,
+      'cycle_issue_outcome_completion_attribution_idx',
+    );
+    const activity = partialIndexOf(
+      schema.issueActivity,
+      'issue_activity_assignee_attribution_idx',
+    );
+    expect(columnNamesOf(outcome)).toEqual([
+      'organization_id',
+      'issue_id',
+      'completed_at',
+      'closed_at',
+    ]);
+    expect(predicateOf(outcome)).toContain(`outcome" = 'completed'`);
+    expect(columnNamesOf(activity)).toEqual(['organization_id', 'issue_id', 'created_at']);
+    expect(predicateOf(activity)).toContain(`field" = 'assigneeId'`);
+  });
+
   it('resolves membership and project teams from their own indexes', () => {
     expect(indexNamesOf(schema.member)).toContain('member_user_idx');
     expect(indexNamesOf(schema.projectTeam)).toContain('project_team_team_idx');

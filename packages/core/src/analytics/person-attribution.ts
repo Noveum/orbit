@@ -2,27 +2,58 @@ import { schema, sql } from '@orbit/db';
 import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import type { AnalyticsQuery } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
+import type { ResolvedAnalyticsQuery } from './types.ts';
 
 export const UNASSIGNED_PERSON_ID = 'unassigned';
 
 type AnalyticsFilterNode = AnalyticsQuery['filter']['children'][number];
+type SimplifiedNode = AnalyticsFilterNode | boolean;
 
-function withoutAssigneeNode(node: AnalyticsFilterNode): AnalyticsFilterNode | null {
-  if (node.kind === 'condition') return node.property === 'assignee' ? null : node;
-  const children = node.children.flatMap((child): AnalyticsFilterNode[] => {
-    const retained = withoutAssigneeNode(child);
-    return retained === null ? [] : [retained];
-  });
-  if (children.length === 0) return null;
-  return { ...node, children };
+function assigneeValue(value: string): string {
+  return value === UNSET_FILTER_VALUE ? UNASSIGNED_PERSON_ID : value;
 }
 
-export function withoutAssigneeFilter(query: AnalyticsQuery): AnalyticsQuery {
-  const children = query.filter.children.flatMap((child): AnalyticsFilterNode[] => {
-    const retained = withoutAssigneeNode(child);
-    return retained === null ? [] : [retained];
-  });
-  return { ...query, filter: { ...query.filter, children } };
+function simplifyNode(node: AnalyticsFilterNode, personId: string): SimplifiedNode {
+  if (node.kind === 'condition') {
+    if (node.property !== 'assignee') return node;
+    const matches =
+      node.operator === 'in' && node.values.some((value) => assigneeValue(value) === personId);
+    return node.negate ? !matches : matches;
+  }
+  const simplified = node.children.map((child) => simplifyNode(child, personId));
+  if (node.combinator === 'and') {
+    if (simplified.some((child) => child === false)) return false;
+    const children = simplified.filter((child): child is AnalyticsFilterNode => child !== true);
+    return children.length === 0 ? true : { ...node, children };
+  }
+  if (simplified.some((child) => child === true)) return true;
+  const children = simplified.filter((child): child is AnalyticsFilterNode => child !== false);
+  return children.length === 0 ? false : { ...node, children };
+}
+
+export function historicalPersonFilter(
+  query: ResolvedAnalyticsQuery,
+  personId: string,
+): { readonly query: ResolvedAnalyticsQuery; readonly matches: boolean };
+export function historicalPersonFilter(
+  query: AnalyticsQuery,
+  personId: string,
+): { readonly query: AnalyticsQuery; readonly matches: boolean };
+export function historicalPersonFilter(
+  query: AnalyticsQuery,
+  personId: string,
+): { readonly query: AnalyticsQuery; readonly matches: boolean } {
+  const simplified = simplifyNode(query.filter, personId);
+  if (simplified === false) return { query, matches: false };
+  if (simplified === true) {
+    return { query: { ...query, filter: { ...query.filter, children: [] } }, matches: true };
+  }
+  if (simplified.kind === 'group')
+    return { query: { ...query, filter: simplified }, matches: true };
+  return {
+    query: { ...query, filter: { ...query.filter, children: [simplified] } },
+    matches: true,
+  };
 }
 
 export function completionAttributionKind(): SQL<unknown> {
@@ -105,18 +136,28 @@ export function personMatches(personId: string, attributed: SQL<unknown>): SQL<u
     : sql`${attributed} = ${personId}`;
 }
 
-export function selectedAssigneeIds(query: AnalyticsQuery): readonly string[] {
-  const selected: string[] = [];
-  const visit = (node: AnalyticsFilterNode): void => {
-    if (node.kind === 'group') {
-      for (const child of node.children) visit(child);
-      return;
+function constrainedAssignees(node: AnalyticsFilterNode): ReadonlySet<string> | null {
+  if (node.kind === 'condition') {
+    if (node.property !== 'assignee' || node.operator !== 'in' || node.negate) return null;
+    return new Set(node.values.map(assigneeValue));
+  }
+  const childSets = node.children.map(constrainedAssignees);
+  if (node.combinator === 'or') {
+    if (childSets.some((set) => set === null)) return null;
+    return new Set(childSets.flatMap((set) => (set === null ? [] : [...set])));
+  }
+  const known = childSets.filter((set): set is ReadonlySet<string> => set !== null);
+  if (known.length === 0) return null;
+  const values = new Set(known[0]);
+  for (const set of known.slice(1)) {
+    for (const value of values) {
+      if (!set.has(value)) values.delete(value);
     }
-    if (node.property !== 'assignee' || node.operator !== 'in' || node.negate) return;
-    selected.push(
-      ...node.values.map((value) => (value === UNSET_FILTER_VALUE ? UNASSIGNED_PERSON_ID : value)),
-    );
-  };
-  for (const child of query.filter.children) visit(child);
-  return [...new Set(selected)];
+  }
+  return values;
+}
+
+export function selectedAssigneeIds(query: AnalyticsQuery): readonly string[] {
+  const selected = constrainedAssignees(query.filter);
+  return selected === null ? [] : [...selected];
 }

@@ -12,9 +12,9 @@ import { bucketDates, calendarDateLabel } from './filter.ts';
 import {
   completionAttributionKind,
   completionAttributionPerson,
+  historicalPersonFilter,
   selectedAssigneeIds,
   UNASSIGNED_PERSON_ID,
-  withoutAssigneeFilter,
 } from './person-attribution.ts';
 import { loadSprintAnalytics, type PersonSprintBurn, type SprintSummary } from './sprints.ts';
 import type { AnalyticsCoverage, ResolvedAnalyticsQuery } from './types.ts';
@@ -316,6 +316,15 @@ async function identities(
       where exists (
         select 1 from issue
         where issue.organization_id = ${principal.organizationId} and issue.assignee_id is null
+      ) or exists (
+        select 1 from cycle_issue_outcome
+        where cycle_issue_outcome.organization_id = ${principal.organizationId}
+          and cycle_issue_outcome.assignee_id_at_close is null
+      ) or exists (
+        select 1 from issue_activity
+        where issue_activity.organization_id = ${principal.organizationId}
+          and issue_activity.field = 'assigneeId'
+          and (issue_activity.from_value is null or issue_activity.to_value is null)
       )
     ), identity as (
       select evidence.id,
@@ -442,6 +451,12 @@ async function activeWeeks(
   const rows = await db.execute<ActiveWeekRow>(sql`
     with assignment_change as (
       select issue.id as issue_id, issue.created_at as issue_created_at,
+        least(
+          ${new Date(lastTimestamp).toISOString()}::timestamptz,
+          issue.completed_at,
+          issue.canceled_at,
+          issue.archived_at
+        ) as terminal_at,
         coalesce(
           assignment_event.from_value ->> 'id',
           assignment_event.from_value #>> '{}',
@@ -467,18 +482,26 @@ async function activeWeeks(
     ), assignment_episode as (
       select assignment_change.from_person_id as person_id,
         assignment_change.issue_created_at as active_from,
-        assignment_change.changed_at as active_to
+        least(assignment_change.changed_at, assignment_change.terminal_at) as active_to
       from assignment_change
       where assignment_change.change_number = 1
       union all
       select assignment_change.to_person_id as person_id,
         assignment_change.changed_at as active_from,
-        coalesce(assignment_change.next_change_at, ${new Date(lastTimestamp).toISOString()}::timestamptz) as active_to
+        least(
+          coalesce(assignment_change.next_change_at, ${new Date(lastTimestamp).toISOString()}::timestamptz),
+          assignment_change.terminal_at
+        ) as active_to
       from assignment_change
       union all
       select coalesce(issue.assignee_id, ${UNASSIGNED_PERSON_ID}) as person_id,
         issue.created_at as active_from,
-        ${new Date(lastTimestamp).toISOString()}::timestamptz as active_to
+        least(
+          ${new Date(lastTimestamp).toISOString()}::timestamptz,
+          issue.completed_at,
+          issue.canceled_at,
+          issue.archived_at
+        ) as active_to
       from issue join workflow_state on workflow_state.id = issue.state_id
       where ${historicalBase} and not exists (
         select 1 from issue_activity no_assignment_history
@@ -681,13 +704,16 @@ async function focusTimeline(
       select issue.id, issue.completed_at, issue.estimate
       from issue join workflow_state on workflow_state.id = issue.state_id
       where ${historicalBase} and issue.completed_at is not null and ${completionMatch}
-    ), assignment_bucket as (
-      select buckets.date, count(distinct assignments.issue_id) as issues,
-        coalesce(sum(assignments.estimate), 0) as points
+    ), assignment_issue_bucket as (
+      select distinct buckets.date, assignments.issue_id, assignments.estimate
       from buckets
       join assignments on assignments.created_at >= buckets.bucket_start
         and assignments.created_at < buckets.bucket_end
-      group by buckets.date
+    ), assignment_bucket as (
+      select assignment_issue_bucket.date, count(*) as issues,
+        coalesce(sum(assignment_issue_bucket.estimate), 0) as points
+      from assignment_issue_bucket
+      group by assignment_issue_bucket.date
     ), completion_bucket as (
       select buckets.date, count(distinct completions.id) as issues,
         coalesce(sum(completions.estimate), 0) as points
@@ -756,7 +782,7 @@ function formulas(): PeopleFormulaMetadata {
     completed:
       'Issues whose final completedAt falls inside the reporting window, attributed at completion with the best available assignment evidence.',
     activeWeek:
-      'Completed issues or points divided by distinct reporting weeks with an overlapping current assignment episode or an attributed completion. Reporting weeks are consecutive seven-day buckets anchored at the range start.',
+      'Completed issues or points divided by distinct reporting weeks with an observed assignment episode or an attributed completion. Reporting weeks are consecutive seven-day buckets anchored at the range start. Assignee activity bounds observed episodes at reassignment, and current terminal timestamps bound fallback episodes. Earlier close and reopen intervals are included only when retained activity supports them.',
     cycleTime:
       'Percentiles use valid startedAt to completedAt intervals for attributed completions. Missing or negative intervals are excluded and the valid count is shown.',
     leadTime:
@@ -770,6 +796,30 @@ function formulas(): PeopleFormulaMetadata {
   };
 }
 
+function focusedHistoryBase(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  focusId: string | null,
+): SQL<unknown> | undefined {
+  if (focusId === null) return undefined;
+  const historical = historicalPersonFilter(resolved, focusId);
+  return sql`${baseAnalyticsPredicate(principal, historical.query)} and ${historical.matches}`;
+}
+
+function applyFocusedHistory(
+  focusId: string | null,
+  completed: Map<string, CompletionStatRow>,
+  weeks: Map<string, number>,
+  focusedCompleted: ReadonlyMap<string, CompletionStatRow>,
+  focusedWeeks: ReadonlyMap<string, number>,
+): void {
+  if (focusId === null) return;
+  const focusedCompletion = focusedCompleted.get(focusId);
+  if (focusedCompletion === undefined) completed.delete(focusId);
+  else completed.set(focusId, focusedCompletion);
+  weeks.set(focusId, focusedWeeks.get(focusId) ?? 0);
+}
+
 export async function loadPeopleAnalytics(
   principal: Principal,
   query: AnalyticsQuery,
@@ -777,10 +827,10 @@ export async function loadPeopleAnalytics(
 ): Promise<PeopleAnalytics> {
   assertCan(principal, 'analytics:read');
   const resolved = await resolveOverviewQuery(principal, query, context);
-  const historicalResolved = { ...resolved, ...withoutAssigneeFilter(resolved) };
   const currentBase = baseAnalyticsPredicate(principal, resolved);
-  const historicalBase = baseAnalyticsPredicate(principal, historicalResolved);
   const focusId = selectedPersonId(principal, query);
+  const historicalBase = baseAnalyticsPredicate(principal, resolved);
+  const focusedHistoricalBase = focusedHistoryBase(principal, resolved, focusId);
   const selected = selectedPeople(query);
   const list = await identities(principal, selected);
   const focusedRow =
@@ -791,11 +841,20 @@ export async function loadPeopleAnalytics(
     focusedRow === undefined || list.some((row) => row.id === focusedRow.id)
       ? list
       : [...list, focusedRow];
-  const [current, completed, weeks] = await Promise.all([
+  const [current, completedRows, weekRows, focusedCompleted, focusedWeeks] = await Promise.all([
     currentStats(currentBase, resolved),
     completionStats(historicalBase, resolved),
     activeWeeks(historicalBase, resolved),
+    focusedHistoricalBase === undefined
+      ? Promise.resolve(new Map())
+      : completionStats(focusedHistoricalBase, resolved),
+    focusedHistoricalBase === undefined
+      ? Promise.resolve(new Map())
+      : activeWeeks(focusedHistoricalBase, resolved),
   ]);
+  const completed = new Map(completedRows);
+  const weeks = new Map(weekRows);
+  applyFocusedHistory(focusId, completed, weeks, focusedCompleted, focusedWeeks);
   const byId = new Map<string, PersonAnalyticsRow>();
   for (const row of visible) {
     const person = identity(row);
@@ -818,7 +877,7 @@ export async function loadPeopleAnalytics(
   if (focusId !== null && focusedBase !== undefined) {
     const [groups, timeline, sprintBurn] = await Promise.all([
       focusGroups(focusId, currentBase),
-      focusTimeline(focusId, historicalBase, resolved),
+      focusTimeline(focusId, focusedHistoricalBase ?? historicalBase, resolved),
       personalSprintBurn(principal, query, focusId, context),
     ]);
     focused = {

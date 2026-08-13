@@ -333,6 +333,9 @@ export const cycleIssueOutcome = pgTable(
   (table) => [
     uniqueIndex('cycle_issue_outcome_cycle_issue_unique').on(table.cycleId, table.issueId),
     index('cycle_issue_outcome_cycle_outcome_idx').on(table.cycleId, table.outcome),
+    index('cycle_issue_outcome_completion_attribution_idx')
+      .on(table.organizationId, table.issueId, table.completedAt, table.closedAt)
+      .where(sql`${table.outcome} = 'completed'`),
   ],
 );
 
@@ -652,6 +655,9 @@ export const issueActivity = pgTable(
     index('issue_activity_cycle_moves_idx')
       .on(table.organizationId, table.createdAt)
       .where(sql`${table.field} = 'cycleId'`),
+    index('issue_activity_assignee_attribution_idx')
+      .on(table.organizationId, table.issueId, table.createdAt)
+      .where(sql`${table.field} = 'assigneeId'`),
   ],
 );
 

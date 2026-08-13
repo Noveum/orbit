@@ -30,6 +30,7 @@ function query(
     readonly range?: AnalyticsQuery['range'];
     readonly includeArchived?: boolean;
     readonly includeCanceled?: boolean;
+    readonly filter?: AnalyticsQuery['filter'];
   } = {},
 ): AnalyticsQuery {
   return analyticsQuerySchema.parse({
@@ -40,7 +41,7 @@ function query(
     includeArchived: input.includeArchived ?? false,
     includeCanceled: input.includeCanceled ?? false,
     focus: input.personId === undefined ? {} : { personId: input.personId },
-    filter: {
+    filter: input.filter ?? {
       kind: 'group',
       combinator: 'and',
       children:
@@ -426,6 +427,168 @@ describe('loadPeopleAnalytics', () => {
         bucket: '2026-08-09',
       },
     });
+  });
+
+  it('ends fallback assignment episodes when completed and counts one active week over 90 days', async () => {
+    const engineer = await addMember(workspace, 'member', { name: 'Brief Owner' });
+    await issue(
+      workspace.admin,
+      {
+        title: 'Brief completed assignment',
+        assigneeId: engineer.user.id,
+        stateId: stateNamed(workspace, 'Done').id,
+      },
+      {
+        createdAt: new Date('2026-05-20T00:00:00.000Z'),
+        completedAt: new Date('2026-05-21T00:00:00.000Z'),
+      },
+    );
+    const result = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: engineer.user.id, range: { preset: 'last_90_days' } }),
+      { now, timezone: 'UTC' },
+    );
+    expect(result.focused?.activeWeeks).toBe(1);
+  });
+
+  it('retains historical Unassigned completion evidence after a later assignment', async () => {
+    const engineer = await addMember(workspace, 'member', { name: 'Later Owner' });
+    const completed = await issue(
+      workspace.admin,
+      {
+        title: 'Completed before assignment',
+        assigneeId: engineer.user.id,
+        stateId: stateNamed(workspace, 'Done').id,
+      },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        completedAt: new Date('2026-08-03T00:00:00.000Z'),
+      },
+    );
+    await assignmentActivity(completed, null, engineer.user, '2026-08-04T00:00:00.000Z');
+    const result = await loadPeopleAnalytics(workspace.admin, query({ personId: 'unassigned' }), {
+      now,
+      timezone: 'UTC',
+    });
+    expect(result.focused).toMatchObject({
+      person: { id: 'unassigned' },
+      completedIssues: 1,
+      attribution: { reconstructed: 1 },
+    });
+  });
+
+  it('preserves boolean assignee semantics for focused history and safe person selection', async () => {
+    const first = await addMember(workspace, 'member', { name: 'Boolean First' });
+    const second = await addMember(workspace, 'member', { name: 'Boolean Second' });
+    const project = await createProject(workspace.admin, {
+      name: 'Boolean Project',
+      teamIds: [workspace.teamId],
+    });
+    const done = stateNamed(workspace, 'Done');
+    await issue(
+      workspace.admin,
+      { title: 'First outside project', assigneeId: first.user.id, stateId: done.id },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        completedAt: new Date('2026-08-02T00:00:00.000Z'),
+      },
+    );
+    await issue(
+      workspace.admin,
+      {
+        title: 'Second in project',
+        assigneeId: second.user.id,
+        stateId: done.id,
+        projectId: project.project.id,
+      },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        completedAt: new Date('2026-08-02T00:00:00.000Z'),
+      },
+    );
+    const disjunctionNode: AnalyticsQuery['filter'] = {
+      kind: 'group',
+      combinator: 'or',
+      children: [
+        {
+          kind: 'condition',
+          property: 'assignee',
+          operator: 'in',
+          values: [first.user.id],
+          negate: false,
+        },
+        {
+          kind: 'condition',
+          property: 'project',
+          operator: 'in',
+          values: [project.project.id],
+          negate: false,
+        },
+      ],
+    };
+    const disjunction: AnalyticsQuery['filter'] = {
+      kind: 'group',
+      combinator: 'and',
+      children: [disjunctionNode],
+    };
+    const firstResult = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: first.user.id, filter: disjunction }),
+      { now, timezone: 'UTC' },
+    );
+    const selectedResult = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ filter: disjunction }),
+      { now, timezone: 'UTC' },
+    );
+    const nested: AnalyticsQuery['filter'] = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        disjunctionNode,
+        {
+          kind: 'condition',
+          property: 'assignee',
+          operator: 'in',
+          values: [second.user.id],
+          negate: true,
+        },
+      ],
+    };
+    const secondResult = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: second.user.id, filter: nested }),
+      { now, timezone: 'UTC' },
+    );
+    expect(firstResult.focused?.completedIssues).toBe(1);
+    expect(secondResult.focused?.completedIssues).toBe(0);
+    expect(selectedResult.focused?.person.id).toBe(workspace.admin.userId);
+    expect(selectedResult.people.some((row) => row.person.id === second.user.id)).toBe(true);
+  });
+
+  it('counts repeated same-bucket assignments once for both issues and points', async () => {
+    const engineer = await addMember(workspace, 'member', { name: 'Repeated Owner' });
+    const work = await issue(
+      workspace.admin,
+      { title: 'Repeated assignment', assigneeId: engineer.user.id, estimate: 5 },
+      { createdAt: new Date('2026-08-01T00:00:00.000Z') },
+    );
+    await assignmentActivity(work, null, engineer.user, '2026-08-04T09:00:00.000Z');
+    await assignmentActivity(work, null, engineer.user, '2026-08-04T10:00:00.000Z');
+    const result = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: engineer.user.id }),
+      { now, timezone: 'UTC' },
+    );
+    const point = result.focused?.timeline.find((entry) => entry.date === '2026-08-04');
+    expect(point).toMatchObject({ assignedIssues: 1, assignedPoints: 5 });
+    if (point === undefined) throw new Error('Missing assignment timeline point.');
+    const drilldown = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query({ personId: engineer.user.id }), cohort: point.assignedCohort },
+      { now, timezone: 'UTC', cursorSecret: 'people-analytics-secret' },
+    );
+    expect(drilldown.total).toBe(point.assignedIssues);
   });
 
   it('retains unassigned and deleted-user-safe evidence and caps the workspace list', async () => {

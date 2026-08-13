@@ -17,10 +17,10 @@ import {
 } from './filter.ts';
 import {
   completionAttributionPerson,
+  historicalPersonFilter,
   personMatches,
   selectedAssigneeIds,
   UNASSIGNED_PERSON_ID,
-  withoutAssigneeFilter,
 } from './person-attribution.ts';
 import type { AnalyticsResolutionContext, ResolvedAnalyticsQuery } from './types.ts';
 
@@ -750,6 +750,18 @@ function historicalPersonCohort(cohort: AnalyticsDrilldownCohort): boolean {
   return person?.metric === 'completed' || person?.metric === 'assigned';
 }
 
+function drilldownBase(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  cohort: AnalyticsDrilldownCohort,
+): SQL<unknown> {
+  if (!historicalPersonCohort(cohort)) return baseAnalyticsPredicate(principal, resolved);
+  const person = personCohort(cohort.cohort);
+  if (person === null) return baseAnalyticsPredicate(principal, resolved);
+  const historical = historicalPersonFilter(resolved, person.id);
+  return sql`${baseAnalyticsPredicate(principal, historical.query)} and ${historical.matches}`;
+}
+
 export function cohortPredicate(
   resolved: ResolvedAnalyticsQuery,
   cohort: AnalyticsDrilldownCohort,
@@ -999,12 +1011,7 @@ export async function listAnalyticsDrilldown(
   ) {
     throw validationFailed('That analytics page cursor is not valid.');
   }
-  const base = baseAnalyticsPredicate(
-    principal,
-    historicalPersonCohort(semanticCohort)
-      ? { ...resolved, ...withoutAssigneeFilter(resolved) }
-      : resolved,
-  );
+  const base = drilldownBase(principal, resolved, semanticCohort);
   const cohort = cohortPredicate(resolved, semanticCohort, base);
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isFinite(requestedLimit)
