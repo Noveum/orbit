@@ -22,6 +22,15 @@ describe('a role the code does not recognise', () => {
     expect(permissionsFor('nonsense' as never)).toEqual([]);
   });
 
+  it('grants nothing for a role that names something every object inherits', () => {
+    for (const role of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(permissionsFor(role as never)).toEqual([]);
+      expect(
+        can({ userId: 'u1', organizationId: 'o1', role, teamIds: [] } as never, 'issue:read'),
+      ).toBe(false);
+    }
+  });
+
   it('answers no to every permission rather than crashing the surface asking', () => {
     const principal = { userId: 'u1', organizationId: 'o1', role: 'nonsense', teamIds: [] };
 
