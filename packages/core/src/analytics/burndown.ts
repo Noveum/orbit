@@ -77,6 +77,7 @@ export async function cycleBurndown(
     }),
     { now, selectedSprintId: cycleId },
   );
+  if (analytics.current === null) throw new Error('The selected sprint is unavailable.');
   const cycle = analytics.current.sprint;
   const today = isoDay(now);
   const actual = analytics.current.burn;

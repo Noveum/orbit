@@ -126,8 +126,8 @@ export interface SprintFormulaMetadata {
 }
 
 export interface SprintAnalytics {
-  readonly selected: SprintSummary;
-  readonly current: SprintDetail;
+  readonly selected: SprintSummary | null;
+  readonly current: SprintDetail | null;
   readonly previous: SprintDetail | null;
   readonly velocity: readonly SprintVelocityPoint[];
   readonly flow: SprintFlowDistributions;
@@ -878,6 +878,25 @@ function formulas(): SprintFormulaMetadata {
   };
 }
 
+function emptySprintAnalytics(asOf: Date): SprintAnalytics {
+  return {
+    selected: null,
+    current: null,
+    previous: null,
+    velocity: [],
+    flow: {
+      leadTime: distributionOf([]),
+      cycleTime: distributionOf([]),
+      completed: 0,
+      leadTimeCoverage: 'unavailable',
+      cycleTimeCoverage: 'unavailable',
+    },
+    focus: null,
+    coverage: { kind: 'live', from: null, asOf: asOf.toISOString() },
+    formulas: formulas(),
+  };
+}
+
 export async function loadSprintAnalytics(
   principal: Principal,
   query: AnalyticsQuery,
@@ -906,7 +925,7 @@ export async function loadSprintAnalytics(
         cycle.endsAt > resolved.asOf,
     ) ??
     cycles.find((cycle) => cycle.completedAt !== null);
-  if (selected === undefined) throw new Error('No sprint is available for analytics.');
+  if (selected === undefined) return emptySprintAnalytics(resolved.asOf);
   const previous = cycles
     .filter(
       (cycle) =>

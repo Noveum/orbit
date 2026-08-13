@@ -87,3 +87,28 @@ Standalone bundle generated
 ```
 
 The build emitted `/analytics` and all five analytics API routes. The feature branch and its worktree are preserved for the parent task.
+
+## Review round 1
+
+Four focused regressions drove the review fixes.
+
+- A valid overview response sent to a People query initially passed the union response schema. The hook now selects the exact schema for the requested lens and exposes lens-specific overloads.
+- Empty and future-only sprint workspaces initially threw `No sprint is available for analytics.` The core sprint service now returns a typed empty state with nullable selection and detail, zero flow, live coverage, and formula metadata. The web contract, route, and hydration boundary accept that state.
+- The server page initially prefetched the new overview aggregate and also rendered the legacy analytics sections, starting duplicate database work. It now loads one active lens and renders a small client data boundary that consumes the hydrated cache. The legacy aggregate tree is deferred for the Task 12 cockpit replacement.
+- Analytics canonicalization initially entered every consumer of the central query-key module. The analytics root, lens, and drilldown keys now live in `features/analytics/analytics-keys.ts`, leaving the global key module free of analytics runtime dependencies.
+
+Review-focused results:
+
+```text
+Core sprint and people: 30 pass, 0 fail
+Web data and page: 24 pass, 0 fail
+```
+
+Fresh full results after the review fixes:
+
+```text
+Core: 911 pass, 0 fail, 2519 expect() calls
+Web: 1990 pass, 0 fail, 4928 expect() calls
+```
+
+Core and web typechecks, lint, comment policy, source-byte policy, Bun import policy, dependency policy, diff whitespace, and the production web build passed. The production build compiled, generated 103 pages, emitted the analytics page and routes, and generated the standalone bundle.

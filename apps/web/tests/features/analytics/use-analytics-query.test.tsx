@@ -65,4 +65,18 @@ describe('useAnalyticsQuery', () => {
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects a valid response belonging to a different lens', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(Response.json(response)),
+    ) as unknown as typeof fetch;
+    const query = analyticsQuerySchema.parse({ lens: 'people' });
+
+    const view = renderHook(() => useAnalyticsQuery(query), {
+      wrapper: wrapper(createQueryClient()),
+    });
+    await waitFor(() => expect(view.result.current.isError).toBe(true), { timeout: 3_000 });
+
+    expect(view.result.current.data).toBeUndefined();
+  });
 });

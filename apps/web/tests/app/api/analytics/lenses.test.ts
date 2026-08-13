@@ -5,8 +5,12 @@ import {
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
+import { db, schema } from '@orbit/db';
 import { analyticsQuerySchema } from '@orbit/shared/validators';
-import { analyticsDrilldownResponseSchema } from '../../../../src/features/analytics/contracts.ts';
+import {
+  analyticsDrilldownResponseSchema,
+  analyticsSprintsResponseSchema,
+} from '../../../../src/features/analytics/contracts.ts';
 import { mockSession } from '../../../../tests-support.ts';
 
 interface SessionUser {
@@ -104,6 +108,43 @@ describe('analytics lens routes', () => {
     expect(await sprints.json()).toMatchObject({ lens: 'sprints' });
     expect(await projects.json()).toMatchObject({ lens: 'projects' });
     expect(await people.json()).toMatchObject({ lens: 'people' });
+  });
+
+  it('returns a schema-valid empty sprint lens without a current or completed sprint', async () => {
+    await resetDatabase();
+    workspace = await createWorkspace('Empty');
+    await db.delete(schema.cycle);
+    signIn(workspace, workspace.adminUser);
+
+    const response = await sprintsRoute.GET(request('/api/analytics/sprints'));
+    const payload = analyticsSprintsResponseSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(payload.selected).toBeNull();
+    expect(payload.current).toBeNull();
+  });
+
+  it('returns a schema-valid empty sprint lens when every sprint is upcoming', async () => {
+    await resetDatabase();
+    workspace = await createWorkspace('Upcoming');
+    await db.delete(schema.cycle);
+    signIn(workspace, workspace.adminUser);
+    await core.createCycle(
+      workspace.admin,
+      {
+        name: 'Future',
+        startsAt: new Date('2099-01-01T00:00:00.000Z'),
+        endsAt: new Date('2099-01-08T00:00:00.000Z'),
+      },
+      new Date('2098-01-01T00:00:00.000Z'),
+    );
+
+    const response = await sprintsRoute.GET(request('/api/analytics/sprints'));
+    const payload = analyticsSprintsResponseSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(payload.selected).toBeNull();
+    expect(payload.current).toBeNull();
   });
 
   it('resolves people My Work to the current principal without adding focus to the clean URL', async () => {

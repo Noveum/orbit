@@ -34,7 +34,7 @@ import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
 import type { AnalyticsLens, AnalyticsQuery } from '@orbit/shared/validators';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
-import { analyticsKeys } from '@/lib/query/keys.ts';
+import { analyticsKeys } from './analytics-keys.ts';
 import {
   type AnalyticsDrilldownResponse,
   type AnalyticsPeopleResponse,

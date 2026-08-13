@@ -154,8 +154,8 @@ const sprintDetailSchema = z.object({
 
 export const analyticsSprintsResponseSchema = z.object({
   lens: z.literal('sprints'),
-  selected: sprintSummarySchema,
-  current: sprintDetailSchema,
+  selected: sprintSummarySchema.nullable(),
+  current: sprintDetailSchema.nullable(),
   previous: sprintDetailSchema.nullable(),
   velocity: z.array(
     z.object({

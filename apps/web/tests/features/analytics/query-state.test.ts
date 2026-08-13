@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { analyticsQuerySchema } from '@orbit/shared/validators';
+import { analyticsKeys } from '../../../src/features/analytics/analytics-keys.ts';
 import {
   canonicalAnalyticsQuery,
   parseAnalyticsSearchParams,
   searchParamsForAnalytics,
 } from '../../../src/features/analytics/query-state.ts';
-import { analyticsKeys } from '../../../src/lib/query/keys.ts';
 
 const defaults = analyticsQuerySchema.parse({});
 

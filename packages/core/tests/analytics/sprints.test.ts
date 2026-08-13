@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { type AnalyticsQuery, analyticsQuerySchema } from '@orbit/shared';
-import { loadSprintAnalytics } from '../../src/analytics/sprints.ts';
+import {
+  loadSprintAnalytics,
+  type SprintAnalytics,
+  type SprintDetail,
+} from '../../src/analytics/sprints.ts';
 import { insertIssue } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
@@ -15,6 +19,11 @@ import {
 
 let workspace: Workspace;
 const DAY_MILLISECONDS = 86_400_000;
+
+function currentOf(analytics: SprintAnalytics): SprintDetail {
+  if (analytics.current === null) throw new Error('Expected a selected sprint.');
+  return analytics.current;
+}
 
 function sprintQuery(cycleId: string, measure: 'issues' | 'points' = 'issues'): AnalyticsQuery {
   return analyticsQuerySchema.parse({
@@ -114,6 +123,34 @@ beforeEach(async () => {
 });
 
 describe('loadSprintAnalytics', () => {
+  it('returns an empty state when the workspace has no sprint', async () => {
+    const result = await loadSprintAnalytics(
+      workspace.admin,
+      analyticsQuerySchema.parse({ lens: 'sprints' }),
+      { now: new Date('2026-01-02T12:00:00.000Z') },
+    );
+
+    expect(result.selected).toBeNull();
+    expect(result.current).toBeNull();
+    expect(result.previous).toBeNull();
+    expect(result.velocity).toEqual([]);
+    expect(result.flow.completed).toBe(0);
+  });
+
+  it('returns an empty state when the workspace only has an upcoming sprint', async () => {
+    await cycle(1, '2026-02-01T00:00:00.000Z', '2026-02-08T00:00:00.000Z');
+
+    const result = await loadSprintAnalytics(
+      workspace.admin,
+      analyticsQuerySchema.parse({ lens: 'sprints' }),
+      { now: new Date('2026-01-02T12:00:00.000Z') },
+    );
+
+    expect(result.selected).toBeNull();
+    expect(result.current).toBeNull();
+    expect(result.velocity).toEqual([]);
+  });
+
   it('burns completed work on the sprint local day and changes between snapshots', async () => {
     const cycleId = await cycle(1, '2026-03-07T05:00:00.000Z', '2026-03-12T04:00:00.000Z', {
       timezone: 'America/New_York',
@@ -144,9 +181,9 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-03-08T12:00:00.000Z'),
     });
 
-    expect(result.current.burn.map((point) => point.date)).toEqual(['2026-03-07', '2026-03-08']);
-    expect(result.current.burn.map((point) => point.remaining)).toEqual([1, 0]);
-    expect(result.current.burn[1]?.completed).toBe(1);
+    expect(currentOf(result).burn.map((point) => point.date)).toEqual(['2026-03-07', '2026-03-08']);
+    expect(currentOf(result).burn.map((point) => point.remaining)).toEqual([1, 0]);
+    expect(currentOf(result).burn[1]?.completed).toBe(1);
     expect(result.formulas.burn).toContain('local calendar day');
   });
 
@@ -178,9 +215,9 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-06T12:00:00.000Z'),
     });
 
-    expect(result.current.scopeChanges).toMatchObject({ added: 2, removed: 2 });
-    expect(result.current.burn.map((point) => point.scope)).toEqual([1, 1, 1, 2, 1, 1]);
-    expect(result.current.cohorts.removed).toContain(moved);
+    expect(currentOf(result).scopeChanges).toMatchObject({ added: 2, removed: 2 });
+    expect(currentOf(result).burn.map((point) => point.scope)).toEqual([1, 1, 1, 2, 1, 1]);
+    expect(currentOf(result).cohorts.removed).toContain(moved);
   });
 
   it('changes committed scope at known state transitions without applying current backlog backward', async () => {
@@ -200,7 +237,7 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-05T12:00:00.000Z'),
     });
 
-    expect(result.current.burn.map((point) => point.scope)).toEqual([1, 1, 0, 0, 0]);
+    expect(currentOf(result).burn.map((point) => point.scope)).toEqual([1, 1, 0, 0, 0]);
   });
 
   it('enters committed scope only when a known backlog issue moves to Todo', async () => {
@@ -220,7 +257,7 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-05T12:00:00.000Z'),
     });
 
-    expect(result.current.burn.map((point) => point.scope)).toEqual([0, 0, 1, 1, 1]);
+    expect(currentOf(result).burn.map((point) => point.scope)).toEqual([0, 0, 1, 1, 1]);
   });
 
   it('shows a completion episode and burns back up when the issue reopens', async () => {
@@ -242,8 +279,8 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-05T12:00:00.000Z'),
     });
 
-    expect(result.current.burn.map((point) => point.completed)).toEqual([0, 1, 1, 0, 0]);
-    expect(result.current.burn.map((point) => point.remaining)).toEqual([1, 0, 0, 1, 1]);
+    expect(currentOf(result).burn.map((point) => point.completed)).toEqual([0, 1, 1, 0, 0]);
+    expect(currentOf(result).burn.map((point) => point.remaining)).toEqual([1, 0, 0, 1, 1]);
   });
 
   it('applies captured 24-hour planning, excludes uncommitted work, and exposes null estimates', async () => {
@@ -292,9 +329,17 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-03T12:00:00.000Z'),
     });
 
-    expect(issues.current.summary).toMatchObject({ planned: 2, currentScope: 3, unestimated: 1 });
-    expect(points.current.summary).toMatchObject({ planned: 13, currentScope: 8, unestimated: 1 });
-    expect([...issues.current.cohorts.planned].sort()).toEqual([planned, backlog].sort());
+    expect(currentOf(issues).summary).toMatchObject({
+      planned: 2,
+      currentScope: 3,
+      unestimated: 1,
+    });
+    expect(currentOf(points).summary).toMatchObject({
+      planned: 13,
+      currentScope: 8,
+      unestimated: 1,
+    });
+    expect([...currentOf(issues).cohorts.planned].sort()).toEqual([planned, backlog].sort());
     expect(issues.coverage.kind).toBe('observed');
   });
 
@@ -314,8 +359,8 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-02T12:00:00.000Z'),
     });
 
-    expect(result.current.cohorts.planned).toEqual([issueId]);
-    expect(result.current.summary.planned).toBe(1);
+    expect(currentOf(result).cohorts.planned).toEqual([issueId]);
+    expect(currentOf(result).summary.planned).toBe(1);
   });
 
   it('does not call work planned when it entered backlog before moving to Todo inside the window', async () => {
@@ -334,8 +379,8 @@ describe('loadSprintAnalytics', () => {
       now: new Date('2026-01-02T12:00:00.000Z'),
     });
 
-    expect(result.current.cohorts.planned).toEqual([]);
-    expect(result.current.summary.planned).toBe(0);
+    expect(currentOf(result).cohorts.planned).toEqual([]);
+    expect(currentOf(result).summary.planned).toBe(0);
   });
 
   it('aligns previous burn and freezes completed outcomes while preserving person attribution', async () => {
@@ -392,7 +437,7 @@ describe('loadSprintAnalytics', () => {
     expect(result.previous?.summary.carryover).toBe(1);
     expect(result.focus?.personId).toBe(person.user.id);
     expect(result.focus?.burn.at(-1)?.remaining).toBe(1);
-    expect(result.current.cohorts.carryover).toContain(previousIssue);
+    expect(currentOf(result).cohorts.carryover).toContain(previousIssue);
   });
 
   it('attributes workspace scope across teams and keeps archived current rows in captured history', async () => {
@@ -439,10 +484,12 @@ describe('loadSprintAnalytics', () => {
       now: new Date(existingCycle.startsAt.getTime() + DAY_MILLISECONDS),
     });
 
-    expect(result.current.summary.currentScope).toBe(5);
-    expect(result.current.teams.map((team) => team.id).sort()).toEqual(
-      [workspace.teamId, sibling.team.id].sort(),
-    );
+    expect(currentOf(result).summary.currentScope).toBe(5);
+    expect(
+      currentOf(result)
+        .teams.map((team) => team.id)
+        .sort(),
+    ).toEqual([workspace.teamId, sibling.team.id].sort());
   });
 
   it('attributes historical scope to interval teams after an issue moves teams', async () => {
@@ -487,10 +534,10 @@ describe('loadSprintAnalytics', () => {
     const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
       now: new Date('2026-01-05T12:00:00.000Z'),
     });
-    const primary = result.current.teams.find((team) => team.id === workspace.teamId);
-    const moved = result.current.teams.find((team) => team.id === sibling.team.id);
+    const primary = currentOf(result).teams.find((team) => team.id === workspace.teamId);
+    const moved = currentOf(result).teams.find((team) => team.id === sibling.team.id);
 
-    expect(result.current.teams).toHaveLength(2);
+    expect(currentOf(result).teams).toHaveLength(2);
     expect(primary?.summary.currentScope).toBe(0);
     expect(moved?.summary.currentScope).toBe(1);
   });
@@ -590,8 +637,10 @@ describe('loadSprintAnalytics', () => {
     const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
       now: new Date('2026-01-10T00:00:00.000Z'),
     });
-    const firstBurn = result.current.people.find((person) => person.personId === first.user.id);
-    const secondBurn = result.current.people.find((person) => person.personId === second.user.id);
+    const firstBurn = currentOf(result).people.find((person) => person.personId === first.user.id);
+    const secondBurn = currentOf(result).people.find(
+      (person) => person.personId === second.user.id,
+    );
 
     expect(firstBurn?.burn.map((point) => point.scope)).toEqual([1, 1, 0, 0, 0, 0, 0, 0]);
     expect(secondBurn?.burn.map((point) => point.scope)).toEqual([0, 0, 1, 1, 1, 1, 1, 1]);

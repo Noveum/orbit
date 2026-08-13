@@ -805,6 +805,7 @@ async function personalSprintBurn(
         : { selectedSprintId: context.selectedSprintId }),
     },
   );
+  if (sprint.current === null) return { selected: null, current: null, previous: null };
   return {
     selected: sprint.selected,
     current: sprint.current.people.find((entry) => entry.personId === personId) ?? null,
