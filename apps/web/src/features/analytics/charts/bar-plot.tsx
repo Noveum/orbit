@@ -11,7 +11,7 @@ import { PlotFrame } from './plot-frame.tsx';
 interface BarPlotProps {
   readonly label: string;
   readonly points: readonly PlotPoint[];
-  readonly onActivate: (cohort: AnalyticsDrilldownCohort) => void;
+  readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
   readonly valueFormatter?: (value: number) => string;
 }
 
@@ -56,15 +56,19 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
             { id: 'label', label: 'Category' },
             { id: 'value', label: 'Value', align: 'right' },
           ]}
-          onActivate={(row) => {
-            const index = points.findIndex((point) => point.id === row.id);
-            const selected = points[index];
-            if (selected !== undefined) {
-              setActiveIndex(index);
-              onActivate(selected.cohort);
-            }
-          }}
           rows={rows}
+          {...(onActivate === undefined
+            ? {}
+            : {
+                onActivate: (row: AnalyticsDataRow) => {
+                  const index = points.findIndex((point) => point.id === row.id);
+                  const selected = points[index];
+                  if (selected !== undefined) {
+                    setActiveIndex(index);
+                    onActivate(selected.cohort);
+                  }
+                },
+              })}
           {...(activePoint === undefined ? {} : { activeRowId: activePoint.id })}
         />
       }
@@ -84,7 +88,7 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
         onClick={(event) => {
           const index = indexFromTarget(event.target);
           const point = index === null ? undefined : points[index];
-          if (point !== undefined) onActivate(point.cohort);
+          if (point !== undefined) onActivate?.(point.cohort);
         }}
         onFocus={() => {
           if (activeIndex === null && points.length > 0) setActiveIndex(0);
@@ -95,7 +99,7 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
           else if (event.key === 'Home') move(0);
           else if (event.key === 'End') move(Number.MAX_SAFE_INTEGER);
           else if (event.key === 'Escape') setActiveIndex(null);
-          else if (event.key === 'Enter' && activePoint !== undefined)
+          else if (event.key === 'Enter' && activePoint !== undefined && onActivate !== undefined)
             onActivate(activePoint.cohort);
           else return;
           event.preventDefault();

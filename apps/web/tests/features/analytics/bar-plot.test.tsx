@@ -44,4 +44,13 @@ describe('BarPlot', () => {
     await user.unhover(screen.getByRole('application', { name: 'Many projects' }));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
+
+  test('supports inspection without presenting evidence actions', async () => {
+    const user = userEvent.setup();
+    render(<BarPlot label="Velocity" points={[point(0, 3)]} />);
+
+    await user.hover(screen.getByTestId('plot-hit-state-0'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('State 0');
+    expect(screen.queryByRole('button', { name: 'State 0, Velocity 3' })).not.toBeInTheDocument();
+  });
 });

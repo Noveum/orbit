@@ -1,15 +1,14 @@
 import { can } from '@orbit/shared/policy';
+import { analyticsQuerySchema } from '@orbit/shared/validators';
 import { RefreshCcw } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
-import { CycleAnalytics } from '@/features/sprints/cycle-board.tsx';
+import { loadSelectedSprintAnalyticsData } from '@/features/analytics/data.ts';
+import { SprintLens } from '@/features/analytics/sprint-lens.tsx';
 import {
-  getActiveCycleView,
   getActiveSprintChrome,
   getSprintChrome,
-  getSprintView,
-  hasSprintAnalytics,
   listPastSprintViews,
   listUpcomingCycleViews,
   runningSprintNumber,
@@ -31,6 +30,10 @@ interface PageProps {
 }
 
 const SPRINT_NUMBER = /^[1-9][0-9]{0,8}$/;
+const sprintAnalyticsQuery = analyticsQuerySchema.parse({
+  lens: 'sprints',
+  range: { preset: 'active_sprint' },
+});
 
 function sprintNumber(value: string | undefined): number | null {
   return value !== undefined && SPRINT_NUMBER.test(value) ? Number(value) : null;
@@ -44,17 +47,19 @@ export default async function SprintsPage({ searchParams }: PageProps) {
   const chosen = sprintNumber(wanted);
   const active = parseSprintTab(tab);
 
-  const loadSprint = () => {
-    if (active !== 'insights') {
-      return chosen === null
-        ? getActiveSprintChrome(principal)
-        : getSprintChrome(principal, chosen);
-    }
-    return chosen === null ? getActiveCycleView(principal) : getSprintView(principal, chosen);
-  };
-
-  const [sprint, upcoming, past, running] = await Promise.all([
-    loadSprint(),
+  const sprintPromise =
+    chosen === null ? getActiveSprintChrome(principal) : getSprintChrome(principal, chosen);
+  const analyticsPromise =
+    active === 'insights'
+      ? sprintPromise.then(async (sprint) =>
+          sprint === null
+            ? null
+            : await loadSelectedSprintAnalyticsData(principal, sprintAnalyticsQuery, sprint.id),
+        )
+      : Promise.resolve(null);
+  const [sprint, analytics, upcoming, past, running] = await Promise.all([
+    sprintPromise,
+    analyticsPromise,
     listUpcomingCycleViews(principal),
     listPastSprintViews(principal),
     runningSprintNumber(principal),
@@ -81,8 +86,8 @@ export default async function SprintsPage({ searchParams }: PageProps) {
             </p>
           )}
           <SprintTabs base={base} active={active} available={['board', 'list', 'insights']} />
-          {hasSprintAnalytics(sprint) ? (
-            <CycleAnalytics cycle={sprint} />
+          {active === 'insights' && analytics !== null ? (
+            <SprintLens data={analytics} query={sprintAnalyticsQuery} />
           ) : (
             <SprintIssues
               cycleId={sprint.id}

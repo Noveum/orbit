@@ -168,9 +168,42 @@ export async function loadSprintsAnalyticsData(
   principal: Principal,
   query: AnalyticsQuery,
 ): Promise<AnalyticsSprintsResponse> {
+  const focusedQuery = sprintQueryForPrincipal(principal, query);
   return analyticsWireResponse('sprints', {
     lens: 'sprints',
-    ...(await loadSprintAnalytics(principal, { ...query, lens: 'sprints' })),
+    ...(await loadSprintAnalytics(principal, { ...focusedQuery, lens: 'sprints' })),
+  });
+}
+
+function sprintQueryForPrincipal(principal: Principal, query: AnalyticsQuery): AnalyticsQuery {
+  if (query.focus.personId !== undefined) return query;
+  let hasAssignee = false;
+  const visit = (node: AnalyticsQuery['filter']['children'][number]): void => {
+    if (node.kind === 'group') {
+      for (const child of node.children) visit(child);
+      return;
+    }
+    if (node.property === 'assignee' && node.operator === 'in' && !node.negate) {
+      hasAssignee = true;
+    }
+  };
+  for (const child of query.filter.children) visit(child);
+  return hasAssignee ? query : { ...query, focus: { ...query.focus, personId: principal.userId } };
+}
+
+export async function loadSelectedSprintAnalyticsData(
+  principal: Principal,
+  query: AnalyticsQuery,
+  selectedSprintId: string,
+): Promise<AnalyticsSprintsResponse> {
+  const focusedQuery = sprintQueryForPrincipal(principal, query);
+  return analyticsWireResponse('sprints', {
+    lens: 'sprints',
+    ...(await loadSprintAnalytics(
+      principal,
+      { ...focusedQuery, lens: 'sprints' },
+      { selectedSprintId },
+    )),
   });
 }
 

@@ -12,13 +12,13 @@ import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { AnalyticsTabs } from './analytics-tabs.tsx';
 import { AnalyticsToolbar } from './analytics-toolbar.tsx';
 import type {
-  AnalyticsOverviewResponse,
   AnalyticsPeopleResponse,
   AnalyticsProjectsResponse,
   AnalyticsResponseByLens,
-  AnalyticsSprintsResponse,
 } from './contracts.ts';
+import { OverviewLens } from './overview-lens.tsx';
 import { searchParamsForAnalytics } from './query-state.ts';
+import { SprintLens } from './sprint-lens.tsx';
 import { useAnalyticsQuery } from './use-analytics-query.ts';
 
 const defaultQuery = analyticsQuerySchema.parse({});
@@ -27,176 +27,6 @@ function writeUrl(query: AnalyticsQuery) {
   const search = searchParamsForAnalytics(query).toString();
   const path = typeof window === 'undefined' ? '/analytics' : window.location.pathname;
   window.history.replaceState(null, '', search.length === 0 ? path : `${path}?${search}`);
-}
-
-function valueLabel(value: number, unit: string): string {
-  const formatted = Number.isInteger(value) ? String(value) : value.toFixed(1);
-  return unit === 'days' ? `${formatted}d` : formatted;
-}
-
-function MetricStrip({
-  metrics,
-}: {
-  readonly metrics: ReadonlyArray<{
-    readonly id: string;
-    readonly label: string;
-    readonly value: number;
-    readonly unit: string;
-    readonly delta?: number | null;
-  }>;
-}) {
-  return (
-    <div className="flex snap-x gap-3 overflow-x-auto pb-1 lg:grid lg:grid-cols-4 lg:overflow-visible">
-      {metrics.map((metric) => (
-        <article
-          className="min-w-40 snap-start rounded-lg border border-border bg-surface p-4"
-          key={metric.id}
-        >
-          <p className="text-muted text-xs">{metric.label}</p>
-          <div className="mt-2 flex items-baseline gap-2">
-            <p className="font-semibold text-2xl text-text">
-              {valueLabel(metric.value, metric.unit)}
-            </p>
-            {metric.delta === undefined || metric.delta === null ? null : (
-              <span className="text-faint text-xs">
-                {metric.delta > 0 ? '+' : ''}
-                {valueLabel(metric.delta, metric.unit)}
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-faint text-2xs uppercase">{metric.unit}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function OverviewContent({ data }: { readonly data: AnalyticsOverviewResponse }) {
-  const delivery = data.delivery.reduce(
-    (total, bucket) => ({
-      created: total.created + bucket.created,
-      completed: total.completed + bucket.completed,
-      open: bucket.open,
-    }),
-    { created: 0, completed: 0, open: 0 },
-  );
-  return (
-    <div className="grid gap-4">
-      <MetricStrip
-        metrics={data.cards.map((card) => ({
-          id: card.id,
-          label: card.label,
-          value: card.value,
-          unit: card.unit,
-          delta: card.comparisonDelta,
-        }))}
-      />
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-medium text-sm text-text">Planning pulse</h2>
-            <p className="mt-1 text-muted text-xs">
-              Created, completed, and open work across the selected period.
-            </p>
-          </div>
-          <span className="rounded-full bg-surface-2 px-2 py-1 text-faint text-2xs uppercase">
-            {data.coverage.kind}
-          </span>
-        </div>
-        {data.delivery.length === 0 ? (
-          <p className="py-12 text-center text-muted text-sm">
-            Delivery activity will appear as work moves.
-          </p>
-        ) : (
-          <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-            <div>
-              <p className="font-semibold text-text" data-testid="delivery-created">
-                {delivery.created}
-              </p>
-              <p className="text-faint text-xs">Created</p>
-            </div>
-            <div>
-              <p className="font-semibold text-text" data-testid="delivery-completed">
-                {delivery.completed}
-              </p>
-              <p className="text-faint text-xs">Completed</p>
-            </div>
-            <div>
-              <p className="font-semibold text-text" data-testid="delivery-open">
-                {delivery.open}
-              </p>
-              <p className="text-faint text-xs">Open</p>
-            </div>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function SprintsContent({ data }: { readonly data: AnalyticsSprintsResponse }) {
-  if (data.current === null || data.selected === null) {
-    return (
-      <section className="rounded-lg border border-border bg-surface px-6 py-14 text-center">
-        <h2 className="font-medium text-base text-text">No sprint history yet</h2>
-        <p className="mx-auto mt-2 max-w-lg text-muted text-sm">
-          Start a sprint and its burn and comparison charts will appear here as work is added,
-          completed, removed, or carried over.
-        </p>
-      </section>
-    );
-  }
-  const summary = data.current.summary;
-  return (
-    <div className="grid gap-4">
-      <div>
-        <p className="text-muted text-xs">Current sprint</p>
-        <h2 className="mt-1 font-medium text-base text-text">{data.selected.name}</h2>
-      </div>
-      <MetricStrip
-        metrics={[
-          { id: 'planned', label: 'Planned', value: summary.planned, unit: data.current.measure },
-          {
-            id: 'completed',
-            label: 'Completed',
-            value: summary.completed,
-            unit: data.current.measure,
-          },
-          {
-            id: 'remaining',
-            label: 'Remaining',
-            value: summary.remaining,
-            unit: data.current.measure,
-          },
-          {
-            id: 'carryover',
-            label: 'Carryover',
-            value: summary.carryover,
-            unit: data.current.measure,
-          },
-        ]}
-      />
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-medium text-sm text-text">Sprint burn</h3>
-        <p className="mt-1 text-muted text-xs">
-          Remaining scope updates from issue completion and membership changes.
-        </p>
-        <div aria-label="Sprint burn preview" className="mt-4 flex h-28 items-end gap-1" role="img">
-          {data.current.burn.map((point) => {
-            const denominator = Math.max(summary.currentScope, 1);
-            return (
-              <div
-                className="min-w-1 flex-1 rounded-t-sm bg-accent/70"
-                key={point.date}
-                style={{ height: `${Math.max(3, (point.remaining / denominator) * 100)}%` }}
-                title={`${point.date}: ${point.remaining} remaining`}
-              />
-            );
-          })}
-        </div>
-      </section>
-    </div>
-  );
 }
 
 function ProjectsContent({
@@ -369,9 +199,9 @@ function LensContent({
 }) {
   switch (data.lens) {
     case 'overview':
-      return <OverviewContent data={data} />;
+      return <OverviewLens data={data} query={query} />;
     case 'sprints':
-      return <SprintsContent data={data} />;
+      return <SprintLens data={data} query={query} />;
     case 'projects':
       return <ProjectsContent data={data} query={query} />;
     case 'people':
