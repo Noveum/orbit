@@ -61,6 +61,11 @@ describe('issue descriptions', () => {
     expect(issueUpdateSchema.safeParse({ description: 'x'.repeat(150_000) }).success).toBe(true);
     expect(
       issueUpdateSchema.safeParse({
+        description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      issueUpdateSchema.safeParse({
         description: 'x'.repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1),
       }).success,
     ).toBe(false);

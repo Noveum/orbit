@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { verifyMcpAccessToken } from '@orbit/core';
 import { and, db, eq, schema } from '@orbit/db';
-import { DomainError } from '@orbit/shared/errors';
+import { DomainError, internal } from '@orbit/shared/errors';
 import {
   callMcp,
   connect,
@@ -160,6 +160,23 @@ describe('http transport', () => {
     expect(challenge).toContain('/.well-known/oauth-protected-resource/mcp');
     expect(logged.errors).toEqual([]);
     expect(logged.warnings).toEqual(['request rejected']);
+    await response.body?.cancel();
+  });
+
+  it('logs an unexpected server failure as an error rather than a warning', async () => {
+    logged.errors.length = 0;
+    logged.warnings.length = 0;
+    const response = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, { method: 'POST' }),
+      {
+        publicUrl: 'http://localhost:3000',
+        dispatch: () => Promise.reject(internal('Forced server failure.')),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(logged.errors).toEqual(['request failed']);
+    expect(logged.warnings).toEqual([]);
     await response.body?.cancel();
   });
 

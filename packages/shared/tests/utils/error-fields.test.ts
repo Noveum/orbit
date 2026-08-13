@@ -31,6 +31,19 @@ describe('safeErrorFields', () => {
     );
   });
 
+  it('sanitizes the error name and code as well as the message', () => {
+    const error = Object.assign(new Error('Safe message'), {
+      name: 'person@example.test',
+      code: 'abcdefghijklmnopqrstuvwx1234',
+    });
+
+    expect(safeErrorFields(error)).toEqual({
+      error: 'Safe message',
+      errorName: '[redacted-email]',
+      errorCode: '[redacted]',
+    });
+  });
+
   it('bounds an unknown error before it reaches the platform logger', () => {
     expect(safeErrorFields('x'.repeat(1_000)).error).toHaveLength(500);
   });
