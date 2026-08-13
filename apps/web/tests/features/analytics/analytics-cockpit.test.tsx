@@ -8,6 +8,8 @@ import { AnalyticsCockpit } from '../../../src/features/analytics/analytics-cock
 import { analyticsKeys } from '../../../src/features/analytics/analytics-keys.ts';
 import type {
   AnalyticsOverviewResponse,
+  AnalyticsPeopleResponse,
+  AnalyticsProjectsResponse,
   AnalyticsSprintsResponse,
 } from '../../../src/features/analytics/contracts.ts';
 import { createQueryClient } from '../../../src/lib/query/provider.tsx';
@@ -33,6 +35,134 @@ const overview: AnalyticsOverviewResponse = {
   projects: [],
   priorities: [],
   outliers: [],
+};
+
+const projectId = '00000000-0000-7000-8000-000000000001';
+const personId = '00000000-0000-7000-8000-000000000002';
+const projectCohort = (name: string) => ({ cohort: `${name}:${projectId}` });
+const personCohort = (name: string) => ({ cohort: `${name}:${personId}` });
+
+const projects: AnalyticsProjectsResponse = {
+  lens: 'projects',
+  asOf,
+  projects: [
+    {
+      id: projectId,
+      name: 'Platform',
+      slug: 'platform',
+      status: 'in_progress',
+      health: 'on_track',
+      healthSource: 'manual',
+      archived: false,
+      lead: null,
+      teams: [],
+      startDate: null,
+      targetDate: null,
+      scopeIssues: 13,
+      scopePoints: 34,
+      openIssues: 8,
+      openPoints: 21,
+      wipIssues: 3,
+      wipPoints: 8,
+      completedIssues: 5,
+      completedPoints: 13,
+      blocked: 1,
+      overdue: 0,
+      stale: 0,
+      unestimated: 0,
+      scopeAddedIssues: 0,
+      scopeAddedPoints: 0,
+      scopeAddedCoverage: 'captured',
+      completedInRangeIssues: 5,
+      completedInRangePoints: 13,
+      estimateCoverage: 'complete',
+      nextMilestoneId: null,
+      nextMilestoneName: null,
+      nextMilestoneTargetDate: null,
+      cohorts: {
+        current: projectCohort('project-current'),
+        open: projectCohort('project-open'),
+        completed: projectCohort('project-completed'),
+        blocked: projectCohort('project-blocked'),
+        overdue: projectCohort('project-overdue'),
+        stale: projectCohort('project-stale'),
+        unestimated: projectCohort('project-unestimated'),
+        scopeAdded: projectCohort('project-added'),
+        completedInRange: projectCohort('project-range'),
+      },
+    },
+  ],
+  totalProjects: 1,
+  truncated: false,
+  focused: null,
+  coverage: { kind: 'live', from: null, asOf },
+};
+
+const person = {
+  person: {
+    id: personId,
+    name: 'Ada',
+    image: null,
+    currentMember: true,
+    status: 'current' as const,
+  },
+  currentAssignments: 3,
+  currentPoints: 8,
+  completedIssues: 2,
+  completedPoints: 5,
+  activeWeeks: 1,
+  averageThroughputIssues: 2,
+  averageThroughputPoints: 5,
+  cycleTime: { valid: 2, p50: 1, p85: 2 },
+  leadTime: { valid: 2, p50: 2, p85: 3 },
+  currentWip: 2,
+  currentWipPoints: 5,
+  wipAge: { valid: 2, p50: 1, p85: 2 },
+  blocked: 0,
+  overdue: 0,
+  stale: 0,
+  unestimated: 0,
+  currentProjects: 1,
+  currentMilestones: 1,
+  currentSprints: 1,
+  attribution: { captured: 2, reconstructed: 0, currentAssignee: 0, kind: 'captured' as const },
+  cohorts: {
+    currentAssignments: personCohort('person-current'),
+    completed: personCohort('person-completed'),
+    wip: personCohort('person-wip'),
+    blocked: personCohort('person-blocked'),
+    overdue: personCohort('person-overdue'),
+    stale: personCohort('person-stale'),
+    unestimated: personCohort('person-unestimated'),
+  },
+};
+
+const people: AnalyticsPeopleResponse = {
+  lens: 'people',
+  asOf,
+  people: [person],
+  totalPeople: 1,
+  truncated: false,
+  focused: {
+    ...person,
+    projects: [],
+    milestones: [],
+    sprints: [],
+    states: [],
+    timeline: [],
+    sprintBurn: { selected: null, current: null, previous: null },
+  },
+  coverage: { kind: 'live', from: null, asOf },
+  formulas: {
+    currentAssignments: 'Current open assignments.',
+    completed: 'Completed in range.',
+    activeWeek: 'Weeks with assignment activity.',
+    cycleTime: 'Start to completion.',
+    leadTime: 'Creation to completion.',
+    wipAge: 'Age of current WIP.',
+    attribution: 'Historical assignee at completion.',
+    points: 'Unestimated is zero points.',
+  },
 };
 
 const emptySprints: AnalyticsSprintsResponse = {
@@ -63,7 +193,11 @@ const emptySprints: AnalyticsSprintsResponse = {
 
 function renderCockpit(
   query = analyticsQuerySchema.parse({}),
-  response: AnalyticsOverviewResponse | AnalyticsSprintsResponse = overview,
+  response:
+    | AnalyticsOverviewResponse
+    | AnalyticsSprintsResponse
+    | AnalyticsProjectsResponse
+    | AnalyticsPeopleResponse = overview,
 ) {
   const client = createQueryClient();
   client.setQueryDefaults(analyticsKeys.root, { enabled: false });
@@ -140,5 +274,86 @@ describe('AnalyticsCockpit', () => {
 
     expect(screen.getByRole('heading', { name: 'No sprint history yet' })).toBeVisible();
     expect(screen.getByText(/burn and comparison charts will appear/)).toBeVisible();
+  });
+
+  it('uses points consistently in project and people lenses', () => {
+    const projectQuery = analyticsQuerySchema.parse({ lens: 'projects', measure: 'points' });
+    const projectView = renderCockpit(projectQuery, projects);
+    expect(screen.getByText('13/34')).toBeVisible();
+    projectView.unmount();
+
+    const peopleQuery = analyticsQuerySchema.parse({ lens: 'people', measure: 'points' });
+    renderCockpit(peopleQuery, people);
+    expect(screen.getAllByText('8').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('5').length).toBeGreaterThan(0);
+  });
+
+  it('sums delivery buckets across the selected period', () => {
+    renderCockpit(undefined, {
+      ...overview,
+      delivery: [
+        {
+          date: '2026-08-12',
+          created: 4,
+          completed: 2,
+          open: 9,
+          createdCohort: { cohort: 'created', bucket: '2026-08-12' },
+          completedCohort: { cohort: 'completed', bucket: '2026-08-12' },
+          openCohort: { cohort: 'open', bucket: '2026-08-12' },
+        },
+        {
+          date: '2026-08-13',
+          created: 3,
+          completed: 5,
+          open: 7,
+          createdCohort: { cohort: 'created', bucket: '2026-08-13' },
+          completedCohort: { cohort: 'completed', bucket: '2026-08-13' },
+          openCohort: { cohort: 'open', bucket: '2026-08-13' },
+        },
+      ],
+    });
+
+    expect(screen.getByTestId('delivery-created')).toHaveTextContent('7');
+    expect(screen.getByTestId('delivery-completed')).toHaveTextContent('7');
+    expect(screen.getByTestId('delivery-open')).toHaveTextContent('7');
+  });
+
+  it('shows active filters and offers the shared searchable filter menu', async () => {
+    const user = userEvent.setup();
+    const query = analyticsQuerySchema.parse({
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'project',
+            operator: 'in',
+            values: [projectId],
+            negate: false,
+          },
+        ],
+      },
+    });
+    renderCockpit(query, overview);
+
+    expect(screen.getByText('Project')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Add filter' }));
+    expect(screen.getByLabelText('Search filters')).toBeVisible();
+    expect(screen.getByTestId('filter-field-assignee')).toBeVisible();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Remove Project filter' }));
+    expect(window.location.search).toBe('');
+  });
+
+  it('uses selected-person copy for explicit focus and links tabs to their panel', () => {
+    const query = analyticsQuerySchema.parse({ lens: 'people', focus: { personId } });
+    renderCockpit(query, people);
+
+    expect(screen.getByText('Selected person')).toBeVisible();
+    const tab = screen.getByRole('tab', { name: 'People' });
+    const panel = screen.getByRole('tabpanel');
+    expect(tab).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', tab.id);
   });
 });

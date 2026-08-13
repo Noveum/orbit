@@ -70,6 +70,14 @@ function MetricStrip({
 }
 
 function OverviewContent({ data }: { readonly data: AnalyticsOverviewResponse }) {
+  const delivery = data.delivery.reduce(
+    (total, bucket) => ({
+      created: total.created + bucket.created,
+      completed: total.completed + bucket.completed,
+      open: bucket.open,
+    }),
+    { created: 0, completed: 0, open: 0 },
+  );
   return (
     <div className="grid gap-4">
       <MetricStrip
@@ -100,15 +108,21 @@ function OverviewContent({ data }: { readonly data: AnalyticsOverviewResponse })
         ) : (
           <div className="mt-4 grid grid-cols-3 gap-2 text-center">
             <div>
-              <p className="font-semibold text-text">{data.delivery.at(-1)?.created ?? 0}</p>
+              <p className="font-semibold text-text" data-testid="delivery-created">
+                {delivery.created}
+              </p>
               <p className="text-faint text-xs">Created</p>
             </div>
             <div>
-              <p className="font-semibold text-text">{data.delivery.at(-1)?.completed ?? 0}</p>
+              <p className="font-semibold text-text" data-testid="delivery-completed">
+                {delivery.completed}
+              </p>
               <p className="text-faint text-xs">Completed</p>
             </div>
             <div>
-              <p className="font-semibold text-text">{data.delivery.at(-1)?.open ?? 0}</p>
+              <p className="font-semibold text-text" data-testid="delivery-open">
+                {delivery.open}
+              </p>
               <p className="text-faint text-xs">Open</p>
             </div>
           </div>
@@ -183,7 +197,13 @@ function SprintsContent({ data }: { readonly data: AnalyticsSprintsResponse }) {
   );
 }
 
-function ProjectsContent({ data }: { readonly data: AnalyticsProjectsResponse }) {
+function ProjectsContent({
+  data,
+  query,
+}: {
+  readonly data: AnalyticsProjectsResponse;
+  readonly query: AnalyticsQuery;
+}) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-surface">
       <div className="border-border border-b px-4 py-3">
@@ -207,7 +227,8 @@ function ProjectsContent({ data }: { readonly data: AnalyticsProjectsResponse })
               </div>
               <div className="text-right">
                 <p className="font-medium text-text text-xs">
-                  {project.completedIssues}/{project.scopeIssues}
+                  {query.measure === 'points' ? project.completedPoints : project.completedIssues}/
+                  {query.measure === 'points' ? project.scopePoints : project.scopeIssues}
                 </p>
                 <p className="text-faint text-2xs">completed</p>
               </div>
@@ -223,31 +244,49 @@ function ProjectsContent({ data }: { readonly data: AnalyticsProjectsResponse })
   );
 }
 
-function PeopleContent({ data }: { readonly data: AnalyticsPeopleResponse }) {
+function PeopleContent({
+  data,
+  query,
+}: {
+  readonly data: AnalyticsPeopleResponse;
+  readonly query: AnalyticsQuery;
+}) {
   const focused = data.focused;
+  const points = query.measure === 'points';
   return (
     <div className="grid gap-4">
       {focused === null ? null : (
         <section className="rounded-lg border border-accent/40 bg-surface p-4">
-          <p className="text-accent text-xs">My work</p>
+          <p className="text-accent text-xs">
+            {query.focus.personId === undefined ? 'My work' : 'Selected person'}
+          </p>
           <h2 className="mt-1 font-medium text-base text-text">{focused.person.name}</h2>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div>
-              <p className="font-semibold text-xl text-text">{focused.currentAssignments}</p>
+              <p className="font-semibold text-xl text-text">
+                {points ? focused.currentPoints : focused.currentAssignments}
+              </p>
               <p className="text-faint text-xs">Assigned now</p>
             </div>
             <div>
-              <p className="font-semibold text-xl text-text">{focused.completedIssues}</p>
+              <p className="font-semibold text-xl text-text">
+                {points ? focused.completedPoints : focused.completedIssues}
+              </p>
               <p className="text-faint text-xs">Completed</p>
             </div>
             <div>
               <p className="font-semibold text-xl text-text">
-                {focused.averageThroughputIssues.toFixed(1)}
+                {(points
+                  ? focused.averageThroughputPoints
+                  : focused.averageThroughputIssues
+                ).toFixed(1)}
               </p>
               <p className="text-faint text-xs">Avg per active week</p>
             </div>
             <div>
-              <p className="font-semibold text-xl text-text">{focused.currentWip}</p>
+              <p className="font-semibold text-xl text-text">
+                {points ? focused.currentWipPoints : focused.currentWip}
+              </p>
               <p className="text-faint text-xs">Work in progress</p>
             </div>
           </div>
@@ -271,11 +310,15 @@ function PeopleContent({ data }: { readonly data: AnalyticsPeopleResponse }) {
                 <p className="text-faint text-xs">{person.person.status}</p>
               </div>
               <div className="text-right">
-                <p className="font-medium text-text text-xs">{person.currentAssignments}</p>
+                <p className="font-medium text-text text-xs">
+                  {points ? person.currentPoints : person.currentAssignments}
+                </p>
                 <p className="text-faint text-2xs">assigned</p>
               </div>
               <div className="text-right">
-                <p className="font-medium text-text text-xs">{person.completedIssues}</p>
+                <p className="font-medium text-text text-xs">
+                  {points ? person.completedPoints : person.completedIssues}
+                </p>
                 <p className="text-faint text-2xs">completed</p>
               </div>
             </div>
@@ -286,16 +329,22 @@ function PeopleContent({ data }: { readonly data: AnalyticsPeopleResponse }) {
   );
 }
 
-function LensContent({ data }: { readonly data: AnalyticsResponseByLens[AnalyticsLens] }) {
+function LensContent({
+  data,
+  query,
+}: {
+  readonly data: AnalyticsResponseByLens[AnalyticsLens];
+  readonly query: AnalyticsQuery;
+}) {
   switch (data.lens) {
     case 'overview':
       return <OverviewContent data={data} />;
     case 'sprints':
       return <SprintsContent data={data} />;
     case 'projects':
-      return <ProjectsContent data={data} />;
+      return <ProjectsContent data={data} query={query} />;
     case 'people':
-      return <PeopleContent data={data} />;
+      return <PeopleContent data={data} query={query} />;
   }
 }
 
@@ -333,7 +382,7 @@ export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: Anal
       </div>
     );
   } else {
-    content = <LensContent data={result.data} />;
+    content = <LensContent data={result.data} query={query} />;
   }
 
   return (
@@ -359,7 +408,13 @@ export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: Anal
       <div className="sticky top-0 z-20 rounded-lg border border-border bg-background/95 p-2 shadow-sm backdrop-blur">
         <AnalyticsToolbar query={query} onChange={update} onReset={reset} />
       </div>
-      {content}
+      <div
+        aria-labelledby={`analytics-tab-${query.lens}`}
+        id={`analytics-panel-${query.lens}`}
+        role="tabpanel"
+      >
+        {content}
+      </div>
     </div>
   );
 }

@@ -38,6 +38,7 @@ export function AnalyticsTabs({
     <div aria-label="Analytics views" className="flex min-w-max gap-1" role="tablist">
       {ANALYTICS_LENSES.map((lens, index) => (
         <button
+          aria-controls={`analytics-panel-${lens}`}
           aria-selected={value === lens}
           className={cn(
             'relative h-8 rounded-md px-3 font-medium text-xs outline-none transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
@@ -46,6 +47,7 @@ export function AnalyticsTabs({
               ? 'bg-surface-2 text-text'
               : 'text-muted hover:bg-surface-2 hover:text-text',
           )}
+          id={`analytics-tab-${lens}`}
           key={lens}
           onClick={() => onChange(lens)}
           onKeyDown={(event) => {

@@ -25,3 +25,11 @@ The new tests require useful hydrated metrics, keyboard tab navigation, URL upda
 ## Review correction
 
 Task 11 temporarily replaced the legacy page with a data-ready message. Task 12 removes that boundary and consumes the hydrated lens result directly. The initial route performs one active-lens aggregate load and that result is the content users see.
+
+## Review round 1
+
+The fresh review confirmed that the placeholder regression was closed and found five display-contract gaps. RED tests showed that Project and People rows stayed in issue units in points mode, Overview omitted every delivery bucket except the last, copied advanced filters were invisible, explicit person focus was labeled My work, and tabs had no associated panel.
+
+The corrected cockpit uses the selected measure for Project and People values, sums created and completed delivery activity while keeping open as the final bucket state, renders active filter chips with removal controls, opens Orbit's shared searchable issue filter builder, uses Selected person for explicit focus, and connects every tab to the active tabpanel with stable IDs.
+
+Focused review tests pass 8 of 8 with 32 assertions. The full web suite passes 1,998 of 1,998 with 4,962 assertions. Web typecheck and all static policy checks pass.

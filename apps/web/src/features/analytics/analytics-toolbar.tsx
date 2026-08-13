@@ -1,7 +1,14 @@
 'use client';
 
+import {
+  conditionsOf,
+  FILTER_PROPERTIES,
+  FILTER_PROPERTY_LABELS,
+  removeCondition,
+} from '@orbit/shared/filters';
 import type { AnalyticsCompare, AnalyticsMeasure, AnalyticsQuery } from '@orbit/shared/validators';
-import { RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { ListFilter, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import {
@@ -11,6 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select.tsx';
+import { buildFilterFields } from '@/features/filters/filter-fields.tsx';
+import { FilterMenu } from '@/features/filters/filter-menu.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { DateRangePicker } from './date-range-picker.tsx';
 
 export function AnalyticsToolbar({
@@ -22,6 +32,10 @@ export function AnalyticsToolbar({
   readonly onChange: (patch: Partial<AnalyticsQuery>) => void;
   readonly onReset: () => void;
 }) {
+  const workspace = useWorkspace();
+  const [filterOpen, setFilterOpen] = useState(false);
+  const conditions = conditionsOf(query.filter);
+  const fields = useMemo(() => buildFilterFields(workspace, null, FILTER_PROPERTIES), [workspace]);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <DateRangePicker value={query.range} onChange={(range) => onChange({ range })} />
@@ -51,11 +65,52 @@ export function AnalyticsToolbar({
           <SelectItem value="points">Points</SelectItem>
         </SelectContent>
       </Select>
+      {conditions.map((condition) => {
+        const label = FILTER_PROPERTY_LABELS[condition.property];
+        return (
+          <span
+            className="flex h-7 items-center rounded-md border border-border bg-surface-2 text-xs"
+            key={JSON.stringify(condition)}
+          >
+            <span className="px-2 text-text">{label}</span>
+            <button
+              aria-label={`Remove ${label} filter`}
+              className="flex h-full items-center border-border border-l px-1.5 text-faint hover:text-text"
+              onClick={() =>
+                onChange({ filter: removeCondition(query.filter, condition.property) })
+              }
+              type="button"
+            >
+              <X aria-hidden="true" className="size-3" />
+            </button>
+          </span>
+        );
+      })}
+      <FilterMenu
+        anchor={
+          <Button
+            aria-expanded={filterOpen}
+            aria-haspopup="dialog"
+            onClick={() => setFilterOpen(!filterOpen)}
+            size="sm"
+            variant="ghost"
+          >
+            <ListFilter aria-hidden="true" className="size-3.5" />
+            Add filter
+          </Button>
+        }
+        facets={undefined}
+        fields={fields}
+        filter={query.filter}
+        onChange={(filter) => onChange({ filter })}
+        onOpenChange={setFilterOpen}
+        open={filterOpen}
+      />
       <Popover>
         <PopoverTrigger asChild>
           <Button size="sm" variant="ghost">
             <SlidersHorizontal aria-hidden="true" className="size-3.5" />
-            Add filter
+            Scope
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-64 p-3">
@@ -76,10 +131,6 @@ export function AnalyticsToolbar({
               type="checkbox"
             />
           </label>
-          <p className="mt-3 border-border border-t pt-3 text-faint text-xs">
-            Open a lens to narrow by its projects, milestones, sprints, or people. Advanced issue
-            filters stay encoded in shared URLs.
-          </p>
         </PopoverContent>
       </Popover>
       <Button
