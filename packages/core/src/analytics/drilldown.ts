@@ -15,6 +15,13 @@ import {
   reportingCalendar,
   resolveAnalyticsQuery,
 } from './filter.ts';
+import {
+  completionAttributionPerson,
+  personMatches,
+  selectedAssigneeIds,
+  UNASSIGNED_PERSON_ID,
+  withoutAssigneeFilter,
+} from './person-attribution.ts';
 import type { AnalyticsResolutionContext, ResolvedAnalyticsQuery } from './types.ts';
 
 const MAX_LIMIT = 200;
@@ -72,6 +79,31 @@ interface MilestoneCohort {
 }
 
 type PlanningCohort = ProjectCohort | MilestoneCohort;
+
+const PERSON_COHORT_METRICS = [
+  'current',
+  'completed',
+  'wip',
+  'blocked',
+  'overdue',
+  'stale',
+  'unestimated',
+  'assigned',
+] as const;
+
+type PersonCohortMetric = (typeof PERSON_COHORT_METRICS)[number];
+
+interface PersonCohort {
+  readonly metric: PersonCohortMetric;
+  readonly id: string;
+}
+
+type PersonGroupDimension = 'project' | 'milestone' | 'sprint' | 'state';
+
+interface PersonGroupCohort {
+  readonly dimension: PersonGroupDimension;
+  readonly id: string;
+}
 
 export type AnalyticsOverviewCohortKey =
   | (typeof ANALYTICS_OVERVIEW_COHORTS)[number]
@@ -331,6 +363,57 @@ function planningCohort(value: string): PlanningCohort | null {
   return null;
 }
 
+function validPersonId(value: string): boolean {
+  return value === UNASSIGNED_PERSON_ID || UUID_PATTERN.test(value);
+}
+
+function personCohort(value: string): PersonCohort | null {
+  const match = /^person-([a-z-]+):(.+)$/.exec(value);
+  const metric = match?.[1];
+  const id = match?.[2];
+  if (
+    metric === undefined ||
+    id === undefined ||
+    !validPersonId(id) ||
+    !PERSON_COHORT_METRICS.some((candidate) => candidate === metric)
+  ) {
+    return null;
+  }
+  return { metric: metric as PersonCohortMetric, id };
+}
+
+function personGroupCohort(value: string): PersonGroupCohort | null {
+  const match = /^person-(project|milestone|sprint|state):(.+)$/.exec(value);
+  const dimension = match?.[1];
+  const id = match?.[2];
+  if (dimension === undefined || id === undefined || !UUID_PATTERN.test(id)) return null;
+  return { dimension: dimension as PersonGroupDimension, id };
+}
+
+function validateBucketRequirement(
+  cohort: AnalyticsDrilldownCohort,
+  requirement: 'required' | 'forbidden' | 'optional',
+): AnalyticsDrilldownCohort {
+  if (requirement === 'required' && cohort.bucket === undefined) {
+    throw validationFailed('That analytics cohort needs a bucket.');
+  }
+  if (requirement === 'forbidden' && cohort.bucket !== undefined) {
+    throw validationFailed('That analytics cohort has no bucket.');
+  }
+  return cohort;
+}
+
+function planningBucketRequirement(planning: PlanningCohort): 'required' | 'forbidden' {
+  return planning.kind === 'project' && planning.metric.startsWith('delivery-')
+    ? 'required'
+    : 'forbidden';
+}
+
+function personBucketRequirement(person: PersonCohort): 'required' | 'forbidden' | 'optional' {
+  if (person.metric === 'assigned') return 'required';
+  return person.metric === 'completed' ? 'optional' : 'forbidden';
+}
+
 function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCohort {
   const bucketed: ReadonlySet<string> = new Set([
     'delivery-created',
@@ -341,27 +424,25 @@ function validateCohort(cohort: AnalyticsDrilldownCohort): AnalyticsDrilldownCoh
     ANALYTICS_OVERVIEW_COHORTS.filter((key) => !bucketed.has(key)),
   );
   if (bucketed.has(cohort.cohort)) {
-    if (cohort.bucket === undefined)
-      throw validationFailed('That analytics cohort needs a bucket.');
-    return cohort;
+    return validateBucketRequirement(cohort, 'required');
   }
   if (unbucketed.has(cohort.cohort)) {
-    if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
-    return cohort;
+    return validateBucketRequirement(cohort, 'forbidden');
   }
   const planning = planningCohort(cohort.cohort);
   if (planning !== null) {
-    const bucketedProject = planning.kind === 'project' && planning.metric.startsWith('delivery-');
-    if (bucketedProject && cohort.bucket === undefined) {
-      throw validationFailed('That analytics cohort needs a bucket.');
-    }
-    if (!bucketedProject && cohort.bucket !== undefined) {
-      throw validationFailed('That analytics cohort has no bucket.');
-    }
-    return cohort;
+    return validateBucketRequirement(cohort, planningBucketRequirement(planning));
   }
-  if (cohort.bucket !== undefined) throw validationFailed('That analytics cohort has no bucket.');
-  if (validDimensionCohort(cohort.cohort)) return cohort;
+  const person = personCohort(cohort.cohort);
+  if (person !== null) {
+    return validateBucketRequirement(cohort, personBucketRequirement(person));
+  }
+  if (personGroupCohort(cohort.cohort) !== null) {
+    return validateBucketRequirement(cohort, 'forbidden');
+  }
+  if (validDimensionCohort(cohort.cohort)) {
+    return validateBucketRequirement(cohort, 'forbidden');
+  }
   throw validationFailed('That analytics cohort is not supported.');
 }
 
@@ -546,6 +627,129 @@ function planningCohortPredicate(
     : projectRiskPredicate(resolved, planning, projectId);
 }
 
+function personSelection(query: AnalyticsQuery): string | null {
+  if (query.focus.personId !== undefined) return query.focus.personId;
+  const selected = selectedAssigneeIds(query);
+  return selected.length === 1 ? (selected[0] ?? null) : null;
+}
+
+function currentPersonPredicate(personId: string): SQL<unknown> {
+  return personId === UNASSIGNED_PERSON_ID
+    ? isNull(schema.issue.assigneeId)
+    : eq(schema.issue.assigneeId, personId);
+}
+
+function personGroupDimension(group: PersonGroupCohort): SQL<unknown> {
+  switch (group.dimension) {
+    case 'project':
+      return eq(schema.issue.projectId, group.id);
+    case 'milestone':
+      return eq(schema.issue.milestoneId, group.id);
+    case 'sprint':
+      return eq(schema.issue.cycleId, group.id);
+    case 'state':
+      return eq(schema.issue.stateId, group.id);
+  }
+}
+
+function personGroupPredicate(
+  resolved: ResolvedAnalyticsQuery,
+  group: PersonGroupCohort,
+): SQL<unknown> {
+  const personId = personSelection(resolved);
+  if (personId === null) return sql`false`;
+  const dimension = personGroupDimension(group);
+  return and(currentPersonPredicate(personId), openPredicate(), dimension) ?? sql`false`;
+}
+
+function personCohortPredicate(
+  resolved: ResolvedAnalyticsQuery,
+  cohort: AnalyticsDrilldownCohort,
+  person: PersonCohort,
+): SQL<unknown> {
+  const current = currentPersonPredicate(person.id);
+  const attributed = personMatches(person.id, completionAttributionPerson());
+  const completed = (): SQL<unknown> => {
+    const range: readonly [Date, Date] =
+      cohort.bucket === undefined
+        ? [resolved.from, resolved.to]
+        : bucketRange(resolved, cohort.bucket);
+    const from = range[0];
+    const to = range[1];
+    return (
+      and(
+        attributed,
+        isNotNull(schema.issue.completedAt),
+        sql`${schema.issue.completedAt} >= ${from.toISOString()}::timestamptz`,
+        sql`${schema.issue.completedAt} < ${to.toISOString()}::timestamptz`,
+      ) ?? sql`false`
+    );
+  };
+  switch (person.metric) {
+    case 'current':
+      return and(current, openPredicate()) ?? sql`false`;
+    case 'completed':
+      return completed();
+    case 'wip':
+      return (
+        and(current, sql`${schema.workflowState.category} in ('started', 'review')`) ?? sql`false`
+      );
+    case 'blocked':
+      return (
+        and(
+          current,
+          openPredicate(),
+          sql`exists (
+            select 1 from issue_relation person_blocked
+            where person_blocked.issue_id = ${schema.issue.id}
+              and person_blocked.type = 'blocked_by'
+          )`,
+        ) ?? sql`false`
+      );
+    case 'overdue':
+      return (
+        and(
+          current,
+          openPredicate(),
+          isNotNull(schema.issue.dueDate),
+          sql`${schema.issue.dueDate} < (${resolved.asOf.toISOString()}::timestamptz at time zone ${resolved.timezone})::date`,
+        ) ?? sql`false`
+      );
+    case 'stale':
+      return (
+        and(
+          current,
+          openPredicate(),
+          sql`${schema.issue.updatedAt} < ${new Date(
+            resolved.asOf.getTime() - STALE_DAYS * 86_400_000,
+          ).toISOString()}::timestamptz`,
+        ) ?? sql`false`
+      );
+    case 'unestimated':
+      return and(current, openPredicate(), isNull(schema.issue.estimate)) ?? sql`false`;
+    case 'assigned': {
+      if (cohort.bucket === undefined) return sql`false`;
+      const [from, to] = bucketRange(resolved, cohort.bucket);
+      const activityPerson = sql`coalesce(
+        person_assignment.to_value ->> 'id', person_assignment.to_value #>> '{}'
+      )`;
+      return sql`exists (
+        select 1 from issue_activity person_assignment
+        where person_assignment.issue_id = ${schema.issue.id}
+          and person_assignment.field = 'assigneeId'
+          and person_assignment.created_at >= ${from.toISOString()}::timestamptz
+          and person_assignment.created_at < ${to.toISOString()}::timestamptz
+          and ${personMatches(person.id, activityPerson)}
+      )`;
+    }
+  }
+}
+
+function historicalPersonCohort(cohort: AnalyticsDrilldownCohort): boolean {
+  const person = personCohort(cohort.cohort);
+  return person?.metric === 'completed' || person?.metric === 'assigned';
+}
+
 export function cohortPredicate(
   resolved: ResolvedAnalyticsQuery,
   cohort: AnalyticsDrilldownCohort,
@@ -553,6 +757,10 @@ export function cohortPredicate(
 ): SQL<unknown> {
   const planning = planningCohort(cohort.cohort);
   if (planning !== null) return planningCohortPredicate(resolved, cohort, planning);
+  const person = personCohort(cohort.cohort);
+  if (person !== null) return personCohortPredicate(resolved, cohort, person);
+  const personGroup = personGroupCohort(cohort.cohort);
+  if (personGroup !== null) return personGroupPredicate(resolved, personGroup);
   const dimension = dimensionCohortPredicate(resolved, cohort, base);
   if (dimension !== null) return dimension;
   const interval = (column: PgColumn): SQL =>
@@ -791,7 +999,12 @@ export async function listAnalyticsDrilldown(
   ) {
     throw validationFailed('That analytics page cursor is not valid.');
   }
-  const base = baseAnalyticsPredicate(principal, resolved);
+  const base = baseAnalyticsPredicate(
+    principal,
+    historicalPersonCohort(semanticCohort)
+      ? { ...resolved, ...withoutAssigneeFilter(resolved) }
+      : resolved,
+  );
   const cohort = cohortPredicate(resolved, semanticCohort, base);
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isFinite(requestedLimit)

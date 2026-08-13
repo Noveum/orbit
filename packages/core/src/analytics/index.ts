@@ -4,6 +4,7 @@ export * from './drilldown.ts';
 export * from './filter.ts';
 export * from './math.ts';
 export * from './overview.ts';
+export * from './people.ts';
 export * from './projects.ts';
 export * from './saved-view.ts';
 export * from './schemas.ts';
