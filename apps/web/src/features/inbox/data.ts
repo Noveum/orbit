@@ -15,6 +15,7 @@ export interface InboxItem {
   readonly title: string;
   readonly body: string;
   readonly url: string;
+  readonly externalUrl: string | null;
   readonly read: boolean;
   readonly snoozedUntil: string | null;
   readonly createdAt: string;
@@ -41,6 +42,7 @@ export function toInboxItem(row: NotificationRecord): InboxItem {
     title: row.title,
     body: row.body,
     url: row.url,
+    externalUrl: row.externalUrl,
     read: row.readAt !== null,
     snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),

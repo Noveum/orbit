@@ -5,7 +5,9 @@ import {
   gitLink,
   issue,
   issueSubscription,
+  member,
   nextSyncId,
+  teamMember,
   user,
   workflowState,
 } from '@orbit/db/schema';
@@ -76,42 +78,58 @@ const EMPTY: GithubApplyResult = {
 
 export async function applyGithubEvent(
   database: GithubDatabase,
-  input: { readonly eventName: string; readonly body: unknown; readonly now?: Date },
+  input: {
+    readonly eventName: string;
+    readonly body: unknown;
+    readonly organizationId?: string | null;
+    readonly now?: Date;
+  },
 ): Promise<GithubApplyResult> {
   const event = parseGithubEvent(input.eventName, input.body);
   if (event === null) return { ...EMPTY, ignoredReason: 'unsupported_event' };
 
+  return await applyNormalizedGithubEvent(database, {
+    event,
+    ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+}
+
+export async function applyNormalizedGithubEvent(
+  database: GithubDatabase,
+  input: {
+    readonly event: NormalizedGithubEvent;
+    readonly organizationId?: string | null;
+    readonly now?: Date;
+  },
+): Promise<GithubApplyResult> {
+  const { event } = input;
+  if (input.organizationId === null) {
+    return { ...EMPTY, ignoredReason: 'repository_not_connected' };
+  }
+
   const [repo] = await database
     .select()
     .from(githubRepositorySync)
-    .where(eq(githubRepositorySync.repositoryId, event.repository.externalId))
+    .where(
+      and(
+        eq(githubRepositorySync.repositoryId, event.repository.externalId),
+        input.organizationId === undefined
+          ? undefined
+          : eq(githubRepositorySync.organizationId, input.organizationId),
+      ),
+    )
     .limit(1);
   if (repo === undefined) return { ...EMPTY, ignoredReason: 'repository_not_connected' };
   if (!repo.enabled) return { ...EMPTY, ignoredReason: 'repository_disabled' };
 
   const now = input.now ?? new Date();
-  const textIdentifiers =
-    event.pullRequest === null
-      ? extractIssueIdentifiers(event.checks?.headBranch ?? '')
-      : unique([
-          ...extractIssueIdentifiers(`${event.pullRequest.headRef} ${event.pullRequest.title}`),
-          ...declaredIssueIdentifiers(event.pullRequest.body),
-        ]);
-  const linkedIdentifiers =
-    event.pullRequest === null && event.checks !== null
-      ? await identifiersFromGitLinks(
-          database,
-          repo.organizationId,
-          event.repository.fullName,
-          event.checks.prNumbers,
-        )
-      : [];
-  const identifiers = unique([...textIdentifiers, ...linkedIdentifiers]);
+  const identifiers = await issueIdentifiers(database, repo, event);
   if (identifiers.length === 0) {
     return {
       ...EMPTY,
       handled: true,
-      ignoredReason: 'no_issue_identifier',
+      ignoredReason: event.comment === null ? 'no_issue_identifier' : 'no_matching_issue',
       organizationId: repo.organizationId,
     };
   }
@@ -131,6 +149,12 @@ export async function applyGithubEvent(
     event.requestedReviewer === null
       ? null
       : await githubAccountUser(database, event.requestedReviewer.id);
+  const audiences = await authorizedAudiences(
+    database,
+    repo.organizationId,
+    issues,
+    reviewerUserId,
+  );
 
   const actions: SyncAction[] = [];
   const notificationEvents: NotificationEvent[] = [];
@@ -142,7 +166,7 @@ export async function applyGithubEvent(
       event,
       linked,
       actor,
-      reviewerUserId,
+      audienceUserIds: audiences.get(linked.id) ?? [],
       now,
     });
     actions.push(...outcome.actions);
@@ -161,6 +185,32 @@ export async function applyGithubEvent(
   };
 }
 
+async function issueIdentifiers(
+  database: GithubDatabase,
+  repo: RepositorySync,
+  event: NormalizedGithubEvent,
+): Promise<string[]> {
+  if (event.comment !== null && event.pullRequest !== null) {
+    return await identifiersFromGitLinks(database, repo.organizationId, event.repository.fullName, [
+      event.pullRequest.number,
+    ]);
+  }
+  if (event.pullRequest !== null) {
+    return unique([
+      ...extractIssueIdentifiers(`${event.pullRequest.headRef} ${event.pullRequest.title}`),
+      ...declaredIssueIdentifiers(event.pullRequest.body),
+    ]);
+  }
+  if (event.checks === null) return [];
+  const linked = await identifiersFromGitLinks(
+    database,
+    repo.organizationId,
+    event.repository.fullName,
+    event.checks.prNumbers,
+  );
+  return unique([...extractIssueIdentifiers(event.checks.headBranch), ...linked]);
+}
+
 interface IssueOutcome {
   readonly actions: SyncAction[];
   readonly notificationEvents: NotificationEvent[];
@@ -174,17 +224,22 @@ async function applyToIssue(
     readonly event: NormalizedGithubEvent;
     readonly linked: LinkedIssue;
     readonly actor: Actor;
-    readonly reviewerUserId: string | null;
+    readonly audienceUserIds: readonly string[];
     readonly now: Date;
   },
 ): Promise<IssueOutcome> {
-  const { event, linked, actor, reviewerUserId, now, repo } = context;
+  const { event, linked, actor, audienceUserIds, now, repo } = context;
   const actions: SyncAction[] = [];
   const notificationEvents: NotificationEvent[] = [];
 
+  if (event.comment !== null && event.pullRequest !== null) {
+    notificationEvents.push(commentNotification({ linked, event, actor, repo, audienceUserIds }));
+    return { actions, notificationEvents, gitLink: null };
+  }
+
   if (event.pullRequest === null) {
     if (event.checks?.failed === true) {
-      notificationEvents.push(checksNotification({ linked, event, actor, repo }));
+      notificationEvents.push(checksNotification({ linked, event, actor, repo, audienceUserIds }));
     }
     return { actions, notificationEvents, gitLink: null };
   }
@@ -242,7 +297,7 @@ async function applyToIssue(
     buildAction({
       syncId: link.syncId,
       organizationId: repo.organizationId,
-      scopes: linkScopes(linked),
+      scopes: linkScopes(linked, audienceUserIds),
       action: inserted ? 'insert' : 'update',
       model: 'git_link',
       modelId: link.id,
@@ -255,7 +310,13 @@ async function applyToIssue(
   const transition = await transitionIssue(database, { linked, state, actor, now });
   if (transition !== null) actions.push(transition);
 
-  const notification = pullRequestNotification({ linked, event, state, actor, reviewerUserId });
+  const notification = pullRequestNotification({
+    linked,
+    event,
+    state,
+    actor,
+    audienceUserIds,
+  });
   if (notification !== null) {
     notificationEvents.push({ ...notification, organizationId: repo.organizationId });
   }
@@ -343,9 +404,9 @@ function pullRequestNotification(context: {
   readonly event: NormalizedGithubEvent;
   readonly state: PullRequestState;
   readonly actor: Actor;
-  readonly reviewerUserId: string | null;
+  readonly audienceUserIds: readonly string[];
 }): Omit<NotificationEvent, 'organizationId'> | null {
-  const { linked, event, state, actor, reviewerUserId } = context;
+  const { linked, event, state, actor, audienceUserIds } = context;
   const pr = event.pullRequest;
   if (pr === null) return null;
   const base = {
@@ -353,6 +414,7 @@ function pullRequestNotification(context: {
     entityType: 'issue',
     entityId: linked.id,
     url: `/issue/${linked.identifier}`,
+    externalUrl: event.review?.url ?? pr.url,
     body: `${event.repository.fullName}#${pr.number}`,
   };
 
@@ -361,7 +423,7 @@ function pullRequestNotification(context: {
       ...base,
       type: 'pr_review_requested',
       reason: 'review_requested',
-      userIds: audienceIds(linked, reviewerUserId),
+      userIds: [...audienceUserIds],
       title: `Review requested on ${pr.title}`,
     };
   }
@@ -376,7 +438,7 @@ function pullRequestNotification(context: {
       ...base,
       type,
       reason: type === 'pr_approved' ? 'review_approved' : 'subscribed',
-      userIds: audienceIds(linked, null),
+      userIds: [...audienceUserIds],
       title: type === 'pr_approved' ? `${pr.title} was approved` : `New review on ${pr.title}`,
     };
   }
@@ -387,7 +449,7 @@ function pullRequestNotification(context: {
       ...base,
       type: lifecycle,
       reason: lifecycle === 'pr_merged' ? 'pull_request_merged' : 'subscribed',
-      userIds: audienceIds(linked, null),
+      userIds: [...audienceUserIds],
       title: lifecycle === 'pr_merged' ? `${pr.title} was merged` : `${pr.title} was closed`,
     };
   }
@@ -400,8 +462,9 @@ function checksNotification(context: {
   readonly event: NormalizedGithubEvent;
   readonly actor: Actor;
   readonly repo: RepositorySync;
+  readonly audienceUserIds: readonly string[];
 }): NotificationEvent {
-  const { linked, event, actor, repo } = context;
+  const { linked, event, actor, repo, audienceUserIds } = context;
   const branch = event.checks?.headBranch ?? linked.identifier;
   return {
     organizationId: repo.organizationId,
@@ -410,17 +473,54 @@ function checksNotification(context: {
     actor,
     entityType: 'issue',
     entityId: linked.id,
-    userIds: audienceIds(linked, null),
+    userIds: [...audienceUserIds],
     title: `Checks failed on ${branch}`,
     body: event.repository.fullName,
     url: `/issue/${linked.identifier}`,
+    externalUrl:
+      event.checks?.prNumbers[0] === undefined
+        ? null
+        : `https://github.com/${event.repository.fullName}/pull/${event.checks.prNumbers[0]}`,
   };
 }
 
-function linkScopes(linked: LinkedIssue): string[] {
-  const list = [scopes.issue(linked.id), scopes.team(linked.teamId), scopes.user(linked.creatorId)];
-  if (linked.assigneeId !== null) list.push(scopes.user(linked.assigneeId));
-  return list;
+function commentNotification(context: {
+  readonly linked: LinkedIssue;
+  readonly event: NormalizedGithubEvent;
+  readonly actor: Actor;
+  readonly repo: RepositorySync;
+  readonly audienceUserIds: readonly string[];
+}): NotificationEvent {
+  const { linked, event, actor, repo, audienceUserIds } = context;
+  const pr = event.pullRequest;
+  const comment = event.comment;
+  if (pr === null || comment === null) {
+    throw new Error('A GitHub comment notification requires a pull request comment.');
+  }
+  return {
+    organizationId: repo.organizationId,
+    type: 'pr_comment',
+    reason: 'commented',
+    actor,
+    entityType: 'issue',
+    entityId: linked.id,
+    userIds: [...audienceUserIds],
+    title:
+      comment.kind === 'inline'
+        ? `New inline comment on ${pr.title}`
+        : `New comment on ${pr.title}`,
+    body: comment.body,
+    url: `/issue/${linked.identifier}`,
+    externalUrl: comment.url,
+  };
+}
+
+function linkScopes(linked: LinkedIssue, audienceUserIds: readonly string[]): string[] {
+  return unique([
+    scopes.issue(linked.id),
+    scopes.team(linked.teamId),
+    ...audienceUserIds.map(scopes.user),
+  ]);
 }
 
 function audienceIds(linked: LinkedIssue, extra: string | null): string[] {
@@ -428,6 +528,41 @@ function audienceIds(linked: LinkedIssue, extra: string | null): string[] {
   if (linked.assigneeId !== null) ids.push(linked.assigneeId);
   if (extra !== null) ids.push(extra);
   return unique(ids.concat(linked.subscriberIds));
+}
+
+async function authorizedAudiences(
+  database: GithubDatabase,
+  organizationId: string,
+  issues: readonly LinkedIssue[],
+  extra: string | null,
+): Promise<Map<string, string[]>> {
+  const candidateIds = unique(issues.flatMap((linked) => audienceIds(linked, extra)));
+  if (candidateIds.length === 0) return new Map();
+  const memberships = await database
+    .select({ userId: member.userId, role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, organizationId), inArray(member.userId, candidateIds)));
+  const roles = new Map(memberships.map((entry) => [entry.userId, entry.role]));
+  const teamIds = unique(issues.map((linked) => linked.teamId));
+  const teamMemberships = await database
+    .select({ userId: teamMember.userId, teamId: teamMember.teamId })
+    .from(teamMember)
+    .where(and(inArray(teamMember.userId, candidateIds), inArray(teamMember.teamId, teamIds)));
+  const teamsByUser = new Map<string, Set<string>>();
+  for (const entry of teamMemberships) {
+    const teams = teamsByUser.get(entry.userId) ?? new Set<string>();
+    teams.add(entry.teamId);
+    teamsByUser.set(entry.userId, teams);
+  }
+  return new Map(
+    issues.map((linked) => [
+      linked.id,
+      audienceIds(linked, extra).filter(
+        (userId) =>
+          roles.get(userId) === 'admin' || teamsByUser.get(userId)?.has(linked.teamId) === true,
+      ),
+    ]),
+  );
 }
 
 async function identifiersFromGitLinks(

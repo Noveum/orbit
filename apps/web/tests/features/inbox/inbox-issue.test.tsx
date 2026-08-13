@@ -203,6 +203,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     title: 'New comment on ENG-3',
     body: 'This needs a second pair of eyes.',
     url: '/issue/ENG-3#comment-comment_9',
+    externalUrl: null,
     read: false,
     snoozedUntil: null,
     createdAt: '2026-01-02T00:00:00.000Z',

@@ -3,6 +3,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import {
   exchangeGithubUserCode,
   fetchGithubInstallation,
+  fetchGithubOpenPullRequests,
   fetchInstalledRepositories,
   forgetGithubInstallationTokens,
   GITHUB_MAX_REPOSITORY_PAGES,
@@ -102,6 +103,58 @@ describe('githubInstallationToken', () => {
 
     expect(first).not.toBe(second);
     expect(counts.minted).toBe(2);
+  });
+});
+
+describe('fetchGithubOpenPullRequests', () => {
+  it('walks every open pull request page and normalizes the fields Orbit stores', async () => {
+    const pages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pulls' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      const page = Number(parsed.searchParams.get('page') ?? '1');
+      pages.push(page);
+      const count = page === 1 ? 100 : 1;
+      return new Response(
+        JSON.stringify(
+          Array.from({ length: count }, (_unused, index) => ({
+            number: (page - 1) * 100 + index + 1,
+            title: `Pull ${page}-${index}`,
+            body: index === 0 ? 'Links ORB-3' : null,
+            html_url: `https://github.com/Noveum/orbit/pull/${(page - 1) * 100 + index + 1}`,
+            draft: index === 1,
+            state: 'open',
+            head: { ref: `orb-3-branch-${index}` },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+          })),
+        ),
+        { status: 200 },
+      );
+    });
+
+    const pulls = await fetchGithubOpenPullRequests({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'Noveum/orbit',
+      fetch: fetchImpl,
+    });
+
+    expect(pages).toEqual([1, 2]);
+    expect(pulls).toHaveLength(101);
+    expect(pulls[0]).toEqual({
+      number: 1,
+      title: 'Pull 1-0',
+      body: 'Links ORB-3',
+      url: 'https://github.com/Noveum/orbit/pull/1',
+      headRef: 'orb-3-branch-0',
+      baseRef: 'main',
+      draft: false,
+      author: { login: 'octocat', id: 500 },
+    });
   });
 });
 

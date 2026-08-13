@@ -135,6 +135,33 @@ const checkSuiteEventSchema = z.object({
   sender: githubUserSchema,
 });
 
+const commentSchema = z.object({
+  body: z.string().max(65536).default(''),
+  html_url: z.string().url().max(2048),
+  user: githubUserSchema.nullable().optional(),
+});
+
+const issueCommentEventSchema = z.object({
+  action: z.string().min(1).max(64),
+  issue: z.object({
+    number: z.number().int().positive(),
+    title: z.string().max(1024).default(''),
+    html_url: z.string().url().max(2048),
+    pull_request: z.object({ url: z.string().url().max(2048) }).optional(),
+  }),
+  comment: commentSchema,
+  repository: repositorySchema,
+  sender: githubUserSchema,
+});
+
+const reviewCommentEventSchema = z.object({
+  action: z.string().min(1).max(64),
+  pull_request: pullRequestSchema,
+  comment: commentSchema,
+  repository: repositorySchema,
+  sender: githubUserSchema,
+});
+
 export interface NormalizedPullRequest {
   readonly number: number;
   readonly title: string;
@@ -161,6 +188,11 @@ export interface NormalizedGithubEvent {
     readonly failed: boolean;
     readonly headBranch: string;
     readonly prNumbers: number[];
+  } | null;
+  readonly comment: {
+    readonly body: string;
+    readonly url: string;
+    readonly kind: 'conversation' | 'inline';
   } | null;
   readonly sender: GithubUser;
 }
@@ -201,6 +233,7 @@ function parsePullRequestEvent(body: unknown): NormalizedGithubEvent | null {
     review: null,
     requestedReviewer: parsed.requested_reviewer ?? null,
     checks: null,
+    comment: null,
     sender: parsed.sender,
   };
 }
@@ -223,6 +256,7 @@ function parseReviewEvent(body: unknown): NormalizedGithubEvent | null {
     },
     requestedReviewer: null,
     checks: null,
+    comment: null,
     sender: parsed.sender,
   };
 }
@@ -245,6 +279,63 @@ function parseCheckSuiteEvent(body: unknown): NormalizedGithubEvent | null {
       headBranch: parsed.check_suite.head_branch ?? '',
       prNumbers: parsed.check_suite.pull_requests.map((entry) => entry.number),
     },
+    comment: null,
+    sender: parsed.sender,
+  };
+}
+
+function parseIssueCommentEvent(body: unknown): NormalizedGithubEvent | null {
+  const result = issueCommentEventSchema.safeParse(body);
+  if (!result.success || result.data.issue.pull_request === undefined) return null;
+  const parsed = result.data;
+  return {
+    action: parsed.action,
+    repository: {
+      externalId: String(parsed.repository.id),
+      fullName: parsed.repository.full_name,
+    },
+    pullRequest: {
+      number: parsed.issue.number,
+      title: parsed.issue.title,
+      body: '',
+      url: parsed.issue.html_url,
+      headRef: '',
+      baseRef: '',
+      draft: false,
+      merged: false,
+      closed: false,
+    },
+    review: null,
+    requestedReviewer: null,
+    checks: null,
+    comment: {
+      body: parsed.comment.body.slice(0, 4000),
+      url: parsed.comment.html_url,
+      kind: 'conversation',
+    },
+    sender: parsed.sender,
+  };
+}
+
+function parseReviewCommentEvent(body: unknown): NormalizedGithubEvent | null {
+  const result = reviewCommentEventSchema.safeParse(body);
+  if (!result.success) return null;
+  const parsed = result.data;
+  return {
+    action: parsed.action,
+    repository: {
+      externalId: String(parsed.repository.id),
+      fullName: parsed.repository.full_name,
+    },
+    pullRequest: normalizePullRequest(parsed.pull_request),
+    review: null,
+    requestedReviewer: null,
+    checks: null,
+    comment: {
+      body: parsed.comment.body.slice(0, 4000),
+      url: parsed.comment.html_url,
+      kind: 'inline',
+    },
     sender: parsed.sender,
   };
 }
@@ -254,6 +345,8 @@ const GITHUB_EVENT_PARSERS: Readonly<
 > = {
   pull_request: parsePullRequestEvent,
   pull_request_review: parseReviewEvent,
+  issue_comment: parseIssueCommentEvent,
+  pull_request_review_comment: parseReviewCommentEvent,
   check_suite: parseCheckSuiteEvent,
 };
 

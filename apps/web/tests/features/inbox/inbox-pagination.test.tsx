@@ -37,6 +37,7 @@ function item(id: string, overrides: Partial<InboxItem> = {}): InboxItem {
     title: `Notification ${id}`,
     body: '',
     url: '/issue/ENG-3',
+    externalUrl: null,
     read: true,
     snoozedUntil: null,
     createdAt: '2026-01-01T00:00:00.000Z',

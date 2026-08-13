@@ -58,6 +58,7 @@ const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
   invite_accepted: UserPlus,
   member_joined: UserPlus,
   pr_review_requested: GitPullRequest,
+  pr_comment: MessageSquare,
   pr_review_submitted: MessageSquare,
   pr_approved: CheckCircle2,
   pr_merged: GitMerge,
@@ -91,6 +92,7 @@ const notificationDeltaSchema = z.object({
   title: z.string(),
   body: z.string(),
   url: z.string(),
+  externalUrl: z.string().nullable().default(null),
   readAt: z.string().nullable(),
   snoozedUntil: z.string().nullable(),
   createdAt: z.string(),
@@ -113,6 +115,7 @@ const inboxPageSchema = z.object({
       title: z.string(),
       body: z.string(),
       url: z.string(),
+      externalUrl: z.string().nullable().default(null),
       read: z.boolean(),
       snoozedUntil: z.string().nullable(),
       createdAt: z.string(),
@@ -134,6 +137,7 @@ function toInboxItem(data: Record<string, unknown>): InboxItem | null {
     title: row.title,
     body: row.body,
     url: row.url,
+    externalUrl: row.externalUrl,
     read: row.readAt !== null,
     snoozedUntil: row.snoozedUntil,
     createdAt: row.createdAt,
@@ -295,14 +299,27 @@ function NotificationDetail({
           {relativeTime(new Date(item.createdAt))}
           {item.snoozedUntil === null ? '' : ' · snoozed'}
         </p>
-        <Link
-          href={item.url}
-          data-testid="inbox-open-link"
-          onClick={onOpen}
-          className="shrink-0 rounded-sm text-accent text-2xs hover:underline"
-        >
-          Open in Orbit
-        </Link>
+        <span className="flex shrink-0 items-center gap-3">
+          {isPullRequestNotification(item.type) && item.externalUrl !== null ? (
+            <a
+              href={item.externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={onOpen}
+              className="rounded-sm text-accent text-2xs hover:underline"
+            >
+              Open on GitHub
+            </a>
+          ) : null}
+          <Link
+            href={item.url}
+            data-testid="inbox-open-link"
+            onClick={onOpen}
+            className="rounded-sm text-accent text-2xs hover:underline"
+          >
+            {isPullRequestNotification(item.type) ? 'Open issue' : 'Open in Orbit'}
+          </Link>
+        </span>
       </div>
 
       {isPullRequestNotification(item.type) && item.body.length > 0 ? (

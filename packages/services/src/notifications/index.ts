@@ -53,6 +53,7 @@ export const notificationEventSchema = z.object({
   title: z.string().trim().min(1).max(255),
   body: z.string().max(4000).default(''),
   url: z.string().trim().min(1).max(2048),
+  externalUrl: z.string().url().max(2048).nullish(),
   priority: z.number().int().min(0).max(4).optional(),
 });
 
@@ -219,6 +220,7 @@ function toInsert(plan: Plan, now: Date) {
     title: event.title,
     body: event.body,
     url: event.url,
+    externalUrl: event.externalUrl ?? null,
     deliveredChannels: plan.channels,
     syncId: nextSyncId,
     createdAt: now,
@@ -276,6 +278,7 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
       title: row.title,
       body: row.body,
       url: row.url,
+      externalUrl: row.externalUrl,
       readAt: row.readAt?.toISOString() ?? null,
       snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
       deliveredChannels: row.deliveredChannels,

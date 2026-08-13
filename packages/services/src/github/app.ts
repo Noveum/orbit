@@ -58,8 +58,26 @@ const repositoriesSchema = z.object({
   repositories: z.array(repositorySchema).default([]),
 });
 
+const openPullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string().max(1024).default(''),
+  body: z.string().max(65536).nullable().default(null),
+  html_url: z.string().url().max(2048),
+  draft: z.boolean().default(false),
+  head: z.object({ ref: z.string().max(1024).default('') }),
+  base: z.object({ ref: z.string().max(1024).default('') }),
+  user: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+});
+
+const openPullRequestsSchema = z.array(openPullRequestSchema);
+
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
 export const GITHUB_MAX_REPOSITORY_PAGES = 100;
+export const GITHUB_PULL_REQUEST_PAGE_SIZE = 100;
+export const GITHUB_MAX_PULL_REQUEST_PAGES = 100;
 
 export const GITHUB_REPOSITORY_SELECTIONS = ['all', 'selected'] as const;
 export type GithubRepositorySelection = (typeof GITHUB_REPOSITORY_SELECTIONS)[number];
@@ -98,6 +116,17 @@ export interface GithubInstalledRepository {
   readonly archived: boolean;
   readonly defaultBranch: string;
   readonly htmlUrl: string;
+}
+
+export interface GithubOpenPullRequest {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly url: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+  readonly draft: boolean;
+  readonly author: { readonly login: string; readonly id: number };
 }
 
 export interface GithubInstallationAccount {
@@ -284,6 +313,44 @@ export async function fetchInstalledRepositories(
   }
   throw internal(
     `GitHub installation ${input.installationId} lists more than ${GITHUB_MAX_REPOSITORY_PAGES * GITHUB_REPOSITORY_PAGE_SIZE} repositories, so this snapshot is incomplete.`,
+  );
+}
+
+export async function fetchGithubOpenPullRequests(
+  input: GithubAppRequest & { readonly repository: string },
+): Promise<GithubOpenPullRequest[]> {
+  const token = await githubInstallationToken(input);
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const repository = input.repository
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const collected: GithubOpenPullRequest[] = [];
+  for (let page = 1; page <= GITHUB_MAX_PULL_REQUEST_PAGES; page += 1) {
+    const body = await githubJson(
+      fetchImpl,
+      `${base}/repos/${repository}/pulls?state=open&per_page=${GITHUB_PULL_REQUEST_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${token}` } },
+      openPullRequestsSchema,
+      'open pull requests',
+    );
+    collected.push(
+      ...body.map((pullRequest) => ({
+        number: pullRequest.number,
+        title: pullRequest.title,
+        body: pullRequest.body ?? '',
+        url: pullRequest.html_url,
+        headRef: pullRequest.head.ref,
+        baseRef: pullRequest.base.ref,
+        draft: pullRequest.draft,
+        author: pullRequest.user ?? { login: 'github', id: 0 },
+      })),
+    );
+    if (body.length < GITHUB_PULL_REQUEST_PAGE_SIZE) return collected;
+  }
+  throw internal(
+    `GitHub repository ${input.repository} lists more than ${GITHUB_MAX_PULL_REQUEST_PAGES * GITHUB_PULL_REQUEST_PAGE_SIZE} open pull requests, so this snapshot is incomplete.`,
   );
 }
 

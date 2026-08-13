@@ -53,6 +53,7 @@ export const notification = pgTable(
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
     url: text('url').notNull(),
+    externalUrl: text('external_url'),
     readAt: timestamp('read_at', { withTimezone: true }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
     deliveredChannels: jsonb('delivered_channels').$type<string[]>().notNull().default([]),

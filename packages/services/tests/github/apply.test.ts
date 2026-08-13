@@ -4,8 +4,10 @@ import {
   gitLink,
   integration,
   issue,
+  member,
   organization,
   team,
+  teamMember,
   user,
   workflowState,
 } from '@orbit/db/schema';
@@ -47,8 +49,29 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
   }));
   await tx.insert(user).values(people);
 
+  const creatorId = `usr_creator_${suffix}`;
+  const assigneeId = `usr_assignee_${suffix}`;
+  await tx.insert(member).values([
+    {
+      id: `mem_creator_${suffix}`,
+      organizationId,
+      userId: creatorId,
+      role: 'member',
+    },
+    {
+      id: `mem_assignee_${suffix}`,
+      organizationId,
+      userId: assigneeId,
+      role: 'member',
+    },
+  ]);
+
   const teamId = `team_${suffix}`;
   await tx.insert(team).values({ id: teamId, organizationId, name: 'Engineering', key: 'ENG' });
+  await tx.insert(teamMember).values([
+    { id: `tm_creator_${suffix}`, teamId, userId: creatorId },
+    { id: `tm_assignee_${suffix}`, teamId, userId: assigneeId },
+  ]);
 
   const states: Record<string, string> = {};
   await tx.insert(workflowState).values(
@@ -67,8 +90,6 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
     }),
   );
 
-  const creatorId = `usr_creator_${suffix}`;
-  const assigneeId = `usr_assignee_${suffix}`;
   const issueId = `iss_${suffix}`;
   const stateId = states[startState];
   if (stateId === undefined) throw new Error('missing start state');
@@ -387,6 +408,127 @@ describe('applyGithubEvent', () => {
         true,
       );
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Review');
+    });
+  });
+
+  it('notifies an existing linked pull request about a conversation comment', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+
+      const result = await applyGithubEvent(tx, {
+        eventName: 'issue_comment',
+        body: {
+          action: 'created',
+          issue: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+          },
+          comment: {
+            body: 'Please add a regression test.',
+            html_url: 'https://github.com/acme/web/pull/7#issuecomment-1',
+            user: { login: 'reviewer', id: 901 },
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'reviewer', id: 901 },
+        },
+      });
+
+      expect(result.ignoredReason).toBeNull();
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.type).toBe('pr_comment');
+      expect(result.notificationEvents[0]?.externalUrl).toBe(
+        'https://github.com/acme/web/pull/7#issuecomment-1',
+      );
+      expect(result.notificationEvents[0]?.entityId).toBe(fixture.issueId);
+    });
+  });
+
+  it('does not link an unlinked pull request from an identifier in a comment', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const result = await applyGithubEvent(tx, {
+        eventName: 'issue_comment',
+        body: {
+          action: 'created',
+          issue: {
+            number: 88,
+            title: 'Unlinked work',
+            html_url: 'https://github.com/acme/web/pull/88',
+            pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/88' },
+          },
+          comment: {
+            body: 'Maybe this is related to ENG-3.',
+            html_url: 'https://github.com/acme/web/pull/88#issuecomment-2',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'reviewer', id: 901 },
+        },
+      });
+
+      expect(result.ignoredReason).toBe('no_matching_issue');
+      expect(result.notificationEvents).toHaveLength(0);
+      expect(
+        await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId)),
+      ).toHaveLength(0);
+    });
+  });
+
+  it('excludes a former team member from notifications and realtime user scopes', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'In Progress');
+      await tx.delete(teamMember).where(eq(teamMember.userId, fixture.assigneeId));
+
+      const result = await applyGithubEvent(tx, {
+        eventName: 'pull_request_review',
+        body: {
+          action: 'submitted',
+          review: { state: 'approved', user: { login: 'rev', id: 900 } },
+          pull_request: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            head: { ref: 'eng-3-dashboard' },
+            base: { ref: 'main' },
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'rev', id: 900 },
+        },
+      });
+
+      expect(result.notificationEvents[0]?.userIds).toContain(fixture.creatorId);
+      expect(result.notificationEvents[0]?.userIds).not.toContain(fixture.assigneeId);
+      const linkAction = result.actions.find((action) => action.model === 'git_link');
+      expect(linkAction?.scopes).not.toContain(`user:${fixture.assigneeId}`);
+    });
+  });
+
+  it('keeps a workspace administrator in the audience without a team membership', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'In Progress');
+      await tx.delete(teamMember).where(eq(teamMember.userId, fixture.assigneeId));
+      await tx.update(member).set({ role: 'admin' }).where(eq(member.userId, fixture.assigneeId));
+
+      const result = await applyGithubEvent(tx, {
+        eventName: 'pull_request_review',
+        body: {
+          action: 'submitted',
+          review: { state: 'approved', user: { login: 'rev', id: 900 } },
+          pull_request: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            head: { ref: 'eng-3-dashboard' },
+            base: { ref: 'main' },
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'rev', id: 900 },
+        },
+      });
+
+      expect(result.notificationEvents[0]?.userIds).toContain(fixture.assigneeId);
     });
   });
 });

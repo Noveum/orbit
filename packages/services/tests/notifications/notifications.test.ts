@@ -122,6 +122,23 @@ describe('notifyMany', () => {
     });
   });
 
+  it('keeps the external destination beside the internal Orbit route', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const event = {
+        ...eventFor(fixture, { userIds: [fixture.adaId] }),
+        externalUrl: 'https://github.com/acme/web/pull/7',
+      };
+
+      const outcome = await notifyMany(tx, [event]);
+      const stored = outcome.notifications[0] as unknown as Record<string, unknown>;
+
+      expect(stored['url']).toBe('/issue/ORB-1');
+      expect(stored['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+      expect(outcome.actions[0]?.data['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+    });
+  });
+
   it('keeps a type out of the inbox when the inbox channel is off', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

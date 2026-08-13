@@ -1,4 +1,4 @@
-import { and, db, desc, eq, or, schema } from '@orbit/db';
+import { and, db, desc, eq, exists, schema } from '@orbit/db';
 import type { Principal } from '@orbit/shared/policy';
 
 export interface PullRequestRow {
@@ -84,6 +84,18 @@ export async function githubReach(principal: Principal): Promise<GithubReach> {
 }
 
 export async function loadPullRequests(principal: Principal): Promise<PullRequestRow[]> {
+  const [membership] = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, principal.organizationId),
+        eq(schema.member.userId, principal.userId),
+      ),
+    )
+    .limit(1);
+  if (membership === undefined) return [];
+
   const rows = await db
     .select({
       id: schema.gitLink.id,
@@ -105,10 +117,26 @@ export async function loadPullRequests(principal: Principal): Promise<PullReques
       and(
         eq(schema.gitLink.organizationId, principal.organizationId),
         eq(schema.gitLink.kind, 'pull_request'),
-        or(
-          eq(schema.issue.assigneeId, principal.userId),
-          eq(schema.issue.creatorId, principal.userId),
-        ),
+        membership.role === 'admin'
+          ? undefined
+          : exists(
+              db
+                .select({ id: schema.teamMember.id })
+                .from(schema.teamMember)
+                .innerJoin(
+                  schema.member,
+                  and(
+                    eq(schema.member.userId, schema.teamMember.userId),
+                    eq(schema.member.organizationId, principal.organizationId),
+                  ),
+                )
+                .where(
+                  and(
+                    eq(schema.teamMember.teamId, schema.issue.teamId),
+                    eq(schema.teamMember.userId, principal.userId),
+                  ),
+                ),
+            ),
       ),
     )
     .orderBy(desc(schema.gitLink.updatedAt))

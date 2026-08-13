@@ -72,6 +72,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     title: 'Mentioned you in ENG-3',
     body: 'Take a look',
     url: '/issue/ENG-3#comment-comment_9',
+    externalUrl: null,
     read: false,
     snoozedUntil: null,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -139,6 +140,27 @@ describe('opening a notification', () => {
     await user.click(screen.getByRole('button', { name: /Mentioned you in ENG-3/ }));
 
     expect(calls).toEqual([]);
+  });
+
+  it('opens a pull request on GitHub and keeps the related Orbit issue separate', () => {
+    renderInbox([
+      item({
+        type: 'pr_review_requested',
+        title: 'Review requested on Fix the socket',
+        body: 'Noveum/orbit#307',
+        url: '/issue/ENG-3',
+        externalUrl: 'https://github.com/Noveum/orbit/pull/307',
+      }),
+    ]);
+
+    expect(screen.getByRole('link', { name: 'Open on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/Noveum/orbit/pull/307',
+    );
+    expect(screen.getByRole('link', { name: 'Open issue' })).toHaveAttribute(
+      'href',
+      '/issue/ENG-3',
+    );
   });
 });
 

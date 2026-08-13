@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
-import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import {
+  createWorkspace,
+  resetDatabase,
+  stateNamed,
+  type Workspace,
+} from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
-import { listGithubCatalogue, listGithubInstallations } from '@orbit/services';
+import {
+  linkGithubRepository,
+  listGithubCatalogue,
+  listGithubInstallations,
+} from '@orbit/services';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
   completeGithubInstall,
   refreshWorkspaceRepositories,
@@ -30,6 +40,7 @@ const IMSHASHANK = '151889033';
 interface GithubStub {
   readonly installations: Record<string, unknown>;
   readonly repositories: Record<string, unknown[]>;
+  readonly pullRequests?: Record<string, unknown[]>;
   readonly userInstallations?: number[];
   readonly userTokenError?: string;
 }
@@ -66,6 +77,12 @@ function githubFetch(stub: GithubStub): typeof globalThis.fetch {
           status: 200,
         }),
       );
+    }
+    const pullsMatch = /\/repos\/(.+)\/pulls$/.exec(new URL(url).pathname);
+    if (pullsMatch !== null) {
+      const repository = decodeURIComponent(pullsMatch[1] ?? '');
+      const pullRequests = stub.pullRequests?.[repository] ?? [];
+      return Promise.resolve(new Response(JSON.stringify(pullRequests), { status: 200 }));
     }
     const installationMatch = /\/app\/installations\/(\d+)$/.exec(url);
     if (installationMatch !== null) {
@@ -400,6 +417,70 @@ describe('refreshWorkspaceRepositories', () => {
 
     expect(refreshed).toBe(1);
     expect(calls).toBeGreaterThan(0);
+  });
+
+  it('backfills open pull requests for watched repositories without sending old notifications', async () => {
+    const stub: GithubStub = {
+      ...NOVEUM_STUB,
+      pullRequests: {
+        'Noveum/ai-gateway': [
+          {
+            number: 73,
+            title: 'Restore the GitHub inbox ORB-3',
+            body: 'Links ORB-3',
+            html_url: 'https://github.com/Noveum/ai-gateway/pull/73',
+            draft: false,
+            state: 'open',
+            head: { ref: 'orb-3-github-inbox' },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+          },
+        ],
+      },
+    };
+    await install(workspace, NOVEUM, stub);
+    const repository = (await listGithubCatalogue(db, workspace.organizationId)).find(
+      (entry) => entry.fullName === 'Noveum/ai-gateway',
+    );
+    if (repository === undefined) throw new Error('the installed repository is missing');
+    await db.transaction(async (tx) =>
+      linkGithubRepository(tx, {
+        organizationId: workspace.organizationId,
+        repositoryId: repository.repositoryId,
+        projectId: null,
+        linkedById: workspace.adminUser.id,
+      }),
+    );
+    await db.update(schema.team).set({ key: 'ORB' }).where(eq(schema.team.id, workspace.teamId));
+    const issueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values({
+      id: issueId,
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      number: 3,
+      identifier: 'ORB-3',
+      title: 'GitHub inbox',
+      stateId: stateNamed(workspace, 'Todo').id,
+      creatorId: workspace.adminUser.id,
+    });
+    const installations = await listGithubInstallations(db, workspace.organizationId);
+
+    const refreshed = await refreshWorkspaceRepositories({
+      installations,
+      force: true,
+      config: CONFIG,
+      fetch: githubFetch(stub),
+    });
+
+    const links = await db.select().from(schema.gitLink).where(eq(schema.gitLink.issueId, issueId));
+    const notifications = await db
+      .select()
+      .from(schema.notification)
+      .where(eq(schema.notification.organizationId, workspace.organizationId));
+    expect(refreshed).toBe(1);
+    expect(links).toHaveLength(1);
+    expect(links[0]?.url).toBe('https://github.com/Noveum/ai-gateway/pull/73');
+    expect(notifications).toHaveLength(0);
   });
 
   it('leaves the cache in place when GitHub is unreachable', async () => {

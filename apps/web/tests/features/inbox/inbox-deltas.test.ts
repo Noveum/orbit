@@ -15,6 +15,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     title: 'Ada assigned you ENG-3',
     body: '',
     url: '/issue/ENG-3',
+    externalUrl: null,
     read: false,
     snoozedUntil: null,
     createdAt: '2026-01-01T00:00:00.000Z',

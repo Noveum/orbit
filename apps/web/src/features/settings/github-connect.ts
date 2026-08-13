@@ -1,9 +1,11 @@
-import { db } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import {
+  applyNormalizedGithubEvent,
   assertGithubIntegrationManager,
   bindGithubInstallation,
   exchangeGithubUserCode,
   fetchGithubInstallation,
+  fetchGithubOpenPullRequests,
   fetchInstalledRepositories,
   type GithubInstallationRow,
   listUserInstallationIds,
@@ -113,7 +115,67 @@ export async function syncInstallationRepositories(input: SyncRepositoriesInput)
       ...(input.now === undefined ? {} : { now: input.now }),
     }),
   );
+  await backfillInstallationPullRequests(input);
   return repositories.length;
+}
+
+async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<number> {
+  const watched = await db
+    .select({
+      repositoryId: schema.githubRepositorySync.repositoryId,
+      repositoryName: schema.githubRepositorySync.repositoryName,
+    })
+    .from(schema.githubRepositorySync)
+    .where(
+      and(
+        eq(schema.githubRepositorySync.organizationId, input.installation.organizationId),
+        eq(schema.githubRepositorySync.installationId, input.installation.installationId),
+        eq(schema.githubRepositorySync.enabled, true),
+      ),
+    );
+  let applied = 0;
+  for (const repository of watched) {
+    const pullRequests = await fetchGithubOpenPullRequests({
+      appId: input.config.appId,
+      privateKey: input.config.privateKey,
+      installationId: input.installation.installationId,
+      repository: repository.repositoryName,
+      ...fetchOverride(input),
+    });
+    await db.transaction(async (tx) => {
+      for (const pullRequest of pullRequests) {
+        const outcome = await applyNormalizedGithubEvent(tx, {
+          organizationId: input.installation.organizationId,
+          event: {
+            action: 'synchronize',
+            repository: {
+              externalId: repository.repositoryId,
+              fullName: repository.repositoryName,
+            },
+            pullRequest: {
+              number: pullRequest.number,
+              title: pullRequest.title,
+              body: pullRequest.body,
+              url: pullRequest.url,
+              headRef: pullRequest.headRef,
+              baseRef: pullRequest.baseRef,
+              draft: pullRequest.draft,
+              merged: false,
+              closed: false,
+            },
+            review: null,
+            requestedReviewer: null,
+            checks: null,
+            comment: null,
+            sender: pullRequest.author,
+          },
+          ...(input.now === undefined ? {} : { now: input.now }),
+        });
+        applied += outcome.gitLinks.length;
+      }
+    });
+  }
+  return applied;
 }
 
 export function repositoriesAreStale(

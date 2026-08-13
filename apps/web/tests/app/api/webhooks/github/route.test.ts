@@ -60,6 +60,18 @@ async function seed(): Promise<void> {
     externalId: 'install-42',
     connectedById: workspace.adminUser.id,
   });
+  await db.insert(schema.githubInstallation).values({
+    id: `ghi_${randomUUIDv7()}`,
+    organizationId: workspace.organizationId,
+    installationId: 'install-42',
+    integrationId,
+    accountLogin: 'acme',
+    accountId: '42',
+    accountType: 'Organization',
+    repositorySelection: 'all',
+    status: 'active',
+    connectedById: workspace.adminUser.id,
+  });
   await db.insert(schema.githubRepositorySync).values({
     id: `repo_${randomUUIDv7()}`,
     organizationId: workspace.organizationId,
@@ -67,6 +79,7 @@ async function seed(): Promise<void> {
     teamId: workspace.teamId,
     repositoryId: '99',
     repositoryName: 'acme/web',
+    installationId: 'install-42',
   });
   const todo = workspace.states.find((state) => state.category === 'unstarted');
   if (todo === undefined) throw new Error('the seeded team has no unstarted state');
@@ -99,6 +112,7 @@ function pullRequestBody(headRef: string, state: 'open' | 'closed' = 'open'): st
       user: { login: 'octocat', id: 500 },
     },
     repository: { id: 99, full_name: 'acme/web' },
+    installation: { id: 'install-42' },
     sender: { login: 'octocat', id: 500 },
   });
 }
@@ -226,6 +240,39 @@ describe('POST /api/webhooks/github', () => {
     expect(published).toHaveLength(0);
   });
 
+  it('lets only one request claim a delivery when the same webhook arrives concurrently', async () => {
+    const raw = pullRequestBody('orb-3-dashboard');
+
+    const responses = await Promise.all([
+      POST(signed(raw, 'delivery-concurrent')),
+      POST(signed(raw, 'delivery-concurrent')),
+    ]);
+    const payloads = await Promise.all(responses.map((response) => response.json()));
+
+    expect(payloads.filter((payload) => payload.status === 'duplicate')).toHaveLength(1);
+    expect(payloads.filter((payload) => payload.ok === true)).toHaveLength(1);
+    expect((await deliveryRow('delivery-concurrent'))?.status).toBe('processed');
+    expect(await linkCount()).toBe(1);
+  });
+
+  it('reclaims a delivery left processing by a worker that stopped', async () => {
+    await db.insert(schema.webhookDelivery).values({
+      id: randomUUIDv7(),
+      provider: 'github',
+      deliveryId: 'delivery-abandoned',
+      event: 'pull_request',
+      status: 'processing',
+      createdAt: new Date(Date.now() - 16 * 60 * 1000),
+    });
+
+    const response = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-abandoned'));
+
+    expect(response.status).toBe(200);
+    expect(bodySchema.parse(await response.json())).not.toEqual({ status: 'duplicate' });
+    expect((await deliveryRow('delivery-abandoned'))?.status).toBe('processed');
+    expect(await linkCount()).toBe(1);
+  });
+
   it('retries a delivery that previously failed instead of calling it a duplicate', async () => {
     const broken = '{ not json';
     const failed = await POST(signed(broken, 'delivery-retry'));
@@ -320,7 +367,7 @@ describe('POST /api/webhooks/github, installation events', () => {
     );
 
     expect(response.status).toBe(401);
-    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(1);
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(2);
   });
 
   it('removes the installation and its repositories when GitHub says it was deleted', async () => {
@@ -331,7 +378,8 @@ describe('POST /api/webhooks/github, installation events', () => {
 
     expect(response.status).toBe(200);
     expect(bodySchema.parse(await response.json())).toEqual({ ok: true, handled: true });
-    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(0);
+    const installations = await listGithubInstallations(db, workspace.organizationId);
+    expect(installations.map((row) => row.installationId)).toEqual(['install-42']);
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
     expect((await deliveryRow('install-deleted'))?.status).toBe('processed');
   });
@@ -352,8 +400,9 @@ describe('POST /api/webhooks/github, installation events', () => {
     await POST(signed(installationEnvelope('suspend'), 'install-suspend', 'installation'));
 
     const rows = await listGithubInstallations(db, workspace.organizationId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe('suspended');
+    expect(rows.find((row) => row.installationId === CONNECTED_INSTALLATION)?.status).toBe(
+      'suspended',
+    );
   });
 
   it('unsuspends it again', async () => {
@@ -363,7 +412,9 @@ describe('POST /api/webhooks/github, installation events', () => {
     await POST(signed(installationEnvelope('unsuspend'), 'install-unsuspend', 'installation'));
 
     const rows = await listGithubInstallations(db, workspace.organizationId);
-    expect(rows[0]?.status).toBe('active');
+    expect(rows.find((row) => row.installationId === CONNECTED_INSTALLATION)?.status).toBe(
+      'active',
+    );
   });
 
   it('adds a repository granted on GitHub to the catalogue', async () => {
@@ -497,7 +548,6 @@ describe('events that reach no handler', () => {
     'status',
     'repository_dispatch',
     'issues',
-    'pull_request_review_comment',
     'push',
     'pull_request_review_thread',
     'sub_issues',
@@ -587,6 +637,19 @@ describe('attributing a delivery to the workspace it belongs to', () => {
     expect(row?.error).toBe('repository_not_connected');
   });
 
+  it('does not route a known repository payload from an installation Orbit does not own', async () => {
+    const payload = JSON.parse(pullRequestBody('orb-3-dashboard')) as Record<string, unknown>;
+    payload['installation'] = { id: 'inst-belongs-elsewhere' };
+
+    const response = await POST(signed(JSON.stringify(payload), 'delivery-wrong-installation'));
+
+    expect(response.status).toBe(200);
+    expect(await linkCount()).toBe(0);
+    const row = await deliveryRow('delivery-wrong-installation');
+    expect(row?.organizationId).toBeNull();
+    expect(row?.error).toBe('repository_not_connected');
+  });
+
   it('leaves a delivery unattributed when no installation here owns it', async () => {
     const raw = JSON.stringify({
       action: 'opened',
@@ -647,6 +710,7 @@ describe('the whole path from a delivery to the pulls page', () => {
         user: { login: 'octocat', id: 500 },
       },
       repository: { id: 99, full_name: 'acme/web' },
+      installation: { id: 'install-42' },
       sender: { login: 'octocat', id: 500 },
     });
 

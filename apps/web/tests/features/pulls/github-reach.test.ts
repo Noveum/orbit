@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  stateNamed,
+  type Workspace,
+} from '@orbit/core/test-support';
+import { and, db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { githubReach } from '../../../src/features/pulls/data.ts';
+import { githubReach, loadPullRequests } from '../../../src/features/pulls/data.ts';
 
 let workspace: Workspace;
 
@@ -176,5 +182,74 @@ describe('githubReach', () => {
     await catalogued(integrationId, 'seen-but-never-switched-on');
 
     expect(await githubReach(workspace.admin)).toBe('no_repositories');
+  });
+});
+
+describe('loadPullRequests', () => {
+  it('rechecks current team membership instead of trusting a stale principal', async () => {
+    const teammate = await addMember(workspace, 'member');
+    const issueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values({
+      id: issueId,
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      number: 51,
+      identifier: 'REA-51',
+      title: 'Keep pull request access current',
+      stateId: stateNamed(workspace, 'Todo').id,
+      creatorId: teammate.user.id,
+      assigneeId: teammate.user.id,
+    });
+    await db.insert(schema.gitLink).values({
+      id: `git_${randomUUIDv7()}`,
+      organizationId: workspace.organizationId,
+      issueId,
+      kind: 'pull_request',
+      externalId: 'pr:noveum/orbit#51:rea-51',
+      number: 51,
+      repository: 'noveum/orbit',
+      title: 'Keep pull request access current',
+      url: 'https://github.com/noveum/orbit/pull/51',
+    });
+
+    await db.delete(schema.teamMember).where(eq(schema.teamMember.userId, teammate.user.id));
+
+    expect(await loadPullRequests(teammate.principal)).toHaveLength(0);
+    expect(await loadPullRequests(workspace.admin)).toHaveLength(1);
+  });
+
+  it('does not trust a stale admin principal after the admin leaves the workspace', async () => {
+    const issueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values({
+      id: issueId,
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      number: 52,
+      identifier: 'REA-52',
+      title: 'Keep admin pull request access current',
+      stateId: stateNamed(workspace, 'Todo').id,
+      creatorId: workspace.adminUser.id,
+    });
+    await db.insert(schema.gitLink).values({
+      id: `git_${randomUUIDv7()}`,
+      organizationId: workspace.organizationId,
+      issueId,
+      kind: 'pull_request',
+      externalId: 'pr:noveum/orbit#52:rea-52',
+      number: 52,
+      repository: 'noveum/orbit',
+      title: 'Keep admin pull request access current',
+      url: 'https://github.com/noveum/orbit/pull/52',
+    });
+    await db
+      .delete(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, workspace.organizationId),
+          eq(schema.member.userId, workspace.adminUser.id),
+        ),
+      );
+
+    expect(await loadPullRequests(workspace.admin)).toHaveLength(0);
   });
 });

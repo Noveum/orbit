@@ -19,6 +19,7 @@ function toData(row: NotificationRecord): Record<string, unknown> {
     title: row.title,
     body: row.body,
     url: row.url,
+    externalUrl: row.externalUrl,
     readAt: row.readAt?.toISOString() ?? null,
     snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
     deliveredChannels: row.deliveredChannels,
