@@ -283,15 +283,29 @@ function estimateAt(fact: IssueFact, at: Date): number | null {
 }
 
 function assigneeAt(fact: IssueFact, at: Date, frozen: boolean): string | null {
-  if (frozen && fact.outcome !== null) return fact.outcome.assigneeIdAtClose;
   const timestamp = at.getTime();
   const membership = [...fact.memberships]
-    .filter((entry) => entry.addedAt.getTime() < timestamp)
+    .filter((entry) => entry.addedAt.getTime() <= timestamp)
     .sort((left, right) => right.addedAt.getTime() - left.addedAt.getTime())[0];
-  let assigneeId = membership?.assigneeIdAtAdd ?? fact.assigneeId;
+  const assignmentChanges = fact.activities.filter((activity) => activity.field === 'assigneeId');
+  const firstChange = assignmentChanges[0];
+  let assigneeId = fact.assigneeId;
+  if (membership !== undefined) assigneeId = membership.assigneeIdAtAdd;
+  if (membership === undefined && frozen) {
+    assigneeId = firstChange === undefined ? null : parseReferenceId(firstChange.fromValue);
+  }
   for (const activity of fact.activities) {
-    if (activity.field !== 'assigneeId' || activity.createdAt.getTime() >= timestamp) continue;
+    if (
+      activity.field !== 'assigneeId' ||
+      activity.createdAt.getTime() >= timestamp ||
+      (membership !== undefined && activity.createdAt < membership.addedAt)
+    ) {
+      continue;
+    }
     assigneeId = parseReferenceId(activity.toValue);
+  }
+  if (frozen && fact.outcome !== null && timestamp >= fact.outcome.closedAt.getTime()) {
+    return fact.outcome.assigneeIdAtClose;
   }
   return assigneeId;
 }
@@ -328,10 +342,17 @@ function coverageOf(facts: SprintFacts, now: Date): AnalyticsCoverage {
   const issueIds = new Set(facts.issues.map((fact) => fact.issueId));
   const outcomesComplete = issueIds.size > 0 && facts.issues.every((fact) => fact.outcome !== null);
   const hasFinalSnapshot = facts.snapshots.some((snapshot) => snapshot.isFinal);
-  if (facts.cycle.completedAt !== null && outcomesComplete && hasFinalSnapshot) {
+  const memberships = facts.issues.flatMap((fact) => fact.memberships);
+  const membershipsCaptured =
+    memberships.length > 0 && memberships.every((row) => row.coverage === 'captured');
+  if (
+    facts.cycle.completedAt !== null &&
+    outcomesComplete &&
+    hasFinalSnapshot &&
+    membershipsCaptured
+  ) {
     return { kind: 'frozen', from: facts.cycle.startsAt.toISOString(), asOf };
   }
-  const memberships = facts.issues.flatMap((fact) => fact.memberships);
   if (memberships.length === 0) {
     return { kind: 'observed', from: null, asOf };
   }
@@ -514,7 +535,7 @@ function cohortsOf(facts: SprintFacts, now: Date): SprintCohorts {
       (entry) =>
         entry.coverage === 'captured' &&
         entry.addedAt.getTime() <= cutoff &&
-        committedAt(fact, facts, new Date(cutoff), now),
+        committedAt(fact, facts, entry.addedAt, now),
     );
   });
   const completed = facts.issues.filter((fact) => {

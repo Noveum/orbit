@@ -298,6 +298,46 @@ describe('loadSprintAnalytics', () => {
     expect(issues.coverage.kind).toBe('observed');
   });
 
+  it('keeps work planned when it entered Todo before moving to backlog inside the planning window', async () => {
+    const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z');
+    const todo = stateNamed(workspace, 'Todo');
+    const backlog = stateNamed(workspace, 'Backlog');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Backlog',
+      cycleId,
+    });
+    await membership(cycleId, issueId, { addedAt: '2026-01-01T02:00:00.000Z' });
+    await stateActivity(issueId, todo, backlog, '2026-01-01T12:00:00.000Z');
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-01-02T12:00:00.000Z'),
+    });
+
+    expect(result.current.cohorts.planned).toEqual([issueId]);
+    expect(result.current.summary.planned).toBe(1);
+  });
+
+  it('does not call work planned when it entered backlog before moving to Todo inside the window', async () => {
+    const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z');
+    const todo = stateNamed(workspace, 'Todo');
+    const backlog = stateNamed(workspace, 'Backlog');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+    });
+    await membership(cycleId, issueId, { addedAt: '2026-01-01T02:00:00.000Z' });
+    await stateActivity(issueId, backlog, todo, '2026-01-01T12:00:00.000Z');
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-01-02T12:00:00.000Z'),
+    });
+
+    expect(result.current.cohorts.planned).toEqual([]);
+    expect(result.current.summary.planned).toBe(0);
+  });
+
   it('aligns previous burn and freezes completed outcomes while preserving person attribution', async () => {
     const person = await addMember(workspace, 'member', { name: 'Grace' });
     const previousId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z', {
@@ -496,6 +536,68 @@ describe('loadSprintAnalytics', () => {
     expect(secondResult.focus?.summary.currentScope).toBe(1);
   });
 
+  it('keeps completed sprint personal burn assigned to each person at the historical time', async () => {
+    const first = await addMember(workspace, 'member', { name: 'Grace' });
+    const second = await addMember(workspace, 'member', { name: 'Linus' });
+    const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z', {
+      completedAt: '2026-01-08T00:00:00.000Z',
+    });
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Done',
+      cycleId: null,
+      assigneeId: second.user.id,
+      completedAt: new Date('2026-01-06T08:00:00.000Z'),
+    });
+    await membership(cycleId, issueId, {
+      addedAt: '2025-12-20T00:00:00.000Z',
+      removedAt: '2026-01-08T00:00:00.000Z',
+      assigneeId: first.user.id,
+    });
+    await db.insert(schema.issueActivity).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      issueId,
+      actorType: 'user',
+      actorId: workspace.adminUser.id,
+      actorName: workspace.adminUser.name,
+      field: 'assigneeId',
+      fromValue: { id: first.user.id, name: first.user.name },
+      toValue: { id: second.user.id, name: second.user.name },
+      createdAt: new Date('2026-01-03T12:00:00.000Z'),
+    });
+    await db.insert(schema.cycleIssueOutcome).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      cycleId,
+      issueId,
+      issueIdentifier: 'NOV-1',
+      planned: true,
+      assigneeIdAtClose: second.user.id,
+      outcome: 'completed',
+      completedAt: new Date('2026-01-06T08:00:00.000Z'),
+      closedAt: new Date('2026-01-08T00:00:00.000Z'),
+    });
+    await db.insert(schema.cycleProgressSnapshot).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      cycleId,
+      capturedOn: '2026-01-08',
+      isFinal: true,
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-01-10T00:00:00.000Z'),
+    });
+    const firstBurn = result.current.people.find((person) => person.personId === first.user.id);
+    const secondBurn = result.current.people.find((person) => person.personId === second.user.id);
+
+    expect(firstBurn?.burn.map((point) => point.scope)).toEqual([1, 1, 0, 0, 0, 0, 0, 0]);
+    expect(secondBurn?.burn.map((point) => point.scope)).toEqual([0, 0, 1, 1, 1, 1, 1, 1]);
+    expect(result.coverage.kind).toBe('frozen');
+  });
+
   it('returns an honest first-sprint state', async () => {
     const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z');
     const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
@@ -576,5 +678,43 @@ describe('loadSprintAnalytics', () => {
 
     expect(result.coverage.kind).not.toBe('frozen');
     expect(result.flow.cycleTimeCoverage).not.toBe('frozen');
+  });
+
+  it('does not call completed outcomes frozen when a relevant membership is observed', async () => {
+    const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z', {
+      completedAt: '2026-01-08T00:00:00.000Z',
+    });
+    const issueId = await insertIssue(workspace, { number: 1, state: 'Done', cycleId: null });
+    await membership(cycleId, issueId, {
+      addedAt: '2025-12-20T00:00:00.000Z',
+      removedAt: '2026-01-08T00:00:00.000Z',
+      coverage: 'observed',
+      entryKind: 'bootstrap',
+    });
+    await db.insert(schema.cycleIssueOutcome).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      cycleId,
+      issueId,
+      issueIdentifier: 'NOV-1',
+      planned: false,
+      outcome: 'completed',
+      completedAt: new Date('2026-01-04T00:00:00.000Z'),
+      closedAt: new Date('2026-01-08T00:00:00.000Z'),
+    });
+    await db.insert(schema.cycleProgressSnapshot).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      cycleId,
+      capturedOn: '2026-01-08',
+      isFinal: true,
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-01-10T00:00:00.000Z'),
+    });
+
+    expect(result.coverage.kind).toBe('reconstructed');
   });
 });
