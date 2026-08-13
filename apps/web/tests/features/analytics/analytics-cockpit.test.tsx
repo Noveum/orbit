@@ -337,13 +337,57 @@ describe('AnalyticsCockpit', () => {
     });
     renderCockpit(query, overview);
 
-    expect(screen.getByText('Project')).toBeVisible();
+    expect(screen.getByText(`Project is ${projectId}`)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Add filter' }));
     expect(screen.getByLabelText('Search filters')).toBeVisible();
     expect(screen.getByTestId('filter-field-assignee')).toBeVisible();
     await user.keyboard('{Escape}');
-    await user.click(screen.getByRole('button', { name: 'Remove Project filter' }));
+    await user.click(
+      screen.getByRole('button', { name: `Remove filter: Project is ${projectId}` }),
+    );
     expect(window.location.search).toBe('');
+  });
+
+  it('describes and removes a nested negated filter without changing its siblings', async () => {
+    const user = userEvent.setup();
+    const query = analyticsQuerySchema.parse({
+      filter: {
+        kind: 'group',
+        combinator: 'or',
+        children: [
+          {
+            kind: 'group',
+            combinator: 'and',
+            children: [
+              {
+                kind: 'condition',
+                property: 'project',
+                operator: 'in',
+                values: [projectId],
+                negate: true,
+              },
+            ],
+          },
+          {
+            kind: 'condition',
+            property: 'priority',
+            operator: 'in',
+            values: ['1'],
+            negate: false,
+          },
+        ],
+      },
+    });
+    renderCockpit(query, overview);
+
+    expect(screen.getByText(`Project is not ${projectId}`)).toBeVisible();
+    expect(screen.getByText('Priority is Urgent')).toBeVisible();
+    await user.click(
+      screen.getByRole('button', { name: `Remove filter: Project is not ${projectId}` }),
+    );
+
+    expect(window.location.search).toContain('priority');
+    expect(window.location.search).not.toContain(projectId);
   });
 
   it('uses selected-person copy for explicit focus and links tabs to their panel', () => {
@@ -355,5 +399,31 @@ describe('AnalyticsCockpit', () => {
     const panel = screen.getByRole('tabpanel');
     expect(tab).toHaveAttribute('aria-controls', panel.id);
     expect(panel).toHaveAttribute('aria-labelledby', tab.id);
+    for (const lens of ['overview', 'sprints', 'projects', 'people']) {
+      expect(document.getElementById(`analytics-panel-${lens}`)).not.toBeNull();
+    }
+  });
+
+  it('does not call a person selected by an assignee filter My work', () => {
+    const query = analyticsQuerySchema.parse({
+      lens: 'people',
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'assignee',
+            operator: 'in',
+            values: [personId],
+            negate: false,
+          },
+        ],
+      },
+    });
+    renderCockpit(query, people);
+
+    expect(screen.getByText('Selected person')).toBeVisible();
+    expect(screen.queryByText('My work')).not.toBeInTheDocument();
   });
 });

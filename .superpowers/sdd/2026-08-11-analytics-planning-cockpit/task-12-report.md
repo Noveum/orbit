@@ -33,3 +33,11 @@ The fresh review confirmed that the placeholder regression was closed and found 
 The corrected cockpit uses the selected measure for Project and People values, sums created and completed delivery activity while keeping open as the final bucket state, renders active filter chips with removal controls, opens Orbit's shared searchable issue filter builder, uses Selected person for explicit focus, and connects every tab to the active tabpanel with stable IDs.
 
 Focused review tests pass 8 of 8 with 32 assertions. The full web suite passes 1,998 of 1,998 with 4,962 assertions. Web typecheck and all static policy checks pass.
+
+## Review round 2
+
+The second review found that copied nested filter trees were visible but not safely editable, workspace state filters had no options, a sole assignee filter could label another person My work, and inactive tabs pointed to absent panels.
+
+The toolbar now describes the complete operator, value, and negation for every condition, shows its All or Any nesting context, and edits or removes conditions by structural path without flattening the Boolean tree. Workspace analytics builds state options across every team. People uses Selected person for an explicit focus or a single assignee-constrained filter. Every tab now owns a persistent panel element while only the active panel renders data.
+
+Focused review coverage passes 15 of 15 across cockpit and filter-field tests. The combined Task 12 and Task 13 foundation check passes 18 of 18 with 66 assertions, and web typecheck is green.

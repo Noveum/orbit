@@ -1,6 +1,8 @@
 'use client';
 
+import type { FilterNode } from '@orbit/shared/filters';
 import {
+  ANALYTICS_LENSES,
   type AnalyticsLens,
   type AnalyticsQuery,
   analyticsQuerySchema,
@@ -253,12 +255,15 @@ function PeopleContent({
 }) {
   const focused = data.focused;
   const points = query.measure === 'points';
+  const selectedByFilter = selectedAssignees(query.filter).length === 1;
   return (
     <div className="grid gap-4">
       {focused === null ? null : (
         <section className="rounded-lg border border-accent/40 bg-surface p-4">
           <p className="text-accent text-xs">
-            {query.focus.personId === undefined ? 'My work' : 'Selected person'}
+            {query.focus.personId === undefined && !selectedByFilter
+              ? 'My work'
+              : 'Selected person'}
           </p>
           <h2 className="mt-1 font-medium text-base text-text">{focused.person.name}</h2>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -327,6 +332,32 @@ function PeopleContent({
       </section>
     </div>
   );
+}
+
+function constrainedAssignees(node: FilterNode): ReadonlySet<string> | null {
+  if (node.kind === 'condition') {
+    if (node.property !== 'assignee' || node.operator !== 'in' || node.negate) return null;
+    return new Set(node.values);
+  }
+  const sets = node.children.map(constrainedAssignees);
+  if (node.combinator === 'or') {
+    if (sets.some((set) => set === null)) return null;
+    return new Set(sets.flatMap((set) => (set === null ? [] : [...set])));
+  }
+  const known = sets.filter((set): set is ReadonlySet<string> => set !== null);
+  if (known.length === 0) return null;
+  const values = new Set(known[0]);
+  for (const set of known.slice(1)) {
+    for (const value of values) {
+      if (!set.has(value)) values.delete(value);
+    }
+  }
+  return values;
+}
+
+function selectedAssignees(filter: AnalyticsQuery['filter']): readonly string[] {
+  const selected = constrainedAssignees(filter);
+  return selected === null ? [] : [...selected];
 }
 
 function LensContent({
@@ -408,13 +439,17 @@ export function AnalyticsCockpit({ initialQuery }: { readonly initialQuery: Anal
       <div className="sticky top-0 z-20 rounded-lg border border-border bg-background/95 p-2 shadow-sm backdrop-blur">
         <AnalyticsToolbar query={query} onChange={update} onReset={reset} />
       </div>
-      <div
-        aria-labelledby={`analytics-tab-${query.lens}`}
-        id={`analytics-panel-${query.lens}`}
-        role="tabpanel"
-      >
-        {content}
-      </div>
+      {ANALYTICS_LENSES.map((lens) => (
+        <div
+          aria-labelledby={`analytics-tab-${lens}`}
+          hidden={lens !== query.lens}
+          id={`analytics-panel-${lens}`}
+          key={lens}
+          role="tabpanel"
+        >
+          {lens === query.lens ? content : null}
+        </div>
+      ))}
     </div>
   );
 }

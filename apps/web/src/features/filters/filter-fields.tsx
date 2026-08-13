@@ -37,7 +37,11 @@ import type { ReactNode } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { PriorityGlyph } from '@/features/issues/priority-glyph.tsx';
 import { StateGlyph } from '@/features/issues/state-glyph.tsx';
-import { statesForTeam, type WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import {
+  orderStates,
+  statesForTeam,
+  type WorkspaceData,
+} from '@/features/issues/workspace-provider.tsx';
 import type { FacetProperty, IssueFacets } from '@/lib/query/schemas.ts';
 import { PRIORITY_ORDER } from './grouping.ts';
 
@@ -144,8 +148,12 @@ export function buildFilterFields(
   workspace: WorkspaceData,
   teamId: string | null,
   allowed: readonly FilterProperty[],
+  options: { readonly workspaceWide?: boolean } = {},
 ): FilterFieldDefinition[] {
-  const states = statesForTeam(workspace.states, teamId);
+  const states =
+    teamId === null && options.workspaceWide
+      ? orderStates(workspace.states)
+      : statesForTeam(workspace.states, teamId);
   const people: FilterOption[] = workspace.members.map((member) => ({
     value: member.id,
     label: member.name,

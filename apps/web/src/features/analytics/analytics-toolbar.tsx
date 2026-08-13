@@ -1,11 +1,6 @@
 'use client';
 
-import {
-  conditionsOf,
-  FILTER_PROPERTIES,
-  FILTER_PROPERTY_LABELS,
-  removeCondition,
-} from '@orbit/shared/filters';
+import { FILTER_PROPERTIES, type FilterCondition, type FilterGroup } from '@orbit/shared/filters';
 import type { AnalyticsCompare, AnalyticsMeasure, AnalyticsQuery } from '@orbit/shared/validators';
 import { ListFilter, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -18,10 +13,65 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select.tsx';
-import { buildFilterFields } from '@/features/filters/filter-fields.tsx';
+import { buildFilterFields, describeCondition } from '@/features/filters/filter-fields.tsx';
 import { FilterMenu } from '@/features/filters/filter-menu.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { DateRangePicker } from './date-range-picker.tsx';
+
+interface ConditionEntry {
+  readonly condition: FilterCondition;
+  readonly path: readonly number[];
+  readonly context: string;
+}
+
+function conditionEntries(
+  group: FilterGroup,
+  path: readonly number[] = [],
+  parents: readonly string[] = [],
+): ConditionEntry[] {
+  const context = [...parents, group.combinator === 'and' ? 'All' : 'Any'];
+  return group.children.flatMap((child, index) => {
+    const childPath = [...path, index];
+    return child.kind === 'condition'
+      ? [{ condition: child, path: childPath, context: context.join(' › ') }]
+      : conditionEntries(child, childPath, context);
+  });
+}
+
+function removeAtPath(group: FilterGroup, path: readonly number[]): FilterGroup {
+  const [index, ...rest] = path;
+  if (index === undefined) return group;
+  const child = group.children[index];
+  if (child === undefined) return group;
+  const children = [...group.children];
+  if (rest.length === 0) children.splice(index, 1);
+  else if (child.kind === 'group') {
+    const next = removeAtPath(child, rest);
+    if (next.children.length === 0) children.splice(index, 1);
+    else children[index] = next;
+  }
+  return { ...group, children };
+}
+
+function replaceAtPath(
+  group: FilterGroup,
+  path: readonly number[],
+  condition: FilterCondition,
+): FilterGroup {
+  const [index, ...rest] = path;
+  if (index === undefined) return group;
+  const child = group.children[index];
+  if (child === undefined) return group;
+  const children = [...group.children];
+  if (rest.length === 0) children[index] = condition;
+  else if (child.kind === 'group') children[index] = replaceAtPath(child, rest, condition);
+  return { ...group, children };
+}
+
+function conditionFrom(group: FilterGroup): FilterCondition | null {
+  const child = group.children[0];
+  return child?.kind === 'condition' ? child : null;
+}
 
 export function AnalyticsToolbar({
   query,
@@ -34,8 +84,12 @@ export function AnalyticsToolbar({
 }) {
   const workspace = useWorkspace();
   const [filterOpen, setFilterOpen] = useState(false);
-  const conditions = conditionsOf(query.filter);
-  const fields = useMemo(() => buildFilterFields(workspace, null, FILTER_PROPERTIES), [workspace]);
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const conditions = conditionEntries(query.filter);
+  const fields = useMemo(
+    () => buildFilterFields(workspace, null, FILTER_PROPERTIES, { workspaceWide: true }),
+    [workspace],
+  );
   return (
     <div className="flex flex-wrap items-center gap-2">
       <DateRangePicker value={query.range} onChange={(range) => onChange({ range })} />
@@ -65,20 +119,51 @@ export function AnalyticsToolbar({
           <SelectItem value="points">Points</SelectItem>
         </SelectContent>
       </Select>
-      {conditions.map((condition) => {
-        const label = FILTER_PROPERTY_LABELS[condition.property];
+      {conditions.map((entry) => {
+        const pathKey = entry.path.join('.');
+        const description = describeCondition(entry.condition, fields);
+        const isolated: FilterGroup = {
+          kind: 'group',
+          combinator: 'and',
+          children: [entry.condition],
+        };
         return (
           <span
             className="flex h-7 items-center rounded-md border border-border bg-surface-2 text-xs"
-            key={JSON.stringify(condition)}
+            key={pathKey}
           >
-            <span className="px-2 text-text">{label}</span>
-            <button
-              aria-label={`Remove ${label} filter`}
-              className="flex h-full items-center border-border border-l px-1.5 text-faint hover:text-text"
-              onClick={() =>
-                onChange({ filter: removeCondition(query.filter, condition.property) })
+            <span className="border-border border-r px-1.5 text-faint">{entry.context}</span>
+            <FilterMenu
+              anchor={
+                <button
+                  aria-label={`Edit filter: ${description}`}
+                  className="h-full px-2 text-text hover:bg-surface-3"
+                  onClick={() => setEditingPath(pathKey)}
+                  type="button"
+                >
+                  {description}
+                </button>
               }
+              facets={undefined}
+              fields={fields}
+              filter={isolated}
+              onChange={(next) => {
+                const condition = conditionFrom(next);
+                onChange({
+                  filter:
+                    condition === null
+                      ? removeAtPath(query.filter, entry.path)
+                      : replaceAtPath(query.filter, entry.path, condition),
+                });
+              }}
+              onOpenChange={(open) => setEditingPath(open ? pathKey : null)}
+              open={editingPath === pathKey}
+              startProperty={entry.condition.property}
+            />
+            <button
+              aria-label={`Remove filter: ${description}`}
+              className="flex h-full items-center border-border border-l px-1.5 text-faint hover:text-text"
+              onClick={() => onChange({ filter: removeAtPath(query.filter, entry.path) })}
               type="button"
             >
               <X aria-hidden="true" className="size-3" />
