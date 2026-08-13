@@ -85,3 +85,59 @@ test.fixme('two viewers see issue, board and comment changes without reloading',
   await first.close();
   await second.close();
 });
+
+test('every issue surface says a failed request failed rather than looking empty', async ({
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1400, height: 800 } });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/login`);
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
+  await page.waitForURL(`${BASE}/my-issues`);
+
+  for (const [path, testId] of [
+    ['/my-issues', 'retry-my-issues'],
+    ['/team/eng/issues', 'retry-team-issues'],
+    ['/sprints', 'retry-sprint-issues'],
+    ['/standup', 'retry-standup'],
+  ] as const) {
+    const surface = await context.newPage();
+    await surface.route('**/api/issues**', (route) =>
+      route.fulfill({ status: 500, body: '{"error":"boom"}' }),
+    );
+    await surface.goto(`${BASE}${path}`);
+    await expect(surface.getByTestId(testId)).toBeVisible({ timeout: 30_000 });
+    await surface.close();
+  }
+
+  const project = await context.newPage();
+  await project.goto(`${BASE}/projects`);
+  const projectHref = await project
+    .locator('a[href^="/projects/"]')
+    .filter({ hasNotText: /^$/ })
+    .first()
+    .getAttribute('href');
+  if (projectHref !== null && projectHref !== '/projects') {
+    await project.route('**/api/issues**', (route) =>
+      route.fulfill({ status: 500, body: '{"error":"boom"}' }),
+    );
+    await project.goto(`${BASE}${projectHref}/issues`);
+    await expect(project.getByTestId('retry-project-issues')).toBeVisible({ timeout: 30_000 });
+  }
+  await project.close();
+
+  const view = await context.newPage();
+  await view.goto(`${BASE}/views`);
+  const viewHref = await view.locator('a[href^="/views/"]').first().getAttribute('href');
+  if (viewHref !== null) {
+    await view.route('**/api/issues**', (route) =>
+      route.fulfill({ status: 500, body: '{"error":"boom"}' }),
+    );
+    await view.goto(`${BASE}${viewHref}`);
+    await expect(view.getByTestId('retry-saved-view')).toBeVisible({ timeout: 30_000 });
+  }
+  await view.close();
+
+  await context.close();
+});

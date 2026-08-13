@@ -316,7 +316,16 @@ export function removeCondition(group: FilterGroup, property: FilterProperty): F
 }
 
 export function dropLastCondition(group: FilterGroup): FilterGroup {
-  return { ...group, children: group.children.slice(0, -1) };
+  const last = group.children.at(-1);
+  if (last === undefined) return group;
+  const withoutLast = group.children.slice(0, -1);
+  if (last.kind === 'condition') return { ...group, children: withoutLast };
+  if (countConditions(last) === 0) return dropLastCondition({ ...group, children: withoutLast });
+  const trimmed = dropLastCondition(last);
+  return {
+    ...group,
+    children: trimmed.children.length === 0 ? withoutLast : [...withoutLast, trimmed],
+  };
 }
 
 export function conditionValues(condition: FilterCondition): readonly string[] {

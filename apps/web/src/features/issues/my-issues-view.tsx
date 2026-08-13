@@ -23,6 +23,7 @@ import { Board, canRegroup } from './board.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
+import { LoadFailed } from './load-failed.tsx';
 import { useIssueViewModel } from './use-issue-view-model.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
@@ -112,6 +113,10 @@ export function MyIssuesView() {
 
       <MyIssuesBody
         loading={loading}
+        failed={assigned.isError}
+        onRetry={() => {
+          assigned.refetch().catch(() => undefined);
+        }}
         loadingMore={isFetchingNextPage}
         onLoadMore={() => {
           fetchNextPage().catch(() => undefined);
@@ -153,6 +158,8 @@ export function MyIssuesView() {
 
 interface BodyProps {
   readonly loading: boolean;
+  readonly failed: boolean;
+  readonly onRetry: () => void;
   readonly layout: ViewLayoutMode;
   readonly model: ReturnType<typeof useIssueViewModel>;
   readonly groups: readonly IssueGroup[];
@@ -171,6 +178,8 @@ interface BodyProps {
 
 function MyIssuesBody({
   loading,
+  failed,
+  onRetry,
   layout,
   model,
   groups,
@@ -186,6 +195,10 @@ function MyIssuesBody({
   onLoadMore,
   sentinel,
 }: BodyProps) {
+  if (failed) {
+    return <LoadFailed subject="your issues" onRetry={onRetry} testId="retry-my-issues" />;
+  }
+
   if (model.shownCount === 0) {
     return (
       <EmptyState

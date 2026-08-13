@@ -15,6 +15,7 @@ import type { BoardColumnSource, StateResolver } from '@/features/issues/board.t
 import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
+import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
@@ -117,6 +118,10 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
         columnSource={columnSource}
         canDrag={canDrag}
         loading={issues.isPending}
+        failed={issues.isError}
+        onRetry={() => {
+          issues.refetch().catch(() => undefined);
+        }}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
         onLoadMore={() => {
@@ -139,6 +144,8 @@ interface BodyProps {
   readonly resolveState: StateResolver;
   readonly layout: ViewLayoutMode;
   readonly loading: boolean;
+  readonly failed: boolean;
+  readonly onRetry: () => void;
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
@@ -156,6 +163,8 @@ function ProjectIssueBody({
   resolveState,
   layout,
   loading,
+  failed,
+  onRetry,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -164,6 +173,9 @@ function ProjectIssueBody({
   properties,
 }: BodyProps) {
   if (loading) return <ListSkeleton layout={layout} />;
+
+  if (failed)
+    return <LoadFailed subject="these issues" onRetry={onRetry} testId="retry-project-issues" />;
 
   if (model.shownCount === 0) {
     return (

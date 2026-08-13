@@ -19,13 +19,13 @@ import { useViewConfig, VIEW_PARAM } from '@/features/filters/use-view-config.ts
 import type { ViewConfig, ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { viewConfigToState } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
+import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { columnParamFor } from '@/lib/query/issue-search.ts';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
-
 import { Board, canRegroup } from './board.tsx';
 import { IssueList } from './issue-list.tsx';
 import { ListSkeleton } from './list-skeleton.tsx';
@@ -128,6 +128,10 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         layout={layout}
         empty={model.shownCount === 0}
         loading={issues.isPending}
+        failed={issues.isError}
+        onRetry={() => {
+          issues.refetch().catch(() => undefined);
+        }}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
         onLoadMore={() => {
@@ -169,6 +173,8 @@ interface TeamContentProps {
   readonly layout: ViewLayoutMode;
   readonly empty: boolean;
   readonly loading: boolean;
+  readonly failed: boolean;
+  readonly onRetry: () => void;
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
@@ -183,12 +189,17 @@ function TeamContent({
   layout,
   empty,
   loading,
+  failed,
+  onRetry,
   hasMore,
   loadingMore,
   onLoadMore,
   onClearLastFilter,
 }: TeamContentProps) {
   if (loading) return <ListSkeleton layout={layout} />;
+
+  if (failed)
+    return <LoadFailed subject="these issues" onRetry={onRetry} testId="retry-team-issues" />;
 
   if (empty && conditionsOf(config.filter).length > 0) {
     return (
