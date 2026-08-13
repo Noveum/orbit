@@ -485,7 +485,7 @@ describe('loadPeopleAnalytics', () => {
       teamIds: [workspace.teamId],
     });
     const done = stateNamed(workspace, 'Done');
-    await issue(
+    const firstIssue = await issue(
       workspace.admin,
       { title: 'First outside project', assigneeId: first.user.id, stateId: done.id },
       {
@@ -493,7 +493,7 @@ describe('loadPeopleAnalytics', () => {
         completedAt: new Date('2026-08-02T00:00:00.000Z'),
       },
     );
-    await issue(
+    const secondIssue = await issue(
       workspace.admin,
       {
         title: 'Second in project',
@@ -506,6 +506,16 @@ describe('loadPeopleAnalytics', () => {
         completedAt: new Date('2026-08-02T00:00:00.000Z'),
       },
     );
+    await assignmentActivity(firstIssue, first.user, second.user, '2026-08-03T00:00:00.000Z');
+    await assignmentActivity(secondIssue, second.user, first.user, '2026-08-03T00:00:00.000Z');
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: second.user.id })
+      .where(eq(schema.issue.id, firstIssue));
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: first.user.id })
+      .where(eq(schema.issue.id, secondIssue));
     const disjunctionNode: AnalyticsQuery['filter'] = {
       kind: 'group',
       combinator: 'or',
@@ -564,6 +574,14 @@ describe('loadPeopleAnalytics', () => {
     expect(secondResult.focused?.completedIssues).toBe(0);
     expect(selectedResult.focused?.person.id).toBe(workspace.admin.userId);
     expect(selectedResult.people.some((row) => row.person.id === second.user.id)).toBe(true);
+    expect(personRow(selectedResult, first.user.id)).toMatchObject({
+      completedIssues: 1,
+      activeWeeks: 1,
+    });
+    expect(personRow(selectedResult, second.user.id)).toMatchObject({
+      completedIssues: 1,
+      activeWeeks: 1,
+    });
   });
 
   it('counts repeated same-bucket assignments once for both issues and points', async () => {

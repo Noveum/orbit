@@ -38,6 +38,8 @@ The timeline now aggregates each event set by bucket before joining it to the bo
 
 Review round 1 added four real PostgreSQL regressions. The observed failures were active weeks `13` instead of `1` for one old completion, a missing focused Unassigned identity, a focused OR-filter completion count of `0` instead of `1`, and repeated assignment points of `10` instead of `5`. A schema test separately proved both attribution indexes were absent.
 
+The final narrow regression swapped both issues to different current assignees after completion. Under `(assignee=A OR project=P)`, the unfocused A row reported zero completions and zero active weeks instead of one each. This proved the person-aware predicate still applied only to focus.
+
 ## GREEN
 
 Focused real PostgreSQL result after review round 1:
@@ -90,6 +92,8 @@ Strict UUID or Unassigned person cohorts were added for current assignments, com
 Current-work cohorts preserve current assignee filtering. Historical completion and assignment cohorts simplify the query's assignee predicates for the cohort person and apply captured or reconstructed person semantics. Pagination retains the existing signed cursor, 200-row hard cap, request binding, and frozen resolution behavior.
 
 Assignment timeline facts are distinct by person, issue, and bucket before issue and point aggregation. Repeated evidence for one assignment therefore contributes one issue and one estimate, matching its semantic drilldown.
+
+Completion and active-week aggregates now evaluate the simplified predicate for every visible identity in one bounded SQL statement per metric. The CASE is limited to the at-most-100 list plus an explicit focus, avoids N+1 queries, and supplies the same maps to table and focused rows.
 
 The focused test opens every summary count cohort and proves that drilldown totals equal the displayed counts.
 

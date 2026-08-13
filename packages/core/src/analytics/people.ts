@@ -399,18 +399,36 @@ function completedInterval(resolved: ResolvedAnalyticsQuery): SQL<unknown> {
     and ${schema.issue.completedAt} < ${resolved.to.toISOString()}::timestamptz`;
 }
 
-async function completionStats(
-  historicalBase: SQL<unknown>,
+function peopleHistoricalPredicate(
+  principal: Principal,
   resolved: ResolvedAnalyticsQuery,
+  person: SQL<unknown>,
+  personIds: readonly string[],
+): SQL<unknown> {
+  if (personIds.length === 0) return sql`false`;
+  const branches = personIds.map((personId) => {
+    const historical = historicalPersonFilter(resolved, personId);
+    const predicate = baseAnalyticsPredicate(principal, historical.query);
+    return sql`when ${personId} then (${predicate} and ${historical.matches})`;
+  });
+  return sql`case ${person} ${sql.join(branches, sql` `)} else false end`;
+}
+
+async function completionStats(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  personIds: readonly string[],
 ): Promise<ReadonlyMap<string, CompletionStatRow>> {
   const person = completionAttributionPerson();
   const kind = completionAttributionKind();
+  const personId = sql`coalesce(${person}, ${UNASSIGNED_PERSON_ID})`;
+  const historical = peopleHistoricalPredicate(principal, resolved, personId, personIds);
   const rows = await db.execute<CompletionStatRow>(sql`
     with attributed as materialized (
-      select issue.*, coalesce(${person}, ${UNASSIGNED_PERSON_ID}) as person_id,
+      select issue.*, ${personId} as person_id,
         ${kind} as attribution_kind
       from issue join workflow_state on workflow_state.id = issue.state_id
-      where ${historicalBase} and issue.completed_at is not null and ${completedInterval(resolved)}
+      where ${historical} and issue.completed_at is not null and ${completedInterval(resolved)}
     )
     select person_id,
       count(*) as completed_issues,
@@ -438,8 +456,9 @@ async function completionStats(
 }
 
 async function activeWeeks(
-  historicalBase: SQL<unknown>,
+  principal: Principal,
   resolved: ResolvedAnalyticsQuery,
+  personIds: readonly string[],
 ): Promise<ReadonlyMap<string, number>> {
   const person = completionAttributionPerson();
   const lastTimestamp = Math.min(resolved.to.getTime(), resolved.asOf.getTime());
@@ -475,18 +494,17 @@ async function activeWeeks(
           partition by issue.id order by assignment_event.created_at, assignment_event.id
         ) as change_number
       from issue
-      join workflow_state on workflow_state.id = issue.state_id
       join issue_activity assignment_event on assignment_event.issue_id = issue.id
         and assignment_event.field = 'assigneeId'
-      where ${historicalBase}
-    ), assignment_episode as (
-      select assignment_change.from_person_id as person_id,
+      where issue.organization_id = ${principal.organizationId}
+    ), assignment_episode_raw as (
+      select assignment_change.issue_id, assignment_change.from_person_id as person_id,
         assignment_change.issue_created_at as active_from,
         least(assignment_change.changed_at, assignment_change.terminal_at) as active_to
       from assignment_change
       where assignment_change.change_number = 1
       union all
-      select assignment_change.to_person_id as person_id,
+      select assignment_change.issue_id, assignment_change.to_person_id as person_id,
         assignment_change.changed_at as active_from,
         least(
           coalesce(assignment_change.next_change_at, ${new Date(lastTimestamp).toISOString()}::timestamptz),
@@ -494,7 +512,8 @@ async function activeWeeks(
         ) as active_to
       from assignment_change
       union all
-      select coalesce(issue.assignee_id, ${UNASSIGNED_PERSON_ID}) as person_id,
+      select issue.id as issue_id,
+        coalesce(issue.assignee_id, ${UNASSIGNED_PERSON_ID}) as person_id,
         issue.created_at as active_from,
         least(
           ${new Date(lastTimestamp).toISOString()}::timestamptz,
@@ -502,12 +521,24 @@ async function activeWeeks(
           issue.canceled_at,
           issue.archived_at
         ) as active_to
-      from issue join workflow_state on workflow_state.id = issue.state_id
-      where ${historicalBase} and not exists (
+      from issue
+      where issue.organization_id = ${principal.organizationId} and not exists (
         select 1 from issue_activity no_assignment_history
         where no_assignment_history.issue_id = issue.id
           and no_assignment_history.field = 'assigneeId'
       )
+    ), assignment_episode as (
+      select assignment_episode_raw.person_id, assignment_episode_raw.active_from,
+        assignment_episode_raw.active_to
+      from assignment_episode_raw
+      join issue on issue.id = assignment_episode_raw.issue_id
+      join workflow_state on workflow_state.id = issue.state_id
+      where ${peopleHistoricalPredicate(
+        principal,
+        resolved,
+        sql`assignment_episode_raw.person_id`,
+        personIds,
+      )}
     ), assignment_bucket as (
       select assignment_episode.person_id, generate_series(
         greatest(0, floor(extract(epoch from (
@@ -528,7 +559,13 @@ async function activeWeeks(
       select coalesce(${person}, ${UNASSIGNED_PERSON_ID}) as person_id,
         floor(extract(epoch from (issue.completed_at - ${resolved.from.toISOString()}::timestamptz)) / ${WEEK_SECONDS})::integer as bucket
       from issue join workflow_state on workflow_state.id = issue.state_id
-      where ${historicalBase} and issue.completed_at is not null and ${completedInterval(resolved)}
+      where ${peopleHistoricalPredicate(
+        principal,
+        resolved,
+        sql`coalesce(${person}, ${UNASSIGNED_PERSON_ID})`,
+        personIds,
+      )}
+        and issue.completed_at is not null and ${completedInterval(resolved)}
     ), active_bucket as (
       select assignment_bucket.person_id, assignment_bucket.bucket from assignment_bucket
       union
@@ -806,20 +843,6 @@ function focusedHistoryBase(
   return sql`${baseAnalyticsPredicate(principal, historical.query)} and ${historical.matches}`;
 }
 
-function applyFocusedHistory(
-  focusId: string | null,
-  completed: Map<string, CompletionStatRow>,
-  weeks: Map<string, number>,
-  focusedCompleted: ReadonlyMap<string, CompletionStatRow>,
-  focusedWeeks: ReadonlyMap<string, number>,
-): void {
-  if (focusId === null) return;
-  const focusedCompletion = focusedCompleted.get(focusId);
-  if (focusedCompletion === undefined) completed.delete(focusId);
-  else completed.set(focusId, focusedCompletion);
-  weeks.set(focusId, focusedWeeks.get(focusId) ?? 0);
-}
-
 export async function loadPeopleAnalytics(
   principal: Principal,
   query: AnalyticsQuery,
@@ -841,20 +864,12 @@ export async function loadPeopleAnalytics(
     focusedRow === undefined || list.some((row) => row.id === focusedRow.id)
       ? list
       : [...list, focusedRow];
-  const [current, completedRows, weekRows, focusedCompleted, focusedWeeks] = await Promise.all([
+  const personIds = [...new Set(visible.map((row) => row.id))];
+  const [current, completed, weeks] = await Promise.all([
     currentStats(currentBase, resolved),
-    completionStats(historicalBase, resolved),
-    activeWeeks(historicalBase, resolved),
-    focusedHistoricalBase === undefined
-      ? Promise.resolve(new Map())
-      : completionStats(focusedHistoricalBase, resolved),
-    focusedHistoricalBase === undefined
-      ? Promise.resolve(new Map())
-      : activeWeeks(focusedHistoricalBase, resolved),
+    completionStats(principal, resolved, personIds),
+    activeWeeks(principal, resolved, personIds),
   ]);
-  const completed = new Map(completedRows);
-  const weeks = new Map(weekRows);
-  applyFocusedHistory(focusId, completed, weeks, focusedCompleted, focusedWeeks);
   const byId = new Map<string, PersonAnalyticsRow>();
   for (const row of visible) {
     const person = identity(row);
