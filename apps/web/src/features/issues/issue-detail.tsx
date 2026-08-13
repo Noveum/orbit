@@ -1,5 +1,6 @@
 'use client';
 
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
 import { Bell, BellOff, Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -110,7 +111,11 @@ export function IssueTitle({
   );
 }
 
-function IssueBody({
+function canSaveIssueDescription(description: string): boolean {
+  return description.length <= ISSUE_DESCRIPTION_MAX_LENGTH;
+}
+
+export function IssueBody({
   issue,
   members,
   onCommit,
@@ -137,7 +142,11 @@ function IssueBody({
     },
     [issue.id, toast],
   );
-  const autosave = useAutosave({ value: draft, save: onCommit });
+  const autosave = useAutosave({
+    value: draft,
+    save: onCommit,
+    canSave: canSaveIssueDescription,
+  });
   const flush = autosave.saveNow;
   const settled = autosave.status === 'saved';
   const server = useRef(issue.description);
@@ -161,6 +170,17 @@ function IssueBody({
       onForceSave={flush}
       onBlur={flush}
       onUpload={upload}
+      footer={
+        canSaveIssueDescription(draft) ? undefined : (
+          <p
+            className="mt-2 text-danger text-xs"
+            role="alert"
+            data-testid="issue-description-limit"
+          >
+            Description must be 500,000 characters or fewer.
+          </p>
+        )
+      }
     />
   );
 }

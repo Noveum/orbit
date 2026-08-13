@@ -1,7 +1,12 @@
 import { z } from 'zod';
-import { ISSUE_RELATION_TYPES, PRIORITIES, STATE_CATEGORIES } from '../constants/index.ts';
+import {
+  ISSUE_DESCRIPTION_MAX_LENGTH,
+  ISSUE_RELATION_TYPES,
+  PRIORITIES,
+  STATE_CATEGORIES,
+} from '../constants/index.ts';
 import { filterGroupQuerySchema, ISSUE_ORDERINGS } from '../filters/index.ts';
-import { calendarDateSchema, idSchema, markdownSchema, titleSchema } from './common.ts';
+import { calendarDateSchema, idSchema, titleSchema } from './common.ts';
 
 export function booleanFlag(fallback: boolean) {
   return z
@@ -19,10 +24,14 @@ export const prioritySchema = z
   .int()
   .refine((value): value is (typeof PRIORITIES)[number] => PRIORITIES.includes(value as 0));
 
+export const issueDescriptionSchema = z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH, {
+  message: 'Description must be 500,000 characters or fewer.',
+});
+
 export const issueCreateSchema = z.object({
   teamId: idSchema,
   title: titleSchema,
-  description: markdownSchema.default(''),
+  description: issueDescriptionSchema.default(''),
   stateId: idSchema.optional(),
   priority: prioritySchema.default(0),
   assigneeId: idSchema.nullable().optional(),
@@ -38,7 +47,7 @@ export const issueCreateSchema = z.object({
 export const issueUpdateSchema = z
   .object({
     title: titleSchema,
-    description: markdownSchema,
+    description: issueDescriptionSchema,
     stateId: idSchema,
     priority: prioritySchema,
     assigneeId: idSchema.nullable(),

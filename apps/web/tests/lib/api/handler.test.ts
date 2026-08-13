@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { forbidden } from '@orbit/shared/errors';
 import { ORIGIN_CLIENT_ID_HEADER, type SyncAction } from '@orbit/shared/events';
+import { z } from 'zod';
 
 const published: SyncAction[][] = [];
 const publishOutcome: { fail: boolean } = { fail: false };
@@ -87,6 +88,25 @@ describe('errorResponse', () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: { code: 'forbidden', message: 'You cannot comment on this doc.' },
+    });
+  });
+
+  it('returns the first validation reason and safe field details', async () => {
+    const response = errorResponse(
+      z
+        .object({ description: z.string().max(3, { message: 'Description is too long.' }) })
+        .safeParse({ description: 'long' }).error,
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'validation_failed',
+        message: 'Description is too long.',
+        details: {
+          issues: [{ code: 'too_big', path: ['description'], message: 'Description is too long.' }],
+        },
+      },
     });
   });
 
