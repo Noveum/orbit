@@ -1,4 +1,4 @@
-import type { AnalyticsDrilldownCohort, AnalyticsQuery, AnalyticsRange } from '@orbit/shared';
+import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared';
 
 export type AnalyticsBucketGranularity = 'day' | 'week' | 'month';
 export type AnalyticsMetricUnit = 'issues' | 'points' | 'days' | 'percent';
@@ -51,13 +51,14 @@ export interface AnalyticsResolutionContext {
   readonly now: Date;
   readonly timezone: string;
   readonly cycles: readonly AnalyticsSprint[];
+  readonly selectedCycleId?: string | null;
+  readonly selectedTeamId?: string | null;
   readonly earliestIssueAt?: Date | null;
   readonly allTimeFrom?: Date | null;
 }
 
-export interface ResolvedAnalyticsQuery extends Omit<AnalyticsQuery, 'range'> {
-  readonly requestedRange: AnalyticsRange;
-  readonly range: AnalyticsDateRange;
+export interface ResolvedAnalyticsQuery extends AnalyticsQuery {
+  readonly resolvedRange: AnalyticsDateRange;
   readonly comparisonRange: AnalyticsDateRange | null;
   readonly from: Date;
   readonly to: Date;

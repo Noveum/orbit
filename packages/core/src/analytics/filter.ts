@@ -73,20 +73,18 @@ function dateTimeAsUtc(date: Date, timezone: string): number {
 
 function startOfCalendarDate(date: CalendarDate, timezone: string): Date {
   const target = Date.UTC(date.year, date.month - 1, date.day);
-  let candidate = target;
-  for (let iteration = 0; iteration < 4; iteration += 1) {
-    const instant = new Date(candidate);
-    const offset = dateTimeAsUtc(instant, timezone) - candidate;
-    const next = target - offset;
-    if (next === candidate) return instant;
-    candidate = next;
+  const offsets = new Set<number>();
+  for (let hours = -48; hours <= 48; hours += 6) {
+    const instant = new Date(target + hours * 3_600_000);
+    offsets.add(dateTimeAsUtc(instant, timezone) - instant.getTime());
   }
-  const resolved = new Date(candidate);
-  const actual = dateParts(resolved, timezone);
-  if (compareCalendarDates(actual, date) !== 0) {
-    throw new RangeError(`The calendar date does not exist in ${timezone}.`);
-  }
-  return resolved;
+  const candidates = [...offsets]
+    .map((offset) => new Date(target - offset))
+    .filter((candidate) => compareCalendarDates(dateParts(candidate, timezone), date) === 0)
+    .sort((left, right) => left.getTime() - right.getTime());
+  const earliest = candidates[0];
+  if (earliest !== undefined) return earliest;
+  throw new RangeError(`The calendar date does not exist in ${timezone}.`);
 }
 
 function parseCalendarDate(value: string): CalendarDate {
@@ -180,16 +178,89 @@ function activeSprints(cycles: readonly AnalyticsSprint[], now: Date): readonly 
   );
 }
 
+function cycleMatchesFilter(cycle: AnalyticsSprint, query: AnalyticsQuery): boolean {
+  const matches = (node: AnalyticsQuery['filter']['children'][number]): boolean => {
+    if (node.kind === 'condition') {
+      if (node.property !== 'cycle' || node.operator !== 'in') return true;
+      const included = node.values.includes(cycle.id);
+      return node.negate ? !included : included;
+    }
+    const values = node.children.map(matches);
+    return node.combinator === 'and' ? values.every(Boolean) : values.some(Boolean);
+  };
+  const values = query.filter.children.map(matches);
+  return query.filter.combinator === 'and' ? values.every(Boolean) : values.some(Boolean);
+}
+
+function selectedCycleIds(query: AnalyticsQuery): ReadonlySet<string> {
+  const selected = new Set<string>();
+  const collect = (node: AnalyticsQuery['filter']['children'][number]): void => {
+    if (node.kind === 'group') {
+      for (const child of node.children) collect(child);
+      return;
+    }
+    if (node.property !== 'cycle' || node.operator !== 'in' || node.negate) return;
+    for (const value of node.values) selected.add(value);
+  };
+  for (const child of query.filter.children) collect(child);
+  return selected;
+}
+
+interface SprintRelevance {
+  readonly cycles: readonly AnalyticsSprint[];
+  readonly active: readonly AnalyticsSprint[];
+  readonly anchor: AnalyticsSprint | null;
+  readonly teamId: string | null;
+}
+
+function sprintRelevance(
+  query: AnalyticsQuery,
+  context: AnalyticsResolutionContext,
+): SprintRelevance {
+  const cycles = context.cycles.filter((cycle) => {
+    if (
+      context.selectedCycleId !== undefined &&
+      context.selectedCycleId !== null &&
+      cycle.id !== context.selectedCycleId
+    )
+      return false;
+    if (
+      context.selectedTeamId !== undefined &&
+      context.selectedTeamId !== null &&
+      cycle.teamId !== context.selectedTeamId
+    )
+      return false;
+    return cycleMatchesFilter(cycle, query);
+  });
+  const active = activeSprints(cycles, context.now);
+  const filteredCycleIds = selectedCycleIds(query);
+  let explicitCycle: AnalyticsSprint | null = null;
+  if (context.selectedCycleId !== undefined && context.selectedCycleId !== null) {
+    explicitCycle = cycles.find((cycle) => cycle.id === context.selectedCycleId) ?? null;
+  } else if (cycles.length === 1 && filteredCycleIds.has(cycles[0]?.id ?? '')) {
+    explicitCycle = cycles[0] ?? null;
+  }
+  const onlyActive = active.length === 1 ? active[0] : undefined;
+  const anchor = explicitCycle ?? onlyActive ?? null;
+  const teamIds = [...new Set(cycles.map((cycle) => cycle.teamId))];
+  const teamId =
+    anchor?.teamId ??
+    context.selectedTeamId ??
+    (teamIds.length === 1 ? (teamIds[0] ?? null) : null);
+  return { cycles, active, anchor, teamId };
+}
+
 function latestCompletedSprint(
   cycles: readonly AnalyticsSprint[],
   now: Date,
-  before?: AnalyticsSprint,
+  teamId: string,
+  before: AnalyticsSprint | null,
 ): AnalyticsSprint | null {
   const eligible = cycles.filter((cycle) => {
     if (isArchived(cycle) || cycle.completedAt === null) return false;
     if (cycle.completedAt.getTime() > now.getTime()) return false;
-    if (before === undefined) return true;
-    return cycle.teamId === before.teamId && cycle.endsAt.getTime() <= before.startsAt.getTime();
+    if (cycle.teamId !== teamId) return false;
+    return before === null || cycle.endsAt.getTime() <= before.startsAt.getTime();
   });
   return (
     eligible.sort((left, right) => {
@@ -228,9 +299,9 @@ function selectedRange(
   query: AnalyticsQuery,
   context: AnalyticsResolutionContext,
   reportingTimezone: string,
+  relevance: SprintRelevance,
 ): SelectedRange {
-  const active = activeSprints(context.cycles, context.now);
-  const onlyActive = active.length === 1 ? active[0] : undefined;
+  const onlyActive = relevance.active.length === 1 ? relevance.active[0] : undefined;
   switch (query.range.preset) {
     case 'auto':
     case 'active_sprint':
@@ -238,8 +309,12 @@ function selectedRange(
         ? { range: trailingDays(context.now, 30, reportingTimezone), sprint: null }
         : { range: sprintRange(onlyActive), sprint: onlyActive };
     case 'previous_sprint': {
-      const previous = latestCompletedSprint(context.cycles, context.now, onlyActive);
-      const selected = previous ?? latestCompletedSprint(context.cycles, context.now);
+      const reference = onlyActive ?? relevance.anchor;
+      const previous =
+        relevance.teamId === null
+          ? null
+          : latestCompletedSprint(context.cycles, context.now, relevance.teamId, reference);
+      const selected = previous;
       return selected === null
         ? { range: trailingDays(context.now, 30, reportingTimezone), sprint: null }
         : { range: sprintRange(selected), sprint: selected };
@@ -282,6 +357,7 @@ function comparisonRange(
   compare: AnalyticsCompare,
   selected: SelectedRange,
   context: AnalyticsResolutionContext,
+  relevance: SprintRelevance,
 ): AnalyticsDateRange | null {
   let resolvedCompare = compare;
   if (resolvedCompare === 'auto') {
@@ -289,7 +365,10 @@ function comparisonRange(
   }
   if (resolvedCompare === 'none') return null;
   if (resolvedCompare === 'previous_period') return previousEqualRange(selected.range);
-  const previous = latestCompletedSprint(context.cycles, context.now, selected.sprint ?? undefined);
+  const reference = selected.sprint ?? relevance.anchor;
+  const teamId = selected.sprint?.teamId ?? relevance.teamId;
+  if (teamId === null) return null;
+  const previous = latestCompletedSprint(context.cycles, context.now, teamId, reference);
   return previous === null ? null : sprintRange(previous);
 }
 
@@ -308,12 +387,12 @@ export function resolveAnalyticsQuery(
 ): ResolvedAnalyticsQuery {
   const reportingTimezone = validTimezone(context.timezone);
   validDate(context.now, 'The reporting clock');
-  const selected = selectedRange(query, context, reportingTimezone);
-  const comparison = comparisonRange(query.compare, selected, context);
+  const relevance = sprintRelevance(query, context);
+  const selected = selectedRange(query, context, reportingTimezone, relevance);
+  const comparison = comparisonRange(query.compare, selected, context, relevance);
   return {
     ...query,
-    requestedRange: query.range,
-    range: selected.range,
+    resolvedRange: selected.range,
     comparisonRange: comparison,
     from: selected.range.from,
     to: selected.range.to,

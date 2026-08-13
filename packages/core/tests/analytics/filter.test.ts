@@ -68,7 +68,7 @@ describe('resolveAnalyticsQuery', () => {
   it('uses the only active sprint as the zero-configuration range', () => {
     const resolved = resolveAnalyticsQuery(query(), context([previousSprint, currentSprint]));
 
-    expectRange(resolved.range, '2024-03-04T05:00:00.000Z', '2024-03-18T04:00:00.000Z');
+    expectRange(resolved.resolvedRange, '2024-03-04T05:00:00.000Z', '2024-03-18T04:00:00.000Z');
     expect(resolved.timezone).toBe('America/New_York');
     expect(resolved.selectedSprintId).toBe('sprint_current');
     expectRange(
@@ -81,7 +81,7 @@ describe('resolveAnalyticsQuery', () => {
   it('uses a trailing 30 calendar-day range when no sprint is active', () => {
     const resolved = resolveAnalyticsQuery(query(), context([previousSprint]));
 
-    expectRange(resolved.range, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
+    expectRange(resolved.resolvedRange, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
     expect(resolved.selectedSprintId).toBeNull();
   });
 
@@ -98,9 +98,97 @@ describe('resolveAnalyticsQuery', () => {
       context([previousSprint, currentSprint, otherActiveSprint]),
     );
 
-    expectRange(resolved.range, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
+    expectRange(resolved.resolvedRange, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
     expect(resolved.timezone).toBe('America/New_York');
     expect(resolved.selectedSprintId).toBeNull();
+  });
+
+  it('narrows overlapping active teams to a cycle selected by the query filter', () => {
+    const otherActiveSprint: AnalyticsSprint = {
+      ...currentSprint,
+      id: 'sprint_other',
+      teamId: 'team_two',
+      timezone: 'Asia/Kolkata',
+    };
+    const resolved = resolveAnalyticsQuery(
+      query({
+        filter: {
+          kind: 'group',
+          combinator: 'and',
+          children: [
+            {
+              kind: 'condition',
+              property: 'cycle',
+              operator: 'in',
+              values: ['sprint_current'],
+              negate: false,
+            },
+          ],
+        },
+      }),
+      context([previousSprint, currentSprint, otherActiveSprint]),
+    );
+
+    expect(resolved.selectedSprintId).toBe('sprint_current');
+    expectRange(resolved.resolvedRange, '2024-03-04T05:00:00.000Z', '2024-03-18T04:00:00.000Z');
+  });
+
+  it('uses selected cycle context and never compares it with another team', () => {
+    const otherActiveSprint: AnalyticsSprint = {
+      ...currentSprint,
+      id: 'sprint_other',
+      teamId: 'team_two',
+    };
+    const unrelatedPrevious: AnalyticsSprint = {
+      ...previousSprint,
+      id: 'sprint_other_previous',
+      teamId: 'team_two',
+      completedAt: new Date('2024-03-09T05:00:00.000Z'),
+    };
+    const resolved = resolveAnalyticsQuery(
+      query(),
+      context([currentSprint, otherActiveSprint, unrelatedPrevious], {
+        selectedCycleId: 'sprint_current',
+      }),
+    );
+
+    expect(resolved.selectedSprintId).toBe('sprint_current');
+    expect(resolved.comparisonRange).toBeNull();
+  });
+
+  it('keeps explicit previous sprint selection and comparison in the relevant team', () => {
+    const unrelatedPrevious: AnalyticsSprint = {
+      ...previousSprint,
+      id: 'sprint_other_previous',
+      teamId: 'team_two',
+      startsAt: new Date('2024-02-26T05:00:00.000Z'),
+      endsAt: new Date('2024-03-09T05:00:00.000Z'),
+      completedAt: new Date('2024-03-09T05:00:00.000Z'),
+    };
+    const selected = resolveAnalyticsQuery(
+      query({ range: { preset: 'previous_sprint' }, compare: 'previous_sprint' }),
+      context([olderSprint, previousSprint, currentSprint, unrelatedPrevious], {
+        selectedTeamId: 'team_one',
+      }),
+    );
+    const compared = resolveAnalyticsQuery(
+      query({ range: { preset: 'last_30_days' }, compare: 'previous_sprint' }),
+      context([previousSprint, currentSprint, unrelatedPrevious], {
+        selectedCycleId: 'sprint_current',
+      }),
+    );
+
+    expect(selected.selectedSprintId).toBe('sprint_previous');
+    expectRange(
+      selected.comparisonRange as { readonly from: Date; readonly to: Date },
+      '2024-02-05T05:00:00.000Z',
+      '2024-02-19T05:00:00.000Z',
+    );
+    expectRange(
+      compared.comparisonRange as { readonly from: Date; readonly to: Date },
+      '2024-02-19T05:00:00.000Z',
+      '2024-03-04T05:00:00.000Z',
+    );
   });
 
   it('resolves custom calendar dates as an inclusive selection and half-open UTC range', () => {
@@ -112,7 +200,7 @@ describe('resolveAnalyticsQuery', () => {
       context([]),
     );
 
-    expectRange(resolved.range, '2024-03-09T05:00:00.000Z', '2024-03-12T04:00:00.000Z');
+    expectRange(resolved.resolvedRange, '2024-03-09T05:00:00.000Z', '2024-03-12T04:00:00.000Z');
     expectRange(
       resolved.comparisonRange as { readonly from: Date; readonly to: Date },
       '2024-03-06T05:00:00.000Z',
@@ -130,7 +218,7 @@ describe('resolveAnalyticsQuery', () => {
       }),
     );
 
-    expectRange(resolved.range, '2023-12-02T18:30:00.000Z', '2024-03-01T18:30:00.000Z');
+    expectRange(resolved.resolvedRange, '2023-12-02T18:30:00.000Z', '2024-03-01T18:30:00.000Z');
     expectRange(
       resolved.comparisonRange as { readonly from: Date; readonly to: Date },
       '2023-09-03T18:30:00.000Z',
@@ -150,9 +238,9 @@ describe('resolveAnalyticsQuery', () => {
     );
 
     expect(active.selectedSprintId).toBe('sprint_current');
-    expectRange(active.range, '2024-03-04T05:00:00.000Z', '2024-03-18T04:00:00.000Z');
+    expectRange(active.resolvedRange, '2024-03-04T05:00:00.000Z', '2024-03-18T04:00:00.000Z');
     expect(previous.selectedSprintId).toBe('sprint_previous');
-    expectRange(previous.range, '2024-02-19T05:00:00.000Z', '2024-03-04T05:00:00.000Z');
+    expectRange(previous.resolvedRange, '2024-02-19T05:00:00.000Z', '2024-03-04T05:00:00.000Z');
     expectRange(
       previous.comparisonRange as { readonly from: Date; readonly to: Date },
       '2024-02-05T05:00:00.000Z',
@@ -183,8 +271,8 @@ describe('resolveAnalyticsQuery', () => {
       context([]),
     );
 
-    expectRange(known.range, '2019-06-15T04:00:00.000Z', '2024-03-11T04:00:00.000Z');
-    expectRange(empty.range, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
+    expectRange(known.resolvedRange, '2019-06-15T04:00:00.000Z', '2024-03-11T04:00:00.000Z');
+    expectRange(empty.resolvedRange, '2024-02-10T05:00:00.000Z', '2024-03-11T04:00:00.000Z');
   });
 
   it('selects day, week, and month buckets at the adaptive boundaries', () => {
@@ -214,6 +302,62 @@ describe('resolveAnalyticsQuery', () => {
 
     expect(() => resolveAnalyticsQuery(invalid, context([]))).toThrow(RangeError);
   });
+
+  it('preserves the original query range discriminator on the resolved query', () => {
+    const input = query({
+      range: { preset: 'custom', from: '2024-03-09', to: '2024-03-11' },
+      compare: 'none',
+    });
+    const resolved = resolveAnalyticsQuery(input, context([]));
+    const compatible: AnalyticsQuery = resolved;
+
+    expect(compatible.range).toEqual(input.range);
+    expectRange(resolved.resolvedRange, '2024-03-09T05:00:00.000Z', '2024-03-12T04:00:00.000Z');
+  });
+
+  it('uses the first valid instant when a civil date skips midnight', () => {
+    const resolved = resolveAnalyticsQuery(
+      query({
+        range: { preset: 'custom', from: '2018-11-04', to: '2018-11-04' },
+        compare: 'previous_period',
+      }),
+      context([], {
+        now: new Date('2018-11-04T12:00:00.000Z'),
+        timezone: 'America/Sao_Paulo',
+      }),
+    );
+
+    expectRange(resolved.resolvedRange, '2018-11-04T03:00:00.000Z', '2018-11-05T02:00:00.000Z');
+    expectRange(
+      resolved.comparisonRange as { readonly from: Date; readonly to: Date },
+      '2018-11-03T03:00:00.000Z',
+      '2018-11-04T03:00:00.000Z',
+    );
+    expect(bucketDates(resolved.resolvedRange, 'day').map((date) => date.toISOString())).toEqual([
+      '2018-11-04T03:00:00.000Z',
+    ]);
+  });
+
+  it('chooses the earlier instant when a civil midnight overlaps', () => {
+    const resolved = resolveAnalyticsQuery(
+      query({
+        range: { preset: 'custom', from: '2018-11-03', to: '2018-11-05' },
+        compare: 'previous_period',
+      }),
+      context([], {
+        now: new Date('2018-11-04T12:00:00.000Z'),
+        timezone: 'America/Havana',
+      }),
+    );
+
+    expectRange(resolved.resolvedRange, '2018-11-03T04:00:00.000Z', '2018-11-06T05:00:00.000Z');
+    expect(resolved.comparisonTo?.toISOString()).toBe('2018-11-03T04:00:00.000Z');
+    expect(bucketDates(resolved.resolvedRange, 'day').map((date) => date.toISOString())).toEqual([
+      '2018-11-03T04:00:00.000Z',
+      '2018-11-04T04:00:00.000Z',
+      '2018-11-05T05:00:00.000Z',
+    ]);
+  });
 });
 
 describe('bucketDates', () => {
@@ -223,7 +367,7 @@ describe('bucketDates', () => {
       context([]),
     );
 
-    expect(bucketDates(resolved.range, 'day').map((date) => date.toISOString())).toEqual([
+    expect(bucketDates(resolved.resolvedRange, 'day').map((date) => date.toISOString())).toEqual([
       '2024-03-09T05:00:00.000Z',
       '2024-03-10T05:00:00.000Z',
       '2024-03-11T04:00:00.000Z',
@@ -236,7 +380,7 @@ describe('bucketDates', () => {
       query({ range: { preset: 'all_time' }, compare: 'none' }),
       context([], { earliestIssueAt: new Date('1900-01-01T12:00:00.000Z') }),
     );
-    const dates = bucketDates(resolved.range, resolved.bucket);
+    const dates = bucketDates(resolved.resolvedRange, resolved.bucket);
 
     expect(dates.length).toBeLessThanOrEqual(120);
     expect(dates[0]?.toISOString()).toBe('1900-01-01T05:00:00.000Z');
