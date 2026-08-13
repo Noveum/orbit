@@ -464,6 +464,30 @@ describe('POST /api/webhooks/github, installation events', () => {
 
   it('follows a repository rename', async () => {
     await connectInstallation();
+    const installation = (await listGithubInstallations(db, workspace.organizationId)).find(
+      (entry) => entry.installationId === CONNECTED_INSTALLATION,
+    );
+    if (installation === undefined) throw new Error('the connected installation is missing');
+    const repositorySyncId = `repo_${randomUUIDv7()}`;
+    const pullRequestId = `pull_${randomUUIDv7()}`;
+    await db.insert(schema.githubRepositorySync).values({
+      id: repositorySyncId,
+      organizationId: workspace.organizationId,
+      integrationId: installation.integrationId,
+      teamId: workspace.teamId,
+      repositoryId: '884762793',
+      repositoryName: 'Noveum/ai-gateway',
+      installationId: CONNECTED_INSTALLATION,
+    });
+    await db.insert(schema.githubPullRequest).values({
+      id: pullRequestId,
+      organizationId: workspace.organizationId,
+      repositorySyncId,
+      repositoryId: '884762793',
+      repositoryName: 'Noveum/ai-gateway',
+      number: 17,
+      url: 'https://github.com/Noveum/ai-gateway/pull/17',
+    });
     const raw = JSON.stringify({
       action: 'renamed',
       repository: {
@@ -483,6 +507,11 @@ describe('POST /api/webhooks/github, installation events', () => {
 
     const catalogue = await listGithubCatalogue(db, workspace.organizationId);
     expect(catalogue.map((entry) => entry.fullName)).toEqual(['Noveum/gateway']);
+    const [pullRequest] = await db
+      .select({ repositoryName: schema.githubPullRequest.repositoryName })
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.id, pullRequestId));
+    expect(pullRequest?.repositoryName).toBe('Noveum/gateway');
   });
 
   it('publishes no realtime action for an installation event, so private names stay put', async () => {

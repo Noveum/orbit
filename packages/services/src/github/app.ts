@@ -149,6 +149,9 @@ const userInstallationsSchema = z.object({
   installations: z.array(z.object({ id: z.number().int().positive() })).default([]),
 });
 
+const GITHUB_USER_INSTALLATION_PAGE_SIZE = 100;
+const GITHUB_MAX_USER_INSTALLATION_PAGES = 100;
+
 const userTokenSchema = z.object({
   access_token: z.string().min(1).optional(),
   error: z.string().optional(),
@@ -598,12 +601,24 @@ export async function listUserInstallationIds(input: {
 }): Promise<string[]> {
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const base = input.apiBase ?? GITHUB_API_BASE;
-  const body = await githubJson(
-    fetchImpl,
-    `${base}/user/installations?per_page=100`,
-    { headers: { authorization: `Bearer ${input.userToken}` } },
-    userInstallationsSchema,
-    'user installations',
+  const collected: string[] = [];
+  for (let page = 1; page <= GITHUB_MAX_USER_INSTALLATION_PAGES; page += 1) {
+    const body = await githubJson(
+      fetchImpl,
+      `${base}/user/installations?per_page=${GITHUB_USER_INSTALLATION_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${input.userToken}` } },
+      userInstallationsSchema,
+      'user installations',
+    );
+    collected.push(...body.installations.map((entry) => String(entry.id)));
+    if (
+      body.installations.length < GITHUB_USER_INSTALLATION_PAGE_SIZE ||
+      collected.length >= body.total_count
+    ) {
+      return collected;
+    }
+  }
+  throw internal(
+    `GitHub user controls more than ${GITHUB_MAX_USER_INSTALLATION_PAGES * GITHUB_USER_INSTALLATION_PAGE_SIZE} installations, so this snapshot is incomplete.`,
   );
-  return body.installations.map((entry) => String(entry.id));
 }

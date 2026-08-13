@@ -531,6 +531,32 @@ describe('listUserInstallationIds', () => {
 
     expect(ids).toEqual(['151887625', '151889033']);
   });
+
+  it('walks every installation page before checking callback ownership', async () => {
+    const pages: number[] = [];
+    const ids = await listUserInstallationIds({
+      userToken: 'ghu_x',
+      fetch: jsonFetch((url) => {
+        const page = Number(new URL(url).searchParams.get('page') ?? '1');
+        pages.push(page);
+        const start = (page - 1) * 100;
+        const count = page === 1 ? 100 : 50;
+        return new Response(
+          JSON.stringify({
+            total_count: 150,
+            installations: Array.from({ length: count }, (_unused, index) => ({
+              id: start + index + 1,
+            })),
+          }),
+          { status: 200 },
+        );
+      }),
+    });
+
+    expect(pages).toEqual([1, 2]);
+    expect(ids).toHaveLength(150);
+    expect(ids.at(-1)).toBe('150');
+  });
 });
 
 describe('exchangeGithubUserCode', () => {
