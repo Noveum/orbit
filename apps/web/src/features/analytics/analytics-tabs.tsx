@@ -21,7 +21,7 @@ export function AnalyticsTabs({
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const move = (index: number, key: string) => {
-    let next = index;
+    let next: number;
     if (key === 'ArrowRight') next = (index + 1) % ANALYTICS_LENSES.length;
     else if (key === 'ArrowLeft')
       next = (index - 1 + ANALYTICS_LENSES.length) % ANALYTICS_LENSES.length;
