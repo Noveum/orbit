@@ -17,7 +17,17 @@ const payload = {
   lens: 'overview' as const,
   asOf: '2026-08-13T12:00:00.000Z',
   coverage: { kind: 'live' as const, from: null, asOf: '2026-08-13T12:00:00.000Z' },
-  cards: [],
+  cards: [
+    {
+      id: 'throughput',
+      label: 'Completed',
+      value: 18,
+      unit: 'issues' as const,
+      comparisonDelta: 3,
+      cohort: { cohort: 'completed' },
+      reconciliation: { kind: 'total' as const, cohortCount: 18 },
+    },
+  ],
   delivery: [],
   state: [],
   projects: [],
@@ -70,15 +80,15 @@ describe('AnalyticsPage', () => {
     loads = 0;
   });
 
-  it('loads one active lens and renders its hydrated data boundary', async () => {
+  it('loads one active lens and renders useful hydrated analytics', async () => {
     render(
       <QueryProvider>{await AnalyticsPage({ searchParams: Promise.resolve({}) })}</QueryProvider>,
     );
 
     expect(loads).toBe(1);
-    expect(screen.getByRole('region', { name: 'Overview analytics' })).toHaveTextContent(
-      'Analytics data is ready.',
-    );
-    expect(screen.queryByText('Scope overview')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Completed')).toBeVisible();
+    expect(screen.getByText('18')).toBeVisible();
+    expect(screen.queryByText('Analytics data is ready.')).not.toBeInTheDocument();
   });
 });
