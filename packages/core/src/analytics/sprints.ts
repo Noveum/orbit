@@ -461,7 +461,7 @@ function burnFor(
   teamId: string | null = null,
 ): SprintBurnPoint[] {
   const startDay = dateText(facts.cycle.startsAt, facts.cycle.timezone);
-  const lastDay = dateText(endOfFacts(facts, now), facts.cycle.timezone);
+  const lastDay = dateText(new Date(endOfFacts(facts, now).getTime() - 1), facts.cycle.timezone);
   const coverage = coverageOf(facts, now).kind;
   const observedMemberships = facts.issues
     .flatMap((fact) => fact.memberships)

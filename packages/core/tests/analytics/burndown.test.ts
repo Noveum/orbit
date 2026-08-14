@@ -85,13 +85,12 @@ describe('cycleBurndown', () => {
       '2026-01-05',
       '2026-01-06',
       '2026-01-07',
-      '2026-01-08',
     ]);
 
     const reference = referenceCumulative(['2026-01-02', '2026-01-03', '2026-01-05'], days);
     expect(burndown.points.map((point) => point.completed)).toEqual(reference);
     expect(burndown.points.every((point) => point.scope === 4)).toBe(true);
-    expect(burndown.points.map((point) => point.remaining)).toEqual([4, 3, 2, 2, 1, 1, 1, 1]);
+    expect(burndown.points.map((point) => point.remaining)).toEqual([4, 3, 2, 2, 1, 1, 1]);
     expect(burndown.scopeCurrent).toBe(4);
     expect(burndown.completedCurrent).toBe(3);
   });
@@ -180,7 +179,7 @@ describe('cycleBurndown', () => {
     expect(burndown.points[3]?.scope).toBe(5);
     expect(burndown.points.at(-1)?.scope).toBe(5);
     const idealJan4 = burndown.points[3]?.ideal ?? 0;
-    expect(idealJan4).toBeCloseTo((5 * (7 - 3)) / 7, 5);
+    expect(idealJan4).toBeCloseTo((5 * (6 - 3)) / 6, 5);
   });
 
   it('counts issues created before the cycle from day zero', async () => {

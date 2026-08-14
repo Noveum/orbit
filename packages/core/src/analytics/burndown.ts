@@ -85,7 +85,7 @@ export async function cycleBurndown(
   const today = calendarDateLabel(now, cycle.timezone);
   const actual = analytics.current.burn;
   const points: BurndownPoint[] = [];
-  const finalDay = calendarDateLabel(new Date(cycle.endsAt), cycle.timezone);
+  const finalDay = calendarDateLabel(new Date(Date.parse(cycle.endsAt) - 1), cycle.timezone);
   for (
     let day = calendarDateLabel(new Date(cycle.startsAt), cycle.timezone);
     day <= finalDay;
