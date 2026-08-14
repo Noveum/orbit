@@ -4,11 +4,18 @@ import { MERMAID_LANGUAGE } from '@orbit/services/markdown';
 import type { NodeViewProps } from '@tiptap/react';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/cn.ts';
-import { DIAGRAM_FAILED, renderDiagram } from '../mermaid.ts';
+import {
+  DIAGRAM_FAILED,
+  fitsTheColumn,
+  inkLabels,
+  naturalWidth,
+  renderDiagram,
+} from '../mermaid.ts';
 
 export const PREVIEW_DEBOUNCE_MS = 300;
+export const PREVIEW_PADDING = 32;
 export const EMPTY_DIAGRAM = 'Write mermaid below and the diagram appears here.';
 
 export function useDiagram(source: string, theme: string): { svg: string | null; note: string } {
@@ -48,15 +55,26 @@ export function useDiagram(source: string, theme: string): { svg: string | null;
 function DiagramPreview({ source }: { readonly source: string }) {
   const { resolvedTheme } = useTheme();
   const { svg, note } = useDiagram(source, resolvedTheme === 'dark' ? 'dark' : 'light');
+  const canvas = useRef<HTMLDivElement | null>(null);
+  const [fits, setFits] = useState(false);
+
+  useEffect(() => {
+    const node = canvas.current;
+    const drawn = svg === null ? null : (node?.querySelector('svg') ?? null);
+    if (node === null || drawn === null) return;
+    inkLabels(node);
+    setFits(fitsTheColumn(naturalWidth(drawn), node.clientWidth - PREVIEW_PADDING));
+  }, [svg]);
 
   return (
     <div
+      ref={canvas}
       contentEditable={false}
       data-testid="mermaid-preview"
       className={cn(
-        'mb-2 flex min-h-24 items-center justify-center overflow-x-auto rounded-lg',
-        'border border-border bg-surface px-4 py-5',
-        '[&_svg]:h-auto [&_svg]:max-w-full',
+        'mb-2 min-h-24 overflow-x-auto rounded-lg border border-border bg-surface px-4 py-5',
+        '[&_svg]:mx-auto [&_svg]:block [&_svg]:h-auto',
+        fits ? '[&_svg]:max-w-full' : '[&_svg]:max-w-none',
       )}
     >
       {svg === null ? (
@@ -67,7 +85,7 @@ function DiagramPreview({ source }: { readonly source: string }) {
         <div
           role="img"
           aria-label="Diagram preview"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid sanitizes its own output at the strict security level
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: the drawn svg is sanitised in renderDiagram
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       )}

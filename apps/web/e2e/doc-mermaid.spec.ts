@@ -20,6 +20,19 @@ const CONTENT = [
   '  A[Start --> B]]]',
   '```',
   '',
+  '```mermaid',
+  'graph LR',
+  '  U[Users and SDKs] --> CF[Cloudflare DNS<br/>authoritative]',
+  '  CF --> CFR[CloudFront distribution<br/>plus WAF]',
+  '  CFR --> ALB[Load balancer<br/>tls termination]',
+  '  ALB --> ING[Ingress controller<br/>9 host rules]',
+  '  ING --> SVC[Service mesh sidecar<br/>mutual tls]',
+  '  SVC --> APP[traces app<br/>eu west and us east]',
+  '  APP --> Q[Ingest queue<br/>partitioned by workspace]',
+  '  Q --> W[Rollup workers<br/>five minute windows]',
+  '  style CFR fill:#e8f0fe',
+  '```',
+  '',
 ].join('\n');
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -61,7 +74,7 @@ test('a mermaid fence is drawn as a diagram, sanitised, and falls back to its so
   await reader.goto(shared.publishUrl);
 
   const blocks = reader.locator('[data-mermaid]');
-  await expect(blocks).toHaveCount(3);
+  await expect(blocks).toHaveCount(4);
   await expect(blocks.nth(0).locator('svg')).toBeVisible();
   await expect(blocks.nth(0)).toHaveAttribute('data-mermaid-view', 'diagram');
 
@@ -78,6 +91,31 @@ test('a mermaid fence is drawn as a diagram, sanitised, and falls back to its so
     };
   });
   expect(unsafe).toEqual({ scripts: 0, handlers: 0, images: 0 });
+
+  const wide = blocks.nth(3);
+  await expect(wide.locator('svg')).toBeVisible();
+  const scale = await wide.evaluate((block) => {
+    const canvas = block.querySelector('[data-mermaid-canvas]');
+    const svg = canvas?.querySelector('svg');
+    return {
+      natural: Math.round(svg?.getBoundingClientRect().width ?? 0),
+      column: canvas?.clientWidth ?? 0,
+      squeezed: block.hasAttribute('data-mermaid-fit'),
+    };
+  });
+  expect(scale.squeezed).toBe(false);
+  expect(scale.natural).toBeGreaterThan(scale.column);
+  await expect(wide.locator('[data-mermaid-scale]')).toHaveCount(1);
+
+  const ink = await wide.evaluate((block) => {
+    const pale = [...block.querySelectorAll('.node')].find((node) => {
+      const fill = getComputedStyle(node.querySelector('rect, polygon, path') as Element).fill;
+      return fill === 'rgb(232, 240, 254)';
+    });
+    const label = pale?.querySelector('text, tspan');
+    return label === null || label === undefined ? null : getComputedStyle(label).fill;
+  });
+  expect(ink).toBe('rgb(16, 19, 26)');
 
   await blocks.nth(0).hover();
   await blocks.nth(0).locator('[data-mermaid-toggle]').click();

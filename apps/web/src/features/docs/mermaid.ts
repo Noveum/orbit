@@ -9,19 +9,27 @@ export const SHOW_SOURCE_LABEL = 'Show the diagram source';
 export const SHOW_DIAGRAM_LABEL = 'Show the diagram';
 export const DIAGRAM_FAILED = 'This diagram could not be drawn.';
 export const DIAGRAM_UNAVAILABLE = 'The diagram renderer could not be loaded.';
+export const FIT_LABEL = 'Fit the diagram to the page';
+export const ACTUAL_LABEL = 'Show the diagram at its own size';
+export const LEGIBLE_SCALE = 0.75;
+export const DARK_INK = '#10131a';
+export const LIGHT_INK = '#f4f5f7';
+export const PALE_FILL = 0.55;
 
 export const mermaidClassName = cn(
   '[&_[data-mermaid]]:relative [&_[data-mermaid]]:my-5',
   '[&_[data-mermaid]]:rounded-lg [&_[data-mermaid]]:border [&_[data-mermaid]]:border-border [&_[data-mermaid]]:bg-surface-2',
   '[&_[data-mermaid][data-mermaid-view=diagram]_pre]:hidden',
   '[&_[data-mermaid]_pre]:my-0 [&_[data-mermaid]_pre]:rounded-lg [&_[data-mermaid]_pre]:border-0 [&_[data-mermaid]_pre]:bg-transparent',
-  '[&_[data-mermaid-canvas]]:flex [&_[data-mermaid-canvas]]:justify-center [&_[data-mermaid-canvas]]:overflow-x-auto',
-  '[&_[data-mermaid-canvas]]:px-4 [&_[data-mermaid-canvas]]:py-6',
-  '[&_[data-mermaid-canvas]_svg]:h-auto [&_[data-mermaid-canvas]_svg]:max-w-full',
+  '[&_[data-mermaid-canvas]]:overflow-x-auto [&_[data-mermaid-canvas]]:px-4 [&_[data-mermaid-canvas]]:py-6',
+  '[&_[data-mermaid-canvas]_svg]:mx-auto [&_[data-mermaid-canvas]_svg]:block [&_[data-mermaid-canvas]_svg]:h-auto',
+  '[&_[data-mermaid-canvas]_svg]:max-w-none',
+  '[&_[data-mermaid][data-mermaid-fit]_[data-mermaid-canvas]_svg]:max-w-full',
   '[&_[data-mermaid][data-mermaid-view=source]_[data-mermaid-canvas]]:hidden',
   '[&_[data-mermaid-note]]:m-0 [&_[data-mermaid-note]]:border-border [&_[data-mermaid-note]]:border-b',
   '[&_[data-mermaid-note]]:px-4 [&_[data-mermaid-note]]:py-2 [&_[data-mermaid-note]]:text-2xs [&_[data-mermaid-note]]:text-danger',
-  '[&_[data-mermaid-toggle]]:absolute [&_[data-mermaid-toggle]]:top-2 [&_[data-mermaid-toggle]]:right-2',
+  '[&_[data-mermaid-actions]]:absolute [&_[data-mermaid-actions]]:top-2 [&_[data-mermaid-actions]]:right-2',
+  '[&_[data-mermaid-actions]]:flex [&_[data-mermaid-actions]]:gap-1',
   '[&_[data-mermaid-toggle]]:cursor-pointer [&_[data-mermaid-toggle]]:rounded-sm [&_[data-mermaid-toggle]]:border [&_[data-mermaid-toggle]]:border-border',
   '[&_[data-mermaid-toggle]]:bg-surface [&_[data-mermaid-toggle]]:px-1.5 [&_[data-mermaid-toggle]]:py-0.5',
   '[&_[data-mermaid-toggle]]:text-2xs [&_[data-mermaid-toggle]]:text-muted',
@@ -61,9 +69,9 @@ export function mermaidConfig(styles: CSSStyleDeclaration, dark: boolean): Merma
     darkMode: dark,
     fontFamily: token(styles, '--font-sans', 'system-ui, sans-serif'),
     htmlLabels: false,
-    flowchart: { useMaxWidth: true, htmlLabels: false, curve: 'basis' },
-    sequence: { useMaxWidth: true },
-    gantt: { useMaxWidth: true },
+    flowchart: { useMaxWidth: false, htmlLabels: false, curve: 'basis' },
+    sequence: { useMaxWidth: false },
+    gantt: { useMaxWidth: false },
     themeVariables: {
       background: surfaceTwo,
       fontSize: '14px',
@@ -119,10 +127,15 @@ export function mermaidConfig(styles: CSSStyleDeclaration, dark: boolean): Merma
   };
 }
 
-function toggleButton(document: Document, view: string): HTMLButtonElement {
+function actionButton(document: Document): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('data-mermaid-toggle', '');
+  return button;
+}
+
+function viewButton(document: Document, view: string): HTMLButtonElement {
+  const button = actionButton(document);
   applyView(button, view);
   button.addEventListener('click', () => {
     const block = button.closest<HTMLElement>(MERMAID_BLOCK);
@@ -141,6 +154,67 @@ function applyView(button: HTMLButtonElement, view: string): void {
   button.setAttribute('aria-label', showsDiagram ? SHOW_SOURCE_LABEL : SHOW_DIAGRAM_LABEL);
 }
 
+function scaleButton(document: Document): HTMLButtonElement {
+  const button = actionButton(document);
+  button.setAttribute('data-mermaid-scale', '');
+  applyScale(button, false);
+  button.addEventListener('click', () => {
+    const block = button.closest<HTMLElement>(MERMAID_BLOCK);
+    if (block === null) return;
+    const fits = !block.hasAttribute('data-mermaid-fit');
+    block.toggleAttribute('data-mermaid-fit', fits);
+    applyScale(button, fits);
+  });
+  return button;
+}
+
+function applyScale(button: HTMLButtonElement, fits: boolean): void {
+  button.textContent = fits ? 'Actual size' : 'Fit';
+  button.setAttribute('aria-label', fits ? ACTUAL_LABEL : FIT_LABEL);
+}
+
+export function fitsTheColumn(natural: number, available: number): boolean {
+  if (natural <= 0 || available <= 0) return false;
+  if (natural <= available) return true;
+  return available / natural >= LEGIBLE_SCALE;
+}
+
+function actionsOf(block: HTMLElement): HTMLElement {
+  const existing = block.querySelector<HTMLElement>('[data-mermaid-actions]');
+  if (existing !== null) return existing;
+  const actions = block.ownerDocument.createElement('div');
+  actions.setAttribute('data-mermaid-actions', '');
+  block.append(actions);
+  return actions;
+}
+
+export function naturalWidth(drawn: SVGSVGElement): number {
+  const box = drawn.viewBox?.baseVal ?? null;
+  if (box !== null && box.width > 0) return box.width;
+  return drawn.getBoundingClientRect().width;
+}
+
+function scaleInto(block: HTMLElement, canvas: HTMLElement): void {
+  const drawn = canvas.querySelector('svg');
+  if (drawn === null) return;
+  block.removeAttribute('data-mermaid-fit');
+  const natural = naturalWidth(drawn);
+  const available = canvas.clientWidth - PADDING;
+  if (natural <= 0 || available <= 0) return;
+
+  block.toggleAttribute('data-mermaid-fit', fitsTheColumn(natural, available));
+  if (natural <= available) {
+    block.querySelector('[data-mermaid-scale]')?.remove();
+    return;
+  }
+  const actions = actionsOf(block);
+  if (actions.querySelector('[data-mermaid-scale]') === null) {
+    actions.prepend(scaleButton(block.ownerDocument));
+  }
+  const button = actions.querySelector<HTMLButtonElement>('[data-mermaid-scale]');
+  if (button !== null) applyScale(button, block.hasAttribute('data-mermaid-fit'));
+}
+
 function noteOf(block: HTMLElement, message: string): void {
   const existing = block.querySelector('[data-mermaid-note]');
   if (existing !== null) existing.remove();
@@ -153,6 +227,45 @@ function noteOf(block: HTMLElement, message: string): void {
 function sourceOf(block: HTMLElement): string {
   return block.querySelector('code')?.textContent ?? '';
 }
+
+const LABEL_HOSTS = '.node, .cluster, .classGroup, .statediagram-state';
+
+function channels(fill: string): readonly number[] | null {
+  const match = /rgba?\(([^)]+)\)/.exec(fill);
+  if (match === null) return null;
+  const parts = (match[1] ?? '')
+    .split(/[\s,/]+/)
+    .filter((part) => part.length > 0)
+    .map(Number);
+  if (parts.some(Number.isNaN)) return null;
+  return parts;
+}
+
+export function inkOn(fill: string): string | null {
+  const parts = channels(fill);
+  if (parts === null) return null;
+  const [red, green, blue, alpha] = parts;
+  if (red === undefined || green === undefined || blue === undefined) return null;
+  if (alpha !== undefined && alpha < 0.5) return null;
+  const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+  return luminance > PALE_FILL ? DARK_INK : LIGHT_INK;
+}
+
+export function inkLabels(canvas: HTMLElement): void {
+  const view = canvas.ownerDocument.defaultView;
+  if (view === null) return;
+  for (const host of canvas.querySelectorAll(LABEL_HOSTS)) {
+    const shape = host.querySelector('rect, polygon, circle, ellipse, path');
+    if (shape === null) continue;
+    const ink = inkOn(view.getComputedStyle(shape).fill);
+    if (ink === null) continue;
+    for (const label of host.querySelectorAll<SVGElement>('text, tspan')) {
+      label.style.fill = ink;
+    }
+  }
+}
+
+const PADDING = 32;
 
 let sequence = 0;
 
@@ -168,15 +281,21 @@ function drawInto(block: HTMLElement, svg: string, source: string): void {
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', `Diagram: ${source.split('\n')[0] ?? ''}`.trim());
   canvas.innerHTML = svg;
+  inkLabels(canvas);
   block.setAttribute('data-mermaid-view', DIAGRAM_VIEW);
-  if (block.querySelector('[data-mermaid-toggle]') === null) {
-    block.append(toggleButton(document, DIAGRAM_VIEW));
+  const actions = actionsOf(block);
+  if (actions.querySelector('[data-mermaid-view-toggle]') === null) {
+    const view = viewButton(document, DIAGRAM_VIEW);
+    view.setAttribute('data-mermaid-view-toggle', '');
+    actions.append(view);
   }
+  scaleInto(block, canvas);
 }
 
 function failInto(block: HTMLElement, message = DIAGRAM_FAILED): void {
   block.querySelector('[data-mermaid-canvas]')?.remove();
-  block.querySelector('[data-mermaid-toggle]')?.remove();
+  block.querySelector('[data-mermaid-actions]')?.remove();
+  block.removeAttribute('data-mermaid-fit');
   block.setAttribute('data-mermaid-view', SOURCE_VIEW);
   noteOf(block, message);
 }

@@ -7,6 +7,8 @@ import {
   DIAGRAM_FAILED,
   DIAGRAM_UNAVAILABLE,
   drawDiagrams,
+  fitsTheColumn,
+  LEGIBLE_SCALE,
   type MermaidRenderer,
   mermaidConfig,
   SHOW_DIAGRAM_LABEL,
@@ -165,6 +167,29 @@ describe('the drawn markup', () => {
 
     expect(mermaidConfig(styles, false).htmlLabels).toBe(false);
     expect(mermaidConfig(styles, false).flowchart?.htmlLabels).toBe(false);
+  });
+});
+
+describe('a diagram wider than the column', () => {
+  it('is scaled down only while it stays legible, and otherwise keeps its own size', () => {
+    expect(fitsTheColumn(600, 700)).toBe(true);
+    expect(fitsTheColumn(800, 700)).toBe(true);
+    expect(fitsTheColumn(3000, 700)).toBe(false);
+    expect(fitsTheColumn(700 / LEGIBLE_SCALE, 700)).toBe(true);
+    expect(fitsTheColumn(700 / LEGIBLE_SCALE + 1, 700)).toBe(false);
+  });
+
+  it('decides nothing before the page has laid the block out', () => {
+    expect(fitsTheColumn(0, 700)).toBe(false);
+    expect(fitsTheColumn(600, 0)).toBe(false);
+  });
+
+  it('asks mermaid for the diagram at its own size, never squeezed into the column', () => {
+    const styles = { getPropertyValue: () => '' } as unknown as CSSStyleDeclaration;
+    const config = mermaidConfig(styles, false);
+
+    expect(config.flowchart?.useMaxWidth).toBe(false);
+    expect(config.sequence?.useMaxWidth).toBe(false);
   });
 });
 
