@@ -533,15 +533,18 @@ describe('the statuses a new team starts with', () => {
     expect(names).toContain('Duplicate');
   });
 
-  it('files Duplicate as canceled, so it closes the issue and leaves the open counts alone', () => {
-    const duplicate = DEFAULT_WORKFLOW_STATES.find((state) => state.name === 'Duplicate');
+  it('files Duplicate as canceled, so it closes the issue and leaves the open counts alone', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const duplicate = design.states.find((state) => state.name === 'Duplicate');
 
     expect(duplicate?.category).toBe('canceled');
     expect(isOpenCategory(duplicate?.category ?? 'unstarted')).toBe(false);
   });
 
-  it('keeps Duplicate last, after Canceled', () => {
-    const names = DEFAULT_WORKFLOW_STATES.map((state) => state.name);
+  it('keeps Duplicate last on the board, after Canceled', async () => {
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const ordered = [...design.states].sort((left, right) => left.position - right.position);
+    const names = ordered.map((state) => state.name);
 
     expect(names.at(-1)).toBe('Duplicate');
     expect(names.indexOf('Duplicate')).toBeGreaterThan(names.indexOf('Canceled'));

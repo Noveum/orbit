@@ -115,7 +115,9 @@ function ScopePickers({
         onSelect={(value) => onEstimate(value === 'none' ? null : Number(value))}
       >
         <button type="button" className={chipClassName} data-testid="quick-create-estimate">
-          <EstimateGlyph points={estimate} />
+          <span aria-hidden="true" className="flex items-center">
+            <EstimateGlyph points={estimate} />
+          </span>
           {estimate === null ? 'Estimate' : estimateLabel(estimate)}
         </button>
       </PropertyMenu>
@@ -424,14 +426,13 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 onSelect={setStateId}
               >
                 <button type="button" className={chipClassName} data-testid="quick-create-status">
-                  {selectedState === undefined ? (
-                    <span
-                      className="size-3.5 rounded-full border border-border border-dashed"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <StateGlyph category={selectedState.category} color={selectedState.color} />
-                  )}
+                  <span aria-hidden="true" className="flex items-center">
+                    {selectedState === undefined ? (
+                      <span className="size-3.5 rounded-full border border-border border-dashed" />
+                    ) : (
+                      <StateGlyph category={selectedState.category} color={selectedState.color} />
+                    )}
+                  </span>
                   {selectedState?.name ?? 'Status'}
                 </button>
               </PropertyMenu>
@@ -466,14 +467,13 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 onSelect={(value) => setAssigneeId(value === 'none' ? null : value)}
               >
                 <button type="button" className={chipClassName} data-testid="quick-create-assignee">
-                  {assignee === undefined ? (
-                    <span
-                      className="size-3.5 rounded-full border border-border border-dashed"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Avatar name={assignee.name} src={assignee.image} size="xs" />
-                  )}
+                  <span aria-hidden="true" className="flex items-center">
+                    {assignee === undefined ? (
+                      <span className="size-3.5 rounded-full border border-border border-dashed" />
+                    ) : (
+                      <Avatar name={assignee.name} src={assignee.image} size="xs" />
+                    )}
+                  </span>
                   {assignee?.name ?? 'Assignee'}
                 </button>
               </PropertyMenu>

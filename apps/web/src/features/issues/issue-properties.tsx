@@ -136,9 +136,11 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           testId="menu-status"
         >
           <button type="button" className={rowClassName} data-testid="property-status">
-            {state === undefined ? null : (
-              <StateGlyph category={state.category} color={state.color} />
-            )}
+            <span aria-hidden="true" className="flex items-center">
+              {state === undefined ? null : (
+                <StateGlyph category={state.category} color={state.color} />
+              )}
+            </span>
             {state?.name ?? 'Unknown'}
           </button>
         </PropertyMenu>
@@ -158,7 +160,9 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           onSelect={(value) => patch({ priority: Number(value) })}
         >
           <button type="button" className={rowClassName} data-testid="property-priority">
-            <PriorityGlyph priority={issue.priority} />
+            <span aria-hidden="true" className="flex items-center">
+              <PriorityGlyph priority={issue.priority} />
+            </span>
             {priorityLabel(issue.priority)}
           </button>
         </PropertyMenu>
@@ -181,11 +185,13 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           onSelect={(value) => patch({ assigneeId: value === 'none' ? null : value })}
         >
           <button type="button" className={rowClassName} data-testid="property-assignee">
-            {assignee === undefined ? (
-              <span className="size-4.5 rounded-full border border-border border-dashed" />
-            ) : (
-              <Avatar name={assignee.name} src={assignee.image} size="xs" />
-            )}
+            <span aria-hidden="true" className="flex items-center">
+              {assignee === undefined ? (
+                <span className="size-4.5 rounded-full border border-border border-dashed" />
+              ) : (
+                <Avatar name={assignee.name} src={assignee.image} size="xs" />
+              )}
+            </span>
             {assignee?.name ?? 'Unassigned'}
           </button>
         </PropertyMenu>
@@ -209,7 +215,9 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           testId="menu-estimate"
         >
           <button type="button" className={rowClassName} data-testid="property-estimate">
-            <EstimateGlyph points={issue.estimate} />
+            <span aria-hidden="true" className="flex items-center">
+              <EstimateGlyph points={issue.estimate} />
+            </span>
             {estimateLabel(issue.estimate)}
           </button>
         </PropertyMenu>

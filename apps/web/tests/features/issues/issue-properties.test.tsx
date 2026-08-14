@@ -428,7 +428,23 @@ describe('the estimate row on the issue properties panel', () => {
   it('says one point rather than 1 points', () => {
     mountProperties(issue({ estimate: 1 }));
 
-    expect(screen.getByTestId('property-estimate')).toHaveTextContent('1 point');
+    expect(screen.getByTestId('property-estimate')).toHaveTextContent(/^1 point$/);
+  });
+
+  it('announces the row once, not twice, because the glyph repeats the reading', () => {
+    mountProperties(issue({ estimate: 3 }));
+
+    expect(screen.getByRole('button', { name: '3 points' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '3 points 3 points' })).toBeNull();
+  });
+
+  it('names every glyph bearing row in the panel after its visible text alone', () => {
+    mountProperties(issue({ estimate: 3, priority: 1 }));
+
+    for (const row of ['property-status', 'property-priority', 'property-estimate']) {
+      const button = screen.getByTestId(row);
+      expect(button).toHaveAccessibleName((button.textContent ?? '').trim());
+    }
   });
 
   it('offers every step of the scale with its own glyph', async () => {
@@ -442,6 +458,18 @@ describe('the estimate row on the issue properties panel', () => {
       const option = within(menu).getByText(estimateLabel(points)).parentElement;
       expect(option?.querySelector('svg')).not.toBeNull();
     }
+  });
+
+  it('leaves a menu option named once, with the glyph hidden behind the label', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue());
+
+    await user.click(screen.getByTestId('property-estimate'));
+    const menu = await screen.findByTestId('menu-estimate');
+
+    const option = within(menu).getByText('5 points').parentElement;
+    expect(option?.querySelector('[aria-hidden="true"] svg')).not.toBeNull();
+    expect(within(menu).getByRole('menuitemradio', { name: '5 points' })).toBeInTheDocument();
   });
 
   it('sets the estimate the user picks', async () => {

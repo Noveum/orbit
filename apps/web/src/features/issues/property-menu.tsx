@@ -87,7 +87,11 @@ export function PropertyMenu({
 function OptionLabel({ option }: { option: PropertyOption }) {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
-      {option.icon}
+      {option.icon === undefined ? null : (
+        <span aria-hidden="true" className="flex items-center">
+          {option.icon}
+        </span>
+      )}
       <span className="truncate">{option.label}</span>
     </span>
   );
