@@ -1,4 +1,4 @@
-import { isRestricted, ORG_ROLE_RANK, type OrgRole } from '../constants/index.ts';
+import { isRestricted, ORG_ROLE_RANK, ORG_ROLES, type OrgRole } from '../constants/index.ts';
 import { forbidden, notFound } from '../errors/index.ts';
 
 export const PERMISSIONS = [
@@ -96,6 +96,10 @@ export function permissionsFor(role: OrgRole): readonly Permission[] {
   return PERMISSIONS_BY_ROLE[role] ?? NO_PERMISSIONS;
 }
 
+export function policyRole(role: string): OrgRole {
+  return ORG_ROLES.find((candidate) => candidate === role) ?? 'guest';
+}
+
 export function can(principal: Principal, permission: Permission): boolean {
   return permissionsFor(principal.role).includes(permission);
 }
@@ -123,6 +127,10 @@ export function teamScope(row: {
 export function isInTeam(principal: Principal, team: TeamScope): boolean {
   if (team.organizationId !== principal.organizationId) return false;
   return principal.role === 'admin' || principal.teamIds.includes(team.id);
+}
+
+export function isInOrganization(principal: Principal, organizationId: string): boolean {
+  return principal.organizationId === organizationId;
 }
 
 export function assertInTeam(principal: Principal, team: TeamScope): void {

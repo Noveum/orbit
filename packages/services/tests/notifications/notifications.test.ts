@@ -122,6 +122,23 @@ describe('notifyMany', () => {
     });
   });
 
+  it('keeps the external destination beside the internal Orbit route', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const event = {
+        ...eventFor(fixture, { userIds: [fixture.adaId] }),
+        externalUrl: 'https://github.com/acme/web/pull/7',
+      };
+
+      const outcome = await notifyMany(tx, [event]);
+      const stored = outcome.notifications[0] as unknown as Record<string, unknown>;
+
+      expect(stored['url']).toBe('/issue/ORB-1');
+      expect(stored['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+      expect(outcome.actions[0]?.data['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+    });
+  });
+
   it('keeps a type out of the inbox when the inbox channel is off', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -245,6 +262,28 @@ describe('notifyMany', () => {
       const outcome = await notifyMany(tx, [eventFor(fixture), eventFor(fixture)]);
       expect(outcome.notifications).toHaveLength(2);
       expect(outcome.deduped).toBe(2);
+    });
+  });
+
+  it('keeps distinct GitHub activities on the same pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const first = eventFor(fixture, {
+        type: 'pr_comment',
+        entityType: 'github_pull_request',
+        entityId: 'pr_7',
+        externalUrl: 'https://github.com/acme/web/pull/7#issuecomment-1',
+      });
+      const second = {
+        ...first,
+        body: 'A different comment',
+        externalUrl: 'https://github.com/acme/web/pull/7#issuecomment-2',
+      };
+
+      const outcome = await notifyMany(tx, [first, second]);
+
+      expect(outcome.notifications).toHaveLength(4);
+      expect(outcome.deduped).toBe(0);
     });
   });
 

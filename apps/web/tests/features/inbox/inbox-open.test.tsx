@@ -71,7 +71,9 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     actorName: 'Ada',
     title: 'Mentioned you in ENG-3',
     body: 'Take a look',
+    bodyHtml: '<p>Take a look</p>',
     url: '/issue/ENG-3#comment-comment_9',
+    externalUrl: null,
     read: false,
     snoozedUntil: null,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -140,6 +142,49 @@ describe('opening a notification', () => {
 
     expect(calls).toEqual([]);
   });
+
+  it('opens a pull request on GitHub and keeps the related Orbit issue separate', () => {
+    renderInbox([
+      item({
+        type: 'pr_review_requested',
+        title: 'Review requested on Fix the socket',
+        body: 'Noveum/orbit#307',
+        url: '/issue/ENG-3',
+        externalUrl: 'https://github.com/Noveum/orbit/pull/307',
+      }),
+    ]);
+
+    expect(screen.getByRole('link', { name: 'Open on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/Noveum/orbit/pull/307',
+    );
+    expect(screen.getByRole('link', { name: 'Open issue' })).toHaveAttribute(
+      'href',
+      '/issue/ENG-3',
+    );
+  });
+
+  it('opens an unlinked pull request in the Orbit activity view', () => {
+    renderInbox([
+      item({
+        type: 'pr_comment',
+        entityType: 'github_pull_request',
+        entityId: 'pr_1',
+        title: 'New comment on Fix the socket',
+        body: 'Please add a **regression test**.',
+        bodyHtml: '<p>Please add a <strong>regression test</strong>.</p>',
+        url: '/pulls/pr_1',
+        externalUrl: 'https://github.com/Noveum/orbit/pull/307#issuecomment-1',
+      }),
+    ]);
+
+    expect(screen.getByRole('link', { name: 'Open pull request' })).toHaveAttribute(
+      'href',
+      '/pulls/pr_1',
+    );
+    expect(screen.getAllByText(/Please add a/)).toHaveLength(1);
+    expect(screen.getByText('regression test')).toHaveRole('strong');
+  });
 });
 
 describe('opening a notification in the Unread tab', () => {
@@ -156,6 +201,27 @@ describe('opening a notification in the Unread tab', () => {
     await waitFor(() => {
       expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
     });
+  });
+
+  it('keeps notifications opened during this unread session visible', async () => {
+    const user = userEvent.setup();
+    renderInbox([
+      item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
+      item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Unread' }));
+    await user.click(screen.getByRole('button', { name: /First/ }));
+    await user.click(screen.getByRole('button', { name: /Second/ }));
+
+    await waitFor(() => {
+      expect(calls).toEqual([
+        { notificationIds: ['notification_1'], read: true },
+        { notificationIds: ['notification_2'], read: true },
+      ]);
+    });
+    expect(screen.getByRole('button', { name: /First/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Second/ })).toBeInTheDocument();
   });
 });
 

@@ -3,7 +3,13 @@
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
-import { GitPullRequest } from 'lucide-react';
+import {
+  CircleCheck,
+  CircleX,
+  ExternalLink,
+  GitPullRequest,
+  MessageSquareText,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
@@ -11,14 +17,20 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
+import { cn } from '@/lib/cn.ts';
+import { rowHover, tabHover } from '@/lib/interaction.ts';
 import type { GithubReach, PullRequestRow } from './data.ts';
 import { PR_GROUP_ORDER, prStateLabel, prStateTone } from './pr-state.ts';
+import { usePullRefresh } from './use-pull-refresh.ts';
 
 export interface PullsViewProps {
   readonly pulls: readonly PullRequestRow[];
+  readonly total?: number;
   readonly userId: string;
   readonly reach: GithubReach;
   readonly canManageIntegrations: boolean;
+  readonly currentPage?: number;
+  readonly hasMore?: boolean;
 }
 
 interface ReachCopy {
@@ -31,15 +43,14 @@ interface ReachCopy {
 const REACH_COPY: Record<GithubReach, ReachCopy> = {
   not_installed: {
     title: 'GitHub is not connected yet',
-    admin:
-      'Connect GitHub, pick the repositories to track, and pull requests naming an issue show up here.',
+    admin: 'Connect GitHub and pick the repositories whose pull requests Orbit should mirror.',
     member: 'A workspace admin needs to connect GitHub before pull requests can appear here.',
     action: 'Connect GitHub',
   },
   suspended: {
     title: 'The GitHub installation is suspended',
     admin:
-      'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then pull requests naming an issue show up here.',
+      'GitHub is refusing to send anything while the installation is suspended. Lift it in the GitHub App settings, then refresh the connection.',
     member:
       'GitHub is refusing to send anything while the installation is suspended. A workspace admin has to lift it on GitHub.',
     action: 'Open integrations',
@@ -53,19 +64,19 @@ const REACH_COPY: Record<GithubReach, ReachCopy> = {
     action: 'Pick repositories',
   },
   repositories_untracked: {
-    title: 'No pull requests linked to your issues',
+    title: 'No pull requests in tracked repositories',
     admin:
-      'Two things have to be true. The branch or title has to name an issue, like ENG-42, and the repository has to be tracked here. GitHub can see repositories this workspace has not switched on, and a pull request from one of those is dropped on arrival while GitHub still reports the delivery as accepted, so nothing looks wrong on either side.',
+      'GitHub can see additional repositories this workspace has not switched on. Track the repositories whose pull requests should appear here, then refresh to import their open pull requests.',
     member:
-      'Two things have to be true. The branch or title has to name an issue, like ENG-42, and the repository has to be tracked here. GitHub can see repositories this workspace has not switched on, and pull requests from those are dropped on arrival. A workspace admin picks which ones to track.',
+      'GitHub can see additional repositories this workspace has not switched on. A workspace admin chooses which repositories Orbit mirrors.',
     action: 'Check tracked repositories',
   },
   connected: {
-    title: 'No pull requests linked to your issues',
+    title: 'No pull requests have synced yet',
     admin:
-      'Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches.',
+      'Orbit mirrors pull requests from tracked repositories. Refresh GitHub repositories if this workspace was connected before PR mirroring was enabled.',
     member:
-      'Orbit links a pull request when its branch or title names an issue, like ENG-42. Copy branch name on an issue gives you one that matches.',
+      'Orbit mirrors pull requests from tracked repositories. A workspace admin can refresh the GitHub connection if this stays empty.',
     action: 'Open integrations',
   },
 };
@@ -111,8 +122,17 @@ function indexOfState(state: string): number {
   return index === -1 ? PR_GROUP_ORDER.length : index;
 }
 
-export function PullsView({ pulls, userId, reach, canManageIntegrations }: PullsViewProps) {
+export function PullsView({
+  pulls,
+  total = pulls.length,
+  userId,
+  reach,
+  canManageIntegrations,
+  currentPage = 1,
+  hasMore = false,
+}: PullsViewProps) {
   const router = useRouter();
+  usePullRefresh();
   useScopeSubscription([scopes.user(userId)]);
   useDeltaHandler(
     useCallback(
@@ -130,12 +150,12 @@ export function PullsView({ pulls, userId, reach, canManageIntegrations }: Pulls
   const groups = groupPulls(pulls);
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col bg-surface">
       <header className="flex items-center justify-between gap-3 border-border border-b px-5 py-3">
         <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
           Pull requests
-          <Badge tone={pulls.length > 0 ? 'accent' : 'neutral'} data-testid="pulls-count">
-            {pulls.length}
+          <Badge tone={total > 0 ? 'accent' : 'neutral'} data-testid="pulls-count">
+            {total}
           </Badge>
         </h1>
       </header>
@@ -150,45 +170,119 @@ export function PullsView({ pulls, userId, reach, canManageIntegrations }: Pulls
                 {prStateLabel(group.state)}
                 <span className="text-faint">{group.rows.length}</span>
               </h2>
-              <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
+              <ul className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
                 {group.rows.map((pull) => (
                   <li key={pull.id}>
-                    <div className="flex items-center gap-3 border-border border-b px-3 py-2.5 last:border-b-0 hover:bg-surface-2">
+                    <div
+                      className={cn(
+                        'flex items-center gap-3 border-border border-b px-3 py-2.5 last:border-b-0',
+                        rowHover,
+                      )}
+                    >
                       <GitPullRequest className="size-4 shrink-0 text-faint" aria-hidden="true" />
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <a
-                          href={pull.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="truncate rounded-sm text-dense text-text hover:text-accent"
+                        <Link
+                          href={`/pulls/${pull.id}`}
+                          className={cn('truncate rounded-sm text-dense text-text', tabHover)}
                         >
                           {pull.title}
-                        </a>
-                        <span className="flex items-center gap-1.5 truncate text-2xs text-faint">
+                        </Link>
+                        <span className="flex flex-wrap items-center gap-1.5 text-2xs text-faint">
                           <span className="font-mono">
                             {pull.repository}#{pull.number ?? '?'}
                           </span>
+                          {pull.authorLogin.length > 0 ? (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span>{pull.authorLogin}</span>
+                            </>
+                          ) : null}
                           <span aria-hidden="true">·</span>
-                          <IssueLink
-                            identifier={pull.issueIdentifier}
-                            testId={`pull-issue-${pull.issueIdentifier}`}
-                            className="flex min-w-0 items-center gap-1.5 rounded-sm hover:text-accent"
-                          >
-                            <span className="shrink-0">{pull.issueIdentifier}</span>
-                            <span className="truncate">{pull.issueTitle}</span>
-                          </IssueLink>
+                          <span className="inline-flex items-center gap-1">
+                            <MessageSquareText className="size-3" aria-hidden="true" />
+                            {pull.activityCount}
+                          </span>
                         </span>
+                        {pull.linkedIssues.length > 0 ? (
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-faint">
+                            {pull.linkedIssues.map((linked) => (
+                              <span
+                                key={linked.identifier}
+                                className="inline-flex items-center gap-1.5"
+                              >
+                                <IssueLink
+                                  identifier={linked.identifier}
+                                  testId={`pull-issue-${linked.identifier}`}
+                                  className={cn(
+                                    'flex min-w-0 items-center gap-1 rounded-sm',
+                                    tabHover,
+                                  )}
+                                >
+                                  <span className="shrink-0">{linked.identifier}</span>
+                                  <span className="max-w-56 truncate">{linked.title}</span>
+                                </IssueLink>
+                                {linked.project === null ? null : (
+                                  <Link
+                                    href={`/projects/${linked.project.slug}`}
+                                    className="rounded-sm text-accent underline-offset-2 hover:underline"
+                                  >
+                                    {linked.project.name}
+                                  </Link>
+                                )}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="text-2xs text-faint">No Orbit task linked</span>
+                        )}
                       </div>
                       <span className="hidden shrink-0 text-2xs text-faint sm:block">
                         {relativeTime(new Date(pull.updatedAt))}
                       </span>
+                      {pull.checkStatus === 'success' ? (
+                        <CircleCheck
+                          className="size-4 shrink-0 text-success"
+                          aria-label="Checks passing"
+                        />
+                      ) : null}
+                      {pull.checkStatus === 'failure' ? (
+                        <CircleX
+                          className="size-4 shrink-0 text-danger"
+                          aria-label="Checks failing"
+                        />
+                      ) : null}
                       <Badge tone={prStateTone(pull.state)}>{prStateLabel(pull.state)}</Badge>
+                      <a
+                        href={pull.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Open on GitHub"
+                        className={cn('rounded-sm p-1 text-faint', rowHover, tabHover)}
+                      >
+                        <ExternalLink className="size-3.5" aria-hidden="true" />
+                      </a>
                     </div>
                   </li>
                 ))}
               </ul>
             </section>
           ))}
+          {currentPage > 1 || hasMore ? (
+            <nav aria-label="Pull request pages" className="flex items-center justify-end gap-2">
+              {currentPage > 1 ? (
+                <Button asChild variant="secondary" size="sm">
+                  <Link href={currentPage === 2 ? '/pulls' : `/pulls?page=${currentPage - 1}`}>
+                    Previous
+                  </Link>
+                </Button>
+              ) : null}
+              {hasMore ? (
+                <Button asChild variant="secondary" size="sm">
+                  <Link href={`/pulls?page=${currentPage + 1}`}>Next</Link>
+                </Button>
+              ) : null}
+            </nav>
+          ) : null}
         </div>
       )}
     </div>

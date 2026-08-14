@@ -30,10 +30,12 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { CommentBody } from '@/features/comments/comment-thread.tsx';
 import { DocSurface } from '@/features/docs/doc-surface.tsx';
 import { IssueDetailView } from '@/features/issues/issue-detail.tsx';
 import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
@@ -58,6 +60,7 @@ const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
   invite_accepted: UserPlus,
   member_joined: UserPlus,
   pr_review_requested: GitPullRequest,
+  pr_comment: MessageSquare,
   pr_review_submitted: MessageSquare,
   pr_approved: CheckCircle2,
   pr_merged: GitMerge,
@@ -80,6 +83,11 @@ function matchesTab(item: InboxItem, tab: TabId): boolean {
   return true;
 }
 
+function openLabel(item: InboxItem): string {
+  if (!isPullRequestNotification(item.type)) return 'Open in Orbit';
+  return item.entityType === 'github_pull_request' ? 'Open pull request' : 'Open issue';
+}
+
 const SNOOZE_HOURS = 24;
 
 const notificationDeltaSchema = z.object({
@@ -90,7 +98,9 @@ const notificationDeltaSchema = z.object({
   actorName: z.string(),
   title: z.string(),
   body: z.string(),
+  bodyHtml: z.string().default(''),
   url: z.string(),
+  externalUrl: z.httpUrl().max(2048).nullable().default(null),
   readAt: z.string().nullable(),
   snoozedUntil: z.string().nullable(),
   createdAt: z.string(),
@@ -112,7 +122,9 @@ const inboxPageSchema = z.object({
       actorName: z.string(),
       title: z.string(),
       body: z.string(),
+      bodyHtml: z.string().default(''),
       url: z.string(),
+      externalUrl: z.httpUrl().max(2048).nullable().default(null),
       read: z.boolean(),
       snoozedUntil: z.string().nullable(),
       createdAt: z.string(),
@@ -133,7 +145,9 @@ function toInboxItem(data: Record<string, unknown>): InboxItem | null {
     actorName: row.actorName,
     title: row.title,
     body: row.body,
+    bodyHtml: row.bodyHtml,
     url: row.url,
+    externalUrl: row.externalUrl,
     read: row.readAt !== null,
     snoozedUntil: row.snoozedUntil,
     createdAt: row.createdAt,
@@ -226,6 +240,66 @@ function LoadMoreRow({
   );
 }
 
+function notificationIconTone(type: NotificationType): string {
+  if (type === 'pr_checks_failed') return 'text-danger';
+  if (type === 'pr_approved' || type === 'pr_merged') return 'text-success';
+  if (isPullRequestNotification(type)) return 'text-accent';
+  return 'text-muted';
+}
+
+function NotificationRow({
+  row,
+  current,
+  onOpen,
+}: {
+  readonly row: InboxItem;
+  readonly current: boolean;
+  readonly onOpen: (item: InboxItem) => void;
+}) {
+  const Icon = SOURCE_ICONS[row.type];
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpen(row)}
+        aria-current={current ? 'true' : undefined}
+        className={cn(
+          'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',
+          rowHover,
+          current ? 'bg-accent-soft/70' : null,
+        )}
+      >
+        <span
+          className={cn(
+            'mt-1.5 size-1.5 shrink-0 rounded-full',
+            row.read ? 'bg-transparent' : 'bg-accent',
+          )}
+          aria-hidden="true"
+        />
+        <span className="sr-only">{row.read ? 'Read' : 'Unread'}</span>
+        <span
+          className={cn(
+            'flex size-6 shrink-0 items-center justify-center rounded-md bg-surface-2',
+            notificationIconTone(row.type),
+          )}
+        >
+          <Icon className="size-3.5" aria-hidden="true" />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span
+            className={cn('truncate text-dense', row.read ? 'text-muted' : 'font-medium text-text')}
+          >
+            {row.title}
+          </span>
+          <span className="truncate text-2xs text-faint">
+            {row.actorName} · {relativeTime(new Date(row.createdAt))}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 function NotificationBody({
   item,
   canWriteDocs,
@@ -268,7 +342,7 @@ function NotificationBody({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-5">
       {item.body.length === 0 ? null : (
-        <p className="whitespace-pre-wrap text-muted text-sm">{item.body}</p>
+        <CommentBody body={item.body} bodyHtml={item.bodyHtml ?? ''} />
       )}
     </div>
   );
@@ -295,23 +369,38 @@ function NotificationDetail({
           {relativeTime(new Date(item.createdAt))}
           {item.snoozedUntil === null ? '' : ' · snoozed'}
         </p>
-        <Link
-          href={item.url}
-          data-testid="inbox-open-link"
-          onClick={onOpen}
-          className="shrink-0 rounded-sm text-accent text-2xs hover:underline"
-        >
-          Open in Orbit
-        </Link>
+        <span className="flex shrink-0 items-center gap-3">
+          {isPullRequestNotification(item.type) && item.externalUrl !== null ? (
+            <a
+              href={item.externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={onOpen}
+              className="rounded-sm text-accent text-2xs hover:underline"
+            >
+              Open on GitHub
+            </a>
+          ) : null}
+          <Link
+            href={item.url}
+            data-testid="inbox-open-link"
+            onClick={onOpen}
+            className="rounded-sm text-accent text-2xs hover:underline"
+          >
+            {openLabel(item)}
+          </Link>
+        </span>
       </div>
 
-      {isPullRequestNotification(item.type) && item.body.length > 0 ? (
-        <p
-          className="border-border border-b px-5 py-1.5 text-2xs text-muted"
+      {isPullRequestNotification(item.type) &&
+      item.body.length > 0 &&
+      (issueIdentifierFromUrl(item.url) !== null || docIdFromUrl(item.url) !== null) ? (
+        <div
+          className="border-border border-b bg-surface-2 px-5 py-2 text-2xs"
           data-testid="inbox-event-context"
         >
-          {item.body}
-        </p>
+          <CommentBody body={item.body} bodyHtml={item.bodyHtml ?? ''} />
+        </div>
       ) : null}
 
       <NotificationBody
@@ -352,6 +441,7 @@ export function InboxView({
   const inFlight = useRef(false);
   const cursorRef = useRef<string | null>(nextCursor);
   const [tab, setTab] = useState<TabId>('all');
+  const [retainedUnreadIds, setRetainedUnreadIds] = useState<ReadonlySet<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -381,8 +471,14 @@ export function InboxView({
   );
 
   const visible = useMemo(
-    () => rows.filter((row) => matchesTab(row, tab) || row.id === selectedId),
-    [rows, tab, selectedId],
+    () =>
+      rows.filter(
+        (row) =>
+          matchesTab(row, tab) ||
+          row.id === selectedId ||
+          (tab === 'unread' && retainedUnreadIds.has(row.id)),
+      ),
+    [rows, tab, selectedId, retainedUnreadIds],
   );
   const selectedIndex = visible.findIndex((row) => row.id === selectedId);
   const current = visible[selectedIndex === -1 ? 0 : selectedIndex];
@@ -442,6 +538,7 @@ export function InboxView({
   const selectTab = useCallback((next: TabId) => {
     setTab(next);
     setSelectedId(null);
+    setRetainedUnreadIds(new Set());
   }, []);
 
   const applyServerCount = useCallback((payload: unknown) => {
@@ -455,6 +552,14 @@ export function InboxView({
       const isMention = item.type === 'mention';
       const applyLocally = (read: boolean, step: number) => {
         setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read } : row)));
+        if (tab === 'unread') {
+          setRetainedUnreadIds((current) => {
+            const nextIds = new Set(current);
+            if (read) nextIds.add(item.id);
+            else nextIds.delete(item.id);
+            return nextIds;
+          });
+        }
         if (isMention) setMentions((count) => Math.max(0, count + step));
         setUnread((count) => Math.max(0, count + step));
       };
@@ -473,7 +578,7 @@ export function InboxView({
         throw cause;
       }
     },
-    [applyServerCount],
+    [applyServerCount, tab],
   );
 
   const toggleRead = useCallback(async () => {
@@ -544,7 +649,7 @@ export function InboxView({
   );
 
   return (
-    <div className="flex min-h-0 flex-col md:h-full">
+    <div className="flex min-h-0 flex-col bg-surface md:h-full">
       <header className="flex flex-col gap-2 border-border border-b px-5 py-2">
         {error === null ? null : (
           <p role="alert" className="text-danger text-xs" data-testid="inbox-error">
@@ -573,7 +678,7 @@ export function InboxView({
                 className={cn(
                   'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
                   tab === entry.id
-                    ? 'bg-surface-2 font-medium text-text'
+                    ? 'bg-accent-soft font-medium text-accent'
                     : 'text-muted hover:bg-surface-2 hover:text-text',
                 )}
               >
@@ -601,46 +706,14 @@ export function InboxView({
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[22rem_minmax(0,1fr)]">
           <ul className="flex min-h-0 flex-col border-border md:overflow-y-auto md:border-r">
-            {visible.map((row) => {
-              const Icon = SOURCE_ICONS[row.type];
-              return (
-                <li key={row.id}>
-                  <button
-                    type="button"
-                    onClick={() => open(row)}
-                    aria-current={current?.id === row.id ? 'true' : undefined}
-                    className={cn(
-                      'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',
-                      'transition-colors duration-[var(--duration-fast)]',
-                      current?.id === row.id ? 'bg-surface-2' : 'hover:bg-surface-2',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'mt-1.5 size-1.5 shrink-0 rounded-full',
-                        row.read ? 'bg-transparent' : 'bg-accent',
-                      )}
-                      aria-hidden="true"
-                    />
-                    <span className="sr-only">{row.read ? 'Read' : 'Unread'}</span>
-                    <Icon className="mt-0.5 size-3.5 shrink-0 text-faint" aria-hidden="true" />
-                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span
-                        className={cn(
-                          'truncate text-dense',
-                          row.read ? 'text-muted' : 'font-medium text-text',
-                        )}
-                      >
-                        {row.title}
-                      </span>
-                      <span className="truncate text-2xs text-faint">
-                        {row.actorName} · {relativeTime(new Date(row.createdAt))}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+            {visible.map((row) => (
+              <NotificationRow
+                key={row.id}
+                row={row}
+                current={current?.id === row.id}
+                onOpen={open}
+              />
+            ))}
             {cursor === null ? null : (
               <li key="load-more">
                 <LoadMoreRow loading={loadingMore} onReach={loadMore} />

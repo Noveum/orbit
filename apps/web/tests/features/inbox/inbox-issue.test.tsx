@@ -194,6 +194,7 @@ afterEach(() => {
 });
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {
+  const body = overrides.body ?? 'This needs a second pair of eyes.';
   return {
     id: 'notification_1',
     type: 'comment_created',
@@ -201,12 +202,14 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     entityId: 'comment_9',
     actorName: 'Ada Lovelace',
     title: 'New comment on ENG-3',
-    body: 'This needs a second pair of eyes.',
+    body,
     url: '/issue/ENG-3#comment-comment_9',
+    externalUrl: null,
     read: false,
     snoozedUntil: null,
     createdAt: '2026-01-02T00:00:00.000Z',
     ...overrides,
+    bodyHtml: overrides.bodyHtml ?? `<p>${body}</p>`,
   };
 }
 

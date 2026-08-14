@@ -21,6 +21,7 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { renderMarkdown } from '../markdown/index.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -53,6 +54,7 @@ export const notificationEventSchema = z.object({
   title: z.string().trim().min(1).max(255),
   body: z.string().max(4000).default(''),
   url: z.string().trim().min(1).max(2048),
+  externalUrl: z.httpUrl().max(2048).nullish(),
   priority: z.number().int().min(0).max(4).optional(),
 });
 
@@ -128,7 +130,7 @@ export async function notifyMany(
     for (const userId of event.userIds) {
       const recipient = recipients.get(userId);
       if (userId === event.actor.id || recipient === undefined) continue;
-      const key = dedupeKey(userId, event.type, event.entityId);
+      const key = dedupeKey(userId, event.type, event.entityId, event.externalUrl ?? null);
       if (seen.has(key)) {
         deduped += 1;
         continue;
@@ -219,6 +221,7 @@ function toInsert(plan: Plan, now: Date) {
     title: event.title,
     body: event.body,
     url: event.url,
+    externalUrl: event.externalUrl ?? null,
     deliveredChannels: plan.channels,
     syncId: nextSyncId,
     createdAt: now,
@@ -275,7 +278,9 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
       entityId: row.entityId,
       title: row.title,
       body: row.body,
+      bodyHtml: renderMarkdown(row.body),
       url: row.url,
+      externalUrl: row.externalUrl,
       readAt: row.readAt?.toISOString() ?? null,
       snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
       deliveredChannels: row.deliveredChannels,
@@ -319,6 +324,7 @@ async function loadRecentKeys(
       userId: notification.userId,
       type: notification.type,
       entityId: notification.entityId,
+      externalUrl: notification.externalUrl,
     })
     .from(notification)
     .where(
@@ -327,11 +333,16 @@ async function loadRecentKeys(
         gte(notification.createdAt, new Date(now.getTime() - DEDUPE_WINDOW_MS)),
       ),
     );
-  return new Set(rows.map((row) => dedupeKey(row.userId, row.type, row.entityId)));
+  return new Set(rows.map((row) => dedupeKey(row.userId, row.type, row.entityId, row.externalUrl)));
 }
 
-function dedupeKey(userId: string, type: string, entityId: string): string {
-  return `${userId}:${type}:${entityId}`;
+function dedupeKey(
+  userId: string,
+  type: string,
+  entityId: string,
+  externalUrl: string | null,
+): string {
+  return `${userId}:${type}:${entityId}:${externalUrl ?? ''}`;
 }
 
 function emptyOutcome(): NotifyOutcome {

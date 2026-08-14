@@ -58,8 +58,88 @@ const repositoriesSchema = z.object({
   repositories: z.array(repositorySchema).default([]),
 });
 
+const openPullRequestSchema = z.object({
+  id: z.number().int().nonnegative().default(0),
+  node_id: z.string().max(255).default(''),
+  number: z.number().int().positive(),
+  title: z.string().max(1024).default(''),
+  body: z.string().max(65536).nullable().default(null),
+  html_url: z.string().url().max(2048),
+  draft: z.boolean().default(false),
+  head: z.object({
+    ref: z.string().max(1024).default(''),
+    sha: z.string().max(255).default(''),
+  }),
+  base: z.object({ ref: z.string().max(1024).default('') }),
+  created_at: z.string().datetime().nullable().default(null),
+  updated_at: z.string().datetime().nullable().default(null),
+  user: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+});
+
+const openPullRequestsSchema = z.array(openPullRequestSchema);
+
+const historyCommentSchema = z.object({
+  id: z.number().int().nonnegative(),
+  body: z.string().max(65536).default(''),
+  html_url: z.string().url().max(2048),
+  user: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  path: z.string().max(4096).nullable().optional(),
+  line: z.number().int().positive().nullable().optional(),
+  created_at: z.string().datetime().nullable().default(null),
+  updated_at: z.string().datetime().nullable().default(null),
+});
+
+const historyReviewSchema = z.object({
+  id: z.number().int().nonnegative(),
+  state: z.string().max(64).default('COMMENTED'),
+  body: z.string().max(65536).nullable().default(null),
+  html_url: z.string().url().max(2048).nullable().default(null),
+  user: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  submitted_at: z.string().datetime().nullable().default(null),
+});
+
+const historyCheckRunSchema = z.object({
+  id: z.number().int().nonnegative(),
+  name: z.string().max(255).default(''),
+  status: z.string().max(64).nullable().default(null),
+  conclusion: z.string().max(64).nullable().default(null),
+  html_url: z.string().url().max(2048).nullable().default(null),
+  started_at: z.string().datetime().nullable().default(null),
+  completed_at: z.string().datetime().nullable().default(null),
+});
+
+const historyCheckRunsSchema = z.object({
+  total_count: z.number().int().nonnegative().default(0),
+  check_runs: z.array(historyCheckRunSchema).default([]),
+});
+
+const historyCommitStatusSchema = z.object({
+  id: z.number().int().nonnegative(),
+  state: z.string().max(64),
+  context: z.string().max(255),
+  description: z.string().max(1024).nullable().default(null),
+  target_url: z.string().url().max(2048).nullable().default(null),
+  creator: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  created_at: z.string().datetime().nullable().default(null),
+  updated_at: z.string().datetime().nullable().default(null),
+});
+
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
 export const GITHUB_MAX_REPOSITORY_PAGES = 100;
+export const GITHUB_PULL_REQUEST_PAGE_SIZE = 100;
+export const GITHUB_MAX_PULL_REQUEST_PAGES = 100;
 
 export const GITHUB_REPOSITORY_SELECTIONS = ['all', 'selected'] as const;
 export type GithubRepositorySelection = (typeof GITHUB_REPOSITORY_SELECTIONS)[number];
@@ -83,6 +163,9 @@ const userInstallationsSchema = z.object({
   installations: z.array(z.object({ id: z.number().int().positive() })).default([]),
 });
 
+const GITHUB_USER_INSTALLATION_PAGE_SIZE = 100;
+const GITHUB_MAX_USER_INSTALLATION_PAGES = 100;
+
 const userTokenSchema = z.object({
   access_token: z.string().min(1).optional(),
   error: z.string().optional(),
@@ -98,6 +181,34 @@ export interface GithubInstalledRepository {
   readonly archived: boolean;
   readonly defaultBranch: string;
   readonly htmlUrl: string;
+}
+
+export interface GithubOpenPullRequest {
+  readonly externalId: string;
+  readonly nodeId: string;
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly url: string;
+  readonly headRef: string;
+  readonly headSha: string;
+  readonly baseRef: string;
+  readonly draft: boolean;
+  readonly author: { readonly login: string; readonly id: number };
+  readonly createdAt: string | null;
+  readonly updatedAt: string | null;
+}
+
+export interface GithubPullRequestHistoryEntry {
+  readonly externalId: string;
+  readonly type: 'comment' | 'review' | 'review_comment' | 'checks';
+  readonly actor: { readonly login: string; readonly id: number };
+  readonly body: string;
+  readonly url: string;
+  readonly state: string;
+  readonly path: string | null;
+  readonly line: number | null;
+  readonly occurredAt: string;
 }
 
 export interface GithubInstallationAccount {
@@ -287,6 +398,202 @@ export async function fetchInstalledRepositories(
   );
 }
 
+export async function fetchGithubOpenPullRequests(
+  input: GithubAppRequest & { readonly repository: string },
+): Promise<GithubOpenPullRequest[]> {
+  const token = await githubInstallationToken(input);
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const repository = input.repository
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const collected: GithubOpenPullRequest[] = [];
+  for (let page = 1; page <= GITHUB_MAX_PULL_REQUEST_PAGES; page += 1) {
+    const body = await githubJson(
+      fetchImpl,
+      `${base}/repos/${repository}/pulls?state=open&per_page=${GITHUB_PULL_REQUEST_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${token}` } },
+      openPullRequestsSchema,
+      'open pull requests',
+    );
+    collected.push(
+      ...body.map((pullRequest) => ({
+        externalId: pullRequest.id === 0 ? '' : String(pullRequest.id),
+        nodeId: pullRequest.node_id,
+        number: pullRequest.number,
+        title: pullRequest.title,
+        body: pullRequest.body ?? '',
+        url: pullRequest.html_url,
+        headRef: pullRequest.head.ref,
+        headSha: pullRequest.head.sha,
+        baseRef: pullRequest.base.ref,
+        draft: pullRequest.draft,
+        author: pullRequest.user ?? { login: 'github', id: 0 },
+        createdAt: pullRequest.created_at,
+        updatedAt: pullRequest.updated_at,
+      })),
+    );
+    if (body.length < GITHUB_PULL_REQUEST_PAGE_SIZE) return collected;
+  }
+  throw internal(
+    `GitHub repository ${input.repository} lists more than ${GITHUB_MAX_PULL_REQUEST_PAGES * GITHUB_PULL_REQUEST_PAGE_SIZE} open pull requests, so this snapshot is incomplete.`,
+  );
+}
+
+async function githubPagedArray<T extends z.ZodTypeAny>(input: {
+  readonly fetchImpl: typeof globalThis.fetch;
+  readonly endpoint: string;
+  readonly token: string;
+  readonly itemSchema: T;
+  readonly label: string;
+}): Promise<z.infer<T>[]> {
+  const collected: z.infer<T>[] = [];
+  for (let page = 1; page <= GITHUB_MAX_PULL_REQUEST_PAGES; page += 1) {
+    const body = await githubJson(
+      input.fetchImpl,
+      `${input.endpoint}?per_page=${GITHUB_PULL_REQUEST_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${input.token}` } },
+      z.array(input.itemSchema),
+      input.label,
+    );
+    collected.push(...body);
+    if (body.length < GITHUB_PULL_REQUEST_PAGE_SIZE) return collected;
+  }
+  throw internal(`GitHub ${input.label} exceeded the supported history size.`);
+}
+
+function historyActor(actor: { readonly login: string; readonly id: number } | null): {
+  readonly login: string;
+  readonly id: number;
+} {
+  return actor ?? { login: 'github', id: 0 };
+}
+
+export async function fetchGithubPullRequestHistory(
+  input: GithubAppRequest & {
+    readonly repository: string;
+    readonly number: number;
+    readonly headSha: string;
+  },
+): Promise<GithubPullRequestHistoryEntry[]> {
+  const token = await githubInstallationToken(input);
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const repository = input.repository
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const root = `${base}/repos/${repository}`;
+  const [conversationComments, reviews, reviewComments] = await Promise.all([
+    githubPagedArray({
+      fetchImpl,
+      endpoint: `${root}/issues/${input.number}/comments`,
+      token,
+      itemSchema: historyCommentSchema,
+      label: 'pull request conversation comments',
+    }),
+    githubPagedArray({
+      fetchImpl,
+      endpoint: `${root}/pulls/${input.number}/reviews`,
+      token,
+      itemSchema: historyReviewSchema,
+      label: 'pull request reviews',
+    }),
+    githubPagedArray({
+      fetchImpl,
+      endpoint: `${root}/pulls/${input.number}/comments`,
+      token,
+      itemSchema: historyCommentSchema,
+      label: 'pull request review comments',
+    }),
+  ]);
+  const checks: z.infer<typeof historyCheckRunSchema>[] = [];
+  let statuses: z.infer<typeof historyCommitStatusSchema>[] = [];
+  if (input.headSha.length > 0) {
+    statuses = await githubPagedArray({
+      fetchImpl,
+      endpoint: `${root}/commits/${encodeURIComponent(input.headSha)}/statuses`,
+      token,
+      itemSchema: historyCommitStatusSchema,
+      label: 'pull request commit statuses',
+    });
+    for (let page = 1; page <= GITHUB_MAX_PULL_REQUEST_PAGES; page += 1) {
+      const body = await githubJson(
+        fetchImpl,
+        `${root}/commits/${encodeURIComponent(input.headSha)}/check-runs?per_page=${GITHUB_PULL_REQUEST_PAGE_SIZE}&page=${page}`,
+        { headers: { authorization: `Bearer ${token}` } },
+        historyCheckRunsSchema,
+        'pull request check runs',
+      );
+      checks.push(...body.check_runs);
+      if (body.check_runs.length < GITHUB_PULL_REQUEST_PAGE_SIZE) break;
+      if (page === GITHUB_MAX_PULL_REQUEST_PAGES) {
+        throw internal('GitHub pull request check runs exceeded the supported history size.');
+      }
+    }
+  }
+
+  const history: GithubPullRequestHistoryEntry[] = [
+    ...conversationComments.map((comment) => ({
+      externalId: `comment:${comment.id}`,
+      type: 'comment' as const,
+      actor: historyActor(comment.user),
+      body: comment.body,
+      url: comment.html_url,
+      state: 'created',
+      path: null,
+      line: null,
+      occurredAt: comment.updated_at ?? comment.created_at ?? new Date(0).toISOString(),
+    })),
+    ...reviews.map((review) => ({
+      externalId: `review:${review.id}`,
+      type: 'review' as const,
+      actor: historyActor(review.user),
+      body: review.body ?? '',
+      url: review.html_url ?? '',
+      state: review.state.toLowerCase(),
+      path: null,
+      line: null,
+      occurredAt: review.submitted_at ?? new Date(0).toISOString(),
+    })),
+    ...reviewComments.map((comment) => ({
+      externalId: `review_comment:${comment.id}`,
+      type: 'review_comment' as const,
+      actor: historyActor(comment.user),
+      body: comment.body,
+      url: comment.html_url,
+      state: 'created',
+      path: comment.path ?? null,
+      line: comment.line ?? null,
+      occurredAt: comment.updated_at ?? comment.created_at ?? new Date(0).toISOString(),
+    })),
+    ...checks.map((check) => ({
+      externalId: `check_run:${check.id}:${check.conclusion === null ? 'created' : 'completed'}:${check.conclusion ?? check.status ?? ''}`,
+      type: 'checks' as const,
+      actor: { login: 'github-actions', id: 0 },
+      body: check.name,
+      url: check.html_url ?? '',
+      state: check.conclusion ?? check.status ?? 'unknown',
+      path: null,
+      line: null,
+      occurredAt: check.completed_at ?? check.started_at ?? new Date(0).toISOString(),
+    })),
+    ...statuses.map((status) => ({
+      externalId: `status:${status.context}:${status.id}:${status.state}`,
+      type: 'checks' as const,
+      actor: historyActor(status.creator),
+      body: status.context,
+      url: status.target_url ?? '',
+      state: status.state,
+      path: null,
+      line: null,
+      occurredAt: status.updated_at ?? status.created_at ?? new Date(0).toISOString(),
+    })),
+  ];
+  return history.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+}
+
 export interface GithubUserAuthorization {
   readonly clientId: string;
   readonly clientSecret: string;
@@ -327,12 +634,24 @@ export async function listUserInstallationIds(input: {
 }): Promise<string[]> {
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const base = input.apiBase ?? GITHUB_API_BASE;
-  const body = await githubJson(
-    fetchImpl,
-    `${base}/user/installations?per_page=100`,
-    { headers: { authorization: `Bearer ${input.userToken}` } },
-    userInstallationsSchema,
-    'user installations',
+  const collected: string[] = [];
+  for (let page = 1; page <= GITHUB_MAX_USER_INSTALLATION_PAGES; page += 1) {
+    const body = await githubJson(
+      fetchImpl,
+      `${base}/user/installations?per_page=${GITHUB_USER_INSTALLATION_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${input.userToken}` } },
+      userInstallationsSchema,
+      'user installations',
+    );
+    collected.push(...body.installations.map((entry) => String(entry.id)));
+    if (
+      body.installations.length < GITHUB_USER_INSTALLATION_PAGE_SIZE ||
+      collected.length >= body.total_count
+    ) {
+      return collected;
+    }
+  }
+  throw internal(
+    `GitHub user controls more than ${GITHUB_MAX_USER_INSTALLATION_PAGES * GITHUB_USER_INSTALLATION_PAGE_SIZE} installations, so this snapshot is incomplete.`,
   );
-  return body.installations.map((entry) => String(entry.id));
 }

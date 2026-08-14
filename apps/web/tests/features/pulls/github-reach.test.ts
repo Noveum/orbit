@@ -1,8 +1,21 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import { generateKeyPairSync } from 'node:crypto';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  stateNamed,
+  type Workspace,
+} from '@orbit/core/test-support';
+import { and, db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { githubReach } from '../../../src/features/pulls/data.ts';
+import {
+  githubReach,
+  loadPullRequestDetail,
+  loadPullRequestPage,
+  loadPullRequests,
+} from '@/features/pulls/data.ts';
+import { refreshPullRequestHistory } from '@/features/pulls/github-refresh.ts';
 
 let workspace: Workspace;
 
@@ -50,6 +63,36 @@ async function repository(
     enabled,
   });
   return repositoryId;
+}
+
+async function mirroredPull(
+  integrationId: string,
+  repositoryId: string,
+  number: number,
+): Promise<string> {
+  const [repositorySync] = await db
+    .select({ id: schema.githubRepositorySync.id })
+    .from(schema.githubRepositorySync)
+    .where(
+      and(
+        eq(schema.githubRepositorySync.integrationId, integrationId),
+        eq(schema.githubRepositorySync.repositoryId, repositoryId),
+      ),
+    )
+    .limit(1);
+  if (repositorySync === undefined) throw new Error('the repository is not tracked');
+  const id = `ghp_${randomUUIDv7()}`;
+  await db.insert(schema.githubPullRequest).values({
+    id,
+    organizationId: workspace.organizationId,
+    repositorySyncId: repositorySync.id,
+    repositoryId,
+    repositoryName: 'noveum/orbit',
+    number,
+    title: `Pull ${number}`,
+    url: `https://github.com/noveum/orbit/pull/${number}`,
+  });
+  return id;
 }
 
 async function catalogued(
@@ -176,5 +219,229 @@ describe('githubReach', () => {
     await catalogued(integrationId, 'seen-but-never-switched-on');
 
     expect(await githubReach(workspace.admin)).toBe('no_repositories');
+  });
+});
+
+describe('loadPullRequests', () => {
+  it('merges direct and legacy task links without losing or duplicating context', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    const pullRequestId = await mirroredPull(integrationId, repositoryId, 54);
+    const directIssueId = `iss_${randomUUIDv7()}`;
+    const dualIssueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values([
+      {
+        id: directIssueId,
+        organizationId: workspace.organizationId,
+        teamId: workspace.teamId,
+        number: 54,
+        identifier: 'REA-54',
+        title: 'Keep direct pull request context',
+        stateId: stateNamed(workspace, 'Todo').id,
+        creatorId: workspace.adminUser.id,
+      },
+      {
+        id: dualIssueId,
+        organizationId: workspace.organizationId,
+        teamId: workspace.teamId,
+        number: 55,
+        identifier: 'REA-55',
+        title: 'Deduplicate migrated pull request context',
+        stateId: stateNamed(workspace, 'Todo').id,
+        creatorId: workspace.adminUser.id,
+      },
+    ]);
+    await db.insert(schema.gitLink).values([
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: directIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit:direct:rea-54',
+        pullRequestId,
+        number: null,
+        repository: 'noveum/orbit',
+        title: 'Keep direct pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: dualIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit:direct:rea-55',
+        pullRequestId,
+        number: 54,
+        repository: 'noveum/orbit',
+        title: 'Deduplicate migrated pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: dualIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit#54:rea-55',
+        number: 54,
+        repository: 'noveum/orbit',
+        title: 'Deduplicate migrated pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+    ]);
+
+    const page = await loadPullRequestPage(workspace.admin, 1);
+    const detail = await loadPullRequestDetail(workspace.admin, pullRequestId);
+
+    expect(page.total).toBe(1);
+    expect(page.pulls[0]?.linkedIssues.map((context) => context.identifier).sort()).toEqual([
+      'REA-54',
+      'REA-55',
+    ]);
+    expect(detail?.linkedIssues.map((context) => context.identifier).sort()).toEqual([
+      'REA-54',
+      'REA-55',
+    ]);
+  });
+
+  it('keeps the PR visible but hides linked task context after team access is removed', async () => {
+    const teammate = await addMember(workspace, 'member');
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    await mirroredPull(integrationId, repositoryId, 51);
+    const issueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values({
+      id: issueId,
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      number: 51,
+      identifier: 'REA-51',
+      title: 'Keep pull request access current',
+      stateId: stateNamed(workspace, 'Todo').id,
+      creatorId: teammate.user.id,
+      assigneeId: teammate.user.id,
+    });
+    await db.insert(schema.gitLink).values({
+      id: `git_${randomUUIDv7()}`,
+      organizationId: workspace.organizationId,
+      issueId,
+      kind: 'pull_request',
+      externalId: 'pr:noveum/orbit#51:rea-51',
+      number: 51,
+      repository: 'noveum/orbit',
+      title: 'Keep pull request access current',
+      url: 'https://github.com/noveum/orbit/pull/51',
+    });
+
+    await db.delete(schema.teamMember).where(eq(schema.teamMember.userId, teammate.user.id));
+
+    const teammatePulls = await loadPullRequests(teammate.principal);
+    expect(teammatePulls).toHaveLength(1);
+    expect(teammatePulls[0]?.linkedIssues).toHaveLength(0);
+    const adminPulls = await loadPullRequests(workspace.admin);
+    expect(adminPulls).toHaveLength(1);
+    expect(adminPulls[0]?.linkedIssues[0]?.identifier).toBe('REA-51');
+  });
+
+  it('does not trust a stale admin principal after the admin leaves the workspace', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    await mirroredPull(integrationId, repositoryId, 52);
+    const issueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values({
+      id: issueId,
+      organizationId: workspace.organizationId,
+      teamId: workspace.teamId,
+      number: 52,
+      identifier: 'REA-52',
+      title: 'Keep admin pull request access current',
+      stateId: stateNamed(workspace, 'Todo').id,
+      creatorId: workspace.adminUser.id,
+    });
+    await db.insert(schema.gitLink).values({
+      id: `git_${randomUUIDv7()}`,
+      organizationId: workspace.organizationId,
+      issueId,
+      kind: 'pull_request',
+      externalId: 'pr:noveum/orbit#52:rea-52',
+      number: 52,
+      repository: 'noveum/orbit',
+      title: 'Keep admin pull request access current',
+      url: 'https://github.com/noveum/orbit/pull/52',
+    });
+    await db
+      .delete(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, workspace.organizationId),
+          eq(schema.member.userId, workspace.adminUser.id),
+        ),
+      );
+
+    expect(await loadPullRequests(workspace.admin)).toHaveLength(0);
+  });
+});
+
+describe('refreshPullRequestHistory', () => {
+  it('lets only one concurrent request fetch GitHub history', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    const pullRequestId = await mirroredPull(integrationId, repositoryId, 53);
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    let tokenCalls = 0;
+    let historyCalls = 0;
+    const fetchHistory = ((input: string) => {
+      const url = String(input);
+      if (url.includes('/access_tokens')) {
+        tokenCalls += 1;
+        return Promise.resolve(
+          new Response(JSON.stringify({ token: 'ghs_history' }), { status: 201 }),
+        );
+      }
+      historyCalls += 1;
+      return Promise.resolve(new Response('[]', { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await Promise.all([
+      refreshPullRequestHistory({
+        principal: workspace.admin,
+        pullRequestId,
+        config: {
+          slug: 'orbit-test',
+          appId: '123',
+          privateKey,
+          clientId: 'client',
+          clientSecret: 'secret',
+        },
+        fetch: fetchHistory,
+      }),
+      refreshPullRequestHistory({
+        principal: workspace.admin,
+        pullRequestId,
+        config: {
+          slug: 'orbit-test',
+          appId: '123',
+          privateKey,
+          clientId: 'client',
+          clientSecret: 'secret',
+        },
+        fetch: fetchHistory,
+      }),
+    ]);
+
+    expect(tokenCalls).toBe(1);
+    expect(historyCalls).toBe(3);
+    const [pull] = await db
+      .select({
+        historySyncedAt: schema.githubPullRequest.historySyncedAt,
+        historyRefreshClaimedAt: schema.githubPullRequest.historyRefreshClaimedAt,
+      })
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.id, pullRequestId));
+    expect(pull?.historySyncedAt).not.toBeNull();
+    expect(pull?.historyRefreshClaimedAt).toBeNull();
   });
 });

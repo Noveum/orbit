@@ -3,6 +3,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import {
   exchangeGithubUserCode,
   fetchGithubInstallation,
+  fetchGithubOpenPullRequests,
+  fetchGithubPullRequestHistory,
   fetchInstalledRepositories,
   forgetGithubInstallationTokens,
   GITHUB_MAX_REPOSITORY_PAGES,
@@ -102,6 +104,239 @@ describe('githubInstallationToken', () => {
 
     expect(first).not.toBe(second);
     expect(counts.minted).toBe(2);
+  });
+});
+
+describe('fetchGithubOpenPullRequests', () => {
+  it('walks every open pull request page and normalizes the fields Orbit stores', async () => {
+    const pages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pulls' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      const page = Number(parsed.searchParams.get('page') ?? '1');
+      pages.push(page);
+      const count = page === 1 ? 100 : 1;
+      return new Response(
+        JSON.stringify(
+          Array.from({ length: count }, (_unused, index) => ({
+            id: (page - 1) * 100 + index + 1,
+            node_id: `PR_${page}_${index}`,
+            number: (page - 1) * 100 + index + 1,
+            title: `Pull ${page}-${index}`,
+            body: index === 0 ? 'Links ORB-3' : null,
+            html_url: `https://github.com/Noveum/orbit/pull/${(page - 1) * 100 + index + 1}`,
+            draft: index === 1,
+            state: 'open',
+            head: { ref: `orb-3-branch-${index}`, sha: `sha-${page}-${index}` },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+          })),
+        ),
+        { status: 200 },
+      );
+    });
+
+    const pulls = await fetchGithubOpenPullRequests({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'Noveum/orbit',
+      fetch: fetchImpl,
+    });
+
+    expect(pages).toEqual([1, 2]);
+    expect(pulls).toHaveLength(101);
+    expect(pulls[0]).toEqual({
+      externalId: '1',
+      nodeId: 'PR_1_0',
+      number: 1,
+      title: 'Pull 1-0',
+      body: 'Links ORB-3',
+      url: 'https://github.com/Noveum/orbit/pull/1',
+      headRef: 'orb-3-branch-0',
+      headSha: 'sha-1-0',
+      baseRef: 'main',
+      draft: false,
+      author: { login: 'octocat', id: 500 },
+      createdAt: null,
+      updatedAt: null,
+    });
+  });
+
+  it('keeps an absent pull request id non-identifying', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pulls' }), { status: 201 });
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            number: 7,
+            title: 'Partial pull request',
+            html_url: 'https://github.com/Noveum/orbit/pull/7',
+            head: { ref: 'partial' },
+            base: { ref: 'main' },
+          },
+        ]),
+        { status: 200 },
+      );
+    });
+
+    const pulls = await fetchGithubOpenPullRequests({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'Noveum/orbit',
+      fetch: fetchImpl,
+    });
+
+    expect(pulls[0]?.externalId).toBe('');
+  });
+
+  it('rejects an open pull request snapshot that exceeds the pagination bound', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pulls' }), { status: 201 });
+      }
+      return new Response(
+        JSON.stringify(
+          Array.from({ length: 100 }, (_unused, index) => ({
+            id: index + 1,
+            number: index + 1,
+            title: `Pull ${index + 1}`,
+            html_url: `https://github.com/Noveum/orbit/pull/${index + 1}`,
+            head: { ref: `pull-${index + 1}` },
+            base: { ref: 'main' },
+          })),
+        ),
+        { status: 200 },
+      );
+    });
+
+    await expect(
+      fetchGithubOpenPullRequests({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'Noveum/orbit',
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/snapshot is incomplete/);
+  });
+});
+
+describe('fetchGithubPullRequestHistory', () => {
+  it('loads conversation comments, reviews, inline comments, and checks', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_history' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith('/issues/7/comments')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 11,
+              body: 'Please add a test.',
+              html_url: 'https://github.com/acme/web/pull/7#issuecomment-11',
+              user: { login: 'ada', id: 1 },
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T01:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/pulls/7/reviews')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 12,
+              state: 'APPROVED',
+              body: 'Looks good.',
+              html_url: 'https://github.com/acme/web/pull/7#pullrequestreview-12',
+              user: { login: 'grace', id: 2 },
+              submitted_at: '2026-08-13T02:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/pulls/7/comments')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 13,
+              body: 'This can be simpler.',
+              html_url: 'https://github.com/acme/web/pull/7#discussion_r13',
+              user: { login: 'linus', id: 3 },
+              path: 'src/index.ts',
+              line: 42,
+              created_at: '2026-08-13T03:00:00.000Z',
+              updated_at: '2026-08-13T03:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      if (path.endsWith('/commits/abc123/check-runs')) {
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 14,
+                name: 'verify',
+                status: 'completed',
+                conclusion: 'success',
+                html_url: 'https://github.com/acme/web/actions/runs/14',
+                started_at: '2026-08-13T04:00:00.000Z',
+                completed_at: '2026-08-13T05:00:00.000Z',
+              },
+            ],
+          }),
+        );
+      }
+      if (path.endsWith('/commits/abc123/statuses')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 15,
+              state: 'failure',
+              context: 'Vercel',
+              description: 'Deployment failed',
+              target_url: 'https://vercel.com/acme/web/deployment/15',
+              creator: { login: 'vercel', id: 4 },
+              created_at: '2026-08-13T04:30:00.000Z',
+              updated_at: '2026-08-13T05:30:00.000Z',
+            },
+          ]),
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const history = await fetchGithubPullRequestHistory({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      number: 7,
+      headSha: 'abc123',
+      fetch: fetchImpl,
+    });
+
+    expect(history.map((entry) => entry.type)).toEqual([
+      'comment',
+      'review',
+      'review_comment',
+      'checks',
+      'checks',
+    ]);
+    expect(history[2]?.path).toBe('src/index.ts');
+    expect(history[2]?.line).toBe(42);
+    expect(history[3]?.state).toBe('success');
+    expect(history[4]?.body).toBe('Vercel');
+    expect(history[4]?.state).toBe('failure');
   });
 });
 
@@ -377,6 +612,32 @@ describe('listUserInstallationIds', () => {
     });
 
     expect(ids).toEqual(['151887625', '151889033']);
+  });
+
+  it('walks every installation page before checking callback ownership', async () => {
+    const pages: number[] = [];
+    const ids = await listUserInstallationIds({
+      userToken: 'ghu_x',
+      fetch: jsonFetch((url) => {
+        const page = Number(new URL(url).searchParams.get('page') ?? '1');
+        pages.push(page);
+        const start = (page - 1) * 100;
+        const count = page === 1 ? 100 : 50;
+        return new Response(
+          JSON.stringify({
+            total_count: 150,
+            installations: Array.from({ length: count }, (_unused, index) => ({
+              id: start + index + 1,
+            })),
+          }),
+          { status: 200 },
+        );
+      }),
+    });
+
+    expect(pages).toEqual([1, 2]);
+    expect(ids).toHaveLength(150);
+    expect(ids.at(-1)).toBe('150');
   });
 });
 
