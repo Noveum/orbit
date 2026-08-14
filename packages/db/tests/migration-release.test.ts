@@ -77,6 +77,74 @@ describe('database release', () => {
     expect([...preserved]).toEqual([{ payload: 'preserve me' }]);
   }, 60_000);
 
+  it('reconciles historical data backfills before baselining a legacy database', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        insert into "user" (id, name, email, handle)
+        values ('release-user', 'Release user', 'release@example.com', 'release-user')
+      `;
+      await sql`
+        insert into organization (id, name, slug)
+        values ('release-org', 'Release org', 'release-org')
+      `;
+      await sql`
+        insert into attachment (
+          id, organization_id, parent_type, parent_id, file_name, content_type,
+          size, storage_key, uploaded_by_id, created_at, upload_expires_at
+        ) values (
+          'release-attachment', 'release-org', 'issue', 'issue-1', 'proof.txt',
+          'text/plain', 1, 'release/proof.txt', 'release-user',
+          '2026-08-14T00:00:00Z', null
+        )
+      `;
+      await sql`drop schema drizzle cascade`;
+    });
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const [attachment] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ upload_expires_at: string | null }[]>`
+        select upload_expires_at::text as upload_expires_at
+        from attachment
+        where id = 'release-attachment'
+      `,
+    );
+
+    expect(result.mode).toBe('baselined');
+    expect(attachment?.upload_expires_at).toBe('2026-08-14 00:15:00+00');
+  }, 60_000);
+
+  it('refuses to baseline when a historical data invariant cannot be reconciled safely', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        insert into organization (id, name, slug)
+        values ('numbering-org', 'Numbering org', 'numbering-org')
+      `;
+      await sql`
+        insert into cycle (
+          id, organization_id, number, starts_at, ends_at, created_at
+        ) values
+          (
+            'later-cycle', 'numbering-org', 10, '2026-08-15T00:00:00Z',
+            '2026-08-22T00:00:00Z', '2026-08-10T00:00:00Z'
+          ),
+          (
+            'earlier-cycle', 'numbering-org', 20, '2026-08-01T00:00:00Z',
+            '2026-08-08T00:00:00Z', '2026-07-28T00:00:00Z'
+          )
+      `;
+      await sql`drop schema drizzle cascade`;
+    });
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'historical cycle numbering backfill',
+    );
+  }, 60_000);
+
   it('rejects a changed hash in an applied migration', async () => {
     await resetScratch();
     await migrateScratch();

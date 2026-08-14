@@ -28,10 +28,14 @@ keys are reported but preserved.
 ## Existing databases without a ledger
 
 When the public catalog already contains Orbit tables but the Drizzle ledger is
-absent, the release command first requires the full catalog check to pass. It then
-records all current migration hashes without replaying their SQL or modifying
-application rows. A partial legacy catalog is refused and must be brought forward
-with the applicable scripts in `packages/db/catchup` before retrying.
+absent, the release command first requires the full catalog check to pass. Before
+recording migration hashes, it transactionally reconciles each recognized
+historical data migration. Missing attachment expiry values are repaired from the
+original creation timestamp, while cycle numbering must already match the
+historical deterministic backfill. A data migration without an explicit legacy
+reconciliation makes the release fail closed. A partial catalog or an unsafe data
+invariant is refused and must be brought forward with the applicable scripts in
+`packages/db/catchup` before retrying.
 
 ## Deployment guard
 

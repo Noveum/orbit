@@ -18,6 +18,26 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
+const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883]);
+
+function containsDataChange(migration: MigrationMeta): boolean {
+  return migration.sql.some((statement) =>
+    /^\s*(?:call|copy|delete|do|insert|merge|truncate|update|with)\b/iu.test(statement),
+  );
+}
+
+function verifyLegacyDataReconciliation(migrations: readonly MigrationMeta[]): void {
+  const missing = migrations.filter(
+    (migration) =>
+      containsDataChange(migration) &&
+      !RECONCILED_LEGACY_DATA_MIGRATIONS.has(migration.folderMillis),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Legacy baseline has no reconciliation for data migration ${missing[0]?.folderMillis}.`,
+    );
+  }
+}
 
 async function ledgerExists(sql: postgres.Sql): Promise<boolean> {
   const [row] = await sql<{ exists: boolean }[]>`
@@ -60,7 +80,35 @@ async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
 ): Promise<void> {
+  verifyLegacyDataReconciliation(migrations);
   await sql.begin(async (tx) => {
+    await tx`
+      update attachment
+      set upload_expires_at = created_at + interval '900 seconds'
+      where upload_expires_at is null
+    `;
+    const [cycleNumbering] = await tx<{ mismatched: boolean }[]>`
+      with expected as (
+        select
+          id,
+          row_number() over (
+            partition by organization_id
+            order by starts_at, created_at, id
+          ) as number
+        from cycle
+      )
+      select exists (
+        select 1
+        from cycle
+        inner join expected on expected.id = cycle.id
+        where cycle.number is distinct from expected.number
+      ) as mismatched
+    `;
+    if (cycleNumbering?.mismatched === true) {
+      throw new Error(
+        'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
+      );
+    }
     await tx`create schema if not exists drizzle`;
     await tx`
       create table if not exists drizzle.__drizzle_migrations (
