@@ -104,6 +104,7 @@ const sprintBurnPointSchema = z.object({
   added: numberSchema,
   removed: numberSchema,
   ideal: numberSchema,
+  available: z.boolean(),
   coverage: analyticsCoverageSchema.shape.kind,
 });
 

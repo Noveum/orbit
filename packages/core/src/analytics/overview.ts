@@ -1,4 +1,9 @@
 import { db, sql } from '@orbit/db';
+import {
+  STATE_CATEGORY_LABELS,
+  STATE_CATEGORY_ORDER,
+  type StateCategory,
+} from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/validators';
 import {
@@ -244,7 +249,8 @@ async function distributions(
   const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
   return await db.execute<DistributionRow>(sql`
     with filtered as materialized (
-      select workflow_state.id as state_id, workflow_state.name as state_name,
+      select workflow_state.category::text as state_id,
+        workflow_state.category::text as state_name,
         coalesce(project.id, 'none') as project_id,
         coalesce(project.name, 'No project') as project_name,
         issue.priority::text as priority_id, ${weight} as weight
@@ -342,13 +348,15 @@ function distributionBucket(
   measure: AnalyticsQuery['measure'],
 ): AnalyticsBucket {
   const id = row.dimension === 'priority' ? String(row.id) : row.id;
-  const label = row.dimension === 'priority' ? priorityLabel(Number(row.id)) : row.label;
+  let label = row.label;
+  if (row.dimension === 'priority') label = priorityLabel(Number(row.id));
+  if (row.dimension === 'state') label = STATE_CATEGORY_LABELS[row.id as StateCategory];
   return {
     id,
     label,
     value: Number(row.value),
     unit: measure,
-    cohort: { cohort: `${row.dimension}:${id}` },
+    cohort: { cohort: `${row.dimension === 'state' ? 'state-category' : row.dimension}:${id}` },
   };
 }
 
@@ -468,7 +476,12 @@ export async function loadAnalyticsOverview(
     })),
     state: mix
       .filter((row) => row.dimension === 'state')
-      .map((row) => distributionBucket(row, unit)),
+      .map((row) => distributionBucket(row, unit))
+      .sort(
+        (left, right) =>
+          STATE_CATEGORY_ORDER[left.id as StateCategory] -
+          STATE_CATEGORY_ORDER[right.id as StateCategory],
+      ),
     projects: mix
       .filter((row) => row.dimension === 'project')
       .map((row) => distributionBucket(row, unit)),

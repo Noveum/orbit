@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import { type AnalyticsQuery, analyticsQuerySchema } from '@orbit/shared';
 import type { Principal } from '@orbit/shared/policy';
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
@@ -80,6 +80,53 @@ beforeEach(async () => {
 });
 
 describe('loadAnalyticsOverview', () => {
+  it('groups workflow states by semantic category across teams', async () => {
+    const secondTeam = await createTeam(workspace.admin, { name: 'Second team', key: 'SEC' });
+    const firstBacklog = stateNamed(workspace, 'Backlog');
+    const [secondBacklog] = await db
+      .select()
+      .from(schema.workflowState)
+      .where(
+        and(
+          eq(schema.workflowState.teamId, secondTeam.team.id),
+          eq(schema.workflowState.category, 'backlog'),
+        ),
+      )
+      .limit(1);
+    if (secondBacklog === undefined) throw new Error('Missing second-team backlog state.');
+    await issue(
+      workspace.admin,
+      { title: 'First backlog', stateId: firstBacklog.id },
+      { createdAt: new Date('2026-08-01T00:00:00.000Z') },
+    );
+    await issue(
+      workspace.admin,
+      {
+        title: 'Second backlog',
+        teamId: secondTeam.team.id,
+        stateId: secondBacklog.id,
+      },
+      { createdAt: new Date('2026-08-01T00:00:00.000Z') },
+    );
+
+    const overview = await loadAnalyticsOverview(workspace.admin, query(), {
+      now,
+      timezone: 'UTC',
+    });
+    const backlog = overview.state.filter((bucket) => bucket.label === 'Backlog');
+
+    expect(backlog).toHaveLength(1);
+    expect(backlog[0]?.id).toBe('backlog');
+    expect(backlog[0]?.value).toBe(2);
+    expect(backlog[0]?.cohort).toEqual({ cohort: 'state-category:backlog' });
+    const drilldown = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: backlog[0]?.cohort ?? { cohort: 'invalid' } },
+      { now, timezone: 'UTC' },
+    );
+    expect(drilldown.total).toBe(2);
+  });
+
   it('evaluates named and relative date filters in the reporting timezone', async () => {
     await issue(
       workspace.admin,

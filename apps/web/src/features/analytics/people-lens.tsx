@@ -113,6 +113,8 @@ function PersonTimeline({
               })),
             },
           ]}
+          xAxisLabel="Reporting period"
+          yAxisLabel={points ? 'Points' : 'Issues'}
         />
       )}
     </AnalyticsCard>
@@ -143,6 +145,7 @@ function PersonalSprintBurn({
     value: point.remaining,
     cohort: { cohort: 'open' as const },
     x: point.workingDay ?? point.calendarDay,
+    available: point.available,
   }));
   const elapsed = currentPoints.at(-1)?.x ?? 0;
   const previousPoints =
@@ -154,6 +157,7 @@ function PersonalSprintBurn({
         value: point.remaining,
         cohort: { cohort: 'open' as const },
         x: point.workingDay ?? point.calendarDay,
+        available: point.available,
       })) ?? [];
   const unit = points ? 'points' : 'issues';
   return (
@@ -176,6 +180,8 @@ function PersonalSprintBurn({
             : [{ id: 'previous-person', label: 'Previous sprint', points: previousPoints }]),
         ]}
         valueFormatter={(value) => `${numberLabel(value)} ${unit}`}
+        xAxisLabel="Sprint working day"
+        yAxisLabel={`Remaining ${unit}`}
       />
       <p className="text-faint text-xs">
         Uses assignment history at each sprint point, not only current ownership.
@@ -214,6 +220,7 @@ function PersonGroups({
                 value: points ? group.points : group.issues,
                 cohort: group.cohort,
               }))}
+              xAxisLabel={points ? 'Points' : 'Issues'}
             />
           )}
         </AnalyticsCard>

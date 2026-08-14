@@ -21,6 +21,7 @@ describe('BarPlot', () => {
     expect(Number(screen.getByTestId('plot-hit-state-0').getAttribute('height'))).toBeGreaterThan(
       0,
     );
+    await user.click(screen.getByText('View data (2 rows)'));
     await user.click(screen.getByRole('button', { name: 'State 1, Workflow state 4' }));
     expect(activate).toHaveBeenCalledWith({ cohort: 'state', bucket: '1' });
   });
@@ -36,8 +37,10 @@ describe('BarPlot', () => {
     );
 
     const last = screen.getByTestId('plot-hit-state-79');
-    expect(Number(last.getAttribute('x')) + Number(last.getAttribute('width'))).toBeLessThanOrEqual(
-      320,
+    expect(
+      Number(last.getAttribute('y')) + Number(last.getAttribute('height')),
+    ).toBeLessThanOrEqual(
+      Number(screen.getByRole('application', { name: 'Many projects' }).getAttribute('height')),
     );
     await user.hover(last);
     expect(screen.getByRole('tooltip')).toHaveTextContent('State 79');
@@ -56,10 +59,22 @@ describe('BarPlot', () => {
 
   test('shows a readable scale and anchors the exact tooltip to its bar', async () => {
     const user = userEvent.setup();
-    render(<BarPlot label="Velocity" points={[point(0, 3), point(1, 8)]} />);
+    render(
+      <BarPlot
+        label="Velocity"
+        points={[point(0, 3), point(1, 8)]}
+        xAxisLabel="Issues completed"
+      />,
+    );
 
     expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(3);
-    expect(screen.getByTestId('plot-y-max')).toHaveTextContent('8');
+    expect(screen.getByTestId('plot-x-max')).toHaveTextContent('8');
+    expect(screen.getByTestId('plot-x-zero')).toHaveTextContent('0');
+    expect(screen.getByTestId('plot-x-axis-label')).toHaveTextContent('Issues completed');
+    expect(screen.getByTestId('plot-x-axis-label').getAttribute('fill')).toBe('var(--color-muted)');
+    expect(screen.getByTestId('plot-x-max').getAttribute('fill')).toBe('var(--color-faint)');
+    expect(screen.getByTestId('plot-category-state-0')).toHaveTextContent('State 0');
+    expect(screen.getByTestId('plot-value-state-1')).toHaveTextContent('8');
 
     await user.hover(screen.getByTestId('plot-hit-state-1'));
     expect(screen.getByRole('tooltip').getAttribute('style')).toContain('left:');

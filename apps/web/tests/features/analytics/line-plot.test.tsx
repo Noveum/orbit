@@ -81,6 +81,7 @@ describe('LinePlot', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 
+    await user.click(screen.getByText('View data (4 rows)'));
     await user.click(screen.getByRole('button', { name: 'Aug 11, Completed 7' }));
     expect(activate).toHaveBeenLastCalledWith({
       cohort: 'completed',
@@ -103,6 +104,8 @@ describe('LinePlot', () => {
     await user.keyboard('{ArrowRight}{Enter}');
     expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 7');
     expect(screen.queryByRole('button', { name: 'Aug 11, Completed 7' })).not.toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /Aug 11 Completed 7/, hidden: true })).not.toBeVisible();
+    await user.click(screen.getByText('View data (4 rows)'));
     expect(screen.getByRole('row', { name: /Aug 11 Completed 7/ })).toBeVisible();
   });
 
@@ -155,20 +158,90 @@ describe('LinePlot', () => {
       'cx',
       screen.getByTestId('plot-hit-previous-2').getAttribute('cx'),
     );
+    expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 10');
   });
 
   test('adds chart guidance without shrinking pointer targets', async () => {
     const user = userEvent.setup();
-    render(<LinePlot label="Delivery trend" series={series} />);
+    render(
+      <LinePlot
+        label="Delivery trend"
+        series={series}
+        xAxisLabel="Calendar date"
+        yAxisLabel="Issues completed"
+      />,
+    );
 
     expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(3);
     expect(screen.getByTestId('plot-y-max')).toHaveTextContent('7');
     expect(screen.getByTestId('plot-x-start')).toHaveTextContent('Aug 10');
     expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 11');
-    expect(screen.getByTestId('plot-point-2026-08-11-completed')).toHaveAttribute('r', '2.5');
-    expect(screen.getByTestId('plot-hit-2026-08-11-completed')).toHaveAttribute('r', '8');
+    expect(screen.getByTestId('plot-x-axis-label')).toHaveTextContent('Calendar date');
+    expect(screen.getByTestId('plot-y-axis-label')).toHaveTextContent('Issues completed');
+    expect(screen.getByTestId('plot-y-axis-label').getAttribute('fill')).toBe('var(--color-muted)');
+    expect(screen.getByTestId('plot-y-max').getAttribute('fill')).toBe('var(--color-faint)');
+    expect(screen.getByTestId('plot-y-zero')).toHaveTextContent('0');
+    expect(screen.getByTestId('plot-point-2026-08-11-completed')).toHaveAttribute('r', '3');
+    expect(screen.getByTestId('plot-hit-2026-08-11-completed')).toHaveAttribute('r', '10');
+    expect(screen.getByTestId('plot-legend-completed')).not.toHaveAttribute('stroke-dasharray');
 
     await user.hover(screen.getByTestId('plot-hit-2026-08-11-completed'));
-    expect(screen.getByRole('tooltip')).toHaveStyle({ left: '98.125%' });
+    expect(screen.getByRole('tooltip')).toHaveStyle({ left: '97.1875%' });
+  });
+
+  test('shows dashed legend keys and short calendar ticks', () => {
+    render(
+      <LinePlot
+        label="Sprint burn"
+        series={[
+          {
+            id: 'scope',
+            label: 'Scope',
+            dashed: true,
+            points: [
+              {
+                ...series[0].points[0],
+                id: 'scope-1',
+                label: '2026-08-11',
+              },
+              {
+                ...series[0].points[1],
+                id: 'scope-2',
+                label: '2026-08-24',
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('plot-legend-scope')).toHaveAttribute('stroke-dasharray', '5 3');
+    expect(screen.getByTestId('plot-x-start')).toHaveTextContent('Aug 11');
+    expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 24');
+  });
+
+  test('leaves unavailable history as a visible gap instead of drawing false zeroes', () => {
+    render(
+      <LinePlot
+        label="Sprint burn"
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: [
+              { ...series[0].points[0], id: 'missing-1', value: 0, available: false },
+              { ...series[0].points[1], id: 'missing-2', value: 0, available: false },
+              { ...series[0].points[0], id: 'known-1', value: 9 },
+              { ...series[0].points[1], id: 'known-2', value: 7 },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId('plot-point-missing-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('plot-point-missing-2')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plot-line-remaining').getAttribute('d')).not.toContain(' 218.00');
+    expect(screen.getByText('2 dates unavailable')).toBeVisible();
   });
 });

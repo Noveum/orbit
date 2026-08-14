@@ -35,6 +35,7 @@ const burn = [
     added: 1,
     removed: 0,
     ideal: 8,
+    available: true,
     coverage: 'captured' as const,
   },
   {
@@ -48,6 +49,7 @@ const burn = [
     added: 2,
     removed: 1,
     ideal: 7,
+    available: true,
     coverage: 'live' as const,
   },
 ];
@@ -114,10 +116,79 @@ describe('SprintLens', () => {
     expect(screen.getByText('Cycle time p85')).toBeVisible();
     expect(screen.getByText(/comparison will appear after this sprint closes/i)).toBeVisible();
     expect(screen.getByText(/2 unestimated issues contribute zero points/i)).toBeVisible();
+    expect(screen.getByTestId('plot-y-axis-label')).toHaveTextContent('Remaining points');
+    expect(screen.getByTestId('plot-x-axis-label')).toHaveTextContent('Sprint working day');
+    expect(screen.getByText(/forecast needs at least 3 working days/i)).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'Burn up' }));
     await user.hover(screen.getByTestId('plot-hit-2026-08-14-completed'));
     expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 3');
+  });
+
+  test('does not draw pre-capture dates as zero and explains when tracking began', () => {
+    const firstBurnPoint = burn[0];
+    const secondBurnPoint = burn[1];
+    if (firstBurnPoint === undefined || secondBurnPoint === undefined) {
+      throw new Error('Missing burn fixture.');
+    }
+    const observedBurn = [
+      { ...firstBurnPoint, date: '2026-08-11', scope: 0, remaining: 0, ideal: 0, available: false },
+      { ...firstBurnPoint, date: '2026-08-12', scope: 0, remaining: 0, ideal: 0, available: false },
+      { ...firstBurnPoint, date: '2026-08-13', scope: 0, remaining: 0, ideal: 0, available: false },
+      {
+        ...secondBurnPoint,
+        date: '2026-08-14',
+        scope: 194,
+        remaining: 178,
+        ideal: 194,
+        available: true,
+      },
+    ];
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          current: data.current === null ? null : { ...data.current, burn: observedBurn },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    expect(screen.getByText(/tracking began aug 14, 2026/i)).toBeVisible();
+    expect(screen.getByText(/second reliable day is needed/i)).toBeVisible();
+    expect(
+      screen.getByText(/ideal line starts at the first reliable scope baseline/i),
+    ).toBeVisible();
+    expect(screen.queryByTestId('plot-point-2026-08-11-remaining')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plot-point-2026-08-14-remaining')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-point-sprint-end-ideal')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 27');
+  });
+
+  test('adds a dotted forecast only after a measurable declining trend exists', () => {
+    const firstBurnPoint = burn[0];
+    const secondBurnPoint = burn[1];
+    if (firstBurnPoint === undefined || secondBurnPoint === undefined) {
+      throw new Error('Missing burn fixture.');
+    }
+    const forecastBurn = [
+      { ...firstBurnPoint, date: '2026-08-11', workingDay: 1, scope: 12, remaining: 10 },
+      { ...secondBurnPoint, date: '2026-08-12', workingDay: 2, scope: 12, remaining: 8 },
+      { ...secondBurnPoint, date: '2026-08-13', workingDay: 3, scope: 12, remaining: 6 },
+    ];
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          current: data.current === null ? null : { ...data.current, burn: forecastBurn },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    expect(screen.getByText(/forecasts completion around working day 6/i)).toBeVisible();
+    expect(screen.getByTestId('plot-line-forecast')).toHaveAttribute('stroke-dasharray', '7 5');
+    expect(screen.getByTestId('plot-line-scope')).toHaveAttribute('stroke-dasharray', '7 5');
   });
 
   test('does not invent velocity before any sprint exists', () => {

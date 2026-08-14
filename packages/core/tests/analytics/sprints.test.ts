@@ -187,6 +187,32 @@ describe('loadSprintAnalytics', () => {
     expect(result.formulas.burn).toContain('local calendar day');
   });
 
+  it('marks dates before observed membership capture as unavailable', async () => {
+    const cycleId = await cycle(1, '2026-08-11T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    await membership(cycleId, issueId, {
+      addedAt: '2026-08-14T07:49:36.000Z',
+      coverage: 'observed',
+      entryKind: 'bootstrap',
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    });
+    const burn = currentOf(result).burn;
+
+    expect(burn.map((point) => point.available)).toEqual([false, false, false, true]);
+    expect(burn.slice(0, 3).map((point) => point.scope)).toEqual([0, 0, 0]);
+    expect(burn[3]?.scope).toBe(1);
+    expect(burn[3]?.ideal).toBe(1);
+    expect(result.formulas.burn).toContain('unavailable rather than zero');
+  });
+
   it('applies visible issue filters to sprint scope without treating sprint selection as a filter', async () => {
     const cycleId = await cycle(1, '2026-03-01T00:00:00.000Z', '2026-03-15T00:00:00.000Z');
     const includedProject = await createProjectRow(workspace, 'Included');

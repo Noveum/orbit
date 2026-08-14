@@ -28,7 +28,7 @@ export function OverviewLens({
   const [evidence, setEvidence] = useState<EvidenceSelection | null>(null);
   const activate = (title: string, cohort: AnalyticsDrilldownCohort) =>
     setEvidence({ title, cohort });
-  const deliverySeries = [
+  const deliveryFlowSeries = [
     {
       id: 'created',
       label: 'Created',
@@ -49,6 +49,8 @@ export function OverviewLens({
         cohort: point.completedCohort,
       })),
     },
+  ];
+  const openSeries = [
     {
       id: 'open',
       label: 'Open',
@@ -129,16 +131,27 @@ export function OverviewLens({
                 <p className="text-faint text-xs">Open now</p>
               </div>
             </div>
-            <LinePlot
-              label="Created, completed, and open work"
-              onActivate={(cohort) => activate('Delivery evidence', cohort)}
-              series={deliverySeries}
-            />
+            <div className="grid gap-6 xl:grid-cols-2">
+              <LinePlot
+                label="Created and completed work"
+                onActivate={(cohort) => activate('Delivery evidence', cohort)}
+                series={deliveryFlowSeries}
+                xAxisLabel="Reporting period"
+                yAxisLabel={`${query.measure === 'points' ? 'Points' : 'Issues'} per ${data.delivery.length > 45 ? 'period' : 'day'}`}
+              />
+              <LinePlot
+                label="Open work"
+                onActivate={(cohort) => activate('Open work evidence', cohort)}
+                series={openSeries}
+                xAxisLabel="Reporting period"
+                yAxisLabel={`Open ${query.measure}`}
+              />
+            </div>
           </>
         )}
       </AnalyticsCard>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2">
         {distributions.map((distribution) => (
           <AnalyticsCard key={distribution.title} title={distribution.title}>
             {distribution.points.length === 0 ? (
@@ -148,6 +161,7 @@ export function OverviewLens({
                 label={distribution.title}
                 onActivate={(cohort) => activate(distribution.title, cohort)}
                 points={distribution.points}
+                xAxisLabel={query.measure === 'points' ? 'Points' : 'Issues'}
               />
             )}
           </AnalyticsCard>

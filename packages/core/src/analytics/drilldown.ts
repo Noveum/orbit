@@ -1,6 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { and, asc, db, eq, gt, isNotNull, isNull, schema, sql } from '@orbit/db';
-import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
+import {
+  PRIORITIES,
+  PRIORITY_LABELS,
+  type Priority,
+  STATE_CATEGORIES,
+  type StateCategory,
+} from '@orbit/shared/constants';
 import { validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -301,6 +307,12 @@ function dimensionCohortPredicate(
   cohort: AnalyticsDrilldownCohort,
   base: SQL<unknown> | undefined,
 ): SQL<unknown> | null {
+  if (cohort.cohort.startsWith('state-category:')) {
+    return eq(
+      schema.workflowState.category,
+      cohort.cohort.slice('state-category:'.length) as StateCategory,
+    );
+  }
   if (cohort.cohort.startsWith('state:')) {
     const stateId = cohort.cohort.slice('state:'.length);
     return stateId === 'other'
@@ -330,6 +342,13 @@ function validIdCohort(value: string, prefix: string, special: ReadonlySet<strin
 }
 
 function validDimensionCohort(value: string): boolean {
+  const stateCategory = /^state-category:([a-z]+)$/.exec(value);
+  if (
+    stateCategory !== null &&
+    STATE_CATEGORIES.some((category) => category === stateCategory[1])
+  ) {
+    return true;
+  }
   if (validIdCohort(value, 'state', new Set(['other']))) return true;
   if (validIdCohort(value, 'project', new Set(['none', 'other']))) return true;
   if (validIdCohort(value, 'outlier', new Set())) return true;

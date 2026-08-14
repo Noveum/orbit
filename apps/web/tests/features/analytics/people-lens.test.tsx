@@ -98,6 +98,7 @@ const data: AnalyticsPeopleResponse = {
             added: 0,
             removed: 0,
             ideal: 8,
+            available: true,
             coverage: 'captured',
           },
           {
@@ -111,6 +112,7 @@ const data: AnalyticsPeopleResponse = {
             added: 0,
             removed: 0,
             ideal: 5,
+            available: true,
             coverage: 'live',
           },
         ],

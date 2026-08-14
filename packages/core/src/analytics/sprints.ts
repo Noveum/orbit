@@ -51,6 +51,7 @@ export interface SprintBurnPoint {
   readonly added: number;
   readonly removed: number;
   readonly ideal: number;
+  readonly available: boolean;
   readonly coverage: AnalyticsCoverage['kind'];
 }
 
@@ -462,6 +463,14 @@ function burnFor(
   const startDay = dateText(facts.cycle.startsAt, facts.cycle.timezone);
   const lastDay = dateText(endOfFacts(facts, now), facts.cycle.timezone);
   const coverage = coverageOf(facts, now).kind;
+  const observedMemberships = facts.issues
+    .flatMap((fact) => fact.memberships)
+    .filter((membership) => membership.coverage === 'observed');
+  const availableFrom = observedMemberships.reduce<Date | null>(
+    (earliest, membership) =>
+      earliest === null || membership.addedAt < earliest ? membership.addedAt : earliest,
+    null,
+  );
   const points: SprintBurnPoint[] = [];
   const dayIndexes = sampledDayIndexes(calendarDaysBetween(startDay, lastDay));
   for (let pointIndex = 0; pointIndex < dayIndexes.length; pointIndex += 1) {
@@ -470,6 +479,7 @@ function burnFor(
     const working = isWorkingDay(day);
     const workingDay = workingDaysBetween(startDay, day);
     const at = timeForDay(day, facts, now);
+    const available = availableFrom === null || at.getTime() > availableFrom.getTime();
     const eligible = facts.issues.filter(
       (fact) =>
         committedAt(fact, facts, at, now) &&
@@ -531,24 +541,26 @@ function burnFor(
       added,
       removed,
       ideal: 0,
+      available,
       coverage,
     });
   }
-  const initialScope = points[0]?.scope ?? 0;
+  const baseline = points.find((point) => point.available);
+  const initialScope = baseline?.scope ?? 0;
+  const baselineDay = baseline?.date ?? startDay;
   const plannedWorkingDays = Math.max(
     1,
-    workingDaysBetween(startDay, dateText(facts.cycle.endsAt, facts.cycle.timezone)),
+    workingDaysBetween(baselineDay, dateText(facts.cycle.endsAt, facts.cycle.timezone)),
   );
   return points.map((point) => ({
     ...point,
-    ideal:
-      point.workingDay === null
-        ? idealRemaining(
-            initialScope,
-            workingDaysBetween(startDay, point.date) - 1,
-            plannedWorkingDays - 1,
-          )
-        : idealRemaining(initialScope, point.workingDay - 1, plannedWorkingDays - 1),
+    ideal: point.available
+      ? idealRemaining(
+          initialScope,
+          workingDaysBetween(baselineDay, point.date) - 1,
+          plannedWorkingDays - 1,
+        )
+      : 0,
   }));
 }
 
@@ -940,7 +952,7 @@ function formulas(): SprintFormulaMetadata {
       'Captured sprint membership entered before the sprint start or within 24 hours after it. Known triage, backlog, or canceled state at commitment is excluded; missing state-at-entry coverage is retained as membership-planned rather than inferred from current state.',
     scope:
       'Membership active at the observation time, excluding triage, backlog, or canceled work only where a state transition or observation establishes that category.',
-    burn: 'Remaining equals scope minus completed on each sprint local calendar day. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
+    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Dates before an observed membership baseline are unavailable rather than zero. The ideal line begins at the first reliable scope baseline. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
     leadTime:
       'Current issue-row creation to durable completion for issues whose creation row remains available; deleted rows are unavailable.',
     cycleTime:

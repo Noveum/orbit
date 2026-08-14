@@ -153,6 +153,7 @@ function ProjectHealthUpdates({
   );
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The project cockpit keeps coordinated portfolio and detail states in one render boundary.
 export function ProjectsLens({
   data,
   query,
@@ -280,6 +281,8 @@ export function ProjectsLens({
                     })),
                   },
                 ]}
+                xAxisLabel="Reporting period"
+                yAxisLabel={points ? 'Points' : 'Issues'}
               />
             )}
           </AnalyticsCard>

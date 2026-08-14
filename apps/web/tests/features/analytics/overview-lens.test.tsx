@@ -48,7 +48,7 @@ const data: AnalyticsOverviewResponse = {
       label: 'Started',
       value: 4,
       unit: 'issues',
-      cohort: { cohort: 'state', bucket: 'started' },
+      cohort: { cohort: 'state-category:started' },
     },
   ],
   projects: [],
@@ -84,6 +84,18 @@ describe('OverviewLens', () => {
     ) as unknown as typeof fetch;
     const user = userEvent.setup();
     render(<OverviewLens data={data} query={analyticsQuerySchema.parse({})} />);
+
+    expect(screen.getByRole('application', { name: 'Created and completed work' })).toBeVisible();
+    expect(screen.getByRole('application', { name: 'Open work' })).toBeVisible();
+    expect(
+      screen.queryByRole('application', { name: 'Created, completed, and open work' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('plot-y-axis-label').map((node) => node.textContent)).toContain(
+      'Issues per day',
+    );
+    expect(screen.getAllByTestId('plot-y-axis-label').map((node) => node.textContent)).toContain(
+      'Open issues',
+    );
 
     await user.hover(screen.getByTestId('plot-hit-2026-08-14-completed'));
     expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 4');
