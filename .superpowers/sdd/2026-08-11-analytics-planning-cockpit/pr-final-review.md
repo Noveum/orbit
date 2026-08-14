@@ -37,10 +37,29 @@ Two final usability gaps were fixed during this review:
 - New sprint-selector and chart tests: 12 tests passed with 43 assertions.
 - Focused real-database burndown tests: 10 tests passed with 38 assertions, including the timezone-boundary regression.
 - Combined real-database reconciliation suites for Overview, Sprints, Projects, People, drilldowns, and burndown: 65 tests passed with 334 assertions.
+- The production catchup regression first failed because the additive script did not exist, then passed against real PostgreSQL after applying the script twice and preserving unrelated deployed objects.
+- Full database package after the rollout addition: 236 tests passed with 614 assertions.
+- Final fresh-schema repository verification passed: Shared 256, Database 236, Realtime client 15, Realtime server 74, Services 553, Core 917, MCP 193, Realtime 39, and Web 2,035, all with zero failures.
 - Web typecheck and scoped Biome checks passed.
 - The previous full branch gate passed Core 916 of 916 and Web 2,031 of 2,031. GitHub unit, build, Playwright, migration drift, lint, type, and CodeQL checks passed on the prior review commit.
 - The final review reran the focused burndown suite against local PostgreSQL. GitHub CI will reconfirm the full branch after the timezone correction is pushed.
 
 ## Deployment prerequisite
 
-The Vercel preview database is behind the branch schema. It is missing sprint membership and outcome tables plus the final snapshot columns. The application build correctly refuses to deploy against that schema. Migrations and the documented catchup must be applied to the target database before this pull request can be merged safely.
+The Vercel database is behind the branch schema. It is missing sprint membership and outcome tables plus the final snapshot columns. The application build correctly refuses to deploy against that schema.
+
+A read-only production audit on 2026-08-14 found:
+
+- 585 issues, including 254 assigned to sprints.
+- 12 sprints: 4 open, 8 archived, and none completed.
+- No progress snapshot rows.
+- No sprint membership or outcome tables and no final snapshot columns.
+- The workspace sprint conversion is already reflected in the live constraints and indexes. Its data-impact query reports zero sprint merges, issue moves, team clears, and renumbers.
+- Four Git links, none connected to a mirrored pull request.
+- Zero rows in the undeclared GitHub pull request mirror tables.
+- Zero rows in the four undeclared legacy Standup meeting tables.
+- No Drizzle migration ledger, so replaying the complete migration journal is not safe for this database.
+
+`db:push` must not be used for this rollout. It treats undeclared production tables as deletions, which is why it proposes dropping the empty GitHub mirror and legacy Standup meeting tables. The analytics rollout does not require those deletions.
+
+`packages/db/catchup/analytics-planning-cockpit.sql` is the production path. It is transactional, additive, idempotent, and limited to the missing analytics tables, snapshot columns, constraints, and indexes. A real PostgreSQL regression applies it twice while preserving populated stand-in GitHub, Git link, and Standup objects. A schema-only backup of the relevant production objects was captured before rollout at `/private/tmp/orbit-production-analytics-schema-20260814T0715Z.sql`, mode `0600`, SHA-256 `b526743d331047efa0e2297d44a05e11e600790bf897134d68c46ca1f3f62d52`.

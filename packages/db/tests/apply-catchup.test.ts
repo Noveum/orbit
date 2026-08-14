@@ -269,3 +269,170 @@ describe('workspace sprint catchup against captured analytics', () => {
     expect(rows.find((row) => row.cycle_id === 'winner')?.removed_at).toBeNull();
   }, 30_000);
 });
+
+const ANALYTICS_SCRATCH = laneDatabase('orbit_test_analytics_catchup', currentLane());
+
+describe('analytics planning catchup against a deployed schema', () => {
+  beforeAll(async () => {
+    await run(urlFor('postgres'), async (sql) => {
+      await sql.unsafe(`drop database if exists "${ANALYTICS_SCRATCH}"`);
+      await sql.unsafe(`create database "${ANALYTICS_SCRATCH}"`);
+    });
+    await run(urlFor(ANALYTICS_SCRATCH), async (sql) => {
+      await sql
+        .unsafe(`
+        create table public.organization (id text primary key);
+        create table public.team (
+          id text primary key,
+          organization_id text not null references public.organization(id)
+        );
+        create table public."user" (id text primary key);
+        create table public.project (id text primary key);
+        create table public.milestone (id text primary key);
+        create table public.cycle (id text primary key);
+        create table public.cycle_progress_snapshot (
+          id text primary key,
+          organization_id text not null references public.organization(id),
+          cycle_id text not null references public.cycle(id),
+          captured_on date not null,
+          total_issues integer not null default 0,
+          backlog_issues integer not null default 0,
+          unstarted_issues integer not null default 0,
+          started_issues integer not null default 0,
+          completed_issues integer not null default 0,
+          canceled_issues integer not null default 0,
+          total_estimate double precision not null default 0,
+          completed_estimate double precision not null default 0,
+          breakdown jsonb not null default '{}'::jsonb,
+          sync_id bigint not null default 0,
+          created_at timestamptz not null default now(),
+          unique (cycle_id, captured_on)
+        );
+        create table public.issue_activity (
+          id text primary key,
+          organization_id text not null,
+          issue_id text not null,
+          field text not null,
+          created_at timestamptz not null
+        );
+        create table public.github_pull_request (id text primary key);
+        create table public.git_link (
+          id text primary key,
+          pull_request_id text references public.github_pull_request(id) on delete set null
+        );
+        create table public.standup (id text primary key);
+        insert into public.organization (id) values ('org');
+        insert into public.team (id, organization_id) values ('team', 'org');
+        insert into public."user" (id) values ('user');
+        insert into public.project (id) values ('project');
+        insert into public.milestone (id) values ('milestone');
+        insert into public.cycle (id) values ('cycle');
+        insert into public.cycle_progress_snapshot
+          (id, organization_id, cycle_id, captured_on)
+        values ('snapshot', 'org', 'cycle', '2026-08-14');
+        insert into public.github_pull_request (id) values ('pull-request');
+        insert into public.git_link (id, pull_request_id) values ('link', 'pull-request');
+        insert into public.standup (id) values ('standup');
+      `)
+        .simple();
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await run(urlFor('postgres'), (sql) =>
+      sql.unsafe(`drop database if exists "${ANALYTICS_SCRATCH}"`),
+    );
+  }, 30_000);
+
+  it('adds analytics history without replacing unrelated deployed data', async () => {
+    await applyCatchup(urlFor(ANALYTICS_SCRATCH), 'analytics-planning-cockpit.sql');
+    await applyCatchup(urlFor(ANALYTICS_SCRATCH), 'analytics-planning-cockpit.sql');
+
+    const [objects] = await run(
+      urlFor(ANALYTICS_SCRATCH),
+      (sql) => sql<
+        {
+          memberships: string | null;
+          outcomes: string | null;
+          captured_at: boolean;
+          is_final: boolean;
+          github_rows: number;
+          standup_rows: number;
+          linked_rows: number;
+        }[]
+      >`
+        select
+          to_regclass('public.cycle_issue_membership')::text as memberships,
+          to_regclass('public.cycle_issue_outcome')::text as outcomes,
+          exists (
+            select 1 from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'cycle_progress_snapshot'
+              and column_name = 'captured_at'
+              and is_nullable = 'NO'
+          ) as captured_at,
+          exists (
+            select 1 from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'cycle_progress_snapshot'
+              and column_name = 'is_final'
+              and is_nullable = 'NO'
+          ) as is_final,
+          (select count(*)::integer from public.github_pull_request) as github_rows,
+          (select count(*)::integer from public.standup) as standup_rows,
+          (select count(*)::integer from public.git_link where pull_request_id = 'pull-request') as linked_rows
+      `,
+    );
+
+    expect(objects).toEqual({
+      memberships: 'cycle_issue_membership',
+      outcomes: 'cycle_issue_outcome',
+      captured_at: true,
+      is_final: true,
+      github_rows: 1,
+      standup_rows: 1,
+      linked_rows: 1,
+    });
+
+    const indexes = await run(
+      urlFor(ANALYTICS_SCRATCH),
+      (sql) => sql<{ indexname: string }[]>`
+        select indexname from pg_indexes
+        where schemaname = 'public'
+          and indexname in (
+            'cycle_issue_membership_cycle_added_idx',
+            'cycle_issue_membership_cycle_removed_idx',
+            'cycle_issue_membership_issue_added_idx',
+            'cycle_issue_membership_one_open_per_issue_unique',
+            'cycle_issue_outcome_cycle_issue_unique',
+            'cycle_issue_outcome_cycle_outcome_idx',
+            'cycle_issue_outcome_completion_attribution_idx',
+            'issue_activity_assignee_attribution_idx'
+          )
+        order by indexname
+      `,
+    );
+    expect(indexes.map((row) => row.indexname)).toEqual([
+      'cycle_issue_membership_cycle_added_idx',
+      'cycle_issue_membership_cycle_removed_idx',
+      'cycle_issue_membership_issue_added_idx',
+      'cycle_issue_membership_one_open_per_issue_unique',
+      'cycle_issue_outcome_completion_attribution_idx',
+      'cycle_issue_outcome_cycle_issue_unique',
+      'cycle_issue_outcome_cycle_outcome_idx',
+      'issue_activity_assignee_attribution_idx',
+    ]);
+
+    const [snapshot] = await run(
+      urlFor(ANALYTICS_SCRATCH),
+      (sql) => sql<{ id: string; captured_at: Date; is_final: boolean }[]>`
+        select id, captured_at, is_final
+        from public.cycle_progress_snapshot
+        where id = 'snapshot'
+      `,
+    );
+    expect(snapshot?.id).toBe('snapshot');
+    expect(snapshot?.captured_at).toBeInstanceOf(Date);
+    expect(snapshot?.is_final).toBe(false);
+  }, 30_000);
+});
