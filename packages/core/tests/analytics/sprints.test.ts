@@ -209,7 +209,9 @@ describe('loadSprintAnalytics', () => {
     expect(burn.map((point) => point.available)).toEqual([false, false, false, true]);
     expect(burn.slice(0, 3).map((point) => point.scope)).toEqual([0, 0, 0]);
     expect(burn[3]?.scope).toBe(1);
+    expect(burn[3]?.added).toBe(0);
     expect(burn[3]?.ideal).toBe(1);
+    expect(currentOf(result).scopeChanges.added).toBe(0);
     expect(result.formulas.burn).toContain('unavailable rather than zero');
   });
 

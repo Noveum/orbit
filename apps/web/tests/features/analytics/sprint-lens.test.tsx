@@ -109,6 +109,7 @@ describe('SprintLens', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Remaining 7 points');
     expect(screen.getByText('Added').parentElement).toHaveTextContent('Added 2');
     expect(screen.getByText('Removed').parentElement).toHaveTextContent('Removed 1');
+    expect(screen.getByText('Initial scope capture is a baseline, not added work.')).toBeVisible();
     expect(screen.getByText('Creation to completion.')).toBeVisible();
     expect(screen.getByText('Start to completion.')).toBeVisible();
     expect(screen.getByText('Lead time p85')).toBeVisible();

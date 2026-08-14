@@ -314,6 +314,7 @@ function SprintBurnChart({
           <strong className="text-text">{numberLabel(current.summary.currentScope)}</strong>
         </span>
       </div>
+      <p className="text-faint text-xs">Initial scope capture is a baseline, not added work.</p>
     </AnalyticsCard>
   );
 }

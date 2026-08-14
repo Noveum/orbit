@@ -512,7 +512,13 @@ function burnFor(
     };
     const added = facts.issues
       .flatMap((fact) => fact.memberships)
-      .filter((entry) => entry.addedAt >= dayStart && entry.addedAt < dayEnd && attributed(entry))
+      .filter(
+        (entry) =>
+          entry.entryKind !== 'bootstrap' &&
+          entry.addedAt >= dayStart &&
+          entry.addedAt < dayEnd &&
+          attributed(entry),
+      )
       .reduce((sum, entry) => {
         if (measure === 'issues') return sum + 1;
         return sum + (entry.estimateAtAdd ?? 0);
@@ -583,7 +589,12 @@ function membershipEvents(
   const end = endOfFacts(facts, now);
   const added = facts.issues
     .flatMap((fact) => fact.memberships)
-    .filter((entry) => entry.addedAt >= facts.cycle.startsAt && entry.addedAt <= end);
+    .filter(
+      (entry) =>
+        entry.entryKind !== 'bootstrap' &&
+        entry.addedAt >= facts.cycle.startsAt &&
+        entry.addedAt <= end,
+    );
   const removed = facts.issues
     .flatMap((fact) => fact.memberships)
     .filter(
@@ -950,7 +961,7 @@ function formulas(): SprintFormulaMetadata {
       'Captured sprint membership entered before the sprint start or within 24 hours after it. Known triage, backlog, or canceled state at commitment is excluded; missing state-at-entry coverage is retained as membership-planned rather than inferred from current state.',
     scope:
       'Membership active at the observation time, excluding triage, backlog, or canceled work only where a state transition or observation establishes that category.',
-    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Dates before an observed membership baseline are unavailable rather than zero. The ideal line begins at the first reliable scope baseline. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
+    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Dates before an observed membership baseline are unavailable rather than zero. Observed bootstrap membership establishes the baseline and is not counted as added scope. The ideal line begins at the first reliable scope baseline. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
     leadTime:
       'Current issue-row creation to durable completion for issues whose creation row remains available; deleted rows are unavailable.',
     cycleTime:
