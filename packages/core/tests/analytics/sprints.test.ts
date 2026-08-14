@@ -277,6 +277,34 @@ describe('loadSprintAnalytics', () => {
     expect(finalPoint?.ideal).toBe(0);
   });
 
+  it('reaches zero ideal remaining on the last working day of a weekend ending sprint', async () => {
+    const cycleId = await cycle(1, '2026-08-03T00:00:00.000Z', '2026-08-16T00:00:00.000Z');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    await membership(cycleId, issueId, {
+      addedAt: '2026-08-03T00:00:00.000Z',
+      coverage: 'captured',
+      entryKind: 'added',
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-15T23:00:00.000Z'),
+    });
+    const burn = currentOf(result).burn;
+    const lastWorkingDay = burn.find((point) => point.date === '2026-08-14');
+    const weekendEnd = burn.at(-1);
+
+    expect(weekendEnd?.date).toBe('2026-08-15');
+    expect(weekendEnd?.workingDay).toBeNull();
+    expect(lastWorkingDay?.workingDay).toBe(10);
+    expect(lastWorkingDay?.ideal).toBe(0);
+    expect(weekendEnd?.ideal).toBe(0);
+  });
+
   it('applies visible issue filters to sprint scope without treating sprint selection as a filter', async () => {
     const cycleId = await cycle(1, '2026-03-01T00:00:00.000Z', '2026-03-15T00:00:00.000Z');
     const includedProject = await createProjectRow(workspace, 'Included');
