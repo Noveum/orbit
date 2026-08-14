@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { DocBody, docProseClassName } from '@/features/docs/doc-body.tsx';
 import {
   DIAGRAM_FAILED,
+  DIAGRAM_LABEL,
   DIAGRAM_OPEN_EVENT,
   DIAGRAM_UNAVAILABLE,
   type DiagramOpenDetail,
@@ -238,16 +239,17 @@ describe('the diagram chrome', () => {
   it('offers a viewer for a diagram that outgrew the column', async () => {
     const host = blockFrom(DIAGRAM);
     const { renderer } = fakeMermaid(SVG);
-    const opened: string[] = [];
+    const opened: DiagramOpenDetail[] = [];
     host.addEventListener(DIAGRAM_OPEN_EVENT, (event) => {
-      opened.push((event as CustomEvent<DiagramOpenDetail>).detail.svg);
+      opened.push((event as CustomEvent<DiagramOpenDetail>).detail);
     });
 
     await drawDiagrams(host, 'light', () => Promise.resolve(renderer));
     host.querySelector<HTMLButtonElement>('[data-mermaid-expand]')?.click();
 
     expect(opened).toHaveLength(1);
-    expect(opened[0]).toContain('graphics-hint');
+    expect(opened[0]?.svg).toContain('graphics-hint');
+    expect(opened[0]?.label).toBe(DIAGRAM_LABEL);
   });
 
   it('reveals the toggle on hover and keeps it visible while the source is showing', () => {

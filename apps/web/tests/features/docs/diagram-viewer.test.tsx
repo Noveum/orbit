@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   clampScale,
@@ -82,6 +82,33 @@ describe('the diagram viewer', () => {
 
     await user.keyboard('0');
     expect(moved.style.transform).toContain('translate(0px, 0px)');
+  });
+
+  it('pans while a pointer drags across it', () => {
+    render(<DiagramViewer svg={SVG} label="Diagram" onClose={mock()} />);
+    const viewport = screen.getByTestId('diagram-viewport');
+    const moved = viewport.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(viewport, { pointerId: 1, clientX: 200, clientY: 120 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 260, clientY: 150 });
+
+    expect(moved.style.transform).toContain('translate(60px, 30px)');
+
+    fireEvent.pointerUp(viewport, { pointerId: 1 });
+    fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 400, clientY: 400 });
+
+    expect(moved.style.transform).toContain('translate(60px, 30px)');
+  });
+
+  it('zooms with the wheel, in the direction the wheel turned', () => {
+    render(<DiagramViewer svg={SVG} label="Diagram" onClose={mock()} />);
+    const viewport = screen.getByTestId('diagram-viewport');
+
+    fireEvent.wheel(viewport, { deltaY: -120 });
+    expect(screen.getByTestId('diagram-zoom').textContent).toBe('125%');
+
+    fireEvent.wheel(viewport, { deltaY: 120 });
+    expect(screen.getByTestId('diagram-zoom').textContent).toBe('100%');
   });
 
   it('closes when the reader asks it to', async () => {
