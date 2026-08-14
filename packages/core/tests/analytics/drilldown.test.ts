@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, eq, schema } from '@orbit/db';
 import {
   type AnalyticsQuery,
   analyticsDrilldownQuerySchema,
@@ -212,6 +213,28 @@ describe('listAnalyticsDrilldown', () => {
     ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 
+  it('drills into the workflow state category the overview distribution links to', async () => {
+    const started = workspace.states.find((state) => state.category === 'started');
+    if (started === undefined) throw new Error('Missing started state fixture.');
+    const running = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Running',
+    });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Waiting' });
+    await db
+      .update(schema.issue)
+      .set({ stateId: started.id })
+      .where(eq(schema.issue.id, running.issue.id));
+
+    const page = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: `state-category:${started.category}` }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(page.issues.map((entry) => entry.title)).toEqual(['Running']);
+  });
+
   it('rejects malformed semantic cohort keys before executing SQL', async () => {
     const invalidCohorts = [
       '',
@@ -222,6 +245,9 @@ describe('listAnalyticsDrilldown', () => {
       'state:',
       'state:none',
       'state:not-an-id',
+      'state-category:',
+      'state-category:nope',
+      'state-category:Started',
       'project:',
       'project:not-an-id',
       'outlier:',
