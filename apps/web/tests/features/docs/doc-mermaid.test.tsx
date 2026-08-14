@@ -10,6 +10,7 @@ import {
   mermaidConfig,
   SHOW_DIAGRAM_LABEL,
   SHOW_SOURCE_LABEL,
+  safeSvg,
 } from '@/features/docs/mermaid.ts';
 
 afterEach(cleanup);
@@ -38,7 +39,7 @@ function fakeMermaid(svg: string): { renderer: MermaidRenderer; calls: string[] 
   };
 }
 
-const SVG = '<svg role="graphics-document"><g></g></svg>';
+const SVG = '<svg role="graphics-document"><g data-testid="graphics-hint"></g></svg>';
 
 describe('a mermaid diagram in a doc', () => {
   it('draws the fence into the block and keeps the source for the fallback', async () => {
@@ -50,7 +51,7 @@ describe('a mermaid diagram in a doc', () => {
     expect(calls[0]).toContain('graph TD');
     const block = host.querySelector('[data-mermaid]');
     expect(block?.getAttribute('data-mermaid-view')).toBe('diagram');
-    expect(block?.querySelector('[data-mermaid-canvas] svg')).not.toBeNull();
+    expect(block?.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('graphics-hint');
     expect(block?.querySelector('code')?.textContent).toContain('graph TD');
   });
 
@@ -128,6 +129,19 @@ describe('the reader', () => {
 
   it('hides the source once a diagram is drawn', () => {
     expect(docProseClassName).toContain('[&_[data-mermaid][data-mermaid-view=diagram]_pre]:hidden');
+  });
+});
+
+describe('the drawn markup', () => {
+  it('goes through the sanitiser on its way to the page', () => {
+    expect(safeSvg('<g><text>hi</text></g>')).toContain('hi');
+  });
+
+  it('asks mermaid for plain svg labels, because the sanitiser drops foreign objects', () => {
+    const styles = { getPropertyValue: () => '' } as unknown as CSSStyleDeclaration;
+
+    expect(mermaidConfig(styles, false).htmlLabels).toBe(false);
+    expect(mermaidConfig(styles, false).flowchart?.htmlLabels).toBe(false);
   });
 });
 

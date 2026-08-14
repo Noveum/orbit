@@ -1,3 +1,4 @@
+import purify from 'dompurify';
 import type { MermaidConfig } from 'mermaid';
 import { cn } from '@/lib/cn.ts';
 
@@ -58,6 +59,7 @@ export function mermaidConfig(styles: CSSStyleDeclaration, dark: boolean): Merma
     theme: 'base',
     darkMode: dark,
     fontFamily: token(styles, '--font-sans', 'system-ui, sans-serif'),
+    htmlLabels: false,
     flowchart: { useMaxWidth: true, htmlLabels: false, curve: 'basis' },
     sequence: { useMaxWidth: true },
     gantt: { useMaxWidth: true },
@@ -178,6 +180,10 @@ function failInto(block: HTMLElement): void {
   noteOf(block, DIAGRAM_FAILED);
 }
 
+export function safeSvg(svg: string): string {
+  return purify.sanitize(svg, { ADD_ATTR: ['transform-origin'] });
+}
+
 export interface MermaidRenderer {
   initialize(config: MermaidConfig): void;
   render(id: string, source: string): Promise<{ svg: string }>;
@@ -202,7 +208,7 @@ async function drawOne(
   const id = `orbit-mermaid-${sequence}`;
   try {
     const { svg } = await mermaid.render(id, source);
-    return svg;
+    return safeSvg(svg);
   } catch {
     return null;
   } finally {
