@@ -181,4 +181,45 @@ describe('PeopleLens', () => {
     await user.click(screen.getByRole('button', { name: /Grace Hopper/ }));
     expect(onFocus).toHaveBeenCalledWith(secondPersonId);
   });
+
+  test('leaves a gap in the personal burn where sprint history is unavailable', () => {
+    const focused = data.focused;
+    if (focused === null) throw new Error('Missing focused person fixture.');
+    const sprintBurn = focused.sprintBurn;
+    const current = sprintBurn.current;
+    if (current === null) throw new Error('Missing personal sprint burn fixture.');
+    const firstBurnPoint = current.burn[0];
+    if (firstBurnPoint === undefined) throw new Error('Missing burn fixture.');
+    render(
+      <PeopleLens
+        data={{
+          ...data,
+          focused: {
+            ...focused,
+            sprintBurn: {
+              ...sprintBurn,
+              current: {
+                ...current,
+                burn: [
+                  { ...firstBurnPoint, remaining: 0, scope: 0, ideal: 0, available: false },
+                  ...current.burn.slice(1),
+                ],
+              },
+            },
+          },
+        }}
+        onFocusPerson={mock()}
+        query={analyticsQuerySchema.parse({
+          lens: 'people',
+          measure: 'points',
+          focus: { personId },
+        })}
+      />,
+    );
+
+    expect(screen.queryByTestId('plot-point-2026-08-10-current-person')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plot-point-2026-08-14-current-person')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-line-current-person').getAttribute('d')).not.toContain('L');
+    expect(screen.getByText('1 date unavailable')).toBeVisible();
+  });
 });

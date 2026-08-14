@@ -166,6 +166,42 @@ describe('SprintLens', () => {
     expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 27');
   });
 
+  test('keeps the ideal line at zero when the sprint ends on a weekend', async () => {
+    const user = userEvent.setup();
+    const weekendSprint = {
+      ...sprint,
+      timezone: 'UTC',
+      startsAt: '2026-08-03T00:00:00.000Z',
+      endsAt: '2026-08-16T00:00:00.000Z',
+    };
+    const template = burn[0];
+    if (template === undefined) throw new Error('Missing burn fixture.');
+    const weekendBurn = [
+      { ...template, date: '2026-08-03', calendarDay: 1, workingDay: 1, ideal: 9 },
+      { ...template, date: '2026-08-13', calendarDay: 11, workingDay: 9, ideal: 1 },
+      { ...template, date: '2026-08-14', calendarDay: 12, workingDay: 10, ideal: 0 },
+      { ...template, date: '2026-08-15', calendarDay: 13, workingDay: null, ideal: 0 },
+    ];
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          selected: weekendSprint,
+          current:
+            data.current === null
+              ? null
+              : { ...data.current, sprint: weekendSprint, burn: weekendBurn },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints', measure: 'points' })}
+      />,
+    );
+
+    expect(screen.queryByTestId('plot-point-sprint-end-ideal')).not.toBeInTheDocument();
+    expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 15');
+    await user.hover(screen.getByTestId('plot-hit-2026-08-15-ideal'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Ideal 0 points');
+  });
+
   test('adds a dotted forecast only after a measurable declining trend exists', () => {
     const firstBurnPoint = burn[0];
     const secondBurnPoint = burn[1];

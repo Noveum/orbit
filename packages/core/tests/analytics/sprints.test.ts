@@ -215,6 +215,45 @@ describe('loadSprintAnalytics', () => {
     expect(result.formulas.burn).toContain('unavailable rather than zero');
   });
 
+  it('holds the capture baseline cycle wide for a person scoped burn', async () => {
+    const cycleId = await cycle(1, '2026-08-11T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+    const ada = await addMember(workspace, 'member', { name: 'Ada' });
+    const bootstrapped = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      assigneeId: workspace.adminUser.id,
+    });
+    const joinedAfterCapture = await insertIssue(workspace, {
+      number: 2,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      assigneeId: ada.user.id,
+    });
+    await membership(cycleId, bootstrapped, {
+      addedAt: '2026-08-14T07:00:00.000Z',
+      coverage: 'observed',
+      entryKind: 'bootstrap',
+      assigneeId: workspace.adminUser.id,
+    });
+    await membership(cycleId, joinedAfterCapture, {
+      addedAt: '2026-08-14T09:00:00.000Z',
+      coverage: 'captured',
+      entryKind: 'added',
+      assigneeId: ada.user.id,
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    });
+    const adaBurn = currentOf(result).people.find((entry) => entry.personId === ada.user.id)?.burn;
+
+    expect(adaBurn).toBeDefined();
+    expect(adaBurn?.map((point) => point.available)).toEqual([false, false, false, true]);
+  });
+
   it('reaches zero ideal remaining on the final included sprint day', async () => {
     const cycleId = await cycle(1, '2026-08-11T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
     const issueId = await insertIssue(workspace, {

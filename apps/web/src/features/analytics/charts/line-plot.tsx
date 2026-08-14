@@ -96,6 +96,10 @@ function xTickTestId(index: number, count: number): string | undefined {
   return undefined;
 }
 
+function unavailableNote(count: number): string {
+  return `${count} ${count === 1 ? 'date' : 'dates'} unavailable`;
+}
+
 function xTickLabel(label: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(label)) return label;
   return new Intl.DateTimeFormat('en-US', {
@@ -431,9 +435,7 @@ export function LinePlot({
         )}
       </svg>
       {annotation === undefined && unavailableDates.size === 0 ? null : (
-        <p className="text-muted text-xs">
-          {annotation ?? `${unavailableDates.size} dates unavailable`}
-        </p>
+        <p className="text-muted text-xs">{annotation ?? unavailableNote(unavailableDates.size)}</p>
       )}
     </PlotFrame>
   );
