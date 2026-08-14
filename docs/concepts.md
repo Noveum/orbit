@@ -174,6 +174,8 @@ rather than in a separate tool.
   workspace.
 - Commentable, and searchable alongside issues from the command palette.
 - Optionally bound to a path in a repository, so a doc can mirror a file.
+- A fenced `mermaid` block is drawn as a diagram, in the theme's own colours,
+  with the source one click away. The rich editor previews it as you type.
 
 Specs, runbooks, meeting notes and architecture decisions are the things that
 end up here.

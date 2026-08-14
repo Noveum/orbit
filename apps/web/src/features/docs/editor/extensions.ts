@@ -5,8 +5,10 @@ import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { common, createLowlight } from 'lowlight';
+import { CodeBlockView } from './code-block-view.tsx';
 import { calloutToneOf } from './markdown.ts';
 
 export const MENU_KEYS = ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'] as const;
@@ -84,6 +86,12 @@ export const MenuKeymap = Extension.create<{ handler: MenuKeyHandlerRef | null }
 
 const lowlight = createLowlight(common);
 
+const CodeBlock = CodeBlockLowlight.extend({
+  addNodeView() {
+    return ReactNodeViewRenderer(CodeBlockView);
+  },
+});
+
 export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
   return [
     Placeholder.configure({ placeholder, emptyEditorClass: 'orbit-editor-empty' }),
@@ -93,7 +101,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
       heading: { levels: [1, 2, 3, 4, 5, 6] },
     }),
     Highlight,
-    CodeBlockLowlight.configure({ lowlight, defaultLanguage: 'ts' }),
+    CodeBlock.configure({ lowlight, defaultLanguage: 'ts' }),
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),

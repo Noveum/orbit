@@ -7,6 +7,8 @@ export { extractIssueIdentifiers, extractMentions } from '@orbit/shared/utils';
 export { highlightCode, languageAlias } from './highlight.ts';
 export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
+export const MERMAID_LANGUAGE = 'mermaid';
+
 const UNSAFE_URL = /^\s*(javascript|vbscript|file|data):/i;
 const BLOCK_END = /<\/(p|h[1-6]|li|blockquote|pre|tr|table|ul|ol)>/gi;
 const IMAGE_KEYS = ['tokens', 'items', 'rows', 'header', 'cells'] as const;
@@ -29,6 +31,9 @@ const marked = new Marked({ gfm: true, breaks: false, pedantic: false, async: fa
   renderer: {
     code({ text, lang }): string {
       const alias = languageAlias(lang ?? '');
+      if (alias === MERMAID_LANGUAGE) {
+        return `<div data-mermaid><pre><code class="language-${MERMAID_LANGUAGE}">${escapeHtml(text)}\n</code></pre></div>\n`;
+      }
       const classes = alias.length === 0 ? 'hljs' : `hljs language-${escapeHtml(alias)}`;
       const language = alias.length === 0 ? '' : ` data-code-language="${escapeHtml(alias)}"`;
       return `<div data-code-block${language}><pre><code class="${classes}">${highlightCode(text, alias)}\n</code></pre></div>\n`;
