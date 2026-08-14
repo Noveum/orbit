@@ -27,7 +27,7 @@ Closes #
 - [ ] External input is parsed with a Zod schema from `@orbit/shared`
 - [ ] Authorization is enforced on the server through `packages/shared/src/policy`, not only in the UI
 - [ ] Docs updated if behaviour, configuration or setup changed
-- [ ] Schema changes are pushed to the target database before this ships
+- [ ] `bun run db:release` and `bun run db:check-drift` passed against the target database before this ships
 
 ## Anything reviewers should know
 

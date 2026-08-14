@@ -25,23 +25,8 @@ gated behind a plan.
 
 ## The five minute version
 
-```bash
-git clone https://github.com/Noveum/orbit.git
-cd orbit
-bun install
-cp .env.example .env
-bun run infra:up
-bun run db:push && bun run db:test-setup && bun run db:seed
-bun run dev
-```
-
-Open <http://localhost:3000> and sign in as `alex@orbit.example`. The seed loads a
-demo workspace with three teams, seven people, thirty two issues, projects,
-sprints and docs, so there is something to click on immediately.
-
-Full detail, including what each command does and what to do when one fails, is
-in [Getting started](getting-started.md).
-
+The canonical quick start is in [Getting started](getting-started.md). Follow
+that page for the full commands and troubleshooting notes.
 ## What Orbit is
 
 - **Issues** with priorities, labels, states, estimates, assignees and

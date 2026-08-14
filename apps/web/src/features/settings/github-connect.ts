@@ -1,11 +1,14 @@
-import { db } from '@orbit/db';
+import { and, db, eq, isNull, schema, sql } from '@orbit/db';
 import {
+  applyNormalizedGithubEvent,
   assertGithubIntegrationManager,
   bindGithubInstallation,
   exchangeGithubUserCode,
   fetchGithubInstallation,
+  fetchGithubOpenPullRequests,
   fetchInstalledRepositories,
   type GithubInstallationRow,
+  listGithubInstallations,
   listUserInstallationIds,
   replaceGithubRepositories,
 } from '@orbit/services';
@@ -13,6 +16,7 @@ import { forbidden, validationFailed } from '@orbit/shared/errors';
 import type { GithubAppConfig } from '@/lib/env.ts';
 
 export const GITHUB_REPOSITORY_CACHE_MS = 600_000;
+export const GITHUB_BACKFILL_REPOSITORY_LIMIT = 5;
 
 export interface GithubConnectDeps {
   readonly config: GithubAppConfig;
@@ -113,7 +117,129 @@ export async function syncInstallationRepositories(input: SyncRepositoriesInput)
       ...(input.now === undefined ? {} : { now: input.now }),
     }),
   );
+  try {
+    await backfillInstallationPullRequests(input);
+  } catch (error) {
+    console.error(
+      `Could not backfill GitHub pull requests for installation ${input.installation.installationId}.`,
+      error,
+    );
+  }
   return repositories.length;
+}
+
+async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<number> {
+  const watched = await db
+    .select({
+      id: schema.githubRepositorySync.id,
+      repositoryId: schema.githubRepositorySync.repositoryId,
+      repositoryName: schema.githubRepositorySync.repositoryName,
+    })
+    .from(schema.githubRepositorySync)
+    .where(
+      and(
+        eq(schema.githubRepositorySync.organizationId, input.installation.organizationId),
+        eq(schema.githubRepositorySync.installationId, input.installation.installationId),
+        eq(schema.githubRepositorySync.enabled, true),
+        isNull(schema.githubRepositorySync.pullRequestsBackfilledAt),
+      ),
+    )
+    .orderBy(sql`${schema.githubRepositorySync.pullRequestsBackfilledAt} asc nulls first`)
+    .limit(GITHUB_BACKFILL_REPOSITORY_LIMIT);
+  const backfilledAt = input.now ?? new Date();
+  let completed = 0;
+  for (const repository of watched) {
+    try {
+      const pullRequests = await fetchGithubOpenPullRequests({
+        appId: input.config.appId,
+        privateKey: input.config.privateKey,
+        installationId: input.installation.installationId,
+        repository: repository.repositoryName,
+        ...fetchOverride(input),
+      });
+      for (const pullRequest of pullRequests) {
+        await db.transaction(async (tx) => {
+          await applyNormalizedGithubEvent(tx, {
+            organizationId: input.installation.organizationId,
+            event: {
+              action: 'synchronize',
+              repository: {
+                externalId: repository.repositoryId,
+                fullName: repository.repositoryName,
+              },
+              pullRequest: {
+                externalId: pullRequest.externalId,
+                nodeId: pullRequest.nodeId,
+                number: pullRequest.number,
+                title: pullRequest.title,
+                body: pullRequest.body,
+                url: pullRequest.url,
+                headRef: pullRequest.headRef,
+                headSha: pullRequest.headSha,
+                baseRef: pullRequest.baseRef,
+                draft: pullRequest.draft,
+                merged: false,
+                closed: false,
+                author: pullRequest.author,
+                createdAt: pullRequest.createdAt,
+                updatedAt: pullRequest.updatedAt,
+              },
+              review: null,
+              requestedReviewer: null,
+              checks: null,
+              comment: null,
+              activity: {
+                externalId:
+                  pullRequest.externalId.length === 0
+                    ? `pull_request:${pullRequest.number}:backfill`
+                    : `pull_request:${pullRequest.externalId}`,
+                type: 'pull_request',
+                body: '',
+                url: pullRequest.url,
+                state: 'synchronize',
+                path: null,
+                line: null,
+                occurredAt: pullRequest.updatedAt,
+              },
+              sender: pullRequest.author,
+            },
+            ...(input.now === undefined ? {} : { now: input.now }),
+          });
+        });
+      }
+      await db
+        .update(schema.githubRepositorySync)
+        .set({ pullRequestsBackfilledAt: backfilledAt })
+        .where(eq(schema.githubRepositorySync.id, repository.id));
+      completed += 1;
+    } catch (error) {
+      console.error(`Could not backfill ${repository.repositoryName}.`, error);
+    }
+  }
+  return completed;
+}
+
+export interface BackfillWorkspacePullRequestsInput extends GithubConnectDeps {
+  readonly organizationId: string;
+  readonly now?: Date;
+}
+
+export async function backfillWorkspacePullRequests(
+  input: BackfillWorkspacePullRequestsInput,
+): Promise<number> {
+  if (!discoveryReady(input.config)) return 0;
+  const installations = await listGithubInstallations(db, input.organizationId);
+  let completed = 0;
+  for (const installation of installations) {
+    if (installation.status !== 'active') continue;
+    completed += await backfillInstallationPullRequests({
+      installation,
+      config: input.config,
+      ...fetchOverride(input),
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
+  }
+  return completed;
 }
 
 export function repositoriesAreStale(

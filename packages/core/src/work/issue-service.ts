@@ -1,4 +1,5 @@
-import { and, asc, count, db, desc, eq, ilike, inArray, isNull, or, schema, sql } from '@orbit/db';
+import type { Database } from '@orbit/db';
+import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
   ISSUE_RELATION_TYPES,
@@ -32,6 +33,12 @@ import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { appendActivities, principalActor } from '../activity/activity-service.ts';
+import {
+  captureCreatedCycleMembership,
+  captureCycleMembershipChange,
+  lockCycleAssignmentTeam,
+  lockCycleAssignmentWorkspace,
+} from '../analytics/membership.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { dedupeAudience, restrictAudience, teamReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
@@ -50,7 +57,7 @@ import {
   issueScopes,
   stateTimestamps,
 } from './issue-fields.ts';
-import { buildFilterFilters, today } from './issue-predicates.ts';
+import { buildIssueWhere } from './issue-query.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
@@ -65,6 +72,7 @@ export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
+export { visibleTeamFilters } from './issue-query.ts';
 export { REBALANCE_THRESHOLD };
 
 export const INVERSE_RELATION: Record<IssueRelationType, IssueRelationType> = {
@@ -364,6 +372,24 @@ async function loadIssue(
   return issue;
 }
 
+async function loadIssueForUpdate(
+  executor: Executor,
+  principal: Principal,
+  issueId: string,
+): Promise<IssueRow> {
+  const [row] = await executor
+    .select()
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.id, issueId), eq(schema.issue.organizationId, principal.organizationId)),
+    )
+    .for('update')
+    .limit(1);
+  const issue = requireRow(row, 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
+  return issue;
+}
+
 async function replaceLabelsFor(
   executor: Executor,
   issueIds: readonly string[],
@@ -598,11 +624,18 @@ async function assertCycleInWorkspace(
   cycleId: string,
 ): Promise<void> {
   const [row] = await executor
-    .select({ id: schema.cycle.id })
+    .select({
+      id: schema.cycle.id,
+      completedAt: schema.cycle.completedAt,
+      archivedAt: schema.cycle.archivedAt,
+    })
     .from(schema.cycle)
     .where(and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, organizationId)))
     .limit(1);
-  requireRow(row, 'That sprint does not exist.');
+  const cycle = requireRow(row, 'That sprint does not exist.');
+  if (cycle.completedAt !== null || cycle.archivedAt !== null) {
+    throw validationFailed('That sprint is no longer open.');
+  }
 }
 
 async function projectTeamIds(executor: Executor, projectId: string): Promise<string[]> {
@@ -699,6 +732,8 @@ async function assertAssignableToTeam(
 ): Promise<void> {
   const { cycleId, projectId, milestoneId } = values;
   if (cycleId !== undefined && cycleId !== null) {
+    await lockCycleAssignmentWorkspace(executor, organizationId);
+    await lockCycleAssignmentTeam(executor, teamId);
     await assertCycleInWorkspace(executor, organizationId, cycleId);
   }
   if (projectId !== undefined && projectId !== null) {
@@ -770,6 +805,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       .returning();
     const issue = requireRow(created, 'The issue could not be created.');
 
+    await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
+
     await replaceLabels(tx, issue.id, parsed.labelIds);
     await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
     await appendActivities(tx, [
@@ -822,7 +859,9 @@ async function loadIssues(
     .from(schema.issue)
     .where(
       and(inArray(schema.issue.id, [...issueIds]), eq(schema.issue.organizationId, organizationId)),
-    );
+    )
+    .orderBy(asc(schema.issue.id))
+    .for('update');
   return new Map(rows.map((row) => [row.id, row]));
 }
 
@@ -880,6 +919,11 @@ async function applyIssueUpdates(
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue[]> {
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  if (parsed.cycleId !== undefined) {
+    await lockCycleAssignmentWorkspace(tx, principal.organizationId);
+    const teamIds = [...new Set([...loaded.values()].map((issue) => issue.teamId))].sort();
+    for (const teamId of teamIds) await lockCycleAssignmentTeam(tx, teamId);
+  }
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
   const context: UpdateContext = { tx, principal, parsed, state, now };
@@ -914,6 +958,18 @@ async function applyIssueUpdates(
       )
       .returning();
     for (const row of rows) updated.set(row.id, row);
+  }
+
+  for (const entry of changing) {
+    const issue = updated.get(entry.current.id);
+    if (issue === undefined || issue.cycleId === entry.current.cycleId) continue;
+    await captureCycleMembershipChange(tx, {
+      issue,
+      fromCycleId: entry.current.cycleId,
+      toCycleId: issue.cycleId,
+      occurredAt: now,
+      entryKind: 'added',
+    });
   }
 
   if (parsed.labelIds !== undefined) {
@@ -1016,10 +1072,11 @@ export async function updateIssue(
   principal: Principal,
   issueId: string,
   patch: unknown,
+  database: Database = db,
 ): Promise<UpdatedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = issueUpdateSchema.parse(patch);
-  return await db.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
+  return await database.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
 }
 
 async function orderOf(executor: Executor, issueId: string | null): Promise<number | null> {
@@ -1139,6 +1196,79 @@ interface Landing {
   readonly rebalanced: IssueRow[];
 }
 
+type MoveInput = z.infer<typeof issueMoveSchema>;
+
+async function lockMoveCycleAssignments(
+  executor: Executor,
+  organizationId: string,
+  current: IssueRow,
+  teamId: string,
+  parsed: MoveInput,
+): Promise<void> {
+  const changingTeam = teamId !== current.teamId;
+  if (parsed.cycleId === undefined && !(changingTeam && current.cycleId !== null)) return;
+  await lockCycleAssignmentWorkspace(executor, organizationId);
+  const teamIds = [...new Set([current.teamId, teamId])].sort();
+  for (const lockedTeamId of teamIds) await lockCycleAssignmentTeam(executor, lockedTeamId);
+}
+
+async function moveValues(
+  executor: Executor,
+  current: IssueRow,
+  team: TeamRow,
+  state: Awaited<ReturnType<typeof stateOf>>,
+  landing: Landing,
+  now: Date,
+): Promise<IssueValues> {
+  const values: IssueValues = landing.sortOrder === null ? {} : { sortOrder: landing.sortOrder };
+  if (team.id !== current.teamId) await carryToTeam(executor, current, team, values);
+  if (state.id === current.stateId) return values;
+  values.stateId = state.id;
+  Object.assign(values, applyStateTimestamps(current, state.category, now));
+  return values;
+}
+
+async function captureMovedIssueMembership(
+  executor: Executor,
+  current: IssueRow,
+  issue: IssueRow,
+  occurredAt: Date,
+): Promise<void> {
+  if (issue.cycleId === current.cycleId && issue.teamId === current.teamId) return;
+  await captureCycleMembershipChange(executor, {
+    issue,
+    fromCycleId: current.cycleId,
+    toCycleId: issue.cycleId,
+    occurredAt,
+    entryKind: 'added',
+  });
+}
+
+async function recordMovedIssueState(
+  executor: Executor,
+  input: {
+    readonly current: IssueRow;
+    readonly state: Awaited<ReturnType<typeof stateOf>>;
+    readonly organizationId: string;
+    readonly issueId: string;
+    readonly actor: Actor;
+    readonly syncId: number;
+  },
+): Promise<void> {
+  if (input.state.id === input.current.stateId) return;
+  await appendActivities(executor, [
+    {
+      organizationId: input.organizationId,
+      issueId: input.issueId,
+      actor: input.actor,
+      field: 'stateId',
+      from: await describeValue(executor, 'stateId', input.current.stateId),
+      to: { id: input.state.id, name: input.state.name },
+      syncId: input.syncId,
+    },
+  ]);
+}
+
 async function landingOrder(
   executor: Executor,
   parsed: { beforeId: string | null; afterId: string | null },
@@ -1170,7 +1300,7 @@ export async function moveIssue(
   const parsed = issueMoveSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal, issueId);
+    const current = await loadIssueForUpdate(tx, principal, issueId);
 
     const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
     const teamId = team.id;
@@ -1188,12 +1318,8 @@ export async function moveIssue(
 
     const now = new Date();
     const changingTeam = teamId !== current.teamId;
-    const values: IssueValues = landing.sortOrder === null ? {} : { sortOrder: landing.sortOrder };
-    if (changingTeam) await carryToTeam(tx, current, team, values);
-    if (state.id !== current.stateId) {
-      values.stateId = state.id;
-      Object.assign(values, applyStateTimestamps(current, state.category, now));
-    }
+    await lockMoveCycleAssignments(tx, principal.organizationId, current, teamId, parsed);
+    const values = await moveValues(tx, current, team, state, landing, now);
 
     await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
     await assertAssignableToTeam(tx, principal.organizationId, teamId, {
@@ -1210,21 +1336,18 @@ export async function moveIssue(
       .returning();
     const issue = requireRow(moved, 'That issue does not exist.');
 
+    await captureMovedIssueMembership(tx, current, issue, now);
+
     if (changingTeam) await dropLabelsForeignToTeam(tx, principal.organizationId, issue.id, teamId);
 
-    if (state.id !== current.stateId) {
-      await appendActivities(tx, [
-        {
-          organizationId: principal.organizationId,
-          issueId,
-          actor,
-          field: 'stateId',
-          from: await describeValue(tx, 'stateId', current.stateId),
-          to: { id: state.id, name: state.name },
-          syncId,
-        },
-      ]);
-    }
+    await recordMovedIssueState(tx, {
+      current,
+      state,
+      organizationId: principal.organizationId,
+      issueId,
+      actor,
+      syncId,
+    });
 
     await recordRegroupings(tx, {
       organizationId: principal.organizationId,
@@ -1358,19 +1481,37 @@ export async function unarchiveIssue(
   return await setArchived(principal, issueId, null);
 }
 
-export async function deleteIssue(principal: Principal, issueId: string): Promise<SyncAction[]> {
+export async function deleteIssue(
+  principal: Principal,
+  issueId: string,
+  database: Database = db,
+): Promise<SyncAction[]> {
   assertCan(principal, 'issue:delete');
 
-  return await db.transaction(async (tx) => {
-    const current = await loadIssue(tx, principal, issueId);
+  return await database.transaction(async (tx) => {
+    const current = await loadIssueForUpdate(tx, principal, issueId);
+    if (current.cycleId !== null) {
+      await lockCycleAssignmentWorkspace(tx, principal.organizationId);
+      await lockCycleAssignmentTeam(tx, current.teamId);
+    }
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const now = new Date();
     const orphaned = await tx
       .update(schema.issue)
-      .set({ parentId: null, updatedAt: new Date(), syncId })
+      .set({ parentId: null, updatedAt: now, syncId })
       .where(eq(schema.issue.parentId, issueId))
       .returning();
+    if (current.cycleId !== null) {
+      await captureCycleMembershipChange(tx, {
+        issue: current,
+        fromCycleId: current.cycleId,
+        toCycleId: null,
+        occurredAt: now,
+        entryKind: 'added',
+      });
+    }
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
     const labels = await labelIdsByIssue(
@@ -1412,89 +1553,6 @@ const {
 } = ISSUE_COLUMNS;
 
 export const ISSUE_LIST_COLUMNS = listColumns;
-
-export function visibleTeamFilters(principal: Principal): SQL[] {
-  if (principal.role === 'admin') return [];
-  if (principal.teamIds.length === 0) return [sql`false`];
-  return [inArray(schema.issue.teamId, [...principal.teamIds])];
-}
-
-function buildScopeFilters(
-  principal: Principal,
-  filter: ReturnType<typeof issueListSchema.parse>,
-): SQL[] {
-  const organizationId = principal.organizationId;
-  const filters: SQL[] = [
-    eq(schema.issue.organizationId, organizationId),
-    ...visibleTeamFilters(principal),
-  ];
-  if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
-  if (filter.projectId !== undefined) filters.push(eq(schema.issue.projectId, filter.projectId));
-  if (filter.cycleId !== undefined) filters.push(eq(schema.issue.cycleId, filter.cycleId));
-  if (filter.milestoneId !== undefined) {
-    filters.push(eq(schema.issue.milestoneId, filter.milestoneId));
-  }
-  if (filter.assigneeId !== undefined) {
-    filters.push(
-      filter.assigneeId === UNSET_FILTER_VALUE
-        ? isNull(schema.issue.assigneeId)
-        : eq(schema.issue.assigneeId, filter.assigneeId),
-    );
-  }
-  if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
-  if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
-  if (filter.stateCategory !== undefined) {
-    filters.push(
-      inArray(
-        schema.issue.stateId,
-        db
-          .select({ id: schema.workflowState.id })
-          .from(schema.workflowState)
-          .where(
-            and(
-              eq(schema.workflowState.organizationId, organizationId),
-              eq(schema.workflowState.category, filter.stateCategory),
-            ),
-          ),
-      ),
-    );
-  }
-  if (filter.labelId !== undefined) {
-    filters.push(
-      inArray(
-        schema.issue.id,
-        db
-          .select({ id: schema.issueLabel.issueId })
-          .from(schema.issueLabel)
-          .where(eq(schema.issueLabel.labelId, filter.labelId)),
-      ),
-    );
-  }
-  if (filter.query !== undefined && filter.query.trim().length > 0) {
-    const term = `%${filter.query.trim()}%`;
-    const matches = or(
-      ilike(schema.issue.title, term),
-      ilike(schema.issue.description, term),
-      ilike(schema.issue.identifier, term),
-    );
-    if (matches !== undefined) filters.push(matches);
-  }
-  if (!filter.includeArchived) filters.push(isNull(schema.issue.archivedAt));
-  if (!filter.includeSubIssues && filter.parentId === undefined) {
-    filters.push(isNull(schema.issue.parentId));
-  }
-  return filters;
-}
-
-function buildIssueFilters(
-  principal: Principal,
-  filter: ReturnType<typeof issueListSchema.parse>,
-): SQL[] {
-  return [
-    ...buildScopeFilters(principal, filter),
-    ...buildFilterFilters(filter.filter, { today: today() }),
-  ];
-}
 
 type OrderKey = ReturnType<typeof issueListSchema.parse>['orderBy'];
 
@@ -1584,7 +1642,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = buildIssueFilters(principal, filter);
+  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -1617,7 +1675,7 @@ export async function getIssueCounts(
 ): Promise<{ stateId: string; total: number }[]> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const filters = buildIssueFilters(principal, filter);
+  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
   return await db
     .select({ stateId: schema.issue.stateId, total: count() })
     .from(schema.issue)
@@ -1847,7 +1905,11 @@ export async function listBoardGroups(
   const filter = boardSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
   const column = FACET_COLUMNS[filter.groupBy]();
-  const matching = and(...buildIssueFilters(principal, filter));
+  const matching = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+  });
 
   const ranked = db
     .select({
@@ -1921,7 +1983,11 @@ export async function getIssueSummary(
 ): Promise<IssueSummary> {
   assertCan(principal, 'issue:read');
   const filter = summarySchema.parse(input);
-  const matching = and(...buildIssueFilters(principal, filter));
+  const matching = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+  });
 
   const [matchedStates, groupTotals] = await Promise.all([
     db
@@ -1948,7 +2014,12 @@ export async function getIssueFacets(
 ): Promise<IssueFacets> {
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
-  const scope = and(...buildScopeFilters(principal, filter));
+  const scope = buildIssueWhere(principal, {
+    visibility: 'team',
+    filter,
+    now: new Date(),
+    advancedFilter: 'omit',
+  });
 
   const [scopeTotal, facets] = await Promise.all([
     db.select({ total: count() }).from(schema.issue).where(scope),

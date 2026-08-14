@@ -105,6 +105,17 @@ describe('validator hardening from review', () => {
     ).toBe(false);
   });
 
+  it('accepts IANA cycle timezones and rejects unknown timezone names', () => {
+    expect(
+      cycleCreateSchema.safeParse({ teamId: 'team_1', timezone: 'America/New_York' }).success,
+    ).toBe(true);
+    expect(cycleUpdateSchema.safeParse({ timezone: 'Asia/Kolkata' }).success).toBe(true);
+    expect(
+      cycleCreateSchema.safeParse({ teamId: 'team_1', timezone: 'Mars/Olympus' }).success,
+    ).toBe(false);
+    expect(cycleUpdateSchema.safeParse({ timezone: 'UTC+05:30' }).success).toBe(false);
+  });
+
   it('treats includeArchived=false as false', () => {
     expect(docFilterSchema.parse({ includeArchived: 'false' }).includeArchived).toBe(false);
     expect(docFilterSchema.parse({ includeArchived: 'true' }).includeArchived).toBe(true);

@@ -17,6 +17,7 @@ export const NOTIFICATION_TYPES = [
   'invite_accepted',
   'member_joined',
   'pr_review_requested',
+  'pr_comment',
   'pr_review_submitted',
   'pr_approved',
   'pr_merged',
@@ -27,6 +28,7 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export const PULL_REQUEST_NOTIFICATION_TYPES = [
   'pr_review_requested',
+  'pr_comment',
   'pr_review_submitted',
   'pr_approved',
   'pr_merged',

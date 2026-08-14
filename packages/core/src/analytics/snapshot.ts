@@ -1,10 +1,12 @@
-import { and, count, db, eq, gt, inArray, isNull, lte, schema, sql } from '@orbit/db';
+import type { Transaction } from '@orbit/db';
+import { and, count, db, eq, gt, isNull, lte, or, schema, sql } from '@orbit/db';
 import type { StateCategory } from '@orbit/shared/constants';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
-import { newId, startOfUtcDay } from '../internal.ts';
+import { newId } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { bootstrapActiveCycleMemberships, bootstrapCycleMemberships } from './membership.ts';
 
 const SNAPSHOT_ACTOR: Actor = { type: 'system', id: 'snapshot', name: 'Sprint snapshot' };
 
@@ -51,35 +53,79 @@ function bucketFor(category: StateCategory): keyof Tally {
   }
 }
 
+function localDate(now: Date, timezone: string): string {
+  const options: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  };
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: timezone });
+  } catch {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+  }
+  const parts = formatter.formatToParts(now);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`Could not resolve a local date for ${timezone}.`);
+  }
+  return `${year}-${month}-${day}`;
+}
+
+export interface WriteCycleSnapshotsInput {
+  readonly now: Date;
+  readonly finalCycleId?: string;
+}
+
 export interface SnapshotResult {
-  readonly capturedOn: string;
-  readonly count: number;
+  readonly captured: number;
   readonly actions: SyncAction[];
 }
 
-export async function writeCycleSnapshots(now: Date = new Date()): Promise<SnapshotResult> {
-  const capturedOn = startOfUtcDay(now).toISOString().slice(0, 10);
+export async function writeCycleSnapshotsInTransaction(
+  tx: Transaction,
+  input: WriteCycleSnapshotsInput,
+): Promise<SnapshotResult> {
+  if (input.finalCycleId === undefined) {
+    await bootstrapActiveCycleMemberships(tx, input.now);
+  } else {
+    await bootstrapCycleMemberships(tx, [input.finalCycleId], input.now);
+  }
 
-  const activeCycles = await db
+  const activeCycles = await tx
     .select({
       id: schema.cycle.id,
       organizationId: schema.cycle.organizationId,
+      timezone: schema.cycle.timezone,
     })
     .from(schema.cycle)
     .where(
       and(
-        lte(schema.cycle.startsAt, now),
-        gt(schema.cycle.endsAt, now),
         isNull(schema.cycle.completedAt),
         isNull(schema.cycle.archivedAt),
+        input.finalCycleId === undefined
+          ? and(lte(schema.cycle.startsAt, input.now), gt(schema.cycle.endsAt, input.now))
+          : eq(schema.cycle.id, input.finalCycleId),
       ),
     );
 
-  if (activeCycles.length === 0) return { capturedOn, count: 0, actions: [] };
+  if (activeCycles.length === 0) return { captured: 0, actions: [] };
 
   const cycleIds = activeCycles.map((cycle) => cycle.id);
-  const rows = await db
+  const issueMatchesCycle = or(
+    ...activeCycles.map((cycle) =>
+      and(
+        eq(schema.issue.cycleId, cycle.id),
+        eq(schema.issue.organizationId, cycle.organizationId),
+      ),
+    ),
+  );
+  const rows = await tx
     .select({
+      organizationId: schema.issue.organizationId,
       cycleId: schema.issue.cycleId,
       category: schema.workflowState.category,
       issues: count(),
@@ -87,13 +133,23 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
     })
     .from(schema.issue)
     .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-    .where(and(inArray(schema.issue.cycleId, cycleIds), isNull(schema.issue.archivedAt)))
-    .groupBy(schema.issue.cycleId, schema.workflowState.category);
+    .where(
+      and(
+        issueMatchesCycle,
+        eq(schema.workflowState.organizationId, schema.issue.organizationId),
+        eq(schema.workflowState.teamId, schema.issue.teamId),
+        isNull(schema.issue.archivedAt),
+      ),
+    )
+    .groupBy(schema.issue.organizationId, schema.issue.cycleId, schema.workflowState.category);
 
+  const cyclesById = new Map(activeCycles.map((cycle) => [cycle.id, cycle]));
   const tallies = new Map<string, Tally>();
   for (const id of cycleIds) tallies.set(id, emptyTally());
   for (const row of rows) {
     if (row.cycleId === null) continue;
+    const cycle = cyclesById.get(row.cycleId);
+    if (cycle === undefined || cycle.organizationId !== row.organizationId) continue;
     const tally = tallies.get(row.cycleId);
     if (tally === undefined) continue;
     const issues = Number(row.issues);
@@ -105,10 +161,10 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
   }
 
   const actions: SyncAction[] = [];
-  let written = 0;
   for (const cycle of activeCycles) {
+    const capturedOn = localDate(input.now, cycle.timezone);
     const tally = tallies.get(cycle.id) ?? emptyTally();
-    const syncId = await nextSyncId(db);
+    const syncId = await nextSyncId(tx);
     const breakdown = {
       backlog: tally.backlog,
       unstarted: tally.unstarted,
@@ -116,7 +172,8 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
       completed: tally.completed,
       canceled: tally.canceled,
     };
-    await db
+    const isFinal = cycle.id === input.finalCycleId;
+    await tx
       .insert(schema.cycleProgressSnapshot)
       .values({
         id: newId(),
@@ -132,6 +189,8 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
         totalEstimate: tally.totalEstimate,
         completedEstimate: tally.completedEstimate,
         breakdown,
+        capturedAt: input.now,
+        isFinal,
         syncId,
       })
       .onConflictDoUpdate({
@@ -146,10 +205,11 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
           totalEstimate: tally.totalEstimate,
           completedEstimate: tally.completedEstimate,
           breakdown,
+          capturedAt: input.now,
+          isFinal: sql`${schema.cycleProgressSnapshot.isFinal} or excluded.is_final`,
           syncId,
         },
       });
-    written += 1;
     actions.push(
       buildSyncAction({
         syncId,
@@ -158,12 +218,18 @@ export async function writeCycleSnapshots(now: Date = new Date()): Promise<Snaps
         action: 'update',
         model: 'cycle',
         modelId: cycle.id,
-        data: { id: cycle.id, capturedOn, ...breakdown, total: tally.total },
+        data: { id: cycle.id, capturedOn, isFinal, ...breakdown, total: tally.total },
         actor: SNAPSHOT_ACTOR,
-        at: now,
+        at: input.now,
       }),
     );
   }
 
-  return { capturedOn, count: written, actions };
+  return { captured: activeCycles.length, actions };
+}
+
+export async function writeCycleSnapshots(
+  input: WriteCycleSnapshotsInput = { now: new Date() },
+): Promise<SnapshotResult> {
+  return await db.transaction(async (tx) => await writeCycleSnapshotsInTransaction(tx, input));
 }

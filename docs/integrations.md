@@ -18,7 +18,8 @@ What you get:
 
 - A **Pull requests** view, showing open pull requests against the issues they
   close.
-- Pull requests **linked to an issue** and shown on it, with their state.
+- Every open pull request in a watched repository, with its activity, reviews,
+  comments and checks. Linked Orbit tasks and projects appear as context.
 - **Branch names** generated from an issue, so the link is automatic. The
   command palette and the `copy_branch_name` MCP tool both produce them.
 
@@ -49,13 +50,22 @@ is the right shape for something reading your code host.
    [GitHub App permissions and events](github-app.md):
    - **Metadata**: read-only
    - **Pull requests**: read-only
+   - **Issues**: read-only
    - **Checks**: read-only
+   - **Commit statuses**: read-only
+   - **Actions**: read-only
    Do not grant organization or account permissions.
 7. Subscribe to these events:
    - **Repository**
    - **Pull request**
    - **Pull request review**
+   - **Pull request review comment**
+   - **Pull request review thread**
+   - **Issue comment**
    - **Check suite**
+   - **Check run**
+   - **Status**
+   - **Workflow run**
    GitHub delivers `installation` and `installation_repositories` automatically.
 8. Generate a private key and download the PEM, and note the app's client ID and
    a generated client secret.

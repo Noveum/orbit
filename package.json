@@ -40,6 +40,7 @@
     "verify": "bun run lint && bun run check-comments && bun run check-bytes && bun run check-bun-imports && bun run check-deps && bun run typecheck && bun run test",
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
+    "db:release": "bun run --filter '@orbit/db' release",
     "db:push": "bun run --filter '@orbit/db' push",
     "db:check-drift": "bun run --filter '@orbit/db' check-drift",
     "db:catchup": "bun run --filter '@orbit/db' catchup",

@@ -2,6 +2,7 @@ import { eq, schema, sql } from '@orbit/db';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { issueIdentifier, slugify } from '@orbit/shared/utils';
+import { captureCreatedCycleMembership } from '../analytics/membership.ts';
 import { type Executor, newId } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
@@ -229,6 +230,7 @@ export async function seedStarterContent(
       })
       .returning();
     if (issue === undefined) continue;
+    await captureCreatedCycleMembership(executor, { issue, occurredAt: now });
     const issueScopes = [
       scopes.organization(params.organizationId),
       scopes.team(params.team.id),

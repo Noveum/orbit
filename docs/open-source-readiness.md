@@ -108,9 +108,10 @@ follow-up work.
   reconnect replay as best effort and identify hard-delete and publish-gap
   limits.
 - [ ] **DB-001: Production migrations.** **Status: partial.** Ordered migrations
-  and a from-scratch migration and drift check exist in CI. Replace production
-  `db:push` guidance, add a safe baseline for existing installs, rollback
-  guidance, and upgrade tests.
+  and a from-scratch migration and full catalog drift check exist in CI. Production
+  guidance uses a locked release command that safely baselines compatible legacy
+  databases and refuses partial ones. Remaining work is provider-tested backup and
+  rollback automation beyond the documented forward-repair procedure.
 - [ ] **DB-002: Migration identity collisions.** **Status: open.** Reject reused
   migration indexes with different contents, compare the resulting catalog in
   CI, define the rebase policy, and decide whether databases that applied the

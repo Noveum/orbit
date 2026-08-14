@@ -21,6 +21,14 @@ describe('workspace seeding on create', () => {
       .from(schema.issue)
       .where(eq(schema.issue.teamId, bootstrap.team.id));
     expect(issues.length).toBeGreaterThan(0);
+    const assignedToCycle = issues.filter((issue) => issue.cycleId !== null);
+    const memberships = await db
+      .select()
+      .from(schema.cycleIssueMembership)
+      .where(eq(schema.cycleIssueMembership.organizationId, bootstrap.organization.id));
+    expect(memberships).toHaveLength(assignedToCycle.length);
+    expect(memberships.every((entry) => entry.coverage === 'captured')).toBe(true);
+    expect(memberships.every((entry) => entry.removedAt === null)).toBe(true);
 
     const docs = await db
       .select()

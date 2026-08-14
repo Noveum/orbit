@@ -136,6 +136,109 @@ describe('parseGithubEvent', () => {
     expect(event?.review?.decision).toBe('approved');
   });
 
+  it('normalizes a conversation comment only when it belongs to a pull request', () => {
+    const event = parseGithubEvent('issue_comment', {
+      action: 'created',
+      issue: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/acme/web/pull/7',
+        pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+      },
+      comment: {
+        body: 'Please add a regression test.',
+        html_url: 'https://github.com/acme/web/pull/7#issuecomment-1',
+        user: { login: 'reviewer', id: 2 },
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'reviewer', id: 2 },
+    });
+
+    expect(event?.comment).toEqual({
+      body: 'Please add a regression test.',
+      url: 'https://github.com/acme/web/pull/7#issuecomment-1',
+      kind: 'conversation',
+    });
+    expect(event?.pullRequest?.number).toBe(7);
+
+    expect(
+      parseGithubEvent('issue_comment', {
+        action: 'created',
+        issue: {
+          number: 7,
+          title: 'Ordinary issue',
+          html_url: 'https://github.com/acme/web/issues/7',
+        },
+        comment: {
+          body: 'Not a pull request.',
+          html_url: 'https://github.com/acme/web/issues/7#issuecomment-1',
+        },
+        repository: { id: 99, full_name: 'acme/web' },
+        sender: { login: 'reviewer', id: 2 },
+      }),
+    ).toBeNull();
+  });
+
+  it('normalizes an inline review comment', () => {
+    const event = parseGithubEvent('pull_request_review_comment', {
+      action: 'created',
+      pull_request: {
+        number: 7,
+        title: 'Rework dashboard',
+        html_url: 'https://github.com/acme/web/pull/7',
+        head: { ref: 'eng-3-dashboard' },
+        base: { ref: 'main' },
+      },
+      comment: {
+        body: 'This branch can return early.',
+        html_url: 'https://github.com/acme/web/pull/7#discussion_r1',
+        user: { login: 'reviewer', id: 2 },
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'reviewer', id: 2 },
+    });
+
+    expect(event?.comment).toEqual({
+      body: 'This branch can return early.',
+      url: 'https://github.com/acme/web/pull/7#discussion_r1',
+      kind: 'inline',
+    });
+  });
+
+  it('treats a GitHub status error as a failed check', () => {
+    const event = parseGithubEvent('status', {
+      id: 17,
+      sha: 'abc123',
+      state: 'error',
+      context: 'deploy',
+      description: 'Deployment errored',
+      target_url: 'https://github.com/acme/web/runs/17',
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'deploy-bot', id: 2 },
+    });
+
+    expect(event?.checks?.failed).toBe(true);
+    expect(event?.activity.state).toBe('error');
+  });
+
+  it('treats a GitHub startup failure as a failed check', () => {
+    const event = parseGithubEvent('check_suite', {
+      action: 'completed',
+      check_suite: {
+        id: 18,
+        status: 'completed',
+        conclusion: 'startup_failure',
+        head_branch: 'main',
+        pull_requests: [{ number: 7 }],
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'github-actions', id: 3 },
+    });
+
+    expect(event?.checks?.failed).toBe(true);
+    expect(event?.activity.state).toBe('startup_failure');
+  });
+
   it('ignores unrelated events', () => {
     expect(parseGithubEvent('push', {})).toBeNull();
     expect(parseGithubEvent('ping', {})).toBeNull();

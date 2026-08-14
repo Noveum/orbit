@@ -4,9 +4,7 @@ import { publishDeltas } from '../packages/core/src/realtime/publisher.ts';
 async function main(): Promise<void> {
   const result = await writeCycleSnapshots();
   await publishDeltas(result.actions);
-  console.info(
-    `[snapshot-cycles] wrote ${result.count} cycle snapshot(s) for ${result.capturedOn}`,
-  );
+  console.info(`[snapshot-cycles] wrote ${result.captured} cycle snapshot(s)`);
 }
 
 main()

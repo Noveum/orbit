@@ -53,6 +53,7 @@ export const notification = pgTable(
     title: text('title').notNull(),
     body: text('body').notNull().default(''),
     url: text('url').notNull(),
+    externalUrl: text('external_url'),
     readAt: timestamp('read_at', { withTimezone: true }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
     deliveredChannels: jsonb('delivered_channels').$type<string[]>().notNull().default([]),
@@ -279,6 +280,7 @@ export const githubRepositorySync = pgTable(
     defaultBranch: text('default_branch').notNull().default('main'),
     enabled: boolean('enabled').notNull().default(true),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    pullRequestsBackfilledAt: timestamp('pull_requests_backfilled_at', { withTimezone: true }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -286,6 +288,91 @@ export const githubRepositorySync = pgTable(
   (table) => [
     uniqueIndex('github_repository_sync_unique').on(table.organizationId, table.repositoryId),
     index('github_repository_sync_team_idx').on(table.teamId),
+  ],
+);
+
+export const githubPullRequest = pgTable(
+  'github_pull_request',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id')
+      .notNull()
+      .references(() => githubRepositorySync.id, { onDelete: 'cascade' }),
+    repositoryId: text('repository_id').notNull(),
+    repositoryName: text('repository_name').notNull(),
+    number: bigint('number', { mode: 'number' }).notNull(),
+    nodeId: text('node_id').notNull().default(''),
+    title: text('title').notNull().default(''),
+    body: text('body').notNull().default(''),
+    url: text('url').notNull(),
+    headRef: text('head_ref').notNull().default(''),
+    headSha: text('head_sha').notNull().default(''),
+    baseRef: text('base_ref').notNull().default(''),
+    state: text('state').notNull().default('open'),
+    draft: boolean('draft').notNull().default(false),
+    merged: boolean('merged').notNull().default(false),
+    authorLogin: text('author_login').notNull().default(''),
+    authorId: text('author_id').notNull().default(''),
+    reviewDecision: text('review_decision'),
+    checkStatus: text('check_status').notNull().default('unknown'),
+    githubCreatedAt: timestamp('github_created_at', { withTimezone: true }),
+    githubUpdatedAt: timestamp('github_updated_at', { withTimezone: true }),
+    historySyncedAt: timestamp('history_synced_at', { withTimezone: true }),
+    historyRefreshClaimedAt: timestamp('history_refresh_claimed_at', { withTimezone: true }),
+    lastEventAt: timestamp('last_event_at', { withTimezone: true }).notNull().defaultNow(),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_pull_request_repository_number_unique').on(
+      table.repositorySyncId,
+      table.number,
+    ),
+    index('github_pull_request_org_updated_idx').on(table.organizationId, table.updatedAt),
+    index('github_pull_request_repository_identity_idx').on(
+      table.organizationId,
+      table.repositoryId,
+      table.number,
+    ),
+  ],
+);
+
+export const githubPullRequestActivity = pgTable(
+  'github_pull_request_activity',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id')
+      .notNull()
+      .references(() => githubPullRequest.id, { onDelete: 'cascade' }),
+    externalId: text('external_id').notNull(),
+    type: text('type').notNull(),
+    action: text('action').notNull(),
+    actorLogin: text('actor_login').notNull().default(''),
+    actorId: text('actor_id').notNull().default(''),
+    body: text('body').notNull().default(''),
+    url: text('url').notNull().default(''),
+    state: text('state').notNull().default(''),
+    path: text('path'),
+    line: integer('line'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_pull_request_activity_external_unique').on(
+      table.pullRequestId,
+      table.externalId,
+    ),
+    index('github_pull_request_activity_timeline_idx').on(table.pullRequestId, table.occurredAt),
+    index('github_pull_request_activity_org_idx').on(table.organizationId),
   ],
 );
 
@@ -458,6 +545,9 @@ export const gitLink = pgTable(
     issueId: text('issue_id')
       .notNull()
       .references(() => issue.id, { onDelete: 'cascade' }),
+    pullRequestId: text('pull_request_id').references(() => githubPullRequest.id, {
+      onDelete: 'set null',
+    }),
     provider: text('provider').notNull().default('github'),
     kind: text('kind').notNull(),
     externalId: text('external_id').notNull(),
@@ -476,6 +566,7 @@ export const gitLink = pgTable(
   (table) => [
     uniqueIndex('git_link_unique').on(table.provider, table.externalId),
     index('git_link_issue_idx').on(table.issueId),
+    index('git_link_pull_request_idx').on(table.pullRequestId),
   ],
 );
 
@@ -512,6 +603,7 @@ export const webhookDelivery = pgTable(
     }),
     status: text('status').notNull().default('received'),
     error: text('error'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

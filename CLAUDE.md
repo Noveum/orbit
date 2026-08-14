@@ -175,8 +175,12 @@ instinct here, because a page makes several database round trips and only one
 trip from the browser.
 
 Migrations are applied locally against the target database, never by a job in the
-platform, so any schema change must be pushed before the code that depends on it
-ships.
+platform. Run `DIRECT_URL="postgres://..." bun run db:release` before merging code
+that depends on a schema change. The command verifies the migration ledger, applies
+pending migrations under a database lock and then compares columns, types,
+nullability, defaults, generated columns, primary keys, indexes, foreign keys and
+enum values against the declared schema. A production Vercel build fails closed if
+that verification cannot run or finds the database behind.
 
 ## Git
 

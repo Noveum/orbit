@@ -1,3 +1,4 @@
+import { analyticsQuerySchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 export const MEASURES = ['issues', 'points'] as const;
@@ -42,14 +43,15 @@ export const breakdownRequestSchema = z.object({
 });
 export type BreakdownRequest = z.infer<typeof breakdownRequestSchema>;
 
-const analyticsViewConfigSchema = z
-  .object({
-    scope: analyticsScopeSchema.optional(),
-    measure: measureSchema.optional(),
-    xAxis: chartDimensionSchema.optional(),
-    segment: chartDimensionSchema.optional(),
-  })
-  .catchall(z.unknown());
+const analyticsViewConfigSchema = z.record(z.string(), z.unknown());
+
+export const savedDashboardConfigSchema = z.object({
+  kind: z.literal('dashboard'),
+  version: z.literal(1),
+  query: analyticsQuerySchema,
+  pinned: z.boolean().default(false),
+});
+export type SavedDashboardConfig = z.infer<typeof savedDashboardConfigSchema>;
 
 export const savedAnalyticsViewCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),

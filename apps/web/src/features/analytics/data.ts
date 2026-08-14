@@ -1,4 +1,5 @@
 import {
+  type AnalyticsDrilldownInput,
   type AnalyticsScope,
   type ChartResult,
   type CheckpointView,
@@ -9,8 +10,13 @@ import {
   cycleFlowMetrics,
   type DistributionSlice,
   type FlowMetrics,
+  listAnalyticsDrilldown,
   listCheckpoints,
   listSavedAnalyticsViews,
+  loadAnalyticsOverview,
+  loadPeopleAnalytics,
+  loadProjectAnalytics,
+  loadSprintAnalytics,
   type Measure,
   type SavedAnalyticsViewPayload,
   type ScopePoint,
@@ -26,6 +32,19 @@ import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
+import type { AnalyticsLens, AnalyticsQuery } from '@orbit/shared/validators';
+import { dehydrate, QueryClient } from '@tanstack/react-query';
+import { analyticsKeys } from './analytics-keys.ts';
+import {
+  type AnalyticsDrilldownResponse,
+  type AnalyticsPeopleResponse,
+  type AnalyticsProjectsResponse,
+  type AnalyticsResponseByLens,
+  type AnalyticsSprintsResponse,
+  analyticsDrilldownWireResponse,
+  analyticsWireResponse,
+} from './contracts.ts';
+import { selectedAssigneeIds } from './person-focus.ts';
 
 const WORKSPACE: AnalyticsScope = { type: 'workspace' };
 
@@ -144,4 +163,95 @@ export async function loadCycleBundle(
   ]);
 
   return { measure, burndown, churn, flow, checkpoints, velocity };
+}
+
+export async function loadSprintsAnalyticsData(
+  principal: Principal,
+  query: AnalyticsQuery,
+): Promise<AnalyticsSprintsResponse> {
+  const focusedQuery = sprintQueryForPrincipal(principal, query);
+  return analyticsWireResponse('sprints', {
+    lens: 'sprints',
+    ...(await loadSprintAnalytics(principal, { ...focusedQuery, lens: 'sprints' })),
+  });
+}
+
+function sprintQueryForPrincipal(principal: Principal, query: AnalyticsQuery): AnalyticsQuery {
+  if (query.focus.personId !== undefined) return query;
+  return selectedAssigneeIds(query).length > 0
+    ? query
+    : { ...query, focus: { ...query.focus, personId: principal.userId } };
+}
+
+export async function loadSelectedSprintAnalyticsData(
+  principal: Principal,
+  query: AnalyticsQuery,
+  selectedSprintId: string,
+): Promise<AnalyticsSprintsResponse> {
+  const focusedQuery = sprintQueryForPrincipal(principal, query);
+  return analyticsWireResponse('sprints', {
+    lens: 'sprints',
+    ...(await loadSprintAnalytics(
+      principal,
+      { ...focusedQuery, lens: 'sprints' },
+      { selectedSprintId },
+    )),
+  });
+}
+
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: 'overview',
+  query: AnalyticsQuery,
+): Promise<AnalyticsResponseByLens['overview']>;
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: 'sprints',
+  query: AnalyticsQuery,
+): Promise<AnalyticsSprintsResponse>;
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: 'projects',
+  query: AnalyticsQuery,
+): Promise<AnalyticsProjectsResponse>;
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: 'people',
+  query: AnalyticsQuery,
+): Promise<AnalyticsPeopleResponse>;
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: AnalyticsLens,
+  query: AnalyticsQuery,
+): Promise<AnalyticsResponseByLens[AnalyticsLens]>;
+export async function loadAnalyticsLensData(
+  principal: Principal,
+  lens: AnalyticsLens,
+  query: AnalyticsQuery,
+): Promise<AnalyticsResponseByLens[AnalyticsLens]> {
+  const normalized = { ...query, lens };
+  switch (lens) {
+    case 'overview':
+      return analyticsWireResponse('overview', await loadAnalyticsOverview(principal, normalized));
+    case 'sprints':
+      return await loadSprintsAnalyticsData(principal, normalized);
+    case 'projects':
+      return analyticsWireResponse('projects', await loadProjectAnalytics(principal, normalized));
+    case 'people':
+      return analyticsWireResponse('people', await loadPeopleAnalytics(principal, normalized));
+  }
+}
+
+export async function loadAnalyticsDrilldownData(
+  principal: Principal,
+  input: AnalyticsDrilldownInput,
+): Promise<AnalyticsDrilldownResponse> {
+  return analyticsDrilldownWireResponse(await listAnalyticsDrilldown(principal, input));
+}
+
+export async function dehydratedAnalyticsLens(principal: Principal, query: AnalyticsQuery) {
+  const client = new QueryClient();
+  const payload = await loadAnalyticsLensData(principal, query.lens, query);
+  client.setQueryData(analyticsKeys.lens(query.lens, query), payload);
+  return dehydrate(client);
 }

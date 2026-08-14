@@ -7,6 +7,12 @@ const USER = process.env['ORBIT_SHOTS_USER'] ?? 'alex@orbit.example';
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const OUT = resolve(REPO_ROOT, 'docs/assets/screenshots');
 const RELATIVE_OUT = 'docs/assets/screenshots';
+const SHOT_FILTER = new Set(
+  (process.env['ORBIT_SHOTS_FILTER'] ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0),
+);
 const WIDTH = 1680;
 const HEIGHT = 1000;
 const THEMES = ['light', 'dark'] as const;
@@ -69,6 +75,25 @@ async function firstProjectSlug(page: Page): Promise<string | null> {
   return first['slug'];
 }
 
+async function firstPersonWithWork(page: Page): Promise<string | null> {
+  const body = await readJson(page, '/api/analytics/people?lens=people');
+  if (!(isRecord(body) && Array.isArray(body['people']))) return null;
+  for (const entry of body['people']) {
+    if (!(isRecord(entry) && isRecord(entry['person']))) continue;
+    const assignments = entry['currentAssignments'];
+    const completions = entry['completedIssues'];
+    const id = entry['person']['id'];
+    if (
+      typeof id === 'string' &&
+      ((typeof assignments === 'number' && assignments > 0) ||
+        (typeof completions === 'number' && completions > 0))
+    ) {
+      return id;
+    }
+  }
+  return null;
+}
+
 async function firstIssueIdentifier(page: Page, teamKey: string): Promise<string | null> {
   const body = await readJson(page, `/api/issues?teamKey=${teamKey}&limit=20`);
   if (!(isRecord(body) && Array.isArray(body['issues']))) return null;
@@ -80,12 +105,52 @@ async function firstIssueIdentifier(page: Page, teamKey: string): Promise<string
 }
 
 async function buildShots(page: Page): Promise<Shot[]> {
+  const personId = await firstPersonWithWork(page);
   const shots: Shot[] = [
     { name: 'board', path: '/team/ENG/board', caption: 'Board' },
     { name: 'issues', path: '/team/ENG/issues', caption: 'Issue list' },
     { name: 'sprints', path: '/sprints', caption: 'Sprints' },
     { name: 'standup', path: '/standup', caption: 'Standup' },
     { name: 'analytics', path: '/analytics', caption: 'Analytics', settleMs: 1800 },
+    {
+      name: 'analytics-sprints',
+      path: '/analytics?lens=sprints',
+      caption: 'Analytics sprint planning',
+      settleMs: 1800,
+    },
+    {
+      name: 'analytics-people',
+      path:
+        personId === null
+          ? '/analytics?lens=people'
+          : `/analytics?lens=people&personId=${personId}`,
+      caption: 'Analytics personal planning',
+      settleMs: 1800,
+    },
+    {
+      name: 'analytics-hover',
+      path: '/analytics?lens=sprints',
+      caption: 'Analytics exact chart value',
+      settleMs: 1800,
+      act: async (target) => {
+        const point = target.locator('[data-testid^="plot-hit-"]').last();
+        await point.hover({ force: true });
+        await target.getByRole('tooltip').waitFor();
+      },
+    },
+    {
+      name: 'analytics-filters',
+      path: '/analytics',
+      caption: 'Analytics advanced filters',
+      settleMs: 1800,
+      act: async (target) => {
+        await target.getByRole('button', { name: 'Add filter' }).click();
+        await target.getByTestId('filter-field-project').click();
+        await target.locator('[data-testid^="filter-value-"]').first().click();
+        await target.keyboard.press('Escape');
+        await target.getByRole('button', { name: 'Scope' }).click();
+      },
+    },
     { name: 'projects', path: '/projects', caption: 'Projects' },
     { name: 'inbox', path: '/inbox', caption: 'Inbox' },
     { name: 'my-issues', path: '/my-issues', caption: 'My issues' },
@@ -182,7 +247,9 @@ async function main(): Promise<void> {
   const setupContext = await openContext(browser, 'light');
   const setupPage = await setupContext.newPage();
   await signIn(setupPage);
-  const shots = await buildShots(setupPage);
+  const allShots = await buildShots(setupPage);
+  const shots =
+    SHOT_FILTER.size === 0 ? allShots : allShots.filter((shot) => SHOT_FILTER.has(shot.name));
   await setupContext.close();
 
   console.log(`Capturing ${shots.length} screens in ${THEMES.length} themes from ${BASE}`);

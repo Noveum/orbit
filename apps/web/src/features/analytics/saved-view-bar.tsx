@@ -1,35 +1,59 @@
 'use client';
 
-import type { Measure, SavedAnalyticsViewPayload } from '@orbit/core';
-import { X } from 'lucide-react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import type { SavedAnalyticsViewPayload } from '@orbit/core';
+import { type AnalyticsQuery, analyticsQuerySchema } from '@orbit/shared/validators';
+import { useQueryClient } from '@tanstack/react-query';
+import { Pencil, Pin, Save, Trash2, Users } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
-import { cn } from '@/lib/cn.ts';
+import { analyticsKeys } from './analytics-keys.ts';
+import { canonicalAnalyticsQuery } from './query-state.ts';
 
 interface SavedViewBarProps {
   readonly views: readonly SavedAnalyticsViewPayload[];
-  readonly measure: Measure;
+  readonly query: AnalyticsQuery;
   readonly canManage: boolean;
+  readonly canManageAll: boolean;
+  readonly currentUserId: string | null;
+  readonly onApply: (query: AnalyticsQuery) => void;
 }
 
-export function SavedViewBar({ views, measure, canManage }: SavedViewBarProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
+function queryOf(view: SavedAnalyticsViewPayload): AnalyticsQuery | null {
+  const parsed = analyticsQuerySchema.safeParse(view.config['query'] ?? view.config);
+  return parsed.success ? parsed.data : null;
+}
+
+function pinned(view: SavedAnalyticsViewPayload): boolean {
+  return view.config['pinned'] === true;
+}
+
+export function SavedViewBar({
+  views,
+  query,
+  canManage,
+  canManageAll,
+  currentUserId,
+  onApply,
+}: SavedViewBarProps) {
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const [pending, setPending] = useState(false);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
-  const dashboards = views.filter((view) => view.kind === 'dashboard');
+  const [shared, setShared] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [localViews, setLocalViews] = useState(views);
+  const dashboards = localViews.filter((view) => view.kind === 'dashboard');
+  const active = dashboards.find((view) => {
+    const saved = queryOf(view);
+    return saved !== null && canonicalAnalyticsQuery(saved) === canonicalAnalyticsQuery(query);
+  });
 
-  function apply(view: SavedAnalyticsViewPayload): void {
-    const configured = view.config['measure'];
-    const query = new URLSearchParams(params.toString());
-    query.set('measure', typeof configured === 'string' ? configured : measure);
-    router.push(`${pathname}?${query.toString()}`);
+  async function refresh(): Promise<void> {
+    await queryClient.invalidateQueries({ queryKey: analyticsKeys.root });
   }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -37,15 +61,42 @@ export function SavedViewBar({ views, measure, canManage }: SavedViewBarProps) {
     if (name.trim().length === 0) return;
     setPending(true);
     try {
-      await apiRequest('/api/analytics/views', {
-        method: 'POST',
-        body: { name: name.trim(), config: { measure } },
-      });
+      const response = await apiRequest<{ view: SavedAnalyticsViewPayload }>(
+        '/api/analytics/views',
+        {
+          method: 'POST',
+          body: {
+            name: name.trim(),
+            shared,
+            config: { kind: 'dashboard', version: 1, query, pinned: false },
+          },
+        },
+      );
+      setLocalViews((current) => [...current, response.view]);
       setName('');
+      setShared(false);
       setEditing(false);
-      router.refresh();
+      await refresh();
     } catch (error) {
       toast({ title: 'Could not save that view', description: messageOf(error), tone: 'danger' });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function update(id: string, body: Record<string, unknown>): Promise<void> {
+    setPending(true);
+    try {
+      const response = await apiRequest<{ view: SavedAnalyticsViewPayload }>(
+        `/api/analytics/views/${id}`,
+        { method: 'PATCH', body },
+      );
+      setLocalViews((current) =>
+        current.map((view) => (view.id === response.view.id ? response.view : view)),
+      );
+      await refresh();
+    } catch (error) {
+      toast({ title: 'Could not update that view', description: messageOf(error), tone: 'danger' });
     } finally {
       setPending(false);
     }
@@ -55,7 +106,8 @@ export function SavedViewBar({ views, measure, canManage }: SavedViewBarProps) {
     setPending(true);
     try {
       await apiRequest(`/api/analytics/views/${id}`, { method: 'DELETE' });
-      router.refresh();
+      setLocalViews((current) => current.filter((view) => view.id !== id));
+      await refresh();
     } catch (error) {
       toast({ title: 'Could not delete that view', description: messageOf(error), tone: 'danger' });
     } finally {
@@ -63,60 +115,159 @@ export function SavedViewBar({ views, measure, canManage }: SavedViewBarProps) {
     }
   }
 
-  const composer = editing ? (
-    <form onSubmit={submit} className="flex items-center gap-1.5">
-      <input
-        type="text"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        placeholder="View name"
-        aria-label="Analytics view name"
-        className="h-7 w-32 rounded-md border border-border bg-surface px-2 text-text text-xs"
-      />
-      <Button type="submit" size="sm" variant="primary" disabled={pending}>
-        Save
-      </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
-        Cancel
-      </Button>
-    </form>
-  ) : (
-    <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)}>
-      Save view
-    </Button>
-  );
-
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {dashboards.map((view) => (
-        <span
-          key={view.id}
-          className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 py-0.5 pr-1 pl-2.5 text-xs"
-        >
-          <button
-            type="button"
-            onClick={() => apply(view)}
-            className="text-muted transition-colors duration-[var(--duration-fast)] hover:text-text"
+    <div className="flex flex-wrap items-center gap-2" data-testid="saved-analytics-views">
+      {dashboards.map((view) => {
+        const saved = queryOf(view);
+        const editable = canManage && (canManageAll || view.ownerId === currentUserId);
+        return (
+          <div
+            className="inline-flex items-center rounded-md border border-border bg-surface-2"
+            key={view.id}
           >
-            {view.name}
-          </button>
-          {canManage ? (
-            <button
-              type="button"
-              aria-label={`Delete ${view.name}`}
-              disabled={pending}
-              onClick={() => remove(view.id)}
-              className={cn(
-                'flex size-4 items-center justify-center rounded-full text-faint',
-                'transition-colors duration-[var(--duration-fast)] hover:bg-surface-3 hover:text-danger',
-              )}
-            >
-              <X className="size-3" aria-hidden="true" />
-            </button>
-          ) : null}
-        </span>
-      ))}
-      {canManage ? composer : null}
+            {renamingId === view.id ? (
+              <form
+                className="flex items-center gap-1 p-1"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const nextName = renameValue.trim();
+                  if (nextName.length === 0) return;
+                  await update(view.id, { name: nextName });
+                  setRenamingId(null);
+                }}
+              >
+                <input
+                  aria-label={`Rename ${view.name}`}
+                  className="h-6 w-28 rounded border border-border bg-surface px-1.5 text-text text-xs"
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  value={renameValue}
+                />
+                <Button disabled={pending} size="sm" type="submit" variant="ghost">
+                  Save
+                </Button>
+              </form>
+            ) : (
+              <button
+                className="rounded-l-md px-2.5 py-1.5 text-muted text-xs hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                disabled={saved === null}
+                onClick={() => {
+                  if (saved !== null) onApply(saved);
+                }}
+                type="button"
+              >
+                {view.name}
+              </button>
+            )}
+            {editable ? (
+              <>
+                <button
+                  aria-label={`${pinned(view) ? 'Unpin' : 'Pin'} ${view.name}`}
+                  className="p-1.5 text-faint hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  disabled={pending}
+                  onClick={() =>
+                    update(view.id, {
+                      config: {
+                        kind: 'dashboard',
+                        version: 1,
+                        query: saved ?? query,
+                        pinned: !pinned(view),
+                      },
+                    })
+                  }
+                  type="button"
+                >
+                  <Pin
+                    aria-hidden="true"
+                    className="size-3"
+                    fill={pinned(view) ? 'currentColor' : 'none'}
+                  />
+                </button>
+                <button
+                  aria-label={`${view.shared ? 'Make private' : 'Share'} ${view.name}`}
+                  className="p-1.5 text-faint hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  disabled={pending}
+                  onClick={() => update(view.id, { shared: !view.shared })}
+                  type="button"
+                >
+                  <Users
+                    aria-hidden="true"
+                    className="size-3"
+                    fill={view.shared ? 'currentColor' : 'none'}
+                  />
+                </button>
+                <button
+                  aria-label={`Rename ${view.name}`}
+                  className="p-1.5 text-faint hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  disabled={pending}
+                  onClick={() => {
+                    setRenamingId(view.id);
+                    setRenameValue(view.name);
+                  }}
+                  type="button"
+                >
+                  <Pencil aria-hidden="true" className="size-3" />
+                </button>
+                <button
+                  aria-label={`Delete ${view.name}`}
+                  className="p-1.5 text-faint hover:text-danger focus-visible:outline focus-visible:outline-2 focus-visible:outline-danger"
+                  disabled={pending}
+                  onClick={() => remove(view.id)}
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" className="size-3" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        );
+      })}
+      {canManage && active !== undefined && (canManageAll || active.ownerId === currentUserId) ? (
+        <Button
+          disabled={pending}
+          onClick={() =>
+            update(active.id, {
+              config: { kind: 'dashboard', version: 1, query, pinned: pinned(active) },
+            })
+          }
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Update view
+        </Button>
+      ) : null}
+      {canManage && !editing ? (
+        <Button onClick={() => setEditing(true)} size="sm" type="button" variant="ghost">
+          <Save aria-hidden="true" className="size-3.5" />
+          Save view
+        </Button>
+      ) : null}
+      {canManage && editing ? (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={submit}>
+          <input
+            aria-label="Analytics view name"
+            className="h-7 w-36 rounded-md border border-border bg-surface px-2 text-text text-xs"
+            onChange={(event) => setName(event.target.value)}
+            placeholder="View name"
+            type="text"
+            value={name}
+          />
+          <label className="flex items-center gap-1 text-muted text-xs">
+            <input
+              checked={shared}
+              onChange={(event) => setShared(event.target.checked)}
+              type="checkbox"
+            />
+            Share with workspace
+          </label>
+          <Button disabled={pending} size="sm" type="submit" variant="primary">
+            Save
+          </Button>
+          <Button onClick={() => setEditing(false)} size="sm" type="button" variant="ghost">
+            Cancel
+          </Button>
+        </form>
+      ) : null}
     </div>
   );
 }

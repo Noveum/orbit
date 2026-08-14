@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "bun src/ensure-extensions.ts && drizzle-kit migrate",
+    "release": "bun --env-file=../../.env src/migration-release.ts",
     "push": "bun src/ensure-extensions.ts && drizzle-kit push --force",
     "studio": "drizzle-kit studio",
     "seed": "bun --env-file=../../.env src/seed/index.ts",

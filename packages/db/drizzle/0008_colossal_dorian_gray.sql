@@ -1,0 +1,2 @@
+CREATE INDEX "cycle_issue_outcome_completion_attribution_idx" ON "cycle_issue_outcome" USING btree ("organization_id","issue_id","completed_at","closed_at") WHERE "cycle_issue_outcome"."outcome" = 'completed';--> statement-breakpoint
+CREATE INDEX "issue_activity_assignee_attribution_idx" ON "issue_activity" USING btree ("organization_id","issue_id","created_at") WHERE "issue_activity"."field" = 'assigneeId';

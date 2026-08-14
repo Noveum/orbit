@@ -1,6 +1,7 @@
 import type { Transaction } from '@orbit/db';
 import {
   githubInstallation,
+  githubPullRequest,
   githubRepository,
   githubRepositorySync,
   integration,
@@ -307,6 +308,40 @@ const REPOSITORY_FACTS = {
   htmlUrl: sql`excluded.html_url`,
 };
 
+async function propagateGithubRepositoryIdentity(
+  database: GithubDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly repositoryId: string;
+    readonly repositoryName: string;
+    readonly defaultBranch: string;
+    readonly now: Date;
+  },
+): Promise<void> {
+  await database
+    .update(githubRepositorySync)
+    .set({
+      repositoryName: input.repositoryName,
+      defaultBranch: input.defaultBranch,
+      updatedAt: input.now,
+    })
+    .where(
+      and(
+        eq(githubRepositorySync.organizationId, input.organizationId),
+        eq(githubRepositorySync.repositoryId, input.repositoryId),
+      ),
+    );
+  await database
+    .update(githubPullRequest)
+    .set({ repositoryName: input.repositoryName })
+    .where(
+      and(
+        eq(githubPullRequest.organizationId, input.organizationId),
+        eq(githubPullRequest.repositoryId, input.repositoryId),
+      ),
+    );
+}
+
 export async function upsertGithubRepositories(
   database: GithubDatabase,
   input: {
@@ -317,7 +352,7 @@ export async function upsertGithubRepositories(
 ): Promise<GithubRepositoryRow[]> {
   if (input.repositories.length === 0) return [];
   const now = input.now ?? new Date();
-  return await database
+  const rows = await database
     .insert(githubRepository)
     .values(input.repositories.map((entry) => repositoryValues(input.installation, entry)))
     .onConflictDoUpdate({
@@ -325,6 +360,16 @@ export async function upsertGithubRepositories(
       set: { ...REPOSITORY_FACTS, updatedAt: now },
     })
     .returning();
+  for (const row of rows) {
+    await propagateGithubRepositoryIdentity(database, {
+      organizationId: row.organizationId,
+      repositoryId: row.repositoryId,
+      repositoryName: row.fullName,
+      defaultBranch: row.defaultBranch,
+      now,
+    });
+  }
+  return rows;
 }
 
 export async function replaceGithubRepositories(
@@ -402,6 +447,7 @@ export async function updateGithubRepositoryFacts(
   database: GithubDatabase,
   input: GithubRepositoryFacts & { readonly now?: Date },
 ): Promise<number> {
+  const now = input.now ?? new Date();
   const rows = await database
     .update(githubRepository)
     .set({
@@ -412,24 +458,18 @@ export async function updateGithubRepositoryFacts(
       archived: input.archived,
       defaultBranch: input.defaultBranch,
       htmlUrl: input.htmlUrl,
-      updatedAt: input.now ?? new Date(),
+      updatedAt: now,
     })
     .where(eq(githubRepository.repositoryId, input.repositoryId))
     .returning({ organizationId: githubRepository.organizationId });
   for (const row of rows) {
-    await database
-      .update(githubRepositorySync)
-      .set({
-        repositoryName: input.fullName,
-        defaultBranch: input.defaultBranch,
-        updatedAt: input.now ?? new Date(),
-      })
-      .where(
-        and(
-          eq(githubRepositorySync.organizationId, row.organizationId),
-          eq(githubRepositorySync.repositoryId, input.repositoryId),
-        ),
-      );
+    await propagateGithubRepositoryIdentity(database, {
+      organizationId: row.organizationId,
+      repositoryId: input.repositoryId,
+      repositoryName: input.fullName,
+      defaultBranch: input.defaultBranch,
+      now,
+    });
   }
   return rows.length;
 }

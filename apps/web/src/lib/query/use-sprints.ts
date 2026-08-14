@@ -1,5 +1,6 @@
 'use client';
 
+import { sprintLabel } from '@orbit/shared/utils';
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
@@ -131,7 +132,7 @@ export function useCompleteSprint() {
         description:
           rolled === 0
             ? 'Nothing was left unfinished.'
-            : `${rolled} ${rolled === 1 ? 'issue' : 'issues'} rolled into ${result.nextCycle.name}.`,
+            : `${rolled} ${rolled === 1 ? 'issue' : 'issues'} rolled into ${sprintLabel(result.nextCycle)}.`,
       });
       refresh();
     },

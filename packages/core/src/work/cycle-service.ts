@@ -1,3 +1,4 @@
+import type { Database } from '@orbit/db';
 import {
   and,
   asc,
@@ -26,6 +27,14 @@ import { sprintLabel } from '@orbit/shared/utils';
 import { cycleCreateSchema, cycleEditSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { principalActor } from '../activity/activity-service.ts';
+import {
+  bootstrapCycleMemberships,
+  captureCycleCloseOutcomes,
+  captureCycleMembershipChange,
+  lockCycleAssignmentTeam,
+  lockCycleAssignmentWorkspace,
+} from '../analytics/membership.ts';
+import { writeCycleSnapshotsInTransaction } from '../analytics/snapshot.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
@@ -40,7 +49,28 @@ function cycleScopes(row: CycleRow): string[] {
 }
 
 async function lockCycles(executor: Executor, organizationId: string): Promise<void> {
-  await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${`cycle:${organizationId}`}))`);
+  await lockCycleAssignmentWorkspace(executor, organizationId);
+}
+
+async function lockCycleIssues(
+  executor: Executor,
+  organizationId: string,
+  cycleId: string,
+): Promise<(typeof schema.issue.$inferSelect)[]> {
+  return await executor
+    .select()
+    .from(schema.issue)
+    .where(and(eq(schema.issue.organizationId, organizationId), eq(schema.issue.cycleId, cycleId)))
+    .orderBy(asc(schema.issue.id))
+    .for('update');
+}
+
+async function lockIssueTeams(
+  executor: Executor,
+  issues: readonly (typeof schema.issue.$inferSelect)[],
+): Promise<void> {
+  const teamIds = [...new Set(issues.map((issue) => issue.teamId))].sort();
+  for (const teamId of teamIds) await lockCycleAssignmentTeam(executor, teamId);
 }
 
 async function requireCycleForUpdate(
@@ -147,6 +177,7 @@ export async function createCycle(
         teamId: null,
         number,
         name: parsed.name ?? '',
+        timezone: parsed.timezone,
         startsAt,
         endsAt,
         syncId,
@@ -188,6 +219,7 @@ export async function updateCycle(
 
     const values: Partial<typeof schema.cycle.$inferInsert> = {};
     if (parsed.name !== undefined) values.name = parsed.name;
+    if (parsed.timezone !== undefined) values.timezone = parsed.timezone;
     if (parsed.startsAt !== undefined) values.startsAt = parsed.startsAt;
     if (parsed.endsAt !== undefined) values.endsAt = parsed.endsAt;
 
@@ -428,16 +460,37 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
   assertCan(principal, 'cycle:manage');
 
   return await db.transaction(async (tx) => {
+    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, found.organizationId, cycleId);
+    await lockCycles(tx, found.organizationId);
     const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    const lockedIssues = await lockCycleIssues(tx, cycle.organizationId, cycleId);
+    await lockIssueTeams(tx, lockedIssues);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
+    const now = new Date();
     const detached = await tx
       .update(schema.issue)
-      .set({ cycleId: null, updatedAt: new Date(), syncId })
-      .where(eq(schema.issue.cycleId, cycleId))
+      .set({ cycleId: null, updatedAt: now, syncId })
+      .where(
+        and(
+          eq(schema.issue.organizationId, cycle.organizationId),
+          eq(schema.issue.cycleId, cycleId),
+        ),
+      )
       .returning();
+
+    for (const issue of detached) {
+      await captureCycleMembershipChange(tx, {
+        issue,
+        fromCycleId: cycleId,
+        toCycleId: null,
+        occurredAt: now,
+        entryKind: 'added',
+      });
+    }
 
     await tx.delete(schema.cycle).where(eq(schema.cycle.id, cycleId));
     return [
@@ -689,6 +742,8 @@ async function cycleIssueFacts(
     .where(
       and(
         eq(schema.issue.organizationId, cycle.organizationId),
+        eq(schema.workflowState.organizationId, schema.issue.organizationId),
+        eq(schema.workflowState.teamId, schema.issue.teamId),
         isNull(schema.issue.archivedAt),
         alsoTouchedBy.length === 0
           ? inCycle
@@ -881,15 +936,16 @@ function outcomeOf(
   rolledOver: number,
   now: Date,
 ): SprintOutcome {
-  const done = rows.filter((row) => row.category === 'completed');
+  const committed = rows.filter((row) => row.category !== 'triage' && row.category !== 'backlog');
+  const done = committed.filter((row) => row.category === 'completed');
   const points = (list: readonly { estimate: number | null }[]) =>
     list.reduce((total, row) => total + (row.estimate ?? 0), 0);
   return {
-    scope: rows.length,
+    scope: committed.length,
     completed: done.length,
-    canceled: rows.filter((row) => row.category === 'canceled').length,
+    canceled: committed.filter((row) => row.category === 'canceled').length,
     rolledOver,
-    points: { scope: points(rows), completed: points(done) },
+    points: { scope: points(committed), completed: points(done) },
     closedAt: now.toISOString(),
   };
 }
@@ -945,7 +1001,21 @@ async function outcomesFor(cycles: readonly CycleRow[]): Promise<(RecordedOutcom
         estimate: schema.issue.estimate,
       })
       .from(schema.issue)
-      .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+      .innerJoin(
+        schema.workflowState,
+        and(
+          eq(schema.workflowState.id, schema.issue.stateId),
+          eq(schema.workflowState.organizationId, schema.issue.organizationId),
+          eq(schema.workflowState.teamId, schema.issue.teamId),
+        ),
+      )
+      .innerJoin(
+        schema.cycle,
+        and(
+          eq(schema.cycle.id, schema.issue.cycleId),
+          eq(schema.cycle.organizationId, schema.issue.organizationId),
+        ),
+      )
       .where(
         and(
           inArray(
@@ -1009,18 +1079,21 @@ export async function completeCycle(
   principal: Principal,
   cycleId: string,
   now: Date = new Date(),
+  database: Database = db,
 ): Promise<CompletedCycle> {
   assertCan(principal, 'cycle:manage');
 
-  return await db.transaction(async (tx) => {
+  return await database.transaction(async (tx) => {
     const found = await requireCycleForUpdate(tx, principal, cycleId);
+    await lockCycleIssues(tx, found.organizationId, cycleId);
     await lockCycles(tx, found.organizationId);
     const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    const lockedIssues = await lockCycleIssues(tx, cycle.organizationId, cycleId);
+    await lockIssueTeams(tx, lockedIssues);
     if (cycle.completedAt !== null) {
       throw conflict('That cycle is already complete.');
     }
 
-    const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
     const [existingNext] = await tx
@@ -1039,6 +1112,7 @@ export async function completeCycle(
       .limit(1);
 
     let nextCycle = existingNext;
+    let createdSuccessor = false;
     if (nextCycle === undefined) {
       const [latest] = await tx
         .select({ endsAt: schema.cycle.endsAt, number: schema.cycle.number })
@@ -1071,12 +1145,13 @@ export async function completeCycle(
           teamId: null,
           number,
           name: '',
+          timezone: cycle.timezone,
           startsAt,
           endsAt: addUtcDays(startsAt, 14),
-          syncId,
         })
         .returning();
       nextCycle = requireRow(created, 'The next cycle could not be created.');
+      createdSuccessor = true;
     }
 
     const openStateIds = tx
@@ -1089,6 +1164,20 @@ export async function completeCycle(
         ),
       );
 
+    await writeCycleSnapshotsInTransaction(tx, {
+      now,
+      finalCycleId: cycle.id,
+    });
+    const syncId = await nextSyncId(tx);
+    if (createdSuccessor) {
+      const [syncedSuccessor] = await tx
+        .update(schema.cycle)
+        .set({ syncId })
+        .where(eq(schema.cycle.id, nextCycle.id))
+        .returning();
+      nextCycle = requireRow(syncedSuccessor, 'The next cycle could not be synchronized.');
+    }
+
     const atClose = await tx
       .select({
         stateId: schema.issue.stateId,
@@ -1097,7 +1186,22 @@ export async function completeCycle(
       })
       .from(schema.issue)
       .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
-      .where(and(eq(schema.issue.cycleId, cycleId), isNull(schema.issue.archivedAt)));
+      .where(
+        and(
+          eq(schema.issue.organizationId, cycle.organizationId),
+          eq(schema.workflowState.organizationId, cycle.organizationId),
+          eq(schema.workflowState.teamId, schema.issue.teamId),
+          eq(schema.issue.cycleId, cycleId),
+          isNull(schema.issue.archivedAt),
+        ),
+      );
+
+    await bootstrapCycleMemberships(tx, [cycle.id], now);
+    await captureCycleCloseOutcomes(tx, {
+      cycle,
+      rolloverCycleId: nextCycle.id,
+      occurredAt: now,
+    });
 
     const uncommittedStateIds = tx
       .select({ id: schema.workflowState.id })
@@ -1115,6 +1219,7 @@ export async function completeCycle(
       .where(
         and(
           eq(schema.issue.cycleId, cycleId),
+          eq(schema.issue.organizationId, cycle.organizationId),
           isNull(schema.issue.archivedAt),
           sql`${schema.issue.stateId} in ${uncommittedStateIds}`,
         ),
@@ -1127,11 +1232,22 @@ export async function completeCycle(
       .where(
         and(
           eq(schema.issue.cycleId, cycleId),
+          eq(schema.issue.organizationId, cycle.organizationId),
           isNull(schema.issue.archivedAt),
           sql`${schema.issue.stateId} in ${openStateIds}`,
         ),
       )
       .returning();
+
+    for (const issue of rolled) {
+      await captureCycleMembershipChange(tx, {
+        issue,
+        fromCycleId: cycle.id,
+        toCycleId: nextCycle.id,
+        occurredAt: now,
+        entryKind: 'rollover',
+      });
+    }
 
     const [closed] = await tx
       .update(schema.cycle)

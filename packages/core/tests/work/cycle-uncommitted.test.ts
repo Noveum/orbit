@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, inArray, schema } from '@orbit/db';
+import { sprintOutcomeSchema } from '@orbit/shared/validators';
 import {
   createWorkspace,
   resetDatabase,
@@ -142,6 +143,21 @@ describe('completing a sprint never loses a task', () => {
       .from(schema.issue)
       .where(eq(schema.issue.id, done.id));
     expect(stayed?.cycleId).toBe(cycle.id);
+  });
+
+  it('freezes only committed scope and points in the sprint summary', async () => {
+    const cycle = await runningCycle();
+    await issueIn(cycle.id, 'Triage', 13);
+    await issueIn(cycle.id, 'Backlog', 21);
+    await issueIn(cycle.id, 'Todo', 3);
+    await issueIn(cycle.id, 'Done', 5);
+
+    const closed = await completeCycle(workspace.admin, cycle.id);
+    const outcome = sprintOutcomeSchema.parse(closed.cycle.progressSnapshot);
+
+    expect(outcome.scope).toBe(2);
+    expect(outcome.completed).toBe(1);
+    expect(outcome.points).toEqual({ scope: 8, completed: 5 });
   });
 });
 
