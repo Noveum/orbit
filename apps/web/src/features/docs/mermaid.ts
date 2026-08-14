@@ -9,7 +9,7 @@ export const SHOW_DIAGRAM_LABEL = 'Show the diagram';
 export const DIAGRAM_FAILED = 'This diagram could not be drawn.';
 
 export const mermaidClassName = cn(
-  '[&_[data-mermaid]]:group/mermaid [&_[data-mermaid]]:relative [&_[data-mermaid]]:my-5',
+  '[&_[data-mermaid]]:relative [&_[data-mermaid]]:my-5',
   '[&_[data-mermaid]]:rounded-lg [&_[data-mermaid]]:border [&_[data-mermaid]]:border-border [&_[data-mermaid]]:bg-surface-2',
   '[&_[data-mermaid][data-mermaid-view=diagram]_pre]:hidden',
   '[&_[data-mermaid]_pre]:my-0 [&_[data-mermaid]_pre]:rounded-lg [&_[data-mermaid]_pre]:border-0 [&_[data-mermaid]_pre]:bg-transparent',
@@ -24,7 +24,9 @@ export const mermaidClassName = cn(
   '[&_[data-mermaid-toggle]]:bg-surface [&_[data-mermaid-toggle]]:px-1.5 [&_[data-mermaid-toggle]]:py-0.5',
   '[&_[data-mermaid-toggle]]:text-2xs [&_[data-mermaid-toggle]]:text-muted',
   '[&_[data-mermaid-toggle]]:opacity-0 [&_[data-mermaid-toggle]]:transition-opacity [&_[data-mermaid-toggle]]:duration-[var(--duration-fast)]',
-  'group-hover/mermaid:[&_[data-mermaid-toggle]]:opacity-100 focus-visible:[&_[data-mermaid-toggle]]:opacity-100',
+  '[&_[data-mermaid]:hover_[data-mermaid-toggle]]:opacity-100',
+  '[&_[data-mermaid]:focus-within_[data-mermaid-toggle]]:opacity-100',
+  '[&_[data-mermaid][data-mermaid-view=source]_[data-mermaid-toggle]]:opacity-100',
   'motion-reduce:[&_[data-mermaid-toggle]]:transition-none',
 );
 
@@ -99,6 +101,7 @@ export function mermaidConfig(styles: CSSStyleDeclaration, dark: boolean): Merma
       pie5: link,
       pie6: danger,
       pieStrokeColor: surfaceTwo,
+      pieOuterStrokeColor: border,
       pieTitleTextColor: text,
       pieSectionTextColor: surface,
       pieLegendTextColor: text,

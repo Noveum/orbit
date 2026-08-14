@@ -147,3 +147,14 @@ describe('the diagram palette', () => {
     expect(light.startOnLoad).toBe(false);
   });
 });
+
+describe('the diagram chrome', () => {
+  it('reveals the toggle on hover and keeps it visible while the source is showing', () => {
+    expect(docProseClassName).toContain(
+      '[&_[data-mermaid]:hover_[data-mermaid-toggle]]:opacity-100',
+    );
+    expect(docProseClassName).toContain(
+      '[&_[data-mermaid][data-mermaid-view=source]_[data-mermaid-toggle]]:opacity-100',
+    );
+  });
+});
