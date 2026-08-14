@@ -1,8 +1,10 @@
 'use client';
 
+import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 import { codeHighlightClassName } from './code-theme.ts';
+import { drawDiagrams, mermaidClassName } from './mermaid.ts';
 import type { DocHeading } from './outline.ts';
 import { extractHeadings, sameHeadings } from './outline.ts';
 
@@ -69,6 +71,7 @@ export const docProseClassName = cn(
   '[&_figure]:my-5 [&_figcaption]:mt-1.5 [&_figcaption]:text-2xs [&_figcaption]:text-faint',
   '[&_img]:my-5 [&_img]:max-w-full [&_img]:rounded-lg [&_img]:border [&_img]:border-border',
   codeHighlightClassName,
+  mermaidClassName,
 );
 
 export interface DocBodyProps {
@@ -112,6 +115,7 @@ export function DocBody({ html, onHeadings, className }: DocBodyProps) {
   const notify = useRef(onHeadings);
   const previous = useRef<DocHeading[]>([]);
   const root = useRef<HTMLDivElement | null>(null);
+  const { resolvedTheme } = useTheme();
   notify.current = onHeadings;
 
   const headings = useMemo(() => extractHeadings(html), [html]);
@@ -126,6 +130,12 @@ export function DocBody({ html, onHeadings, className }: DocBodyProps) {
   useEffect(() => {
     if (root.current !== null) addCodeCopyButtons(root.current);
   });
+
+  useEffect(() => {
+    const node = root.current;
+    if (node === null || html.length === 0) return;
+    drawDiagrams(node, resolvedTheme === 'dark' ? 'dark' : 'light').catch(() => undefined);
+  }, [html, resolvedTheme]);
 
   return (
     <div
