@@ -30,7 +30,9 @@ export function useDiagram(source: string, theme: string): { svg: string | null;
           setNote(drawn === null ? DIAGRAM_FAILED : '');
         })
         .catch(() => {
-          if (live) setNote(DIAGRAM_FAILED);
+          if (!live) return;
+          setSvg(null);
+          setNote(DIAGRAM_FAILED);
         });
     }, PREVIEW_DEBOUNCE_MS);
 

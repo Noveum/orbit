@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { DocBody, docProseClassName } from '@/features/docs/doc-body.tsx';
 import {
   DIAGRAM_FAILED,
+  DIAGRAM_UNAVAILABLE,
   drawDiagrams,
   type MermaidRenderer,
   mermaidConfig,
@@ -105,6 +106,28 @@ describe('a mermaid diagram in a doc', () => {
 
     await user.click(toggle);
     expect(host.querySelector('[data-mermaid]')?.getAttribute('data-mermaid-view')).toBe('diagram');
+  });
+
+  it('says so when the renderer itself never loads, rather than going quiet', async () => {
+    const host = blockFrom(DIAGRAM);
+
+    await drawDiagrams(host, 'light', () => Promise.reject(new Error('chunk gone')));
+
+    const block = host.querySelector('[data-mermaid]');
+    expect(block?.textContent).toContain(DIAGRAM_UNAVAILABLE);
+    expect(block?.getAttribute('data-mermaid-view')).toBe('source');
+  });
+
+  it('lets the newer pass win when a theme flips mid draw', async () => {
+    const host = blockFrom(DIAGRAM);
+    const light = fakeMermaid('<svg><g data-testid="light-hint"></g></svg>');
+    const dark = fakeMermaid('<svg><g data-testid="dark-hint"></g></svg>');
+
+    const slow = drawDiagrams(host, 'light', () => Promise.resolve(light.renderer));
+    await drawDiagrams(host, 'dark', () => Promise.resolve(dark.renderer));
+    await slow;
+
+    expect(host.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('dark-hint');
   });
 
   it('leaves a document without a diagram alone', async () => {

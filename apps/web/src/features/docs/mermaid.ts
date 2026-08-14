@@ -8,6 +8,7 @@ export const SOURCE_VIEW = 'source';
 export const SHOW_SOURCE_LABEL = 'Show the diagram source';
 export const SHOW_DIAGRAM_LABEL = 'Show the diagram';
 export const DIAGRAM_FAILED = 'This diagram could not be drawn.';
+export const DIAGRAM_UNAVAILABLE = 'The diagram renderer could not be loaded.';
 
 export const mermaidClassName = cn(
   '[&_[data-mermaid]]:relative [&_[data-mermaid]]:my-5',
@@ -173,11 +174,11 @@ function drawInto(block: HTMLElement, svg: string, source: string): void {
   }
 }
 
-function failInto(block: HTMLElement): void {
+function failInto(block: HTMLElement, message = DIAGRAM_FAILED): void {
   block.querySelector('[data-mermaid-canvas]')?.remove();
   block.querySelector('[data-mermaid-toggle]')?.remove();
   block.setAttribute('data-mermaid-view', SOURCE_VIEW);
-  noteOf(block, DIAGRAM_FAILED);
+  noteOf(block, message);
 }
 
 export function safeSvg(svg: string): string {
@@ -229,6 +230,8 @@ export async function renderDiagram(
   return drawOne(mermaid, text, document);
 }
 
+let pass = 0;
+
 export async function drawDiagrams(
   root: HTMLElement,
   theme: string,
@@ -238,15 +241,26 @@ export async function drawDiagrams(
     (block) => block.getAttribute('data-mermaid-drawn') !== theme,
   );
   if (blocks.length === 0) return;
+  for (const block of blocks) block.setAttribute('data-mermaid-drawn', theme);
 
+  pass += 1;
+  const mine = pass;
   const document = root.ownerDocument;
-  const mermaid = await renderer();
+
+  let mermaid: MermaidRenderer;
+  try {
+    mermaid = await renderer();
+  } catch {
+    if (mine === pass) for (const block of blocks) failInto(block, DIAGRAM_UNAVAILABLE);
+    return;
+  }
+  if (mine !== pass) return;
   configure(mermaid, theme, document);
 
   for (const block of blocks) {
     const source = sourceOf(block).trim();
-    block.setAttribute('data-mermaid-drawn', theme);
     const svg = source.length === 0 ? null : await drawOne(mermaid, source, document);
+    if (mine !== pass) return;
     if (svg === null) {
       failInto(block);
       continue;
