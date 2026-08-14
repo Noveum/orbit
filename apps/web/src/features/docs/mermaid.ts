@@ -185,6 +185,41 @@ async function load(): Promise<MermaidRenderer> {
   return module.default as unknown as MermaidRenderer;
 }
 
+function configure(mermaid: MermaidRenderer, theme: string, document: Document): void {
+  const styles = document.defaultView?.getComputedStyle(document.documentElement);
+  if (styles !== undefined) mermaid.initialize(mermaidConfig(styles, theme === 'dark'));
+}
+
+async function drawOne(
+  mermaid: MermaidRenderer,
+  source: string,
+  document: Document,
+): Promise<string | null> {
+  sequence += 1;
+  const id = `orbit-mermaid-${sequence}`;
+  try {
+    const { svg } = await mermaid.render(id, source);
+    return svg;
+  } catch {
+    return null;
+  } finally {
+    document.getElementById(`d${id}`)?.remove();
+  }
+}
+
+export async function renderDiagram(
+  source: string,
+  theme: string,
+  document: Document,
+  renderer: () => Promise<MermaidRenderer> = load,
+): Promise<string | null> {
+  const text = source.trim();
+  if (text.length === 0) return null;
+  const mermaid = await renderer();
+  configure(mermaid, theme, document);
+  return drawOne(mermaid, text, document);
+}
+
 export async function drawDiagrams(
   root: HTMLElement,
   theme: string,
@@ -195,27 +230,18 @@ export async function drawDiagrams(
   );
   if (blocks.length === 0) return;
 
+  const document = root.ownerDocument;
   const mermaid = await renderer();
-  const window = root.ownerDocument.defaultView;
-  const styles = window?.getComputedStyle(root.ownerDocument.documentElement);
-  if (styles !== undefined) mermaid.initialize(mermaidConfig(styles, theme === 'dark'));
+  configure(mermaid, theme, document);
 
   for (const block of blocks) {
     const source = sourceOf(block).trim();
     block.setAttribute('data-mermaid-drawn', theme);
-    if (source.length === 0) {
+    const svg = source.length === 0 ? null : await drawOne(mermaid, source, document);
+    if (svg === null) {
       failInto(block);
       continue;
     }
-    sequence += 1;
-    const id = `orbit-mermaid-${sequence}`;
-    try {
-      const { svg } = await mermaid.render(id, source);
-      drawInto(block, svg, source);
-    } catch {
-      failInto(block);
-    } finally {
-      root.ownerDocument.getElementById(`d${id}`)?.remove();
-    }
+    drawInto(block, svg, source);
   }
 }

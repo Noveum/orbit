@@ -1,3 +1,4 @@
+import { MERMAID_LANGUAGE } from '@orbit/services/markdown';
 import type { Editor } from '@tiptap/core';
 import {
   ChevronRight,
@@ -14,6 +15,7 @@ import {
   Quote,
   Table2,
   TriangleAlert,
+  Workflow,
 } from 'lucide-react';
 import { CALLOUT_LABEL } from './markdown.ts';
 
@@ -45,6 +47,8 @@ function callout(tone: 'note' | 'tip' | 'warning' | 'danger', icon: typeof Info)
     },
   };
 }
+
+export const STARTER_DIAGRAM = ['graph TD', '  A[Start] --> B[Ship]'].join('\n');
 
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
@@ -95,6 +99,23 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     hint: 'Syntax highlighted',
     icon: Code2,
     run: (editor) => editor.chain().focus().toggleCodeBlock().run(),
+  },
+  {
+    id: 'diagram',
+    label: 'Diagram',
+    hint: 'Mermaid',
+    keywords: ['mermaid', 'flowchart', 'graph', 'sequence', 'chart'],
+    icon: Workflow,
+    run: (editor) =>
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: 'codeBlock',
+          attrs: { language: MERMAID_LANGUAGE },
+          content: [{ type: 'text', text: STARTER_DIAGRAM }],
+        })
+        .run(),
   },
   {
     id: 'quote',
