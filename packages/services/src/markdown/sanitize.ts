@@ -160,7 +160,12 @@ function isSafeUrl(raw: string): boolean {
 
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
-const LAYOUT_DATA_ATTR = new Set(['data-table-scroll', 'data-code-block', 'data-code-language']);
+const LAYOUT_DATA_ATTR = new Set([
+  'data-table-scroll',
+  'data-code-block',
+  'data-code-language',
+  'data-mermaid',
+]);
 
 const TASK_DATA_ATTR = new Map([
   ['data-type', { tag: 'ul', values: new Set(['taskList']) }],
