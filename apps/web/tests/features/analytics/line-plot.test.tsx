@@ -156,4 +156,19 @@ describe('LinePlot', () => {
       screen.getByTestId('plot-hit-previous-2').getAttribute('cx'),
     );
   });
+
+  test('adds chart guidance without shrinking pointer targets', async () => {
+    const user = userEvent.setup();
+    render(<LinePlot label="Delivery trend" series={series} />);
+
+    expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(3);
+    expect(screen.getByTestId('plot-y-max')).toHaveTextContent('7');
+    expect(screen.getByTestId('plot-x-start')).toHaveTextContent('Aug 10');
+    expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 11');
+    expect(screen.getByTestId('plot-point-2026-08-11-completed')).toHaveAttribute('r', '2.5');
+    expect(screen.getByTestId('plot-hit-2026-08-11-completed')).toHaveAttribute('r', '8');
+
+    await user.hover(screen.getByTestId('plot-hit-2026-08-11-completed'));
+    expect(screen.getByRole('tooltip')).toHaveStyle({ left: '98.125%' });
+  });
 });

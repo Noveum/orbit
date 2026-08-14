@@ -1,6 +1,7 @@
 'use client';
 
 import { FILTER_PROPERTIES, type FilterCondition, type FilterGroup } from '@orbit/shared/filters';
+import { sprintLabel } from '@orbit/shared/utils';
 import type { AnalyticsCompare, AnalyticsMeasure, AnalyticsQuery } from '@orbit/shared/validators';
 import { ListFilter, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -20,7 +21,87 @@ import {
 } from '@/features/filters/filter-fields.tsx';
 import { FilterMenu } from '@/features/filters/filter-menu.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
+import type { Cycle } from '@/lib/query/schemas.ts';
 import { DateRangePicker } from './date-range-picker.tsx';
+
+const AUTOMATIC_SPRINT = 'automatic';
+
+function isDirectSprintSelector(
+  child: FilterGroup['children'][number],
+): child is FilterCondition & { readonly operator: 'in' } {
+  return (
+    child.kind === 'condition' &&
+    child.property === 'cycle' &&
+    child.operator === 'in' &&
+    !child.negate &&
+    child.values.length === 1
+  );
+}
+
+export function selectedSprintId(filter: FilterGroup): string | null {
+  if (filter.combinator !== 'and') return null;
+  const selector = filter.children.find(isDirectSprintSelector);
+  return selector?.values[0] ?? null;
+}
+
+export function withSelectedSprint(filter: FilterGroup, sprintId: string | null): FilterGroup {
+  const withoutSelector =
+    filter.combinator === 'and'
+      ? { ...filter, children: filter.children.filter((child) => !isDirectSprintSelector(child)) }
+      : filter;
+  const base =
+    withoutSelector.combinator === 'and' &&
+    withoutSelector.children.length === 1 &&
+    withoutSelector.children[0]?.kind === 'group'
+      ? withoutSelector.children[0]
+      : withoutSelector;
+  if (sprintId === null) return base;
+  const selector: FilterCondition = {
+    kind: 'condition',
+    property: 'cycle',
+    operator: 'in',
+    values: [sprintId],
+    negate: false,
+  };
+  return base.combinator === 'and'
+    ? { ...base, children: [...base.children, selector] }
+    : { kind: 'group', combinator: 'and', children: [base, selector] };
+}
+
+export function SprintFilterSelect({
+  cycles,
+  filter,
+  onChange,
+}: {
+  readonly cycles: readonly Cycle[];
+  readonly filter: FilterGroup;
+  readonly onChange: (filter: FilterGroup) => void;
+}) {
+  const ordered = useMemo(
+    () => [...cycles].sort((left, right) => right.startsAt.localeCompare(left.startsAt)),
+    [cycles],
+  );
+  return (
+    <Select
+      onValueChange={(value) =>
+        onChange(withSelectedSprint(filter, value === AUTOMATIC_SPRINT ? null : value))
+      }
+      value={selectedSprintId(filter) ?? AUTOMATIC_SPRINT}
+    >
+      <SelectTrigger aria-label="Sprint" className="h-7 w-auto min-w-36 text-xs">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={AUTOMATIC_SPRINT}>Automatic sprint</SelectItem>
+        {ordered.map((cycle) => (
+          <SelectItem key={cycle.id} value={cycle.id}>
+            {sprintLabel(cycle)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 function removeAtPath(group: FilterGroup, path: readonly number[]): FilterGroup {
   const [index, ...rest] = path;
@@ -170,6 +251,13 @@ export function AnalyticsToolbar({
   );
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {query.lens === 'sprints' && workspace.cycles.length > 0 ? (
+        <SprintFilterSelect
+          cycles={workspace.cycles}
+          filter={query.filter}
+          onChange={(filter) => onChange({ filter })}
+        />
+      ) : null}
       <DateRangePicker value={query.range} onChange={(range) => onChange({ range })} />
       <Select
         onValueChange={(value) => onChange({ compare: value as AnalyticsCompare })}

@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { cn } from '@/lib/cn.ts';
 
 interface ChartTooltipProps {
@@ -5,9 +6,10 @@ interface ChartTooltipProps {
   readonly series: string;
   readonly value: string;
   readonly className?: string;
+  readonly style?: CSSProperties | undefined;
 }
 
-export function ChartTooltip({ label, series, value, className }: ChartTooltipProps) {
+export function ChartTooltip({ label, series, value, className, style }: ChartTooltipProps) {
   return (
     <div
       className={cn(
@@ -15,6 +17,7 @@ export function ChartTooltip({ label, series, value, className }: ChartTooltipPr
         className,
       )}
       role="tooltip"
+      style={style}
     >
       <p className="text-faint">{label}</p>
       <p className="mt-0.5 font-medium text-text">

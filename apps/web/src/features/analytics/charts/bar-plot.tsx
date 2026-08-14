@@ -7,6 +7,7 @@ import { type AnalyticsDataRow, AnalyticsDataTable } from './analytics-data-tabl
 import { ChartTooltip } from './chart-tooltip.tsx';
 import type { PlotPoint } from './line-plot.tsx';
 import { PlotFrame } from './plot-frame.tsx';
+import { PlotGuides } from './plot-guides.tsx';
 
 interface BarPlotProps {
   readonly label: string;
@@ -77,6 +78,18 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
           <ChartTooltip
             label={activePoint.label}
             series={label}
+            style={
+              activeIndex === null
+                ? undefined
+                : {
+                    left: `${((gap + activeIndex * (barWidth + gap) + barWidth / 2) / width) * 100}%`,
+                    top: `${(chartY(activePoint.value, max, height) / height) * 100}%`,
+                    transform:
+                      activeIndex >= points.length / 2
+                        ? 'translate(-100%, -110%)'
+                        : 'translate(0, -110%)',
+                  }
+            }
             value={valueFormatter(activePoint.value)}
           />
         )
@@ -115,6 +128,7 @@ export function BarPlot({ label, points, onActivate, valueFormatter = String }: 
         viewBox={`0 0 ${width} ${height}`}
       >
         <title>{label}</title>
+        <PlotGuides height={height} maxLabel={valueFormatter(max)} width={width} />
         {points.map((point, index) => {
           const valueY = chartY(point.value, max, height);
           const barHeight = Math.max(2, height - 6 - valueY);

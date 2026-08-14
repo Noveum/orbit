@@ -6,9 +6,11 @@ import { chartX, chartY } from '@/features/charts/geometry.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './analytics-data-table.tsx';
 import { ChartTooltip } from './chart-tooltip.tsx';
 import { PlotFrame } from './plot-frame.tsx';
+import { PlotGuides } from './plot-guides.tsx';
 
 const WIDTH = 320;
 const HEIGHT = 132;
+const PLOT_HEIGHT = 116;
 
 export interface PlotPoint {
   readonly id: string;
@@ -53,27 +55,41 @@ function announcementOf(
     : `${point.label}, ${activeSeries.label} ${valueFormatter(point.value)}`;
 }
 
+function tooltipStyle(x: number | null, y: number | null) {
+  if (x === null || y === null) return undefined;
+  return {
+    left: `${(x / WIDTH) * 100}%`,
+    top: `${(y / HEIGHT) * 100}%`,
+    transform: x > WIDTH / 2 ? 'translate(-100%, -110%)' : 'translate(0, -110%)',
+  };
+}
+
 export function LinePlot({ label, series, onActivate, valueFormatter = String }: LinePlotProps) {
   const [active, setActive] = useState<ActivePoint | null>(null);
   const activePoint = pointAt(series, active);
   const activeSeries = active === null ? undefined : series[active.seriesIndex];
-  const max = Math.max(1, ...series.flatMap((entry) => entry.points.map((point) => point.value)));
+  const max = maxValue(series);
   const explicitX = series.flatMap((entry) =>
     entry.points.flatMap((point) => (point.x === undefined ? [] : [point.x])),
   );
   const minimumX = Math.min(...explicitX);
   const maximumX = Math.max(...explicitX);
-  const xFor = (point: PlotPoint, index: number, count: number): number => {
+  function xForPoint(point: PlotPoint, index: number, count: number): number {
     if (point.x === undefined || explicitX.length === 0 || minimumX === maximumX) {
       return chartX(index, count);
     }
     return 6 + ((point.x - minimumX) * (WIDTH - 12)) / (maximumX - minimumX);
-  };
+  }
+  const activeX =
+    activePoint === null || active === null || activeSeries === undefined
+      ? null
+      : xForPoint(activePoint, active.pointIndex, activeSeries.points.length);
+  const activeY = activePoint === null ? null : chartY(activePoint.value, max, PLOT_HEIGHT);
   const pathFor = (entry: PlotSeries): string =>
     entry.points
       .map((point, index) => {
         const command = index === 0 ? 'M' : 'L';
-        return `${command}${xFor(point, index, entry.points.length).toFixed(2)} ${chartY(point.value, max).toFixed(2)}`;
+        return `${command}${xForPoint(point, index, entry.points.length).toFixed(2)} ${chartY(point.value, max, PLOT_HEIGHT).toFixed(2)}`;
       })
       .join(' ');
 
@@ -186,6 +202,7 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
           <ChartTooltip
             label={activePoint.label}
             series={activeSeries.label}
+            style={tooltipStyle(activeX, activeY)}
             value={valueFormatter(activePoint.value)}
           />
         )
@@ -218,13 +235,13 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       >
         <title>{label}</title>
-        <line
-          stroke="var(--color-border)"
-          vectorEffect="non-scaling-stroke"
-          x1="6"
-          x2={WIDTH - 6}
-          y1={HEIGHT - 6}
-          y2={HEIGHT - 6}
+        <PlotGuides
+          endLabel={series[0]?.points.at(-1)?.label ?? ''}
+          height={HEIGHT}
+          maxLabel={valueFormatter(max)}
+          plotHeight={PLOT_HEIGHT}
+          startLabel={series[0]?.points[0]?.label ?? ''}
+          width={WIDTH}
         />
         {series.map((entry, seriesIndex) => (
           <g key={entry.id}>
@@ -240,22 +257,32 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
             {entry.points.map((point, pointIndex) => {
               const isActive =
                 active?.seriesIndex === seriesIndex && active.pointIndex === pointIndex;
+              const cx = xForPoint(point, pointIndex, entry.points.length);
+              const cy = chartY(point.value, max, PLOT_HEIGHT);
               return (
-                <circle
-                  cx={xFor(point, pointIndex, entry.points.length)}
-                  cy={chartY(point.value, max)}
-                  data-active={isActive ? 'true' : 'false'}
-                  data-point-index={pointIndex}
-                  data-series-index={seriesIndex}
-                  data-testid={`plot-hit-${point.id}`}
-                  fill={
-                    isActive ? `var(--analytics-series-${(seriesIndex % 4) + 1})` : 'transparent'
-                  }
-                  key={point.id}
-                  r="7"
-                  stroke={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
-                  strokeWidth={isActive ? 2 : 1}
-                />
+                <g key={point.id}>
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    data-testid={`plot-point-${point.id}`}
+                    fill={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
+                    pointerEvents="none"
+                    r={isActive ? 4 : 2.5}
+                    stroke="var(--color-surface)"
+                    strokeWidth="1.5"
+                  />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    data-active={isActive ? 'true' : 'false'}
+                    data-point-index={pointIndex}
+                    data-series-index={seriesIndex}
+                    data-testid={`plot-hit-${point.id}`}
+                    fill="transparent"
+                    r="8"
+                    stroke="transparent"
+                  />
+                </g>
               );
             })}
           </g>
@@ -268,18 +295,22 @@ export function LinePlot({ label, series, onActivate, valueFormatter = String }:
             x1={
               activeSeries === undefined
                 ? 0
-                : xFor(activePoint, active.pointIndex, activeSeries.points.length)
+                : xForPoint(activePoint, active.pointIndex, activeSeries.points.length)
             }
             x2={
               activeSeries === undefined
                 ? 0
-                : xFor(activePoint, active.pointIndex, activeSeries.points.length)
+                : xForPoint(activePoint, active.pointIndex, activeSeries.points.length)
             }
             y1="6"
-            y2={HEIGHT - 6}
+            y2={PLOT_HEIGHT - 6}
           />
         )}
       </svg>
     </PlotFrame>
   );
+}
+
+function maxValue(series: readonly PlotSeries[]): number {
+  return Math.max(1, ...series.flatMap((entry) => entry.points.map((point) => point.value)));
 }

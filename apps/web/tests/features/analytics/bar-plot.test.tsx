@@ -53,4 +53,16 @@ describe('BarPlot', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('State 0');
     expect(screen.queryByRole('button', { name: 'State 0, Velocity 3' })).not.toBeInTheDocument();
   });
+
+  test('shows a readable scale and anchors the exact tooltip to its bar', async () => {
+    const user = userEvent.setup();
+    render(<BarPlot label="Velocity" points={[point(0, 3), point(1, 8)]} />);
+
+    expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(3);
+    expect(screen.getByTestId('plot-y-max')).toHaveTextContent('8');
+
+    await user.hover(screen.getByTestId('plot-hit-state-1'));
+    expect(screen.getByRole('tooltip').getAttribute('style')).toContain('left:');
+    expect(screen.getByRole('tooltip').getAttribute('style')).toContain('top:');
+  });
 });
