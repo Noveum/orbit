@@ -117,8 +117,23 @@ test('a mermaid fence is drawn as a diagram, sanitised, and falls back to its so
   });
   expect(ink).toBe('rgb(16, 19, 26)');
 
+  await wide.hover();
+  await wide.locator('[data-mermaid-expand]').click();
+  const viewer = reader.getByTestId('diagram-viewer');
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByTestId('diagram-viewport').locator('svg').first()).toBeVisible();
+
+  const opensAt = await reader.getByTestId('diagram-zoom').textContent();
+  await viewer.getByLabel('Zoom in').click();
+  await expect(reader.getByTestId('diagram-zoom')).not.toHaveText(opensAt ?? '');
+  await viewer.getByLabel('Fit the diagram to the viewer').click();
+  await expect(reader.getByTestId('diagram-zoom')).toHaveText(opensAt ?? '');
+
+  await reader.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+
   await blocks.nth(0).hover();
-  await blocks.nth(0).locator('[data-mermaid-toggle]').click();
+  await blocks.nth(0).locator('[data-mermaid-view-toggle]').click();
   await expect(blocks.nth(0)).toHaveAttribute('data-mermaid-view', 'source');
   await expect(blocks.nth(0)).toContainText('graph TD');
 

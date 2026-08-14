@@ -9,12 +9,20 @@ export const SHOW_SOURCE_LABEL = 'Show the diagram source';
 export const SHOW_DIAGRAM_LABEL = 'Show the diagram';
 export const DIAGRAM_FAILED = 'This diagram could not be drawn.';
 export const DIAGRAM_UNAVAILABLE = 'The diagram renderer could not be loaded.';
-export const FIT_LABEL = 'Fit the diagram to the page';
+export const FIT_LABEL = 'Fit the diagram to the column';
 export const ACTUAL_LABEL = 'Show the diagram at its own size';
 export const LEGIBLE_SCALE = 0.75;
 export const DARK_INK = '#10131a';
 export const LIGHT_INK = '#f4f5f7';
 export const PALE_FILL = 0.55;
+export const EXPAND_LABEL = 'Open the diagram in a viewer';
+export const DIAGRAM_LABEL = 'Diagram';
+export const DIAGRAM_OPEN_EVENT = 'orbit:diagram-open';
+
+export interface DiagramOpenDetail {
+  readonly svg: string;
+  readonly label: string;
+}
 
 export const mermaidClassName = cn(
   '[&_[data-mermaid]]:relative [&_[data-mermaid]]:my-5',
@@ -154,6 +162,24 @@ function applyView(button: HTMLButtonElement, view: string): void {
   button.setAttribute('aria-label', showsDiagram ? SHOW_SOURCE_LABEL : SHOW_DIAGRAM_LABEL);
 }
 
+function expandButton(document: Document): HTMLButtonElement {
+  const button = actionButton(document);
+  button.setAttribute('data-mermaid-expand', '');
+  button.textContent = 'Expand';
+  button.setAttribute('aria-label', EXPAND_LABEL);
+  button.addEventListener('click', () => {
+    const block = button.closest<HTMLElement>(MERMAID_BLOCK);
+    const canvas = block?.querySelector('[data-mermaid-canvas]') ?? null;
+    if (block === null || canvas === null) return;
+    const detail: DiagramOpenDetail = {
+      svg: canvas.innerHTML,
+      label: canvas.getAttribute('aria-label') ?? 'Diagram',
+    };
+    block.dispatchEvent(new CustomEvent(DIAGRAM_OPEN_EVENT, { detail, bubbles: true }));
+  });
+  return button;
+}
+
 function scaleButton(document: Document): HTMLButtonElement {
   const button = actionButton(document);
   button.setAttribute('data-mermaid-scale', '');
@@ -269,7 +295,7 @@ const PADDING = 32;
 
 let sequence = 0;
 
-function drawInto(block: HTMLElement, svg: string, source: string): void {
+function drawInto(block: HTMLElement, svg: string): void {
   const document = block.ownerDocument;
   block.querySelector('[data-mermaid-note]')?.remove();
   let canvas = block.querySelector<HTMLElement>('[data-mermaid-canvas]');
@@ -279,11 +305,14 @@ function drawInto(block: HTMLElement, svg: string, source: string): void {
     block.prepend(canvas);
   }
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', `Diagram: ${source.split('\n')[0] ?? ''}`.trim());
+  canvas.setAttribute('aria-label', DIAGRAM_LABEL);
   canvas.innerHTML = svg;
   inkLabels(canvas);
   block.setAttribute('data-mermaid-view', DIAGRAM_VIEW);
   const actions = actionsOf(block);
+  if (actions.querySelector('[data-mermaid-expand]') === null) {
+    actions.append(expandButton(document));
+  }
   if (actions.querySelector('[data-mermaid-view-toggle]') === null) {
     const view = viewButton(document, DIAGRAM_VIEW);
     view.setAttribute('data-mermaid-view-toggle', '');
@@ -384,6 +413,6 @@ export async function drawDiagrams(
       failInto(block);
       continue;
     }
-    drawInto(block, svg, source);
+    drawInto(block, svg);
   }
 }

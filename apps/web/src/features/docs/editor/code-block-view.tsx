@@ -3,9 +3,11 @@
 import { MERMAID_LANGUAGE } from '@orbit/services/markdown';
 import type { NodeViewProps } from '@tiptap/react';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
+import { Maximize2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { DiagramViewer } from '../diagram-viewer.tsx';
 import {
   DIAGRAM_FAILED,
   fitsTheColumn,
@@ -57,6 +59,7 @@ function DiagramPreview({ source }: { readonly source: string }) {
   const { svg, note } = useDiagram(source, resolvedTheme === 'dark' ? 'dark' : 'light');
   const canvas = useRef<HTMLDivElement | null>(null);
   const [fits, setFits] = useState(false);
+  const [opened, setOpened] = useState<string | null>(null);
 
   useEffect(() => {
     const node = canvas.current;
@@ -72,11 +75,28 @@ function DiagramPreview({ source }: { readonly source: string }) {
       contentEditable={false}
       data-testid="mermaid-preview"
       className={cn(
-        'mb-2 min-h-24 overflow-x-auto rounded-lg border border-border bg-surface px-4 py-5',
+        'group/preview relative mb-2 min-h-24 overflow-x-auto rounded-lg border border-border bg-surface px-4 py-5',
         '[&_svg]:mx-auto [&_svg]:block [&_svg]:h-auto',
         fits ? '[&_svg]:max-w-full' : '[&_svg]:max-w-none',
       )}
     >
+      {svg === null ? null : (
+        <button
+          type="button"
+          aria-label="Open the diagram in a viewer"
+          data-testid="mermaid-preview-expand"
+          onClick={() => setOpened(svg)}
+          className={cn(
+            'absolute top-2 right-2 z-10 flex size-7 items-center justify-center rounded-sm',
+            'border border-border bg-surface text-muted opacity-0',
+            'transition-opacity duration-[var(--duration-fast)] ease-[var(--ease-standard)]',
+            'group-hover/preview:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none',
+          )}
+        >
+          <Maximize2 className="size-3.5" aria-hidden="true" />
+        </button>
+      )}
+      <DiagramViewer svg={opened} label="Diagram" onClose={() => setOpened(null)} />
       {svg === null ? (
         <p className={cn('m-0 text-2xs', note === DIAGRAM_FAILED ? 'text-danger' : 'text-faint')}>
           {note}

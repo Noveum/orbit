@@ -1,10 +1,16 @@
 'use client';
 
 import { useTheme } from 'next-themes';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn.ts';
 import { codeHighlightClassName } from './code-theme.ts';
-import { drawDiagrams, mermaidClassName } from './mermaid.ts';
+import { DiagramViewer } from './diagram-viewer.tsx';
+import {
+  DIAGRAM_OPEN_EVENT,
+  type DiagramOpenDetail,
+  drawDiagrams,
+  mermaidClassName,
+} from './mermaid.ts';
 import type { DocHeading } from './outline.ts';
 import { extractHeadings, sameHeadings } from './outline.ts';
 
@@ -116,6 +122,7 @@ export function DocBody({ html, onHeadings, className }: DocBodyProps) {
   const previous = useRef<DocHeading[]>([]);
   const root = useRef<HTMLDivElement | null>(null);
   const { resolvedTheme } = useTheme();
+  const [opened, setOpened] = useState<DiagramOpenDetail | null>(null);
   notify.current = onHeadings;
 
   const headings = useMemo(() => extractHeadings(html), [html]);
@@ -137,13 +144,28 @@ export function DocBody({ html, onHeadings, className }: DocBodyProps) {
     drawDiagrams(node, resolvedTheme === 'dark' ? 'dark' : 'light').catch(() => undefined);
   }, [html, resolvedTheme]);
 
+  useEffect(() => {
+    const node = root.current;
+    if (node === null) return;
+    const open = (event: Event) => setOpened((event as CustomEvent<DiagramOpenDetail>).detail);
+    node.addEventListener(DIAGRAM_OPEN_EVENT, open);
+    return () => node.removeEventListener(DIAGRAM_OPEN_EVENT, open);
+  }, []);
+
   return (
-    <div
-      ref={root}
-      data-testid="doc-body"
-      className={cn(docProseClassName, className)}
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized by @orbit/services/markdown
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        ref={root}
+        data-testid="doc-body"
+        className={cn(docProseClassName, className)}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: markdown is sanitized by @orbit/services/markdown
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      <DiagramViewer
+        svg={opened?.svg ?? null}
+        label={opened?.label ?? 'Diagram'}
+        onClose={() => setOpened(null)}
+      />
+    </>
   );
 }
