@@ -2,7 +2,7 @@
 
 Date: 2026-08-15
 Branch: `analytics-insights-redesign`
-Delivery: phase 1 as one pull request; phase 2 as a follow-up pull request once phase 1 has shipped and been used.
+Delivery: both phases in one pull request, built phase 1 first, with small scoped commits.
 
 ## Executive decision
 
@@ -167,6 +167,5 @@ Built after phase 1 ships. Everything below reuses the phase 1 primitives.
 
 ## Rollout
 
-1. Phase 1 lands as `feat(analytics): rebuild sprint burn to planning grade` with small scoped commits.
+1. One pull request carries both phases, phase 1 commits first, phase 2 commits after, each small and scoped.
 2. Verify on the live workspace against the running Sprint 1: the mid-flight baseline path is the very case that prompted this redesign.
-3. Phase 2 begins only after phase 1 feedback, as its own branch and spec-referencing PR.
