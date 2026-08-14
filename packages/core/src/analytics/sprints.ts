@@ -548,10 +548,8 @@ function burnFor(
   const baseline = points.find((point) => point.available);
   const initialScope = baseline?.scope ?? 0;
   const baselineDay = baseline?.date ?? startDay;
-  const plannedWorkingDays = Math.max(
-    1,
-    workingDaysBetween(baselineDay, dateText(facts.cycle.endsAt, facts.cycle.timezone)),
-  );
+  const sprintFinalDay = dateText(new Date(facts.cycle.endsAt.getTime() - 1), facts.cycle.timezone);
+  const plannedWorkingDays = Math.max(1, workingDaysBetween(baselineDay, sprintFinalDay));
   return points.map((point) => ({
     ...point,
     ideal: point.available

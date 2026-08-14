@@ -213,6 +213,29 @@ describe('loadSprintAnalytics', () => {
     expect(result.formulas.burn).toContain('unavailable rather than zero');
   });
 
+  it('reaches zero ideal remaining on the final included sprint day', async () => {
+    const cycleId = await cycle(1, '2026-08-11T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    await membership(cycleId, issueId, {
+      addedAt: '2026-08-11T00:00:00.000Z',
+      coverage: 'captured',
+      entryKind: 'added',
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-24T23:59:00.000Z'),
+    });
+    const finalPoint = currentOf(result).burn.at(-1);
+
+    expect(finalPoint?.date).toBe('2026-08-24');
+    expect(finalPoint?.ideal).toBe(0);
+  });
+
   it('applies visible issue filters to sprint scope without treating sprint selection as a filter', async () => {
     const cycleId = await cycle(1, '2026-03-01T00:00:00.000Z', '2026-03-15T00:00:00.000Z');
     const includedProject = await createProjectRow(workspace, 'Included');
