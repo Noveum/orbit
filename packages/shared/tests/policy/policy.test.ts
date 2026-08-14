@@ -17,6 +17,28 @@ function principal(role: OrgRole, teamIds: string[] = ['team_eng']): Principal {
   return { userId: 'user_1', organizationId: 'org_1', role, teamIds };
 }
 
+describe('a role the code does not recognise', () => {
+  it('grants nothing rather than throwing when the permissions are read', () => {
+    expect(permissionsFor('nonsense' as never)).toEqual([]);
+  });
+
+  it('grants nothing for a role that names something every object inherits', () => {
+    for (const role of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(permissionsFor(role as never)).toEqual([]);
+      expect(
+        can({ userId: 'u1', organizationId: 'o1', role, teamIds: [] } as never, 'issue:read'),
+      ).toBe(false);
+    }
+  });
+
+  it('answers no to every permission rather than crashing the surface asking', () => {
+    const principal = { userId: 'u1', organizationId: 'o1', role: 'nonsense', teamIds: [] };
+
+    expect(can(principal as never, 'issue:delete')).toBe(false);
+    expect(can(principal as never, 'issue:read')).toBe(false);
+  });
+});
+
 describe('permissionsFor', () => {
   it('widens monotonically from guest to admin', () => {
     const guest = permissionsFor('guest');

@@ -1,10 +1,9 @@
 'use client';
 
 import type { DisplayProperty } from '@orbit/shared/filters';
-import { SearchX, WifiOff } from 'lucide-react';
+import { SearchX } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
@@ -13,6 +12,7 @@ import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { Board, type StateResolver } from '@/features/issues/board.tsx';
+import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { summarySearch } from '@/lib/query/issue-search.ts';
@@ -201,19 +201,7 @@ function StandupBody({
   }
 
   if (failed) {
-    return (
-      <EmptyState
-        icon={<WifiOff strokeWidth={1.75} aria-hidden="true" />}
-        title="Could not load the board"
-        description="The request for this workspace did not come back. Try again."
-        className="flex-1"
-        action={
-          <Button size="sm" variant="secondary" data-testid="retry-standup" onClick={onRetry}>
-            Try again
-          </Button>
-        }
-      />
-    );
+    return <LoadFailed subject="the standup board" onRetry={onRetry} testId="retry-standup" />;
   }
 
   if (empty) {

@@ -21,6 +21,7 @@ import type { BoardColumnSource, StateResolver } from '@/features/issues/board.t
 import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
+import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { viewLayoutMode } from '@/features/views/view-href.ts';
@@ -158,6 +159,10 @@ function SavedViewBody({ view }: { view: View }) {
         layout={layout}
         empty={model.shownCount === 0}
         loading={issues.isPending}
+        failed={issues.isError}
+        onRetry={() => {
+          issues.refetch().catch(() => undefined);
+        }}
         hasMore={issues.hasNextPage}
         loadingMore={issues.isFetchingNextPage}
         onLoadMore={() => {
@@ -190,6 +195,8 @@ interface SavedViewContentProps {
   readonly layout: ViewLayoutMode;
   readonly empty: boolean;
   readonly loading: boolean;
+  readonly failed: boolean;
+  readonly onRetry: () => void;
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
@@ -205,11 +212,15 @@ function SavedViewContent({
   layout,
   empty,
   loading,
+  failed,
+  onRetry,
   hasMore,
   loadingMore,
   onLoadMore,
 }: SavedViewContentProps) {
   if (loading) return <ListSkeleton layout={layout} />;
+
+  if (failed) return <LoadFailed subject="this view" onRetry={onRetry} testId="retry-saved-view" />;
 
   if (empty) {
     const filtered = conditionsOf(config.filter).length > 0;

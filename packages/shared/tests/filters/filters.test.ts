@@ -237,6 +237,108 @@ describe('condition helpers', () => {
     ]);
     expect(dropLastCondition(emptyFilterGroup()).children).toEqual([]);
   });
+
+  it('reaches into a nested group rather than taking every condition inside it', () => {
+    const nested: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        {
+          kind: 'group',
+          combinator: 'or',
+          children: [inCondition('assignee', ['user-1']), inCondition('label', ['label-1'])],
+        },
+      ],
+    };
+
+    expect(conditionsOf(dropLastCondition(nested)).map((entry) => entry.property)).toEqual([
+      'state',
+      'assignee',
+    ]);
+  });
+
+  it('takes the emptied group with it once its last condition goes', () => {
+    const nested: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        { kind: 'group', combinator: 'or', children: [inCondition('label', ['label-1'])] },
+      ],
+    };
+
+    const next = dropLastCondition(nested);
+
+    expect(conditionsOf(next).map((entry) => entry.property)).toEqual(['state']);
+    expect(next.children).toHaveLength(1);
+  });
+
+  it('steps past an empty group rather than spending the click on it', () => {
+    const withEmpty: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        { kind: 'group', combinator: 'or', children: [] },
+      ],
+    };
+
+    expect(conditionsOf(dropLastCondition(withEmpty))).toEqual([]);
+  });
+
+  it('steps past a group that only holds other empty groups', () => {
+    const hollow: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        inCondition('state', ['state-1']),
+        {
+          kind: 'group',
+          combinator: 'or',
+          children: [{ kind: 'group', combinator: 'and', children: [] }],
+        },
+      ],
+    };
+
+    expect(conditionsOf(dropLastCondition(hollow))).toEqual([]);
+  });
+
+  it('has nothing to do when the filter holds no conditions at all', () => {
+    const hollow: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [{ kind: 'group', combinator: 'or', children: [] }],
+    };
+
+    expect(conditionsOf(dropLastCondition(hollow))).toEqual([]);
+  });
+
+  it('removes one condition per call however deep the tree goes', () => {
+    const deep: FilterGroup = {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        {
+          kind: 'group',
+          combinator: 'and',
+          children: [
+            inCondition('state', ['state-1']),
+            {
+              kind: 'group',
+              combinator: 'or',
+              children: [inCondition('assignee', ['user-1']), inCondition('due', ['today'])],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(conditionsOf(deep)).toHaveLength(3);
+    expect(conditionsOf(dropLastCondition(deep))).toHaveLength(2);
+    expect(conditionsOf(dropLastCondition(dropLastCondition(deep)))).toHaveLength(1);
+    expect(conditionsOf(dropLastCondition(dropLastCondition(dropLastCondition(deep))))).toEqual([]);
+  });
 });
 
 describe('capability matrix', () => {

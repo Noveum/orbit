@@ -2,7 +2,7 @@
 
 import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { conditionsOf, dropLastCondition } from '@orbit/shared/filters';
-import { Columns3, SearchX, WifiOff } from 'lucide-react';
+import { Columns3, SearchX } from 'lucide-react';
 import { useMemo } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
@@ -15,6 +15,7 @@ import type { BoardColumnSource, StateResolver } from '@/features/issues/board.t
 import { Board, canDragBoard } from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
+import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import type { IssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
@@ -138,19 +139,7 @@ function SprintIssueBody({
   if (loading) return <ListSkeleton layout={layout} />;
 
   if (failed) {
-    return (
-      <EmptyState
-        icon={<WifiOff strokeWidth={1.75} aria-hidden="true" />}
-        title="Could not load this sprint"
-        description="The request for the tasks in this sprint did not come back. Try again."
-        className="flex-1"
-        action={
-          <Button size="sm" variant="secondary" data-testid="retry-sprint-issues" onClick={onRetry}>
-            Try again
-          </Button>
-        }
-      />
-    );
+    return <LoadFailed subject="this sprint" onRetry={onRetry} testId="retry-sprint-issues" />;
   }
 
   if (model.shownCount === 0) {
