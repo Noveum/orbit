@@ -79,35 +79,41 @@ function verifyLedger(rows: readonly LedgerRow[], migrations: readonly Migration
 async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
+  appliedCount = 0,
 ): Promise<void> {
-  verifyLegacyDataReconciliation(migrations);
+  const pendingMigrations = migrations.slice(appliedCount);
+  verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
-    await tx`
-      update attachment
-      set upload_expires_at = created_at + interval '900 seconds'
-      where upload_expires_at is null
-    `;
-    const [cycleNumbering] = await tx<{ mismatched: boolean }[]>`
-      with expected as (
-        select
-          id,
-          row_number() over (
-            partition by organization_id
-            order by starts_at, created_at, id
-          ) as number
-        from cycle
-      )
-      select exists (
-        select 1
-        from cycle
-        inner join expected on expected.id = cycle.id
-        where cycle.number is distinct from expected.number
-      ) as mismatched
-    `;
-    if (cycleNumbering?.mismatched === true) {
-      throw new Error(
-        'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
-      );
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
+      await tx`
+        update attachment
+        set upload_expires_at = created_at + interval '900 seconds'
+        where upload_expires_at is null
+      `;
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1786623194883)) {
+      const [cycleNumbering] = await tx<{ mismatched: boolean }[]>`
+        with expected as (
+          select
+            id,
+            row_number() over (
+              partition by organization_id
+              order by starts_at, created_at, id
+            ) as number
+          from cycle
+        )
+        select exists (
+          select 1
+          from cycle
+          inner join expected on expected.id = cycle.id
+          where cycle.number is distinct from expected.number
+        ) as mismatched
+      `;
+      if (cycleNumbering?.mismatched === true) {
+        throw new Error(
+          'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
+        );
+      }
     }
     await tx`create schema if not exists drizzle`;
     await tx`
@@ -117,7 +123,7 @@ async function baselineLedger(
         created_at bigint
       )
     `;
-    for (const migration of migrations) {
+    for (const migration of pendingMigrations) {
       await tx`
         insert into drizzle.__drizzle_migrations (hash, created_at)
         values (${migration.hash}, ${migration.folderMillis})
@@ -145,11 +151,12 @@ export async function releaseDatabase(
     const hadLedger = await ledgerExists(sql);
     const existingRows = await ledgerRows(sql);
     const before = await liveCatalog(url);
+    const beforeDrift = catalogDriftBetween(expectedCatalog(schema), before);
     let mode: ReleaseResult['mode'] = 'current';
+    let applied = 0;
 
     if ((!hadLedger || existingRows.length === 0) && declaredTableCount(before) > 0) {
-      const drift = catalogDriftBetween(expectedCatalog(schema), before);
-      if (isBehind(drift)) {
+      if (isBehind(beforeDrift)) {
         throw new Error(
           'This legacy database is not compatible with the current schema. Apply the required catchup scripts, verify drift, and run db:release again.',
         );
@@ -161,8 +168,14 @@ export async function releaseDatabase(
     const rows = await ledgerRows(sql);
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
-      await migrate(drizzle({ client: sql }), { migrationsFolder });
-      mode = 'migrated';
+      if (isBehind(beforeDrift)) {
+        await migrate(drizzle({ client: sql }), { migrationsFolder });
+        applied = pending;
+        mode = 'migrated';
+      } else {
+        await baselineLedger(sql, migrations, rows.length);
+        mode = 'baselined';
+      }
     }
 
     const finalRows = await ledgerRows(sql);
@@ -174,7 +187,7 @@ export async function releaseDatabase(
       );
     }
 
-    return { mode, applied: pending, total: migrations.length };
+    return { mode, applied, total: migrations.length };
   } finally {
     if (locked) {
       await sql`select pg_advisory_unlock(${LOCK_KEY})`.catch(() => undefined);

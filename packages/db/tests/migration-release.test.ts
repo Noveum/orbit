@@ -223,4 +223,28 @@ describe('database release', () => {
     expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
     expect(ledger?.count).toBe(migrations.length);
   }, 60_000);
+
+  it('repairs a catalog-complete ledger prefix without replaying the pending migration', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(
+      urlFor(SCRATCH),
+      (sql) => sql`
+        delete from drizzle.__drizzle_migrations
+        where created_at = (select max(created_at) from drizzle.__drizzle_migrations)
+      `,
+    );
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const [ledger] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ count: number }[]>`
+        select count(*)::integer as count from drizzle.__drizzle_migrations
+      `,
+    );
+
+    expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
+    expect(ledger?.count).toBe(migrations.length);
+  }, 60_000);
 });

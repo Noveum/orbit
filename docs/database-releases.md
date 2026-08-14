@@ -37,6 +37,13 @@ reconciliation makes the release fail closed. A partial catalog or an unsafe dat
 invariant is refused and must be brought forward with the applicable scripts in
 `packages/db/catchup` before retrying.
 
+The same reconciliation applies when the ledger is a valid prefix but the live
+catalog already contains the complete pending schema. This supports upgrades
+that previously materialized schema through an approved catchup without
+replaying destructive or conflicting DDL. The release records only the verified
+missing ledger suffix. A partial pending schema is migrated normally or refused
+if its catalog is incompatible.
+
 ## Deployment guard
 
 Every production Vercel build checks the configured production database before the
