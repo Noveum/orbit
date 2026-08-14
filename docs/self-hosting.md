@@ -99,17 +99,21 @@ and email OTP will remain unavailable.
 ### 5. Apply the schema
 
 **Migrations are applied from your machine, never by the platform.** There is no
-migration job in the build, deliberately: a schema change that runs during a
-deploy can leave you with half-migrated code serving traffic.
+migration job in the build. Schema changes are completed and verified before the
+new application is deployed.
 
 So push the schema before the code that needs it ships:
 
 ```bash
-DATABASE_URL="postgres://...direct connection on 5432..." bun run db:push
+DIRECT_URL="postgres://...direct connection on 5432..." bun run db:release
 ```
 
-Use the **direct** connection string here, not the pooler. Schema changes need a
-session the pooler will not give you.
+Use the **direct** connection string here, not the transaction pooler. The release
+command takes a database lock, verifies every recorded migration hash, applies the
+pending migrations and then verifies the complete required catalog. A compatible
+database created before Orbit had a migration ledger is baselined without changing
+application rows. A partial legacy schema is refused until its matching catchup
+scripts have been applied.
 
 ### 6. Import the project into Vercel
 
@@ -249,13 +253,16 @@ passwords are in this repository.
 ```bash
 git pull
 bun install
-bun run db:push        # against the production database, before deploying
+DIRECT_URL="postgres://...direct connection..." bun run db:release
+DATABASE_URL="postgres://...direct connection..." bun run db:check-drift
 bun run build
 ```
 
-Always apply the schema before the code that depends on it goes live. Orbit
-ships continuously from `main` and there is no backporting, so track `main` or a
-recent tag.
+Always complete the database release before the code that depends on it goes live.
+The production Vercel build refuses to deploy when the configured database cannot
+be verified or is missing a required schema object. Additional legacy tables and
+indexes are reported and preserved. Orbit ships continuously from `main` and there
+is no backporting, so track `main` or a recent tag.
 
 Watch the [releases](https://github.com/Noveum/orbit/releases) for anything
 labelled `breaking change`.

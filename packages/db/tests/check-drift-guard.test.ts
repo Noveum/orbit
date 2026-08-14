@@ -36,6 +36,26 @@ describe('the deploy guard', () => {
     expect(out).toContain('went unchecked');
   }, 30_000);
 
+  it('refuses a production build when there is no database to check', async () => {
+    const { code, out } = await runGuard({ DATABASE_URL: undefined, VERCEL_ENV: 'production' }, [
+      '--guard-deploy',
+    ]);
+    expect(code).toBe(1);
+    expect(out).toContain('Production schema verification is required');
+  }, 30_000);
+
+  it('refuses a production build when the database cannot be reached', async () => {
+    const { code, out } = await runGuard(
+      {
+        DATABASE_URL: 'postgres://nobody:nothing@127.0.0.1:9/none',
+        VERCEL_ENV: 'production',
+      },
+      ['--guard-deploy'],
+    );
+    expect(code).toBe(1);
+    expect(out).toContain('Production schema verification is required');
+  }, 30_000);
+
   it('still refuses to run at all without a database when it is not guarding', async () => {
     const { code } = await runGuard({ DATABASE_URL: undefined }, []);
     expect(code).toBe(2);
