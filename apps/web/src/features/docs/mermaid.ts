@@ -189,6 +189,7 @@ function scaleButton(document: Document): HTMLButtonElement {
     if (block === null) return;
     const fits = !block.hasAttribute('data-mermaid-fit');
     block.toggleAttribute('data-mermaid-fit', fits);
+    block.setAttribute('data-mermaid-scaled-by-hand', '');
     applyScale(button, fits);
   });
   return button;
@@ -217,7 +218,30 @@ function actionsOf(block: HTMLElement): HTMLElement {
 export function naturalWidth(drawn: SVGSVGElement): number {
   const box = drawn.viewBox?.baseVal ?? null;
   if (box !== null && box.width > 0) return box.width;
+  const declared = Number.parseFloat(drawn.getAttribute('width') ?? '');
+  if (Number.isFinite(declared) && declared > 0) return declared;
   return drawn.getBoundingClientRect().width;
+}
+
+const widthWatchers = new WeakMap<HTMLElement, ResizeObserver>();
+
+function unwatchWidth(canvas: HTMLElement): void {
+  widthWatchers.get(canvas)?.disconnect();
+  widthWatchers.delete(canvas);
+}
+
+function watchWidth(block: HTMLElement, canvas: HTMLElement): void {
+  unwatchWidth(canvas);
+  if (typeof ResizeObserver === 'undefined') return;
+  let last = canvas.clientWidth;
+  const observer = new ResizeObserver(() => {
+    if (canvas.clientWidth === last) return;
+    last = canvas.clientWidth;
+    if (block.hasAttribute('data-mermaid-scaled-by-hand')) return;
+    scaleInto(block, canvas);
+  });
+  observer.observe(canvas);
+  widthWatchers.set(canvas, observer);
 }
 
 function scaleInto(block: HTMLElement, canvas: HTMLElement): void {
@@ -308,6 +332,7 @@ function drawInto(block: HTMLElement, svg: string): void {
   canvas.setAttribute('aria-label', DIAGRAM_LABEL);
   canvas.innerHTML = svg;
   inkLabels(canvas);
+  block.removeAttribute('data-mermaid-scaled-by-hand');
   block.setAttribute('data-mermaid-view', DIAGRAM_VIEW);
   const actions = actionsOf(block);
   if (actions.querySelector('[data-mermaid-expand]') === null) {
@@ -319,10 +344,13 @@ function drawInto(block: HTMLElement, svg: string): void {
     actions.append(view);
   }
   scaleInto(block, canvas);
+  watchWidth(block, canvas);
 }
 
 function failInto(block: HTMLElement, message = DIAGRAM_FAILED): void {
-  block.querySelector('[data-mermaid-canvas]')?.remove();
+  const canvas = block.querySelector<HTMLElement>('[data-mermaid-canvas]');
+  if (canvas !== null) unwatchWidth(canvas);
+  canvas?.remove();
   block.querySelector('[data-mermaid-actions]')?.remove();
   block.removeAttribute('data-mermaid-fit');
   block.setAttribute('data-mermaid-view', SOURCE_VIEW);

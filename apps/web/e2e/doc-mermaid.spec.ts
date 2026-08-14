@@ -33,6 +33,13 @@ const CONTENT = [
   '  style CFR fill:#e8f0fe',
   '```',
   '',
+  '```mermaid',
+  'graph LR',
+  '  A[Route handler] --> B[(Postgres)]',
+  '  B --> C[Redis fan out]',
+  '  C --> D[Subscribed clients]',
+  '```',
+  '',
 ].join('\n');
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -74,7 +81,7 @@ test('a mermaid fence is drawn as a diagram, sanitised, and falls back to its so
   await reader.goto(shared.publishUrl);
 
   const blocks = reader.locator('[data-mermaid]');
-  await expect(blocks).toHaveCount(4);
+  await expect(blocks).toHaveCount(5);
   await expect(blocks.nth(0).locator('svg')).toBeVisible();
   await expect(blocks.nth(0)).toHaveAttribute('data-mermaid-view', 'diagram');
 
@@ -116,6 +123,13 @@ test('a mermaid fence is drawn as a diagram, sanitised, and falls back to its so
     return label === null || label === undefined ? null : getComputedStyle(label).fill;
   });
   expect(ink).toBe('rgb(16, 19, 26)');
+
+  const midsize = blocks.nth(4);
+  await expect(midsize).toHaveAttribute('data-mermaid-fit', '');
+  await reader.setViewportSize({ width: 520, height: 900 });
+  await expect(midsize).not.toHaveAttribute('data-mermaid-fit', '');
+  await reader.setViewportSize({ width: 1440, height: 900 });
+  await expect(midsize).toHaveAttribute('data-mermaid-fit', '');
 
   await wide.hover();
   await wide.locator('[data-mermaid-expand]').click();

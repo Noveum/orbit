@@ -13,6 +13,7 @@ import {
   LEGIBLE_SCALE,
   type MermaidRenderer,
   mermaidConfig,
+  naturalWidth,
   SHOW_DIAGRAM_LABEL,
   SHOW_SOURCE_LABEL,
   safeSvg,
@@ -192,6 +193,27 @@ describe('a diagram wider than the column', () => {
 
     expect(config.flowchart?.useMaxWidth).toBe(false);
     expect(config.sequence?.useMaxWidth).toBe(false);
+    expect(config.gantt?.useMaxWidth).toBe(false);
+  });
+});
+
+describe('the width a diagram is measured at', () => {
+  function svgWith(attributes: Record<string, string>): SVGSVGElement {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+    return element as unknown as SVGSVGElement;
+  }
+
+  it('reads the size the diagram was drawn at, not the size css left it', () => {
+    expect(naturalWidth(svgWith({ width: '1600', viewBox: '0 0 1600 400' }))).toBe(1600);
+  });
+
+  it('falls back to the declared width when the view box is out of reach', () => {
+    expect(naturalWidth(svgWith({ width: '820' }))).toBe(820);
+  });
+
+  it('answers 0 when a diagram declares nothing, so no decision is taken on it', () => {
+    expect(naturalWidth(svgWith({}))).toBe(0);
   });
 });
 

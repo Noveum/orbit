@@ -66,7 +66,14 @@ function DiagramPreview({ source }: { readonly source: string }) {
     const drawn = svg === null ? null : (node?.querySelector('svg') ?? null);
     if (node === null || drawn === null) return;
     inkLabels(node);
-    setFits(fitsTheColumn(naturalWidth(drawn), node.clientWidth - PREVIEW_PADDING));
+
+    const decide = () =>
+      setFits(fitsTheColumn(naturalWidth(drawn), node.clientWidth - PREVIEW_PADDING));
+    decide();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(decide);
+    observer.observe(node);
+    return () => observer.disconnect();
   }, [svg]);
 
   return (
