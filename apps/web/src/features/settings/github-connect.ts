@@ -1,4 +1,4 @@
-import { and, db, eq, schema, sql } from '@orbit/db';
+import { and, db, eq, isNull, schema, sql } from '@orbit/db';
 import {
   applyNormalizedGithubEvent,
   assertGithubIntegrationManager,
@@ -8,6 +8,7 @@ import {
   fetchGithubOpenPullRequests,
   fetchInstalledRepositories,
   type GithubInstallationRow,
+  listGithubInstallations,
   listUserInstallationIds,
   replaceGithubRepositories,
 } from '@orbit/services';
@@ -127,7 +128,7 @@ export async function syncInstallationRepositories(input: SyncRepositoriesInput)
   return repositories.length;
 }
 
-async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<void> {
+async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<number> {
   const watched = await db
     .select({
       id: schema.githubRepositorySync.id,
@@ -140,11 +141,13 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
         eq(schema.githubRepositorySync.organizationId, input.installation.organizationId),
         eq(schema.githubRepositorySync.installationId, input.installation.installationId),
         eq(schema.githubRepositorySync.enabled, true),
+        isNull(schema.githubRepositorySync.pullRequestsBackfilledAt),
       ),
     )
     .orderBy(sql`${schema.githubRepositorySync.pullRequestsBackfilledAt} asc nulls first`)
     .limit(GITHUB_BACKFILL_REPOSITORY_LIMIT);
   const backfilledAt = input.now ?? new Date();
+  let completed = 0;
   for (const repository of watched) {
     try {
       const pullRequests = await fetchGithubOpenPullRequests({
@@ -208,10 +211,35 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
         .update(schema.githubRepositorySync)
         .set({ pullRequestsBackfilledAt: backfilledAt })
         .where(eq(schema.githubRepositorySync.id, repository.id));
+      completed += 1;
     } catch (error) {
       console.error(`Could not backfill ${repository.repositoryName}.`, error);
     }
   }
+  return completed;
+}
+
+export interface BackfillWorkspacePullRequestsInput extends GithubConnectDeps {
+  readonly organizationId: string;
+  readonly now?: Date;
+}
+
+export async function backfillWorkspacePullRequests(
+  input: BackfillWorkspacePullRequestsInput,
+): Promise<number> {
+  if (!discoveryReady(input.config)) return 0;
+  const installations = await listGithubInstallations(db, input.organizationId);
+  let completed = 0;
+  for (const installation of installations) {
+    if (installation.status !== 'active') continue;
+    completed += await backfillInstallationPullRequests({
+      installation,
+      config: input.config,
+      ...fetchOverride(input),
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
+  }
+  return completed;
 }
 
 export function repositoriesAreStale(

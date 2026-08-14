@@ -14,6 +14,7 @@ import {
 } from '@orbit/services';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
+  backfillWorkspacePullRequests,
   completeGithubInstall,
   refreshWorkspaceRepositories,
   repositoriesAreStale,
@@ -490,6 +491,69 @@ describe('refreshWorkspaceRepositories', () => {
       .from(schema.githubRepositorySync)
       .where(eq(schema.githubRepositorySync.repositoryId, repository.repositoryId));
     expect(sync?.backfilledAt).not.toBeNull();
+  });
+
+  it('backfills pending repositories without repeating completed work', async () => {
+    const stub: GithubStub = {
+      ...NOVEUM_STUB,
+      pullRequests: {
+        'Noveum/ai-gateway': [
+          {
+            id: 732,
+            node_id: 'PR_kwDO732',
+            number: 74,
+            title: 'Populate pull requests without opening settings',
+            body: '',
+            html_url: 'https://github.com/Noveum/ai-gateway/pull/74',
+            draft: false,
+            state: 'open',
+            head: { ref: 'pull-request-backfill', sha: 'fed987' },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+            created_at: '2026-08-14T00:00:00.000Z',
+            updated_at: '2026-08-14T01:00:00.000Z',
+          },
+        ],
+      },
+    };
+    await install(workspace, NOVEUM, stub);
+    const repository = (await listGithubCatalogue(db, workspace.organizationId)).find(
+      (entry) => entry.fullName === 'Noveum/ai-gateway',
+    );
+    if (repository === undefined) throw new Error('the installed repository is missing');
+    await db.transaction(async (tx) =>
+      linkGithubRepository(tx, {
+        organizationId: workspace.organizationId,
+        repositoryId: repository.repositoryId,
+        projectId: null,
+        linkedById: workspace.adminUser.id,
+      }),
+    );
+    let pullFetches = 0;
+    const countingFetch = ((input: string, init?: RequestInit) => {
+      if (/\/repos\/.+\/pulls$/.test(new URL(String(input)).pathname)) pullFetches += 1;
+      return githubFetch(stub)(input, init);
+    }) as unknown as typeof globalThis.fetch;
+
+    const first = await backfillWorkspacePullRequests({
+      organizationId: workspace.organizationId,
+      config: CONFIG,
+      fetch: countingFetch,
+    });
+    const second = await backfillWorkspacePullRequests({
+      organizationId: workspace.organizationId,
+      config: CONFIG,
+      fetch: countingFetch,
+    });
+
+    expect(first).toBe(1);
+    expect(second).toBe(0);
+    expect(pullFetches).toBe(1);
+    const pulls = await db
+      .select()
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.organizationId, workspace.organizationId));
+    expect(pulls.map((pull) => pull.number)).toEqual([74]);
   });
 
   it('keeps a successful repository refresh when pull request backfill fails', async () => {
