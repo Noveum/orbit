@@ -8,6 +8,7 @@ Two final usability gaps were fixed during this review:
 
 - The Sprints lens now has a first-class sprint selector. It writes the existing cycle filter into canonical URL state, preserves nested Boolean filters, and can return to automatic sprint selection.
 - Line and bar charts now show scale guides. Line charts use small visual points with separate eight-pixel pointer targets, start and end labels, crosshair inspection, and tooltips anchored to the active point. Bar tooltips are anchored to the active bar. Keyboard inspection and the accessible data tables remain unchanged.
+- The legacy burndown adapter now uses the selected sprint's reporting calendar for its start, end, and current-day keys. A real-database regression covers a sprint whose local dates differ from UTC, including the live first-day value and future-day masking.
 
 ## Number audit
 
@@ -34,9 +35,11 @@ Two final usability gaps were fixed during this review:
 
 - Final focused analytics UI: 37 tests passed with 156 assertions.
 - New sprint-selector and chart tests: 12 tests passed with 43 assertions.
+- Focused real-database burndown tests: 10 tests passed with 38 assertions, including the timezone-boundary regression.
+- Combined real-database reconciliation suites for Overview, Sprints, Projects, People, drilldowns, and burndown: 65 tests passed with 334 assertions.
 - Web typecheck and scoped Biome checks passed.
 - The previous full branch gate passed Core 916 of 916 and Web 2,031 of 2,031. GitHub unit, build, Playwright, migration drift, lint, type, and CodeQL checks passed on the prior review commit.
-- The current local sandbox could not connect to the Docker PostgreSQL port, so the real-database suite will be reconfirmed by GitHub CI after this review commit is pushed.
+- The final review reran the focused burndown suite against local PostgreSQL. GitHub CI will reconfirm the full branch after the timezone correction is pushed.
 
 ## Deployment prerequisite
 

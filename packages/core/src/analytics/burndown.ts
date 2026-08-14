@@ -4,7 +4,8 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
 import type { SQL } from 'drizzle-orm';
-import { requireRow, startOfUtcDay } from '../internal.ts';
+import { requireRow } from '../internal.ts';
+import { calendarDateLabel } from './filter.ts';
 import { churnFromScopeSeries, type Distribution, distributionOf, idealRemaining } from './math.ts';
 import type { Measure } from './schemas.ts';
 import { loadSprintAnalytics } from './sprints.ts';
@@ -13,8 +14,10 @@ function weightSql(measure: Measure): SQL {
   return measure === 'points' ? sql`coalesce(estimate, 0)` : sql`1`;
 }
 
-function isoDay(value: Date): string {
-  return startOfUtcDay(value).toISOString().slice(0, 10);
+function nextCalendarDay(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
 }
 
 export interface BurndownPoint {
@@ -79,14 +82,14 @@ export async function cycleBurndown(
   );
   if (analytics.current === null) throw new Error('The selected sprint is unavailable.');
   const cycle = analytics.current.sprint;
-  const today = isoDay(now);
+  const today = calendarDateLabel(now, cycle.timezone);
   const actual = analytics.current.burn;
   const points: BurndownPoint[] = [];
-  const finalDay = isoDay(new Date(cycle.endsAt));
+  const finalDay = calendarDateLabel(new Date(cycle.endsAt), cycle.timezone);
   for (
-    let day = isoDay(new Date(cycle.startsAt));
+    let day = calendarDateLabel(new Date(cycle.startsAt), cycle.timezone);
     day <= finalDay;
-    day = isoDay(new Date(new Date(`${day}T00:00:00.000Z`).getTime() + 86_400_000))
+    day = nextCalendarDay(day)
   ) {
     const found = actual.find((point) => point.date === day);
     const isFuture = day > today || found === undefined;
