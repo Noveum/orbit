@@ -96,7 +96,7 @@ describe('database release', () => {
         ) values (
           'release-attachment', 'release-org', 'issue', 'issue-1', 'proof.txt',
           'text/plain', 1, 'release/proof.txt', 'release-user',
-          '2026-08-14T00:00:00Z', null
+          '2026-08-14T00:00:00Z', '2027-01-01T00:00:00Z'
         )
       `;
       await sql`drop schema drizzle cascade`;
@@ -160,6 +160,21 @@ describe('database release', () => {
     await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
       'does not match the committed migration',
     );
+  }, 60_000);
+
+  it('fails promptly when another database release holds the advisory lock', async () => {
+    await resetScratch();
+    const lockKey = 4_611_358_438_132_153;
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`select pg_advisory_lock(${lockKey})`;
+      try {
+        await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+          'Another database release is already running',
+        );
+      } finally {
+        await sql`select pg_advisory_unlock(${lockKey})`;
+      }
+    });
   }, 60_000);
 
   it('refuses to baseline a partial legacy schema', async () => {

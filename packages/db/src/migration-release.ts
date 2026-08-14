@@ -88,7 +88,6 @@ async function baselineLedger(
       await tx`
         update attachment
         set upload_expires_at = created_at + interval '900 seconds'
-        where upload_expires_at is null
       `;
     }
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786623194883)) {
@@ -145,7 +144,12 @@ export async function releaseDatabase(
   const migrations = readMigrationFiles({ migrationsFolder });
   let locked = false;
   try {
-    await sql`select pg_advisory_lock(${LOCK_KEY})`;
+    const [lock] = await sql<{ acquired: boolean }[]>`
+      select pg_try_advisory_lock(${LOCK_KEY}) as acquired
+    `;
+    if (lock?.acquired !== true) {
+      throw new Error('Another database release is already running. Retry after it finishes.');
+    }
     locked = true;
     await sql`create extension if not exists pg_trgm`;
     const hadLedger = await ledgerExists(sql);

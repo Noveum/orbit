@@ -4,7 +4,13 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
-import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from '../src/check-drift.ts';
+import {
+  catalogDriftBetween,
+  expectedCatalog,
+  isBehind,
+  liveCatalog,
+  normalizeCatalogExpression,
+} from '../src/check-drift.ts';
 import * as schema from '../src/schema/index.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
@@ -47,6 +53,12 @@ describe('catalog drift', () => {
     expect(isBehind(drift)).toBe(false);
   });
 
+  it('strips only parentheses that enclose the complete expression', () => {
+    expect(normalizeCatalogExpression('((a) || (b))')).toBe('(a) || (b)');
+    expect(normalizeCatalogExpression('(a) || (b)')).toBe('(a) || (b)');
+    expect(normalizeCatalogExpression("('(') || (b)")).toBe("('(') || (b)");
+  });
+
   it('accepts equivalent foreign keys created under legacy names', async () => {
     await run(urlFor(SCRATCH), async (sql) => {
       await sql`
@@ -66,6 +78,44 @@ describe('catalog drift', () => {
     expect(isBehind(drift)).toBe(false);
   });
 
+  it('accepts equivalent indexes created under legacy names', async () => {
+    await run(
+      urlFor(SCRATCH),
+      (sql) => sql`alter index cycle_org_dates_idx rename to legacy_cycle_org_dates_idx`,
+    );
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.missingIndexes).toEqual([]);
+    expect(drift.undeclaredIndexes).not.toContainEqual({
+      table: 'cycle',
+      index: 'legacy_cycle_org_dates_idx',
+    });
+    expect(isBehind(drift)).toBe(false);
+  });
+
+  it('reports undeclared tables and their catalog objects without treating them as behind', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create table legacy_sidecar (id text primary key, organization_id text)`;
+      await sql`create index legacy_sidecar_org_idx on legacy_sidecar (organization_id)`;
+      await sql`
+        alter table legacy_sidecar add constraint legacy_sidecar_org_fk
+        foreign key (organization_id) references organization(id)
+      `;
+    });
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.undeclaredTables).toContain('legacy_sidecar');
+    expect(drift.undeclaredIndexes).toContainEqual({
+      table: 'legacy_sidecar',
+      index: 'legacy_sidecar_org_idx',
+    });
+    expect(drift.undeclaredForeignKeys).toContainEqual({
+      table: 'legacy_sidecar',
+      foreignKey: 'legacy_sidecar_org_fk',
+    });
+    expect(isBehind(drift)).toBe(false);
+  });
+
   it('detects nullability, foreign key, and index drift even when names and columns exist', async () => {
     await run(urlFor(SCRATCH), async (sql) => {
       await sql`alter table cycle alter column team_id set not null`;
@@ -74,7 +124,7 @@ describe('catalog drift', () => {
         alter table cycle add constraint cycle_team_id_team_id_fk
         foreign key (team_id) references team(id) on delete cascade
       `;
-      await sql`drop index cycle_org_dates_idx`;
+      await sql`drop index legacy_cycle_org_dates_idx`;
     });
 
     const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
@@ -122,6 +172,17 @@ describe('catalog drift', () => {
       actual:
         "setweight(to_tsvector('english', coalesce(title, '')), 'a') || setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')",
     });
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('detects enum drift', async () => {
+    await run(
+      urlFor(SCRATCH),
+      (sql) => sql`alter type notification_reason add value if not exists 'legacy_reason'`,
+    );
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.enumMismatches.map((entry) => entry.name)).toContain('notification_reason');
     expect(isBehind(drift)).toBe(true);
   });
 });

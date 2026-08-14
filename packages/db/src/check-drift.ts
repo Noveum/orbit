@@ -130,7 +130,21 @@ function normalizeSql(value: string): string {
     .trim();
 }
 
-function normalizeCatalogExpression(value: string): string {
+function enclosedInOuterParentheses(value: string): boolean {
+  if (!(value.startsWith('(') && value.endsWith(')'))) return false;
+  const structural = value.replace(/'(?:''|[^'])*'/g, '');
+  let depth = 0;
+  for (let index = 0; index < structural.length; index += 1) {
+    const character = structural[index];
+    if (character === '(') depth += 1;
+    if (character === ')') depth -= 1;
+    if (depth === 0 && index < structural.length - 1) return false;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+export function normalizeCatalogExpression(value: string): string {
   const normalized = normalizeSqlCaseAndIdentifiers(value)
     .replace(/::[a-z_][a-z0-9_]*(?:\s+[a-z_][a-z0-9_]*)?(?:\[\])?/g, '')
     .replace(/interval '(\d+) seconds'/g, (_match, seconds: string) => {
@@ -142,10 +156,7 @@ function normalizeCatalogExpression(value: string): string {
     })
     .replace(/\s+/g, ' ')
     .trim();
-  if (normalized.startsWith('(') && normalized.endsWith(')')) {
-    return normalized.slice(1, -1).trim();
-  }
-  return normalized;
+  return enclosedInOuterParentheses(normalized) ? normalized.slice(1, -1).trim() : normalized;
 }
 
 function quotedLiteral(value: string): string {
@@ -548,9 +559,13 @@ function comparePrimaryKey(expected: CatalogTable, live: CatalogTable, drift: Dr
 
 function compareIndexes(expected: CatalogTable, live: CatalogTable, drift: Drift): void {
   const liveIndexes = new Map(live.indexes.map((index) => [index.name, index]));
-  const expectedNames = new Set(expected.indexes.map((index) => index.name));
+  const unmatched = new Set(live.indexes);
   for (const index of expected.indexes) {
-    const actual = liveIndexes.get(index.name);
+    const named = liveIndexes.get(index.name);
+    const equivalent = live.indexes.find(
+      (entry) => unmatched.has(entry) && stableIndex(entry) === stableIndex(index),
+    );
+    const actual = equivalent ?? (named !== undefined && unmatched.has(named) ? named : undefined);
     if (actual === undefined) {
       drift.missingIndexes.push({ table: expected.name, index: index.name });
     } else if (stableIndex(index) !== stableIndex(actual)) {
@@ -561,11 +576,10 @@ function compareIndexes(expected: CatalogTable, live: CatalogTable, drift: Drift
         actual: stableIndex(actual),
       });
     }
+    if (actual !== undefined) unmatched.delete(actual);
   }
-  for (const index of live.indexes) {
-    if (!expectedNames.has(index.name)) {
-      drift.undeclaredIndexes.push({ table: expected.name, index: index.name });
-    }
+  for (const index of unmatched) {
+    drift.undeclaredIndexes.push({ table: expected.name, index: index.name });
   }
 }
 
@@ -633,6 +647,17 @@ export function catalogDriftBetween(expected: Catalog, live: Catalog): Drift {
   drift.undeclaredTables.push(
     ...live.tables.filter((table) => !expectedNames.has(table.name)).map((table) => table.name),
   );
+  for (const table of live.tables.filter((entry) => !expectedNames.has(entry.name))) {
+    drift.undeclaredIndexes.push(
+      ...table.indexes.map((index) => ({ table: table.name, index: index.name })),
+    );
+    drift.undeclaredForeignKeys.push(
+      ...table.foreignKeys.map((foreignKey) => ({
+        table: table.name,
+        foreignKey: foreignKey.name,
+      })),
+    );
+  }
   compareEnums(expected, live, drift);
 
   return drift;
