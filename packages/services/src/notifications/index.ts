@@ -54,7 +54,7 @@ export const notificationEventSchema = z.object({
   title: z.string().trim().min(1).max(255),
   body: z.string().max(4000).default(''),
   url: z.string().trim().min(1).max(2048),
-  externalUrl: z.string().url().max(2048).nullish(),
+  externalUrl: z.httpUrl().max(2048).nullish(),
   priority: z.number().int().min(0).max(4).optional(),
 });
 

@@ -4,7 +4,6 @@ import { redirect } from 'next/navigation';
 import { githubReach, loadPullRequestPage } from '@/features/pulls/data.ts';
 import { PullsRealtime } from '@/features/pulls/pulls-realtime.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
-import { configuredRealtimeUrl } from '@/lib/realtime/url.ts';
 
 export const metadata: Metadata = { title: 'Pull requests' };
 
@@ -26,8 +25,6 @@ export default async function PullsPage({
     <PullsRealtime
       pulls={pullPage.pulls}
       userId={context.principal.userId}
-      organizationId={context.principal.organizationId}
-      realtimeUrl={configuredRealtimeUrl()}
       reach={reach}
       canManageIntegrations={can(context.principal, 'integration:manage')}
       currentPage={currentPage}

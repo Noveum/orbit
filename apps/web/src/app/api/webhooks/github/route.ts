@@ -19,7 +19,55 @@ import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts'
 const SIGNATURE_HEADER = 'x-hub-signature-256';
 const EVENT_HEADER = 'x-github-event';
 const DELIVERY_HEADER = 'x-github-delivery';
-const DELIVERY_CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
+export const maxDuration = 60;
+const DELIVERY_CLAIM_TIMEOUT_MS = (maxDuration + 15) * 1000;
+
+async function claimDelivery(deliveryId: string, eventName: string): Promise<Response | null> {
+  const claimedAt = new Date();
+  const claimed = await db
+    .insert(schema.webhookDelivery)
+    .values({
+      id: randomUUIDv7(),
+      provider: 'github',
+      deliveryId,
+      event: eventName,
+      status: 'processing',
+      claimedAt,
+    })
+    .onConflictDoNothing()
+    .returning({ id: schema.webhookDelivery.id });
+  if (claimed.length > 0) return null;
+
+  const reclaimed = await db
+    .update(schema.webhookDelivery)
+    .set({ status: 'processing', event: eventName, claimedAt })
+    .where(
+      and(
+        deliveryMatch(deliveryId),
+        or(
+          inArray(schema.webhookDelivery.status, ['received', 'failed']),
+          and(
+            eq(schema.webhookDelivery.status, 'processing'),
+            lt(
+              schema.webhookDelivery.claimedAt,
+              new Date(claimedAt.getTime() - DELIVERY_CLAIM_TIMEOUT_MS),
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: schema.webhookDelivery.id });
+  if (reclaimed.length > 0) return null;
+
+  const [current] = await db
+    .select({ status: schema.webhookDelivery.status })
+    .from(schema.webhookDelivery)
+    .where(deliveryMatch(deliveryId))
+    .limit(1);
+  return current?.status === 'processing'
+    ? Response.json({ status: 'in_progress' }, { status: 409 })
+    : Response.json({ status: 'duplicate' });
+}
 
 export async function POST(request: Request): Promise<Response> {
   const secret = process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
@@ -38,43 +86,8 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ status: 'unhandled', event: eventName });
   }
 
-  const claimedAt = new Date();
-  const claimed = await db
-    .insert(schema.webhookDelivery)
-    .values({
-      id: randomUUIDv7(),
-      provider: 'github',
-      deliveryId,
-      event: eventName,
-      status: 'processing',
-      createdAt: claimedAt,
-    })
-    .onConflictDoNothing()
-    .returning({ id: schema.webhookDelivery.id });
-  if (claimed.length === 0) {
-    const reclaimed = await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'processing', event: eventName, createdAt: claimedAt })
-      .where(
-        and(
-          deliveryMatch(deliveryId),
-          or(
-            inArray(schema.webhookDelivery.status, ['received', 'failed']),
-            and(
-              eq(schema.webhookDelivery.status, 'processing'),
-              lt(
-                schema.webhookDelivery.createdAt,
-                new Date(claimedAt.getTime() - DELIVERY_CLAIM_TIMEOUT_MS),
-              ),
-            ),
-          ),
-        ),
-      )
-      .returning({ id: schema.webhookDelivery.id });
-    if (reclaimed.length === 0) {
-      return Response.json({ status: 'duplicate' });
-    }
-  }
+  const claimResponse = await claimDelivery(deliveryId, eventName);
+  if (claimResponse !== null) return claimResponse;
 
   let body: unknown;
   try {

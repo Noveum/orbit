@@ -425,15 +425,19 @@ describe('refreshWorkspaceRepositories', () => {
       pullRequests: {
         'Noveum/ai-gateway': [
           {
+            id: 730,
+            node_id: 'PR_kwDO730',
             number: 73,
             title: 'Restore the GitHub inbox ORB-3',
             body: 'Links ORB-3',
             html_url: 'https://github.com/Noveum/ai-gateway/pull/73',
             draft: false,
             state: 'open',
-            head: { ref: 'orb-3-github-inbox' },
+            head: { ref: 'orb-3-github-inbox', sha: 'def456' },
             base: { ref: 'main' },
             user: { login: 'octocat', id: 500 },
+            created_at: '2026-08-13T00:00:00.000Z',
+            updated_at: '2026-08-13T01:00:00.000Z',
           },
         ],
       },
@@ -481,6 +485,49 @@ describe('refreshWorkspaceRepositories', () => {
     expect(links).toHaveLength(1);
     expect(links[0]?.url).toBe('https://github.com/Noveum/ai-gateway/pull/73');
     expect(notifications).toHaveLength(0);
+    const [sync] = await db
+      .select({ backfilledAt: schema.githubRepositorySync.pullRequestsBackfilledAt })
+      .from(schema.githubRepositorySync)
+      .where(eq(schema.githubRepositorySync.repositoryId, repository.repositoryId));
+    expect(sync?.backfilledAt).not.toBeNull();
+  });
+
+  it('keeps a successful repository refresh when pull request backfill fails', async () => {
+    await install(workspace, NOVEUM);
+    const repository = (await listGithubCatalogue(db, workspace.organizationId)).find(
+      (entry) => entry.fullName === 'Noveum/ai-gateway',
+    );
+    if (repository === undefined) throw new Error('the installed repository is missing');
+    await db.transaction(async (tx) =>
+      linkGithubRepository(tx, {
+        organizationId: workspace.organizationId,
+        repositoryId: repository.repositoryId,
+        projectId: null,
+        linkedById: workspace.adminUser.id,
+      }),
+    );
+    const baseFetch = githubFetch(NOVEUM_STUB);
+    const failingBackfill = ((input: string, init?: RequestInit) => {
+      if (/\/repos\/.+\/pulls$/.test(new URL(String(input)).pathname)) {
+        return Promise.resolve(new Response('{}', { status: 500 }));
+      }
+      return baseFetch(input, init);
+    }) as unknown as typeof globalThis.fetch;
+    const installations = await listGithubInstallations(db, workspace.organizationId);
+
+    const refreshed = await refreshWorkspaceRepositories({
+      installations,
+      force: true,
+      config: CONFIG,
+      fetch: failingBackfill,
+    });
+
+    expect(refreshed).toBe(1);
+    const [sync] = await db
+      .select({ backfilledAt: schema.githubRepositorySync.pullRequestsBackfilledAt })
+      .from(schema.githubRepositorySync)
+      .where(eq(schema.githubRepositorySync.repositoryId, repository.repositoryId));
+    expect(sync?.backfilledAt).toBeNull();
   });
 
   it('backfills open pull requests that do not name an Orbit issue', async () => {

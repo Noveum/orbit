@@ -13,6 +13,7 @@ const SENT_BY_GITHUB = [
   'delete',
   'installation',
   'installation_repositories',
+  'issue_comment',
   'issues',
   'pull_request',
   'pull_request_review',
@@ -90,6 +91,43 @@ describe('the events the webhook accepts', () => {
         sender,
       }),
     ).not.toBeNull();
+    expect(
+      parseGithubEvent('issue_comment', {
+        action: 'created',
+        issue: {
+          number: 7,
+          title: pullRequest.title,
+          html_url: pullRequest.html_url,
+          pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+        },
+        comment: {
+          id: 71,
+          body: 'Please add a test.',
+          html_url: `${pullRequest.html_url}#issuecomment-71`,
+          user: sender,
+        },
+        repository,
+        sender,
+      }),
+    ).not.toBeNull();
+    expect(
+      parseGithubEvent('issue_comment', {
+        action: 'created',
+        issue: {
+          number: 7,
+          title: pullRequest.title,
+          html_url: 'https://github.com/acme/web/issues/7',
+        },
+        comment: {
+          id: 72,
+          body: 'This is an issue comment.',
+          html_url: 'https://github.com/acme/web/issues/7#issuecomment-72',
+          user: sender,
+        },
+        repository,
+        sender,
+      }),
+    ).toBeNull();
     expect(
       parseGithubEvent('pull_request_review', {
         action: 'submitted',

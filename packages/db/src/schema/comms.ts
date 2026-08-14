@@ -280,6 +280,7 @@ export const githubRepositorySync = pgTable(
     defaultBranch: text('default_branch').notNull().default('main'),
     enabled: boolean('enabled').notNull().default(true),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+    pullRequestsBackfilledAt: timestamp('pull_requests_backfilled_at', { withTimezone: true }),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -320,6 +321,7 @@ export const githubPullRequest = pgTable(
     githubCreatedAt: timestamp('github_created_at', { withTimezone: true }),
     githubUpdatedAt: timestamp('github_updated_at', { withTimezone: true }),
     historySyncedAt: timestamp('history_synced_at', { withTimezone: true }),
+    historyRefreshClaimedAt: timestamp('history_refresh_claimed_at', { withTimezone: true }),
     lastEventAt: timestamp('last_event_at', { withTimezone: true }).notNull().defaultNow(),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -601,6 +603,7 @@ export const webhookDelivery = pgTable(
     }),
     status: text('status').notNull().default('received'),
     error: text('error'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

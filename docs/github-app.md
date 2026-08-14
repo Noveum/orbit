@@ -83,6 +83,13 @@ records to `github_pull_request_activity`. Opening a pull request in Orbit also
 backfills the comment, review and check history from GitHub so a missed webhook
 does not leave the activity view permanently incomplete.
 
+Repository refreshes backfill watched repositories in bounded batches and save
+progress on `github_repository_sync`. Pull request detail refreshes use a short
+database lease so concurrent tabs do not duplicate the same GitHub API work.
+Webhook deliveries use a separate claim timestamp from their original receipt
+time, and an active claim returns a non-success response instead of silently
+acknowledging work that has not finished.
+
 Matching is by issue identifier, and the repository's project association plays
 no part in it. `applyGithubEvent` looks the repository up in the watch list,
 takes the organization from that row, and resolves identifiers against the whole
@@ -120,3 +127,20 @@ Rotate in this order: change it on the App, update
 an environment change to a deployment that already exists, so skipping the
 redeploy leaves every delivery failing signature verification with a `401` while
 GitHub retries. Do it in one sitting.
+
+## Production rollout
+
+Run the committed migrations before directing webhook traffic to a deployment
+that contains this integration. An existing database that needs the idempotent
+repair path can run:
+
+```bash
+bun run db:catchup packages/db/catchup/github-pull-request-mirror.sql
+bun run db:catchup packages/db/catchup/github-notification-external-url.sql
+bun run db:catchup packages/db/catchup/github-delivery-and-refresh-claims.sql
+bun run db:check-drift
+```
+
+The Vercel function serving `/api/webhooks/github` has a 60 second maximum
+duration. The delivery claim lease is slightly longer so a second delivery does
+not take over while the first function is still allowed to run.

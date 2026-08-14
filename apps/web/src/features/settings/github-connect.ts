@@ -1,4 +1,4 @@
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema, sql } from '@orbit/db';
 import {
   applyNormalizedGithubEvent,
   assertGithubIntegrationManager,
@@ -15,6 +15,7 @@ import { forbidden, validationFailed } from '@orbit/shared/errors';
 import type { GithubAppConfig } from '@/lib/env.ts';
 
 export const GITHUB_REPOSITORY_CACHE_MS = 600_000;
+export const GITHUB_BACKFILL_REPOSITORY_LIMIT = 5;
 
 export interface GithubConnectDeps {
   readonly config: GithubAppConfig;
@@ -115,13 +116,21 @@ export async function syncInstallationRepositories(input: SyncRepositoriesInput)
       ...(input.now === undefined ? {} : { now: input.now }),
     }),
   );
-  await backfillInstallationPullRequests(input);
+  try {
+    await backfillInstallationPullRequests(input);
+  } catch (error) {
+    console.error(
+      `Could not backfill GitHub pull requests for installation ${input.installation.installationId}.`,
+      error,
+    );
+  }
   return repositories.length;
 }
 
-async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<number> {
+async function backfillInstallationPullRequests(input: SyncRepositoriesInput): Promise<void> {
   const watched = await db
     .select({
+      id: schema.githubRepositorySync.id,
       repositoryId: schema.githubRepositorySync.repositoryId,
       repositoryName: schema.githubRepositorySync.repositoryName,
     })
@@ -132,69 +141,77 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
         eq(schema.githubRepositorySync.installationId, input.installation.installationId),
         eq(schema.githubRepositorySync.enabled, true),
       ),
-    );
-  let applied = 0;
+    )
+    .orderBy(sql`${schema.githubRepositorySync.pullRequestsBackfilledAt} asc nulls first`)
+    .limit(GITHUB_BACKFILL_REPOSITORY_LIMIT);
+  const backfilledAt = input.now ?? new Date();
   for (const repository of watched) {
-    const pullRequests = await fetchGithubOpenPullRequests({
-      appId: input.config.appId,
-      privateKey: input.config.privateKey,
-      installationId: input.installation.installationId,
-      repository: repository.repositoryName,
-      ...fetchOverride(input),
-    });
-    await db.transaction(async (tx) => {
+    try {
+      const pullRequests = await fetchGithubOpenPullRequests({
+        appId: input.config.appId,
+        privateKey: input.config.privateKey,
+        installationId: input.installation.installationId,
+        repository: repository.repositoryName,
+        ...fetchOverride(input),
+      });
       for (const pullRequest of pullRequests) {
-        const outcome = await applyNormalizedGithubEvent(tx, {
-          organizationId: input.installation.organizationId,
-          event: {
-            action: 'synchronize',
-            repository: {
-              externalId: repository.repositoryId,
-              fullName: repository.repositoryName,
+        await db.transaction(async (tx) => {
+          await applyNormalizedGithubEvent(tx, {
+            organizationId: input.installation.organizationId,
+            event: {
+              action: 'synchronize',
+              repository: {
+                externalId: repository.repositoryId,
+                fullName: repository.repositoryName,
+              },
+              pullRequest: {
+                externalId: pullRequest.externalId,
+                nodeId: pullRequest.nodeId,
+                number: pullRequest.number,
+                title: pullRequest.title,
+                body: pullRequest.body,
+                url: pullRequest.url,
+                headRef: pullRequest.headRef,
+                headSha: pullRequest.headSha,
+                baseRef: pullRequest.baseRef,
+                draft: pullRequest.draft,
+                merged: false,
+                closed: false,
+                author: pullRequest.author,
+                createdAt: pullRequest.createdAt,
+                updatedAt: pullRequest.updatedAt,
+              },
+              review: null,
+              requestedReviewer: null,
+              checks: null,
+              comment: null,
+              activity: {
+                externalId:
+                  pullRequest.externalId.length === 0
+                    ? `pull_request:${pullRequest.number}:backfill`
+                    : `pull_request:${pullRequest.externalId}`,
+                type: 'pull_request',
+                body: '',
+                url: pullRequest.url,
+                state: 'synchronize',
+                path: null,
+                line: null,
+                occurredAt: pullRequest.updatedAt,
+              },
+              sender: pullRequest.author,
             },
-            pullRequest: {
-              externalId: pullRequest.externalId,
-              nodeId: pullRequest.nodeId,
-              number: pullRequest.number,
-              title: pullRequest.title,
-              body: pullRequest.body,
-              url: pullRequest.url,
-              headRef: pullRequest.headRef,
-              headSha: pullRequest.headSha,
-              baseRef: pullRequest.baseRef,
-              draft: pullRequest.draft,
-              merged: false,
-              closed: false,
-              author: pullRequest.author,
-              createdAt: pullRequest.createdAt,
-              updatedAt: pullRequest.updatedAt,
-            },
-            review: null,
-            requestedReviewer: null,
-            checks: null,
-            comment: null,
-            activity: {
-              externalId:
-                pullRequest.externalId.length === 0
-                  ? `pull_request:${pullRequest.number}:backfill`
-                  : `pull_request:${pullRequest.externalId}`,
-              type: 'pull_request',
-              body: '',
-              url: pullRequest.url,
-              state: 'synchronize',
-              path: null,
-              line: null,
-              occurredAt: pullRequest.updatedAt,
-            },
-            sender: pullRequest.author,
-          },
-          ...(input.now === undefined ? {} : { now: input.now }),
+            ...(input.now === undefined ? {} : { now: input.now }),
+          });
         });
-        applied += outcome.pullRequests.length;
       }
-    });
+      await db
+        .update(schema.githubRepositorySync)
+        .set({ pullRequestsBackfilledAt: backfilledAt })
+        .where(eq(schema.githubRepositorySync.id, repository.id));
+    } catch (error) {
+      console.error(`Could not backfill ${repository.repositoryName}.`, error);
+    }
   }
-  return applied;
 }
 
 export function repositoriesAreStale(

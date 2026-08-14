@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import * as realtimeReact from '@orbit/realtime-client/react';
+import type { ReactNode } from 'react';
 import type { PullRequestRow } from '@/features/pulls/data.ts';
+import { PULL_REFRESH_INTERVAL_MS } from '@/features/pulls/use-pull-refresh.ts';
 import { render, screen, within } from '@/test/render.tsx';
 
 const refresh = mock(() => undefined);
+const providerMount = mock(({ children }: { readonly children: ReactNode }) => children);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh, prefetch: mock() }),
@@ -14,11 +17,13 @@ mock.module('next/navigation', () => ({
 
 mock.module('@orbit/realtime-client/react', () => ({
   ...realtimeReact,
+  RealtimeProvider: providerMount,
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
 }));
 
 const { PullsView } = await import('@/features/pulls/pulls-view.tsx');
+const { PullsRealtime } = await import('@/features/pulls/pulls-realtime.tsx');
 
 const pull: PullRequestRow = {
   id: 'link_1',
@@ -46,9 +51,29 @@ const pull: PullRequestRow = {
 
 beforeEach(() => {
   refresh.mockClear();
+  providerMount.mockClear();
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe('PullsView', () => {
+  it('uses the workspace realtime connection instead of opening another socket', () => {
+    render(
+      <PullsRealtime
+        pulls={[pull]}
+        userId="user_1"
+        reach="connected"
+        canManageIntegrations
+        currentPage={1}
+        hasMore={false}
+      />,
+    );
+
+    expect(providerMount).not.toHaveBeenCalled();
+  });
+
   it('links the issue behind each pull request, identifier and title together', () => {
     render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
 
@@ -93,6 +118,25 @@ describe('PullsView', () => {
     window.dispatchEvent(new Event('focus'));
 
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes visible tabs on the interval and leaves hidden tabs alone', () => {
+    jest.useFakeTimers();
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    render(<PullsView pulls={[pull]} userId="user_1" reach="connected" canManageIntegrations />);
+
+    jest.advanceTimersByTime(PULL_REFRESH_INTERVAL_MS);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    jest.advanceTimersByTime(PULL_REFRESH_INTERVAL_MS);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    Object.defineProperty(
+      document,
+      'visibilityState',
+      visibility ?? { configurable: true, value: 'visible' },
+    );
   });
 
   it('provides explicit navigation when more pull requests exist', () => {

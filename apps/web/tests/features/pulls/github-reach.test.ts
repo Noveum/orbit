@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   addMember,
   createWorkspace,
@@ -8,7 +9,8 @@ import {
 } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { githubReach, loadPullRequests } from '../../../src/features/pulls/data.ts';
+import { githubReach, loadPullRequests } from '@/features/pulls/data.ts';
+import { refreshPullRequestHistory } from '@/features/pulls/github-refresh.ts';
 
 let workspace: Workspace;
 
@@ -291,5 +293,70 @@ describe('loadPullRequests', () => {
       );
 
     expect(await loadPullRequests(workspace.admin)).toHaveLength(0);
+  });
+});
+
+describe('refreshPullRequestHistory', () => {
+  it('lets only one concurrent request fetch GitHub history', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    const pullRequestId = await mirroredPull(integrationId, repositoryId, 53);
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    let tokenCalls = 0;
+    let historyCalls = 0;
+    const fetchHistory = ((input: string) => {
+      const url = String(input);
+      if (url.includes('/access_tokens')) {
+        tokenCalls += 1;
+        return Promise.resolve(
+          new Response(JSON.stringify({ token: 'ghs_history' }), { status: 201 }),
+        );
+      }
+      historyCalls += 1;
+      return Promise.resolve(new Response('[]', { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await Promise.all([
+      refreshPullRequestHistory({
+        principal: workspace.admin,
+        pullRequestId,
+        config: {
+          slug: 'orbit-test',
+          appId: '123',
+          privateKey,
+          clientId: 'client',
+          clientSecret: 'secret',
+        },
+        fetch: fetchHistory,
+      }),
+      refreshPullRequestHistory({
+        principal: workspace.admin,
+        pullRequestId,
+        config: {
+          slug: 'orbit-test',
+          appId: '123',
+          privateKey,
+          clientId: 'client',
+          clientSecret: 'secret',
+        },
+        fetch: fetchHistory,
+      }),
+    ]);
+
+    expect(tokenCalls).toBe(1);
+    expect(historyCalls).toBe(3);
+    const [pull] = await db
+      .select({
+        historySyncedAt: schema.githubPullRequest.historySyncedAt,
+        historyRefreshClaimedAt: schema.githubPullRequest.historyRefreshClaimedAt,
+      })
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.id, pullRequestId));
+    expect(pull?.historySyncedAt).not.toBeNull();
+    expect(pull?.historyRefreshClaimedAt).toBeNull();
   });
 });

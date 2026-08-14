@@ -21,6 +21,7 @@ import {
   scopes,
   unique,
 } from '@orbit/shared';
+import { isInOrganization, isInTeam, type Principal, policyRole } from '@orbit/shared/policy';
 import { declaredIssueIdentifiers, randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, getTableColumns, inArray, lte, or, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
@@ -345,12 +346,12 @@ function mirroredReviewDecision(
 }
 
 function mirroredState(
-  stale: boolean,
+  retainSnapshot: boolean,
   existing: GithubPullRequestRow | undefined,
   pr: NonNullable<NormalizedGithubEvent['pullRequest']>,
   reviewDecision: string | null,
 ): string {
-  if (stale) return existing?.state ?? 'open';
+  if (retainSnapshot) return existing?.state ?? 'open';
   const review =
     reviewDecision === 'approved' || reviewDecision === 'changes_requested' ? reviewDecision : null;
   return pullRequestState({
@@ -381,11 +382,11 @@ async function upsertMirroredPullRequest(
     .limit(1);
   const occurredAt = eventDate(event.activity.occurredAt ?? pr.updatedAt, now);
   const stale = existing !== undefined && occurredAt.getTime() < existing.lastEventAt.getTime();
-  const reviewDecision = mirroredReviewDecision(event, existing, stale);
-  const state = mirroredState(stale, existing, pr, reviewDecision);
   const completeSnapshot =
     pr.externalId.length > 0 || pr.nodeId.length > 0 || pr.headRef.length > 0;
   const retainSnapshot = stale || !completeSnapshot;
+  const reviewDecision = mirroredReviewDecision(event, existing, stale);
+  const state = mirroredState(retainSnapshot, existing, pr, reviewDecision);
   let authorLogin = existing?.authorLogin ?? '';
   let authorId = existing?.authorId ?? '';
   if (pr.author !== null) {
@@ -396,10 +397,10 @@ async function upsertMirroredPullRequest(
     repositoryId: event.repository.externalId,
     repositoryName: repo.repositoryName,
     number: pr.number,
-    nodeId: latestText(stale, existing?.nodeId, pr.nodeId),
-    title: latestText(stale, existing?.title, pr.title),
+    nodeId: latestText(retainSnapshot, existing?.nodeId, pr.nodeId),
+    title: latestText(retainSnapshot, existing?.title, pr.title),
     body: retainedValue(retainSnapshot, existing?.body, pr.body),
-    url: latestText(stale, existing?.url, pr.url),
+    url: latestText(retainSnapshot, existing?.url, pr.url),
     headRef: retainedValue(retainSnapshot, existing?.headRef, pr.headRef),
     headSha: retainedValue(retainSnapshot, existing?.headSha, pr.headSha),
     baseRef: retainedValue(retainSnapshot, existing?.baseRef, pr.baseRef),
@@ -427,9 +428,18 @@ async function upsertMirroredPullRequest(
     .onConflictDoUpdate({
       target: [githubPullRequest.repositorySyncId, githubPullRequest.number],
       set: values,
+      setWhere: lte(githubPullRequest.lastEventAt, occurredAt),
     })
     .returning();
-  return row ?? null;
+  if (row !== undefined) return row;
+  const [current] = await database
+    .select()
+    .from(githubPullRequest)
+    .where(
+      and(eq(githubPullRequest.repositorySyncId, repo.id), eq(githubPullRequest.number, pr.number)),
+    )
+    .limit(1);
+  return current ?? null;
 }
 
 async function upsertPullRequestActivity(
@@ -524,8 +534,13 @@ function rolledUpCheckStatus(entries: readonly CheckStatusEntry[]): string | nul
   return 'success';
 }
 
+interface PersistedHistoryEntry extends CheckStatusEntry {
+  readonly actorId: string;
+  readonly actorLogin: string;
+}
+
 function historyReviewDecision(
-  entries: readonly GithubPullRequestHistoryEntry[],
+  entries: readonly PersistedHistoryEntry[],
   current: string | null,
 ): string | null {
   const decisions = entries
@@ -534,12 +549,12 @@ function historyReviewDecision(
         entry.type === 'review' &&
         ['approved', 'changes_requested', 'dismissed'].includes(entry.state.toLowerCase()),
     )
-    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+    .sort((left, right) => checkOccurredAt(left) - checkOccurredAt(right));
   if (decisions.length === 0) return current;
 
   const byReviewer = new Map<string, string>();
   for (const entry of decisions) {
-    const reviewer = entry.actor.id > 0 ? `id:${entry.actor.id}` : `login:${entry.actor.login}`;
+    const reviewer = entry.actorId === '0' ? `login:${entry.actorLogin}` : `id:${entry.actorId}`;
     const decision = entry.state.toLowerCase();
     if (decision === 'dismissed') byReviewer.delete(reviewer);
     else byReviewer.set(reviewer, decision);
@@ -600,10 +615,29 @@ export async function upsertGithubPullRequestHistory(
       .onConflictDoUpdate({
         target: [githubPullRequestActivity.pullRequestId, githubPullRequestActivity.externalId],
         set: values,
+        setWhere: lte(githubPullRequestActivity.occurredAt, occurredAt),
       });
   }
 
-  const reviewDecision = historyReviewDecision(input.entries, pull.reviewDecision);
+  const persistedHistory = await database
+    .select({
+      externalId: githubPullRequestActivity.externalId,
+      type: githubPullRequestActivity.type,
+      actorLogin: githubPullRequestActivity.actorLogin,
+      actorId: githubPullRequestActivity.actorId,
+      body: githubPullRequestActivity.body,
+      state: githubPullRequestActivity.state,
+      occurredAt: githubPullRequestActivity.occurredAt,
+    })
+    .from(githubPullRequestActivity)
+    .where(
+      and(
+        eq(githubPullRequestActivity.pullRequestId, pull.id),
+        inArray(githubPullRequestActivity.type, ['review', 'checks']),
+      ),
+    )
+    .orderBy(asc(githubPullRequestActivity.occurredAt));
+  const reviewDecision = historyReviewDecision(persistedHistory, pull.reviewDecision);
   let state = pull.state;
   if (!(pull.merged || pull.state === 'closed' || pull.draft)) {
     state =
@@ -616,8 +650,9 @@ export async function upsertGithubPullRequestHistory(
     .set({
       state,
       reviewDecision,
-      checkStatus: rolledUpCheckStatus(input.entries) ?? pull.checkStatus,
+      checkStatus: rolledUpCheckStatus(persistedHistory) ?? pull.checkStatus,
       historySyncedAt: now,
+      historyRefreshClaimedAt: null,
       syncId: nextSyncId,
       updatedAt: now,
     })
@@ -678,7 +713,16 @@ function notificationOnlyIssueOutcome(context: ApplyToIssueContext): IssueOutcom
   if (event.comment !== null && event.pullRequest !== null) {
     const notificationEvents =
       event.action === 'created'
-        ? [commentNotification({ linked, event, actor, repo, audienceUserIds })]
+        ? [
+            commentNotification({
+              linked,
+              pullRequest: event.pullRequest,
+              comment: event.comment,
+              actor,
+              repo,
+              audienceUserIds,
+            }),
+          ]
         : [];
     return { actions: [], notificationEvents, gitLink: null };
   }
@@ -1074,17 +1118,13 @@ function checksNotification(context: {
 
 function commentNotification(context: {
   readonly linked: LinkedIssue;
-  readonly event: NormalizedGithubEvent;
+  readonly pullRequest: NonNullable<NormalizedGithubEvent['pullRequest']>;
+  readonly comment: NonNullable<NormalizedGithubEvent['comment']>;
   readonly actor: Actor;
   readonly repo: RepositorySync;
   readonly audienceUserIds: readonly string[];
 }): NotificationEvent {
-  const { linked, event, actor, repo, audienceUserIds } = context;
-  const pr = event.pullRequest;
-  const comment = event.comment;
-  if (pr === null || comment === null) {
-    throw new Error('A GitHub comment notification requires a pull request comment.');
-  }
+  const { linked, pullRequest, comment, actor, repo, audienceUserIds } = context;
   return {
     organizationId: repo.organizationId,
     type: 'pr_comment',
@@ -1095,8 +1135,8 @@ function commentNotification(context: {
     userIds: [...audienceUserIds],
     title:
       comment.kind === 'inline'
-        ? `New inline comment on ${pr.title}`
-        : `New comment on ${pr.title}`,
+        ? `New inline comment on ${pullRequest.title}`
+        : `New comment on ${pullRequest.title}`,
     body: comment.body,
     url: `/issue/${linked.identifier}`,
     externalUrl: comment.url,
@@ -1145,10 +1185,17 @@ async function authorizedAudiences(
   return new Map(
     issues.map((linked) => [
       linked.id,
-      audienceIds(linked, extra).filter(
-        (userId) =>
-          roles.get(userId) === 'admin' || teamsByUser.get(userId)?.has(linked.teamId) === true,
-      ),
+      audienceIds(linked, extra).filter((userId) => {
+        const role = roles.get(userId);
+        if (role === undefined) return false;
+        const principal: Principal = {
+          userId,
+          organizationId,
+          role: policyRole(role),
+          teamIds: [...(teamsByUser.get(userId) ?? [])],
+        };
+        return isInTeam(principal, { id: linked.teamId, organizationId });
+      }),
     ]),
   );
 }
@@ -1160,10 +1207,20 @@ async function authorizedWorkspaceUsers(
 ): Promise<string[]> {
   if (userIds.length === 0) return [];
   const rows = await database
-    .select({ userId: member.userId })
+    .select({ userId: member.userId, role: member.role })
     .from(member)
     .where(and(eq(member.organizationId, organizationId), inArray(member.userId, [...userIds])));
-  return unique(rows.map((row) => row.userId));
+  return unique(
+    rows.flatMap((row) => {
+      const principal: Principal = {
+        userId: row.userId,
+        organizationId,
+        role: policyRole(row.role),
+        teamIds: [],
+      };
+      return isInOrganization(principal, organizationId) ? [row.userId] : [];
+    }),
+  );
 }
 
 async function identifiersFromGitLinks(

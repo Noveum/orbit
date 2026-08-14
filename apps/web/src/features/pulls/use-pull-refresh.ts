@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
-const PULL_REFRESH_INTERVAL_MS = 30_000;
+export const PULL_REFRESH_INTERVAL_MS = 30_000;
 
 export function usePullRefresh(): void {
   const router = useRouter();

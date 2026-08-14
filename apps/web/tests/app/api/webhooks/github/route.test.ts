@@ -42,6 +42,7 @@ const bodySchema = z.union([
   z.object({ ok: z.literal(true), actions: z.number() }),
   z.object({ ok: z.literal(true), handled: z.boolean() }),
   z.object({ status: z.literal('duplicate') }),
+  z.object({ status: z.literal('in_progress') }),
   z.object({ status: z.literal('unhandled'), event: z.string() }),
   z.object({ error: z.string() }),
 ]);
@@ -249,28 +250,53 @@ describe('POST /api/webhooks/github', () => {
     ]);
     const payloads = await Promise.all(responses.map((response) => response.json()));
 
-    expect(payloads.filter((payload) => payload.status === 'duplicate')).toHaveLength(1);
+    expect(
+      payloads.filter(
+        (payload) => payload.status === 'duplicate' || payload.status === 'in_progress',
+      ),
+    ).toHaveLength(1);
     expect(payloads.filter((payload) => payload.ok === true)).toHaveLength(1);
     expect((await deliveryRow('delivery-concurrent'))?.status).toBe('processed');
     expect(await linkCount()).toBe(1);
   });
 
   it('reclaims a delivery left processing by a worker that stopped', async () => {
+    const receivedAt = new Date(Date.now() - 10 * 60 * 1000);
     await db.insert(schema.webhookDelivery).values({
       id: randomUUIDv7(),
       provider: 'github',
       deliveryId: 'delivery-abandoned',
       event: 'pull_request',
       status: 'processing',
-      createdAt: new Date(Date.now() - 16 * 60 * 1000),
+      claimedAt: new Date(Date.now() - 2 * 60 * 1000),
+      createdAt: receivedAt,
     });
 
     const response = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-abandoned'));
 
     expect(response.status).toBe(200);
     expect(bodySchema.parse(await response.json())).not.toEqual({ status: 'duplicate' });
-    expect((await deliveryRow('delivery-abandoned'))?.status).toBe('processed');
+    const delivery = await deliveryRow('delivery-abandoned');
+    expect(delivery?.status).toBe('processed');
+    expect(delivery?.createdAt.getTime()).toBe(receivedAt.getTime());
     expect(await linkCount()).toBe(1);
+  });
+
+  it('answers an active claim with a retryable response', async () => {
+    await db.insert(schema.webhookDelivery).values({
+      id: randomUUIDv7(),
+      provider: 'github',
+      deliveryId: 'delivery-active',
+      event: 'pull_request',
+      status: 'processing',
+      claimedAt: new Date(),
+    });
+
+    const response = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-active'));
+
+    expect(response.status).toBe(409);
+    expect(bodySchema.parse(await response.json())).toEqual({ status: 'in_progress' });
+    expect(await linkCount()).toBe(0);
   });
 
   it('retries a delivery that previously failed instead of calling it a duplicate', async () => {

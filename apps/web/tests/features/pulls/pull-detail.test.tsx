@@ -71,7 +71,7 @@ describe('PullDetail', () => {
     );
   });
 
-  it('renders sanitized GitHub Markdown for the description and activity', () => {
+  it('renders the sanitized GitHub Markdown produced by the data layer', () => {
     render(<PullDetail pull={pull} />);
 
     expect(screen.getByText('reviews')).toHaveRole('strong');

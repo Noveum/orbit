@@ -308,7 +308,7 @@ export interface NormalizedGithubEvent {
 
 function normalizePullRequest(pr: z.infer<typeof pullRequestSchema>): NormalizedPullRequest {
   return {
-    externalId: String(pr.id),
+    externalId: pr.id === 0 ? '' : String(pr.id),
     nodeId: pr.node_id,
     number: pr.number,
     title: pr.title,

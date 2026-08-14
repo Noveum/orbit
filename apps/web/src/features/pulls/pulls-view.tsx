@@ -17,6 +17,8 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
+import { cn } from '@/lib/cn.ts';
+import { rowHover, tabHover } from '@/lib/interaction.ts';
 import type { GithubReach, PullRequestRow } from './data.ts';
 import { PR_GROUP_ORDER, prStateLabel, prStateTone } from './pr-state.ts';
 import { usePullRefresh } from './use-pull-refresh.ts';
@@ -169,12 +171,17 @@ export function PullsView({
               <ul className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
                 {group.rows.map((pull) => (
                   <li key={pull.id}>
-                    <div className="flex items-center gap-3 border-border border-b px-3 py-2.5 last:border-b-0 hover:bg-surface-2">
+                    <div
+                      className={cn(
+                        'flex items-center gap-3 border-border border-b px-3 py-2.5 last:border-b-0',
+                        rowHover,
+                      )}
+                    >
                       <GitPullRequest className="size-4 shrink-0 text-faint" aria-hidden="true" />
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <Link
                           href={`/pulls/${pull.id}`}
-                          className="truncate rounded-sm text-dense text-text hover:text-accent"
+                          className={cn('truncate rounded-sm text-dense text-text', tabHover)}
                         >
                           {pull.title}
                         </Link>
@@ -204,7 +211,10 @@ export function PullsView({
                                 <IssueLink
                                   identifier={linked.identifier}
                                   testId={`pull-issue-${linked.identifier}`}
-                                  className="flex min-w-0 items-center gap-1 rounded-sm hover:text-accent"
+                                  className={cn(
+                                    'flex min-w-0 items-center gap-1 rounded-sm',
+                                    tabHover,
+                                  )}
                                 >
                                   <span className="shrink-0">{linked.identifier}</span>
                                   <span className="max-w-56 truncate">{linked.title}</span>
@@ -212,7 +222,7 @@ export function PullsView({
                                 {linked.project === null ? null : (
                                   <Link
                                     href={`/projects/${linked.project.slug}`}
-                                    className="rounded-sm text-accent hover:underline"
+                                    className="rounded-sm text-accent underline-offset-2 hover:underline"
                                   >
                                     {linked.project.name}
                                   </Link>
@@ -245,7 +255,7 @@ export function PullsView({
                         target="_blank"
                         rel="noreferrer"
                         aria-label="Open on GitHub"
-                        className="rounded-sm p-1 text-faint hover:bg-surface-3 hover:text-text"
+                        className={cn('rounded-sm p-1 text-faint', rowHover, tabHover)}
                       >
                         <ExternalLink className="size-3.5" aria-hidden="true" />
                       </a>

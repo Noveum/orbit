@@ -1,6 +1,6 @@
-import { and, count, db, desc, eq, exists, inArray, or, schema } from '@orbit/db';
+import { and, count, db, desc, eq, inArray, or, schema } from '@orbit/db';
 import { renderMarkdown } from '@orbit/services/markdown';
-import type { Principal } from '@orbit/shared/policy';
+import { isInTeam, type Principal, policyRole } from '@orbit/shared/policy';
 
 export interface PullRequestIssueContext {
   readonly identifier: string;
@@ -66,6 +66,38 @@ export type GithubReach =
   | 'repositories_untracked'
   | 'connected';
 
+async function currentPrincipal(principal: Principal): Promise<Principal | null> {
+  const [[membership], teamRows] = await Promise.all([
+    db
+      .select({ role: schema.member.role })
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, principal.organizationId),
+          eq(schema.member.userId, principal.userId),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ teamId: schema.teamMember.teamId })
+      .from(schema.teamMember)
+      .innerJoin(schema.team, eq(schema.team.id, schema.teamMember.teamId))
+      .where(
+        and(
+          eq(schema.team.organizationId, principal.organizationId),
+          eq(schema.teamMember.userId, principal.userId),
+        ),
+      ),
+  ]);
+  if (membership === undefined) return null;
+  return {
+    userId: principal.userId,
+    organizationId: principal.organizationId,
+    role: policyRole(membership.role),
+    teamIds: teamRows.map((row) => row.teamId),
+  };
+}
+
 async function reachableButUntracked(
   organizationId: string,
   watched: ReadonlySet<string>,
@@ -130,17 +162,8 @@ export async function loadPullRequestPage(
   principal: Principal,
   page: number,
 ): Promise<PullRequestPage> {
-  const [membership] = await db
-    .select({ role: schema.member.role })
-    .from(schema.member)
-    .where(
-      and(
-        eq(schema.member.organizationId, principal.organizationId),
-        eq(schema.member.userId, principal.userId),
-      ),
-    )
-    .limit(1);
-  if (membership === undefined) return { pulls: [], hasMore: false };
+  const livePrincipal = await currentPrincipal(principal);
+  if (livePrincipal === null) return { pulls: [], hasMore: false };
 
   const currentPage = Math.max(1, page);
 
@@ -181,6 +204,7 @@ export async function loadPullRequestPage(
         repository: schema.gitLink.repository,
         number: schema.gitLink.number,
         pullRequestId: schema.gitLink.pullRequestId,
+        teamId: schema.issue.teamId,
         identifier: schema.issue.identifier,
         title: schema.issue.title,
         projectId: schema.project.id,
@@ -201,19 +225,6 @@ export async function loadPullRequestPage(
             ),
             ...visibleLegacyLinks,
           ),
-          membership.role === 'admin'
-            ? undefined
-            : exists(
-                db
-                  .select({ id: schema.teamMember.id })
-                  .from(schema.teamMember)
-                  .where(
-                    and(
-                      eq(schema.teamMember.teamId, schema.issue.teamId),
-                      eq(schema.teamMember.userId, principal.userId),
-                    ),
-                  ),
-              ),
         ),
       ),
     db
@@ -234,6 +245,14 @@ export async function loadPullRequestPage(
   const contextsByPull = new Map<string, PullRequestIssueContext[]>();
   for (const context of contexts) {
     if (context.number === null) continue;
+    if (
+      !isInTeam(livePrincipal, {
+        id: context.teamId,
+        organizationId: principal.organizationId,
+      })
+    ) {
+      continue;
+    }
     const key = context.pullRequestId ?? `${context.repository.toLowerCase()}#${context.number}`;
     contextsByPull.set(key, [
       ...(contextsByPull.get(key) ?? []),
@@ -282,17 +301,8 @@ export async function loadPullRequestDetail(
   principal: Principal,
   id: string,
 ): Promise<PullRequestDetail | null> {
-  const [membership] = await db
-    .select({ role: schema.member.role })
-    .from(schema.member)
-    .where(
-      and(
-        eq(schema.member.organizationId, principal.organizationId),
-        eq(schema.member.userId, principal.userId),
-      ),
-    )
-    .limit(1);
-  if (membership === undefined) return null;
+  const livePrincipal = await currentPrincipal(principal);
+  if (livePrincipal === null) return null;
 
   const [pull] = await db
     .select()
@@ -309,6 +319,7 @@ export async function loadPullRequestDetail(
   const [contexts, activities, activityTotals] = await Promise.all([
     db
       .select({
+        teamId: schema.issue.teamId,
         identifier: schema.issue.identifier,
         title: schema.issue.title,
         projectId: schema.project.id,
@@ -329,19 +340,6 @@ export async function loadPullRequestDetail(
               eq(schema.gitLink.number, pull.number),
             ),
           ),
-          membership.role === 'admin'
-            ? undefined
-            : exists(
-                db
-                  .select({ id: schema.teamMember.id })
-                  .from(schema.teamMember)
-                  .where(
-                    and(
-                      eq(schema.teamMember.teamId, schema.issue.teamId),
-                      eq(schema.teamMember.userId, principal.userId),
-                    ),
-                  ),
-              ),
         ),
       ),
     db
@@ -373,14 +371,28 @@ export async function loadPullRequestDetail(
     reviewDecision: pull.reviewDecision,
     checkStatus: pull.checkStatus,
     activityCount: activityTotals[0]?.value ?? 0,
-    linkedIssues: contexts.map((context) => ({
-      identifier: context.identifier,
-      title: context.title,
-      project:
-        context.projectId === null || context.projectName === null || context.projectSlug === null
-          ? null
-          : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
-    })),
+    linkedIssues: contexts.flatMap((context) => {
+      if (
+        !isInTeam(livePrincipal, {
+          id: context.teamId,
+          organizationId: principal.organizationId,
+        })
+      ) {
+        return [];
+      }
+      return [
+        {
+          identifier: context.identifier,
+          title: context.title,
+          project:
+            context.projectId === null ||
+            context.projectName === null ||
+            context.projectSlug === null
+              ? null
+              : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
+        },
+      ];
+    }),
     updatedAt: pull.updatedAt.toISOString(),
     activities: activities.map((activity) => ({
       id: activity.id,

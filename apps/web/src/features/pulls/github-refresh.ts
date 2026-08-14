@@ -1,9 +1,10 @@
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, isNull, lt, or, schema } from '@orbit/db';
 import { fetchGithubPullRequestHistory, upsertGithubPullRequestHistory } from '@orbit/services';
 import type { Principal } from '@orbit/shared/policy';
 import type { GithubAppConfig } from '@/lib/env.ts';
 
 export const GITHUB_HISTORY_REFRESH_MS = 5 * 60_000;
+export const GITHUB_HISTORY_REFRESH_LEASE_MS = 2 * 60_000;
 
 export async function refreshPullRequestHistory(input: {
   readonly principal: Principal;
@@ -61,20 +62,60 @@ export async function refreshPullRequestHistory(input: {
     return 0;
   }
 
-  const history = await fetchGithubPullRequestHistory({
-    appId: input.config.appId,
-    privateKey: input.config.privateKey,
-    installationId: pull.installationId,
-    repository: pull.repository,
-    number: pull.number,
-    headSha: pull.headSha,
-    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
-  });
-  return await db.transaction(async (tx) =>
-    upsertGithubPullRequestHistory(tx, {
-      organizationId: input.principal.organizationId,
-      pullRequestId: pull.id,
-      entries: history,
-    }),
-  );
+  const claimedAt = new Date();
+  const claimed = await db
+    .update(schema.githubPullRequest)
+    .set({ historyRefreshClaimedAt: claimedAt })
+    .where(
+      and(
+        eq(schema.githubPullRequest.id, pull.id),
+        eq(schema.githubPullRequest.organizationId, input.principal.organizationId),
+        or(
+          isNull(schema.githubPullRequest.historySyncedAt),
+          lt(
+            schema.githubPullRequest.historySyncedAt,
+            new Date(claimedAt.getTime() - GITHUB_HISTORY_REFRESH_MS),
+          ),
+        ),
+        or(
+          isNull(schema.githubPullRequest.historyRefreshClaimedAt),
+          lt(
+            schema.githubPullRequest.historyRefreshClaimedAt,
+            new Date(claimedAt.getTime() - GITHUB_HISTORY_REFRESH_LEASE_MS),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: schema.githubPullRequest.id });
+  if (claimed.length === 0) return 0;
+
+  try {
+    const history = await fetchGithubPullRequestHistory({
+      appId: input.config.appId,
+      privateKey: input.config.privateKey,
+      installationId: pull.installationId,
+      repository: pull.repository,
+      number: pull.number,
+      headSha: pull.headSha,
+      ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+    });
+    return await db.transaction(async (tx) =>
+      upsertGithubPullRequestHistory(tx, {
+        organizationId: input.principal.organizationId,
+        pullRequestId: pull.id,
+        entries: history,
+      }),
+    );
+  } catch (error) {
+    await db
+      .update(schema.githubPullRequest)
+      .set({ historyRefreshClaimedAt: null })
+      .where(
+        and(
+          eq(schema.githubPullRequest.id, pull.id),
+          eq(schema.githubPullRequest.historyRefreshClaimedAt, claimedAt),
+        ),
+      );
+    throw error;
+  }
 }

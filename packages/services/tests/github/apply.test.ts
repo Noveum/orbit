@@ -951,6 +951,79 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps persisted review and check rollups when a later history page omits them', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'review:41',
+            type: 'review',
+            actor: { login: 'grace', id: 2 },
+            body: 'Please fix this.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-41',
+            state: 'changes_requested',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T03:00:00.000Z',
+          },
+          {
+            externalId: 'check_run:41:completed:failure',
+            type: 'checks',
+            actor: { login: 'github-actions', id: 0 },
+            body: 'verify',
+            url: 'https://github.com/acme/web/actions/runs/41',
+            state: 'failure',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T03:00:00.000Z',
+          },
+        ],
+      });
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'review:42',
+            type: 'review',
+            actor: { login: 'ada', id: 1 },
+            body: 'Approved.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-42',
+            state: 'approved',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T04:00:00.000Z',
+          },
+          {
+            externalId: 'check_run:42:completed:success',
+            type: 'checks',
+            actor: { login: 'github-actions', id: 0 },
+            body: 'lint',
+            url: 'https://github.com/acme/web/actions/runs/42',
+            state: 'success',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T04:00:00.000Z',
+          },
+        ],
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.reviewDecision).toBe('changes_requested');
+      expect(pull?.checkStatus).toBe('failure');
+    });
+  });
+
   it('records a late review event without letting it replace a newer decision', async () => {
     await withRollback(async (tx) => {
       await seed(tx);
@@ -1063,6 +1136,58 @@ describe('applyGithubEvent', () => {
       expect(link?.state).toBe('merged');
       expect(link?.url).toBe('https://github.com/acme/web/pull/7');
       expect(late.notificationEvents).toHaveLength(0);
+    });
+  });
+
+  it('does not let a newer abbreviated comment snapshot reopen a merged pull request', async () => {
+    await withRollback(async (tx) => {
+      await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyGithubEvent(tx, {
+        eventName: 'pull_request',
+        body: {
+          action: 'closed',
+          pull_request: {
+            id: 7007,
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            merged: true,
+            state: 'closed',
+            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            base: { ref: 'main' },
+            updated_at: '2026-08-13T05:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'octocat', id: 500 },
+        },
+      });
+
+      await applyGithubEvent(tx, {
+        eventName: 'issue_comment',
+        body: {
+          action: 'created',
+          issue: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+          },
+          comment: {
+            id: 91,
+            body: 'Merged cleanly.',
+            html_url: 'https://github.com/acme/web/pull/7#issuecomment-91',
+            created_at: '2026-08-13T06:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'reviewer', id: 901 },
+        },
+      });
+
+      const [pull] = await tx.select().from(githubPullRequest);
+      expect(pull?.state).toBe('merged');
+      expect(pull?.merged).toBe(true);
+      expect(pull?.headSha).toBe('abc123');
     });
   });
 

@@ -35,6 +35,7 @@ import { DocSurface } from '@/features/docs/doc-surface.tsx';
 import { IssueDetailView } from '@/features/issues/issue-detail.tsx';
 import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
+import { rowHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
@@ -99,7 +100,7 @@ const notificationDeltaSchema = z.object({
   body: z.string(),
   bodyHtml: z.string().default(''),
   url: z.string(),
-  externalUrl: z.string().nullable().default(null),
+  externalUrl: z.httpUrl().max(2048).nullable().default(null),
   readAt: z.string().nullable(),
   snoozedUntil: z.string().nullable(),
   createdAt: z.string(),
@@ -123,7 +124,7 @@ const inboxPageSchema = z.object({
       body: z.string(),
       bodyHtml: z.string().default(''),
       url: z.string(),
-      externalUrl: z.string().nullable().default(null),
+      externalUrl: z.httpUrl().max(2048).nullable().default(null),
       read: z.boolean(),
       snoozedUntil: z.string().nullable(),
       createdAt: z.string(),
@@ -264,8 +265,8 @@ function NotificationRow({
         aria-current={current ? 'true' : undefined}
         className={cn(
           'flex w-full items-start gap-2.5 border-border border-b px-3 py-2.5 text-left',
-          'transition-colors duration-[var(--duration-fast)]',
-          current ? 'bg-accent-soft/70' : 'hover:bg-surface-2',
+          rowHover,
+          current ? 'bg-accent-soft/70' : null,
         )}
       >
         <span

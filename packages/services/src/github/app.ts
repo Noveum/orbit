@@ -419,7 +419,7 @@ export async function fetchGithubOpenPullRequests(
     );
     collected.push(
       ...body.map((pullRequest) => ({
-        externalId: String(pullRequest.id),
+        externalId: pullRequest.id === 0 ? '' : String(pullRequest.id),
         nodeId: pullRequest.node_id,
         number: pullRequest.number,
         title: pullRequest.title,
