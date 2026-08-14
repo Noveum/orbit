@@ -36,6 +36,7 @@ function item(id: string, overrides: Partial<InboxItem> = {}): InboxItem {
     actorName: 'Ada',
     title: `Notification ${id}`,
     body: '',
+    bodyHtml: '',
     url: '/issue/ENG-3',
     externalUrl: null,
     read: true,

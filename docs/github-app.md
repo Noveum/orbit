@@ -57,6 +57,7 @@ GET  /repos/{owner}/{repo}/issues/{n}/comments backfill PR conversation comments
 GET  /repos/{owner}/{repo}/pulls/{n}/reviews  backfill submitted reviews
 GET  /repos/{owner}/{repo}/pulls/{n}/comments backfill inline review comments
 GET  /repos/{owner}/{repo}/commits/{sha}/check-runs backfill current checks
+GET  /repos/{owner}/{repo}/commits/{sha}/statuses backfill commit statuses
 ```
 
 The App JWT covers installation discovery and token minting. Repository reads
@@ -81,9 +82,6 @@ state and append normalized lifecycle, review, comment, review thread and check
 records to `github_pull_request_activity`. Opening a pull request in Orbit also
 backfills the comment, review and check history from GitHub so a missed webhook
 does not leave the activity view permanently incomplete.
-
-An Orbit task link is optional context on that mirror. Matching is by issue
-identifier, and the repository's project association plays no part in it.
 
 Matching is by issue identifier, and the repository's project association plays
 no part in it. `applyGithubEvent` looks the repository up in the watch list,

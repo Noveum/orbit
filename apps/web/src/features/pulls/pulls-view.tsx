@@ -146,7 +146,7 @@ export function PullsView({
   const groups = groupPulls(pulls);
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col bg-surface">
       <header className="flex items-center justify-between gap-3 border-border border-b px-5 py-3">
         <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
           Pull requests
@@ -166,7 +166,7 @@ export function PullsView({
                 {prStateLabel(group.state)}
                 <span className="text-faint">{group.rows.length}</span>
               </h2>
-              <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
+              <ul className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
                 {group.rows.map((pull) => (
                   <li key={pull.id}>
                     <div className="flex items-center gap-3 border-border border-b px-3 py-2.5 last:border-b-0 hover:bg-surface-2">

@@ -517,8 +517,108 @@ describe('applyGithubEvent', () => {
         .select()
         .from(githubPullRequest)
         .where(eq(githubPullRequest.organizationId, fixture.organizationId));
-      expect(passingPull?.checkStatus).toBe('success');
+      expect(passingPull?.checkStatus).toBe('failure');
+
+      await applyGithubEvent(tx, {
+        eventName: 'check_suite',
+        body: {
+          action: 'completed',
+          check_suite: {
+            conclusion: 'success',
+            head_branch: 'eng-3-dashboard',
+            pull_requests: [{ number: 7 }],
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+      const [recoveredPull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(recoveredPull?.checkStatus).toBe('success');
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Review');
+    });
+  });
+
+  it('rolls up concurrent checks and ignores an older retry result', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      const checkRun = (input: {
+        readonly id: number;
+        readonly name: string;
+        readonly conclusion: string;
+        readonly completedAt: string;
+      }) => ({
+        eventName: 'check_run',
+        body: {
+          action: 'completed',
+          check_run: {
+            id: input.id,
+            name: input.name,
+            status: 'completed',
+            conclusion: input.conclusion,
+            html_url: `https://github.com/acme/web/actions/runs/${input.id}`,
+            head_sha: 'abc123',
+            pull_requests: [{ number: 7 }],
+            check_suite: { head_branch: 'eng-3-dashboard' },
+            completed_at: input.completedAt,
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+
+      await applyGithubEvent(
+        tx,
+        checkRun({
+          id: 81,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
+      await applyGithubEvent(
+        tx,
+        checkRun({
+          id: 82,
+          name: 'lint',
+          conclusion: 'success',
+          completedAt: '2026-08-13T06:00:00.000Z',
+        }),
+      );
+
+      let [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.checkStatus).toBe('failure');
+
+      await applyGithubEvent(
+        tx,
+        checkRun({
+          id: 81,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T07:00:00.000Z',
+        }),
+      );
+      await applyGithubEvent(
+        tx,
+        checkRun({
+          id: 81,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
+
+      [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.checkStatus).toBe('success');
     });
   });
 
@@ -806,6 +906,51 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps an outstanding change request after another reviewer approves', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'review:31',
+            type: 'review',
+            actor: { login: 'grace', id: 2 },
+            body: 'Please fix this.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-31',
+            state: 'changes_requested',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T03:00:00.000Z',
+          },
+          {
+            externalId: 'review:32',
+            type: 'review',
+            actor: { login: 'ada', id: 1 },
+            body: 'Approved.',
+            url: 'https://github.com/acme/web/pull/7#pullrequestreview-32',
+            state: 'approved',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T04:00:00.000Z',
+          },
+        ],
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.reviewDecision).toBe('changes_requested');
+      expect(pull?.state).toBe('changes_requested');
+    });
+  });
+
   it('records a late review event without letting it replace a newer decision', async () => {
     await withRollback(async (tx) => {
       await seed(tx);
@@ -857,6 +1002,67 @@ describe('applyGithubEvent', () => {
       expect(pull?.state).toBe('approved');
       const activities = await tx.select().from(githubPullRequestActivity);
       expect(activities.filter((activity) => activity.type === 'review')).toHaveLength(2);
+    });
+  });
+
+  it('does not let a late review reopen a merged link or notify again', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyGithubEvent(tx, {
+        eventName: 'pull_request',
+        body: {
+          action: 'closed',
+          pull_request: {
+            id: 7007,
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            draft: false,
+            merged: true,
+            state: 'closed',
+            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+            updated_at: '2026-08-13T05:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'octocat', id: 500 },
+        },
+      });
+
+      const late = await applyGithubEvent(tx, {
+        eventName: 'pull_request_review',
+        body: {
+          action: 'submitted',
+          review: {
+            id: 30,
+            state: 'changes_requested',
+            submitted_at: '2026-08-13T03:00:00.000Z',
+            user: { login: 'rev', id: 900 },
+          },
+          pull_request: {
+            id: 7007,
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/legacy/pull/7',
+            draft: false,
+            merged: false,
+            state: 'open',
+            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+            updated_at: '2026-08-13T03:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'rev', id: 900 },
+        },
+      });
+
+      const [link] = await tx.select().from(gitLink).where(eq(gitLink.issueId, fixture.issueId));
+      expect(link?.state).toBe('merged');
+      expect(link?.url).toBe('https://github.com/acme/web/pull/7');
+      expect(late.notificationEvents).toHaveLength(0);
     });
   });
 

@@ -11,7 +11,10 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge.tsx';
+import { CommentBody } from '@/features/comments/comment-thread.tsx';
+import { DocBody } from '@/features/docs/doc-body.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
+import { cn } from '@/lib/cn.ts';
 import type { PullRequestActivityRow, PullRequestDetail } from './data.ts';
 import { prStateLabel, prStateTone } from './pr-state.ts';
 
@@ -24,21 +27,58 @@ function activityLabel(activity: PullRequestActivityRow): string {
   return activity.action.replaceAll('_', ' ');
 }
 
-function ActivityIcon({ type }: { readonly type: string }) {
-  if (type === 'comment' || type === 'review_comment') {
+function activityIconLabel(activity: PullRequestActivityRow): string {
+  if (activity.type === 'review') return `Review ${activity.state.replaceAll('_', ' ')}`;
+  if (activity.type === 'review_request') return 'Review requested';
+  if (activity.type === 'review_comment') return 'Review comment';
+  if (activity.type === 'comment') return 'Pull request comment';
+  if (activity.type === 'checks') return `Checks ${activity.state}`;
+  if (activity.type === 'pull_request') return 'Pull request update';
+  return 'Commit update';
+}
+
+function activityIconTone(activity: PullRequestActivityRow): string {
+  if (activity.type === 'checks' && activity.state === 'failure') {
+    return 'bg-danger-soft text-danger';
+  }
+  if (activity.type === 'checks' && activity.state === 'success') {
+    return 'bg-surface-2 text-success';
+  }
+  if (activity.type === 'review' && activity.state === 'approved') {
+    return 'bg-surface-2 text-success';
+  }
+  if (activity.type === 'review' && activity.state === 'changes_requested') {
+    return 'bg-surface-2 text-warning';
+  }
+  if (activity.type === 'comment' || activity.type === 'review_comment') {
+    return 'bg-accent-soft text-accent';
+  }
+  return 'bg-surface-2 text-muted';
+}
+
+function ActivityIcon({ activity }: { readonly activity: PullRequestActivityRow }) {
+  if (activity.type === 'comment' || activity.type === 'review_comment') {
     return <MessageSquareText className="size-4" aria-hidden="true" />;
   }
-  if (type === 'review' || type === 'review_request') {
+  if (activity.type === 'review' || activity.type === 'review_request') {
     return <UserRoundCheck className="size-4" aria-hidden="true" />;
   }
-  if (type === 'checks') return <CircleCheck className="size-4" aria-hidden="true" />;
-  if (type === 'pull_request') return <GitPullRequest className="size-4" aria-hidden="true" />;
+  if (activity.type === 'checks' && activity.state === 'failure') {
+    return <CircleX className="size-4" aria-hidden="true" />;
+  }
+  if (activity.type === 'checks') return <CircleCheck className="size-4" aria-hidden="true" />;
+  if (activity.type === 'pull_request') {
+    return <GitPullRequest className="size-4" aria-hidden="true" />;
+  }
   return <GitCommit className="size-4" aria-hidden="true" />;
 }
 
 export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-5 sm:p-8">
+    <div
+      data-testid="pull-detail"
+      className="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-6 bg-surface p-5 sm:p-8"
+    >
       <header className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
@@ -52,7 +92,7 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
             href={pull.url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-dense text-text hover:bg-surface-2"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-dense text-text shadow-sm hover:bg-surface-2"
           >
             Open on GitHub
             <ExternalLink className="size-3.5" aria-hidden="true" />
@@ -90,32 +130,41 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <main className="flex min-w-0 flex-col gap-6">
           {pull.body.length === 0 ? null : (
-            <section className="rounded-lg border border-border bg-surface-1 p-4">
+            <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
               <h2 className="mb-3 font-medium text-dense text-text">Description</h2>
-              <p className="whitespace-pre-wrap break-words text-muted text-sm leading-6">
-                {pull.body}
-              </p>
+              <DocBody html={pull.bodyHtml} className="text-sm leading-6" />
             </section>
           )}
 
           <section className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <h2 className="font-medium text-text">Activity</h2>
-              <span className="text-faint text-xs">{pull.activityCount} events</span>
+              <span className="text-faint text-xs">
+                {pull.activityCount > pull.activities.length
+                  ? `Showing latest ${pull.activities.length} of ${pull.activityCount} events`
+                  : `${pull.activityCount} events`}
+              </span>
             </div>
             {pull.activities.length === 0 ? (
               <div className="rounded-lg border border-border p-5 text-muted text-sm">
                 Activity will appear here as GitHub sends reviews, comments, checks, and PR updates.
               </div>
             ) : (
-              <ol className="flex flex-col overflow-hidden rounded-lg border border-border">
+              <ol className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
                 {pull.activities.map((activity) => (
                   <li
                     key={activity.id}
                     className="flex gap-3 border-border border-b p-4 last:border-b-0"
                   >
-                    <span className="mt-0.5 text-faint">
-                      <ActivityIcon type={activity.type} />
+                    <span
+                      role="img"
+                      aria-label={activityIconLabel(activity)}
+                      className={cn(
+                        'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
+                        activityIconTone(activity),
+                      )}
+                    >
+                      <ActivityIcon activity={activity} />
                     </span>
                     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                       <div className="flex flex-wrap items-baseline gap-x-1.5 text-dense">
@@ -132,9 +181,9 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
                         </span>
                       )}
                       {activity.body.length === 0 ? null : (
-                        <p className="whitespace-pre-wrap break-words rounded-md bg-surface-2 p-3 text-muted text-sm leading-5">
-                          {activity.body}
-                        </p>
+                        <div className="rounded-md border border-border-subtle bg-surface-2 p-3 text-sm">
+                          <CommentBody body={activity.body} bodyHtml={activity.bodyHtml} />
+                        </div>
                       )}
                       {activity.url.length === 0 ? null : (
                         <a
@@ -154,7 +203,7 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
           </section>
         </main>
 
-        <aside className="flex h-fit flex-col gap-3 rounded-lg border border-border p-4">
+        <aside className="flex h-fit flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-sm">
           <h2 className="font-medium text-dense text-text">Linked Orbit work</h2>
           {pull.linkedIssues.length === 0 ? (
             <p className="text-muted text-sm">No Orbit task is linked to this pull request.</p>

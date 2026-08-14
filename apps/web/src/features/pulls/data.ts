@@ -1,4 +1,5 @@
 import { and, count, db, desc, eq, exists, inArray, or, schema } from '@orbit/db';
+import { renderMarkdown } from '@orbit/services/markdown';
 import type { Principal } from '@orbit/shared/policy';
 
 export interface PullRequestIssueContext {
@@ -35,6 +36,7 @@ export interface PullRequestPage {
 }
 
 export const PULL_REQUEST_PAGE_SIZE = 100;
+export const PULL_REQUEST_ACTIVITY_LIMIT = 200;
 
 export interface PullRequestActivityRow {
   readonly id: string;
@@ -42,6 +44,7 @@ export interface PullRequestActivityRow {
   readonly action: string;
   readonly actorLogin: string;
   readonly body: string;
+  readonly bodyHtml: string;
   readonly url: string;
   readonly state: string;
   readonly path: string | null;
@@ -51,6 +54,7 @@ export interface PullRequestActivityRow {
 
 export interface PullRequestDetail extends PullRequestRow {
   readonly body: string;
+  readonly bodyHtml: string;
   readonly baseRef: string;
   readonly activities: readonly PullRequestActivityRow[];
 }
@@ -302,7 +306,7 @@ export async function loadPullRequestDetail(
     .limit(1);
   if (pull === undefined) return null;
 
-  const [contexts, activities] = await Promise.all([
+  const [contexts, activities, activityTotals] = await Promise.all([
     db
       .select({
         identifier: schema.issue.identifier,
@@ -344,13 +348,19 @@ export async function loadPullRequestDetail(
       .select()
       .from(schema.githubPullRequestActivity)
       .where(eq(schema.githubPullRequestActivity.pullRequestId, pull.id))
-      .orderBy(desc(schema.githubPullRequestActivity.occurredAt)),
+      .orderBy(desc(schema.githubPullRequestActivity.occurredAt))
+      .limit(PULL_REQUEST_ACTIVITY_LIMIT),
+    db
+      .select({ value: count() })
+      .from(schema.githubPullRequestActivity)
+      .where(eq(schema.githubPullRequestActivity.pullRequestId, pull.id)),
   ]);
 
   return {
     id: pull.id,
     title: pull.title.length > 0 ? pull.title : `${pull.repositoryName}#${pull.number}`,
     body: pull.body,
+    bodyHtml: renderMarkdown(pull.body),
     url: pull.url,
     repository: pull.repositoryName,
     number: pull.number,
@@ -362,7 +372,7 @@ export async function loadPullRequestDetail(
     authorLogin: pull.authorLogin,
     reviewDecision: pull.reviewDecision,
     checkStatus: pull.checkStatus,
-    activityCount: activities.length,
+    activityCount: activityTotals[0]?.value ?? 0,
     linkedIssues: contexts.map((context) => ({
       identifier: context.identifier,
       title: context.title,
@@ -378,6 +388,7 @@ export async function loadPullRequestDetail(
       action: activity.action,
       actorLogin: activity.actorLogin,
       body: activity.body,
+      bodyHtml: renderMarkdown(activity.body),
       url: activity.url,
       state: activity.state,
       path: activity.path,

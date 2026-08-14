@@ -475,7 +475,7 @@ function normalizedCheckEvent(input: {
     review: null,
     requestedReviewer: null,
     checks: {
-      failed: ['failure', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
+      failed: ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
         input.conclusion.toLowerCase(),
       ),
       headBranch: input.headBranch,

@@ -14,6 +14,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     actorName: 'Ada',
     title: 'Ada assigned you ENG-3',
     body: '',
+    bodyHtml: '',
     url: '/issue/ENG-3',
     externalUrl: null,
     read: false,

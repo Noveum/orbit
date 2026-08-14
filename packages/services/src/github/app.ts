@@ -122,6 +122,20 @@ const historyCheckRunsSchema = z.object({
   check_runs: z.array(historyCheckRunSchema).default([]),
 });
 
+const historyCommitStatusSchema = z.object({
+  id: z.number().int().nonnegative(),
+  state: z.string().max(64),
+  context: z.string().max(255),
+  description: z.string().max(1024).nullable().default(null),
+  target_url: z.string().url().max(2048).nullable().default(null),
+  creator: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  created_at: z.string().datetime().nullable().default(null),
+  updated_at: z.string().datetime().nullable().default(null),
+});
+
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
 export const GITHUB_MAX_REPOSITORY_PAGES = 100;
 export const GITHUB_PULL_REQUEST_PAGE_SIZE = 100;
@@ -495,7 +509,15 @@ export async function fetchGithubPullRequestHistory(
     }),
   ]);
   const checks: z.infer<typeof historyCheckRunSchema>[] = [];
+  let statuses: z.infer<typeof historyCommitStatusSchema>[] = [];
   if (input.headSha.length > 0) {
+    statuses = await githubPagedArray({
+      fetchImpl,
+      endpoint: `${root}/commits/${encodeURIComponent(input.headSha)}/statuses`,
+      token,
+      itemSchema: historyCommitStatusSchema,
+      label: 'pull request commit statuses',
+    });
     for (let page = 1; page <= GITHUB_MAX_PULL_REQUEST_PAGES; page += 1) {
       const body = await githubJson(
         fetchImpl,
@@ -556,6 +578,17 @@ export async function fetchGithubPullRequestHistory(
       path: null,
       line: null,
       occurredAt: check.completed_at ?? check.started_at ?? new Date(0).toISOString(),
+    })),
+    ...statuses.map((status) => ({
+      externalId: `status:${status.context}:${status.id}:${status.state}`,
+      type: 'checks' as const,
+      actor: historyActor(status.creator),
+      body: status.context,
+      url: status.target_url ?? '',
+      state: status.state,
+      path: null,
+      line: null,
+      occurredAt: status.updated_at ?? status.created_at ?? new Date(0).toISOString(),
     })),
   ];
   return history.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));

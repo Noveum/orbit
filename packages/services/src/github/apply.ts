@@ -22,7 +22,7 @@ import {
   unique,
 } from '@orbit/shared';
 import { declaredIssueIdentifiers, randomUUIDv7 } from '@orbit/shared/utils';
-import { and, asc, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, inArray, lte, or, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
 import type { GithubPullRequestHistoryEntry } from './app.ts';
 import {
@@ -131,38 +131,29 @@ export async function applyNormalizedGithubEvent(
 
   const now = input.now ?? new Date();
   const pullRequests = await persistGithubMirror(database, { repo, event, now });
+  const mirroredPullRequest = pullRequests[0] ?? null;
+  const stalePullRequestEvent =
+    mirroredPullRequest !== null && pullRequestEventIsStale(event, mirroredPullRequest, now);
   const identifiers = await issueIdentifiers(database, repo, event);
   if (identifiers.length === 0) {
-    const notificationEvents = await unlinkedPullRequestNotifications(database, {
+    return await resultWithoutLinkedIssues(database, {
       repo,
       event,
       pullRequests,
+      stalePullRequestEvent,
+      emptyReason: 'no_issue_identifier',
     });
-    return {
-      ...EMPTY,
-      handled: true,
-      ignoredReason: pullRequests.length === 0 ? 'no_issue_identifier' : null,
-      organizationId: repo.organizationId,
-      notificationEvents,
-      pullRequests,
-    };
   }
 
   const issues = await loadLinkedIssues(database, repo.organizationId, identifiers);
   if (issues.length === 0) {
-    const notificationEvents = await unlinkedPullRequestNotifications(database, {
+    return await resultWithoutLinkedIssues(database, {
       repo,
       event,
       pullRequests,
+      stalePullRequestEvent,
+      emptyReason: 'no_matching_issue',
     });
-    return {
-      ...EMPTY,
-      handled: true,
-      ignoredReason: pullRequests.length === 0 ? 'no_matching_issue' : null,
-      organizationId: repo.organizationId,
-      notificationEvents,
-      pullRequests,
-    };
   }
 
   const actor = await resolveActor(database, event);
@@ -188,7 +179,8 @@ export async function applyNormalizedGithubEvent(
       linked,
       actor,
       audienceUserIds: audiences.get(linked.id) ?? [],
-      pullRequestId: pullRequests[0]?.id ?? null,
+      mirroredPullRequest,
+      stalePullRequestEvent,
       now,
     });
     actions.push(...outcome.actions);
@@ -206,6 +198,40 @@ export async function applyNormalizedGithubEvent(
     gitLinks,
     pullRequests,
   };
+}
+
+async function resultWithoutLinkedIssues(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly pullRequests: GithubPullRequestRow[];
+    readonly stalePullRequestEvent: boolean;
+    readonly emptyReason: Extract<GithubIgnoredReason, 'no_issue_identifier' | 'no_matching_issue'>;
+  },
+): Promise<GithubApplyResult> {
+  const { repo, event, pullRequests, stalePullRequestEvent, emptyReason } = context;
+  const notificationEvents = stalePullRequestEvent
+    ? []
+    : await unlinkedPullRequestNotifications(database, { repo, event, pullRequests });
+  return {
+    ...EMPTY,
+    handled: true,
+    ignoredReason: pullRequests.length === 0 ? emptyReason : null,
+    organizationId: repo.organizationId,
+    notificationEvents,
+    pullRequests,
+  };
+}
+
+function pullRequestEventIsStale(
+  event: NormalizedGithubEvent,
+  pull: GithubPullRequestRow,
+  now: Date,
+): boolean {
+  if (event.pullRequest === null) return false;
+  const occurredAt = eventDate(event.activity.occurredAt ?? event.pullRequest.updatedAt, now);
+  return occurredAt.getTime() < pull.lastEventAt.getTime();
 }
 
 function eventDate(value: string | null, fallback: Date): Date {
@@ -255,11 +281,27 @@ async function persistGithubMirror(
     .where(and(eq(githubPullRequest.repositorySyncId, repo.id), numberFilter));
   const updatedRows: GithubPullRequestRow[] = [];
   for (const row of rows) {
+    await upsertPullRequestActivity(database, { row, event, now });
+    const checkActivities = await database
+      .select({
+        externalId: githubPullRequestActivity.externalId,
+        type: githubPullRequestActivity.type,
+        body: githubPullRequestActivity.body,
+        state: githubPullRequestActivity.state,
+        occurredAt: githubPullRequestActivity.occurredAt,
+      })
+      .from(githubPullRequestActivity)
+      .where(
+        and(
+          eq(githubPullRequestActivity.pullRequestId, row.id),
+          eq(githubPullRequestActivity.type, 'checks'),
+        ),
+      );
     const [updated] = await database
       .update(githubPullRequest)
       .set({
-        checkStatus: checkStatus(event),
-        repositoryName: event.repository.fullName,
+        checkStatus: rolledUpCheckStatus(checkActivities) ?? checkStatus(event),
+        repositoryName: repo.repositoryName,
         syncId: nextSyncId,
         updatedAt: now,
       })
@@ -267,7 +309,6 @@ async function persistGithubMirror(
       .returning();
     if (updated !== undefined) {
       updatedRows.push(updated);
-      await upsertPullRequestActivity(database, { row: updated, event, now });
     }
   }
   return updatedRows;
@@ -353,12 +394,12 @@ async function upsertMirroredPullRequest(
   }
   const values = {
     repositoryId: event.repository.externalId,
-    repositoryName: event.repository.fullName,
+    repositoryName: repo.repositoryName,
     number: pr.number,
     nodeId: latestText(stale, existing?.nodeId, pr.nodeId),
     title: latestText(stale, existing?.title, pr.title),
     body: retainedValue(retainSnapshot, existing?.body, pr.body),
-    url: latestText(false, existing?.url, pr.url),
+    url: latestText(stale, existing?.url, pr.url),
     headRef: retainedValue(retainSnapshot, existing?.headRef, pr.headRef),
     headSha: retainedValue(retainSnapshot, existing?.headSha, pr.headSha),
     baseRef: retainedValue(retainSnapshot, existing?.baseRef, pr.baseRef),
@@ -428,27 +469,47 @@ async function upsertPullRequestActivity(
     .onConflictDoUpdate({
       target: [githubPullRequestActivity.pullRequestId, githubPullRequestActivity.externalId],
       set: values,
+      setWhere: lte(githubPullRequestActivity.occurredAt, occurredAt),
     });
 }
 
-function historyCheckStatus(entries: readonly GithubPullRequestHistoryEntry[]): string | null {
+interface CheckStatusEntry {
+  readonly externalId: string;
+  readonly type: string;
+  readonly body: string;
+  readonly state: string;
+  readonly occurredAt: string | Date;
+}
+
+function checkStatusKey(entry: CheckStatusEntry): string {
+  const name = entry.body.trim().toLowerCase();
+  if (name.length > 0) return name;
+  if (entry.externalId.startsWith('check_suite:')) {
+    return entry.externalId.split(':').slice(0, 2).join(':');
+  }
+  return entry.externalId;
+}
+
+function checkOccurredAt(entry: CheckStatusEntry): number {
+  const value = entry.occurredAt instanceof Date ? entry.occurredAt : new Date(entry.occurredAt);
+  return value.getTime();
+}
+
+function rolledUpCheckStatus(entries: readonly CheckStatusEntry[]): string | null {
   const checks = entries.filter((entry) => entry.type === 'checks');
   if (checks.length === 0) return null;
-  const latestByName = new Map<string, GithubPullRequestHistoryEntry>();
+  const latestByName = new Map<string, CheckStatusEntry>();
   for (const entry of checks) {
-    const key = entry.body.trim().toLowerCase() || entry.externalId;
+    const key = checkStatusKey(entry);
     const current = latestByName.get(key);
-    if (
-      current === undefined ||
-      new Date(entry.occurredAt).getTime() >= new Date(current.occurredAt).getTime()
-    ) {
+    if (current === undefined || checkOccurredAt(entry) >= checkOccurredAt(current)) {
       latestByName.set(key, entry);
     }
   }
   const states = [...latestByName.values()].map((entry) => entry.state.toLowerCase());
   if (
     states.some((state) =>
-      ['failure', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(state),
+      ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(state),
     )
   ) {
     return 'failure';
@@ -461,6 +522,32 @@ function historyCheckStatus(entries: readonly GithubPullRequestHistoryEntry[]): 
     return 'pending';
   }
   return 'success';
+}
+
+function historyReviewDecision(
+  entries: readonly GithubPullRequestHistoryEntry[],
+  current: string | null,
+): string | null {
+  const decisions = entries
+    .filter(
+      (entry) =>
+        entry.type === 'review' &&
+        ['approved', 'changes_requested', 'dismissed'].includes(entry.state.toLowerCase()),
+    )
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+  if (decisions.length === 0) return current;
+
+  const byReviewer = new Map<string, string>();
+  for (const entry of decisions) {
+    const reviewer = entry.actor.id > 0 ? `id:${entry.actor.id}` : `login:${entry.actor.login}`;
+    const decision = entry.state.toLowerCase();
+    if (decision === 'dismissed') byReviewer.delete(reviewer);
+    else byReviewer.set(reviewer, decision);
+  }
+  const active = [...byReviewer.values()];
+  if (active.includes('changes_requested')) return 'changes_requested';
+  if (active.includes('approved')) return 'approved';
+  return null;
 }
 
 export async function upsertGithubPullRequestHistory(
@@ -516,18 +603,7 @@ export async function upsertGithubPullRequestHistory(
       });
   }
 
-  const latestReview = [...input.entries]
-    .reverse()
-    .find(
-      (entry) =>
-        entry.type === 'review' &&
-        ['approved', 'changes_requested', 'dismissed'].includes(entry.state.toLowerCase()),
-    );
-  let reviewDecision = pull.reviewDecision;
-  if (latestReview !== undefined) {
-    const latestDecision = latestReview.state.toLowerCase();
-    reviewDecision = latestDecision === 'dismissed' ? null : latestDecision;
-  }
+  const reviewDecision = historyReviewDecision(input.entries, pull.reviewDecision);
   let state = pull.state;
   if (!(pull.merged || pull.state === 'closed' || pull.draft)) {
     state =
@@ -540,7 +616,7 @@ export async function upsertGithubPullRequestHistory(
     .set({
       state,
       reviewDecision,
-      checkStatus: historyCheckStatus(input.entries) ?? pull.checkStatus,
+      checkStatus: rolledUpCheckStatus(input.entries) ?? pull.checkStatus,
       historySyncedAt: now,
       syncId: nextSyncId,
       updatedAt: now,
@@ -586,36 +662,55 @@ interface IssueOutcome {
   readonly gitLink: GitLinkRow | null;
 }
 
+interface ApplyToIssueContext {
+  readonly repo: RepositorySync;
+  readonly event: NormalizedGithubEvent;
+  readonly linked: LinkedIssue;
+  readonly actor: Actor;
+  readonly audienceUserIds: readonly string[];
+  readonly mirroredPullRequest: GithubPullRequestRow | null;
+  readonly stalePullRequestEvent: boolean;
+  readonly now: Date;
+}
+
+function notificationOnlyIssueOutcome(context: ApplyToIssueContext): IssueOutcome | null {
+  const { event, linked, actor, repo, audienceUserIds } = context;
+  if (event.comment !== null && event.pullRequest !== null) {
+    const notificationEvents =
+      event.action === 'created'
+        ? [commentNotification({ linked, event, actor, repo, audienceUserIds })]
+        : [];
+    return { actions: [], notificationEvents, gitLink: null };
+  }
+  if (event.pullRequest !== null) return null;
+  const notificationEvents =
+    event.checks?.failed === true
+      ? [checksNotification({ linked, event, actor, repo, audienceUserIds })]
+      : [];
+  return { actions: [], notificationEvents, gitLink: null };
+}
+
 async function applyToIssue(
   database: GithubDatabase,
-  context: {
-    readonly repo: RepositorySync;
-    readonly event: NormalizedGithubEvent;
-    readonly linked: LinkedIssue;
-    readonly actor: Actor;
-    readonly audienceUserIds: readonly string[];
-    readonly pullRequestId: string | null;
-    readonly now: Date;
-  },
+  context: ApplyToIssueContext,
 ): Promise<IssueOutcome> {
-  const { event, linked, actor, audienceUserIds, pullRequestId, now, repo } = context;
+  const {
+    event,
+    linked,
+    actor,
+    audienceUserIds,
+    mirroredPullRequest,
+    stalePullRequestEvent,
+    now,
+    repo,
+  } = context;
+  const notificationOnly = notificationOnlyIssueOutcome(context);
+  if (notificationOnly !== null) return notificationOnly;
+
   const actions: SyncAction[] = [];
   const notificationEvents: NotificationEvent[] = [];
-
-  if (event.comment !== null && event.pullRequest !== null) {
-    if (event.action !== 'created') return { actions, notificationEvents, gitLink: null };
-    notificationEvents.push(commentNotification({ linked, event, actor, repo, audienceUserIds }));
-    return { actions, notificationEvents, gitLink: null };
-  }
-
-  if (event.pullRequest === null) {
-    if (event.checks?.failed === true) {
-      notificationEvents.push(checksNotification({ linked, event, actor, repo, audienceUserIds }));
-    }
-    return { actions, notificationEvents, gitLink: null };
-  }
-
   const pr = event.pullRequest;
+  if (pr === null) return { actions, notificationEvents, gitLink: null };
   const externalId = `pr:${event.repository.externalId}#${pr.number}:${linked.id}`;
   const [existing] = await database
     .select()
@@ -635,19 +730,21 @@ async function applyToIssue(
     )
     .limit(1);
 
-  const state = resolveLinkState(pr, event, existing?.state as PullRequestState | undefined);
+  const state =
+    (mirroredPullRequest?.state as PullRequestState | undefined) ??
+    resolveLinkState(pr, event, existing?.state as PullRequestState | undefined);
 
   const linkValues = {
-    pullRequestId,
+    pullRequestId: mirroredPullRequest?.id ?? null,
     externalId,
     number: pr.number,
-    repository: event.repository.fullName,
-    branch: pr.headRef,
-    title: pr.title,
-    url: pr.url,
+    repository: repo.repositoryName,
+    branch: mirroredPullRequest?.headRef ?? pr.headRef,
+    title: mirroredPullRequest?.title ?? pr.title,
+    url: mirroredPullRequest?.url ?? pr.url,
     state,
-    draft: pr.draft,
-    merged: pr.merged,
+    draft: mirroredPullRequest?.draft ?? pr.draft,
+    merged: mirroredPullRequest?.merged ?? pr.merged,
     syncId: nextSyncId,
     updatedAt: now,
   };
@@ -690,16 +787,14 @@ async function applyToIssue(
     }),
   );
 
-  const transition = await transitionIssue(database, { linked, state, actor, now });
+  const transition = stalePullRequestEvent
+    ? null
+    : await transitionIssue(database, { linked, state, actor, now });
   if (transition !== null) actions.push(transition);
 
-  const notification = pullRequestNotification({
-    linked,
-    event,
-    state,
-    actor,
-    audienceUserIds,
-  });
+  const notification = stalePullRequestEvent
+    ? null
+    : pullRequestNotification({ linked, event, state, actor, audienceUserIds, repo });
   if (notification !== null) {
     notificationEvents.push({ ...notification, organizationId: repo.organizationId });
   }
@@ -788,8 +883,9 @@ function pullRequestNotification(context: {
   readonly state: PullRequestState;
   readonly actor: Actor;
   readonly audienceUserIds: readonly string[];
+  readonly repo: RepositorySync;
 }): Omit<NotificationEvent, 'organizationId'> | null {
-  const { linked, event, state, actor, audienceUserIds } = context;
+  const { linked, event, state, actor, audienceUserIds, repo } = context;
   const pr = event.pullRequest;
   if (pr === null) return null;
   const base = {
@@ -798,7 +894,7 @@ function pullRequestNotification(context: {
     entityId: linked.id,
     url: `/issue/${linked.identifier}`,
     externalUrl: event.review?.url ?? pr.url,
-    body: `${event.repository.fullName}#${pr.number}`,
+    body: `${repo.repositoryName}#${pr.number}`,
   };
 
   if (event.action === 'review_requested') {
@@ -967,12 +1063,12 @@ function checksNotification(context: {
     entityId: linked.id,
     userIds: [...audienceUserIds],
     title: `Checks failed on ${branch}`,
-    body: event.repository.fullName,
+    body: repo.repositoryName,
     url: `/issue/${linked.identifier}`,
     externalUrl:
       event.checks?.prNumbers[0] === undefined
         ? null
-        : `https://github.com/${event.repository.fullName}/pull/${event.checks.prNumbers[0]}`,
+        : `https://github.com/${repo.repositoryName}/pull/${event.checks.prNumbers[0]}`,
   };
 }
 

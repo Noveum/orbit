@@ -1,4 +1,5 @@
 import { buildSyncAction } from '@orbit/core';
+import { renderMarkdown } from '@orbit/services/markdown';
 import type { NotificationRecord } from '@orbit/services/notifications';
 import type { SyncAction, SyncActionKind } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -18,6 +19,7 @@ function toData(row: NotificationRecord): Record<string, unknown> {
     entityId: row.entityId,
     title: row.title,
     body: row.body,
+    bodyHtml: renderMarkdown(row.body),
     url: row.url,
     externalUrl: row.externalUrl,
     readAt: row.readAt?.toISOString() ?? null,

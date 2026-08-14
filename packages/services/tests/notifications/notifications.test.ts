@@ -265,6 +265,28 @@ describe('notifyMany', () => {
     });
   });
 
+  it('keeps distinct GitHub activities on the same pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const first = eventFor(fixture, {
+        type: 'pr_comment',
+        entityType: 'github_pull_request',
+        entityId: 'pr_7',
+        externalUrl: 'https://github.com/acme/web/pull/7#issuecomment-1',
+      });
+      const second = {
+        ...first,
+        body: 'A different comment',
+        externalUrl: 'https://github.com/acme/web/pull/7#issuecomment-2',
+      };
+
+      const outcome = await notifyMany(tx, [first, second]);
+
+      expect(outcome.notifications).toHaveLength(4);
+      expect(outcome.deduped).toBe(0);
+    });
+  });
+
   it('defers non urgent email during quiet hours', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx, 'Asia/Kolkata');

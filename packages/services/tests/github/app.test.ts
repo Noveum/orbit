@@ -233,6 +233,22 @@ describe('fetchGithubPullRequestHistory', () => {
           }),
         );
       }
+      if (path.endsWith('/commits/abc123/statuses')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 15,
+              state: 'failure',
+              context: 'Vercel',
+              description: 'Deployment failed',
+              target_url: 'https://vercel.com/acme/web/deployment/15',
+              creator: { login: 'vercel', id: 4 },
+              created_at: '2026-08-13T04:30:00.000Z',
+              updated_at: '2026-08-13T05:30:00.000Z',
+            },
+          ]),
+        );
+      }
       return new Response('{}', { status: 404 });
     });
 
@@ -251,10 +267,13 @@ describe('fetchGithubPullRequestHistory', () => {
       'review',
       'review_comment',
       'checks',
+      'checks',
     ]);
     expect(history[2]?.path).toBe('src/index.ts');
     expect(history[2]?.line).toBe(42);
     expect(history[3]?.state).toBe('success');
+    expect(history[4]?.body).toBe('Vercel');
+    expect(history[4]?.state).toBe('failure');
   });
 });
 

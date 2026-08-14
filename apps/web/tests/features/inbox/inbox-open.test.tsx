@@ -71,6 +71,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     actorName: 'Ada',
     title: 'Mentioned you in ENG-3',
     body: 'Take a look',
+    bodyHtml: '<p>Take a look</p>',
     url: '/issue/ENG-3#comment-comment_9',
     externalUrl: null,
     read: false,
@@ -170,7 +171,8 @@ describe('opening a notification', () => {
         entityType: 'github_pull_request',
         entityId: 'pr_1',
         title: 'New comment on Fix the socket',
-        body: 'Please add a regression test.',
+        body: 'Please add a **regression test**.',
+        bodyHtml: '<p>Please add a <strong>regression test</strong>.</p>',
         url: '/pulls/pr_1',
         externalUrl: 'https://github.com/Noveum/orbit/pull/307#issuecomment-1',
       }),
@@ -180,6 +182,8 @@ describe('opening a notification', () => {
       'href',
       '/pulls/pr_1',
     );
+    expect(screen.getAllByText(/Please add a/)).toHaveLength(1);
+    expect(screen.getByText('regression test')).toHaveRole('strong');
   });
 });
 
@@ -197,6 +201,21 @@ describe('opening a notification in the Unread tab', () => {
     await waitFor(() => {
       expect(screen.getByTestId('inbox-open-link')).toHaveAttribute('href', '/issue/ENG-2');
     });
+  });
+
+  it('keeps notifications opened during this unread session visible', async () => {
+    const user = userEvent.setup();
+    renderInbox([
+      item({ id: 'notification_1', title: 'First', url: '/issue/ENG-1' }),
+      item({ id: 'notification_2', title: 'Second', url: '/issue/ENG-2' }),
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Unread' }));
+    await user.click(screen.getByRole('button', { name: /First/ }));
+    await user.click(screen.getByRole('button', { name: /Second/ }));
+
+    expect(screen.getByRole('button', { name: /First/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Second/ })).toBeInTheDocument();
   });
 });
 

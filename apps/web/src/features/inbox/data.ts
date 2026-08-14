@@ -1,4 +1,5 @@
 import { db } from '@orbit/db';
+import { renderMarkdown } from '@orbit/services/markdown';
 import { listInbox, type NotificationRecord, unreadCounters } from '@orbit/services/notifications';
 import type { NotificationType } from '@orbit/shared/constants';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
@@ -14,6 +15,7 @@ export interface InboxItem {
   readonly actorName: string;
   readonly title: string;
   readonly body: string;
+  readonly bodyHtml: string;
   readonly url: string;
   readonly externalUrl: string | null;
   readonly read: boolean;
@@ -41,6 +43,7 @@ export function toInboxItem(row: NotificationRecord): InboxItem {
     actorName: row.actorName,
     title: row.title,
     body: row.body,
+    bodyHtml: renderMarkdown(row.body),
     url: row.url,
     externalUrl: row.externalUrl,
     read: row.readAt !== null,

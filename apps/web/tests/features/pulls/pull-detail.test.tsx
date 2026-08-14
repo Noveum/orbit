@@ -6,7 +6,9 @@ import { render, screen } from '@/test/render.tsx';
 const pull: PullRequestDetail = {
   id: 'pull_1',
   title: 'Mirror the complete review timeline',
-  body: 'Keeps reviews visible in Orbit.',
+  body: 'Keeps **reviews** visible in [Orbit](https://orbit.noveum.ai).',
+  bodyHtml:
+    '<p>Keeps <strong>reviews</strong> visible in <a href="https://orbit.noveum.ai" target="_blank" rel="noopener noreferrer">Orbit</a>.</p>',
   url: 'https://github.com/noveum/orbit/pull/304',
   repository: 'noveum/orbit',
   number: 304,
@@ -33,7 +35,8 @@ const pull: PullRequestDetail = {
       type: 'review_comment',
       action: 'created',
       actorLogin: 'grace',
-      body: 'Please keep the stable repository ID.',
+      body: 'Please keep the `repositoryId` stable.',
+      bodyHtml: 'Please keep the <code>repositoryId</code> stable.',
       url: 'https://github.com/noveum/orbit/pull/304#discussion_r2',
       state: 'created',
       path: 'packages/services/src/github/apply.ts',
@@ -46,6 +49,7 @@ const pull: PullRequestDetail = {
       action: 'submitted',
       actorLogin: 'ada',
       body: 'Approved.',
+      bodyHtml: '<p><strong>Approved.</strong></p>',
       url: 'https://github.com/noveum/orbit/pull/304#pullrequestreview-1',
       state: 'approved',
       path: null,
@@ -59,12 +63,36 @@ describe('PullDetail', () => {
   it('keeps review comments, their code location, and GitHub destination visible', () => {
     render(<PullDetail pull={pull} />);
 
-    expect(screen.getByText('Please keep the stable repository ID.')).toBeInTheDocument();
+    expect(screen.getByText('repositoryId')).toHaveRole('code');
     expect(screen.getByText('packages/services/src/github/apply.ts:42')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'View on GitHub' })[0]).toHaveAttribute(
       'href',
       'https://github.com/noveum/orbit/pull/304#discussion_r2',
     );
+  });
+
+  it('renders sanitized GitHub Markdown for the description and activity', () => {
+    render(<PullDetail pull={pull} />);
+
+    expect(screen.getByText('reviews')).toHaveRole('strong');
+    expect(screen.getByRole('link', { name: 'Orbit' })).toHaveAttribute(
+      'href',
+      'https://orbit.noveum.ai',
+    );
+    expect(screen.getByText('Approved.')).toHaveRole('strong');
+  });
+
+  it('uses the white application surface and labels its activity status', () => {
+    render(<PullDetail pull={pull} />);
+
+    expect(screen.getByTestId('pull-detail')).toHaveClass('bg-surface');
+    expect(screen.getByLabelText('Review approved')).toBeInTheDocument();
+  });
+
+  it('makes a capped production timeline explicit', () => {
+    render(<PullDetail pull={{ ...pull, activityCount: 812 }} />);
+
+    expect(screen.getByText('Showing latest 2 of 812 events')).toBeInTheDocument();
   });
 
   it('shows linked task and project context without replacing the pull request', () => {

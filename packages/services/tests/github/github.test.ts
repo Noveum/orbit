@@ -205,6 +205,22 @@ describe('parseGithubEvent', () => {
     });
   });
 
+  it('treats a GitHub status error as a failed check', () => {
+    const event = parseGithubEvent('status', {
+      id: 17,
+      sha: 'abc123',
+      state: 'error',
+      context: 'deploy',
+      description: 'Deployment errored',
+      target_url: 'https://github.com/acme/web/runs/17',
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'deploy-bot', id: 2 },
+    });
+
+    expect(event?.checks?.failed).toBe(true);
+    expect(event?.activity.state).toBe('error');
+  });
+
   it('ignores unrelated events', () => {
     expect(parseGithubEvent('push', {})).toBeNull();
     expect(parseGithubEvent('ping', {})).toBeNull();
