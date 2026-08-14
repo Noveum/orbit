@@ -33,7 +33,11 @@ export function addDays(day: string, count: number): string {
 }
 
 export interface FilterContext {
-  readonly today: string;
+  readonly now: Date;
+  readonly calendar?: {
+    readonly today: string;
+    readonly startOfDay: (day: string) => Date;
+  };
 }
 
 function anyOf(clauses: readonly SQL[]): SQL | null {
@@ -239,10 +243,27 @@ const DATE_COLUMNS: Record<DateProperty, AnyColumn> = {
   stateAge: schema.issue.stateEnteredAt,
 };
 
-function dayBounds(column: AnyColumn, from: string | null, to: string | null): SQL | null {
+function dayBounds(
+  property: DateProperty,
+  from: string | null,
+  to: string | null,
+  context: FilterContext,
+): SQL | null {
+  const column = DATE_COLUMNS[property];
   const parts: SQL[] = [];
-  if (from !== null) parts.push(sql`${column}::date >= ${from}::date`);
-  if (to !== null) parts.push(sql`${column}::date <= ${to}::date`);
+  if (property === 'due' || context.calendar === undefined) {
+    if (from !== null) parts.push(sql`${column}::date >= ${from}::date`);
+    if (to !== null) parts.push(sql`${column}::date <= ${to}::date`);
+    return allOf(parts);
+  }
+  if (from !== null) {
+    parts.push(sql`${column} >= ${context.calendar.startOfDay(from).toISOString()}::timestamptz`);
+  }
+  if (to !== null) {
+    parts.push(
+      sql`${column} < ${context.calendar.startOfDay(addDays(to, 1)).toISOString()}::timestamptz`,
+    );
+  }
   return allOf(parts);
 }
 
@@ -252,17 +273,18 @@ function namedDateClause(
   context: FilterContext,
 ): SQL | null {
   const column = DATE_COLUMNS[property];
+  const currentDay = context.calendar?.today ?? today(context.now);
   switch (value) {
     case UNSET_FILTER_VALUE:
       return isNull(column);
     case 'any':
       return isNotNull(column);
     case 'overdue':
-      return dayBounds(column, null, addDays(context.today, -1));
+      return dayBounds(property, null, addDays(currentDay, -1), context);
     case 'today':
-      return dayBounds(column, context.today, context.today);
+      return dayBounds(property, currentDay, currentDay, context);
     case 'this_week':
-      return dayBounds(column, context.today, addDays(context.today, 7));
+      return dayBounds(property, currentDay, addDays(currentDay, 7), context);
     default:
       return null;
   }
@@ -292,8 +314,8 @@ function relativeDatePredicate(
   negate: boolean,
   context: FilterContext,
 ): SQL | null {
-  const range = resolveRelativeRange(relative, context.today);
-  const positive = dayBounds(DATE_COLUMNS[property], range.from, range.to);
+  const range = resolveRelativeRange(relative, context.calendar?.today ?? today(context.now));
+  const positive = dayBounds(property, range.from, range.to, context);
   if (positive === null) return null;
   return negate ? negateWithNulls(positive, DATE_COLUMNS[property], false) : positive;
 }
@@ -309,11 +331,11 @@ function numericRange(column: AnyColumn, from: string | null, to: string | null)
   return allOf(parts);
 }
 
-function rangeSql(condition: FilterCondition): SQL | null {
+function rangeSql(condition: FilterCondition, context: FilterContext): SQL | null {
   if (condition.operator !== 'range') return null;
   const { property, negate, from, to } = condition;
   if (isDate(property)) {
-    const positive = dayBounds(DATE_COLUMNS[property], from, to);
+    const positive = dayBounds(property, from, to, context);
     if (positive === null) return null;
     return negate ? negateWithNulls(positive, DATE_COLUMNS[property], false) : positive;
   }
@@ -370,7 +392,7 @@ function conditionSql(condition: FilterCondition, context: FilterContext): SQL |
       ? relativeDatePredicate(condition.property, condition.relative, condition.negate, context)
       : null;
   }
-  if (condition.operator === 'range') return rangeSql(condition);
+  if (condition.operator === 'range') return rangeSql(condition, context);
   return setSql(condition, context);
 }
 

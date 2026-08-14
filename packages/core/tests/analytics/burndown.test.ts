@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import {
   cycleBurndown,
   cycleChurn,
@@ -117,6 +117,44 @@ describe('cycleBurndown', () => {
     );
     expect(future.every((point) => point.isFuture)).toBe(true);
     expect(burndown.points.every((point) => Number.isFinite(point.ideal))).toBe(true);
+  });
+
+  it('uses the sprint calendar for boundaries and the current day', async () => {
+    await db
+      .update(schema.cycle)
+      .set({ timezone: 'America/New_York' })
+      .where(eq(schema.cycle.id, cycleId));
+    await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: START,
+    });
+
+    const burndown = await cycleBurndown(
+      workspace.admin,
+      cycleId,
+      'issues',
+      utc('2026-01-01T02:00:00Z'),
+    );
+
+    expect(burndown.points.map((point) => point.date)).toEqual([
+      '2025-12-31',
+      '2026-01-01',
+      '2026-01-02',
+      '2026-01-03',
+      '2026-01-04',
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+    ]);
+    expect(burndown.points[0]).toMatchObject({
+      date: '2025-12-31',
+      scope: 1,
+      remaining: 1,
+      isFuture: false,
+    });
+    expect(burndown.points.slice(1).every((point) => point.isFuture)).toBe(true);
   });
 
   it('moves the scope line when an issue is added mid cycle', async () => {

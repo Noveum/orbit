@@ -91,22 +91,28 @@ export function CycleSectionSkeleton() {
 
 export function AnalyticsSkeleton() {
   return (
-    <div className="flex flex-col gap-6 px-6 py-6" data-testid="analytics-skeleton">
+    <div className="flex flex-col gap-5 px-4 py-5 sm:px-6 sm:py-6" data-testid="analytics-skeleton">
       <header className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
             <Skeleton className="h-6 w-32" />
             <Skeleton className="h-3 w-72" />
           </div>
-          <Skeleton className="h-8 w-40 rounded-md" />
+          <Skeleton className="h-4 w-40 rounded-md" />
         </div>
-        <SavedViewBarSkeleton />
+        <div className="flex gap-2">
+          {['overview', 'sprints', 'projects', 'people'].map((key) => (
+            <Skeleton className="h-8 w-20 rounded-md" key={key} />
+          ))}
+        </div>
       </header>
-
-      <ScopeCardSkeleton />
-      <DistributionGridSkeleton />
-      <BreakdownCardSkeleton />
-      <CycleSectionSkeleton />
+      <Skeleton className="h-11 w-full rounded-lg" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {['one', 'two', 'three', 'four'].map((key) => (
+          <Skeleton className="h-28 rounded-lg" key={key} />
+        ))}
+      </div>
+      <Skeleton className="h-72 w-full rounded-lg" />
     </div>
   );
 }

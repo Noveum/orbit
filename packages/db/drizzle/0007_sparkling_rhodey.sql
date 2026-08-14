@@ -1,3 +1,0 @@
-ALTER TABLE "git_link" ADD COLUMN "pull_request_id" text;--> statement-breakpoint
-ALTER TABLE "git_link" ADD CONSTRAINT "git_link_pull_request_id_github_pull_request_id_fk" FOREIGN KEY ("pull_request_id") REFERENCES "public"."github_pull_request"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "git_link_pull_request_idx" ON "git_link" USING btree ("pull_request_id");

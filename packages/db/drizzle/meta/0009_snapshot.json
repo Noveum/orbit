@@ -1,6 +1,6 @@
 {
-  "id": "4fd8bd12-c8fd-4148-b454-e369dfaf16f0",
-  "prevId": "af54fcd2-d3ea-4214-9012-a6d0636dc6e5",
+  "id": "83e6282d-2b66-443b-a0b4-00e393efe66a",
+  "prevId": "f6b77df3-33b2-4984-a1b5-fdd74a8cb4cd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7734,6 +7734,556 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.cycle_issue_membership": {
+      "name": "cycle_issue_membership",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cycle_id": {
+          "name": "cycle_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_id": {
+          "name": "issue_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_identifier": {
+          "name": "issue_identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "removed_at": {
+          "name": "removed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_kind": {
+          "name": "entry_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estimate_at_add": {
+          "name": "estimate_at_add",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assignee_id_at_add": {
+          "name": "assignee_id_at_add",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "project_id_at_add": {
+          "name": "project_id_at_add",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "milestone_id_at_add": {
+          "name": "milestone_id_at_add",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'captured'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cycle_issue_membership_cycle_added_idx": {
+          "name": "cycle_issue_membership_cycle_added_idx",
+          "columns": [
+            {
+              "expression": "cycle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "added_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cycle_issue_membership_cycle_removed_idx": {
+          "name": "cycle_issue_membership_cycle_removed_idx",
+          "columns": [
+            {
+              "expression": "cycle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "removed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cycle_issue_membership_issue_added_idx": {
+          "name": "cycle_issue_membership_issue_added_idx",
+          "columns": [
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "added_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cycle_issue_membership_one_open_per_issue_unique": {
+          "name": "cycle_issue_membership_one_open_per_issue_unique",
+          "columns": [
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"cycle_issue_membership\".\"removed_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cycle_issue_membership_organization_id_organization_id_fk": {
+          "name": "cycle_issue_membership_organization_id_organization_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_membership_team_id_team_id_fk": {
+          "name": "cycle_issue_membership_team_id_team_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "team",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_membership_cycle_id_cycle_id_fk": {
+          "name": "cycle_issue_membership_cycle_id_cycle_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "cycle",
+          "columnsFrom": [
+            "cycle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_membership_assignee_id_at_add_user_id_fk": {
+          "name": "cycle_issue_membership_assignee_id_at_add_user_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "user",
+          "columnsFrom": [
+            "assignee_id_at_add"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_membership_project_id_at_add_project_id_fk": {
+          "name": "cycle_issue_membership_project_id_at_add_project_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "project",
+          "columnsFrom": [
+            "project_id_at_add"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_membership_milestone_id_at_add_milestone_id_fk": {
+          "name": "cycle_issue_membership_milestone_id_at_add_milestone_id_fk",
+          "tableFrom": "cycle_issue_membership",
+          "tableTo": "milestone",
+          "columnsFrom": [
+            "milestone_id_at_add"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cycle_issue_outcome": {
+      "name": "cycle_issue_outcome",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cycle_id": {
+          "name": "cycle_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_id": {
+          "name": "issue_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_identifier": {
+          "name": "issue_identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "planned": {
+          "name": "planned",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "estimate_at_commitment": {
+          "name": "estimate_at_commitment",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimate_at_close": {
+          "name": "estimate_at_close",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assignee_id_at_close": {
+          "name": "assignee_id_at_close",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "project_id_at_close": {
+          "name": "project_id_at_close",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "milestone_id_at_close": {
+          "name": "milestone_id_at_close",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rollover_cycle_id": {
+          "name": "rollover_cycle_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cycle_issue_outcome_cycle_issue_unique": {
+          "name": "cycle_issue_outcome_cycle_issue_unique",
+          "columns": [
+            {
+              "expression": "cycle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cycle_issue_outcome_cycle_outcome_idx": {
+          "name": "cycle_issue_outcome_cycle_outcome_idx",
+          "columns": [
+            {
+              "expression": "cycle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "outcome",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cycle_issue_outcome_completion_attribution_idx": {
+          "name": "cycle_issue_outcome_completion_attribution_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "completed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "closed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"cycle_issue_outcome\".\"outcome\" = 'completed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cycle_issue_outcome_organization_id_organization_id_fk": {
+          "name": "cycle_issue_outcome_organization_id_organization_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_team_id_team_id_fk": {
+          "name": "cycle_issue_outcome_team_id_team_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "team",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_cycle_id_cycle_id_fk": {
+          "name": "cycle_issue_outcome_cycle_id_cycle_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "cycle",
+          "columnsFrom": [
+            "cycle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_assignee_id_at_close_user_id_fk": {
+          "name": "cycle_issue_outcome_assignee_id_at_close_user_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "user",
+          "columnsFrom": [
+            "assignee_id_at_close"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_project_id_at_close_project_id_fk": {
+          "name": "cycle_issue_outcome_project_id_at_close_project_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "project",
+          "columnsFrom": [
+            "project_id_at_close"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_milestone_id_at_close_milestone_id_fk": {
+          "name": "cycle_issue_outcome_milestone_id_at_close_milestone_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "milestone",
+          "columnsFrom": [
+            "milestone_id_at_close"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "cycle_issue_outcome_rollover_cycle_id_cycle_id_fk": {
+          "name": "cycle_issue_outcome_rollover_cycle_id_cycle_id_fk",
+          "tableFrom": "cycle_issue_outcome",
+          "tableTo": "cycle",
+          "columnsFrom": [
+            "rollover_cycle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.cycle_progress_snapshot": {
       "name": "cycle_progress_snapshot",
       "schema": "",
@@ -7824,6 +8374,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "captured_at": {
+          "name": "captured_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "is_final": {
+          "name": "is_final",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "sync_id": {
           "name": "sync_id",
@@ -9244,6 +9808,34 @@
           ],
           "isUnique": false,
           "where": "\"issue_activity\".\"field\" = 'cycleId'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "issue_activity_assignee_attribution_idx": {
+          "name": "issue_activity_assignee_attribution_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "issue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"issue_activity\".\"field\" = 'assigneeId'",
           "concurrently": false,
           "method": "btree",
           "with": {}

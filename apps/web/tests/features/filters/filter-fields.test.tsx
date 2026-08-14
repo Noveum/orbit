@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { emptyFacets, type IssueFacets } from '@/lib/query/schemas.ts';
 import {
+  buildFilterFields,
   countValues,
   type FilterFieldDefinition,
 } from '../../../src/features/filters/filter-fields.tsx';
+import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 
 const labelDef = {
   property: 'label',
@@ -43,5 +45,37 @@ describe('countValues', () => {
   it('survives a facet the server omitted', () => {
     const partial = { ...emptyFacets() } as unknown as IssueFacets['facets'];
     expect(countValues(labelDef, partial).size).toBe(0);
+  });
+});
+
+describe('buildFilterFields', () => {
+  it('includes states from every team for workspace analytics', () => {
+    const workspace = {
+      states: [
+        {
+          id: 'state-a',
+          teamId: 'team-a',
+          name: 'Todo',
+          category: 'unstarted',
+          color: '#111111',
+          position: 0,
+        },
+        {
+          id: 'state-b',
+          teamId: 'team-b',
+          name: 'In progress',
+          category: 'started',
+          color: '#222222',
+          position: 0,
+        },
+      ],
+      members: [],
+      labels: [],
+      cycles: [],
+      projects: [],
+    } as unknown as WorkspaceData;
+
+    const fields = buildFilterFields(workspace, null, ['state'], { workspaceWide: true });
+    expect(fields[0]?.options.map((option) => option.value)).toEqual(['state-a', 'state-b']);
   });
 });

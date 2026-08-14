@@ -1,67 +1,46 @@
-import type { Measure } from '@orbit/core';
-import { assertCan, can } from '@orbit/shared/policy';
+import { can } from '@orbit/shared/policy';
+import { analyticsQuerySchema } from '@orbit/shared/validators';
+import { HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import {
-  BreakdownCardSkeleton,
-  CycleSectionSkeleton,
-  DistributionGridSkeleton,
-  SavedViewBarSkeleton,
-  ScopeCardSkeleton,
-} from '@/features/analytics/analytics-skeleton.tsx';
-import { BreakdownSection } from '@/features/analytics/breakdown-section.tsx';
-import { CycleSection } from '@/features/analytics/cycle-section.tsx';
-import { DistributionSection } from '@/features/analytics/distribution-section.tsx';
-import { MeasureToggle } from '@/features/analytics/measure-toggle.tsx';
-import { SavedViewSection } from '@/features/analytics/saved-view-section.tsx';
-import { ScopeSection } from '@/features/analytics/scope-section.tsx';
+import { AnalyticsCockpit } from '@/features/analytics/analytics-cockpit.tsx';
+import { dehydratedAnalyticsLens, loadSavedViews } from '@/features/analytics/data.ts';
+import { parseAnalyticsSearchParams } from '@/features/analytics/query-state.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 
 export const metadata: Metadata = { title: 'Analytics' };
 
 interface PageProps {
-  readonly searchParams: Promise<{ measure?: string }>;
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function AnalyticsPage({ searchParams }: PageProps) {
-  const { measure: rawMeasure } = await searchParams;
-  const measure: Measure = rawMeasure === 'points' ? 'points' : 'issues';
-  const { principal } = await pageContext();
-  assertCan(principal, 'project:read');
-  const canManage = can(principal, 'view:manage');
+  const [{ principal }, params] = await Promise.all([pageContext(), searchParams]);
+  const requestedQuery = parseAnalyticsSearchParams(params);
+  const savedViews = await loadSavedViews(principal);
+  const cleanUrl = Object.values(params).every((value) => value === undefined);
+  const pinned = savedViews.find(
+    (view) =>
+      view.kind === 'dashboard' &&
+      view.ownerId === principal.userId &&
+      view.config['pinned'] === true,
+  );
+  const pinnedQuery = pinned?.config['query'];
+  const query =
+    cleanUrl && typeof pinnedQuery === 'object' && pinnedQuery !== null
+      ? analyticsQuerySchema.parse(pinnedQuery)
+      : requestedQuery;
 
   return (
-    <div className="flex flex-col gap-6 px-6 py-6">
-      <header className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-semibold text-lg text-text">Analytics</h1>
-            <p className="text-muted text-xs">
-              Scope, throughput, churn and distributions across the workspace.
-            </p>
-          </div>
-          <MeasureToggle measure={measure} />
-        </div>
-        <Suspense fallback={<SavedViewBarSkeleton />}>
-          <SavedViewSection principal={principal} measure={measure} canManage={canManage} />
-        </Suspense>
-      </header>
-
-      <Suspense fallback={<ScopeCardSkeleton />}>
-        <ScopeSection principal={principal} measure={measure} />
-      </Suspense>
-
-      <Suspense fallback={<DistributionGridSkeleton />}>
-        <DistributionSection principal={principal} measure={measure} />
-      </Suspense>
-
-      <Suspense fallback={<BreakdownCardSkeleton />}>
-        <BreakdownSection principal={principal} measure={measure} />
-      </Suspense>
-
-      <Suspense fallback={<CycleSectionSkeleton />}>
-        <CycleSection principal={principal} measure={measure} canManage={canManage} />
-      </Suspense>
-    </div>
+    <HydrationBoundary state={await dehydratedAnalyticsLens(principal, query)}>
+      <div className="px-4 py-5 sm:px-6 sm:py-6">
+        <AnalyticsCockpit
+          canManageAllViews={principal.role === 'admin'}
+          canManageViews={can(principal, 'view:manage')}
+          currentUserId={principal.userId}
+          initialQuery={query}
+          savedViews={savedViews}
+        />
+      </div>
+    </HydrationBoundary>
   );
 }

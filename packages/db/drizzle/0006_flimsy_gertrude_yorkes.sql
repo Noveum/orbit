@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "cycle_issue_membership_one_open_per_issue_unique" ON "cycle_issue_membership" USING btree ("issue_id") WHERE "cycle_issue_membership"."removed_at" is null;

@@ -40,6 +40,12 @@ describe('a role the code does not recognise', () => {
 });
 
 describe('permissionsFor', () => {
+  it('allows every workspace role to read analytics', () => {
+    for (const role of ['guest', 'contributor', 'member', 'admin'] as const) {
+      expect(permissionsFor(role)).toContain('analytics:read');
+    }
+  });
+
   it('widens monotonically from guest to admin', () => {
     const guest = permissionsFor('guest');
     const contributor = permissionsFor('contributor');

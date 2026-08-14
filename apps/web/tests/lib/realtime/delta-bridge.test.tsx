@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render } from '@testing-library/react';
+import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import {
   BOARD_ROOT,
@@ -170,6 +171,39 @@ describe('DeltaBridge origin suppression', () => {
   });
 });
 
+describe('DeltaBridge analytics freshness', () => {
+  it('coalesces relevant actions into one aggregate invalidation', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() =>
+      capturedHandler?.([
+        action({ model: 'issue' }),
+        action({ model: 'project', modelId: 'project_1' }),
+        action({ model: 'label', modelId: 'label_1' }),
+      ]),
+    );
+
+    expect(seen.filter((key) => key[0] === ANALYTICS_ROOT)).toEqual([[ANALYTICS_ROOT]]);
+  });
+
+  it('invalidates aggregates for this tab before suppressing its row echo', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() => capturedHandler?.([renameAction(clientId(), 'Own update')]));
+
+    expect(seen).toContainEqual([ANALYTICS_ROOT]);
+    expect(titleIn(client)).toBe('Ship the board');
+  });
+
+  it('does not invalidate analytics for unrelated comment activity', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    act(() => capturedHandler?.([action({ model: 'comment', modelId: 'comment_1' })]));
+
+    expect(seen.some((key) => key[0] === ANALYTICS_ROOT)).toBe(false);
+  });
+});
+
 describe('DeltaBridge ordering', () => {
   it('ignores a delta whose sync id is not newer than the cached row', () => {
     const client = mount();
@@ -197,6 +231,79 @@ describe('DeltaBridge ordering', () => {
   });
 });
 
+describe('DeltaBridge workspace sprint membership', () => {
+  const cycleId = 'cycle_workspace';
+
+  function cycleRows(client: QueryClient): Issue[] {
+    const pages = client.getQueryData<IssuePages>(queryKeys.cycleIssues(cycleId));
+    return (pages?.pages ?? []).flatMap((page) => page.issues);
+  }
+
+  it('adds an issue from any team to its workspace sprint cache', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [{ issues: [], nextCursor: null }],
+      pageParams: [null],
+    });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'insert',
+          modelId: 'issue_design',
+          data: issue({
+            id: 'issue_design',
+            teamId: 'team_design',
+            identifier: 'DSGN-4',
+            cycleId,
+            syncId: 30,
+          }),
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(cycleRows(client).map((row) => row.id)).toEqual(['issue_design']);
+  });
+
+  it('keeps a cross-team sprint issue when an unrelated field changes', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [
+        {
+          issues: [issue({ teamId: 'team_design', cycleId })],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null],
+    });
+
+    act(() =>
+      capturedHandler?.([action({ data: { id: 'issue_1', title: 'Still here', syncId: 30 } })]),
+    );
+
+    expect(cycleRows(client)).toHaveLength(1);
+    expect(cycleRows(client)[0]?.title).toBe('Still here');
+  });
+
+  it('removes an issue only when it leaves that workspace sprint', () => {
+    const client = mount();
+    client.setQueryData(queryKeys.cycleIssues(cycleId), {
+      pages: [
+        {
+          issues: [issue({ teamId: 'team_design', cycleId })],
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null],
+    });
+
+    act(() => capturedHandler?.([action({ data: { id: 'issue_1', cycleId: null, syncId: 30 } })]));
+
+    expect(cycleRows(client)).toEqual([]);
+  });
+});
+
 describe('DeltaBridge root invalidation', () => {
   it('invalidates the bootstrap root once for a burst of org config models', () => {
     const client = mount();
@@ -208,7 +315,7 @@ describe('DeltaBridge root invalidation', () => {
         action({ model: 'team_member', modelId: 'tm_1', data: { id: 'tm_1' } }),
       ]),
     );
-    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+    expect(seen).toEqual([[ANALYTICS_ROOT], [BOOTSTRAP_ROOT]]);
   });
 
   it('invalidates the milestones root, and nothing else, for a milestone delta', () => {
@@ -220,14 +327,14 @@ describe('DeltaBridge root invalidation', () => {
         action({ model: 'milestone', modelId: 'milestone_2', data: { id: 'milestone_2' } }),
       ]),
     );
-    expect(seen).toEqual([[MILESTONES_ROOT]]);
+    expect(seen).toEqual([[ANALYTICS_ROOT], [MILESTONES_ROOT]]);
   });
 
   it('invalidates the views root for a view delta', () => {
     const client = mount();
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action({ model: 'view', modelId: 'view_1', data: {} })]));
-    expect(seen).toEqual([[VIEWS_ROOT]]);
+    expect(seen).toEqual([[ANALYTICS_ROOT], [VIEWS_ROOT]]);
   });
 
   it('invalidates docs once, the docs home once, and each touched doc for a doc burst', () => {
@@ -247,6 +354,7 @@ describe('DeltaBridge root invalidation', () => {
     const seen = trackInvalidations(client);
     act(() => capturedHandler?.([action()]));
     expect(seen).toEqual([
+      [ANALYTICS_ROOT],
       [ISSUE_SUMMARY_ROOT],
       [ISSUE_FACETS_ROOT],
       [BOARD_ROOT],
@@ -350,6 +458,7 @@ describe('DeltaBridge reconnect backfill', () => {
     expect(titleIn(client)).toBe('Caught up');
     expect(observed).toContain(42);
     expect(seen).toEqual([
+      [ANALYTICS_ROOT],
       [ISSUE_SUMMARY_ROOT],
       [ISSUE_FACETS_ROOT],
       [BOARD_ROOT],
@@ -391,7 +500,7 @@ describe('DeltaBridge reconnect backfill', () => {
       globalThis.fetch = originalFetch;
     }
 
-    expect(seen).toEqual([[BOOTSTRAP_ROOT]]);
+    expect(seen).toEqual([[ANALYTICS_ROOT], [BOOTSTRAP_ROOT]]);
   });
 });
 

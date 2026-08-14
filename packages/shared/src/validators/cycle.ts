@@ -2,8 +2,25 @@ import { z } from 'zod';
 
 const instantSchema = z.union([z.string().trim().min(1), z.date()]).pipe(z.coerce.date());
 
+function isIanaTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const ianaTimezoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine(isIanaTimezone, 'Use a valid IANA timezone.');
+
 export const cycleCreateSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
+  name: z.string().trim().max(120).optional(),
+  timezone: ianaTimezoneSchema.optional(),
   startsAt: instantSchema.optional(),
   endsAt: instantSchema.optional(),
 });
@@ -11,6 +28,7 @@ export const cycleCreateSchema = z.object({
 export const cycleUpdateSchema = z
   .object({
     name: z.string().trim().max(120),
+    timezone: ianaTimezoneSchema,
     startsAt: instantSchema,
     endsAt: instantSchema,
   })

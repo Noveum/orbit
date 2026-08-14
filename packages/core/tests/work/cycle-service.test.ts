@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { and, asc, db, eq, schema } from '@orbit/db';
+import { and, asc, db, eq, inArray, schema, sql } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import { sprintLabel } from '@orbit/shared/utils';
 import { sprintOutcomeSchema } from '@orbit/shared/validators';
 import { createTeam } from '../../src/org/team-service.ts';
+import { catchUp } from '../../src/realtime/backfill.ts';
 import {
   addMember,
   createWorkspace,
@@ -16,6 +17,7 @@ import {
   completeCycle,
   createCycle,
   cycleProgress,
+  deleteCycle,
   getCycle,
   getCycleByNumber,
   listCycles,
@@ -54,6 +56,7 @@ describe('createCycle', () => {
     });
     expect(cycle.number).toBe(2);
     expect(cycle.name).toBe('');
+    expect(cycle.teamId).toBeNull();
     expect(sprintLabel(cycle)).toBe('Sprint 2');
     expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
   });
@@ -66,6 +69,23 @@ describe('createCycle', () => {
     });
     expect(cycle.name).toBe('Hardening');
     expect(sprintLabel(cycle)).toBe('Hardening');
+  });
+
+  it('stores a valid timezone and refuses an unknown one', async () => {
+    const { cycle } = await createCycle(workspace.admin, {
+      timezone: 'America/New_York',
+      startsAt: daysFromNow(20),
+      endsAt: daysFromNow(34),
+    });
+    expect(cycle.timezone).toBe('America/New_York');
+
+    await expect(
+      createCycle(workspace.admin, {
+        timezone: 'Mars/Olympus',
+        startsAt: daysFromNow(40),
+        endsAt: daysFromNow(54),
+      }),
+    ).rejects.toBeDefined();
   });
 
   it('refuses a cycle that ends before it starts', async () => {
@@ -210,6 +230,66 @@ describe('updateCycle', () => {
       endsAt: new Date(cycle.endsAt.getTime() + 86_400_000),
     });
     expect(shifted.endsAt.getTime()).toBe(cycle.endsAt.getTime() + 86_400_000);
+  });
+
+  it('updates a valid timezone and refuses an unknown one', async () => {
+    const cycle = await firstCycle();
+    const { cycle: updated } = await updateCycle(workspace.admin, cycle.id, {
+      timezone: 'Asia/Kolkata',
+    });
+    expect(updated.timezone).toBe('Asia/Kolkata');
+
+    await expect(
+      updateCycle(workspace.admin, cycle.id, { timezone: 'UTC+05:30' }),
+    ).rejects.toBeDefined();
+  });
+});
+
+describe('deleteCycle', () => {
+  it('closes membership before deleting a sprint and detaching its issues', async () => {
+    const cycle = await firstCycle();
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Detached',
+      cycleId: cycle.id,
+    });
+
+    await db.execute(
+      sql.raw(`
+      create function require_closed_membership_before_cycle_delete() returns trigger as $$
+      begin
+        if not exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id
+        ) then
+          raise exception 'membership missing before cycle delete';
+        end if;
+        if exists (
+          select 1 from cycle_issue_membership where cycle_id = old.id and removed_at is null
+        ) then
+          raise exception 'membership open before cycle delete';
+        end if;
+        return old;
+      end;
+      $$ language plpgsql;
+      create trigger require_closed_membership_before_cycle_delete
+      before delete on cycle
+      for each row execute function require_closed_membership_before_cycle_delete();
+    `),
+    );
+
+    try {
+      await deleteCycle(workspace.admin, cycle.id);
+    } finally {
+      await db.execute(
+        sql.raw(`
+        drop trigger require_closed_membership_before_cycle_delete on cycle;
+        drop function require_closed_membership_before_cycle_delete();
+      `),
+      );
+    }
+
+    const [detached] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
+    expect(detached?.cycleId).toBeNull();
   });
 });
 
@@ -740,6 +820,50 @@ describe('completeCycle', () => {
     await expect(completeCycle(workspace.admin, cycle.id)).rejects.toMatchObject({
       code: 'conflict',
     });
+  });
+
+  it('publishes the canonical close after its final snapshot for reconnect safety', async () => {
+    const cycle = await firstCycle();
+    const rolled = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Todo').id,
+      teamId: workspace.teamId,
+      title: 'Roll forward',
+      cycleId: cycle.id,
+    });
+    const released = await createIssue(workspace.admin, {
+      stateId: stateNamed(workspace, 'Backlog').id,
+      teamId: workspace.teamId,
+      title: 'Return to backlog',
+      cycleId: cycle.id,
+    });
+    const cursor = (await catchUp(workspace.admin, 0)).syncId;
+
+    const result = await completeCycle(workspace.admin, cycle.id);
+    const [snapshot] = await db
+      .select()
+      .from(schema.cycleProgressSnapshot)
+      .where(eq(schema.cycleProgressSnapshot.cycleId, cycle.id));
+    const changedIssues = await db
+      .select()
+      .from(schema.issue)
+      .where(inArray(schema.issue.id, [rolled.issue.id, released.issue.id]));
+    const replay = await catchUp(workspace.admin, cursor);
+    const replayedClose = replay.actions.find(
+      (action) => action.model === 'cycle' && action.modelId === cycle.id,
+    );
+
+    expect(snapshot?.syncId).toBeLessThan(result.cycle.syncId);
+    expect(new Set(result.actions.map((action) => action.syncId))).toEqual(
+      new Set([result.cycle.syncId]),
+    );
+    expect(
+      result.actions.filter((action) => action.model === 'cycle' && action.modelId === cycle.id),
+    ).toHaveLength(1);
+    expect(changedIssues.every((issue) => issue.syncId === result.cycle.syncId)).toBe(true);
+    expect(replayedClose?.syncId).toBe(result.cycle.syncId);
+    expect(replay.actions.map((action) => action.syncId)).toEqual(
+      replay.actions.map((action) => action.syncId).toSorted((left, right) => left - right),
+    );
   });
 });
 

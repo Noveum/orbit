@@ -44,6 +44,8 @@ alter table public.cycle
 
 drop index if exists cycle_team_number_unique;
 drop index if exists cycle_team_dates_idx;
+drop index if exists cycle_org_number_unique;
+drop index if exists cycle_org_dates_idx;
 
 create temporary table sprint_runs on commit drop as
 with open_cycles as (
@@ -91,13 +93,77 @@ left join public.issue i on i.cycle_id = r.id and i.archived_at is null
 group by r.organization_id, r.run, r.id, r.starts_at
 order by r.organization_id, r.run, count(i.id) desc, r.starts_at asc, r.id asc;
 
-update public.issue i
-set cycle_id = w.id
-from sprint_runs r
+create temporary table sprint_issue_moves on commit drop as
+select
+  i.id as issue_id,
+  i.organization_id,
+  i.team_id,
+  i.cycle_id as source_cycle_id,
+  w.id as destination_cycle_id,
+  i.identifier,
+  i.estimate,
+  i.assignee_id,
+  i.project_id,
+  i.milestone_id
+from public.issue i
+join sprint_runs r on r.id = i.cycle_id
 join sprint_run_winners w on w.organization_id = r.organization_id and w.run = r.run
-where i.cycle_id = r.id
-  and i.cycle_id is distinct from w.id
+where i.cycle_id is distinct from w.id
   and i.archived_at is null;
+
+update public.issue i
+set cycle_id = m.destination_cycle_id
+from sprint_issue_moves m
+where i.id = m.issue_id;
+
+do $$
+begin
+  if to_regclass('public.cycle_issue_membership') is null then return; end if;
+
+  update public.cycle_issue_membership membership
+  set removed_at = now()
+  from sprint_issue_moves move
+  where membership.issue_id = move.issue_id
+    and membership.removed_at is null;
+
+  insert into public.cycle_issue_membership (
+    id,
+    organization_id,
+    team_id,
+    cycle_id,
+    issue_id,
+    issue_identifier,
+    added_at,
+    entry_kind,
+    estimate_at_add,
+    assignee_id_at_add,
+    project_id_at_add,
+    milestone_id_at_add,
+    coverage
+  )
+  select
+    gen_random_uuid()::text,
+    move.organization_id,
+    move.team_id,
+    move.destination_cycle_id,
+    move.issue_id,
+    move.identifier,
+    now(),
+    'bootstrap',
+    move.estimate,
+    move.assignee_id,
+    move.project_id,
+    move.milestone_id,
+    'observed'
+  from sprint_issue_moves move
+  where not exists (
+    select 1 from public.cycle_issue_membership membership
+    where membership.issue_id = move.issue_id
+      and membership.cycle_id = move.destination_cycle_id
+      and membership.removed_at is null
+  );
+end
+$$;
 
 update public.cycle c
 set archived_at = now()

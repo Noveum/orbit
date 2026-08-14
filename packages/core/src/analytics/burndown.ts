@@ -1,18 +1,23 @@
 import { and, asc, db, eq, schema, sql } from '@orbit/db';
+import { analyticsQuerySchema } from '@orbit/shared';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
 import type { SQL } from 'drizzle-orm';
-import { requireRow, startOfUtcDay } from '../internal.ts';
+import { requireRow } from '../internal.ts';
+import { calendarDateLabel } from './filter.ts';
 import { churnFromScopeSeries, type Distribution, distributionOf, idealRemaining } from './math.ts';
 import type { Measure } from './schemas.ts';
+import { loadSprintAnalytics } from './sprints.ts';
 
 function weightSql(measure: Measure): SQL {
   return measure === 'points' ? sql`coalesce(estimate, 0)` : sql`1`;
 }
 
-function isoDay(value: Date): string {
-  return startOfUtcDay(value).toISOString().slice(0, 10);
+function nextCalendarDay(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
 }
 
 export interface BurndownPoint {
@@ -36,12 +41,6 @@ export interface CycleBurndown {
   readonly points: BurndownPoint[];
 }
 
-type SeriesRow = {
-  readonly day: string;
-  readonly scope: number | string;
-  readonly completed: number | string;
-};
-
 async function loadCycle(principal: Principal, cycleId: string) {
   const [row] = await db
     .select()
@@ -59,83 +58,68 @@ export async function cycleBurndown(
   measure: Measure = 'issues',
   now: Date = new Date(),
 ): Promise<CycleBurndown> {
-  assertCan(principal, 'project:read');
-  const cycle = await loadCycle(principal, cycleId);
-  const weight = weightSql(measure);
-  const today = isoDay(now);
-  const startsAt = cycle.startsAt.toISOString();
-  const endsAt = cycle.endsAt.toISOString();
-
-  const rows = await db.execute<SeriesRow>(sql`
-    with days as (
-      select generate_series(
-        date_trunc('day', ${startsAt}::timestamptz),
-        date_trunc('day', ${endsAt}::timestamptz),
-        interval '1 day'
-      )::date as day
-    ),
-    scoped as (
-      select
-        greatest(
-          (created_at at time zone 'UTC')::date,
-          date_trunc('day', ${startsAt}::timestamptz)::date
-        ) as created_day,
-        greatest(
-          (completed_at at time zone 'UTC')::date,
-          date_trunc('day', ${startsAt}::timestamptz)::date
-        ) as completed_day,
-        completed_at,
-        ${weight} as weight
-      from issue
-      where cycle_id = ${cycleId} and archived_at is null
-    ),
-    added as (
-      select created_day as day, sum(weight) as amount from scoped group by created_day
-    ),
-    finished as (
-      select completed_day as day, sum(weight) as amount
-      from scoped where completed_at is not null group by completed_day
-    )
-    select
-      to_char(d.day, 'YYYY-MM-DD') as day,
-      coalesce(sum(coalesce(a.amount, 0)) over (order by d.day), 0) as scope,
-      coalesce(sum(coalesce(f.amount, 0)) over (order by d.day), 0) as completed
-    from days d
-    left join added a on a.day = d.day
-    left join finished f on f.day = d.day
-    order by d.day
-  `);
-
-  const totalDays = Math.max(1, rows.length - 1);
-  const points: BurndownPoint[] = rows.map((row, index) => {
-    const scope = Number(row['scope']);
-    const completed = Number(row['completed']);
-    const day = String(row['day']);
-    const isFuture = day > today;
-    return {
+  await loadCycle(principal, cycleId);
+  const analytics = await loadSprintAnalytics(
+    principal,
+    analyticsQuerySchema.parse({
+      lens: 'sprints',
+      measure,
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'cycle',
+            operator: 'in',
+            values: [cycleId],
+            negate: false,
+          },
+        ],
+      },
+    }),
+    { now, selectedSprintId: cycleId },
+  );
+  if (analytics.current === null) throw new Error('The selected sprint is unavailable.');
+  const cycle = analytics.current.sprint;
+  const today = calendarDateLabel(now, cycle.timezone);
+  const actual = analytics.current.burn;
+  const points: BurndownPoint[] = [];
+  const finalDay = calendarDateLabel(new Date(cycle.endsAt), cycle.timezone);
+  for (
+    let day = calendarDateLabel(new Date(cycle.startsAt), cycle.timezone);
+    day <= finalDay;
+    day = nextCalendarDay(day)
+  ) {
+    const found = actual.find((point) => point.date === day);
+    const isFuture = day > today || found === undefined;
+    points.push({
       date: day,
-      scope,
-      completed: isFuture ? null : completed,
-      remaining: isFuture ? null : scope - completed,
-      ideal: idealRemaining(scope, index, totalDays),
+      scope: found?.scope ?? actual.at(-1)?.scope ?? 0,
+      completed: isFuture ? null : (found?.completed ?? 0),
+      remaining: isFuture ? null : (found?.remaining ?? 0),
+      ideal: found?.ideal ?? actual.at(-1)?.ideal ?? 0,
       isFuture,
-    };
-  });
-
-  const scopeStart = points.at(0)?.scope ?? 0;
-  const present = points.filter((point) => !point.isFuture);
-  const last = present.at(-1);
+    });
+  }
+  const scopeStart = points[0]?.scope ?? 0;
+  const last = actual.at(-1);
+  const totalDays = Math.max(1, points.length - 1);
+  const compatiblePoints = points.map((point, index) => ({
+    ...point,
+    ideal: idealRemaining(point.scope, index, totalDays),
+  }));
 
   return {
     cycleId,
-    name: sprintLabel(cycle),
+    name: cycle.name,
     measure,
-    startsAt: cycle.startsAt.toISOString(),
-    endsAt: cycle.endsAt.toISOString(),
+    startsAt: cycle.startsAt,
+    endsAt: cycle.endsAt,
     scopeStart,
     scopeCurrent: last?.scope ?? scopeStart,
     completedCurrent: last?.completed ?? 0,
-    points,
+    points: compatiblePoints,
   };
 }
 
@@ -219,6 +203,7 @@ export async function cycleFlowMetrics(
       extract(epoch from (completed_at - created_at)) / 86400 as lead_days
     from issue
     where cycle_id = ${cycleId}
+      and organization_id = ${principal.organizationId}
       and archived_at is null
       and completed_at is not null
   `);
@@ -272,8 +257,12 @@ export async function workspaceVelocity(
       coalesce(sum(${weight}), 0) as planned,
       coalesce(sum(${weight}) filter (where ws.category = 'completed'), 0) as completed
     from cycle c
-    left join issue i on i.cycle_id = c.id and i.archived_at is null
+    left join issue i on i.cycle_id = c.id
+      and i.organization_id = c.organization_id
+      and i.archived_at is null
     left join workflow_state ws on ws.id = i.state_id
+      and ws.organization_id = i.organization_id
+      and ws.team_id = i.team_id
     where c.organization_id = ${principal.organizationId}
     group by c.id, c.name, c.number
     order by c.number desc

@@ -250,10 +250,93 @@ export const cycleProgressSnapshot = pgTable(
     totalEstimate: doublePrecision('total_estimate').notNull().default(0),
     completedEstimate: doublePrecision('completed_estimate').notNull().default(0),
     breakdown: jsonb('breakdown').$type<Record<string, unknown>>().notNull().default({}),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+    isFinal: boolean('is_final').notNull().default(false),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('cycle_progress_snapshot_unique').on(table.cycleId, table.capturedOn)],
+);
+
+export const cycleIssueMembership = pgTable(
+  'cycle_issue_membership',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    cycleId: text('cycle_id')
+      .notNull()
+      .references(() => cycle.id, { onDelete: 'cascade' }),
+    issueId: text('issue_id').notNull(),
+    issueIdentifier: text('issue_identifier').notNull(),
+    addedAt: timestamp('added_at', { withTimezone: true }).notNull(),
+    removedAt: timestamp('removed_at', { withTimezone: true }),
+    entryKind: text('entry_kind').notNull(),
+    estimateAtAdd: integer('estimate_at_add'),
+    assigneeIdAtAdd: text('assignee_id_at_add').references(() => user.id, { onDelete: 'set null' }),
+    projectIdAtAdd: text('project_id_at_add').references(() => project.id, {
+      onDelete: 'set null',
+    }),
+    milestoneIdAtAdd: text('milestone_id_at_add').references(() => milestone.id, {
+      onDelete: 'set null',
+    }),
+    coverage: text('coverage').notNull().default('captured'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('cycle_issue_membership_cycle_added_idx').on(table.cycleId, table.addedAt),
+    index('cycle_issue_membership_cycle_removed_idx').on(table.cycleId, table.removedAt),
+    index('cycle_issue_membership_issue_added_idx').on(table.issueId, table.addedAt),
+    uniqueIndex('cycle_issue_membership_one_open_per_issue_unique')
+      .on(table.issueId)
+      .where(sql`${table.removedAt} is null`),
+  ],
+);
+
+export const cycleIssueOutcome = pgTable(
+  'cycle_issue_outcome',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => team.id, { onDelete: 'cascade' }),
+    cycleId: text('cycle_id')
+      .notNull()
+      .references(() => cycle.id, { onDelete: 'cascade' }),
+    issueId: text('issue_id').notNull(),
+    issueIdentifier: text('issue_identifier').notNull(),
+    planned: boolean('planned').notNull().default(false),
+    estimateAtCommitment: integer('estimate_at_commitment'),
+    estimateAtClose: integer('estimate_at_close'),
+    assigneeIdAtClose: text('assignee_id_at_close').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    projectIdAtClose: text('project_id_at_close').references(() => project.id, {
+      onDelete: 'set null',
+    }),
+    milestoneIdAtClose: text('milestone_id_at_close').references(() => milestone.id, {
+      onDelete: 'set null',
+    }),
+    outcome: text('outcome').notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }).notNull(),
+    rolloverCycleId: text('rollover_cycle_id').references(() => cycle.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('cycle_issue_outcome_cycle_issue_unique').on(table.cycleId, table.issueId),
+    index('cycle_issue_outcome_cycle_outcome_idx').on(table.cycleId, table.outcome),
+    index('cycle_issue_outcome_completion_attribution_idx')
+      .on(table.organizationId, table.issueId, table.completedAt, table.closedAt)
+      .where(sql`${table.outcome} = 'completed'`),
+  ],
 );
 
 export const module = pgTable(
@@ -572,6 +655,9 @@ export const issueActivity = pgTable(
     index('issue_activity_cycle_moves_idx')
       .on(table.organizationId, table.createdAt)
       .where(sql`${table.field} = 'cycleId'`),
+    index('issue_activity_assignee_attribution_idx')
+      .on(table.organizationId, table.issueId, table.createdAt)
+      .where(sql`${table.field} = 'assigneeId'`),
   ],
 );
 

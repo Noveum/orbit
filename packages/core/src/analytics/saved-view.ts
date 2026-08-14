@@ -1,9 +1,10 @@
-import { and, asc, db, eq, isNull, or, schema } from '@orbit/db';
+import { and, asc, db, eq, isNull, or, schema, type Transaction } from '@orbit/db';
 import { forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
+import { analyticsQuerySchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
@@ -14,8 +15,10 @@ import {
   checkpointCreateSchema,
   type SavedAnalyticsViewCreate,
   type SavedAnalyticsViewUpdate,
+  type SavedDashboardConfig,
   savedAnalyticsViewCreateSchema,
   savedAnalyticsViewUpdateSchema,
+  savedDashboardConfigSchema,
 } from './schemas.ts';
 
 export type SavedAnalyticsViewRow = typeof schema.savedAnalyticsView.$inferSelect;
@@ -38,14 +41,59 @@ function kindOf(config: Record<string, unknown>): string {
   return typeof kind === 'string' ? kind : 'dashboard';
 }
 
+export function normalizeSavedAnalyticsConfig(
+  config: Record<string, unknown>,
+): SavedDashboardConfig {
+  const query = config['query'];
+  return savedDashboardConfigSchema.parse({
+    kind: 'dashboard',
+    version: 1,
+    query: analyticsQuerySchema.parse(typeof query === 'object' && query !== null ? query : config),
+    pinned: config['pinned'] === true,
+  });
+}
+
+export function savedAnalyticsQuery(row: SavedAnalyticsViewRow): SavedDashboardConfig | null {
+  if (kindOf(row.config) !== 'dashboard') return null;
+  return normalizeSavedAnalyticsConfig(row.config);
+}
+
+async function unpinOwnedDashboards(
+  tx: Transaction,
+  principal: Principal,
+  exceptId: string | null,
+  syncId: number,
+): Promise<void> {
+  const rows = await tx
+    .select()
+    .from(schema.savedAnalyticsView)
+    .where(
+      and(
+        eq(schema.savedAnalyticsView.organizationId, principal.organizationId),
+        eq(schema.savedAnalyticsView.ownerId, principal.userId),
+        isNull(schema.savedAnalyticsView.archivedAt),
+      ),
+    );
+  for (const row of rows) {
+    if (row.id === exceptId) continue;
+    const dashboard = savedAnalyticsQuery(row);
+    if (dashboard === null || !dashboard.pinned) continue;
+    await tx
+      .update(schema.savedAnalyticsView)
+      .set({ config: { ...dashboard, pinned: false }, syncId, updatedAt: new Date() })
+      .where(eq(schema.savedAnalyticsView.id, row.id));
+  }
+}
+
 export function toSavedAnalyticsViewPayload(row: SavedAnalyticsViewRow): SavedAnalyticsViewPayload {
+  const kind = kindOf(row.config);
   return {
     id: row.id,
     name: row.name,
     scopeType: row.scopeType,
     scopeId: row.scopeId,
-    kind: kindOf(row.config),
-    config: row.config,
+    kind,
+    config: kind === 'dashboard' ? normalizeSavedAnalyticsConfig(row.config) : row.config,
     shared: row.shared,
     ownerId: row.ownerId,
     createdAt: row.createdAt.toISOString(),
@@ -131,6 +179,11 @@ async function insertView(
   return await db.transaction(async (tx) => {
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    const dashboard =
+      kindOf(values.config) === 'dashboard' ? normalizeSavedAnalyticsConfig(values.config) : null;
+    if (dashboard?.pinned === true) {
+      await unpinOwnedDashboards(tx, principal, null, syncId);
+    }
     const [created] = await tx
       .insert(schema.savedAnalyticsView)
       .values({
@@ -174,7 +227,10 @@ export async function createSavedAnalyticsView(
     name: parsed.name,
     scopeType: parsed.scopeType,
     scopeId: parsed.scopeId,
-    config: { ...parsed.config, kind: kindOf(parsed.config) },
+    config:
+      kindOf(parsed.config) === 'checkpoint'
+        ? parsed.config
+        : normalizeSavedAnalyticsConfig(parsed.config),
     shared: parsed.shared,
   });
 }
@@ -193,12 +249,23 @@ export async function updateSavedAnalyticsView(
       updatedAt: new Date(),
     };
     if (parsed.name !== undefined) values.name = parsed.name;
-    if (parsed.config !== undefined)
-      values.config = { ...parsed.config, kind: kindOf(parsed.config) };
+    if (parsed.config !== undefined) {
+      values.config =
+        kindOf(parsed.config) === 'checkpoint'
+          ? parsed.config
+          : normalizeSavedAnalyticsConfig(parsed.config);
+    }
     if (parsed.shared !== undefined) values.shared = parsed.shared;
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
+    if (values.config !== undefined) {
+      const dashboard =
+        kindOf(values.config) === 'dashboard' ? normalizeSavedAnalyticsConfig(values.config) : null;
+      if (dashboard?.pinned === true) {
+        await unpinOwnedDashboards(tx, principal, id, syncId);
+      }
+    }
     const [updated] = await tx
       .update(schema.savedAnalyticsView)
       .set({ ...values, syncId })

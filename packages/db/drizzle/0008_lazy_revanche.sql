@@ -1,1 +1,0 @@
-ALTER TABLE "github_pull_request" ADD COLUMN "history_synced_at" timestamp with time zone;
