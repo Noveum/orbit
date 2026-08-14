@@ -25,6 +25,7 @@ import { usePullRefresh } from './use-pull-refresh.ts';
 
 export interface PullsViewProps {
   readonly pulls: readonly PullRequestRow[];
+  readonly total?: number;
   readonly userId: string;
   readonly reach: GithubReach;
   readonly canManageIntegrations: boolean;
@@ -123,6 +124,7 @@ function indexOfState(state: string): number {
 
 export function PullsView({
   pulls,
+  total = pulls.length,
   userId,
   reach,
   canManageIntegrations,
@@ -152,8 +154,8 @@ export function PullsView({
       <header className="flex items-center justify-between gap-3 border-border border-b px-5 py-3">
         <h1 className="flex items-center gap-2 font-semibold text-lg text-text">
           Pull requests
-          <Badge tone={pulls.length > 0 ? 'accent' : 'neutral'} data-testid="pulls-count">
-            {pulls.length}
+          <Badge tone={total > 0 ? 'accent' : 'neutral'} data-testid="pulls-count">
+            {total}
           </Badge>
         </h1>
       </header>

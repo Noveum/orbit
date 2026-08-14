@@ -512,14 +512,28 @@ function rolledUpCheckStatus(entries: readonly CheckStatusEntry[]): string | nul
   for (const entry of checks) {
     const key = checkStatusKey(entry);
     const current = latestByName.get(key);
-    if (current === undefined || checkOccurredAt(entry) >= checkOccurredAt(current)) {
+    const entryTime = checkOccurredAt(entry);
+    const currentTime = current === undefined ? Number.NEGATIVE_INFINITY : checkOccurredAt(current);
+    if (
+      current === undefined ||
+      entryTime > currentTime ||
+      (entryTime === currentTime && entry.externalId > current.externalId)
+    ) {
       latestByName.set(key, entry);
     }
   }
   const states = [...latestByName.values()].map((entry) => entry.state.toLowerCase());
   if (
     states.some((state) =>
-      ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(state),
+      [
+        'failure',
+        'error',
+        'timed_out',
+        'cancelled',
+        'action_required',
+        'startup_failure',
+        'stale',
+      ].includes(state),
     )
   ) {
     return 'failure';
@@ -531,7 +545,9 @@ function rolledUpCheckStatus(entries: readonly CheckStatusEntry[]): string | nul
   ) {
     return 'pending';
   }
-  return 'success';
+  return states.every((state) => ['success', 'neutral', 'skipped'].includes(state))
+    ? 'success'
+    : 'unknown';
 }
 
 interface PersistedHistoryEntry extends CheckStatusEntry {

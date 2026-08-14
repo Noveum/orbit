@@ -622,6 +622,39 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps an unrecognized check conclusion unknown', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'check_run:83:completed:mysterious',
+            type: 'checks',
+            actor: { login: 'github-actions', id: 0 },
+            body: 'verify',
+            url: 'https://github.com/acme/web/actions/runs/83',
+            state: 'mysterious',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-13T08:00:00.000Z',
+          },
+        ],
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.checkStatus).toBe('unknown');
+    });
+  });
+
   it('notifies an existing linked pull request about a conversation comment', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

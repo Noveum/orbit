@@ -33,10 +33,31 @@ export interface PullRequestRow {
 export interface PullRequestPage {
   readonly pulls: PullRequestRow[];
   readonly hasMore: boolean;
+  readonly total: number;
 }
 
 export const PULL_REQUEST_PAGE_SIZE = 100;
 export const PULL_REQUEST_ACTIVITY_LIMIT = 200;
+
+function pullRequestLinkKeys(
+  pullRequestId: string | null,
+  repository: string,
+  number: number | null,
+): string[] {
+  const keys = pullRequestId === null ? [] : [pullRequestId];
+  if (number !== null) keys.push(`${repository.toLowerCase()}#${number}`);
+  return keys;
+}
+
+function mergeLinkedIssues(
+  ...groups: readonly (readonly PullRequestIssueContext[] | undefined)[]
+): PullRequestIssueContext[] {
+  const merged = new Map<string, PullRequestIssueContext>();
+  for (const group of groups) {
+    for (const context of group ?? []) merged.set(context.identifier, context);
+  }
+  return [...merged.values()];
+}
 
 export interface PullRequestActivityRow {
   readonly id: string;
@@ -163,33 +184,40 @@ export async function loadPullRequestPage(
   page: number,
 ): Promise<PullRequestPage> {
   const livePrincipal = await currentPrincipal(principal);
-  if (livePrincipal === null) return { pulls: [], hasMore: false };
+  if (livePrincipal === null) return { pulls: [], hasMore: false, total: 0 };
 
   const currentPage = Math.max(1, page);
 
-  const rows = await db
-    .select({
-      id: schema.githubPullRequest.id,
-      title: schema.githubPullRequest.title,
-      url: schema.githubPullRequest.url,
-      repository: schema.githubPullRequest.repositoryName,
-      number: schema.githubPullRequest.number,
-      branch: schema.githubPullRequest.headRef,
-      state: schema.githubPullRequest.state,
-      draft: schema.githubPullRequest.draft,
-      merged: schema.githubPullRequest.merged,
-      authorLogin: schema.githubPullRequest.authorLogin,
-      reviewDecision: schema.githubPullRequest.reviewDecision,
-      checkStatus: schema.githubPullRequest.checkStatus,
-      updatedAt: schema.githubPullRequest.updatedAt,
-    })
-    .from(schema.githubPullRequest)
-    .where(eq(schema.githubPullRequest.organizationId, principal.organizationId))
-    .orderBy(desc(schema.githubPullRequest.updatedAt))
-    .limit(PULL_REQUEST_PAGE_SIZE + 1)
-    .offset((currentPage - 1) * PULL_REQUEST_PAGE_SIZE);
+  const [rows, totals] = await Promise.all([
+    db
+      .select({
+        id: schema.githubPullRequest.id,
+        title: schema.githubPullRequest.title,
+        url: schema.githubPullRequest.url,
+        repository: schema.githubPullRequest.repositoryName,
+        number: schema.githubPullRequest.number,
+        branch: schema.githubPullRequest.headRef,
+        state: schema.githubPullRequest.state,
+        draft: schema.githubPullRequest.draft,
+        merged: schema.githubPullRequest.merged,
+        authorLogin: schema.githubPullRequest.authorLogin,
+        reviewDecision: schema.githubPullRequest.reviewDecision,
+        checkStatus: schema.githubPullRequest.checkStatus,
+        updatedAt: schema.githubPullRequest.updatedAt,
+      })
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.organizationId, principal.organizationId))
+      .orderBy(desc(schema.githubPullRequest.updatedAt))
+      .limit(PULL_REQUEST_PAGE_SIZE + 1)
+      .offset((currentPage - 1) * PULL_REQUEST_PAGE_SIZE),
+    db
+      .select({ value: count() })
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.organizationId, principal.organizationId)),
+  ]);
+  const total = totals[0]?.value ?? 0;
 
-  if (rows.length === 0) return { pulls: [], hasMore: false };
+  if (rows.length === 0) return { pulls: [], hasMore: false, total };
   const hasMore = rows.length > PULL_REQUEST_PAGE_SIZE;
   const visibleRows = rows.slice(0, PULL_REQUEST_PAGE_SIZE);
   const visibleLegacyLinks = visibleRows.flatMap((row) =>
@@ -244,7 +272,6 @@ export async function loadPullRequestPage(
 
   const contextsByPull = new Map<string, PullRequestIssueContext[]>();
   for (const context of contexts) {
-    if (context.number === null) continue;
     if (
       !isInTeam(livePrincipal, {
         id: context.teamId,
@@ -253,23 +280,27 @@ export async function loadPullRequestPage(
     ) {
       continue;
     }
-    const key = context.pullRequestId ?? `${context.repository.toLowerCase()}#${context.number}`;
-    contextsByPull.set(key, [
-      ...(contextsByPull.get(key) ?? []),
-      {
-        identifier: context.identifier,
-        title: context.title,
-        project:
-          context.projectId === null || context.projectName === null || context.projectSlug === null
-            ? null
-            : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
-      },
-    ]);
+    const linkedIssue = {
+      identifier: context.identifier,
+      title: context.title,
+      project:
+        context.projectId === null || context.projectName === null || context.projectSlug === null
+          ? null
+          : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
+    };
+    for (const key of pullRequestLinkKeys(
+      context.pullRequestId,
+      context.repository,
+      context.number,
+    )) {
+      contextsByPull.set(key, [...(contextsByPull.get(key) ?? []), linkedIssue]);
+    }
   }
   const activityByPull = new Map(activityCounts.map((entry) => [entry.pullRequestId, entry.total]));
 
   return {
     hasMore,
+    total,
     pulls: visibleRows.map((row) => ({
       id: row.id,
       title: row.title.length > 0 ? row.title : `${row.repository}#${row.number ?? '?'}`,
@@ -284,10 +315,12 @@ export async function loadPullRequestPage(
       reviewDecision: row.reviewDecision,
       checkStatus: row.checkStatus,
       activityCount: activityByPull.get(row.id) ?? 0,
-      linkedIssues:
-        contextsByPull.get(row.id) ??
-        contextsByPull.get(`${row.repository.toLowerCase()}#${row.number}`) ??
-        [],
+      linkedIssues: mergeLinkedIssues(
+        contextsByPull.get(row.id),
+        row.number === null
+          ? undefined
+          : contextsByPull.get(`${row.repository.toLowerCase()}#${row.number}`),
+      ),
       updatedAt: row.updatedAt.toISOString(),
     })),
   };
@@ -316,6 +349,17 @@ export async function loadPullRequestDetail(
     .limit(1);
   if (pull === undefined) return null;
 
+  const contextMatch =
+    pull.number === null
+      ? eq(schema.gitLink.pullRequestId, pull.id)
+      : or(
+          eq(schema.gitLink.pullRequestId, pull.id),
+          and(
+            eq(schema.gitLink.repository, pull.repositoryName),
+            eq(schema.gitLink.number, pull.number),
+          ),
+        );
+
   const [contexts, activities, activityTotals] = await Promise.all([
     db
       .select({
@@ -333,13 +377,7 @@ export async function loadPullRequestDetail(
         and(
           eq(schema.gitLink.organizationId, principal.organizationId),
           eq(schema.gitLink.kind, 'pull_request'),
-          or(
-            eq(schema.gitLink.pullRequestId, pull.id),
-            and(
-              eq(schema.gitLink.repository, pull.repositoryName),
-              eq(schema.gitLink.number, pull.number),
-            ),
-          ),
+          contextMatch,
         ),
       ),
     db
@@ -356,7 +394,7 @@ export async function loadPullRequestDetail(
 
   return {
     id: pull.id,
-    title: pull.title.length > 0 ? pull.title : `${pull.repositoryName}#${pull.number}`,
+    title: pull.title.length > 0 ? pull.title : `${pull.repositoryName}#${pull.number ?? '?'}`,
     body: pull.body,
     bodyHtml: renderMarkdown(pull.body),
     url: pull.url,
@@ -371,28 +409,30 @@ export async function loadPullRequestDetail(
     reviewDecision: pull.reviewDecision,
     checkStatus: pull.checkStatus,
     activityCount: activityTotals[0]?.value ?? 0,
-    linkedIssues: contexts.flatMap((context) => {
-      if (
-        !isInTeam(livePrincipal, {
-          id: context.teamId,
-          organizationId: principal.organizationId,
-        })
-      ) {
-        return [];
-      }
-      return [
-        {
-          identifier: context.identifier,
-          title: context.title,
-          project:
-            context.projectId === null ||
-            context.projectName === null ||
-            context.projectSlug === null
-              ? null
-              : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
-        },
-      ];
-    }),
+    linkedIssues: mergeLinkedIssues(
+      contexts.flatMap((context) => {
+        if (
+          !isInTeam(livePrincipal, {
+            id: context.teamId,
+            organizationId: principal.organizationId,
+          })
+        ) {
+          return [];
+        }
+        return [
+          {
+            identifier: context.identifier,
+            title: context.title,
+            project:
+              context.projectId === null ||
+              context.projectName === null ||
+              context.projectSlug === null
+                ? null
+                : { id: context.projectId, name: context.projectName, slug: context.projectSlug },
+          },
+        ];
+      }),
+    ),
     updatedAt: pull.updatedAt.toISOString(),
     activities: activities.map((activity) => ({
       id: activity.id,

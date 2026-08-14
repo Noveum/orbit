@@ -1,7 +1,5 @@
 # GitHub Inbox Foundation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Make linked pull request notifications useful and reliable by adding GitHub destinations, comment events, open pull request backfill, team-safe reads, and exclusive delivery claims.
 
 **Architecture:** Preserve the existing issue-link automation model while strengthening its boundaries. GitHub webhooks and REST backfill share normalization and application code, notifications carry separate internal and external destinations, and authorization is enforced in database queries before data reaches realtime or UI consumers.
@@ -142,8 +140,8 @@ Run: `bun test packages/services/tests/github/apply.test.ts apps/web/tests/featu
 - Modify: `apps/web/tests/app/api/webhooks/github/route.test.ts`
 
 **Interfaces:**
-- Produces: atomic `received|failed -> processing` transition
-- Produces: duplicate response when a delivery is already processing or terminal
+- Produces: atomic insert into `processing` or lease-aware reclaim from `received`, `failed`, or expired `processing`
+- Produces: in-progress response for an active claim and duplicate response for a terminal delivery
 
 - [ ] **Step 1: Write a failing concurrent delivery test**
 
@@ -223,4 +221,3 @@ Run: `bun run dev`
 - [ ] **Step 5: Capture desktop and narrow viewport screenshots and check for framework overlays**
 
 - [ ] **Step 6: Review the complete diff against this plan, fix all critical and important findings, rerun verification, commit, push, and open a draft pull request**
-

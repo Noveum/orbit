@@ -63,6 +63,7 @@ describe('PullsView', () => {
     render(
       <PullsRealtime
         pulls={[pull]}
+        total={250}
         userId="user_1"
         reach="connected"
         canManageIntegrations
@@ -72,6 +73,7 @@ describe('PullsView', () => {
     );
 
     expect(providerMount).not.toHaveBeenCalled();
+    expect(screen.getByTestId('pulls-count')).toHaveTextContent('250');
   });
 
   it('links the issue behind each pull request, identifier and title together', () => {

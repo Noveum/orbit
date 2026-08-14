@@ -221,6 +221,24 @@ describe('parseGithubEvent', () => {
     expect(event?.activity.state).toBe('error');
   });
 
+  it('treats a GitHub startup failure as a failed check', () => {
+    const event = parseGithubEvent('check_suite', {
+      action: 'completed',
+      check_suite: {
+        id: 18,
+        status: 'completed',
+        conclusion: 'startup_failure',
+        head_branch: 'main',
+        pull_requests: [{ number: 7 }],
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'github-actions', id: 3 },
+    });
+
+    expect(event?.checks?.failed).toBe(true);
+    expect(event?.activity.state).toBe('startup_failure');
+  });
+
   it('ignores unrelated events', () => {
     expect(parseGithubEvent('push', {})).toBeNull();
     expect(parseGithubEvent('ping', {})).toBeNull();

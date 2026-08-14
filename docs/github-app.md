@@ -46,7 +46,7 @@ subscribe to those events until a product path consumes them.
 
 The App makes only token, installation and read calls:
 
-```
+```text
 POST /app/installations/{id}/access_tokens   mint an installation token
 GET  /app/installations/{id}                 read the installation back
 GET  /installation/repositories              list what was installed on

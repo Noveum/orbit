@@ -5,6 +5,7 @@ import { PullsView } from './pulls-view.tsx';
 
 export interface PullsRealtimeProps {
   readonly pulls: readonly PullRequestRow[];
+  readonly total: number;
   readonly userId: string;
   readonly reach: GithubReach;
   readonly canManageIntegrations: boolean;
@@ -14,6 +15,7 @@ export interface PullsRealtimeProps {
 
 export function PullsRealtime({
   pulls,
+  total,
   userId,
   reach,
   canManageIntegrations,
@@ -23,6 +25,7 @@ export function PullsRealtime({
   return (
     <PullsView
       pulls={pulls}
+      total={total}
       userId={userId}
       reach={reach}
       canManageIntegrations={canManageIntegrations}

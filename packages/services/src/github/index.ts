@@ -425,9 +425,15 @@ function parseCheckSuiteEvent(body: unknown): NormalizedGithubEvent | null {
     review: null,
     requestedReviewer: null,
     checks: {
-      failed: ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
-        (parsed.check_suite.conclusion ?? '').toLowerCase(),
-      ),
+      failed: [
+        'failure',
+        'error',
+        'timed_out',
+        'cancelled',
+        'action_required',
+        'startup_failure',
+        'stale',
+      ].includes((parsed.check_suite.conclusion ?? '').toLowerCase()),
       headBranch: parsed.check_suite.head_branch ?? '',
       headSha: '',
       prNumbers: parsed.check_suite.pull_requests.map((entry) => entry.number),
@@ -475,9 +481,15 @@ function normalizedCheckEvent(input: {
     review: null,
     requestedReviewer: null,
     checks: {
-      failed: ['failure', 'error', 'timed_out', 'cancelled', 'action_required', 'stale'].includes(
-        input.conclusion.toLowerCase(),
-      ),
+      failed: [
+        'failure',
+        'error',
+        'timed_out',
+        'cancelled',
+        'action_required',
+        'startup_failure',
+        'stale',
+      ].includes(input.conclusion.toLowerCase()),
       headBranch: input.headBranch,
       headSha: input.headSha,
       prNumbers: input.prNumbers,

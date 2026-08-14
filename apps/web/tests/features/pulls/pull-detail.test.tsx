@@ -95,6 +95,14 @@ describe('PullDetail', () => {
     expect(screen.getByText('Showing latest 2 of 812 events')).toBeInTheDocument();
   });
 
+  it('uses singular wording for one activity event', () => {
+    const firstActivity = pull.activities[0];
+    if (firstActivity === undefined) throw new Error('the activity fixture is missing');
+    render(<PullDetail pull={{ ...pull, activityCount: 1, activities: [firstActivity] }} />);
+
+    expect(screen.getByText('1 event')).toBeInTheDocument();
+  });
+
   it('shows linked task and project context without replacing the pull request', () => {
     render(<PullDetail pull={pull} />);
 

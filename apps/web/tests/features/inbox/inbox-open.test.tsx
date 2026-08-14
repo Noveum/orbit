@@ -214,6 +214,12 @@ describe('opening a notification in the Unread tab', () => {
     await user.click(screen.getByRole('button', { name: /First/ }));
     await user.click(screen.getByRole('button', { name: /Second/ }));
 
+    await waitFor(() => {
+      expect(calls).toEqual([
+        { notificationIds: ['notification_1'], read: true },
+        { notificationIds: ['notification_2'], read: true },
+      ]);
+    });
     expect(screen.getByRole('button', { name: /First/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Second/ })).toBeInTheDocument();
   });

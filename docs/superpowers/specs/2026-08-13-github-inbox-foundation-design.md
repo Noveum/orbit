@@ -59,7 +59,7 @@ When no Orbit task is linked, review requests notify the mapped requested review
 
 ## Delivery claiming
 
-A new delivery starts in `received`. Processing atomically moves it to `processing` only when its current state is `received` or `failed`. Requests that cannot make that transition return duplicate without executing domain effects. Terminal `processed` and `ignored` deliveries never become eligible again through ordinary webhook receipt.
+A new delivery is inserted directly into `processing` with a claim timestamp. Existing `received` and `failed` deliveries, plus `processing` deliveries whose lease expired, can be reclaimed atomically. An active claim returns an in-progress response without executing domain effects. Terminal `processed` and `ignored` deliveries never become eligible again through ordinary webhook receipt.
 
 Manual replay is a separate future operation with its own authorization and audit trail.
 

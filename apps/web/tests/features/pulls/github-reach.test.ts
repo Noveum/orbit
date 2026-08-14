@@ -9,7 +9,12 @@ import {
 } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { githubReach, loadPullRequests } from '@/features/pulls/data.ts';
+import {
+  githubReach,
+  loadPullRequestDetail,
+  loadPullRequestPage,
+  loadPullRequests,
+} from '@/features/pulls/data.ts';
 import { refreshPullRequestHistory } from '@/features/pulls/github-refresh.ts';
 
 let workspace: Workspace;
@@ -218,6 +223,86 @@ describe('githubReach', () => {
 });
 
 describe('loadPullRequests', () => {
+  it('merges direct and legacy task links without losing or duplicating context', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    const pullRequestId = await mirroredPull(integrationId, repositoryId, 54);
+    const directIssueId = `iss_${randomUUIDv7()}`;
+    const dualIssueId = `iss_${randomUUIDv7()}`;
+    await db.insert(schema.issue).values([
+      {
+        id: directIssueId,
+        organizationId: workspace.organizationId,
+        teamId: workspace.teamId,
+        number: 54,
+        identifier: 'REA-54',
+        title: 'Keep direct pull request context',
+        stateId: stateNamed(workspace, 'Todo').id,
+        creatorId: workspace.adminUser.id,
+      },
+      {
+        id: dualIssueId,
+        organizationId: workspace.organizationId,
+        teamId: workspace.teamId,
+        number: 55,
+        identifier: 'REA-55',
+        title: 'Deduplicate migrated pull request context',
+        stateId: stateNamed(workspace, 'Todo').id,
+        creatorId: workspace.adminUser.id,
+      },
+    ]);
+    await db.insert(schema.gitLink).values([
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: directIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit:direct:rea-54',
+        pullRequestId,
+        number: null,
+        repository: 'noveum/orbit',
+        title: 'Keep direct pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: dualIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit:direct:rea-55',
+        pullRequestId,
+        number: 54,
+        repository: 'noveum/orbit',
+        title: 'Deduplicate migrated pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+      {
+        id: `git_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        issueId: dualIssueId,
+        kind: 'pull_request',
+        externalId: 'pr:noveum/orbit#54:rea-55',
+        number: 54,
+        repository: 'noveum/orbit',
+        title: 'Deduplicate migrated pull request context',
+        url: 'https://github.com/noveum/orbit/pull/54',
+      },
+    ]);
+
+    const page = await loadPullRequestPage(workspace.admin, 1);
+    const detail = await loadPullRequestDetail(workspace.admin, pullRequestId);
+
+    expect(page.total).toBe(1);
+    expect(page.pulls[0]?.linkedIssues.map((context) => context.identifier).sort()).toEqual([
+      'REA-54',
+      'REA-55',
+    ]);
+    expect(detail?.linkedIssues.map((context) => context.identifier).sort()).toEqual([
+      'REA-54',
+      'REA-55',
+    ]);
+  });
+
   it('keeps the PR visible but hides linked task context after team access is removed', async () => {
     const teammate = await addMember(workspace, 'member');
     const integrationId = await installation('active');

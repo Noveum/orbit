@@ -142,7 +142,7 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
               <span className="text-faint text-xs">
                 {pull.activityCount > pull.activities.length
                   ? `Showing latest ${pull.activities.length} of ${pull.activityCount} events`
-                  : `${pull.activityCount} events`}
+                  : `${pull.activityCount} ${pull.activityCount === 1 ? 'event' : 'events'}`}
               </span>
             </div>
             {pull.activities.length === 0 ? (

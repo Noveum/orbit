@@ -24,6 +24,7 @@ export default async function PullsPage({
   return (
     <PullsRealtime
       pulls={pullPage.pulls}
+      total={pullPage.total}
       userId={context.principal.userId}
       reach={reach}
       canManageIntegrations={can(context.principal, 'integration:manage')}
