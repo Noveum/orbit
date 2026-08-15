@@ -75,11 +75,17 @@ export interface SlackDispatch {
   readonly notificationId: string;
 }
 
+export interface SlackDmDispatch {
+  readonly userId: string;
+  readonly notificationId: string;
+}
+
 export interface NotifyOutcome {
   readonly notifications: NotificationRecord[];
   readonly actions: SyncAction[];
   readonly email: EmailDispatch[];
   readonly slack: SlackDispatch[];
+  readonly slackDm: SlackDmDispatch[];
   readonly deduped: number;
 }
 
@@ -166,9 +172,16 @@ function planFor(
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
+  const personal = isPersonalNotification(event);
   const slackEnabled =
-    SLACK_INTEGRATION_ENABLED && isChannelEnabled(disabled, recipient.id, 'slack', event.type);
-  if (!(inboxEnabled || emailEnabled || slackEnabled)) return null;
+    SLACK_INTEGRATION_ENABLED &&
+    !personal &&
+    isChannelEnabled(disabled, recipient.id, 'slack', event.type);
+  const slackDmEnabled =
+    SLACK_INTEGRATION_ENABLED &&
+    personal &&
+    isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
+  if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
   const quietHours: QuietHours = {
     enabled: settings.quietHoursEnabled,
     start: settings.quietHoursStart,
@@ -185,6 +198,7 @@ function planFor(
       ...(inboxEnabled ? [INBOX_CHANNEL] : []),
       ...(emailEnabled ? ['email'] : []),
       ...(slackEnabled ? ['slack'] : []),
+      ...(slackDmEnabled ? ['slack_dm'] : []),
     ],
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
@@ -204,6 +218,12 @@ function emailSendAt(
 
 function isUrgent(event: ParsedEvent): boolean {
   return event.type === 'issue_assigned' && event.priority === 1;
+}
+
+function isPersonalNotification(event: ParsedEvent): boolean {
+  return ['assigned', 'mentioned', 'subscribed', 'commented', 'review_requested'].includes(
+    event.reason,
+  );
 }
 
 function toInsert(plan: Plan, now: Date) {
@@ -238,6 +258,7 @@ function buildOutcome(
   const actions: SyncAction[] = [];
   const email: EmailDispatch[] = [];
   const slack: SlackDispatch[] = [];
+  const slackDm: SlackDmDispatch[] = [];
   for (const row of rows) {
     const plan = planById.get(row.id);
     if (plan === undefined) continue;
@@ -254,8 +275,11 @@ function buildOutcome(
     if (plan.channels.includes('slack')) {
       slack.push({ userId: row.userId, notificationId: row.id });
     }
+    if (plan.channels.includes('slack_dm')) {
+      slackDm.push({ userId: row.userId, notificationId: row.id });
+    }
   }
-  return { notifications: rows, actions, email, slack, deduped };
+  return { notifications: rows, actions, email, slack, slackDm, deduped };
 }
 
 function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
@@ -347,7 +371,7 @@ function dedupeKey(
 }
 
 function emptyOutcome(): NotifyOutcome {
-  return { notifications: [], actions: [], email: [], slack: [], deduped: 0 };
+  return { notifications: [], actions: [], email: [], slack: [], slackDm: [], deduped: 0 };
 }
 
 export const markReadSchema = z.object({

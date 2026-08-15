@@ -73,6 +73,44 @@ function eventFor(fixture: Fixture, overrides: Partial<NotificationEvent> = {}):
 }
 
 describe('notifyMany', () => {
+  const slackEnabled = process.env['ORBIT_SLACK_ENABLED'] === '1';
+
+  it('offers Slack DM as a distinct personal notification channel', () => {
+    expect(NOTIFICATION_CHANNELS).toContain('slack_dm');
+    expect(defaultPreferences()).toContainEqual({
+      channel: 'slack_dm',
+      type: 'mention',
+      enabled: false,
+    });
+  });
+
+  it('routes a personal event to Slack DM instead of the channel', async () => {
+    if (!slackEnabled) return;
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [
+        eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' }),
+      ]);
+
+      expect(outcome.slackDm).toHaveLength(1);
+      expect(outcome.slack).toHaveLength(0);
+      expect(outcome.notifications[0]?.deliveredChannels).toContain('slack_dm');
+    });
+  });
+
+  it('keeps a team event on the Slack channel', async () => {
+    if (!slackEnabled) return;
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [
+        eventFor(fixture, { userIds: [fixture.adaId], reason: 'state_changed' }),
+      ]);
+
+      expect(outcome.slack).toHaveLength(1);
+      expect(outcome.slackDm).toHaveLength(0);
+    });
+  });
+
   it('always writes an inbox row and returns valid sync actions', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -520,10 +558,14 @@ describe('defaultPreferences', () => {
     expect(matrix).toHaveLength(NOTIFICATION_CHANNELS.length * NOTIFICATION_TYPES.length);
     expect(new Set(matrix.map((entry) => entry.channel)).size).toBe(NOTIFICATION_CHANNELS.length);
     expect(
-      matrix.filter((entry) => entry.channel === 'slack').every((entry) => !entry.enabled),
+      matrix
+        .filter((entry) => entry.channel === 'slack' || entry.channel === 'slack_dm')
+        .every((entry) => !entry.enabled),
     ).toBe(true);
     expect(
-      matrix.filter((entry) => entry.channel !== 'slack').every((entry) => entry.enabled),
+      matrix
+        .filter((entry) => entry.channel !== 'slack' && entry.channel !== 'slack_dm')
+        .every((entry) => entry.enabled),
     ).toBe(true);
   });
 });
