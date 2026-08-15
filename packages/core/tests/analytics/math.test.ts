@@ -4,6 +4,7 @@ import {
   distributionOf,
   idealRemaining,
   percentile,
+  percentilesOf,
 } from '../../src/analytics/math.ts';
 
 describe('percentile', () => {
@@ -24,6 +25,21 @@ describe('percentile', () => {
   it('clamps out of range quantiles', () => {
     expect(percentile([1, 2, 3], -1)).toBe(1);
     expect(percentile([1, 2, 3], 5)).toBe(3);
+  });
+});
+
+describe('percentilesOf', () => {
+  it('returns null for an empty set', () => {
+    expect(percentilesOf([])).toBeNull();
+  });
+
+  it('interpolates p25, p50, p75 and p95 on a known set', () => {
+    const result = percentilesOf([1, 2, 3, 4]);
+    expect(result).not.toBeNull();
+    expect(result?.p25).toBeCloseTo(1.75, 5);
+    expect(result?.p50).toBeCloseTo(2.5, 5);
+    expect(result?.p75).toBeCloseTo(3.25, 5);
+    expect(result?.p95).toBeCloseTo(3.85, 5);
   });
 });
 
