@@ -1,4 +1,6 @@
 import type { SprintBurnPoint } from '@orbit/core';
+import type { PlotPoint } from './charts/line-plot.tsx';
+import type { AnalyticsSprintsResponse } from './contracts.ts';
 
 export type BurnPointLike = Pick<
   SprintBurnPoint,
@@ -71,4 +73,45 @@ export function forecastDate(
     if (!isWeekend(date)) workingDay += 1;
   }
   return date;
+}
+
+export function burnForecast(
+  burn: NonNullable<AnalyticsSprintsResponse['current']>['burn'],
+): { readonly completionWorkingDay: number; readonly points: readonly PlotPoint[] } | null {
+  const observed = burn.filter((point) => point.available && point.workingDay !== null);
+  if (observed.length < 3) return null;
+  const count = observed.length;
+  const meanX = observed.reduce((sum, point) => sum + (point.workingDay ?? 0), 0) / count;
+  const meanY = observed.reduce((sum, point) => sum + point.remaining, 0) / count;
+  const covariance = observed.reduce(
+    (sum, point) => sum + ((point.workingDay ?? 0) - meanX) * (point.remaining - meanY),
+    0,
+  );
+  const variance = observed.reduce((sum, point) => sum + ((point.workingDay ?? 0) - meanX) ** 2, 0);
+  if (variance === 0) return null;
+  const slope = covariance / variance;
+  if (slope >= 0) return null;
+  const intercept = meanY - slope * meanX;
+  const last = observed.at(-1);
+  if (last === undefined || last.workingDay === null) return null;
+  const completionWorkingDay = Math.max(last.workingDay, Math.ceil(-intercept / slope));
+  return {
+    completionWorkingDay,
+    points: [
+      {
+        id: 'forecast-current',
+        label: last.date,
+        value: last.remaining,
+        cohort: { cohort: 'open' },
+        x: last.workingDay,
+      },
+      {
+        id: 'forecast-completion',
+        label: `Forecast day ${completionWorkingDay}`,
+        value: 0,
+        cohort: { cohort: 'open' },
+        x: completionWorkingDay,
+      },
+    ],
+  };
 }
