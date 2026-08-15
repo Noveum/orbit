@@ -168,3 +168,43 @@ test('a complete analytics view can be saved, pinned, and restored', async ({ br
 
   await context.close();
 });
+
+test('the insights lens configures measure, slice, and segment then renders bars, a linked table, and scatter percentiles', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context);
+
+  await page.goto(`${BASE}/analytics?range=last_90_days`);
+  await page.getByRole('tab', { name: 'Insights' }).click();
+  await expect(page).toHaveURL(/lens=insights/);
+
+  await expect(page.getByLabel('Insight measure')).toBeVisible();
+  await expect(page.getByLabel('Insight slice')).toBeVisible();
+  await expect(page.getByLabel('Insight segment')).toBeVisible();
+
+  await page.getByLabel('Insight slice').click();
+  await page.getByRole('option', { name: 'Assignee' }).click();
+  await expect(page).toHaveURL(/insightSlice=assignee/);
+
+  const barChart = page.getByRole('application', { name: 'Count by Assignee' });
+  await expect(barChart).toBeVisible();
+  await expect(barChart.locator('[data-testid^="plot-hit-"]').first()).toBeVisible();
+
+  await page.getByText(/View data/).click();
+  await expect(page.getByRole('table', { name: 'Count by Assignee data' })).toBeVisible();
+
+  await page.getByLabel('Insight measure').click();
+  await page.getByRole('option', { name: 'Cycle time' }).click();
+  await expect(page).toHaveURL(/insightMeasure=cycle_time/);
+
+  const scatter = page.getByRole('application', { name: 'Cycle time distribution' });
+  await expect(scatter).toBeVisible();
+  await expect(scatter.locator('[data-testid="plot-percentile-p25"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p50"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p75"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p95"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid^="plot-scatter-"]').first()).toBeVisible();
+
+  await context.close();
+});
