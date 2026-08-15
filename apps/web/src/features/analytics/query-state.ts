@@ -7,6 +7,8 @@ import {
   analyticsDrilldownQuerySchema,
   analyticsInsightsQuerySchema,
   analyticsQuerySchema,
+  type InsightConfig,
+  insightConfigSchema,
 } from '@orbit/shared/validators';
 import { z } from 'zod';
 
@@ -15,6 +17,7 @@ export type AnalyticsSearchParams =
   | Readonly<Record<string, string | string[] | undefined>>;
 
 const defaultAnalyticsQuery = analyticsQuerySchema.parse({});
+const defaultInsightConfig = insightConfigSchema.parse({});
 const encodedFilterSchema = z
   .string()
   .transform((encoded, context): unknown => {
@@ -135,6 +138,35 @@ export function canonicalAnalyticsQuery(query: AnalyticsQuery): string {
 
 export function canonicalDrilldownQuery(query: AnalyticsDrilldownQuery): string {
   return searchParamsForDrilldown(query).toString();
+}
+
+function insightConfigInput(params: AnalyticsSearchParams): unknown {
+  return {
+    measure: parameterValue(params, 'insightMeasure'),
+    slice: parameterValue(params, 'insightSlice'),
+    segment: parameterValue(params, 'insightSegment'),
+    cumulative: booleanValue(parameterValue(params, 'insightCumulative')),
+  };
+}
+
+export function insightConfigFromSearchParams(params: AnalyticsSearchParams): InsightConfig {
+  try {
+    return insightConfigSchema.parse(insightConfigInput(params));
+  } catch {
+    return defaultInsightConfig;
+  }
+}
+
+export function searchParamsForInsightConfig(insight: InsightConfig): URLSearchParams {
+  const parsed = insightConfigSchema.parse(insight);
+  const params = new URLSearchParams();
+  if (parsed.measure !== defaultInsightConfig.measure) params.set('insightMeasure', parsed.measure);
+  if (parsed.slice !== defaultInsightConfig.slice) params.set('insightSlice', parsed.slice);
+  if (parsed.segment !== undefined) params.set('insightSegment', parsed.segment);
+  if (parsed.cumulative !== defaultInsightConfig.cumulative) {
+    params.set('insightCumulative', parsed.cumulative ? '1' : '0');
+  }
+  return params;
 }
 
 export function analyticsInsightsFromSearchParams(

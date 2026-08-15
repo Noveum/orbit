@@ -180,6 +180,65 @@ describe('BarPlot', () => {
     expect(activate).toHaveBeenCalledWith({ cohort: 'state', bucket: 'bob-current' });
   });
 
+  test('renders one stacked rect per segment, cycling series colors, with every segment listed in the tooltip', async () => {
+    const user = userEvent.setup();
+    const segmented = {
+      id: 'state-0',
+      label: 'Backlog',
+      value: 10,
+      cohort: { cohort: 'state' as const, bucket: '0' },
+      segments: [
+        { id: 'a', label: 'Alpha', value: 2 },
+        { id: 'b', label: 'Bravo', value: 3 },
+        { id: 'c', label: 'Charlie', value: 1 },
+        { id: 'd', label: 'Delta', value: 3 },
+        { id: 'e', label: 'Echo', value: 1 },
+      ],
+    };
+    render(<BarPlot label="Workflow state" points={[segmented]} />);
+
+    expect(screen.getByTestId('plot-hit-state-0')).toBeInTheDocument();
+    const svg = screen.getByRole('application', { name: 'Workflow state' });
+    const segmentRects = svg.querySelectorAll('rect[fill^="var(--analytics-series-"]');
+    expect(segmentRects).toHaveLength(5);
+    expect(segmentRects[0]?.getAttribute('fill')).toBe('var(--analytics-series-1)');
+    expect(segmentRects[3]?.getAttribute('fill')).toBe('var(--analytics-series-4)');
+    expect(segmentRects[4]?.getAttribute('fill')).toBe('var(--analytics-series-1)');
+
+    await user.hover(screen.getByTestId('plot-hit-state-0'));
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Alpha 2');
+    expect(tooltip).toHaveTextContent('Bravo 3');
+    expect(tooltip).toHaveTextContent('Charlie 1');
+    expect(tooltip).toHaveTextContent('Delta 3');
+    expect(tooltip).toHaveTextContent('Echo 1');
+  });
+
+  test('leaves a null-cohort bucket inert to pointer and keyboard activation, without an evidence button', async () => {
+    const activate = mock();
+    const user = userEvent.setup();
+    render(
+      <BarPlot
+        label="Workflow state"
+        onActivate={activate}
+        points={[point(0, 4), { id: 'other', label: 'Other', value: 1, cohort: null }]}
+      />,
+    );
+
+    await user.click(screen.getByTestId('plot-hit-other'));
+    expect(activate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText('View data (2 rows)'));
+    expect(screen.getByRole('button', { name: 'State 0, Workflow state 4' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Other/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Other' })).toBeInTheDocument();
+
+    const plot = screen.getByRole('application', { name: 'Workflow state' });
+    plot.focus();
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(activate).not.toHaveBeenCalled();
+  });
+
   test('marks exactly the pair flagged current with a row testid, leaving the rest untagged', () => {
     const bob = pairs[1];
     if (bob === undefined) throw new Error('missing bob pair fixture');

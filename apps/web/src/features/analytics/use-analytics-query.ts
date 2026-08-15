@@ -47,6 +47,17 @@ export async function fetchInsights(
   });
 }
 
+export function useInsightsQuery(
+  query: AnalyticsInsightsQuery,
+  options?: { readonly enabled?: boolean },
+): UseQueryResult<AnalyticsInsightsResponse> {
+  return useQuery<AnalyticsInsightsResponse>({
+    queryKey: analyticsKeys.insights(query),
+    queryFn: async ({ signal }) => await fetchInsights(query, signal),
+    ...(options?.enabled === false ? { enabled: false } : {}),
+  });
+}
+
 export function useAnalyticsQuery(
   query: AnalyticsQuery & { readonly lens: 'overview' },
 ): UseQueryResult<AnalyticsOverviewResponse>;
@@ -68,5 +79,6 @@ export function useAnalyticsQuery(
   return useQuery<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]>({
     queryKey: analyticsKeys.lens(query.lens, query),
     queryFn: async ({ signal }) => await fetchAnalyticsLens(query, signal),
+    ...(query.lens === 'insights' ? { enabled: false } : {}),
   });
 }

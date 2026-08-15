@@ -21,9 +21,20 @@ export interface BarPlotAverageLine {
   readonly label: string;
 }
 
+export interface BarPlotSegment {
+  readonly id: string;
+  readonly label: string;
+  readonly value: number;
+}
+
+export type BarPlotPoint = Omit<PlotPoint, 'cohort'> & {
+  readonly cohort: AnalyticsDrilldownCohort | null;
+  readonly segments?: readonly BarPlotSegment[];
+};
+
 interface BarPlotProps {
   readonly label: string;
-  readonly points: readonly PlotPoint[];
+  readonly points: readonly BarPlotPoint[];
   readonly pairs?: readonly BarPair[];
   readonly averageLine?: BarPlotAverageLine;
   readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
@@ -184,25 +195,122 @@ function AverageLineMarker({ averageLine, max, plotWidth, plotHeight }: AverageL
   );
 }
 
-function pointsMax(points: readonly PlotPoint[]): number {
+function pointsMax(points: readonly BarPlotPoint[]): number {
   return Math.max(1, ...points.map((point) => point.value));
 }
 
 function pointsRows(
   label: string,
-  points: readonly PlotPoint[],
+  points: readonly BarPlotPoint[],
   valueFormatter: (value: number) => string,
 ): AnalyticsDataRow[] {
   return points.map((point) => ({
     id: point.id,
     label: `${label} ${valueFormatter(point.value)}`,
     cells: { label: point.label, value: valueFormatter(point.value) },
+    activatable: point.cohort !== null,
   }));
+}
+
+function segmentColor(index: number): string {
+  return `var(--analytics-series-${(index % 4) + 1})`;
+}
+
+interface SegmentedBarProps {
+  readonly point: BarPlotPoint;
+  readonly segments: readonly BarPlotSegment[];
+  readonly index: number;
+  readonly isActive: boolean;
+  readonly totalWidth: number;
+  readonly y: number;
+}
+
+function SegmentedBar({ point, segments, index, isActive, totalWidth, y }: SegmentedBarProps) {
+  const total = segments.reduce((sum, segment) => sum + segment.value, 0) || 1;
+  let cursor = 0;
+  return (
+    <g>
+      {segments.map((segment, segmentIndex) => {
+        const width = (segment.value / total) * totalWidth;
+        const x = LEFT + cursor;
+        cursor += width;
+        return (
+          <rect
+            fill={segmentColor(segmentIndex)}
+            height="22"
+            key={segment.id}
+            width={width}
+            x={x}
+            y={y}
+          />
+        );
+      })}
+      <rect
+        data-active={isActive ? 'true' : 'false'}
+        data-point-index={index}
+        data-testid={`plot-hit-${point.id}`}
+        fill="transparent"
+        height="22"
+        width={Math.max(totalWidth, 2)}
+        x={LEFT}
+        y={y}
+      />
+    </g>
+  );
+}
+
+interface PointsTooltipProps {
+  readonly point: BarPlotPoint;
+  readonly index: number;
+  readonly label: string;
+  readonly max: number;
+  readonly plotWidth: number;
+  readonly width: number;
+  readonly height: number;
+  readonly valueFormatter: (value: number) => string;
+}
+
+function PointsTooltip({
+  point,
+  index,
+  label,
+  max,
+  plotWidth,
+  width,
+  height,
+  valueFormatter,
+}: PointsTooltipProps) {
+  const style = {
+    left: `${((LEFT + (point.value / max) * plotWidth) / width) * 100}%`,
+    top: `${((TOP + index * ROW_HEIGHT + ROW_HEIGHT / 2) / height) * 100}%`,
+    transform: 'translate(-100%, -110%)',
+  };
+  if (point.segments !== undefined && point.segments.length > 0) {
+    return (
+      <ChartTooltip
+        label={point.label}
+        rows={point.segments.map((segment) => ({
+          id: segment.id,
+          series: segment.label,
+          value: valueFormatter(segment.value),
+        }))}
+        style={style}
+      />
+    );
+  }
+  return (
+    <ChartTooltip
+      label={point.label}
+      series={label}
+      style={style}
+      value={valueFormatter(point.value)}
+    />
+  );
 }
 
 interface PointsBarPlotProps {
   readonly label: string;
-  readonly points: readonly PlotPoint[];
+  readonly points: readonly BarPlotPoint[];
   readonly averageLine?: BarPlotAverageLine;
   readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
   readonly valueFormatter?: (value: number) => string;
@@ -250,7 +358,7 @@ function PointsBarPlot({
                 onActivate: (row: AnalyticsDataRow) => {
                   const index = points.findIndex((point) => point.id === row.id);
                   const selected = points[index];
-                  if (selected !== undefined) {
+                  if (selected !== undefined && selected.cohort !== null) {
                     setActiveIndex(index);
                     onActivate(selected.cohort);
                   }
@@ -261,15 +369,15 @@ function PointsBarPlot({
       }
       tooltip={
         activePoint === undefined || activeIndex === null ? null : (
-          <ChartTooltip
-            label={activePoint.label}
-            series={label}
-            style={{
-              left: `${((LEFT + (activePoint.value / max) * plotWidth) / width) * 100}%`,
-              top: `${((TOP + activeIndex * ROW_HEIGHT + ROW_HEIGHT / 2) / height) * 100}%`,
-              transform: 'translate(-100%, -110%)',
-            }}
-            value={valueFormatter(activePoint.value)}
+          <PointsTooltip
+            height={height}
+            index={activeIndex}
+            label={label}
+            max={max}
+            plotWidth={plotWidth}
+            point={activePoint}
+            valueFormatter={valueFormatter}
+            width={width}
           />
         )
       }
@@ -282,7 +390,7 @@ function PointsBarPlot({
           onClick={(event) => {
             const index = indexFromTarget(event.target);
             const point = index === null ? undefined : points[index];
-            if (point !== undefined) onActivate?.(point.cohort);
+            if (point !== undefined && point.cohort !== null) onActivate?.(point.cohort);
           }}
           onFocus={() => {
             if (activeIndex === null && points.length > 0) setActiveIndex(0);
@@ -292,11 +400,13 @@ function PointsBarPlot({
               event.key,
               activeIndex,
               points.length,
-              activePoint !== undefined && onActivate !== undefined,
+              activePoint !== undefined && activePoint.cohort !== null && onActivate !== undefined,
             );
             if (result === null) return;
             setActiveIndex(result.index);
-            if (result.activate && activePoint !== undefined) onActivate?.(activePoint.cohort);
+            if (result.activate && activePoint !== undefined && activePoint.cohort !== null) {
+              onActivate?.(activePoint.cohort);
+            }
             event.preventDefault();
           }}
           onPointerOver={(event) => {
@@ -333,17 +443,28 @@ function PointsBarPlot({
                 >
                   {truncatedLabel(point.label)}
                 </text>
-                <rect
-                  data-active={isActive ? 'true' : 'false'}
-                  data-point-index={index}
-                  data-testid={`plot-hit-${point.id}`}
-                  fill={isActive ? 'var(--color-accent)' : 'var(--color-accent-soft)'}
-                  height="22"
-                  rx="3"
-                  width={barWidth}
-                  x={LEFT}
-                  y={y}
-                />
+                {point.segments === undefined || point.segments.length === 0 ? (
+                  <rect
+                    data-active={isActive ? 'true' : 'false'}
+                    data-point-index={index}
+                    data-testid={`plot-hit-${point.id}`}
+                    fill={isActive ? 'var(--color-accent)' : 'var(--color-accent-soft)'}
+                    height="22"
+                    rx="3"
+                    width={barWidth}
+                    x={LEFT}
+                    y={y}
+                  />
+                ) : (
+                  <SegmentedBar
+                    index={index}
+                    isActive={isActive}
+                    point={point}
+                    segments={point.segments}
+                    totalWidth={barWidth}
+                    y={y}
+                  />
+                )}
                 <text
                   data-testid={`plot-value-${point.id}`}
                   fill="var(--color-text)"

@@ -4,15 +4,14 @@ import { ANALYTICS_LENSES, type AnalyticsLens } from '@orbit/shared/validators';
 import { useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 
-type VisibleLens = Exclude<AnalyticsLens, 'insights'>;
+const TAB_LENSES = ANALYTICS_LENSES;
 
-const TAB_LENSES = ANALYTICS_LENSES.filter((lens): lens is VisibleLens => lens !== 'insights');
-
-const LABELS: Record<VisibleLens, string> = {
+const LABELS: Record<AnalyticsLens, string> = {
   overview: 'Overview',
   sprints: 'Sprints',
   projects: 'Projects',
   people: 'People',
+  insights: 'Insights',
 };
 
 export function AnalyticsTabs({

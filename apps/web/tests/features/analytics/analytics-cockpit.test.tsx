@@ -242,8 +242,8 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('lens=sprints');
 
     await user.keyboard('{End}');
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveFocus();
-    expect(window.location.search).toContain('lens=people');
+    expect(screen.getByRole('tab', { name: 'Insights' })).toHaveFocus();
+    expect(window.location.search).toContain('lens=insights');
 
     await user.keyboard('{Home}');
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveFocus();
