@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { cn } from '@/lib/cn.ts';
 
 interface ChartTooltipRow {
+  readonly id: string;
   readonly series: string;
   readonly value: string;
 }
@@ -45,7 +46,7 @@ export function ChartTooltip(props: ChartTooltipProps) {
       ) : (
         <div className="mt-0.5 grid gap-0.5">
           {props.rows.map((row) => (
-            <p className="font-medium text-text" key={row.series}>
+            <p className="font-medium text-text" key={row.id}>
               {row.series} {row.value}
             </p>
           ))}

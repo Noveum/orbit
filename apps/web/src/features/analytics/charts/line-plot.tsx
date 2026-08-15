@@ -66,6 +66,7 @@ interface AxisTick {
 }
 
 interface TooltipRow {
+  readonly id: string;
   readonly series: string;
   readonly value: string;
 }
@@ -495,7 +496,9 @@ function tooltipRowsForDay(
     const point = entry.points.find(
       (candidate) => candidate.label === day.date && isAvailable(candidate),
     );
-    return point === undefined ? [] : [{ series: entry.label, value: valueFormatter(point.value) }];
+    return point === undefined
+      ? []
+      : [{ id: entry.id, series: entry.label, value: valueFormatter(point.value) }];
   });
 }
 

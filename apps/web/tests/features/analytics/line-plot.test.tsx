@@ -308,4 +308,144 @@ describe('LinePlot', () => {
     expect(svg.getAttribute('viewBox')).toBeNull();
     expect(svg.getAttribute('width')).toBe('640');
   });
+
+  test('pivots one table row per sprint day with series columns, activation, and the active marker', async () => {
+    const user = userEvent.setup();
+    const activate = mock();
+    const days = [
+      { date: '2026-08-13', weekend: false, today: false, future: false },
+      { date: '2026-08-14', weekend: false, today: true, future: false },
+      { date: '2026-08-15', weekend: true, today: false, future: true },
+      { date: '2026-08-16', weekend: true, today: false, future: true },
+      { date: '2026-08-17', weekend: false, today: false, future: true },
+    ];
+    render(
+      <LinePlot
+        days={days}
+        label="Burn"
+        onActivate={activate}
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: days.map((day, index) => ({
+              id: `r${index}`,
+              label: day.date,
+              value: 8 - index,
+              cohort: { cohort: 'open', bucket: day.date },
+            })),
+          },
+          {
+            id: 'ideal',
+            label: 'Ideal',
+            dashed: true,
+            points: days.map((day, index) => ({
+              id: `i${index}`,
+              label: day.date,
+              value: 8 - index,
+              cohort: { cohort: 'open', bucket: `ideal-${day.date}` },
+            })),
+          },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByText('View data (5 rows)'));
+
+    expect(screen.getByRole('columnheader', { name: 'Remaining' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Ideal' })).toBeVisible();
+
+    await user.hover(screen.getAllByTestId('plot-day-hit')[1] as Element);
+    const activeRow = screen.getByRole('row', { name: /Aug 14/ });
+    expect(activeRow).toHaveAttribute('data-active', 'true');
+
+    await user.click(screen.getByRole('button', { name: /Aug 14/ }));
+    expect(activate).toHaveBeenLastCalledWith({ cohort: 'open', bucket: '2026-08-14' });
+  });
+
+  test('supports day-mode keyboard navigation, activation, and escape', async () => {
+    const user = userEvent.setup();
+    const activate = mock();
+    const days = [
+      { date: '2026-08-13', weekend: false, today: false, future: false },
+      { date: '2026-08-14', weekend: false, today: false, future: false },
+      { date: '2026-08-15', weekend: true, today: false, future: false },
+      { date: '2026-08-16', weekend: true, today: false, future: false },
+      { date: '2026-08-17', weekend: false, today: false, future: false },
+    ];
+    render(
+      <LinePlot
+        days={days}
+        label="Burn"
+        onActivate={activate}
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: days.map((day, index) => ({
+              id: `r${index}`,
+              label: day.date,
+              value: 8 - index,
+              cohort: { cohort: 'open', bucket: day.date },
+            })),
+          },
+        ]}
+      />,
+    );
+
+    const plot = screen.getByRole('application', { name: 'Burn' });
+    await user.tab();
+    expect(plot).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 13');
+
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 14');
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 15');
+
+    await user.keyboard('{Home}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 13');
+    await user.keyboard('{End}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 17');
+
+    await user.keyboard('{Enter}');
+    expect(activate).toHaveBeenLastCalledWith({ cohort: 'open', bucket: '2026-08-17' });
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  test('draws a staircase path for a step series and a straight line without it', () => {
+    const days = [
+      { date: '2026-08-13', weekend: false, today: false, future: false },
+      { date: '2026-08-14', weekend: false, today: false, future: false },
+      { date: '2026-08-15', weekend: false, today: false, future: false },
+    ];
+    const points = days.map((day, index) => ({
+      id: `s${index}`,
+      label: day.date,
+      value: index + 1,
+      cohort: { cohort: 'open' as const },
+    }));
+
+    const { rerender } = render(
+      <LinePlot
+        days={days}
+        label="Scope"
+        series={[{ id: 'scope', label: 'Scope', points, step: true }]}
+      />,
+    );
+    const stepPath = screen.getByTestId('plot-line-scope').getAttribute('d');
+    expect(stepPath).toContain('H');
+    expect(stepPath).toContain('V');
+    expect(stepPath).not.toContain('L');
+
+    rerender(
+      <LinePlot days={days} label="Scope" series={[{ id: 'scope', label: 'Scope', points }]} />,
+    );
+    const linePath = screen.getByTestId('plot-line-scope').getAttribute('d');
+    expect(linePath).toContain('L');
+    expect(linePath).not.toContain('H');
+    expect(linePath).not.toContain('V');
+  });
 });
