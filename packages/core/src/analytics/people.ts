@@ -830,7 +830,7 @@ function formulas(): PeopleFormulaMetadata {
     attribution:
       'Captured close outcomes are preferred, assignment activity reconstructs the assignee at completion next, and current-assignee is the labeled fallback when neither fact exists.',
     points:
-      'Null estimates contribute zero points and remain counted in the unestimated issue total. Counts and points are planning signals, not measures of employee value or effort.',
+      'Unestimated work counts as 1 point until estimated. Counts and points are planning signals, not measures of employee value or effort.',
   };
 }
 
