@@ -432,7 +432,7 @@ async function completionStats(
     )
     select person_id,
       count(*) as completed_issues,
-      coalesce(sum(coalesce(estimate, 0)), 0) as completed_points,
+      coalesce(sum(coalesce(estimate, 1)), 0) as completed_points,
       count(*) filter (where started_at is not null and completed_at >= started_at) as cycle_valid,
       percentile_cont(0.5) within group (
         order by extract(epoch from (completed_at - started_at)) / 86400
@@ -664,22 +664,22 @@ async function focusGroups(
         and workflow_state.category not in ('completed', 'canceled')
     ), dimensions as (
       select 'project'::text as dimension, project.id, project.name,
-        count(*) as issues, coalesce(sum(coalesce(current_work.estimate, 0)), 0) as points
+        count(*) as issues, coalesce(sum(coalesce(current_work.estimate, 1)), 0) as points
       from current_work join project on project.id = current_work.project_id
       group by project.id, project.name
       union all
       select 'milestone', milestone.id, milestone.name, count(*),
-        coalesce(sum(coalesce(current_work.estimate, 0)), 0)
+        coalesce(sum(coalesce(current_work.estimate, 1)), 0)
       from current_work join milestone on milestone.id = current_work.milestone_id
       group by milestone.id, milestone.name
       union all
       select 'sprint', cycle.id, case when cycle.name = '' then 'Sprint ' || cycle.number else cycle.name end,
-        count(*), coalesce(sum(coalesce(current_work.estimate, 0)), 0)
+        count(*), coalesce(sum(coalesce(current_work.estimate, 1)), 0)
       from current_work join cycle on cycle.id = current_work.cycle_id
       group by cycle.id, cycle.name, cycle.number
       union all
       select 'state', workflow_state.id, workflow_state.name, count(*),
-        coalesce(sum(coalesce(current_work.estimate, 0)), 0)
+        coalesce(sum(coalesce(current_work.estimate, 1)), 0)
       from current_work join workflow_state on workflow_state.id = current_work.state_id
       group by workflow_state.id, workflow_state.name
     ), ranked as (
@@ -748,12 +748,12 @@ async function focusTimeline(
         and assignments.created_at < buckets.bucket_end
     ), assignment_bucket as (
       select assignment_issue_bucket.date, count(*) as issues,
-        coalesce(sum(assignment_issue_bucket.estimate), 0) as points
+        coalesce(sum(coalesce(assignment_issue_bucket.estimate, 1)), 0) as points
       from assignment_issue_bucket
       group by assignment_issue_bucket.date
     ), completion_bucket as (
       select buckets.date, count(distinct completions.id) as issues,
-        coalesce(sum(completions.estimate), 0) as points
+        coalesce(sum(coalesce(completions.estimate, 1)), 0) as points
       from buckets
       join completions on completions.completed_at >= buckets.bucket_start
         and completions.completed_at < buckets.bucket_end

@@ -449,7 +449,7 @@ async function projectAddedStats(
     )
     select project_id,
       count(*) as scope_added_issues,
-      coalesce(sum(coalesce(estimate, 0)), 0) as scope_added_points,
+      coalesce(sum(coalesce(estimate, 1)), 0) as scope_added_points,
       count(*) filter (where current_project_entry) as current_project_entries
     from deduplicated
     group by project_id
@@ -655,9 +655,9 @@ async function milestoneRows(
       select milestone.id, milestone.name, milestone.target_date, milestone.sort_order,
         milestone.created_at,
         count(filtered.id) as scope_issues,
-        coalesce(sum(coalesce(filtered.estimate, 0)), 0) as scope_points,
+        coalesce(sum(case when filtered.id is null then 0 else coalesce(filtered.estimate, 1) end), 0) as scope_points,
         count(filtered.id) filter (where filtered.category = 'completed') as completed_issues,
-        coalesce(sum(coalesce(filtered.estimate, 0)) filter (
+        coalesce(sum(coalesce(filtered.estimate, 1)) filter (
           where filtered.category = 'completed'
         ), 0) as completed_points
       from milestone
