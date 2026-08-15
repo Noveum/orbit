@@ -3,7 +3,11 @@ import {
   actualPace,
   forecastDate,
   neededPace,
+  personCaptureCaption,
+  personIdealSeries,
+  readableDate,
   sprintDays,
+  todayDateOf,
 } from '../../../src/features/analytics/burn-math.ts';
 
 const point = (
@@ -14,6 +18,7 @@ const point = (
     future: boolean;
     completed: number;
     remaining: number;
+    ideal: number;
   }> = {},
 ) => ({
   date,
@@ -22,6 +27,7 @@ const point = (
   future: extra.future ?? false,
   completed: extra.completed ?? 0,
   remaining: extra.remaining ?? 0,
+  ideal: extra.ideal ?? 0,
 });
 
 describe('sprintDays', () => {
@@ -67,5 +73,78 @@ describe('forecastDate', () => {
   test('maps a completion working day to a calendar date beyond the series', () => {
     const burn = [point('2026-08-13', 1), point('2026-08-14', 2)];
     expect(forecastDate(burn, 4)).toBe('2026-08-18');
+  });
+});
+
+describe('todayDateOf', () => {
+  test('picks the last non-future date', () => {
+    const burn = [
+      point('2026-08-13', 1),
+      point('2026-08-14', 2),
+      point('2026-08-17', 3, { future: true }),
+    ];
+    expect(todayDateOf(burn)).toBe('2026-08-14');
+  });
+
+  test('falls back to the last date when every point is future', () => {
+    const burn = [
+      point('2026-08-13', 1, { future: true }),
+      point('2026-08-14', 2, { future: true }),
+    ];
+    expect(todayDateOf(burn)).toBe('2026-08-14');
+  });
+
+  test('returns an empty string for an empty burn', () => {
+    expect(todayDateOf([])).toBe('');
+  });
+});
+
+describe('readableDate', () => {
+  test('formats an ISO date as a short month, day, year', () => {
+    expect(readableDate('2026-08-14')).toBe('Aug 14, 2026');
+  });
+});
+
+describe('personCaptureCaption', () => {
+  test('is undefined when capture starts on day one', () => {
+    const burn = [point('2026-08-13', 1), point('2026-08-14', 2)];
+    expect(personCaptureCaption(burn)).toBeUndefined();
+  });
+
+  test('is undefined when no day is available yet', () => {
+    const burn = [
+      point('2026-08-13', 1, { available: false, future: true }),
+      point('2026-08-14', 2, { available: false, future: true }),
+    ];
+    expect(personCaptureCaption(burn)).toBeUndefined();
+  });
+
+  test('states the capture start when earlier days precede the first captured day', () => {
+    const burn = [
+      point('2026-08-13', 1, { available: false }),
+      point('2026-08-14', 2, { available: false }),
+      point('2026-08-17', 3),
+    ];
+    expect(personCaptureCaption(burn)).toBe(
+      'Capture began Aug 17, 2026. Earlier days show targets only.',
+    );
+  });
+});
+
+describe('personIdealSeries', () => {
+  test('includes every point, captured or not, using the ideal value', () => {
+    const burn = [
+      point('2026-08-13', 1, { available: false, ideal: 10 }),
+      point('2026-08-14', 2, { ideal: 8 }),
+    ];
+    const series = personIdealSeries(burn);
+    expect(series).toMatchObject({
+      id: 'ideal-person',
+      label: 'Ideal',
+      color: 2,
+      dashed: true,
+      dots: true,
+    });
+    expect(series.points.map((entry) => entry.value)).toEqual([10, 8]);
   });
 });

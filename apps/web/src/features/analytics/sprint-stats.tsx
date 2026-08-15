@@ -1,5 +1,5 @@
 import type { AnalyticsMeasure } from '@orbit/shared/validators';
-import { actualPace, burnForecast, forecastDate, neededPace } from './burn-math.ts';
+import { actualPace, burnForecast, forecastDate, neededPace, readableDate } from './burn-math.ts';
 import type { AnalyticsSprintsResponse } from './contracts.ts';
 
 const DAY_MILLISECONDS = 86_400_000;
@@ -10,15 +10,6 @@ function numberLabel(value: number): string {
 
 function paceLabel(value: number): string {
   return `${value.toFixed(1)}/d`;
-}
-
-function readableDate(value: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(`${value}T12:00:00.000Z`));
 }
 
 function unitLabel(measure: AnalyticsMeasure): string {

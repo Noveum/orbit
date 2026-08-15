@@ -1,11 +1,13 @@
 import type { SprintBurnPoint } from '@orbit/core';
-import type { PlotPoint } from './charts/line-plot.tsx';
+import type { PlotPoint, PlotSeries } from './charts/line-plot.tsx';
 import type { AnalyticsSprintsResponse } from './contracts.ts';
 
 export type BurnPointLike = Pick<
   SprintBurnPoint,
   'date' | 'workingDay' | 'available' | 'future' | 'completed' | 'remaining'
 >;
+
+export type PersonBurnPointLike = BurnPointLike & { readonly ideal: number };
 
 export interface SprintDay {
   readonly date: string;
@@ -36,6 +38,48 @@ export function sprintDays(burn: readonly BurnPointLike[], today: string): reado
     today: point.date === today,
     future: point.future,
   }));
+}
+
+export function todayDateOf(burn: readonly BurnPointLike[]): string {
+  return burn.filter((point) => !point.future).at(-1)?.date ?? burn.at(-1)?.date ?? '';
+}
+
+export function readableDate(value: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${value}T12:00:00.000Z`));
+}
+
+export function personCaptureCaption(burn: readonly BurnPointLike[]): string | undefined {
+  const firstAvailableIndex = burn.findIndex((point) => point.available);
+  if (firstAvailableIndex <= 0) return undefined;
+  const hasEarlierGap = burn
+    .slice(0, firstAvailableIndex)
+    .some((point) => !(point.available || point.future));
+  if (!hasEarlierGap) return undefined;
+  const firstAvailable = burn[firstAvailableIndex];
+  return firstAvailable === undefined
+    ? undefined
+    : `Capture began ${readableDate(firstAvailable.date)}. Earlier days show targets only.`;
+}
+
+export function personIdealSeries(burn: readonly PersonBurnPointLike[]): PlotSeries {
+  return {
+    id: 'ideal-person',
+    label: 'Ideal',
+    color: 2,
+    dashed: true,
+    dots: true,
+    points: burn.map((point) => ({
+      id: `${point.date}-ideal-person`,
+      label: point.date,
+      value: point.ideal,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
 }
 
 export function neededPace(remaining: number, burn: readonly BurnPointLike[]): number | null {

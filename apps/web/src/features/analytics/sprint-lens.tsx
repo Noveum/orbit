@@ -3,7 +3,16 @@
 import type { AnalyticsQuery } from '@orbit/shared/validators';
 import { useState } from 'react';
 import { AnalyticsCard } from './analytics-card.tsx';
-import { burnForecast, forecastDate, type SprintDay, sprintDays } from './burn-math.ts';
+import {
+  burnForecast,
+  forecastDate,
+  personCaptureCaption,
+  personIdealSeries,
+  readableDate,
+  type SprintDay,
+  sprintDays,
+  todayDateOf,
+} from './burn-math.ts';
 import { BarPlot } from './charts/bar-plot.tsx';
 import type { PlotPoint, PlotSeries } from './charts/line-plot.tsx';
 import { LinePlot } from './charts/line-plot.tsx';
@@ -23,19 +32,6 @@ function numberLabel(value: number): string {
 
 function days(value: number): string {
   return `${numberLabel(value)}d`;
-}
-
-function readableDate(value: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(`${value}T12:00:00.000Z`));
-}
-
-function todayDateOf(burn: SprintBurnPoints): string {
-  return burn.filter((point) => !point.future).at(-1)?.date ?? burn.at(-1)?.date ?? '';
 }
 
 function capturedPoints(burn: SprintBurnPoints): SprintBurnPoints {
@@ -70,6 +66,20 @@ function remainingSeries(burn: SprintBurnPoints): PlotSeries {
     color: 1,
     points: capturedPoints(burn).map((point) => ({
       id: `${point.date}-remaining`,
+      label: point.date,
+      value: point.remaining,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function focusRemainingSeries(burn: SprintBurnPoints): PlotSeries {
+  return {
+    id: 'person-remaining',
+    label: 'Remaining',
+    color: 1,
+    points: capturedPoints(burn).map((point) => ({
+      id: `${point.date}-person-remaining`,
       label: point.date,
       value: point.remaining,
       cohort: { cohort: 'open' as const },
@@ -282,6 +292,43 @@ function SprintBurnChart({
   );
 }
 
+function FocusBurnCard({
+  focus,
+  currentPerson,
+  measure,
+  measureFormatter,
+}: {
+  readonly focus: NonNullable<AnalyticsSprintsResponse['focus']>;
+  readonly currentPerson: boolean;
+  readonly measure: string;
+  readonly measureFormatter: (value: number) => string;
+}) {
+  const captureAnnotation = personCaptureCaption(focus.burn);
+  return (
+    <AnalyticsCard>
+      <div>
+        <p className="text-accent text-xs">
+          {currentPerson ? 'My sprint burn' : 'Selected person sprint burn'}
+        </p>
+        <h3 className="mt-1 font-medium text-sm text-text">{focus.name}</h3>
+        <p className="mt-1 text-muted text-xs">
+          Work assigned to {currentPerson ? 'you' : focus.name} over this sprint, using historical
+          assignment facts where available.
+        </p>
+      </div>
+      <LinePlot
+        {...(captureAnnotation === undefined ? {} : { annotation: captureAnnotation })}
+        days={sprintDays(focus.burn, todayDateOf(focus.burn))}
+        label={`${focus.name} remaining work`}
+        series={[focusRemainingSeries(focus.burn), personIdealSeries(focus.burn)]}
+        valueFormatter={measureFormatter}
+        xAxisLabel="Sprint day"
+        yAxisLabel={`Remaining ${measure}`}
+      />
+    </AnalyticsCard>
+  );
+}
+
 export function SprintLens({
   data,
   query,
@@ -402,38 +449,12 @@ export function SprintLens({
       </div>
 
       {data.focus === null ? null : (
-        <AnalyticsCard>
-          <div>
-            <p className="text-accent text-xs">
-              {currentPerson ? 'My sprint burn' : 'Selected person sprint burn'}
-            </p>
-            <h3 className="mt-1 font-medium text-sm text-text">{data.focus.name}</h3>
-            <p className="mt-1 text-muted text-xs">
-              Work assigned to {currentPerson ? 'you' : data.focus.name} over this sprint, using
-              historical assignment facts where available.
-            </p>
-          </div>
-          <LinePlot
-            label={`${data.focus.name} remaining work`}
-            series={[
-              {
-                id: 'person-remaining',
-                label: 'Remaining',
-                points: data.focus.burn.map((point) => ({
-                  id: `${point.date}-person-remaining`,
-                  label: point.date,
-                  value: point.remaining,
-                  cohort: { cohort: 'open' },
-                  x: point.workingDay ?? point.calendarDay,
-                  available: point.available,
-                })),
-              },
-            ]}
-            valueFormatter={measureFormatter}
-            xAxisLabel="Sprint working day"
-            yAxisLabel={`Remaining ${current.measure}`}
-          />
-        </AnalyticsCard>
+        <FocusBurnCard
+          currentPerson={currentPerson}
+          focus={data.focus}
+          measure={current.measure}
+          measureFormatter={measureFormatter}
+        />
       )}
     </div>
   );

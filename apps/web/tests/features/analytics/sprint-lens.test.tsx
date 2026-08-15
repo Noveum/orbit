@@ -3,7 +3,7 @@ import { analyticsQuerySchema } from '@orbit/shared/validators';
 import userEvent from '@testing-library/user-event';
 import type { AnalyticsSprintsResponse } from '../../../src/features/analytics/contracts.ts';
 import { SprintLens } from '../../../src/features/analytics/sprint-lens.tsx';
-import { render, screen } from '../../../src/test/render.tsx';
+import { render, screen, within } from '../../../src/test/render.tsx';
 
 const asOf = '2026-08-14T10:00:00.000Z';
 const flow = {
@@ -459,6 +459,59 @@ describe('SprintLens', () => {
 
     expect(screen.getByText('My sprint burn')).toBeVisible();
     expect(screen.getByRole('application', { name: 'Ada remaining work' })).toBeVisible();
+  });
+
+  test('frames the focus card across the whole sprint with an ideal series', () => {
+    const focusBurn = buildSprintBurn({
+      start: '2026-08-13',
+      count: 8,
+      observedCount: 5,
+      scope: 6,
+    });
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          focus: {
+            personId: '00000000-0000-7000-8000-000000000009',
+            name: 'Ada',
+            burn: focusBurn,
+            summary,
+            coverage: { kind: 'captured', from: sprint.startsAt, asOf },
+          },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    const focusChart = screen.getByRole('application', { name: 'Ada remaining work' });
+    expect(within(focusChart).getAllByTestId('plot-day-hit')).toHaveLength(focusBurn.length);
+    expect(screen.getByTestId('plot-line-ideal-person')).toBeInTheDocument();
+  });
+
+  test('states the capture start on the focus card instead of a dates-unavailable fallback', () => {
+    const focusBurn = [
+      { ...burnDay1, available: false, future: false, scope: 0, remaining: 0, ideal: 8 },
+      { ...burnDay2, available: true, future: false },
+    ];
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          focus: {
+            personId: '00000000-0000-7000-8000-000000000009',
+            name: 'Ada',
+            burn: focusBurn,
+            summary,
+            coverage: { kind: 'captured', from: sprint.startsAt, asOf },
+          },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    expect(screen.getByText(/capture began aug 14/i)).toBeVisible();
+    expect(screen.queryByText(/dates unavailable/i)).not.toBeInTheDocument();
   });
 
   test('labels an explicitly selected developer without calling them the current user', () => {
