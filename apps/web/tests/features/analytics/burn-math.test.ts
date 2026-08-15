@@ -9,6 +9,7 @@ import {
   readableDate,
   sprintDays,
   todayDateOf,
+  unestimatedNote,
 } from '../../../src/features/analytics/burn-math.ts';
 
 const point = (
@@ -173,6 +174,17 @@ describe('todayDateOf', () => {
 describe('readableDate', () => {
   test('formats an ISO date as a short month, day, year', () => {
     expect(readableDate('2026-08-14')).toBe('Aug 14, 2026');
+  });
+});
+
+describe('unestimatedNote', () => {
+  test('uses singular wording for exactly one unestimated issue', () => {
+    expect(unestimatedNote(1)).toBe('1 unestimated issue counts as 1 point.');
+  });
+
+  test('uses plural wording for any other count', () => {
+    expect(unestimatedNote(2)).toBe('2 unestimated issues count as 1 point each.');
+    expect(unestimatedNote(0)).toBe('0 unestimated issues count as 1 point each.');
   });
 });
 

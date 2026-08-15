@@ -66,6 +66,12 @@ export function personCaptureCaption(burn: readonly BurnPointLike[]): string | u
     : `Capture began ${readableDate(firstAvailable.date)}. Earlier days show targets only.`;
 }
 
+export function unestimatedNote(count: number): string {
+  return count === 1
+    ? '1 unestimated issue counts as 1 point.'
+    : `${count} unestimated issues count as 1 point each.`;
+}
+
 export function personIdealSeries(burn: readonly PersonBurnPointLike[]): PlotSeries {
   return {
     id: 'ideal-person',

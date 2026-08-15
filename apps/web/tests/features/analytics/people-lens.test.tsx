@@ -220,7 +220,7 @@ describe('PeopleLens', () => {
     ).toBeVisible();
     expect(screen.getByText('Sprint 4')).toBeVisible();
     expect(screen.getByText('5 points remaining')).toBeVisible();
-    expect(screen.getByText('1 unestimated issues count as 1 point each.')).toBeVisible();
+    expect(screen.getByText('1 unestimated issue counts as 1 point.')).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: /Grace Hopper/ }));
     expect(onFocus).toHaveBeenCalledWith(secondPersonId);

@@ -5,7 +5,13 @@ import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { AnalyticsCard } from './analytics-card.tsx';
 import { AnalyticsDrilldownDialog } from './analytics-drilldown-dialog.tsx';
-import { personCaptureCaption, personIdealSeries, sprintDays, todayDateOf } from './burn-math.ts';
+import {
+  personCaptureCaption,
+  personIdealSeries,
+  sprintDays,
+  todayDateOf,
+  unestimatedNote,
+} from './burn-math.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './charts/analytics-data-table.tsx';
 import { BarPlot } from './charts/bar-plot.tsx';
 import { LinePlot, type PlotSeries } from './charts/line-plot.tsx';
@@ -304,9 +310,7 @@ function FocusedPerson({
           </p>
         )}
         {points && focused.unestimated > 0 ? (
-          <p className="text-muted text-xs">
-            {focused.unestimated} unestimated issues count as 1 point each.
-          </p>
+          <p className="text-muted text-xs">{unestimatedNote(focused.unestimated)}</p>
         ) : null}
       </AnalyticsCard>
       <PersonFlowCards focused={focused} formulas={formulas} />

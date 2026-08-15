@@ -4,6 +4,7 @@ import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/val
 import { useState } from 'react';
 import { AnalyticsCard } from './analytics-card.tsx';
 import { AnalyticsDrilldownDialog } from './analytics-drilldown-dialog.tsx';
+import { unestimatedNote } from './burn-math.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './charts/analytics-data-table.tsx';
 import { LinePlot } from './charts/line-plot.tsx';
 import type { AnalyticsProjectsResponse } from './contracts.ts';
@@ -234,9 +235,7 @@ export function ProjectsLens({
               />
             </div>
             {points && focused.project.unestimated > 0 ? (
-              <p className="text-muted text-xs">
-                {focused.project.unestimated} unestimated issues count as 1 point each.
-              </p>
+              <p className="text-muted text-xs">{unestimatedNote(focused.project.unestimated)}</p>
             ) : null}
           </AnalyticsCard>
 

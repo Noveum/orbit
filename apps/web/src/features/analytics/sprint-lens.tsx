@@ -12,6 +12,7 @@ import {
   type SprintDay,
   sprintDays,
   todayDateOf,
+  unestimatedNote,
 } from './burn-math.ts';
 import type { BarPair, BarPlotAverageLine } from './charts/bar-plot.tsx';
 import { BarPlot } from './charts/bar-plot.tsx';
@@ -415,7 +416,7 @@ export function SprintLens({
 
       {query.measure === 'points' && summary.unestimated > 0 ? (
         <p className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-muted text-xs">
-          {summary.unestimated} unestimated issues count as 1 point each.
+          {unestimatedNote(summary.unestimated)}
         </p>
       ) : null}
 
