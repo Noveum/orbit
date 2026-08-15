@@ -82,24 +82,28 @@ export function personIdealSeries(burn: readonly PersonBurnPointLike[]): PlotSer
   };
 }
 
+function lastWithWorkingDay(burn: readonly BurnPointLike[]): BurnPointLike | undefined {
+  return burn.findLast((point) => point.workingDay != null);
+}
+
 export function neededPace(remaining: number, burn: readonly BurnPointLike[]): number | null {
   const current = burn
     .filter((point) => !point.future)
     .reverse()
     .find((point) => point.workingDay != null);
-  const last = burn.at(-1);
+  const last = lastWithWorkingDay(burn);
   if (current?.workingDay == null || last?.workingDay == null) return null;
   const daysLeft = last.workingDay - current.workingDay + 1;
   return daysLeft <= 0 ? null : remaining / daysLeft;
 }
 
 export function actualPace(burn: readonly BurnPointLike[]): number | null {
-  const observed = burn.filter((point) => point.available && !point.future);
-  const first = observed[0];
-  const current = observed.at(-1);
-  if (first?.workingDay == null || current?.workingDay == null) return null;
-  const elapsed = Math.max(1, current.workingDay - first.workingDay + 1);
-  return current.completed / elapsed;
+  const current = burn
+    .filter((point) => !point.future)
+    .reverse()
+    .find((point) => point.workingDay != null);
+  if (current?.workingDay == null) return null;
+  return current.completed / Math.max(1, current.workingDay);
 }
 
 export function forecastDate(
@@ -108,7 +112,7 @@ export function forecastDate(
 ): string | null {
   const inSeries = burn.find((point) => point.workingDay === completionWorkingDay);
   if (inSeries !== undefined) return inSeries.date;
-  const last = burn.at(-1);
+  const last = lastWithWorkingDay(burn);
   if (last?.workingDay == null) return null;
   let date = last.date;
   let workingDay = last.workingDay;

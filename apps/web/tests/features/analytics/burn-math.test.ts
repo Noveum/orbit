@@ -59,13 +59,43 @@ describe('pace', () => {
     expect(neededPace(7, burn)).toBeCloseTo(7 / 3, 5);
   });
 
-  test('actual pace divides completed since baseline by elapsed working days', () => {
+  test('actual pace divides completed by working days elapsed since sprint start, not since capture began', () => {
     const burn = [
       point('2026-08-11', 1, { available: false }),
       point('2026-08-13', 3, { completed: 2 }),
       point('2026-08-14', 4, { completed: 5 }),
     ];
-    expect(actualPace(burn)).toBeCloseTo(5 / 2, 5);
+    expect(actualPace(burn)).toBeCloseTo(5 / 4, 5);
+  });
+
+  test('mid-flight adoption does not inflate pace from a late capture start', () => {
+    const burn = [
+      point('2026-08-11', 1, { available: false }),
+      point('2026-08-12', 2, { available: false }),
+      point('2026-08-13', 3, { completed: 9 }),
+      point('2026-08-14', 4, { completed: 16 }),
+    ];
+    expect(actualPace(burn)).toBeCloseTo(4, 5);
+  });
+
+  test('needed pace uses the last working day in the series even when the sprint ends on a weekend', () => {
+    const mondayToMondayBurn = [
+      point('2026-08-03', 1),
+      point('2026-08-04', 2),
+      point('2026-08-05', 3),
+      point('2026-08-06', 4),
+      point('2026-08-07', 5),
+      point('2026-08-08', null),
+      point('2026-08-09', null),
+      point('2026-08-10', 6),
+      point('2026-08-11', 7),
+      point('2026-08-12', 8, { remaining: 6 }),
+      point('2026-08-13', 9, { future: true }),
+      point('2026-08-14', 10, { future: true }),
+      point('2026-08-15', null, { future: true }),
+      point('2026-08-16', null, { future: true }),
+    ];
+    expect(neededPace(6, mondayToMondayBurn)).toBeCloseTo(2, 5);
   });
 });
 
@@ -73,6 +103,26 @@ describe('forecastDate', () => {
   test('maps a completion working day to a calendar date beyond the series', () => {
     const burn = [point('2026-08-13', 1), point('2026-08-14', 2)];
     expect(forecastDate(burn, 4)).toBe('2026-08-18');
+  });
+
+  test('walks forward from the last working day even when the sprint ends on a weekend', () => {
+    const mondayToMondayBurn = [
+      point('2026-08-03', 1),
+      point('2026-08-04', 2),
+      point('2026-08-05', 3),
+      point('2026-08-06', 4),
+      point('2026-08-07', 5),
+      point('2026-08-08', null),
+      point('2026-08-09', null),
+      point('2026-08-10', 6),
+      point('2026-08-11', 7),
+      point('2026-08-12', 8),
+      point('2026-08-13', 9, { future: true }),
+      point('2026-08-14', 10, { future: true }),
+      point('2026-08-15', null, { future: true }),
+      point('2026-08-16', null, { future: true }),
+    ];
+    expect(forecastDate(mondayToMondayBurn, 12)).toBe('2026-08-18');
   });
 });
 
