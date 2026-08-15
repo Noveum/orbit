@@ -473,7 +473,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       name: 'delete_doc_collection',
       title: 'Delete a document collection',
       description:
-        'Delete a folder. The documents inside are never deleted: they move to reassignTo, or become unfiled when you leave it out.',
+        'Deletes a document collection. The documents inside are never deleted: they move to reassignTo, or become unfiled when you leave it out. This action is refused if the folder holds a document you cannot write.',
       readOnly: false,
       inputSchema: {
         collection: collectionRef,
