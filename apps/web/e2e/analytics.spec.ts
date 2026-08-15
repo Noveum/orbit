@@ -13,6 +13,10 @@ const sprintSummarySchema = z.object({
   current: z.object({ summary: z.object({ completed: z.number(), remaining: z.number() }) }),
 });
 
+const sprintBurnLengthSchema = z.object({
+  current: z.object({ burn: z.array(z.unknown()) }),
+});
+
 async function json(page: Page, path: string, init?: RequestInit): Promise<unknown> {
   return await page.evaluate(
     async ({ url, options }) => {
@@ -79,15 +83,26 @@ test('analytics and the sprint page share sprint truth and expose exact hover va
   await expect(page.getByText('Flow time')).toBeVisible();
   await expect(page.getByText(/Current issue-row creation to durable completion/)).toBeVisible();
   await expect(page.getByText(/Current mutable startedAt column to completion/)).toBeVisible();
+  await expect(page.getByText(/Scope\s+\d+\s+(pts|issues)\s+·\s+\d+\s+(pts|issues)/)).toBeVisible();
 
-  const point = page.locator('[data-testid^="plot-hit-"]').last();
-  await point.hover({ force: true });
-  await expect(page.getByRole('tooltip')).toBeVisible();
+  const burnLength = sprintBurnLengthSchema.parse(await json(page, '/api/analytics/sprints'))
+    .current.burn.length;
 
   const chart = page.getByRole('application', { name: 'Sprint burn down' });
+  const dayHits = chart.locator('[data-testid="plot-day-hit"]');
+  await expect(dayHits).toHaveCount(burnLength);
+  await dayHits.last().hover({ force: true });
+  await expect(page.getByRole('tooltip')).toBeVisible();
+
   await chart.focus();
   await page.keyboard.press('End');
   await expect(page.getByRole('tooltip')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Burn up' }).click();
+  const upChart = page.getByRole('application', { name: 'Sprint burn up' });
+  await expect(upChart).toBeVisible();
+  await expect(upChart.locator('[data-testid="plot-day-hit"]')).toHaveCount(burnLength);
+  await expect(upChart.locator('[data-testid="plot-line-completed"]')).toBeVisible();
 
   await context.close();
 });
@@ -150,6 +165,46 @@ test('a complete analytics view can be saved, pinned, and restored', async ({ br
   );
   await expect(page.getByLabel('Measure')).toContainText('Points');
   await expect(page.getByLabel(/Reporting range/)).toContainText('Last 90 days');
+
+  await context.close();
+});
+
+test('the insights lens configures measure, slice, and segment then renders bars, a linked table, and scatter percentiles', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context);
+
+  await page.goto(`${BASE}/analytics?range=last_90_days`);
+  await page.getByRole('tab', { name: 'Insights' }).click();
+  await expect(page).toHaveURL(/lens=insights/);
+
+  await expect(page.getByLabel('Insight measure')).toBeVisible();
+  await expect(page.getByLabel('Insight slice')).toBeVisible();
+  await expect(page.getByLabel('Insight segment')).toBeVisible();
+
+  await page.getByLabel('Insight slice').click();
+  await page.getByRole('option', { name: 'Assignee' }).click();
+  await expect(page).toHaveURL(/insightSlice=assignee/);
+
+  const barChart = page.getByRole('application', { name: 'Count by Assignee' });
+  await expect(barChart).toBeVisible();
+  await expect(barChart.locator('[data-testid^="plot-hit-"]').first()).toBeVisible();
+
+  await page.getByText(/View data/).click();
+  await expect(page.getByRole('table', { name: 'Count by Assignee data' })).toBeVisible();
+
+  await page.getByLabel('Insight measure').click();
+  await page.getByRole('option', { name: 'Cycle time' }).click();
+  await expect(page).toHaveURL(/insightMeasure=cycle_time/);
+
+  const scatter = page.getByRole('application', { name: 'Cycle time distribution' });
+  await expect(scatter).toBeVisible();
+  await expect(scatter.locator('[data-testid="plot-percentile-p25"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p50"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p75"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid="plot-percentile-p95"]')).toBeAttached();
+  await expect(scatter.locator('[data-testid^="plot-scatter-"]').first()).toBeVisible();
 
   await context.close();
 });

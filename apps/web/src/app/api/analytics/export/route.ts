@@ -36,7 +36,7 @@ export async function GET(request: Request): Promise<Response> {
             [
               'Formula',
               query.measure === 'points'
-                ? 'Sum of estimates; unestimated is zero'
+                ? 'Sum of estimates; unestimated counts as 1'
                 : 'Count of issues',
             ],
             ['Timezone', page.timezone],

@@ -240,7 +240,7 @@ describe('loadPeopleAnalytics', () => {
 
     expect(row).toMatchObject({
       currentAssignments: 1,
-      currentPoints: 0,
+      currentPoints: 1,
       completedIssues: 2,
       completedPoints: 8,
       activeWeeks: 2,
@@ -277,6 +277,39 @@ describe('loadPeopleAnalytics', () => {
       );
       expect(evidence.total).toBe(count);
     }
+  });
+
+  it('weights an unestimated current issue as 1 point in the focused work groups', async () => {
+    const engineer = await addMember(workspace, 'member', { name: 'Grouped Person' });
+    const project = await createProject(workspace.admin, {
+      name: 'Grouping',
+      teamIds: [workspace.teamId],
+    });
+    const started = stateNamed(workspace, 'In Progress');
+    await issue(
+      workspace.admin,
+      {
+        title: 'Unestimated current work',
+        assigneeId: engineer.user.id,
+        projectId: project.project.id,
+        stateId: started.id,
+        estimate: null,
+      },
+      { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+    );
+
+    const result = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: engineer.user.id }),
+      { now, timezone: 'UTC' },
+    );
+
+    expect(result.focused?.projects).toEqual([
+      expect.objectContaining({ id: project.project.id, issues: 1, points: 1 }),
+    ]);
+    expect(result.focused?.states).toEqual([
+      expect.objectContaining({ id: started.id, issues: 1, points: 1 }),
+    ]);
   });
 
   it('labels captured, reconstructed, and current-assignee completion attribution', async () => {
@@ -607,6 +640,43 @@ describe('loadPeopleAnalytics', () => {
       { now, timezone: 'UTC', cursorSecret: 'people-analytics-secret' },
     );
     expect(drilldown.total).toBe(point.assignedIssues);
+  });
+
+  it('weights an unestimated issue as 1 point in the assignment and completion timeline', async () => {
+    const engineer = await addMember(workspace, 'member', { name: 'Timeline Person' });
+    const assignedWork = await issue(
+      workspace.admin,
+      { title: 'Unestimated assignment', assigneeId: engineer.user.id, estimate: null },
+      { createdAt: new Date('2026-08-01T00:00:00.000Z') },
+    );
+    await assignmentActivity(assignedWork, null, engineer.user, '2026-08-04T09:00:00.000Z');
+    await issue(
+      workspace.admin,
+      {
+        title: 'Unestimated completion',
+        assigneeId: engineer.user.id,
+        stateId: stateNamed(workspace, 'Done').id,
+        estimate: null,
+      },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        completedAt: new Date('2026-08-04T00:00:00.000Z'),
+      },
+    );
+
+    const result = await loadPeopleAnalytics(
+      workspace.admin,
+      query({ personId: engineer.user.id }),
+      { now, timezone: 'UTC' },
+    );
+
+    const point = result.focused?.timeline.find((entry) => entry.date === '2026-08-04');
+    expect(point).toMatchObject({
+      assignedIssues: 1,
+      assignedPoints: 1,
+      completedIssues: 1,
+      completedPoints: 1,
+    });
   });
 
   it('retains unassigned and deleted-user-safe evidence and caps the workspace list', async () => {

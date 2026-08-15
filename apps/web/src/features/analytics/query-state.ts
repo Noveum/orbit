@@ -1,9 +1,14 @@
+import { validationFailed } from '@orbit/shared/errors';
 import { encodeFilter, filterGroupSchema, isEmptyFilter } from '@orbit/shared/filters';
 import {
   type AnalyticsDrilldownQuery,
+  type AnalyticsInsightsQuery,
   type AnalyticsQuery,
   analyticsDrilldownQuerySchema,
+  analyticsInsightsQuerySchema,
   analyticsQuerySchema,
+  type InsightConfig,
+  insightConfigSchema,
 } from '@orbit/shared/validators';
 import { z } from 'zod';
 
@@ -12,6 +17,7 @@ export type AnalyticsSearchParams =
   | Readonly<Record<string, string | string[] | undefined>>;
 
 const defaultAnalyticsQuery = analyticsQuerySchema.parse({});
+const defaultInsightConfig = insightConfigSchema.parse({});
 const encodedFilterSchema = z
   .string()
   .transform((encoded, context): unknown => {
@@ -132,4 +138,70 @@ export function canonicalAnalyticsQuery(query: AnalyticsQuery): string {
 
 export function canonicalDrilldownQuery(query: AnalyticsDrilldownQuery): string {
   return searchParamsForDrilldown(query).toString();
+}
+
+function insightConfigInput(params: AnalyticsSearchParams): unknown {
+  return {
+    measure: parameterValue(params, 'insightMeasure'),
+    slice: parameterValue(params, 'insightSlice'),
+    segment: parameterValue(params, 'insightSegment'),
+    cumulative: booleanValue(parameterValue(params, 'insightCumulative')),
+  };
+}
+
+export function insightConfigFromSearchParams(params: AnalyticsSearchParams): InsightConfig {
+  try {
+    return insightConfigSchema.parse(insightConfigInput(params));
+  } catch {
+    return defaultInsightConfig;
+  }
+}
+
+export function searchParamsForInsightConfig(insight: InsightConfig): URLSearchParams {
+  const parsed = insightConfigSchema.parse(insight);
+  const params = new URLSearchParams();
+  if (parsed.measure !== defaultInsightConfig.measure) params.set('insightMeasure', parsed.measure);
+  if (parsed.slice !== defaultInsightConfig.slice) params.set('insightSlice', parsed.slice);
+  if (parsed.segment !== undefined) params.set('insightSegment', parsed.segment);
+  if (parsed.cumulative !== defaultInsightConfig.cumulative) {
+    params.set('insightCumulative', parsed.cumulative ? '1' : '0');
+  }
+  return params;
+}
+
+export function analyticsInsightsFromSearchParams(
+  params: AnalyticsSearchParams,
+): AnalyticsInsightsQuery {
+  const raw = parameterValue(params, 'query');
+  let json: unknown;
+  try {
+    json = raw === undefined ? {} : JSON.parse(raw);
+  } catch {
+    throw validationFailed('That analytics insights query is not valid JSON.');
+  }
+  return analyticsInsightsQuerySchema.parse(json);
+}
+
+export function searchParamsForInsights(query: AnalyticsInsightsQuery): URLSearchParams {
+  const parsed = analyticsInsightsQuerySchema.parse(query);
+  const params = new URLSearchParams();
+  params.set('query', JSON.stringify(parsed));
+  return params;
+}
+
+export function canonicalInsightsQuery(query: AnalyticsInsightsQuery): string {
+  return searchParamsForInsights(query).toString();
+}
+
+export function searchParamsForSavedAnalyticsView(
+  query: AnalyticsQuery,
+  insight: InsightConfig,
+): URLSearchParams {
+  const params = searchParamsForAnalytics(query);
+  for (const [key, value] of searchParamsForInsightConfig(insight)) params.set(key, value);
+  return params;
+}
+
+export function canonicalSavedAnalyticsView(query: AnalyticsQuery, insight: InsightConfig): string {
+  return searchParamsForSavedAnalyticsView(query, insight).toString();
 }

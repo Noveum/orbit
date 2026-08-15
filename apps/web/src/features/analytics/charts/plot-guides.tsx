@@ -18,9 +18,9 @@ interface PlotGuidesProps {
   readonly yAxisLabel: string;
 }
 
-function yTickTestId(index: number): string | undefined {
+function yTickTestId(index: number, count: number): string | undefined {
   if (index === 0) return 'plot-y-max';
-  if (index === 2) return 'plot-y-zero';
+  if (index === count - 1) return 'plot-y-zero';
   return undefined;
 }
 
@@ -39,17 +39,17 @@ export function PlotGuides({
 }: PlotGuidesProps) {
   const plotBottom = height - bottom;
   const plotHeight = plotBottom - top;
-  const ticks = [max, max / 2, 0];
+  const ticks = [max, (3 * max) / 4, max / 2, max / 4, 0];
   return (
     <g>
       {ticks.map((value, index) => {
-        const y = top + (index * plotHeight) / 2;
+        const y = top + (index * plotHeight) / (ticks.length - 1);
         return (
           <g key={value}>
             <line
               data-testid="plot-grid-line"
               stroke="var(--color-border)"
-              strokeDasharray={index === 2 ? undefined : '3 4'}
+              strokeDasharray={index === ticks.length - 1 ? undefined : '3 4'}
               vectorEffect="non-scaling-stroke"
               x1={left}
               x2={width - right}
@@ -57,7 +57,7 @@ export function PlotGuides({
               y2={y}
             />
             <text
-              data-testid={yTickTestId(index)}
+              data-testid={yTickTestId(index, ticks.length)}
               fill="var(--color-faint)"
               fontSize="11"
               textAnchor="end"

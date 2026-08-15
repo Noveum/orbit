@@ -367,6 +367,94 @@ describe('loadProjectAnalytics', () => {
     }
   });
 
+  it('weights an unestimated issue moved into scope as 1 point', async () => {
+    const alpha = await createProject(workspace.admin, {
+      name: 'Alpha added points',
+      teamIds: [workspace.teamId],
+    });
+    const beta = await createProject(workspace.admin, {
+      name: 'Beta added points',
+      teamIds: [workspace.teamId],
+    });
+    const movedIn = await issue(
+      workspace.admin,
+      { title: 'Unestimated moved in', projectId: beta.project.id, estimate: null },
+      { createdAt: new Date('2026-07-01T00:00:00.000Z') },
+    );
+    await projectActivity(movedIn, alpha.project, beta.project, '2026-08-05T00:00:00.000Z');
+
+    const result = await loadProjectAnalytics(workspace.admin, query({ measure: 'points' }), {
+      now,
+      timezone: 'UTC',
+    });
+    const betaRow = projectRow(result, beta.project.id);
+
+    expect(betaRow.scopeAddedIssues).toBe(1);
+    expect(betaRow.scopeAddedPoints).toBe(1);
+  });
+
+  it('weights an unestimated issue as 1 milestone point, leaving an empty milestone at zero', async () => {
+    const project = await createProject(workspace.admin, {
+      name: 'Milestone points',
+      teamIds: [workspace.teamId],
+    });
+    const populated = await createMilestone(workspace.admin, {
+      projectId: project.project.id,
+      name: 'Populated',
+    });
+    const empty = await createMilestone(workspace.admin, {
+      projectId: project.project.id,
+      name: 'Empty',
+    });
+    await issue(
+      workspace.admin,
+      {
+        title: 'Unestimated milestone work',
+        projectId: project.project.id,
+        milestoneId: populated.milestone.id,
+        estimate: null,
+      },
+      { createdAt: new Date('2026-08-02T00:00:00.000Z') },
+    );
+    await issue(
+      workspace.admin,
+      {
+        title: 'Estimated completed milestone work',
+        projectId: project.project.id,
+        milestoneId: populated.milestone.id,
+        stateId: stateNamed(workspace, 'Done').id,
+        estimate: 3,
+      },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        completedAt: new Date('2026-08-03T00:00:00.000Z'),
+      },
+    );
+
+    const result = await loadProjectAnalytics(
+      workspace.admin,
+      query({ measure: 'points', focusProjectId: project.project.id }),
+      { now, timezone: 'UTC' },
+    );
+
+    expect(result.focused?.milestones).toEqual([
+      expect.objectContaining({
+        id: populated.milestone.id,
+        scopeIssues: 2,
+        scopePoints: 4,
+        completedIssues: 1,
+        completedPoints: 3,
+      }),
+      expect.objectContaining({
+        id: empty.milestone.id,
+        scopeIssues: 0,
+        scopePoints: 0,
+        completedIssues: 0,
+        completedPoints: 0,
+      }),
+    ]);
+  });
+
   it('labels delivery buckets in the reporting calendar and reconciles bucket completions', async () => {
     const project = await createProject(workspace.admin, {
       name: 'Calendar launch',
@@ -526,7 +614,7 @@ describe('loadProjectAnalytics', () => {
       healthSource: 'manual',
       status: 'in_progress',
       scopeIssues: 4,
-      scopePoints: 10,
+      scopePoints: 11,
       openIssues: 3,
       completedIssues: 1,
       blocked: 1,
@@ -681,12 +769,12 @@ describe('loadProjectAnalytics', () => {
 
     expect(row).toMatchObject({
       scopeIssues: 2,
-      scopePoints: 8,
+      scopePoints: 9,
       unestimated: 1,
       estimateCoverage: 'mixed',
     });
     expect(drilldown.total).toBe(2);
-    expect(drilldown.totalValue).toBe(8);
+    expect(drilldown.totalValue).toBe(9);
   });
 
   it('lets every workspace role inspect projects across teams without crossing organizations', async () => {

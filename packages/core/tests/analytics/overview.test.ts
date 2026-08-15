@@ -354,6 +354,44 @@ describe('loadAnalyticsOverview', () => {
     expect(card(overview, 'unestimated')).toMatchObject({ value: 1, unit: 'issues' });
   });
 
+  it('weights unestimated work as 1 point everywhere in points mode, matching the drilldown total', async () => {
+    const started = stateNamed(workspace, 'In Progress');
+    await issue(
+      workspace.admin,
+      { title: 'Unestimated in progress', stateId: started.id, estimate: null },
+      {
+        createdAt: new Date('2026-08-02T00:00:00.000Z'),
+        startedAt: new Date('2026-08-02T00:00:00.000Z'),
+      },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'Estimated in progress', stateId: started.id, estimate: 3 },
+      {
+        createdAt: new Date('2026-08-02T00:00:00.000Z'),
+        startedAt: new Date('2026-08-02T00:00:00.000Z'),
+      },
+    );
+
+    const overview = await loadAnalyticsOverview(workspace.admin, query('points'), {
+      now,
+      timezone: 'UTC',
+    });
+
+    expect(card(overview, 'wip').value).toBe(4);
+    const startedBucket = overview.state.find((bucket) => bucket.id === 'started');
+    expect(startedBucket?.value).toBe(4);
+    const createdPoint = overview.delivery.find((point) => point.date === '2026-08-02');
+    expect(createdPoint?.created).toBe(4);
+
+    const drilldown = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query('points'), cohort: { cohort: 'wip' }, limit: 100 },
+      { now, timezone: 'UTC' },
+    );
+    expect(drilldown.totalValue).toBe(4);
+  });
+
   it('bounds project distribution and reconciles the Other cohort', async () => {
     for (let index = 0; index < 10; index += 1) {
       const { project } = await createProject(workspace.admin, {

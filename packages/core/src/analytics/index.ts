@@ -2,6 +2,7 @@ export * from './burndown.ts';
 export * from './distribution.ts';
 export * from './drilldown.ts';
 export * from './filter.ts';
+export * from './insights.ts';
 export * from './math.ts';
 export * from './overview.ts';
 export * from './people.ts';

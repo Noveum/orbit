@@ -5,13 +5,22 @@ import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { AnalyticsCard } from './analytics-card.tsx';
 import { AnalyticsDrilldownDialog } from './analytics-drilldown-dialog.tsx';
+import {
+  personCaptureCaption,
+  personIdealSeries,
+  sprintDays,
+  todayDateOf,
+  unestimatedNote,
+} from './burn-math.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './charts/analytics-data-table.tsx';
 import { BarPlot } from './charts/bar-plot.tsx';
-import { LinePlot } from './charts/line-plot.tsx';
+import { LinePlot, type PlotSeries } from './charts/line-plot.tsx';
 import type { AnalyticsPeopleResponse } from './contracts.ts';
 import { usesCurrentPersonDefault } from './person-focus.ts';
 
 type PersonRow = AnalyticsPeopleResponse['people'][number];
+type FocusedPerson = NonNullable<AnalyticsPeopleResponse['focused']>;
+type PersonSprintBurnPoints = NonNullable<FocusedPerson['sprintBurn']['current']>['burn'];
 
 interface EvidenceSelection {
   readonly title: string;
@@ -121,6 +130,22 @@ function PersonTimeline({
   );
 }
 
+function personRemainingSeries(burn: PersonSprintBurnPoints): PlotSeries {
+  return {
+    id: 'current-person',
+    label: 'Current sprint',
+    color: 1,
+    points: burn
+      .filter((point) => point.available && !point.future)
+      .map((point) => ({
+        id: `${point.date}-current-person`,
+        label: point.date,
+        value: point.remaining,
+        cohort: { cohort: 'open' as const },
+      })),
+  };
+}
+
 function PersonalSprintBurn({
   focused,
   points,
@@ -130,6 +155,7 @@ function PersonalSprintBurn({
 }) {
   const current = focused.sprintBurn.current;
   const selected = focused.sprintBurn.selected;
+  const previous = focused.sprintBurn.previous;
   if (current === null || selected === null) {
     return (
       <AnalyticsCard title="Personal sprint burn">
@@ -139,27 +165,8 @@ function PersonalSprintBurn({
       </AnalyticsCard>
     );
   }
-  const currentPoints = current.burn.map((point) => ({
-    id: `${point.date}-current-person`,
-    label: point.date,
-    value: point.remaining,
-    cohort: { cohort: 'open' as const },
-    x: point.workingDay ?? point.calendarDay,
-    available: point.available,
-  }));
-  const elapsed = currentPoints.at(-1)?.x ?? 0;
-  const previousPoints =
-    focused.sprintBurn.previous?.burn
-      .filter((point) => point.workingDay !== null && point.workingDay <= elapsed)
-      .map((point) => ({
-        id: `${point.date}-previous-person`,
-        label: `Previous day ${point.calendarDay}`,
-        value: point.remaining,
-        cohort: { cohort: 'open' as const },
-        x: point.workingDay ?? point.calendarDay,
-        available: point.available,
-      })) ?? [];
   const unit = points ? 'points' : 'issues';
+  const captureAnnotation = personCaptureCaption(current.burn);
   return (
     <AnalyticsCard title="Personal sprint burn">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -172,17 +179,19 @@ function PersonalSprintBurn({
         <p className="text-faint text-xs">{current.coverage.kind}</p>
       </div>
       <LinePlot
+        {...(captureAnnotation === undefined ? {} : { annotation: captureAnnotation })}
+        days={sprintDays(current.burn, todayDateOf(current.burn))}
         label={`${focused.person.name} personal sprint burn`}
-        series={[
-          { id: 'current-person', label: 'Current sprint', points: currentPoints },
-          ...(previousPoints.length === 0
-            ? []
-            : [{ id: 'previous-person', label: 'Previous sprint', points: previousPoints }]),
-        ]}
+        series={[personRemainingSeries(current.burn), personIdealSeries(current.burn)]}
         valueFormatter={(value) => `${numberLabel(value)} ${unit}`}
-        xAxisLabel="Sprint working day"
+        xAxisLabel="Sprint day"
         yAxisLabel={`Remaining ${unit}`}
       />
+      {previous === null ? null : (
+        <p className="text-faint text-xs">
+          Previous sprint ended with {numberLabel(previous.summary.remaining)} {unit} remaining.
+        </p>
+      )}
       <p className="text-faint text-xs">
         Uses assignment history at each sprint point, not only current ownership.
       </p>
@@ -301,10 +310,7 @@ function FocusedPerson({
           </p>
         )}
         {points && focused.unestimated > 0 ? (
-          <p className="text-muted text-xs">
-            {focused.unestimated} unestimated issue{focused.unestimated === 1 ? '' : 's'}{' '}
-            contributes zero points.
-          </p>
+          <p className="text-muted text-xs">{unestimatedNote(focused.unestimated)}</p>
         ) : null}
       </AnalyticsCard>
       <PersonFlowCards focused={focused} formulas={formulas} />

@@ -11,6 +11,7 @@ export interface AnalyticsDataRow {
   readonly id: string;
   readonly label: string;
   readonly cells: Readonly<Record<string, ReactNode>>;
+  readonly activatable?: boolean;
 }
 
 interface AnalyticsDataTableProps {
@@ -65,7 +66,7 @@ export function AnalyticsDataTable({
                   )}
                   key={column.id}
                 >
-                  {index === 0 && onActivate !== undefined ? (
+                  {index === 0 && onActivate !== undefined && row.activatable !== false ? (
                     <button
                       aria-label={`${String(row.cells[column.id] ?? '')}, ${row.label}`}
                       className="rounded-sm text-left text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"

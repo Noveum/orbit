@@ -46,6 +46,23 @@ export interface ChurnTotals {
   readonly removed: number;
 }
 
+export interface InsightPercentiles {
+  readonly p25: number;
+  readonly p50: number;
+  readonly p75: number;
+  readonly p95: number;
+}
+
+export function percentilesOf(values: readonly number[]): InsightPercentiles | null {
+  if (values.length === 0) return null;
+  return {
+    p25: percentile(values, 0.25),
+    p50: percentile(values, 0.5),
+    p75: percentile(values, 0.75),
+    p95: percentile(values, 0.95),
+  };
+}
+
 export function churnFromScopeSeries(scopeByDay: readonly number[]): ChurnTotals {
   let added = 0;
   let removed = 0;

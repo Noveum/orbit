@@ -11,7 +11,7 @@ import { validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/validators';
-import { issueFilterSchema } from '@orbit/shared/validators';
+import { calendarDateSchema, issueFilterSchema } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { buildIssueWhere } from '../work/issue-query.ts';
@@ -116,7 +116,12 @@ export type AnalyticsOverviewCohortKey =
   | `state:${string}`
   | `project:${string}`
   | `priority:${number}`
-  | `outlier:${string}`;
+  | `outlier:${string}`
+  | `assignee:${string}`
+  | `label:${string}`
+  | `sprint:${string}`
+  | `created-week:${string}`
+  | `completed-week:${string}`;
 
 export interface AnalyticsServiceContext {
   readonly now?: Date;
@@ -289,7 +294,7 @@ function otherDimensionPredicate(
     dimension === 'state'
       ? sql`${schema.issue.stateId}`
       : sql`coalesce(${schema.issue.projectId}, 'none')`;
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   return sql`${dimensionId} not in (
     select ranked.dimension_id from (
       select ${dimensionId} as dimension_id
@@ -300,6 +305,32 @@ function otherDimensionPredicate(
       limit ${DISTRIBUTION_CAP}
     ) ranked
   )`;
+}
+
+function sliceCohortPredicate(cohort: AnalyticsDrilldownCohort): SQL<unknown> | null {
+  if (cohort.cohort.startsWith('assignee:')) {
+    const id = cohort.cohort.slice('assignee:'.length);
+    return id === 'none' ? isNull(schema.issue.assigneeId) : eq(schema.issue.assigneeId, id);
+  }
+  if (cohort.cohort.startsWith('label:')) {
+    const id = cohort.cohort.slice('label:'.length);
+    return id === 'none'
+      ? sql`not exists (select 1 from issue_label where issue_label.issue_id = ${schema.issue.id})`
+      : sql`exists (select 1 from issue_label where issue_label.issue_id = ${schema.issue.id} and issue_label.label_id = ${id})`;
+  }
+  if (cohort.cohort.startsWith('sprint:')) {
+    const id = cohort.cohort.slice('sprint:'.length);
+    return id === 'none' ? isNull(schema.issue.cycleId) : eq(schema.issue.cycleId, id);
+  }
+  if (cohort.cohort.startsWith('created-week:')) {
+    const week = cohort.cohort.slice('created-week:'.length);
+    return sql`date_trunc('week', ${schema.issue.createdAt}) = ${week}::date`;
+  }
+  if (cohort.cohort.startsWith('completed-week:')) {
+    const week = cohort.cohort.slice('completed-week:'.length);
+    return sql`date_trunc('week', ${schema.issue.completedAt}) = ${week}::date`;
+  }
+  return null;
 }
 
 function dimensionCohortPredicate(
@@ -332,13 +363,20 @@ function dimensionCohortPredicate(
   if (cohort.cohort.startsWith('outlier:')) {
     return eq(schema.issue.id, cohort.cohort.slice('outlier:'.length));
   }
-  return null;
+  return sliceCohortPredicate(cohort);
 }
 
 function validIdCohort(value: string, prefix: string, special: ReadonlySet<string>): boolean {
   const match = new RegExp(`^${prefix}:(.+)$`, 'i').exec(value);
   const suffix = match?.[1];
   return suffix !== undefined && (special.has(suffix) || UUID_PATTERN.test(suffix));
+}
+
+const WEEK_COHORT_PATTERN = /^(?:created|completed)-week:(\d{4}-\d{2}-\d{2})$/;
+
+function validWeekCohort(value: string): boolean {
+  const day = WEEK_COHORT_PATTERN.exec(value)?.[1];
+  return day !== undefined && calendarDateSchema.safeParse(day).success;
 }
 
 function validDimensionCohort(value: string): boolean {
@@ -352,6 +390,10 @@ function validDimensionCohort(value: string): boolean {
   if (validIdCohort(value, 'state', new Set(['other']))) return true;
   if (validIdCohort(value, 'project', new Set(['none', 'other']))) return true;
   if (validIdCohort(value, 'outlier', new Set())) return true;
+  if (validIdCohort(value, 'assignee', new Set(['none']))) return true;
+  if (validIdCohort(value, 'label', new Set(['none']))) return true;
+  if (validIdCohort(value, 'sprint', new Set(['none']))) return true;
+  if (validWeekCohort(value)) return true;
   const priority = /^priority:(\d+)$/.exec(value);
   return priority !== null && PRIORITIES.some((entry) => String(entry) === priority[1]);
 }
@@ -1040,7 +1082,7 @@ export async function listAnalyticsDrilldown(
     ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(requestedLimit)))
     : 50;
   const weight =
-    resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 0)` : sql`1`;
+    resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
   const [aggregate] = await db.execute<AggregateRow>(sql`
     select
       count(*) as total,

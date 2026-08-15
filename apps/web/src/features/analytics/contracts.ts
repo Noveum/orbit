@@ -106,6 +106,7 @@ const sprintBurnPointSchema = z.object({
   ideal: numberSchema,
   available: z.boolean(),
   coverage: analyticsCoverageSchema.shape.kind,
+  future: z.boolean(),
 });
 
 const distributionSchema = z.object({
@@ -137,6 +138,14 @@ const sprintDetailSchema = z.object({
   sprint: sprintSummarySchema,
   measure: z.enum(['issues', 'points']),
   summary: sprintMeasureSummarySchema,
+  baseline: z
+    .object({
+      date: calendarDateSchema,
+      scope: numberSchema,
+      retroactive: z.boolean(),
+    })
+    .nullable(),
+  counterpart: sprintMeasureSummarySchema,
   scopeChanges: z.object({ added: numberSchema, removed: numberSchema }),
   burn: z.array(sprintBurnPointSchema),
   cohorts: z.object({
@@ -479,3 +488,47 @@ export function analyticsWireResponse(
 export function analyticsDrilldownWireResponse(value: unknown): AnalyticsDrilldownResponse {
   return analyticsDrilldownResponseSchema.parse(jsonValue(value));
 }
+
+const insightSegmentValueSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: numberSchema,
+});
+
+const insightBucketSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: numberSchema,
+  segments: z.array(insightSegmentValueSchema),
+  cohort: analyticsDrilldownCohortSchema.nullable(),
+});
+
+const insightPercentilesSchema = z.object({
+  p25: numberSchema,
+  p50: numberSchema,
+  p75: numberSchema,
+  p95: numberSchema,
+});
+
+const insightScatterPointSchema = z.object({
+  issueId: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  days: numberSchema,
+});
+
+export const analyticsInsightsWireResponse = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('bars'),
+    unit: z.enum(['issues', 'points']),
+    buckets: z.array(insightBucketSchema),
+  }),
+  z.object({
+    kind: z.literal('scatter'),
+    unit: z.literal('days'),
+    points: z.array(insightScatterPointSchema),
+    percentiles: insightPercentilesSchema.nullable(),
+  }),
+]);
+
+export type AnalyticsInsightsResponse = z.infer<typeof analyticsInsightsWireResponse>;

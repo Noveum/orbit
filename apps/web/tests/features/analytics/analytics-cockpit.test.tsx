@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { SavedAnalyticsViewPayload } from '@orbit/core';
-import { analyticsQuerySchema } from '@orbit/shared/validators';
+import {
+  analyticsInsightsQuerySchema,
+  analyticsQuerySchema,
+  insightConfigSchema,
+} from '@orbit/shared/validators';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -9,6 +13,7 @@ import { ToastProvider } from '../../../src/components/ui/toast.tsx';
 import { AnalyticsCockpit } from '../../../src/features/analytics/analytics-cockpit.tsx';
 import { analyticsKeys } from '../../../src/features/analytics/analytics-keys.ts';
 import type {
+  AnalyticsInsightsResponse,
   AnalyticsOverviewResponse,
   AnalyticsPeopleResponse,
   AnalyticsProjectsResponse,
@@ -217,6 +222,50 @@ function renderCockpit(
   });
 }
 
+const insightsBars: AnalyticsInsightsResponse = {
+  kind: 'bars',
+  unit: 'issues',
+  buckets: [
+    {
+      id: 'started',
+      label: 'Started',
+      value: 4,
+      segments: [],
+      cohort: { cohort: 'state-category:started' },
+    },
+  ],
+};
+
+function renderCockpitWithInsights(
+  savedViews: readonly SavedAnalyticsViewPayload[] = [],
+  initialInsight = insightConfigSchema.parse({}),
+) {
+  const query = analyticsQuerySchema.parse({ lens: 'insights' });
+  const client = createQueryClient();
+  client.setQueryDefaults(analyticsKeys.root, { enabled: false });
+  client.setQueryData(
+    analyticsKeys.insights(
+      analyticsInsightsQuerySchema.parse({ ...query, insight: initialInsight }),
+    ),
+    insightsBars,
+  );
+  function Wrapper({ children }: { readonly children: ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>
+        <ToastProvider>{children}</ToastProvider>
+      </QueryClientProvider>
+    );
+  }
+  return render(
+    <AnalyticsCockpit
+      initialInsight={initialInsight}
+      initialQuery={query}
+      savedViews={savedViews}
+    />,
+    { wrapper: Wrapper },
+  );
+}
+
 describe('AnalyticsCockpit', () => {
   it('renders useful hydrated metrics without asking for configuration', () => {
     renderCockpit();
@@ -242,8 +291,8 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('lens=sprints');
 
     await user.keyboard('{End}');
-    expect(screen.getByRole('tab', { name: 'People' })).toHaveFocus();
-    expect(window.location.search).toContain('lens=people');
+    expect(screen.getByRole('tab', { name: 'Insights' })).toHaveFocus();
+    expect(window.location.search).toContain('lens=insights');
 
     await user.keyboard('{Home}');
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveFocus();
@@ -521,5 +570,99 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('measure=points');
     expect(window.location.search).toContain('includeArchived=1');
     expect(window.location.search).toContain(`personId=${personId}`);
+  });
+
+  it('restores measure, slice, and segment from a saved insights view', async () => {
+    const user = userEvent.setup();
+    const savedInsight = insightConfigSchema.parse({
+      measure: 'points',
+      slice: 'assignee',
+      segment: 'state',
+    });
+    renderCockpitWithInsights([
+      {
+        id: 'saved_insights_1',
+        name: 'Points by assignee',
+        scopeType: 'workspace',
+        scopeId: null,
+        kind: 'dashboard',
+        config: {
+          kind: 'dashboard',
+          version: 1,
+          query: analyticsQuerySchema.parse({ lens: 'insights' }),
+          insight: savedInsight,
+          pinned: false,
+        },
+        shared: false,
+        ownerId: personId,
+        createdAt: asOf,
+        updatedAt: asOf,
+      },
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Points by assignee' }));
+
+    expect(window.location.search).toContain('lens=insights');
+    expect(window.location.search).toContain('insightMeasure=points');
+    expect(window.location.search).toContain('insightSlice=assignee');
+    expect(window.location.search).toContain('insightSegment=state');
+  });
+
+  it('resets the insight to its defaults when applying a saved insights view with no stored insight', async () => {
+    const user = userEvent.setup();
+    const nonDefaultInsight = insightConfigSchema.parse({ measure: 'points', slice: 'assignee' });
+    renderCockpitWithInsights(
+      [
+        {
+          id: 'saved_bare_insights',
+          name: 'Bare insights view',
+          scopeType: 'workspace',
+          scopeId: null,
+          kind: 'dashboard',
+          config: {
+            kind: 'dashboard',
+            version: 1,
+            query: analyticsQuerySchema.parse({ lens: 'insights' }),
+            pinned: false,
+          },
+          shared: false,
+          ownerId: personId,
+          createdAt: asOf,
+          updatedAt: asOf,
+        },
+      ],
+      nonDefaultInsight,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Bare insights view' }));
+
+    expect(window.location.search).toContain('lens=insights');
+    expect(window.location.search).not.toContain('insightMeasure');
+    expect(window.location.search).not.toContain('insightSlice');
+  });
+
+  it('dispatches to the insights lens for query.lens insights, rendering its pickers and bar chart', () => {
+    renderCockpitWithInsights();
+
+    expect(screen.getByRole('tab', { name: 'Insights' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('combobox', { name: 'Insight measure' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Insight slice' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Insight segment' })).toBeVisible();
+    expect(screen.getByRole('application', { name: 'Count by State category' })).toBeVisible();
+    expect(screen.getByText('Insights are computed on demand')).toBeVisible();
+  });
+
+  it('stops rendering the insights pickers and chart once the lens is switched away', async () => {
+    const user = userEvent.setup();
+    renderCockpitWithInsights();
+    expect(screen.getByRole('combobox', { name: 'Insight measure' })).toBeVisible();
+
+    await user.click(screen.getByRole('tab', { name: 'Overview' }));
+
+    expect(screen.queryByRole('combobox', { name: 'Insight measure' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('application', { name: 'Count by State category' }),
+    ).not.toBeInTheDocument();
+    expect(window.location.search).toBe('');
   });
 });

@@ -159,7 +159,7 @@ async function healthCards(
   resolved: ResolvedAnalyticsQuery,
 ): Promise<HealthRow> {
   const base = baseAnalyticsPredicate(principal, resolved);
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   const wip = cohortPredicate(resolved, { cohort: 'wip' });
   const blocked = cohortPredicate(resolved, { cohort: 'blocked' });
   const overdue = cohortPredicate(resolved, { cohort: 'overdue' });
@@ -202,7 +202,7 @@ async function throughputCards(
   const base = baseAnalyticsPredicate(principal, resolved);
   const current = cohortPredicate(resolved, { cohort: 'throughput' });
   const comparison = cohortPredicate(resolved, { cohort: 'comparison-throughput' });
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   const duration = sql`extract(epoch from (issue.completed_at - issue.started_at)) / 86400`;
   const validCycle = sql`issue.started_at is not null and issue.completed_at >= issue.started_at`;
   const [row] = await db.execute<CardRow>(sql`
@@ -246,7 +246,7 @@ async function distributions(
   resolved: ResolvedAnalyticsQuery,
 ): Promise<readonly DistributionRow[]> {
   const base = baseAnalyticsPredicate(principal, resolved);
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   return await db.execute<DistributionRow>(sql`
     with filtered as materialized (
       select workflow_state.category::text as state_id,
@@ -293,7 +293,7 @@ async function deliverySeries(
   resolved: ResolvedAnalyticsQuery,
 ): Promise<readonly DeliveryRow[]> {
   const base = baseAnalyticsPredicate(principal, resolved);
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   const starts = bucketDates(resolved.resolvedRange, resolved.bucket);
   const rows = starts.map((start, index) => {
     const end = starts[index + 1] ?? resolved.to;

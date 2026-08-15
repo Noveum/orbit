@@ -1,10 +1,21 @@
 import { can } from '@orbit/shared/policy';
-import { analyticsQuerySchema } from '@orbit/shared/validators';
+import {
+  analyticsInsightsQuerySchema,
+  analyticsQuerySchema,
+  insightConfigSchema,
+} from '@orbit/shared/validators';
 import { HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
 import { AnalyticsCockpit } from '@/features/analytics/analytics-cockpit.tsx';
-import { dehydratedAnalyticsLens, loadSavedViews } from '@/features/analytics/data.ts';
-import { parseAnalyticsSearchParams } from '@/features/analytics/query-state.ts';
+import {
+  dehydratedAnalyticsInsights,
+  dehydratedAnalyticsLens,
+  loadSavedViews,
+} from '@/features/analytics/data.ts';
+import {
+  insightConfigFromSearchParams,
+  parseAnalyticsSearchParams,
+} from '@/features/analytics/query-state.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 
 export const metadata: Metadata = { title: 'Analytics' };
@@ -29,14 +40,26 @@ export default async function AnalyticsPage({ searchParams }: PageProps) {
     cleanUrl && typeof pinnedQuery === 'object' && pinnedQuery !== null
       ? analyticsQuerySchema.parse(pinnedQuery)
       : requestedQuery;
+  const initialInsight =
+    cleanUrl && query.lens === 'insights'
+      ? insightConfigSchema.parse(pinned?.config['insight'] ?? {})
+      : insightConfigFromSearchParams(params);
+  const hydrationState =
+    query.lens === 'insights'
+      ? await dehydratedAnalyticsInsights(
+          principal,
+          analyticsInsightsQuerySchema.parse({ ...query, insight: initialInsight }),
+        )
+      : await dehydratedAnalyticsLens(principal, query);
 
   return (
-    <HydrationBoundary state={await dehydratedAnalyticsLens(principal, query)}>
+    <HydrationBoundary state={hydrationState}>
       <div className="px-4 py-5 sm:px-6 sm:py-6">
         <AnalyticsCockpit
           canManageAllViews={principal.role === 'admin'}
           canManageViews={can(principal, 'view:manage')}
           currentUserId={principal.userId}
+          initialInsight={initialInsight}
           initialQuery={query}
           savedViews={savedViews}
         />

@@ -9,6 +9,7 @@ const LABELS: Record<AnalyticsLens, string> = {
   sprints: 'Sprints',
   projects: 'Projects',
   people: 'People',
+  insights: 'Insights',
 };
 
 export function AnalyticsTabs({

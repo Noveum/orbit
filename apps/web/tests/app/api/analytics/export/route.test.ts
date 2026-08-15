@@ -41,7 +41,7 @@ describe('GET /api/analytics/export', () => {
     expect(response.headers.get('x-orbit-export-truncated')).toBe('false');
     expect(csv).toContain('Predicate,current');
     expect(csv).toContain('Measure,points');
-    expect(csv).toContain('Formula,Sum of estimates; unestimated is zero');
+    expect(csv).toContain('Formula,Sum of estimates; unestimated counts as 1');
     expect(csv).toContain('Timezone,');
     expect(csv).toContain('Coverage,Exact semantic issue cohort');
     expect(csv).toContain("'=HYPERLINK");

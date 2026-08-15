@@ -116,6 +116,10 @@ describe('cycleBurndown', () => {
     );
     expect(future.every((point) => point.isFuture)).toBe(true);
     expect(burndown.points.every((point) => Number.isFinite(point.ideal))).toBe(true);
+
+    const lastObserved = burndown.points.filter((point) => !point.isFuture).at(-1);
+    expect(future.every((point) => point.scope === lastObserved?.scope)).toBe(true);
+    expect(future[0]?.ideal).toBeGreaterThan(0);
   });
 
   it('uses the sprint calendar for boundaries and the current day', async () => {

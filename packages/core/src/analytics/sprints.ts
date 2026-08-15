@@ -52,7 +52,14 @@ export interface SprintBurnPoint {
   readonly removed: number;
   readonly ideal: number;
   readonly available: boolean;
+  readonly future: boolean;
   readonly coverage: AnalyticsCoverage['kind'];
+}
+
+export interface SprintBaseline {
+  readonly date: string;
+  readonly scope: number;
+  readonly retroactive: boolean;
 }
 
 export interface SprintMeasureSummary {
@@ -105,6 +112,8 @@ export interface SprintDetail {
   readonly sprint: SprintSummary;
   readonly measure: AnalyticsQuery['measure'];
   readonly summary: SprintMeasureSummary;
+  readonly baseline: SprintBaseline | null;
+  readonly counterpart: SprintMeasureSummary;
   readonly scopeChanges: SprintScopeChanges;
   readonly burn: readonly SprintBurnPoint[];
   readonly cohorts: SprintCohorts;
@@ -390,7 +399,7 @@ function startedAt(fact: IssueFact): Date | null {
 
 function valueAt(fact: IssueFact, at: Date, measure: AnalyticsQuery['measure']): number {
   if (measure === 'issues') return 1;
-  return estimateAt(fact, at) ?? 0;
+  return estimateAt(fact, at) ?? 1;
 }
 
 function coverageOf(facts: SprintFacts, now: Date): AnalyticsCoverage {
@@ -462,6 +471,7 @@ function burnFor(
 ): SprintBurnPoint[] {
   const startDay = dateText(facts.cycle.startsAt, facts.cycle.timezone);
   const lastDay = dateText(new Date(endOfFacts(facts, now).getTime() - 1), facts.cycle.timezone);
+  const sprintFinalDay = dateText(new Date(facts.cycle.endsAt.getTime() - 1), facts.cycle.timezone);
   const coverage = coverageOf(facts, now).kind;
   const observedMemberships = facts.issues
     .flatMap((fact) => fact.memberships)
@@ -521,7 +531,7 @@ function burnFor(
       )
       .reduce((sum, entry) => {
         if (measure === 'issues') return sum + 1;
-        return sum + (entry.estimateAtAdd ?? 0);
+        return sum + (entry.estimateAtAdd ?? 1);
       }, 0);
     const removed = facts.issues
       .flatMap((fact) => fact.memberships)
@@ -534,7 +544,7 @@ function burnFor(
       )
       .reduce((sum, entry) => {
         if (measure === 'issues') return sum + 1;
-        return sum + (entry.estimateAtAdd ?? 0);
+        return sum + (entry.estimateAtAdd ?? 1);
       }, 0);
     points.push({
       date: day,
@@ -548,23 +558,43 @@ function burnFor(
       removed,
       ideal: 0,
       available,
+      future: false,
       coverage,
     });
   }
-  const baseline = points.find((point) => point.available);
+  const lastObservedDay = points.at(-1)?.date ?? startDay;
+  if (lastObservedDay < sprintFinalDay) {
+    let day = addDate(lastObservedDay, 1);
+    while (day <= sprintFinalDay) {
+      const working = isWorkingDay(day);
+      points.push({
+        date: day,
+        calendarDay: calendarDaysBetween(startDay, day),
+        workingDay: working ? workingDaysBetween(startDay, day) : null,
+        scope: 0,
+        started: 0,
+        completed: 0,
+        remaining: 0,
+        added: 0,
+        removed: 0,
+        ideal: 0,
+        available: false,
+        future: true,
+        coverage,
+      });
+      day = addDate(day, 1);
+    }
+  }
+  const baseline = points.find((point) => point.available && !point.future);
   const initialScope = baseline?.scope ?? 0;
-  const baselineDay = baseline?.date ?? startDay;
-  const sprintFinalDay = dateText(new Date(facts.cycle.endsAt.getTime() - 1), facts.cycle.timezone);
-  const plannedWorkingDays = Math.max(1, workingDaysBetween(baselineDay, sprintFinalDay));
+  const plannedWorkingDays = Math.max(1, workingDaysBetween(startDay, sprintFinalDay));
   return points.map((point) => ({
     ...point,
-    ideal: point.available
-      ? idealRemaining(
-          initialScope,
-          workingDaysBetween(baselineDay, point.date) - 1,
-          plannedWorkingDays - 1,
-        )
-      : 0,
+    ideal: idealRemaining(
+      initialScope,
+      workingDaysBetween(startDay, point.date) - 1,
+      plannedWorkingDays - 1,
+    ),
   }));
 }
 
@@ -656,6 +686,7 @@ function summaryFor(
   now: Date,
   personId: string | null,
   teamId: string | null = null,
+  options: { readonly baselineScope: number | null } = { baselineScope: null },
 ): SprintMeasureSummary {
   const at = endOfFacts(facts, now);
   const personFacts = facts.issues.filter(
@@ -667,7 +698,7 @@ function summaryFor(
     personFacts
       .filter((fact) => ids.includes(fact.issueId))
       .reduce((sum, fact) => sum + valueAt(fact, at, measure), 0);
-  const last = burn.at(-1);
+  const last = burn.filter((point) => !point.future).at(-1);
   const events = membershipEvents(facts, now);
   const attributedEvents = (rows: readonly MembershipRow[]): MembershipRow[] =>
     rows.filter((row) => {
@@ -680,14 +711,15 @@ function summaryFor(
     });
   const eventValue = (rows: readonly MembershipRow[]): number =>
     attributedEvents(rows).reduce(
-      (sum, row) => sum + (measure === 'issues' ? 1 : (row.estimateAtAdd ?? 0)),
+      (sum, row) => sum + (measure === 'issues' ? 1 : (row.estimateAtAdd ?? 1)),
       0,
     );
   const currentFacts = personFacts.filter(
     (fact) => committedAt(fact, facts, at, now) && insideAt(fact, at),
   );
+  const captured = sumCohort(cohorts.planned);
   return {
-    planned: sumCohort(cohorts.planned),
+    planned: captured > 0 ? captured : (options.baselineScope ?? 0),
     currentScope: last?.scope ?? 0,
     completed: last?.completed ?? 0,
     remaining: last?.remaining ?? 0,
@@ -725,6 +757,10 @@ function flowFor(facts: SprintFacts): SprintFlowDistributions {
   };
 }
 
+function baselinePointOf(burn: readonly SprintBurnPoint[]): SprintBurnPoint | undefined {
+  return burn.find((point) => point.available && !point.future);
+}
+
 function detailFor(
   facts: SprintFacts,
   measure: AnalyticsQuery['measure'],
@@ -733,7 +769,28 @@ function detailFor(
 ): SprintDetail {
   const burn = burnFor(facts, measure, now, null);
   const cohorts = cohortsOf(facts, now);
-  const summary = summaryFor(facts, burn, cohorts, measure, now, null);
+  const baselinePoint = baselinePointOf(burn);
+  const at = endOfFacts(facts, now);
+  const capturedPlanned = facts.issues
+    .filter((fact) => cohorts.planned.includes(fact.issueId))
+    .reduce((sum, fact) => sum + valueAt(fact, at, measure), 0);
+  const baseline =
+    baselinePoint === undefined
+      ? null
+      : {
+          date: baselinePoint.date,
+          scope: baselinePoint.scope,
+          retroactive: capturedPlanned === 0 && baselinePoint.scope > 0,
+        };
+  const summary = summaryFor(facts, burn, cohorts, measure, now, null, null, {
+    baselineScope: baselinePoint?.scope ?? null,
+  });
+  const otherMeasure = measure === 'issues' ? ('points' as const) : ('issues' as const);
+  const counterpartBurn = burnFor(facts, otherMeasure, now, null);
+  const counterpartBaseline = baselinePointOf(counterpartBurn);
+  const counterpart = summaryFor(facts, counterpartBurn, cohorts, otherMeasure, now, null, null, {
+    baselineScope: counterpartBaseline?.scope ?? null,
+  });
   const personIds = unique(
     facts.issues.flatMap((fact) => [
       ...(fact.assigneeId === null ? [] : [fact.assigneeId]),
@@ -747,11 +804,14 @@ function detailFor(
   );
   const people = personIds.map((personId) => {
     const personBurn = burnFor(facts, measure, now, personId);
+    const personBaseline = baselinePointOf(personBurn);
     return {
       personId,
       name: names.get(personId) ?? 'Former member',
       burn: personBurn,
-      summary: summaryFor(facts, personBurn, cohorts, measure, now, personId),
+      summary: summaryFor(facts, personBurn, cohorts, measure, now, personId, null, {
+        baselineScope: personBaseline?.scope ?? null,
+      }),
       coverage: coverageOf(facts, now),
     };
   });
@@ -764,15 +824,20 @@ function detailFor(
   );
   const teams = teamIds.map((teamId) => {
     const teamBurn = burnFor(facts, measure, now, null, teamId);
+    const teamBaseline = baselinePointOf(teamBurn);
     return {
       id: teamId,
-      summary: summaryFor(facts, teamBurn, cohorts, measure, now, null, teamId),
+      summary: summaryFor(facts, teamBurn, cohorts, measure, now, null, teamId, {
+        baselineScope: teamBaseline?.scope ?? null,
+      }),
     };
   });
   return {
     sprint: summaryOf(facts.cycle),
     measure,
     summary,
+    baseline,
+    counterpart,
     scopeChanges: { added: summary.added, removed: summary.removed },
     burn,
     cohorts,
@@ -961,13 +1026,12 @@ function formulas(): SprintFormulaMetadata {
       'Captured sprint membership entered before the sprint start or within 24 hours after it. Known triage, backlog, or canceled state at commitment is excluded; missing state-at-entry coverage is retained as membership-planned rather than inferred from current state.',
     scope:
       'Membership active at the observation time, excluding triage, backlog, or canceled work only where a state transition or observation establishes that category.',
-    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Dates before an observed membership baseline are unavailable rather than zero. Observed bootstrap membership establishes the baseline and is not counted as added scope. The ideal line begins at the first reliable scope baseline. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
+    burn: 'Remaining equals scope minus completed on each sprint local calendar day. Dates before an observed membership baseline are unavailable rather than zero. Observed bootstrap membership establishes the baseline and is not counted as added scope. The ideal line starts at sprint day 1 using the first reliable scope baseline and holds flat over weekends. State-transition facts preserve completion and reopen episodes; current-day values include captured facts after the latest snapshot.',
     leadTime:
       'Current issue-row creation to durable completion for issues whose creation row remains available; deleted rows are unavailable.',
     cycleTime:
       'Current mutable startedAt column to completion. Completed sprint values are labeled reconstructed-current-column, never frozen, because close outcomes do not retain first start.',
-    points:
-      'Null estimates contribute zero points and remain counted in the explicit unestimated issue total.',
+    points: 'Unestimated work counts as 1 point until estimated.',
     coverage:
       'Captured requires captured active membership facts, observed includes bootstrap or missing entry-state facts, frozen requires outcomes for every relevant issue plus a final snapshot, and completed partial history is reconstructed.',
   };

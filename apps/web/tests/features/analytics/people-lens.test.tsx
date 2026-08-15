@@ -9,6 +9,47 @@ const personId = '00000000-0000-7000-8000-000000000001';
 const secondPersonId = '00000000-0000-7000-8000-000000000002';
 const asOf = '2026-08-14T10:00:00.000Z';
 const sprintId = '00000000-0000-7000-8000-000000000003';
+
+function dayOffset(start: string, offset: number): string {
+  const value = new Date(`${start}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + offset);
+  return value.toISOString().slice(0, 10);
+}
+
+function buildPersonBurn(options: {
+  readonly start: string;
+  readonly count: number;
+  readonly observedCount: number;
+  readonly scope: number;
+}) {
+  return Array.from({ length: options.count }, (_unused, index) => {
+    const date = dayOffset(options.start, index);
+    const observed = index < options.observedCount;
+    const completed = observed ? index : 0;
+    return {
+      date,
+      calendarDay: index + 1,
+      workingDay: index + 1,
+      scope: observed ? options.scope : 0,
+      started: observed ? completed : 0,
+      completed,
+      remaining: observed ? Math.max(0, options.scope - completed) : 0,
+      added: 0,
+      removed: 0,
+      ideal: Math.max(0, options.scope - index),
+      available: observed,
+      coverage: 'captured' as const,
+      future: !observed,
+    };
+  });
+}
+
+const fullSpanPersonBurn = buildPersonBurn({
+  start: '2026-08-10',
+  count: 10,
+  observedCount: 6,
+  scope: 8,
+});
 const cohort = (name: string, id = personId) => ({ cohort: `${name}:${id}` });
 const person = (id: string, name: string, status: 'current' | 'former') => ({
   person: { id, name, image: null, currentMember: status === 'current', status },
@@ -100,6 +141,7 @@ const data: AnalyticsPeopleResponse = {
             ideal: 8,
             available: true,
             coverage: 'captured',
+            future: false,
           },
           {
             date: '2026-08-14',
@@ -114,6 +156,7 @@ const data: AnalyticsPeopleResponse = {
             ideal: 5,
             available: true,
             coverage: 'live',
+            future: false,
           },
         ],
         summary: {
@@ -177,12 +220,14 @@ describe('PeopleLens', () => {
     ).toBeVisible();
     expect(screen.getByText('Sprint 4')).toBeVisible();
     expect(screen.getByText('5 points remaining')).toBeVisible();
+    expect(screen.getByText('1 unestimated issue counts as 1 point.')).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: /Grace Hopper/ }));
     expect(onFocus).toHaveBeenCalledWith(secondPersonId);
   });
 
-  test('leaves a gap in the personal burn where sprint history is unavailable', () => {
+  test('excludes an unavailable day from the personal burn instead of leaving a fabricated gap', async () => {
+    const user = userEvent.setup();
     const focused = data.focused;
     if (focused === null) throw new Error('Missing focused person fixture.');
     const sprintBurn = focused.sprintBurn;
@@ -217,9 +262,124 @@ describe('PeopleLens', () => {
       />,
     );
 
-    expect(screen.queryByTestId('plot-point-2026-08-10-current-person')).not.toBeInTheDocument();
-    expect(screen.getByTestId('plot-point-2026-08-14-current-person')).toBeInTheDocument();
+    expect(screen.getByText(/capture began aug 14/i)).toBeVisible();
+    expect(screen.queryByText(/dates unavailable/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('plot-line-current-person').getAttribute('d')).not.toContain('L');
-    expect(screen.getByText('1 date unavailable')).toBeVisible();
+
+    const dayHits = screen.getAllByTestId('plot-day-hit');
+    expect(dayHits).toHaveLength(2);
+    await user.hover(dayHits[0] as Element);
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Ideal');
+    expect(tooltip).not.toHaveTextContent('Current sprint');
+  });
+
+  test('frames the personal burn across the whole sprint with an ideal series', () => {
+    const focused = data.focused;
+    if (focused === null) throw new Error('Missing focused person fixture.');
+    const current = focused.sprintBurn.current;
+    if (current === null) throw new Error('Missing personal sprint burn fixture.');
+    render(
+      <PeopleLens
+        data={{
+          ...data,
+          focused: {
+            ...focused,
+            sprintBurn: {
+              ...focused.sprintBurn,
+              current: { ...current, burn: fullSpanPersonBurn },
+            },
+          },
+        }}
+        onFocusPerson={mock()}
+        query={analyticsQuerySchema.parse({
+          lens: 'people',
+          measure: 'points',
+          focus: { personId },
+        })}
+      />,
+    );
+
+    expect(screen.getAllByTestId('plot-day-hit')).toHaveLength(fullSpanPersonBurn.length);
+    expect(screen.getByTestId('plot-line-ideal-person')).toBeInTheDocument();
+  });
+
+  test('states the capture start once instead of a dates-unavailable fallback', () => {
+    const focused = data.focused;
+    if (focused === null) throw new Error('Missing focused person fixture.');
+    const current = focused.sprintBurn.current;
+    if (current === null) throw new Error('Missing personal sprint burn fixture.');
+    const firstDay = fullSpanPersonBurn[0];
+    if (firstDay === undefined) throw new Error('Missing burn fixture.');
+    const retroBurn = [
+      { ...firstDay, available: false, future: false, remaining: 0, scope: 0 },
+      ...fullSpanPersonBurn.slice(1),
+    ];
+    render(
+      <PeopleLens
+        data={{
+          ...data,
+          focused: {
+            ...focused,
+            sprintBurn: { ...focused.sprintBurn, current: { ...current, burn: retroBurn } },
+          },
+        }}
+        onFocusPerson={mock()}
+        query={analyticsQuerySchema.parse({
+          lens: 'people',
+          measure: 'points',
+          focus: { personId },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/capture began aug 11/i)).toBeVisible();
+    expect(screen.queryByText(/dates unavailable/i)).not.toBeInTheDocument();
+  });
+
+  test('replaces the previous-sprint overlay with a caption since the frame cannot mix sprints', () => {
+    const focused = data.focused;
+    if (focused === null) throw new Error('Missing focused person fixture.');
+    const sprintBurn = focused.sprintBurn;
+    const current = sprintBurn.current;
+    if (current === null) throw new Error('Missing personal sprint burn fixture.');
+    render(
+      <PeopleLens
+        data={{
+          ...data,
+          focused: {
+            ...focused,
+            sprintBurn: {
+              ...sprintBurn,
+              previous: {
+                personId,
+                name: 'Ada Lovelace',
+                burn: [],
+                summary: {
+                  planned: 6,
+                  currentScope: 6,
+                  completed: 4,
+                  remaining: 2,
+                  added: 0,
+                  removed: 0,
+                  carryover: 0,
+                  unestimated: 0,
+                },
+                coverage: { kind: 'captured', from: '2026-07-27T00:00:00.000Z', asOf },
+              },
+            },
+          },
+        }}
+        onFocusPerson={mock()}
+        query={analyticsQuerySchema.parse({
+          lens: 'people',
+          measure: 'points',
+          focus: { personId },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/previous sprint ended with 2 points remaining/i)).toBeVisible();
+    expect(screen.queryByTestId('plot-line-previous-person')).not.toBeInTheDocument();
   });
 });

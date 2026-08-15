@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { analyticsQuerySchema } from '@orbit/shared/validators';
+import { analyticsQuerySchema, insightConfigSchema } from '@orbit/shared/validators';
 import {
   createCheckpoint,
   createSavedAnalyticsView,
@@ -76,6 +76,27 @@ describe('saved analytics views', () => {
       version: 1,
       query,
       pinned: true,
+    });
+  });
+
+  it('keeps the insight config alongside the query for an insights lens view', async () => {
+    const query = analyticsQuerySchema.parse({ lens: 'insights' });
+    const insight = insightConfigSchema.parse({
+      measure: 'points',
+      slice: 'assignee',
+      segment: 'state',
+    });
+    const { view } = await createSavedAnalyticsView(workspace.admin, {
+      name: 'Points by assignee',
+      config: { kind: 'dashboard', version: 1, query, insight, pinned: false },
+    });
+
+    expect(savedAnalyticsQuery(view)).toEqual({
+      kind: 'dashboard',
+      version: 1,
+      query,
+      insight,
+      pinned: false,
     });
   });
 

@@ -13,6 +13,7 @@ import {
   listAnalyticsDrilldown,
   listCheckpoints,
   listSavedAnalyticsViews,
+  loadAnalyticsInsights,
   loadAnalyticsOverview,
   loadPeopleAnalytics,
   loadProjectAnalytics,
@@ -32,16 +33,23 @@ import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import { sprintLabel } from '@orbit/shared/utils';
-import type { AnalyticsLens, AnalyticsQuery } from '@orbit/shared/validators';
+import type {
+  AnalyticsInsightsQuery,
+  AnalyticsLens,
+  AnalyticsQuery,
+  InsightConfig,
+} from '@orbit/shared/validators';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { analyticsKeys } from './analytics-keys.ts';
 import {
   type AnalyticsDrilldownResponse,
+  type AnalyticsInsightsResponse,
   type AnalyticsPeopleResponse,
   type AnalyticsProjectsResponse,
   type AnalyticsResponseByLens,
   type AnalyticsSprintsResponse,
   analyticsDrilldownWireResponse,
+  analyticsInsightsWireResponse,
   analyticsWireResponse,
 } from './contracts.ts';
 import { selectedAssigneeIds } from './person-focus.ts';
@@ -223,12 +231,12 @@ export async function loadAnalyticsLensData(
   principal: Principal,
   lens: AnalyticsLens,
   query: AnalyticsQuery,
-): Promise<AnalyticsResponseByLens[AnalyticsLens]>;
+): Promise<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]>;
 export async function loadAnalyticsLensData(
   principal: Principal,
   lens: AnalyticsLens,
   query: AnalyticsQuery,
-): Promise<AnalyticsResponseByLens[AnalyticsLens]> {
+): Promise<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]> {
   const normalized = { ...query, lens };
   switch (lens) {
     case 'overview':
@@ -239,6 +247,8 @@ export async function loadAnalyticsLensData(
       return analyticsWireResponse('projects', await loadProjectAnalytics(principal, normalized));
     case 'people':
       return analyticsWireResponse('people', await loadPeopleAnalytics(principal, normalized));
+    case 'insights':
+      throw notFound('Insights analytics is not available yet.');
   }
 }
 
@@ -247,6 +257,27 @@ export async function loadAnalyticsDrilldownData(
   input: AnalyticsDrilldownInput,
 ): Promise<AnalyticsDrilldownResponse> {
   return analyticsDrilldownWireResponse(await listAnalyticsDrilldown(principal, input));
+}
+
+export async function loadAnalyticsInsightsData(
+  principal: Principal,
+  query: AnalyticsQuery,
+  insight: InsightConfig,
+  now: Date = new Date(),
+): Promise<AnalyticsInsightsResponse> {
+  return analyticsInsightsWireResponse.parse(
+    await loadAnalyticsInsights(principal, query, insight, { now }),
+  );
+}
+
+export async function dehydratedAnalyticsInsights(
+  principal: Principal,
+  query: AnalyticsInsightsQuery,
+) {
+  const client = new QueryClient();
+  const payload = await loadAnalyticsInsightsData(principal, query, query.insight);
+  client.setQueryData(analyticsKeys.insights(query), payload);
+  return dehydrate(client);
 }
 
 export async function dehydratedAnalyticsLens(principal: Principal, query: AnalyticsQuery) {

@@ -84,6 +84,7 @@ export async function cycleBurndown(
   const cycle = analytics.current.sprint;
   const today = calendarDateLabel(now, cycle.timezone);
   const actual = analytics.current.burn;
+  const lastObserved = actual.filter((point) => !point.future).at(-1);
   const points: BurndownPoint[] = [];
   const finalDay = calendarDateLabel(new Date(Date.parse(cycle.endsAt) - 1), cycle.timezone);
   for (
@@ -92,18 +93,19 @@ export async function cycleBurndown(
     day = nextCalendarDay(day)
   ) {
     const found = actual.find((point) => point.date === day);
+    const observed = found !== undefined && !found.future ? found : undefined;
     const isFuture = day > today || found === undefined;
     points.push({
       date: day,
-      scope: found?.scope ?? actual.at(-1)?.scope ?? 0,
+      scope: observed?.scope ?? lastObserved?.scope ?? 0,
       completed: isFuture ? null : (found?.completed ?? 0),
       remaining: isFuture ? null : (found?.remaining ?? 0),
-      ideal: found?.ideal ?? actual.at(-1)?.ideal ?? 0,
+      ideal: observed?.ideal ?? lastObserved?.ideal ?? 0,
       isFuture,
     });
   }
   const scopeStart = points[0]?.scope ?? 0;
-  const last = actual.at(-1);
+  const last = lastObserved;
   const totalDays = Math.max(1, points.length - 1);
   const compatiblePoints = points.map((point, index) => ({
     ...point,
