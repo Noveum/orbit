@@ -2,7 +2,7 @@
 
 import type { AnalyticsQuery } from '@orbit/shared/validators';
 import { type UseQueryResult, useQuery } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/query/fetcher.ts';
+import { ApiError, apiFetch } from '@/lib/query/fetcher.ts';
 import { analyticsKeys } from './analytics-keys.ts';
 import {
   type AnalyticsOverviewResponse,
@@ -30,6 +30,8 @@ async function fetchAnalyticsLens(
       return await apiFetch(path, analyticsLensResponseSchemas.projects, { signal });
     case 'people':
       return await apiFetch(path, analyticsLensResponseSchemas.people, { signal });
+    case 'insights':
+      throw new ApiError(404, 'not_found', 'Insights analytics is not available yet.');
   }
 }
 

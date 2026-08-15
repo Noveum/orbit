@@ -3,7 +3,6 @@
 import type { SavedAnalyticsViewPayload } from '@orbit/core';
 import {
   ANALYTICS_LENSES,
-  type AnalyticsLens,
   type AnalyticsQuery,
   analyticsQuerySchema,
 } from '@orbit/shared/validators';
@@ -34,7 +33,7 @@ function LensContent({
   onFocusProject,
   onFocusPerson,
 }: {
-  readonly data: AnalyticsResponseByLens[AnalyticsLens];
+  readonly data: AnalyticsResponseByLens[keyof AnalyticsResponseByLens];
   readonly query: AnalyticsQuery;
   readonly onFocusProject: (projectId: string) => void;
   readonly onFocusPerson: (personId: string) => void;

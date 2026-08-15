@@ -223,12 +223,12 @@ export async function loadAnalyticsLensData(
   principal: Principal,
   lens: AnalyticsLens,
   query: AnalyticsQuery,
-): Promise<AnalyticsResponseByLens[AnalyticsLens]>;
+): Promise<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]>;
 export async function loadAnalyticsLensData(
   principal: Principal,
   lens: AnalyticsLens,
   query: AnalyticsQuery,
-): Promise<AnalyticsResponseByLens[AnalyticsLens]> {
+): Promise<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]> {
   const normalized = { ...query, lens };
   switch (lens) {
     case 'overview':
@@ -239,6 +239,8 @@ export async function loadAnalyticsLensData(
       return analyticsWireResponse('projects', await loadProjectAnalytics(principal, normalized));
     case 'people':
       return analyticsWireResponse('people', await loadPeopleAnalytics(principal, normalized));
+    case 'insights':
+      throw notFound('Insights analytics is not available yet.');
   }
 }
 

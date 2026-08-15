@@ -4,7 +4,11 @@ import { ANALYTICS_LENSES, type AnalyticsLens } from '@orbit/shared/validators';
 import { useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 
-const LABELS: Record<AnalyticsLens, string> = {
+type VisibleLens = Exclude<AnalyticsLens, 'insights'>;
+
+const TAB_LENSES = ANALYTICS_LENSES.filter((lens): lens is VisibleLens => lens !== 'insights');
+
+const LABELS: Record<VisibleLens, string> = {
   overview: 'Overview',
   sprints: 'Sprints',
   projects: 'Projects',
@@ -22,13 +26,12 @@ export function AnalyticsTabs({
 
   const move = (index: number, key: string) => {
     let next: number;
-    if (key === 'ArrowRight') next = (index + 1) % ANALYTICS_LENSES.length;
-    else if (key === 'ArrowLeft')
-      next = (index - 1 + ANALYTICS_LENSES.length) % ANALYTICS_LENSES.length;
+    if (key === 'ArrowRight') next = (index + 1) % TAB_LENSES.length;
+    else if (key === 'ArrowLeft') next = (index - 1 + TAB_LENSES.length) % TAB_LENSES.length;
     else if (key === 'Home') next = 0;
-    else if (key === 'End') next = ANALYTICS_LENSES.length - 1;
+    else if (key === 'End') next = TAB_LENSES.length - 1;
     else return;
-    const lens = ANALYTICS_LENSES[next];
+    const lens = TAB_LENSES[next];
     if (lens === undefined) return;
     onChange(lens);
     tabs.current[next]?.focus();
@@ -36,7 +39,7 @@ export function AnalyticsTabs({
 
   return (
     <div aria-label="Analytics views" className="flex min-w-max gap-1" role="tablist">
-      {ANALYTICS_LENSES.map((lens, index) => (
+      {TAB_LENSES.map((lens, index) => (
         <button
           aria-controls={`analytics-panel-${lens}`}
           aria-selected={value === lens}
