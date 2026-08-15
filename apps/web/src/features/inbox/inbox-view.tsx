@@ -103,6 +103,8 @@ function openLabel(item: InboxItem): string {
 
 const SNOOZE_HOURS = 24;
 
+const FAILED_SAVE = 'That did not save. Check your connection and try again.';
+
 const notificationDeltaSchema = z.object({
   id: z.string(),
   type: z.string(),
@@ -194,15 +196,23 @@ function unreadActivityCount(item: InboxItem): number {
   return !item.read && countsTowardUnread(item) && isActivity(item) ? 1 : 0;
 }
 
-export function revertSnooze(
+export interface SnoozeRollback {
+  readonly rows: readonly InboxItem[];
+  readonly restoreCounts: boolean;
+}
+
+export function snoozeRollback(
   rows: readonly InboxItem[],
   id: string,
   optimistic: string,
   previous: string | null,
-): readonly InboxItem[] {
-  return rows.map((row) =>
-    row.id === id && row.snoozedUntil === optimistic ? { ...row, snoozedUntil: previous } : row,
-  );
+): SnoozeRollback {
+  const ours = rows.some((row) => row.id === id && row.snoozedUntil === optimistic);
+  if (!ours) return { rows, restoreCounts: false };
+  return {
+    rows: rows.map((row) => (row.id === id ? { ...row, snoozedUntil: previous } : row)),
+    restoreCounts: true,
+  };
 }
 
 function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
@@ -476,6 +486,8 @@ export function InboxView({
   canPublishDocs,
 }: InboxViewProps) {
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
   const [activity, setActivity] = useState(unreadActivity);
@@ -625,7 +637,7 @@ export function InboxView({
         );
       } catch (cause) {
         applyLocally(item.read, next ? 1 : -1);
-        setError('That did not save. Check your connection and try again.');
+        setError(FAILED_SAVE);
         throw cause;
       }
     },
@@ -648,7 +660,6 @@ export function InboxView({
   const restoreCounts = useCallback((mention: boolean, activityRow: boolean) => {
     if (mention) setMentions((count) => count + 1);
     if (activityRow) setActivity((count) => count + 1);
-    setError('That did not save. Check your connection and try again.');
   }, []);
 
   const snooze = useCallback(async () => {
@@ -668,8 +679,15 @@ export function InboxView({
         }),
       );
     } catch {
-      setRows((list) => revertSnooze(list, current.id, snoozedUntil, previousSnoozedUntil));
-      restoreCounts(wasUnreadMention, wasUnreadActivity);
+      const rollback = snoozeRollback(
+        rowsRef.current,
+        current.id,
+        snoozedUntil,
+        previousSnoozedUntil,
+      );
+      setRows(rollback.rows);
+      if (rollback.restoreCounts) restoreCounts(wasUnreadMention, wasUnreadActivity);
+      setError(FAILED_SAVE);
     }
   }, [current, applyServerCount, restoreCounts]);
 
@@ -684,13 +702,16 @@ export function InboxView({
     try {
       applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
     } catch {
-      setRows((list) => {
-        if (list.some((row) => row.id === current.id)) return list;
-        const restored = [...list];
-        restored.splice(removedAt === -1 ? list.length : removedAt, 0, current);
-        return restored;
-      });
-      restoreCounts(wasUnreadMention, wasUnreadActivity);
+      const stillRemoved = !rowsRef.current.some((row) => row.id === current.id);
+      if (stillRemoved) {
+        setRows((list) => {
+          const restored = [...list];
+          restored.splice(removedAt === -1 ? list.length : removedAt, 0, current);
+          return restored;
+        });
+        restoreCounts(wasUnreadMention, wasUnreadActivity);
+      }
+      setError(FAILED_SAVE);
     }
   }, [current, rows, applyServerCount, restoreCounts]);
 

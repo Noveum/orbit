@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import type { InboxItem } from '../../../src/features/inbox/data.ts';
-import { applyNotificationDeltas, revertSnooze } from '../../../src/features/inbox/inbox-view.tsx';
+import {
+  applyNotificationDeltas,
+  snoozeRollback,
+} from '../../../src/features/inbox/inbox-view.tsx';
 
 const TAB = 'tab_a';
 
@@ -246,21 +249,30 @@ describe('what the reading pane is looking at', () => {
   });
 });
 
-describe('reverting a snooze the server rejected', () => {
+describe('rolling back a snooze the server rejected', () => {
   it('puts back the value the row had before the failed request', () => {
     const rows = [item({ snoozedUntil: '2026-03-01T00:00:00.000Z' })];
 
-    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+    const rollback = snoozeRollback(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
 
-    expect(reverted[0]?.snoozedUntil).toBeNull();
+    expect(rollback.rows[0]?.snoozedUntil).toBeNull();
+    expect(rollback.restoreCounts).toBe(true);
   });
 
   it('leaves a newer snooze alone rather than overwriting it', () => {
     const rows = [item({ snoozedUntil: '2026-06-01T00:00:00.000Z' })];
 
-    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+    const rollback = snoozeRollback(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
 
-    expect(reverted[0]?.snoozedUntil).toBe('2026-06-01T00:00:00.000Z');
+    expect(rollback.rows[0]?.snoozedUntil).toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  it('leaves the counts alone when it did not undo the snooze', () => {
+    const rows = [item({ snoozedUntil: '2026-06-01T00:00:00.000Z' })];
+
+    const rollback = snoozeRollback(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+
+    expect(rollback.restoreCounts).toBe(false);
   });
 
   it('leaves every other row untouched', () => {
@@ -269,8 +281,8 @@ describe('reverting a snooze the server rejected', () => {
       item({ id: 'notification_2', snoozedUntil: '2026-03-01T00:00:00.000Z' }),
     ];
 
-    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+    const rollback = snoozeRollback(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
 
-    expect(reverted[1]?.snoozedUntil).toBe('2026-03-01T00:00:00.000Z');
+    expect(rollback.rows[1]?.snoozedUntil).toBe('2026-03-01T00:00:00.000Z');
   });
 });
