@@ -44,6 +44,10 @@ describe('insightConfigSchema', () => {
     expect(() => insightConfigSchema.parse({ slice: 'assignee', segment: 'assignee' })).toThrow();
   });
 
+  it('rejects a segment equal to the defaulted slice when slice is omitted', () => {
+    expect(() => insightConfigSchema.parse({ segment: 'state_category' })).toThrow();
+  });
+
   it('allows a segment that differs from the slice', () => {
     expect(insightConfigSchema.parse({ slice: 'assignee', segment: 'project' })).toMatchObject({
       slice: 'assignee',
