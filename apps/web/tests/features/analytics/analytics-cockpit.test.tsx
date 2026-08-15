@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { SavedAnalyticsViewPayload } from '@orbit/core';
-import { analyticsQuerySchema } from '@orbit/shared/validators';
+import {
+  analyticsInsightsQuerySchema,
+  analyticsQuerySchema,
+  insightConfigSchema,
+} from '@orbit/shared/validators';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -9,6 +13,7 @@ import { ToastProvider } from '../../../src/components/ui/toast.tsx';
 import { AnalyticsCockpit } from '../../../src/features/analytics/analytics-cockpit.tsx';
 import { analyticsKeys } from '../../../src/features/analytics/analytics-keys.ts';
 import type {
+  AnalyticsInsightsResponse,
   AnalyticsOverviewResponse,
   AnalyticsPeopleResponse,
   AnalyticsProjectsResponse,
@@ -215,6 +220,39 @@ function renderCockpit(
   return render(<AnalyticsCockpit initialQuery={query} savedViews={savedViews} />, {
     wrapper: Wrapper,
   });
+}
+
+const insightsBars: AnalyticsInsightsResponse = {
+  kind: 'bars',
+  unit: 'issues',
+  buckets: [
+    {
+      id: 'started',
+      label: 'Started',
+      value: 4,
+      segments: [],
+      cohort: { cohort: 'state-category:started' },
+    },
+  ],
+};
+
+function renderCockpitWithInsights() {
+  const query = analyticsQuerySchema.parse({ lens: 'insights' });
+  const insight = insightConfigSchema.parse({});
+  const client = createQueryClient();
+  client.setQueryDefaults(analyticsKeys.root, { enabled: false });
+  client.setQueryData(
+    analyticsKeys.insights(analyticsInsightsQuerySchema.parse({ ...query, insight })),
+    insightsBars,
+  );
+  function Wrapper({ children }: { readonly children: ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>
+        <ToastProvider>{children}</ToastProvider>
+      </QueryClientProvider>
+    );
+  }
+  return render(<AnalyticsCockpit initialQuery={query} savedViews={[]} />, { wrapper: Wrapper });
 }
 
 describe('AnalyticsCockpit', () => {
@@ -521,5 +559,30 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('measure=points');
     expect(window.location.search).toContain('includeArchived=1');
     expect(window.location.search).toContain(`personId=${personId}`);
+  });
+
+  it('dispatches to the insights lens for query.lens insights, rendering its pickers and bar chart', () => {
+    renderCockpitWithInsights();
+
+    expect(screen.getByRole('tab', { name: 'Insights' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('combobox', { name: 'Insight measure' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Insight slice' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Insight segment' })).toBeVisible();
+    expect(screen.getByRole('application', { name: 'Count by State category' })).toBeVisible();
+    expect(screen.getByText('Insights are computed on demand')).toBeVisible();
+  });
+
+  it('stops rendering the insights pickers and chart once the lens is switched away', async () => {
+    const user = userEvent.setup();
+    renderCockpitWithInsights();
+    expect(screen.getByRole('combobox', { name: 'Insight measure' })).toBeVisible();
+
+    await user.click(screen.getByRole('tab', { name: 'Overview' }));
+
+    expect(screen.queryByRole('combobox', { name: 'Insight measure' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('application', { name: 'Count by State category' }),
+    ).not.toBeInTheDocument();
+    expect(window.location.search).toBe('');
   });
 });

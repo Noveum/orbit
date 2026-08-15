@@ -87,8 +87,10 @@ function headerCaptionFor(
   insightsResult: ReturnType<typeof useInsightsQuery>,
 ): string {
   if (query.lens === 'insights') {
+    if (insightsResult.isError) return 'Analytics could not load';
     return insightsResult.data === undefined ? 'Refreshing' : 'Insights are computed on demand';
   }
+  if (result.isError) return 'Analytics could not load';
   if (result.data === undefined) return 'Refreshing';
   return `Data through ${result.data.coverage.asOf.slice(0, 10)}`;
 }
