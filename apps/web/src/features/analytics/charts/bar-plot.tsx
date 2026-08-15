@@ -13,6 +13,7 @@ export interface BarPair {
   readonly label: string;
   readonly primary: PlotPoint;
   readonly secondary: PlotPoint;
+  readonly current?: boolean;
 }
 
 export interface BarPlotAverageLine {
@@ -543,7 +544,10 @@ function PairsBarPlot({
             const secondaryWidth = barWidthFor(pair.secondary.value, max, plotWidth);
             const isActive = activeIndex === index;
             return (
-              <g key={pair.id}>
+              <g
+                data-testid={pair.current === true ? 'plot-pair-current' : undefined}
+                key={pair.id}
+              >
                 <text
                   data-testid={`plot-category-${pair.id}`}
                   fill="var(--color-muted)"

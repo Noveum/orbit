@@ -178,4 +178,19 @@ describe('BarPlot', () => {
     await user.keyboard('{ArrowDown}{Enter}');
     expect(activate).toHaveBeenCalledWith({ cohort: 'state', bucket: 'bob-current' });
   });
+
+  test('marks exactly the pair flagged current with a row testid, leaving the rest untagged', () => {
+    const bob = pairs[1];
+    if (bob === undefined) throw new Error('missing bob pair fixture');
+    render(
+      <BarPlot
+        label="Sprint velocity"
+        pairs={[...pairs, { ...bob, id: 'current', current: true }]}
+        points={[]}
+      />,
+    );
+
+    expect(screen.getAllByTestId('plot-pair-current')).toHaveLength(1);
+    expect(screen.getByTestId('plot-bar-primary-current')).toBeInTheDocument();
+  });
 });

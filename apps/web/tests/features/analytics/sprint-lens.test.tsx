@@ -206,10 +206,16 @@ describe('SprintLens', () => {
     expect(screen.getByText('Lead time p85')).toBeVisible();
     expect(screen.getByText('7d')).toBeVisible();
     expect(screen.getByText('Cycle time p85')).toBeVisible();
-    expect(screen.getByText(/comparison will appear after this sprint closes/i)).toBeVisible();
+    expect(screen.getByText(/velocity below already includes this sprint/i)).toBeVisible();
     expect(screen.getByText(/2 unestimated issues count as 1 point each/i)).toBeVisible();
-    expect(screen.getByTestId('plot-y-axis-label')).toHaveTextContent('Remaining points');
-    expect(screen.getByTestId('plot-x-axis-label')).toHaveTextContent('Sprint day');
+    const burnFigure = screen
+      .getByRole('application', { name: 'Sprint burn down' })
+      .closest('figure');
+    if (burnFigure === null) throw new Error('missing burn chart figure');
+    expect(within(burnFigure).getByTestId('plot-y-axis-label')).toHaveTextContent(
+      'Remaining points',
+    );
+    expect(within(burnFigure).getByTestId('plot-x-axis-label')).toHaveTextContent('Sprint day');
     expect(screen.getByText(/forecast needs at least 3 working days/i)).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'Burn up' }));
@@ -334,7 +340,11 @@ describe('SprintLens', () => {
     );
     expect(screen.queryByTestId('plot-legend-forecast')).not.toBeInTheDocument();
 
-    await user.click(screen.getByText(/View data/));
+    const burnFigure = screen
+      .getByRole('application', { name: 'Sprint burn down' })
+      .closest('figure');
+    if (burnFigure === null) throw new Error('missing burn chart figure');
+    await user.click(within(burnFigure).getByText(/View data/));
     expect(screen.queryByRole('columnheader', { name: 'Forecast' })).not.toBeInTheDocument();
   });
 
@@ -536,6 +546,80 @@ describe('SprintLens', () => {
     expect(screen.queryByText('My sprint burn')).not.toBeInTheDocument();
     expect(screen.getByText(/assigned to Ada over this sprint/i)).toBeVisible();
     expect(screen.queryByText(/assigned to you/i)).not.toBeInTheDocument();
+  });
+
+  test('pairs planned against completed velocity per closed sprint, averages them, and appends the current sprint as an in-progress pair', async () => {
+    const user = userEvent.setup();
+    const closedSprintOne = {
+      ...sprint,
+      id: '00000000-0000-7000-8000-000000000002',
+      name: 'Sprint 2',
+      number: 2,
+    };
+    const closedSprintTwo = {
+      ...sprint,
+      id: '00000000-0000-7000-8000-000000000003',
+      name: 'Sprint 3',
+      number: 3,
+    };
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          velocity: [
+            {
+              sprint: closedSprintOne,
+              planned: 10,
+              completed: 8,
+              carryover: 1,
+              coverage: 'captured',
+            },
+            {
+              sprint: closedSprintTwo,
+              planned: 12,
+              completed: 10,
+              carryover: 0,
+              coverage: 'captured',
+            },
+          ],
+        }}
+        query={sprintQueryFixture}
+      />,
+    );
+
+    expect(screen.getByTestId(`plot-category-${closedSprintOne.id}`)).toHaveTextContent('Sprint 2');
+    expect(screen.getByTestId(`plot-bar-primary-${closedSprintOne.id}`).getAttribute('fill')).toBe(
+      'var(--analytics-series-1)',
+    );
+    expect(
+      screen.getByTestId(`plot-bar-secondary-${closedSprintOne.id}`).getAttribute('fill'),
+    ).toBe('var(--color-border-strong)');
+
+    await user.hover(screen.getByTestId(`plot-bar-primary-${closedSprintOne.id}`));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Completed');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('8 points');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Planned');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('10 points');
+
+    expect(screen.getByTestId('plot-average-line')).toBeInTheDocument();
+    expect(screen.getByText('Avg 9')).toBeVisible();
+
+    expect(screen.getByTestId('plot-pair-current')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-category-current')).toHaveTextContent('Sprint 1');
+    expect(screen.getByTestId('plot-bar-primary-current')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-bar-secondary-current')).toBeInTheDocument();
+
+    expect(
+      screen.queryByText('Velocity history builds as sprints complete.'),
+    ).not.toBeInTheDocument();
+  });
+
+  test('captions the velocity chart until any sprint has closed', () => {
+    render(<SprintLens data={data} query={sprintQueryFixture} />);
+
+    expect(screen.getByTestId('plot-pair-current')).toBeInTheDocument();
+    expect(screen.queryByTestId('plot-average-line')).not.toBeInTheDocument();
+    expect(screen.getByText('Velocity history builds as sprints complete.')).toBeVisible();
   });
 
   test('shows unavailable flow honestly and explains a closed first sprint', () => {

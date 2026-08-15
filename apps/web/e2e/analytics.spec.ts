@@ -13,6 +13,10 @@ const sprintSummarySchema = z.object({
   current: z.object({ summary: z.object({ completed: z.number(), remaining: z.number() }) }),
 });
 
+const sprintBurnLengthSchema = z.object({
+  current: z.object({ burn: z.array(z.unknown()) }),
+});
+
 async function json(page: Page, path: string, init?: RequestInit): Promise<unknown> {
   return await page.evaluate(
     async ({ url, options }) => {
@@ -79,15 +83,26 @@ test('analytics and the sprint page share sprint truth and expose exact hover va
   await expect(page.getByText('Flow time')).toBeVisible();
   await expect(page.getByText(/Current issue-row creation to durable completion/)).toBeVisible();
   await expect(page.getByText(/Current mutable startedAt column to completion/)).toBeVisible();
+  await expect(page.getByText(/Scope\s+\d+\s+(pts|issues)\s+·\s+\d+\s+(pts|issues)/)).toBeVisible();
 
-  const point = page.locator('[data-testid^="plot-hit-"]').last();
-  await point.hover({ force: true });
-  await expect(page.getByRole('tooltip')).toBeVisible();
+  const burnLength = sprintBurnLengthSchema.parse(await json(page, '/api/analytics/sprints'))
+    .current.burn.length;
 
   const chart = page.getByRole('application', { name: 'Sprint burn down' });
+  const dayHits = chart.locator('[data-testid="plot-day-hit"]');
+  await expect(dayHits).toHaveCount(burnLength);
+  await dayHits.last().hover({ force: true });
+  await expect(page.getByRole('tooltip')).toBeVisible();
+
   await chart.focus();
   await page.keyboard.press('End');
   await expect(page.getByRole('tooltip')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Burn up' }).click();
+  const upChart = page.getByRole('application', { name: 'Sprint burn up' });
+  await expect(upChart).toBeVisible();
+  await expect(upChart.locator('[data-testid="plot-day-hit"]')).toHaveCount(burnLength);
+  await expect(upChart.locator('[data-testid="plot-line-completed"]')).toBeVisible();
 
   await context.close();
 });

@@ -13,6 +13,7 @@ import {
   sprintDays,
   todayDateOf,
 } from './burn-math.ts';
+import type { BarPair, BarPlotAverageLine } from './charts/bar-plot.tsx';
 import { BarPlot } from './charts/bar-plot.tsx';
 import type { PlotPoint, PlotSeries } from './charts/line-plot.tsx';
 import { LinePlot } from './charts/line-plot.tsx';
@@ -329,6 +330,50 @@ function FocusBurnCard({
   );
 }
 
+type SprintVelocityPoint = AnalyticsSprintsResponse['velocity'][number];
+
+function velocityPairPoints(idPrefix: string, planned: number, completed: number) {
+  return {
+    primary: {
+      id: `${idPrefix}-completed`,
+      label: 'Completed',
+      value: completed,
+      cohort: { cohort: 'completed' as const },
+    },
+    secondary: {
+      id: `${idPrefix}-planned`,
+      label: 'Planned',
+      value: planned,
+      cohort: { cohort: 'planned' as const },
+    },
+  };
+}
+
+function closedVelocityPairs(velocity: readonly SprintVelocityPoint[]): readonly BarPair[] {
+  return velocity.map((point) => ({
+    id: point.sprint.id,
+    label: point.sprint.name,
+    ...velocityPairPoints(point.sprint.id, point.planned, point.completed),
+  }));
+}
+
+function currentVelocityPair(current: SprintCurrent): BarPair {
+  return {
+    id: 'current',
+    label: current.sprint.name,
+    current: true,
+    ...velocityPairPoints('current', current.summary.planned, current.summary.completed),
+  };
+}
+
+function velocityAverageLine(
+  velocity: readonly SprintVelocityPoint[],
+): BarPlotAverageLine | undefined {
+  if (velocity.length === 0) return undefined;
+  const mean = velocity.reduce((total, point) => total + point.completed, 0) / velocity.length;
+  return { value: mean, label: `Avg ${numberLabel(mean)}` };
+}
+
 export function SprintLens({
   data,
   query,
@@ -347,12 +392,8 @@ export function SprintLens({
       </section>
     );
   }
-  const velocity = data.velocity.map((point) => ({
-    id: point.sprint.id,
-    label: point.sprint.name,
-    value: point.completed,
-    cohort: { cohort: 'completed' as const },
-  }));
+  const velocityPairs = [...closedVelocityPairs(data.velocity), currentVelocityPair(current)];
+  const velocityAverage = velocityAverageLine(data.velocity);
   const summary = current.summary;
   const measureFormatter = (value: number) => `${numberLabel(value)} ${current.measure}`;
   const currentPerson = usesCurrentPersonDefault(query);
@@ -382,7 +423,7 @@ export function SprintLens({
       {data.previous === null ? (
         <p className="rounded-lg border border-border bg-surface px-4 py-3 text-muted text-xs">
           {data.selected.completedAt === null
-            ? 'A comparison will appear after this sprint closes.'
+            ? 'Velocity below already includes this sprint as it happens.'
             : 'No earlier sprint is available for comparison.'}
         </p>
       ) : null}
@@ -433,18 +474,17 @@ export function SprintLens({
         </AnalyticsCard>
 
         <AnalyticsCard title="Velocity across sprints">
-          {velocity.length === 0 ? (
-            <p className="py-8 text-center text-muted text-xs">
-              Velocity appears after a sprint closes.
-            </p>
-          ) : (
-            <BarPlot
-              label="Completed scope"
-              points={velocity}
-              valueFormatter={measureFormatter}
-              xAxisLabel={`Completed ${current.measure}`}
-            />
-          )}
+          <BarPlot
+            {...(velocityAverage === undefined ? {} : { averageLine: velocityAverage })}
+            label="Sprint velocity"
+            pairs={velocityPairs}
+            points={[]}
+            valueFormatter={measureFormatter}
+            xAxisLabel={current.measure === 'points' ? 'Points' : 'Issues'}
+          />
+          {data.velocity.length === 0 ? (
+            <p className="text-muted text-xs">Velocity history builds as sprints complete.</p>
+          ) : null}
         </AnalyticsCard>
       </div>
 
