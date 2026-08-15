@@ -110,6 +110,10 @@ function activeFromEventTarget(target: EventTarget): ActiveTarget {
   return isPercentileKey(percentileKey) ? { kind: 'percentile', key: percentileKey } : null;
 }
 
+function isEventInsideAnchor(target: EventTarget): boolean {
+  return target instanceof Element && target.closest('a') !== null;
+}
+
 interface KeyResult {
   readonly active: ActiveTarget;
   readonly focusAnchor: boolean;
@@ -228,7 +232,7 @@ function activeInfoFor(
 export function ScatterPlot({ label, points, percentiles, unitLabel }: ScatterPlotProps) {
   const { ref, width } = useMeasuredWidth();
   const [active, setActive] = useState<ActiveTarget>(null);
-  const anchorRefs = useRef<Array<HTMLAnchorElement | null>>([]);
+  const anchorRefs = useRef<Array<SVGAElement | null>>([]);
   const sortedPoints = sortedByDays(points);
 
   if (points.length === 0) {
@@ -268,6 +272,7 @@ export function ScatterPlot({ label, points, percentiles, unitLabel }: ScatterPl
             if (active === null && sortedPoints.length > 0) setActive({ kind: 'point', index: 0 });
           }}
           onKeyDown={(event) => {
+            if (event.key === 'Enter' && isEventInsideAnchor(event.target)) return;
             const result = keyResult(event.key, active, sortedPoints.length);
             if (result === null) return;
             setActive(result.active);
@@ -350,7 +355,7 @@ export function ScatterPlot({ label, points, percentiles, unitLabel }: ScatterPl
                 href={`/issue/${point.identifier}`}
                 key={point.issueId}
                 ref={(node) => {
-                  anchorRefs.current[index] = node;
+                  anchorRefs.current[index] = node as unknown as SVGAElement | null;
                 }}
               >
                 <circle

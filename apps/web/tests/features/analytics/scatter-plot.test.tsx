@@ -94,6 +94,29 @@ describe('ScatterPlot', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
+  test('focuses the active anchor on the first Enter and lets a second Enter navigate', async () => {
+    const user = userEvent.setup();
+    render(<ScatterPlot label="Cycle time" percentiles={null} points={points} unitLabel="days" />);
+
+    const plot = screen.getByRole('application', { name: 'Cycle time' });
+    await user.tab();
+    expect(plot).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    const anchor = document.activeElement;
+    expect(anchor).not.toBe(plot);
+    expect(anchor?.tagName.toLowerCase()).toBe('a');
+    expect(anchor).toHaveAttribute('href', '/issue/NOV-1');
+
+    const secondEnter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    anchor?.dispatchEvent(secondEnter);
+    expect(secondEnter.defaultPrevented).toBe(false);
+  });
+
   test('shows an empty state with no percentile lines when there are no points', () => {
     render(
       <ScatterPlot label="Cycle time" percentiles={percentiles} points={[]} unitLabel="days" />,
