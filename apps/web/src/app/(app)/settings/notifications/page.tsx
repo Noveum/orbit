@@ -21,6 +21,7 @@ export default async function NotificationSettingsPage() {
         quietHoursStart={state.settings.quietHoursStart}
         quietHoursEnd={state.settings.quietHoursEnd}
         urgentBypassEnabled={state.settings.urgentBypassEnabled}
+        slackDm={state.slackDm}
       />
     </section>
   );

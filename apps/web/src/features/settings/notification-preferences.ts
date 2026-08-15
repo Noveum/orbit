@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationSettings } from '@orbit/services/notifications';
 import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
@@ -15,6 +15,7 @@ export const notificationSettingsSchema = notificationPreferencesUpdateSchema.ex
 export interface NotificationPreferenceState {
   readonly disabledKeys: string[];
   readonly settings: NotificationSettings;
+  readonly slackDm: 'available' | 'unmapped' | 'reauthorize' | 'unavailable';
 }
 
 export async function loadNotificationPreferences(
@@ -30,9 +31,33 @@ export async function loadNotificationPreferences(
     .where(eq(schema.notificationSetting.userId, userId))
     .limit(1);
 
+  const [slack] = await db
+    .select({ config: schema.integration.config, integrationId: schema.integration.id })
+    .from(schema.integration)
+    .where(eq(schema.integration.provider, 'slack'))
+    .limit(1);
+  let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
+  if (slack !== undefined) {
+    const scopes = slack.config['scopes'];
+    if (Array.isArray(scopes) && scopes.includes('im:write')) {
+      const [mapping] = await db
+        .select({ id: schema.slackUserMapping.id })
+        .from(schema.slackUserMapping)
+        .where(
+          and(
+            eq(schema.slackUserMapping.integrationId, slack.integrationId),
+            eq(schema.slackUserMapping.userId, userId),
+          ),
+        )
+        .limit(1);
+      slackDm = mapping === undefined ? 'unmapped' : 'available';
+    } else slackDm = 'reauthorize';
+  }
+
   return {
     disabledKeys: rows.filter((row) => !row.enabled).map((row) => `${row.channel}:${row.type}`),
     settings: setting ?? DEFAULT_SETTINGS,
+    slackDm,
   };
 }
 
