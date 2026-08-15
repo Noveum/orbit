@@ -3,13 +3,19 @@
 import type { AnalyticsQuery } from '@orbit/shared/validators';
 import { useState } from 'react';
 import { AnalyticsCard } from './analytics-card.tsx';
-import { burnForecast } from './burn-math.ts';
+import { burnForecast, forecastDate, type SprintDay, sprintDays } from './burn-math.ts';
 import { BarPlot } from './charts/bar-plot.tsx';
+import type { PlotPoint, PlotSeries } from './charts/line-plot.tsx';
 import { LinePlot } from './charts/line-plot.tsx';
 import type { AnalyticsSprintsResponse } from './contracts.ts';
 import { usesCurrentPersonDefault } from './person-focus.ts';
+import { SprintStats } from './sprint-stats.tsx';
 
 type BurnMode = 'down' | 'up';
+type SprintCurrent = NonNullable<AnalyticsSprintsResponse['current']>;
+type SprintBurnPoints = SprintCurrent['burn'];
+
+const DAY_MILLISECONDS = 86_400_000;
 
 function numberLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -28,191 +34,186 @@ function readableDate(value: string): string {
   }).format(new Date(`${value}T12:00:00.000Z`));
 }
 
-function localDate(value: string, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    timeZone: timezone,
-  }).formatToParts(new Date(value));
-  const part = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((entry) => entry.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+function todayDateOf(burn: SprintBurnPoints): string {
+  return burn.filter((point) => !point.future).at(-1)?.date ?? burn.at(-1)?.date ?? '';
 }
 
-function addUtcDays(value: string, amount: number): string {
-  const date = new Date(`${value}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + amount);
-  return date.toISOString().slice(0, 10);
+function capturedPoints(burn: SprintBurnPoints): SprintBurnPoints {
+  return burn.filter((point) => point.available && !point.future);
 }
 
-function workingDayNumber(start: string, end: string): number {
-  let day = start;
-  let count = 0;
-  while (day <= end) {
-    const weekday = new Date(`${day}T12:00:00.000Z`).getUTCDay();
-    if (weekday !== 0 && weekday !== 6) count += 1;
-    day = addUtcDays(day, 1);
+function initialScopeOf(current: SprintCurrent): number {
+  const firstAvailable = current.burn.find((point) => point.available);
+  return current.baseline?.scope ?? firstAvailable?.scope ?? 0;
+}
+
+function idealSeries(burn: SprintBurnPoints): PlotSeries {
+  return {
+    id: 'ideal',
+    label: 'Ideal',
+    dashed: true,
+    dots: true,
+    points: burn.map((point) => ({
+      id: `${point.date}-ideal`,
+      label: point.date,
+      value: point.ideal,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function remainingSeries(burn: SprintBurnPoints): PlotSeries {
+  return {
+    id: 'remaining',
+    label: 'Remaining',
+    points: capturedPoints(burn).map((point) => ({
+      id: `${point.date}-remaining`,
+      label: point.date,
+      value: point.remaining,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function scopeSeries(
+  burn: SprintBurnPoints,
+  options: { readonly step?: boolean } = {},
+): PlotSeries {
+  return {
+    id: 'scope',
+    label: 'Scope',
+    ...(options.step === true ? { step: true } : {}),
+    points: capturedPoints(burn).map((point) => ({
+      id: `${point.date}-scope`,
+      label: point.date,
+      value: point.scope,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function completedSeries(burn: SprintBurnPoints): PlotSeries {
+  return {
+    id: 'completed',
+    label: 'Completed',
+    points: capturedPoints(burn).map((point) => ({
+      id: `${point.date}-completed`,
+      label: point.date,
+      value: point.completed,
+      cohort: { cohort: 'completed' as const },
+    })),
+  };
+}
+
+function startedSeries(burn: SprintBurnPoints): PlotSeries {
+  return {
+    id: 'started',
+    label: 'Started',
+    points: capturedPoints(burn).map((point) => ({
+      id: `${point.date}-started`,
+      label: point.date,
+      value: point.completed + point.started,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function targetSeries(burn: SprintBurnPoints, initialScope: number): PlotSeries {
+  return {
+    id: 'target',
+    label: 'Target',
+    dashed: true,
+    points: burn.map((point) => ({
+      id: `${point.date}-target`,
+      label: point.date,
+      value: initialScope - point.ideal,
+      cohort: { cohort: 'open' as const },
+    })),
+  };
+}
+
+function daysBetweenDates(from: string, to: string): number {
+  return Math.round(
+    (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / DAY_MILLISECONDS,
+  );
+}
+
+function forecastEndPoint(
+  startLabel: string,
+  startValue: number,
+  targetDate: string,
+  lastDayDate: string,
+): { readonly label: string; readonly value: number } {
+  if (targetDate <= lastDayDate) return { label: targetDate, value: 0 };
+  const span = daysBetweenDates(startLabel, targetDate);
+  const elapsed = daysBetweenDates(startLabel, lastDayDate);
+  const fraction = span <= 0 ? 1 : Math.min(1, Math.max(0, elapsed / span));
+  return { label: lastDayDate, value: Math.max(0, startValue * (1 - fraction)) };
+}
+
+function forecastSeriesFor(
+  forecast: ReturnType<typeof burnForecast>,
+  forecastDateValue: string | null,
+  sprintDaysList: readonly SprintDay[],
+): PlotSeries {
+  const start = forecast?.points[0];
+  const lastDay = sprintDaysList.at(-1);
+  const empty: PlotSeries = { id: 'forecast', label: 'Forecast', dashed: true, points: [] };
+  if (
+    forecast === null ||
+    start === undefined ||
+    forecastDateValue === null ||
+    lastDay === undefined
+  ) {
+    return empty;
   }
-  return Math.max(1, count);
-}
-
-function burnWithWorkingX(burn: NonNullable<AnalyticsSprintsResponse['current']>['burn']) {
-  let lastWorkingDay = 0;
-  return burn.map((point) => {
-    if (point.workingDay !== null) lastWorkingDay = point.workingDay;
-    return { point, x: lastWorkingDay };
-  });
-}
-
-function trackingAnnotation(
-  burn: NonNullable<AnalyticsSprintsResponse['current']>['burn'],
-  trackingStart: string | null,
-): string | undefined {
-  if (trackingStart === null) return 'No reliable burn history is available yet.';
-  if (burn.some((point) => !point.available)) {
-    const trendGuidance =
-      burn.filter((point) => point.available).length < 2
-        ? ' A second reliable day is needed before an actual trend line can be drawn.'
-        : '';
-    return `Tracking began ${readableDate(trackingStart)}. Earlier dates are not zero.${trendGuidance}`;
-  }
-  return undefined;
+  const end = forecastEndPoint(start.label, start.value, forecastDateValue, lastDay.date);
+  const points: PlotPoint[] = [
+    {
+      id: 'forecast-current',
+      label: start.label,
+      value: start.value,
+      cohort: { cohort: 'open' as const },
+    },
+    {
+      id: 'forecast-completion',
+      label: end.label,
+      value: end.value,
+      cohort: { cohort: 'open' as const },
+    },
+  ];
+  return { id: 'forecast', label: 'Forecast', dashed: true, points };
 }
 
 function SprintBurnChart({
   current,
-  previous,
   measureFormatter,
 }: {
-  readonly current: NonNullable<AnalyticsSprintsResponse['current']>;
-  readonly previous: AnalyticsSprintsResponse['previous'];
+  readonly current: SprintCurrent;
   readonly measureFormatter: (value: number) => string;
 }) {
   const [burnMode, setBurnMode] = useState<BurnMode>('down');
-  const currentBurn = burnWithWorkingX(current.burn);
-  const availableBurn = currentBurn.filter(({ point }) => point.available);
-  const trackingStart = availableBurn[0]?.point.date ?? null;
+  const sprintDaysList = sprintDays(current.burn, todayDateOf(current.burn));
   const forecast = burnForecast(current.burn);
-  const annotation = trackingAnnotation(current.burn, trackingStart);
-  const sprintStart = localDate(current.sprint.startsAt, current.sprint.timezone);
-  const sprintEnd = localDate(
-    new Date(Date.parse(current.sprint.endsAt) - 1).toISOString(),
-    current.sprint.timezone,
-  );
-  const sprintEndWorkingDay = workingDayNumber(sprintStart, sprintEnd);
-  const idealPoints = currentBurn.map(({ point, x }) => ({
-    id: `${point.date}-ideal`,
-    label: point.date,
-    value: point.ideal,
-    cohort: { cohort: 'open' as const },
-    x,
-    available: point.available,
-  }));
-  const lastIdeal = idealPoints.filter((point) => point.available).at(-1);
-  if (lastIdeal !== undefined && (lastIdeal.x ?? 0) < sprintEndWorkingDay) {
-    idealPoints.push({
-      id: 'sprint-end-ideal',
-      label: sprintEnd,
-      value: 0,
-      cohort: { cohort: 'open' },
-      x: sprintEndWorkingDay,
-      available: true,
-    });
-  }
-  const elapsedWorkingDay = currentBurn.at(-1)?.x ?? 0;
-  const previousBurn =
-    previous === null
-      ? []
-      : burnWithWorkingX(previous.burn).filter(
-          ({ point, x }) => point.workingDay !== null && x <= elapsedWorkingDay,
-        );
-  const burnSeries =
+  const forecastDateValue =
+    forecast === null ? null : forecastDate(current.burn, forecast.completionWorkingDay);
+  const captureAnnotation =
+    current.baseline?.retroactive === true
+      ? `Capture began ${readableDate(current.baseline.date)}. Earlier days show targets only.`
+      : undefined;
+  const burnSeries: readonly PlotSeries[] =
     burnMode === 'down'
       ? [
-          {
-            id: 'remaining',
-            label: 'Remaining',
-            points: currentBurn.map(({ point, x }) => ({
-              id: `${point.date}-remaining`,
-              label: point.date,
-              value: point.remaining,
-              cohort: { cohort: 'open' as const },
-              x,
-              available: point.available,
-            })),
-          },
-          {
-            id: 'scope',
-            label: 'Scope',
-            dashed: true,
-            points: currentBurn.map(({ point, x }) => ({
-              id: `${point.date}-scope`,
-              label: point.date,
-              value: point.scope,
-              cohort: { cohort: 'open' as const },
-              x,
-              available: point.available,
-            })),
-          },
-          {
-            id: 'ideal',
-            label: 'Ideal',
-            dashed: true,
-            points: idealPoints,
-          },
-          ...(forecast === null
-            ? []
-            : [
-                {
-                  id: 'forecast',
-                  label: 'Forecast',
-                  dashed: true,
-                  points: forecast.points,
-                },
-              ]),
-          ...(previous === null
-            ? []
-            : [
-                {
-                  id: 'previous',
-                  label: 'Previous remaining',
-                  points: previousBurn.map(({ point, x }) => ({
-                    id: `${point.date}-previous`,
-                    label: `Previous day ${point.calendarDay}`,
-                    value: point.remaining,
-                    cohort: { cohort: 'open' as const },
-                    x,
-                    available: point.available,
-                  })),
-                },
-              ]),
+          remainingSeries(current.burn),
+          idealSeries(current.burn),
+          forecastSeriesFor(forecast, forecastDateValue, sprintDaysList),
+          scopeSeries(current.burn, { step: true }),
         ]
       : [
-          {
-            id: 'completed',
-            label: 'Completed',
-            points: currentBurn.map(({ point, x }) => ({
-              id: `${point.date}-completed`,
-              label: point.date,
-              value: point.completed,
-              cohort: { cohort: 'completed' as const },
-              x,
-              available: point.available,
-            })),
-          },
-          {
-            id: 'scope',
-            label: 'Scope',
-            points: currentBurn.map(({ point, x }) => ({
-              id: `${point.date}-scope`,
-              label: point.date,
-              value: point.scope,
-              cohort: { cohort: 'open' as const },
-              x,
-              available: point.available,
-            })),
-          },
+          completedSeries(current.burn),
+          startedSeries(current.burn),
+          scopeSeries(current.burn),
+          targetSeries(current.burn, initialScopeOf(current)),
         ];
 
   return (
@@ -245,23 +246,19 @@ function SprintBurnChart({
         </fieldset>
       </div>
       <LinePlot
-        {...(annotation === undefined ? {} : { annotation })}
+        {...(captureAnnotation === undefined ? {} : { annotation: captureAnnotation })}
+        days={sprintDaysList}
         label={burnMode === 'down' ? 'Sprint burn down' : 'Sprint burn up'}
         series={burnSeries}
         valueFormatter={measureFormatter}
-        xAxisLabel="Sprint working day"
+        xAxisLabel="Sprint day"
         yAxisLabel={`${burnMode === 'down' ? 'Remaining' : 'Completed'} ${current.measure}`}
       />
       <p className="text-muted text-xs">
-        {forecast === null
+        {forecast === null || forecastDateValue === null
           ? 'Forecast needs at least 3 working days with a declining remaining-work trend.'
-          : `Current trend forecasts completion around working day ${forecast.completionWorkingDay}.`}
+          : `Current trend forecasts completion around ${readableDate(forecastDateValue)}.`}
       </p>
-      {trackingStart !== null && current.burn.some((point) => !point.available) ? (
-        <p className="text-faint text-xs">
-          The ideal line starts at the first reliable scope baseline and reaches zero at sprint end.
-        </p>
-      ) : null}
       <div className="flex flex-wrap gap-4 text-xs">
         <span className="text-muted">
           Added <strong className="text-text">{numberLabel(current.summary.added)}</strong>
@@ -319,34 +316,15 @@ export function SprintLens({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          ['Planned', summary.planned],
-          ['Completed', summary.completed],
-          ['Remaining', summary.remaining],
-          ['Carryover', summary.carryover],
-        ].map(([label, value]) => (
-          <article className="rounded-lg border border-border bg-surface p-4" key={String(label)}>
-            <p className="text-muted text-xs">{label}</p>
-            <p className="mt-2 font-semibold text-2xl text-text tabular">
-              {numberLabel(Number(value))}
-            </p>
-            <p className="mt-1 text-faint text-2xs uppercase">{current.measure}</p>
-          </article>
-        ))}
-      </div>
+      <SprintStats current={current} measure={current.measure} />
 
       {query.measure === 'points' && summary.unestimated > 0 ? (
         <p className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-muted text-xs">
-          {summary.unestimated} unestimated issues contribute zero points.
+          {summary.unestimated} unestimated issues count as 1 point each.
         </p>
       ) : null}
 
-      <SprintBurnChart
-        current={current}
-        measureFormatter={measureFormatter}
-        previous={data.previous}
-      />
+      <SprintBurnChart current={current} measureFormatter={measureFormatter} />
 
       {data.previous === null ? (
         <p className="rounded-lg border border-border bg-surface px-4 py-3 text-muted text-xs">
