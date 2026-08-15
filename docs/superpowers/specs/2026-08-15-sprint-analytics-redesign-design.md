@@ -134,7 +134,7 @@ Built after phase 1 ships. Everything below reuses the phase 1 primitives.
 
 ### Grammar
 
-- Any filtered issue view can open an Insights panel: Measure by Slice by optional Segment.
+- The analytics page gains an Insights lens over the filtered dataset: Measure by Slice by optional Segment. The existing filter bar and saved views make the current view the dataset, so this covers filtered issue exploration without mounting a panel into every issue list.
 - Measures: issue count, points, cycle time, lead time, issue age.
 - Slices: assignee, state, state category, project, label, priority, sprint, week created, week completed.
 - Segment: a second dimension rendered as stacked color within each slice, bar charts only.
