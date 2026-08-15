@@ -608,6 +608,39 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('insightSegment=state');
   });
 
+  it('resets the insight to its defaults when applying a saved insights view with no stored insight', async () => {
+    const user = userEvent.setup();
+    const nonDefaultInsight = insightConfigSchema.parse({ measure: 'points', slice: 'assignee' });
+    renderCockpitWithInsights(
+      [
+        {
+          id: 'saved_bare_insights',
+          name: 'Bare insights view',
+          scopeType: 'workspace',
+          scopeId: null,
+          kind: 'dashboard',
+          config: {
+            kind: 'dashboard',
+            version: 1,
+            query: analyticsQuerySchema.parse({ lens: 'insights' }),
+            pinned: false,
+          },
+          shared: false,
+          ownerId: personId,
+          createdAt: asOf,
+          updatedAt: asOf,
+        },
+      ],
+      nonDefaultInsight,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Bare insights view' }));
+
+    expect(window.location.search).toContain('lens=insights');
+    expect(window.location.search).not.toContain('insightMeasure');
+    expect(window.location.search).not.toContain('insightSlice');
+  });
+
   it('dispatches to the insights lens for query.lens insights, rendering its pickers and bar chart', () => {
     renderCockpitWithInsights();
 

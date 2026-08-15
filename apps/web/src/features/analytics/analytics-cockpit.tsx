@@ -93,6 +93,15 @@ function headerCaptionFor(
   return `Data through ${result.data.coverage.asOf.slice(0, 10)}`;
 }
 
+function insightForAppliedView(
+  nextQuery: AnalyticsQuery,
+  nextInsight: InsightConfig | undefined,
+  currentInsight: InsightConfig,
+): InsightConfig {
+  if (nextInsight !== undefined) return insightConfigSchema.parse(nextInsight);
+  return nextQuery.lens === 'insights' ? defaultInsightConfig : currentInsight;
+}
+
 function insightsContent(
   insightsResult: ReturnType<typeof useInsightsQuery>,
   query: AnalyticsQuery,
@@ -146,8 +155,7 @@ export function AnalyticsCockpit({
     writeUrl(query, parsed);
   };
   const applySavedView = (nextQuery: AnalyticsQuery, nextInsight?: InsightConfig) => {
-    const parsedInsight =
-      nextInsight === undefined ? insight : insightConfigSchema.parse(nextInsight);
+    const parsedInsight = insightForAppliedView(nextQuery, nextInsight, insight);
     setQuery(nextQuery);
     setInsight(parsedInsight);
     writeUrl(nextQuery, parsedInsight);
