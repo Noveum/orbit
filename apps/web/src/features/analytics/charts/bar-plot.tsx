@@ -548,6 +548,8 @@ function PairsBarPlot({
   const plotHeight = Math.max(PAIR_ROW_HEIGHT, pairs.length * PAIR_ROW_HEIGHT);
   const height = TOP + plotHeight + BOTTOM;
   const rows = pairsRows(pairs, valueFormatter);
+  const primaryLabel = pairs[0]?.primary.label ?? 'Primary';
+  const secondaryLabel = pairs[0]?.secondary.label ?? 'Secondary';
 
   return (
     <PlotFrame
@@ -558,14 +560,17 @@ function PairsBarPlot({
       }
       dataCount={rows.length}
       label={label}
-      legends={[]}
+      legends={[
+        { id: 'primary', label: primaryLabel, color: 1 },
+        { id: 'secondary', label: secondaryLabel, color: 4 },
+      ]}
       table={
         <AnalyticsDataTable
           ariaLabel={`${label} data`}
           columns={[
             { id: 'label', label: 'Category' },
-            { id: 'primary', label: 'Primary', align: 'right' },
-            { id: 'secondary', label: 'Secondary', align: 'right' },
+            { id: 'primary', label: primaryLabel, align: 'right' },
+            { id: 'secondary', label: secondaryLabel, align: 'right' },
           ]}
           rows={rows}
           {...(onActivate === undefined

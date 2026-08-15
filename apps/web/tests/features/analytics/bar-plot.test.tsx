@@ -145,6 +145,22 @@ describe('BarPlot', () => {
     expect(bobSecondary.getAttribute('width')).toBe('406');
   });
 
+  test('labels the pairs legend and data-table columns with the real series names, not Primary and Secondary', async () => {
+    const user = userEvent.setup();
+    render(<BarPlot label="Sprint velocity" pairs={pairs} points={[]} />);
+
+    const legend = screen.getByTestId('plot-legend-primary').closest('span');
+    expect(legend).toHaveTextContent('This sprint');
+    const secondaryLegend = screen.getByTestId('plot-legend-secondary').closest('span');
+    expect(secondaryLegend).toHaveTextContent('Last sprint');
+    expect(screen.queryByText('Primary')).not.toBeInTheDocument();
+    expect(screen.queryByText('Secondary')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('View data (2 rows)'));
+    expect(screen.getByRole('columnheader', { name: 'This sprint' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Last sprint' })).toBeVisible();
+  });
+
   test('draws the average line at the correct proportion with its label, absent when not provided', () => {
     const { rerender } = render(<BarPlot label="Sprint velocity" pairs={pairs} points={[]} />);
     expect(screen.queryByTestId('plot-average-line')).not.toBeInTheDocument();
