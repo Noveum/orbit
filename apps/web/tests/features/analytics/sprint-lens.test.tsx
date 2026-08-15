@@ -450,7 +450,7 @@ describe('SprintLens', () => {
     );
 
     expect(screen.getByText(/forecasts completion around aug 18, 2026/i)).toBeVisible();
-    expect(screen.getByText('Aug 18, 2026 · 1 days late')).toBeVisible();
+    expect(screen.getByText('Aug 18, 2026 · 1 day late')).toBeVisible();
 
     const dayHits = screen.getAllByTestId('plot-day-hit');
     expect(dayHits).toHaveLength(7);

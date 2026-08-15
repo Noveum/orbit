@@ -102,7 +102,7 @@ export function SprintStats({
         <strong className={`font-medium ${forecastColorClass(forecastDateValue, isLate)}`}>
           {forecastDateValue === null
             ? 'needs 3 working days'
-            : `${readableDate(forecastDateValue)} · ${isLate ? `${daysLate} days late` : 'on track'}`}
+            : `${readableDate(forecastDateValue)} · ${isLate ? `${daysLate} ${daysLate === 1 ? 'day' : 'days'} late` : 'on track'}`}
         </strong>
       </span>
       <span className="text-muted">

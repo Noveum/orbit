@@ -194,4 +194,21 @@ describe('SprintStats', () => {
     expect(screen.getByText('Pace')).toHaveTextContent('Pace Not enough data');
     expect(screen.getByText('Forecast')).toHaveTextContent('Forecast needs 3 working days');
   });
+
+  test('uses singular day wording for a forecast that lands exactly one day late', () => {
+    const oneDayLateBurn = [
+      observedDay1,
+      observedDay2,
+      observedDay3,
+      observedDay4,
+      futurePoint('2026-08-07', 5, 5),
+      futurePoint('2026-08-10', 6, 6),
+      futurePoint('2026-08-11', 7, 7),
+      futurePoint('2026-08-12', 8, 8),
+    ];
+    render(<SprintStats current={{ ...current, burn: oneDayLateBurn }} measure="issues" />);
+
+    const forecastValue = screen.getByText('Aug 13, 2026 · 1 day late');
+    expect(forecastValue).toHaveClass('text-warning');
+  });
 });
