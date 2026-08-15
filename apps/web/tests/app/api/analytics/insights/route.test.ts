@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createIssue } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import { analyticsInsightsWireResponse } from '../../../../../src/features/analytics/contracts.ts';
 import { mockSession } from '../../../../../tests-support.ts';
 
 let workspace: Workspace;
@@ -31,12 +32,12 @@ beforeEach(async () => {
 });
 
 describe('GET /api/analytics/insights', () => {
-  it('returns a bars or scatter result for an authenticated valid query', async () => {
+  it('returns a validated bars result for a count query', async () => {
     const response = await route.GET(request({ insight: { measure: 'count', slice: 'state' } }));
-    const payload = await response.json();
+    const payload = analyticsInsightsWireResponse.parse(await response.json());
 
     expect(response.status).toBe(200);
-    expect(['bars', 'scatter']).toContain(payload.kind);
+    expect(payload.kind).toBe('bars');
   });
 
   it('rejects a malformed insight measure as a validation error', async () => {
