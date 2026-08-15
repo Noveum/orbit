@@ -2,25 +2,43 @@
 
 import type { AnalyticsDrilldownCohort } from '@orbit/shared/validators';
 import { useState } from 'react';
+import { useMeasuredWidth } from '@/lib/use-measured-width.ts';
 import { type AnalyticsDataRow, AnalyticsDataTable } from './analytics-data-table.tsx';
 import { ChartTooltip } from './chart-tooltip.tsx';
 import type { PlotPoint } from './line-plot.tsx';
 import { PlotFrame } from './plot-frame.tsx';
 
+export interface BarPair {
+  readonly id: string;
+  readonly label: string;
+  readonly primary: PlotPoint;
+  readonly secondary: PlotPoint;
+}
+
+export interface BarPlotAverageLine {
+  readonly value: number;
+  readonly label: string;
+}
+
 interface BarPlotProps {
   readonly label: string;
   readonly points: readonly PlotPoint[];
+  readonly pairs?: readonly BarPair[];
+  readonly averageLine?: BarPlotAverageLine;
   readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
   readonly valueFormatter?: (value: number) => string;
   readonly xAxisLabel?: string;
 }
 
-const WIDTH = 640;
 const LEFT = 170;
 const RIGHT = 64;
 const TOP = 12;
-const ROW_HEIGHT = 34;
 const BOTTOM = 42;
+const ROW_HEIGHT = 34;
+const PAIR_ROW_HEIGHT = 30;
+const PAIR_BAR_HEIGHT = 8;
+const PAIR_BAR_GAP = 4;
+const PAIR_BAR_TOP = 4;
 
 function truncatedLabel(label: string): string {
   return label.length > 24 ? `${label.slice(0, 23)}…` : label;
@@ -32,35 +50,180 @@ function xTickTestId(ratio: number): string | undefined {
   return undefined;
 }
 
-export function BarPlot({
-  label,
-  points,
-  onActivate,
-  valueFormatter = String,
-  xAxisLabel = 'Value',
-}: BarPlotProps) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const activePoint = activeIndex === null ? undefined : points[activeIndex];
-  const max = Math.max(1, ...points.map((point) => point.value));
-  const plotWidth = WIDTH - LEFT - RIGHT;
-  const plotHeight = Math.max(ROW_HEIGHT, points.length * ROW_HEIGHT);
-  const height = TOP + plotHeight + BOTTOM;
-  const rows: AnalyticsDataRow[] = points.map((point) => ({
+function indexFromTarget(target: EventTarget): number | null {
+  if (!(target instanceof SVGElement)) return null;
+  const index = Number(target.dataset['pointIndex']);
+  return Number.isInteger(index) ? index : null;
+}
+
+function clampRowIndex(index: number, rowCount: number): number | null {
+  if (rowCount === 0) return null;
+  return Math.max(0, Math.min(index, rowCount - 1));
+}
+
+interface BarKeyResult {
+  readonly index: number | null;
+  readonly activate: boolean;
+}
+
+function barKeyResult(
+  key: string,
+  activeIndex: number | null,
+  rowCount: number,
+  canActivate: boolean,
+): BarKeyResult | null {
+  switch (key) {
+    case 'ArrowDown':
+    case 'ArrowRight':
+      return { index: clampRowIndex((activeIndex ?? -1) + 1, rowCount), activate: false };
+    case 'ArrowUp':
+    case 'ArrowLeft':
+      return { index: clampRowIndex((activeIndex ?? 1) - 1, rowCount), activate: false };
+    case 'Home':
+      return { index: clampRowIndex(0, rowCount), activate: false };
+    case 'End':
+      return { index: clampRowIndex(Number.MAX_SAFE_INTEGER, rowCount), activate: false };
+    case 'Escape':
+      return { index: null, activate: false };
+    case 'Enter':
+      return canActivate ? { index: activeIndex, activate: true } : null;
+    default:
+      return null;
+  }
+}
+
+function barWidthFor(value: number, max: number, plotWidth: number): number {
+  return Math.max(2, (value / max) * plotWidth);
+}
+
+function valueLabelX(width: number, barEndX: number): number {
+  return Math.min(width - RIGHT + 8, barEndX + 8);
+}
+
+interface BarGridProps {
+  readonly plotWidth: number;
+  readonly plotHeight: number;
+  readonly max: number;
+  readonly valueFormatter: (value: number) => string;
+  readonly xAxisLabel: string;
+}
+
+function BarGrid({ plotWidth, plotHeight, max, valueFormatter, xAxisLabel }: BarGridProps) {
+  return (
+    <>
+      {[0, 0.5, 1].map((ratio) => {
+        const x = LEFT + ratio * plotWidth;
+        const value = ratio * max;
+        return (
+          <g key={ratio}>
+            <line
+              data-testid="plot-grid-line"
+              stroke="var(--color-border)"
+              strokeDasharray={ratio === 0 ? undefined : '3 4'}
+              vectorEffect="non-scaling-stroke"
+              x1={x}
+              x2={x}
+              y1={TOP}
+              y2={TOP + plotHeight}
+            />
+            <text
+              data-testid={xTickTestId(ratio)}
+              fill="var(--color-faint)"
+              fontSize="10"
+              textAnchor="middle"
+              x={x}
+              y={TOP + plotHeight + 17}
+            >
+              {valueFormatter(value)}
+            </text>
+          </g>
+        );
+      })}
+      <text
+        data-testid="plot-x-axis-label"
+        fill="var(--color-muted)"
+        fontSize="11"
+        fontWeight="500"
+        textAnchor="middle"
+        x={LEFT + plotWidth / 2}
+        y={TOP + plotHeight + BOTTOM - 2}
+      >
+        {xAxisLabel}
+      </text>
+    </>
+  );
+}
+
+interface AverageLineMarkerProps {
+  readonly averageLine: BarPlotAverageLine;
+  readonly max: number;
+  readonly plotWidth: number;
+  readonly plotHeight: number;
+}
+
+function AverageLineMarker({ averageLine, max, plotWidth, plotHeight }: AverageLineMarkerProps) {
+  const ratio = Math.min(1, Math.max(0, averageLine.value / max));
+  const x = LEFT + ratio * plotWidth;
+  return (
+    <g>
+      <line
+        data-testid="plot-average-line"
+        stroke="var(--color-border-strong)"
+        strokeDasharray="4 4"
+        vectorEffect="non-scaling-stroke"
+        x1={x}
+        x2={x}
+        y1={TOP}
+        y2={TOP + plotHeight}
+      />
+      <text fill="var(--color-muted)" fontSize="10" textAnchor="middle" x={x} y={TOP - 2}>
+        {averageLine.label}
+      </text>
+    </g>
+  );
+}
+
+function pointsMax(points: readonly PlotPoint[]): number {
+  return Math.max(1, ...points.map((point) => point.value));
+}
+
+function pointsRows(
+  label: string,
+  points: readonly PlotPoint[],
+  valueFormatter: (value: number) => string,
+): AnalyticsDataRow[] {
+  return points.map((point) => ({
     id: point.id,
     label: `${label} ${valueFormatter(point.value)}`,
     cells: { label: point.label, value: valueFormatter(point.value) },
   }));
+}
 
-  function move(index: number) {
-    if (points.length === 0) return;
-    setActiveIndex(Math.max(0, Math.min(index, points.length - 1)));
-  }
+interface PointsBarPlotProps {
+  readonly label: string;
+  readonly points: readonly PlotPoint[];
+  readonly averageLine?: BarPlotAverageLine;
+  readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
+  readonly valueFormatter?: (value: number) => string;
+  readonly xAxisLabel?: string;
+}
 
-  function indexFromTarget(target: EventTarget): number | null {
-    if (!(target instanceof SVGElement)) return null;
-    const index = Number(target.dataset['pointIndex']);
-    return Number.isInteger(index) ? index : null;
-  }
+function PointsBarPlot({
+  label,
+  points,
+  averageLine,
+  onActivate,
+  valueFormatter = String,
+  xAxisLabel = 'Value',
+}: PointsBarPlotProps) {
+  const { ref, width } = useMeasuredWidth();
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const activePoint = activeIndex === null ? undefined : points[activeIndex];
+  const max = pointsMax(points);
+  const plotWidth = width - LEFT - RIGHT;
+  const plotHeight = Math.max(ROW_HEIGHT, points.length * ROW_HEIGHT);
+  const height = TOP + plotHeight + BOTTOM;
+  const rows = pointsRows(label, points, valueFormatter);
 
   return (
     <PlotFrame
@@ -101,7 +264,7 @@ export function BarPlot({
             label={activePoint.label}
             series={label}
             style={{
-              left: `${((LEFT + (activePoint.value / max) * plotWidth) / WIDTH) * 100}%`,
+              left: `${((LEFT + (activePoint.value / max) * plotWidth) / width) * 100}%`,
               top: `${((TOP + activeIndex * ROW_HEIGHT + ROW_HEIGHT / 2) / height) * 100}%`,
               transform: 'translate(-100%, -110%)',
             }}
@@ -110,122 +273,330 @@ export function BarPlot({
         )
       }
     >
-      <svg
-        aria-label={label}
-        className="h-auto w-full outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        height={height}
-        onClick={(event) => {
-          const index = indexFromTarget(event.target);
-          const point = index === null ? undefined : points[index];
-          if (point !== undefined) onActivate?.(point.cohort);
-        }}
-        onFocus={() => {
-          if (activeIndex === null && points.length > 0) setActiveIndex(0);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
-            move((activeIndex ?? -1) + 1);
-          } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
-            move((activeIndex ?? 1) - 1);
-          } else if (event.key === 'Home') move(0);
-          else if (event.key === 'End') move(Number.MAX_SAFE_INTEGER);
-          else if (event.key === 'Escape') setActiveIndex(null);
-          else if (event.key === 'Enter' && activePoint !== undefined && onActivate !== undefined) {
-            onActivate(activePoint.cohort);
-          } else return;
-          event.preventDefault();
-        }}
-        onPointerOver={(event) => {
-          const index = indexFromTarget(event.target);
-          if (index !== null) setActiveIndex(index);
-        }}
-        onPointerLeave={() => setActiveIndex(null)}
-        role="application"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: The SVG is the chart's single keyboard focus surface.
-        tabIndex={0}
-        viewBox={`0 0 ${WIDTH} ${height}`}
-      >
-        <title>{label}</title>
-        {[0, 0.5, 1].map((ratio) => {
-          const x = LEFT + ratio * plotWidth;
-          const value = ratio * max;
-          return (
-            <g key={ratio}>
-              <line
-                data-testid="plot-grid-line"
-                stroke="var(--color-border)"
-                strokeDasharray={ratio === 0 ? undefined : '3 4'}
-                vectorEffect="non-scaling-stroke"
-                x1={x}
-                x2={x}
-                y1={TOP}
-                y2={TOP + plotHeight}
-              />
-              <text
-                data-testid={xTickTestId(ratio)}
-                fill="var(--color-faint)"
-                fontSize="10"
-                textAnchor="middle"
-                x={x}
-                y={TOP + plotHeight + 17}
-              >
-                {valueFormatter(value)}
-              </text>
-            </g>
-          );
-        })}
-        {points.map((point, index) => {
-          const y = TOP + index * ROW_HEIGHT + 6;
-          const barWidth = Math.max(2, (point.value / max) * plotWidth);
-          const isActive = activeIndex === index;
-          return (
-            <g key={point.id}>
-              <text
-                data-testid={`plot-category-${point.id}`}
-                fill="var(--color-muted)"
-                fontSize="11"
-                textAnchor="end"
-                x={LEFT - 10}
-                y={y + 15}
-              >
-                {truncatedLabel(point.label)}
-              </text>
-              <rect
-                data-active={isActive ? 'true' : 'false'}
-                data-point-index={index}
-                data-testid={`plot-hit-${point.id}`}
-                fill={isActive ? 'var(--color-accent)' : 'var(--color-accent-soft)'}
-                height="22"
-                rx="3"
-                width={barWidth}
-                x={LEFT}
-                y={y}
-              />
-              <text
-                data-testid={`plot-value-${point.id}`}
-                fill="var(--color-text)"
-                fontSize="11"
-                fontWeight="600"
-                x={Math.min(WIDTH - RIGHT + 8, LEFT + barWidth + 8)}
-                y={y + 15}
-              >
-                {valueFormatter(point.value)}
-              </text>
-            </g>
-          );
-        })}
-        <text
-          data-testid="plot-x-axis-label"
-          fill="var(--color-muted)"
-          fontSize="11"
-          fontWeight="500"
-          textAnchor="middle"
-          x={LEFT + plotWidth / 2}
-          y={height - 2}
+      <div className="w-full" ref={ref}>
+        <svg
+          aria-label={label}
+          className="block outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          height={height}
+          onClick={(event) => {
+            const index = indexFromTarget(event.target);
+            const point = index === null ? undefined : points[index];
+            if (point !== undefined) onActivate?.(point.cohort);
+          }}
+          onFocus={() => {
+            if (activeIndex === null && points.length > 0) setActiveIndex(0);
+          }}
+          onKeyDown={(event) => {
+            const result = barKeyResult(
+              event.key,
+              activeIndex,
+              points.length,
+              activePoint !== undefined && onActivate !== undefined,
+            );
+            if (result === null) return;
+            setActiveIndex(result.index);
+            if (result.activate && activePoint !== undefined) onActivate?.(activePoint.cohort);
+            event.preventDefault();
+          }}
+          onPointerOver={(event) => {
+            const index = indexFromTarget(event.target);
+            if (index !== null) setActiveIndex(index);
+          }}
+          onPointerLeave={() => setActiveIndex(null)}
+          role="application"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The SVG is the chart's single keyboard focus surface.
+          tabIndex={0}
+          width={width}
         >
-          {xAxisLabel}
-        </text>
-      </svg>
+          <title>{label}</title>
+          <BarGrid
+            max={max}
+            plotHeight={plotHeight}
+            plotWidth={plotWidth}
+            valueFormatter={valueFormatter}
+            xAxisLabel={xAxisLabel}
+          />
+          {points.map((point, index) => {
+            const y = TOP + index * ROW_HEIGHT + 6;
+            const barWidth = barWidthFor(point.value, max, plotWidth);
+            const isActive = activeIndex === index;
+            return (
+              <g key={point.id}>
+                <text
+                  data-testid={`plot-category-${point.id}`}
+                  fill="var(--color-muted)"
+                  fontSize="11"
+                  textAnchor="end"
+                  x={LEFT - 10}
+                  y={y + 15}
+                >
+                  {truncatedLabel(point.label)}
+                </text>
+                <rect
+                  data-active={isActive ? 'true' : 'false'}
+                  data-point-index={index}
+                  data-testid={`plot-hit-${point.id}`}
+                  fill={isActive ? 'var(--color-accent)' : 'var(--color-accent-soft)'}
+                  height="22"
+                  rx="3"
+                  width={barWidth}
+                  x={LEFT}
+                  y={y}
+                />
+                <text
+                  data-testid={`plot-value-${point.id}`}
+                  fill="var(--color-text)"
+                  fontSize="11"
+                  fontWeight="600"
+                  x={valueLabelX(width, LEFT + barWidth)}
+                  y={y + 15}
+                >
+                  {valueFormatter(point.value)}
+                </text>
+              </g>
+            );
+          })}
+          {averageLine === undefined ? null : (
+            <AverageLineMarker
+              averageLine={averageLine}
+              max={max}
+              plotHeight={plotHeight}
+              plotWidth={plotWidth}
+            />
+          )}
+        </svg>
+      </div>
     </PlotFrame>
+  );
+}
+
+function pairsMax(pairs: readonly BarPair[]): number {
+  return Math.max(1, ...pairs.flatMap((pair) => [pair.primary.value, pair.secondary.value]));
+}
+
+function pairsRows(
+  pairs: readonly BarPair[],
+  valueFormatter: (value: number) => string,
+): AnalyticsDataRow[] {
+  return pairs.map((pair) => ({
+    id: pair.id,
+    label: `${pair.label}, ${pair.primary.label} ${valueFormatter(pair.primary.value)}, ${pair.secondary.label} ${valueFormatter(pair.secondary.value)}`,
+    cells: {
+      label: pair.label,
+      primary: valueFormatter(pair.primary.value),
+      secondary: valueFormatter(pair.secondary.value),
+    },
+  }));
+}
+
+function pairRowTop(index: number): number {
+  return TOP + index * PAIR_ROW_HEIGHT;
+}
+
+function pairPrimaryY(index: number): number {
+  return pairRowTop(index) + PAIR_BAR_TOP;
+}
+
+function pairSecondaryY(index: number): number {
+  return pairPrimaryY(index) + PAIR_BAR_HEIGHT + PAIR_BAR_GAP;
+}
+
+interface PairsBarPlotProps {
+  readonly label: string;
+  readonly pairs: readonly BarPair[];
+  readonly averageLine?: BarPlotAverageLine;
+  readonly onActivate?: (cohort: AnalyticsDrilldownCohort) => void;
+  readonly valueFormatter?: (value: number) => string;
+  readonly xAxisLabel?: string;
+}
+
+function PairsBarPlot({
+  label,
+  pairs,
+  averageLine,
+  onActivate,
+  valueFormatter = String,
+  xAxisLabel = 'Value',
+}: PairsBarPlotProps) {
+  const { ref, width } = useMeasuredWidth();
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const activePair = activeIndex === null ? undefined : pairs[activeIndex];
+  const max = pairsMax(pairs);
+  const plotWidth = width - LEFT - RIGHT;
+  const plotHeight = Math.max(PAIR_ROW_HEIGHT, pairs.length * PAIR_ROW_HEIGHT);
+  const height = TOP + plotHeight + BOTTOM;
+  const rows = pairsRows(pairs, valueFormatter);
+
+  return (
+    <PlotFrame
+      announcement={
+        activePair === undefined
+          ? ''
+          : `${activePair.label}, ${activePair.primary.label} ${valueFormatter(activePair.primary.value)}, ${activePair.secondary.label} ${valueFormatter(activePair.secondary.value)}`
+      }
+      dataCount={rows.length}
+      label={label}
+      legends={[]}
+      table={
+        <AnalyticsDataTable
+          ariaLabel={`${label} data`}
+          columns={[
+            { id: 'label', label: 'Category' },
+            { id: 'primary', label: 'Primary', align: 'right' },
+            { id: 'secondary', label: 'Secondary', align: 'right' },
+          ]}
+          rows={rows}
+          {...(onActivate === undefined
+            ? {}
+            : {
+                onActivate: (row: AnalyticsDataRow) => {
+                  const index = pairs.findIndex((pair) => pair.id === row.id);
+                  const selected = pairs[index];
+                  if (selected !== undefined) {
+                    setActiveIndex(index);
+                    onActivate(selected.primary.cohort);
+                  }
+                },
+              })}
+          {...(activePair === undefined ? {} : { activeRowId: activePair.id })}
+        />
+      }
+      tooltip={
+        activePair === undefined || activeIndex === null ? null : (
+          <ChartTooltip
+            label={activePair.label}
+            rows={[
+              {
+                id: 'primary',
+                series: activePair.primary.label,
+                value: valueFormatter(activePair.primary.value),
+              },
+              {
+                id: 'secondary',
+                series: activePair.secondary.label,
+                value: valueFormatter(activePair.secondary.value),
+              },
+            ]}
+            style={{
+              left: `${
+                ((LEFT +
+                  (Math.max(activePair.primary.value, activePair.secondary.value) / max) *
+                    plotWidth) /
+                  width) *
+                100
+              }%`,
+              top: `${((pairRowTop(activeIndex) + PAIR_ROW_HEIGHT / 2) / height) * 100}%`,
+              transform: 'translate(-100%, -110%)',
+            }}
+          />
+        )
+      }
+    >
+      <div className="w-full" ref={ref}>
+        <svg
+          aria-label={label}
+          className="block outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          height={height}
+          onClick={(event) => {
+            const index = indexFromTarget(event.target);
+            const pair = index === null ? undefined : pairs[index];
+            if (pair !== undefined) onActivate?.(pair.primary.cohort);
+          }}
+          onFocus={() => {
+            if (activeIndex === null && pairs.length > 0) setActiveIndex(0);
+          }}
+          onKeyDown={(event) => {
+            const result = barKeyResult(
+              event.key,
+              activeIndex,
+              pairs.length,
+              activePair !== undefined && onActivate !== undefined,
+            );
+            if (result === null) return;
+            setActiveIndex(result.index);
+            if (result.activate && activePair !== undefined)
+              onActivate?.(activePair.primary.cohort);
+            event.preventDefault();
+          }}
+          onPointerOver={(event) => {
+            const index = indexFromTarget(event.target);
+            if (index !== null) setActiveIndex(index);
+          }}
+          onPointerLeave={() => setActiveIndex(null)}
+          role="application"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The SVG is the chart's single keyboard focus surface.
+          tabIndex={0}
+          width={width}
+        >
+          <title>{label}</title>
+          <BarGrid
+            max={max}
+            plotHeight={plotHeight}
+            plotWidth={plotWidth}
+            valueFormatter={valueFormatter}
+            xAxisLabel={xAxisLabel}
+          />
+          {pairs.map((pair, index) => {
+            const primaryY = pairPrimaryY(index);
+            const secondaryY = pairSecondaryY(index);
+            const primaryWidth = barWidthFor(pair.primary.value, max, plotWidth);
+            const secondaryWidth = barWidthFor(pair.secondary.value, max, plotWidth);
+            const isActive = activeIndex === index;
+            return (
+              <g key={pair.id}>
+                <text
+                  data-testid={`plot-category-${pair.id}`}
+                  fill="var(--color-muted)"
+                  fontSize="11"
+                  textAnchor="end"
+                  x={LEFT - 10}
+                  y={pairRowTop(index) + PAIR_ROW_HEIGHT / 2 + 4}
+                >
+                  {truncatedLabel(pair.label)}
+                </text>
+                <rect
+                  data-active={isActive ? 'true' : 'false'}
+                  data-point-index={index}
+                  data-testid={`plot-bar-primary-${pair.id}`}
+                  fill="var(--analytics-series-1)"
+                  height={PAIR_BAR_HEIGHT}
+                  rx="2"
+                  width={primaryWidth}
+                  x={LEFT}
+                  y={primaryY}
+                />
+                <rect
+                  data-active={isActive ? 'true' : 'false'}
+                  data-point-index={index}
+                  data-testid={`plot-bar-secondary-${pair.id}`}
+                  fill="var(--color-border-strong)"
+                  height={PAIR_BAR_HEIGHT}
+                  rx="2"
+                  width={secondaryWidth}
+                  x={LEFT}
+                  y={secondaryY}
+                />
+              </g>
+            );
+          })}
+          {averageLine === undefined ? null : (
+            <AverageLineMarker
+              averageLine={averageLine}
+              max={max}
+              plotHeight={plotHeight}
+              plotWidth={plotWidth}
+            />
+          )}
+        </svg>
+      </div>
+    </PlotFrame>
+  );
+}
+
+export function BarPlot({ points, pairs, ...rest }: BarPlotProps) {
+  return pairs === undefined ? (
+    <PointsBarPlot points={points} {...rest} />
+  ) : (
+    <PairsBarPlot pairs={pairs} {...rest} />
   );
 }
