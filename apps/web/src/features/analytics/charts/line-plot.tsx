@@ -159,6 +159,13 @@ function firstAvailableIndex(points: readonly PlotPoint[]): number {
   );
 }
 
+function lastAvailableIndex(points: readonly PlotPoint[]): number {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (isAvailable(points[index])) return index;
+  }
+  return Math.max(0, points.length - 1);
+}
+
 function movedPointIndex(
   points: readonly PlotPoint[],
   current: number | null,
@@ -167,7 +174,8 @@ function movedPointIndex(
   const direction = target >= (current ?? -1) ? 1 : -1;
   let next = clampIndex(target, points.length);
   while (next >= 0 && next < points.length && !isAvailable(points[next])) next += direction;
-  return isAvailable(points[next]) ? next : firstAvailableIndex(points);
+  if (isAvailable(points[next])) return next;
+  return direction === 1 ? lastAvailableIndex(points) : firstAvailableIndex(points);
 }
 
 function movedPoint(

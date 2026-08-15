@@ -280,6 +280,64 @@ describe('LinePlot', () => {
     expect(screen.getByText('2 dates unavailable')).toBeVisible();
   });
 
+  test('lands End on the last available point, not the first, when trailing points are unavailable', async () => {
+    const user = userEvent.setup();
+    render(
+      <LinePlot
+        label="Sprint burn"
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: [
+              { ...series[0].points[0], id: 'known-1', value: 9 },
+              { ...series[0].points[1], id: 'known-2', value: 7 },
+              { ...series[0].points[0], id: 'missing-1', label: 'Aug 12', available: false },
+              { ...series[0].points[1], id: 'missing-2', label: 'Aug 13', available: false },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const plot = screen.getByRole('application', { name: 'Sprint burn' });
+    await user.tab();
+    expect(plot).toHaveFocus();
+
+    await user.keyboard('{End}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 11');
+  });
+
+  test('keeps ArrowRight at the last available point instead of wrapping to the first', async () => {
+    const user = userEvent.setup();
+    render(
+      <LinePlot
+        label="Sprint burn"
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: [
+              { ...series[0].points[0], id: 'known-1', value: 9 },
+              { ...series[0].points[1], id: 'known-2', value: 7 },
+              { ...series[0].points[0], id: 'missing-1', label: 'Aug 12', available: false },
+              { ...series[0].points[1], id: 'missing-2', label: 'Aug 13', available: false },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const plot = screen.getByRole('application', { name: 'Sprint burn' });
+    await user.tab();
+    expect(plot).toHaveFocus();
+
+    await user.keyboard('{End}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 11');
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Aug 11');
+  });
+
   test('renders one slot per sprint day with weekend bands and a full-day tooltip', async () => {
     const user = userEvent.setup();
     const days = [
