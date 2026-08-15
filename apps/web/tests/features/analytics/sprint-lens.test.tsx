@@ -608,6 +608,12 @@ describe('SprintLens', () => {
     expect(screen.getByTestId('plot-category-current')).toHaveTextContent('Sprint 1');
     expect(screen.getByTestId('plot-bar-primary-current')).toBeInTheDocument();
     expect(screen.getByTestId('plot-bar-secondary-current')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-bar-primary-current').getAttribute('fill-opacity')).toBe(
+      '0.45',
+    );
+    expect(
+      screen.getByTestId(`plot-bar-primary-${closedSprintOne.id}`).getAttribute('fill-opacity'),
+    ).toBeNull();
 
     expect(
       screen.queryByText('Velocity history builds as sprints complete.'),

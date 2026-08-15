@@ -563,6 +563,7 @@ function PairsBarPlot({
                   data-point-index={index}
                   data-testid={`plot-bar-primary-${pair.id}`}
                   fill="var(--analytics-series-1)"
+                  fillOpacity={pair.current === true ? 0.45 : undefined}
                   height={PAIR_BAR_HEIGHT}
                   rx="2"
                   width={primaryWidth}
@@ -574,6 +575,7 @@ function PairsBarPlot({
                   data-point-index={index}
                   data-testid={`plot-bar-secondary-${pair.id}`}
                   fill="var(--color-border-strong)"
+                  fillOpacity={pair.current === true ? 0.45 : undefined}
                   height={PAIR_BAR_HEIGHT}
                   rx="2"
                   width={secondaryWidth}

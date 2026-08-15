@@ -139,6 +139,7 @@ describe('BarPlot', () => {
     expect(aliceSecondary.getAttribute('fill')).toBe('var(--color-border-strong)');
     expect(alicePrimary.getAttribute('height')).toBe('8');
     expect(aliceSecondary.getAttribute('height')).toBe('8');
+    expect(alicePrimary.getAttribute('fill-opacity')).toBeNull();
 
     expect(alicePrimary.getAttribute('width')).toBe('203');
     expect(bobSecondary.getAttribute('width')).toBe('406');
@@ -192,5 +193,12 @@ describe('BarPlot', () => {
 
     expect(screen.getAllByTestId('plot-pair-current')).toHaveLength(1);
     expect(screen.getByTestId('plot-bar-primary-current')).toBeInTheDocument();
+    expect(screen.getByTestId('plot-bar-primary-current').getAttribute('fill-opacity')).toBe(
+      '0.45',
+    );
+    expect(screen.getByTestId('plot-bar-secondary-current').getAttribute('fill-opacity')).toBe(
+      '0.45',
+    );
+    expect(screen.getByTestId('plot-bar-primary-alice').getAttribute('fill-opacity')).toBeNull();
   });
 });
