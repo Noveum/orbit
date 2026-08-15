@@ -175,6 +175,52 @@ describe('the Activity unread count', () => {
       expect(screen.queryByTestId('inbox-activity-count')).toBeNull();
     });
   });
+
+  it('drops only once when the same notification is snoozed again', async () => {
+    const user = userEvent.setup();
+    renderInbox(
+      [
+        item({ id: 'notification_a', read: false }),
+        item({ id: 'notification_b', read: false, title: 'Second comment on ENG-3' }),
+      ],
+      2,
+    );
+
+    await user.keyboard('h');
+    await user.keyboard('h');
+
+    expect(screen.getByTestId('inbox-activity-count')).toHaveTextContent('1');
+  });
+
+  it('ignores a read toggle on a notification already snoozed out of the counters', async () => {
+    const user = userEvent.setup();
+    renderInbox(
+      [
+        item({ id: 'notification_a', read: false, snoozedUntil: '2999-01-01T00:00:00.000Z' }),
+        item({ id: 'notification_b', read: false, title: 'Second comment on ENG-3' }),
+      ],
+      1,
+    );
+
+    await user.keyboard('u');
+
+    expect(screen.getByTestId('inbox-activity-count')).toHaveTextContent('1');
+  });
+});
+
+describe('the empty state', () => {
+  it('does not claim inbox zero when the notifications are all on another tab', () => {
+    renderInbox([statusMove, assignment]);
+
+    expect(screen.queryByText('Inbox zero')).toBeNull();
+    expect(screen.getByText('Nothing on this tab')).toBeVisible();
+  });
+
+  it('still claims inbox zero when there is genuinely nothing', () => {
+    renderInbox([]);
+
+    expect(screen.getByText('Inbox zero')).toBeVisible();
+  });
 });
 
 describe('the mention count', () => {

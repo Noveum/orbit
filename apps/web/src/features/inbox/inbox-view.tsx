@@ -186,8 +186,12 @@ function isActivity(item: InboxItem): boolean {
   return !isStatusChangeNotification(item.type);
 }
 
+function countsTowardUnread(item: InboxItem, at = Date.now()): boolean {
+  return item.snoozedUntil === null || Date.parse(item.snoozedUntil) <= at;
+}
+
 function unreadActivityCount(item: InboxItem): number {
-  return !item.read && isActivity(item) ? 1 : 0;
+  return !item.read && countsTowardUnread(item) && isActivity(item) ? 1 : 0;
 }
 
 function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
@@ -582,8 +586,9 @@ export function InboxView({
   const setReadState = useCallback(
     async (item: InboxItem, next: boolean) => {
       if (item.read === next) return;
-      const isMention = item.type === 'mention';
-      const countsAsActivity = isActivity(item);
+      const counted = countsTowardUnread(item);
+      const isMention = counted && item.type === 'mention';
+      const countsAsActivity = counted && isActivity(item);
       const applyLocally = (read: boolean, step: number) => {
         setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read } : row)));
         if (tab === 'unread') {
@@ -632,7 +637,7 @@ export function InboxView({
   const snooze = useCallback(async () => {
     if (current === undefined) return;
     const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
-    const wasUnreadMention = unreadMentionCount(current) === 1;
+    const wasUnreadMention = countsTowardUnread(current) && unreadMentionCount(current) === 1;
     const wasUnreadActivity = unreadActivityCount(current) === 1;
     setRows((list) => list.map((row) => (row.id === current.id ? { ...row, snoozedUntil } : row)));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
@@ -749,8 +754,12 @@ export function InboxView({
       {visible.length === 0 && cursor === null ? (
         <EmptyState
           icon={<Bell strokeWidth={1.75} aria-hidden="true" />}
-          title="Inbox zero"
-          description="When somebody assigns you an issue, mentions you, replies to you, or changes something you follow, it lands here. Your own actions do not."
+          title={rows.length === 0 ? 'Inbox zero' : 'Nothing on this tab'}
+          description={
+            rows.length === 0
+              ? 'When somebody assigns you an issue, mentions you, replies to you, or changes something you follow, it lands here. Your own actions do not.'
+              : 'Every notification you have is on another tab. Status collects the issue field moves, and Unread, Mentions and Pull requests span all of them.'
+          }
           className="flex-1"
         />
       ) : (
