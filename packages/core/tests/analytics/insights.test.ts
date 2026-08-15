@@ -201,6 +201,27 @@ describe('loadAnalyticsInsights', () => {
     expect(bucket.segments.some((segment) => segment.id === overflowLabelId)).toBe(false);
   });
 
+  it('labels state category buckets for people instead of the raw enum value', async () => {
+    await insertIssue(workspace, { number: 40, state: 'Todo' });
+    await insertIssue(workspace, { number: 41, state: 'In Progress' });
+
+    const result = await loadAnalyticsInsights(
+      workspace.admin,
+      query(),
+      insightConfigSchema.parse({ measure: 'count', slice: 'state_category' }),
+      { now, timezone: 'UTC' },
+    );
+
+    if (result.kind !== 'bars') throw new Error('Expected a bars result.');
+    const started = result.buckets.find((bucket) => bucket.id === 'started');
+    const unstarted = result.buckets.find((bucket) => bucket.id === 'unstarted');
+    if (started === undefined || unstarted === undefined) {
+      throw new Error('Missing expected state category buckets.');
+    }
+    expect(started.label).toBe('Started');
+    expect(unstarted.label).toBe('Unstarted');
+  });
+
   it('produces scatter points and exact percentiles for cycle time', async () => {
     const shortId = await insertIssue(workspace, {
       number: 20,

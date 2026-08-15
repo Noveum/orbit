@@ -1,4 +1,5 @@
 import { and, db, isNotNull, schema, sql } from '@orbit/db';
+import { STATE_CATEGORY_LABELS, type StateCategory } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
 import type {
@@ -253,7 +254,9 @@ function rankByValue<T extends { readonly value: number }>(
 
 function resolveLabel(kind: InsightSlice, id: string, rawLabel: string): string {
   if (id === 'other') return rawLabel;
-  return kind === 'priority' ? priorityLabel(Number(id)) : rawLabel;
+  if (kind === 'priority') return priorityLabel(Number(id));
+  if (kind === 'state_category') return STATE_CATEGORY_LABELS[id as StateCategory] ?? rawLabel;
+  return rawLabel;
 }
 
 function capSegments(
