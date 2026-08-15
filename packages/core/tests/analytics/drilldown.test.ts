@@ -6,7 +6,14 @@ import {
   analyticsQuerySchema,
 } from '@orbit/shared';
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
-import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
+import { createLabel, insertLabelOn } from '../../src/analytics/test-fixtures.ts';
+import { newId } from '../../src/internal.ts';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '../../src/test-support.ts';
 import { createIssue } from '../../src/work/issue-service.ts';
 
 const now = new Date('2026-08-13T12:00:00.000Z');
@@ -235,6 +242,148 @@ describe('listAnalyticsDrilldown', () => {
     expect(page.issues.map((entry) => entry.title)).toEqual(['Running']);
   });
 
+  it('drills into an assignee cohort, including the unassigned bucket', async () => {
+    const member = await addMember(workspace, 'member', { name: 'Nadia' });
+    const assigned = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Assigned',
+      assigneeId: member.user.id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Unassigned',
+      assigneeId: null,
+    });
+
+    const assignedPage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: `assignee:${member.user.id}` }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+    const nonePage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'assignee:none' }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(assignedPage.issues.map((entry) => entry.title)).toEqual(['Assigned']);
+    expect(assignedPage.issues[0]?.id).toBe(assigned.issue.id);
+    expect(nonePage.issues.map((entry) => entry.title)).toEqual(['Unassigned']);
+  });
+
+  it('drills into a label cohort, including the unlabeled bucket', async () => {
+    const labelId = await createLabel(workspace, 'Bug');
+    const labeled = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Labeled',
+    });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Unlabeled' });
+    await insertLabelOn(labeled.issue.id, labelId);
+
+    const labeledPage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: `label:${labelId}` }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+    const nonePage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'label:none' }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(labeledPage.issues.map((entry) => entry.title)).toEqual(['Labeled']);
+    expect(nonePage.issues.map((entry) => entry.title)).toEqual(['Unlabeled']);
+  });
+
+  it('drills into a sprint cohort, including the no-sprint bucket', async () => {
+    const cycleId = newId();
+    await db.insert(schema.cycle).values({
+      id: cycleId,
+      organizationId: workspace.organizationId,
+      number: 2,
+      name: 'Sprint 2',
+      timezone: 'UTC',
+      startsAt: new Date('2026-08-01T00:00:00.000Z'),
+      endsAt: new Date('2026-08-08T00:00:00.000Z'),
+    });
+    const inSprint = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'In sprint',
+      cycleId,
+    });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'No sprint' });
+
+    const sprintPage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: `sprint:${cycleId}` }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+    const nonePage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'sprint:none' }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(sprintPage.issues.map((entry) => entry.title)).toEqual(['In sprint']);
+    expect(sprintPage.issues[0]?.id).toBe(inSprint.issue.id);
+    expect(nonePage.issues.map((entry) => entry.title)).toEqual(['No sprint']);
+  });
+
+  it('drills into a created-week cohort by the date_trunc week bucket', async () => {
+    const inWeek = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'In week',
+    });
+    const outOfWeek = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Out of week',
+    });
+    await db
+      .update(schema.issue)
+      .set({ createdAt: new Date('2026-08-10T12:00:00.000Z') })
+      .where(eq(schema.issue.id, inWeek.issue.id));
+    await db
+      .update(schema.issue)
+      .set({ createdAt: new Date('2026-08-17T12:00:00.000Z') })
+      .where(eq(schema.issue.id, outOfWeek.issue.id));
+
+    const page = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'created-week:2026-08-10' }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(page.issues.map((entry) => entry.title)).toEqual(['In week']);
+  });
+
+  it('drills into a completed-week cohort and excludes open issues implicitly', async () => {
+    const completedInWeek = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Completed in week',
+    });
+    const completedOtherWeek = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Completed other week',
+    });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Still open' });
+    await db
+      .update(schema.issue)
+      .set({ completedAt: new Date('2026-08-10T12:00:00.000Z') })
+      .where(eq(schema.issue.id, completedInWeek.issue.id));
+    await db
+      .update(schema.issue)
+      .set({ completedAt: new Date('2026-08-17T12:00:00.000Z') })
+      .where(eq(schema.issue.id, completedOtherWeek.issue.id));
+
+    const page = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'completed-week:2026-08-10' }, limit: 10 },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(page.issues.map((entry) => entry.title)).toEqual(['Completed in week']);
+  });
+
   it('rejects malformed semantic cohort keys before executing SQL', async () => {
     const invalidCohorts = [
       '',
@@ -254,6 +403,11 @@ describe('listAnalyticsDrilldown', () => {
       'outlier:none',
       'outlier:not-an-id',
       'current:extra',
+      'assignee:',
+      'label:not-an-id',
+      'sprint:',
+      'created-week:junk',
+      'completed-week:2026-13-99',
     ];
 
     for (const cohort of invalidCohorts) {
