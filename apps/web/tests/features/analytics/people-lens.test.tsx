@@ -100,6 +100,7 @@ const data: AnalyticsPeopleResponse = {
             ideal: 8,
             available: true,
             coverage: 'captured',
+            future: false,
           },
           {
             date: '2026-08-14',
@@ -114,6 +115,7 @@ const data: AnalyticsPeopleResponse = {
             ideal: 5,
             available: true,
             coverage: 'live',
+            future: false,
           },
         ],
         summary: {

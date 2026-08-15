@@ -37,6 +37,7 @@ const burn = [
     ideal: 8,
     available: true,
     coverage: 'captured' as const,
+    future: false,
   },
   {
     date: '2026-08-14',
@@ -51,6 +52,7 @@ const burn = [
     ideal: 7,
     available: true,
     coverage: 'live' as const,
+    future: false,
   },
 ];
 const sprint = {
@@ -71,6 +73,8 @@ const data: AnalyticsSprintsResponse = {
     sprint,
     measure: 'points',
     summary,
+    baseline: { date: '2026-08-13', scope: 9, retroactive: false },
+    counterpart: summary,
     scopeChanges: { added: 2, removed: 1 },
     burn,
     cohorts: { planned: [], added: [], removed: [], completed: [], incomplete: [], carryover: [] },
@@ -133,9 +137,33 @@ describe('SprintLens', () => {
       throw new Error('Missing burn fixture.');
     }
     const observedBurn = [
-      { ...firstBurnPoint, date: '2026-08-11', scope: 0, remaining: 0, ideal: 0, available: false },
-      { ...firstBurnPoint, date: '2026-08-12', scope: 0, remaining: 0, ideal: 0, available: false },
-      { ...firstBurnPoint, date: '2026-08-13', scope: 0, remaining: 0, ideal: 0, available: false },
+      {
+        ...firstBurnPoint,
+        date: '2026-08-11',
+        scope: 0,
+        remaining: 0,
+        ideal: 0,
+        available: false,
+        future: false,
+      },
+      {
+        ...firstBurnPoint,
+        date: '2026-08-12',
+        scope: 0,
+        remaining: 0,
+        ideal: 0,
+        available: false,
+        future: false,
+      },
+      {
+        ...firstBurnPoint,
+        date: '2026-08-13',
+        scope: 0,
+        remaining: 0,
+        ideal: 0,
+        available: false,
+        future: false,
+      },
       {
         ...secondBurnPoint,
         date: '2026-08-14',
@@ -143,6 +171,7 @@ describe('SprintLens', () => {
         remaining: 178,
         ideal: 194,
         available: true,
+        future: false,
       },
     ];
     render(
@@ -177,10 +206,17 @@ describe('SprintLens', () => {
     const template = burn[0];
     if (template === undefined) throw new Error('Missing burn fixture.');
     const weekendBurn = [
-      { ...template, date: '2026-08-03', calendarDay: 1, workingDay: 1, ideal: 9 },
-      { ...template, date: '2026-08-13', calendarDay: 11, workingDay: 9, ideal: 1 },
-      { ...template, date: '2026-08-14', calendarDay: 12, workingDay: 10, ideal: 0 },
-      { ...template, date: '2026-08-15', calendarDay: 13, workingDay: null, ideal: 0 },
+      { ...template, date: '2026-08-03', calendarDay: 1, workingDay: 1, ideal: 9, future: false },
+      { ...template, date: '2026-08-13', calendarDay: 11, workingDay: 9, ideal: 1, future: false },
+      { ...template, date: '2026-08-14', calendarDay: 12, workingDay: 10, ideal: 0, future: false },
+      {
+        ...template,
+        date: '2026-08-15',
+        calendarDay: 13,
+        workingDay: null,
+        ideal: 0,
+        future: false,
+      },
     ];
     render(
       <SprintLens
@@ -209,9 +245,30 @@ describe('SprintLens', () => {
       throw new Error('Missing burn fixture.');
     }
     const forecastBurn = [
-      { ...firstBurnPoint, date: '2026-08-11', workingDay: 1, scope: 12, remaining: 10 },
-      { ...secondBurnPoint, date: '2026-08-12', workingDay: 2, scope: 12, remaining: 8 },
-      { ...secondBurnPoint, date: '2026-08-13', workingDay: 3, scope: 12, remaining: 6 },
+      {
+        ...firstBurnPoint,
+        date: '2026-08-11',
+        workingDay: 1,
+        scope: 12,
+        remaining: 10,
+        future: false,
+      },
+      {
+        ...secondBurnPoint,
+        date: '2026-08-12',
+        workingDay: 2,
+        scope: 12,
+        remaining: 8,
+        future: false,
+      },
+      {
+        ...secondBurnPoint,
+        date: '2026-08-13',
+        workingDay: 3,
+        scope: 12,
+        remaining: 6,
+        future: false,
+      },
     ];
     render(
       <SprintLens

@@ -106,6 +106,7 @@ const sprintBurnPointSchema = z.object({
   ideal: numberSchema,
   available: z.boolean(),
   coverage: analyticsCoverageSchema.shape.kind,
+  future: z.boolean(),
 });
 
 const distributionSchema = z.object({
@@ -137,6 +138,14 @@ const sprintDetailSchema = z.object({
   sprint: sprintSummarySchema,
   measure: z.enum(['issues', 'points']),
   summary: sprintMeasureSummarySchema,
+  baseline: z
+    .object({
+      date: calendarDateSchema,
+      scope: numberSchema,
+      retroactive: z.boolean(),
+    })
+    .nullable(),
+  counterpart: sprintMeasureSummarySchema,
   scopeChanges: z.object({ added: numberSchema, removed: numberSchema }),
   burn: z.array(sprintBurnPointSchema),
   cohorts: z.object({
