@@ -5,6 +5,7 @@ interface PlotLegend {
   readonly label: string;
   readonly dashed?: boolean;
   readonly color?: number;
+  readonly swatchVar?: string;
 }
 
 interface PlotFrameProps {
@@ -40,7 +41,9 @@ export function PlotFrame({
               <svg aria-hidden="true" height="6" viewBox="0 0 20 6" width="20">
                 <line
                   data-testid={`plot-legend-${legend.id}`}
-                  stroke={`var(--analytics-series-${legend.color ?? (index % 4) + 1})`}
+                  stroke={
+                    legend.swatchVar ?? `var(--analytics-series-${legend.color ?? (index % 4) + 1})`
+                  }
                   strokeDasharray={legend.dashed ? '5 3' : undefined}
                   strokeLinecap="round"
                   strokeWidth="2"

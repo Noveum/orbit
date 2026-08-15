@@ -132,7 +132,7 @@ describe('ProjectsLens', () => {
     expect(screen.getAllByText('At risk').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Public beta').length).toBeGreaterThan(0);
     expect(screen.getByText('5 / 13 points')).toBeVisible();
-    expect(screen.getByText(/1 unestimated issue contributes zero points/i)).toBeVisible();
+    expect(screen.getByText(/1 unestimated issues count as 1 point each/i)).toBeVisible();
     expect(screen.getByRole('application', { name: 'Platform migration delivery' })).toBeVisible();
     expect(screen.getByText('API migration is waiting on the billing cutover.')).toBeVisible();
     expect(screen.getByText(/Grace Hopper/)).toBeVisible();

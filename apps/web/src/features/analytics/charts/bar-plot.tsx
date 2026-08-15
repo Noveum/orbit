@@ -562,7 +562,7 @@ function PairsBarPlot({
       label={label}
       legends={[
         { id: 'primary', label: primaryLabel, color: 1 },
-        { id: 'secondary', label: secondaryLabel, color: 4 },
+        { id: 'secondary', label: secondaryLabel, swatchVar: 'var(--color-border-strong)' },
       ]}
       table={
         <AnalyticsDataTable

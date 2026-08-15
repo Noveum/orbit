@@ -305,8 +305,7 @@ function FocusedPerson({
         )}
         {points && focused.unestimated > 0 ? (
           <p className="text-muted text-xs">
-            {focused.unestimated} unestimated issue{focused.unestimated === 1 ? '' : 's'}{' '}
-            contributes zero points.
+            {focused.unestimated} unestimated issues count as 1 point each.
           </p>
         ) : null}
       </AnalyticsCard>

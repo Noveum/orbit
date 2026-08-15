@@ -153,7 +153,6 @@ function ProjectHealthUpdates({
   );
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The project cockpit keeps coordinated portfolio and detail states in one render boundary.
 export function ProjectsLens({
   data,
   query,
@@ -236,8 +235,7 @@ export function ProjectsLens({
             </div>
             {points && focused.project.unestimated > 0 ? (
               <p className="text-muted text-xs">
-                {focused.project.unestimated} unestimated issue
-                {focused.project.unestimated === 1 ? '' : 's'} contributes zero points.
+                {focused.project.unestimated} unestimated issues count as 1 point each.
               </p>
             ) : null}
           </AnalyticsCard>

@@ -149,10 +149,12 @@ describe('BarPlot', () => {
     const user = userEvent.setup();
     render(<BarPlot label="Sprint velocity" pairs={pairs} points={[]} />);
 
-    const legend = screen.getByTestId('plot-legend-primary').closest('span');
-    expect(legend).toHaveTextContent('This sprint');
-    const secondaryLegend = screen.getByTestId('plot-legend-secondary').closest('span');
-    expect(secondaryLegend).toHaveTextContent('Last sprint');
+    const legend = screen.getByTestId('plot-legend-primary');
+    expect(legend.closest('span')).toHaveTextContent('This sprint');
+    expect(legend).toHaveAttribute('stroke', 'var(--analytics-series-1)');
+    const secondaryLegend = screen.getByTestId('plot-legend-secondary');
+    expect(secondaryLegend.closest('span')).toHaveTextContent('Last sprint');
+    expect(secondaryLegend).toHaveAttribute('stroke', 'var(--color-border-strong)');
     expect(screen.queryByText('Primary')).not.toBeInTheDocument();
     expect(screen.queryByText('Secondary')).not.toBeInTheDocument();
 
