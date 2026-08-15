@@ -49,6 +49,23 @@ describe('ScatterPlot', () => {
     expect(tooltip).toHaveTextContent('5.1 days');
   });
 
+  test('hovering a point formats its value with the given unit label, not a hardcoded days suffix', async () => {
+    const user = userEvent.setup();
+    render(
+      <ScatterPlot
+        label="Time in review"
+        percentiles={percentiles}
+        points={points}
+        unitLabel="hours"
+      />,
+    );
+
+    await user.hover(screen.getByTestId('plot-scatter-NOV-2'));
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('5.1 hours');
+    expect(tooltip).not.toHaveTextContent('5.1 days');
+  });
+
   test('hovering a percentile line shows its exact value', async () => {
     const user = userEvent.setup();
     render(

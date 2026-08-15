@@ -68,10 +68,6 @@ function numberLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function formatPointDays(value: number): string {
-  return `${value.toFixed(1)} days`;
-}
-
 function formatUnitValue(value: number, unitLabel: string): string {
   return `${value.toFixed(1)} ${unitLabel}`;
 }
@@ -181,8 +177,9 @@ function activePointInfo(
   sortedPoints: readonly InsightScatterPoint[],
   plotWidth: number,
   max: number,
+  unitLabel: string,
 ): ActiveInfo {
-  const value = formatPointDays(point.days);
+  const value = formatUnitValue(point.days, unitLabel);
   return {
     x: xForRank(index, sortedPoints.length, plotWidth),
     y: yForValue(point.days, max),
@@ -221,7 +218,7 @@ function activeInfoFor(
     const point = sortedPoints[active.index];
     return point === undefined
       ? EMPTY_ACTIVE_INFO
-      : activePointInfo(point, active.index, sortedPoints, plotWidth, max);
+      : activePointInfo(point, active.index, sortedPoints, plotWidth, max, unitLabel);
   }
   if (active?.kind === 'percentile' && percentiles !== null) {
     return activePercentileInfo(active.key, percentiles[active.key], max, width, unitLabel);
