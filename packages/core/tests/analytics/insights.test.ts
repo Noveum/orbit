@@ -120,6 +120,59 @@ describe('loadAnalyticsInsights', () => {
     expect(noneBucket.label).toBe('No label');
   });
 
+  it('keeps a bucket total independent of segment fanout for multi-label issues', async () => {
+    const todo = stateNamed(workspace, 'Todo');
+    const bugId = await createLabel(workspace, 'Bug');
+    const featureId = await createLabel(workspace, 'Feature');
+    const dual = await insertIssue(workspace, { number: 30, state: 'Todo' });
+    await insertLabelOn(dual, bugId);
+    await insertLabelOn(dual, featureId);
+
+    const result = await loadAnalyticsInsights(
+      workspace.admin,
+      query(),
+      insightConfigSchema.parse({ measure: 'count', slice: 'state', segment: 'label' }),
+      { now, timezone: 'UTC' },
+    );
+
+    if (result.kind !== 'bars') throw new Error('Expected a bars result.');
+    const todoBucket = result.buckets.find((bucket) => bucket.id === todo.id);
+    if (todoBucket === undefined) throw new Error('Missing the Todo bucket.');
+    expect(todoBucket.value).toBe(1);
+    expect(todoBucket.segments.find((segment) => segment.id === bugId)?.value).toBe(1);
+    expect(todoBucket.segments.find((segment) => segment.id === featureId)?.value).toBe(1);
+  });
+
+  it('rolls slices beyond the cap into a non-drillable other bucket', async () => {
+    const labelIds: string[] = [];
+    for (let index = 0; index < 31; index += 1) {
+      const labelId = await createLabel(workspace, `Slice ${String(index).padStart(2, '0')}`);
+      labelIds.push(labelId);
+      const issueId = await insertIssue(workspace, { number: 200 + index, state: 'Todo' });
+      await insertLabelOn(issueId, labelId);
+    }
+
+    const result = await loadAnalyticsInsights(
+      workspace.admin,
+      query(),
+      insightConfigSchema.parse({ measure: 'count', slice: 'label' }),
+      { now, timezone: 'UTC' },
+    );
+
+    if (result.kind !== 'bars') throw new Error('Expected a bars result.');
+    expect(result.buckets).toHaveLength(31);
+
+    const other = result.buckets.find((bucket) => bucket.id === 'other');
+    if (other === undefined) throw new Error('Missing the other bucket.');
+    expect(other.cohort).toBeNull();
+    expect(other.value).toBe(1);
+
+    const named = result.buckets.find((bucket) => bucket.id !== 'other');
+    if (named === undefined) throw new Error('Missing a named bucket.');
+    expect(named.cohort).not.toBeNull();
+    expect(named.cohort).toEqual({ cohort: `label:${named.id}` });
+  });
+
   it('rolls segments beyond the cap into an other bucket', async () => {
     const labelIds: string[] = [];
     for (let index = 0; index < 9; index += 1) {
@@ -161,6 +214,12 @@ describe('loadAnalyticsInsights', () => {
       startedAt: new Date('2026-08-01T00:00:00.000Z'),
       completedAt: new Date('2026-08-07T00:00:00.000Z'),
     });
+    await insertIssue(workspace, {
+      number: 22,
+      state: 'Done',
+      startedAt: new Date('2026-08-05T00:00:00.000Z'),
+      completedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
 
     const result = await loadAnalyticsInsights(
       workspace.admin,
@@ -171,6 +230,7 @@ describe('loadAnalyticsInsights', () => {
 
     if (result.kind !== 'scatter') throw new Error('Expected a scatter result.');
     expect(result.unit).toBe('days');
+    expect(result.points).toHaveLength(2);
     expect(result.points.map((point) => point.issueId)).toEqual([longId, shortId]);
     expect(result.points[0]?.days).toBeCloseTo(6, 5);
     expect(result.points[1]?.days).toBeCloseTo(2, 5);

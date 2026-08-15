@@ -27,7 +27,7 @@ export interface InsightBucket {
   readonly label: string;
   readonly value: number;
   readonly segments: readonly InsightSegmentValue[];
-  readonly cohort: AnalyticsDrilldownCohort;
+  readonly cohort: AnalyticsDrilldownCohort | null;
 }
 
 export interface InsightScatterPoint {
@@ -122,58 +122,82 @@ const SLICE_JOIN: Partial<Record<InsightSlice, JoinKind>> = {
   label: 'label',
 };
 
-function joinsFor(insight: InsightConfig): SQL<unknown> {
+function joinsForKinds(kinds: readonly InsightSlice[]): SQL<unknown> {
   const joins = new Set<JoinKind>();
-  const sliceJoin = SLICE_JOIN[insight.slice];
-  if (sliceJoin !== undefined) joins.add(sliceJoin);
-  if (insight.segment !== undefined) {
-    const segmentJoin = SLICE_JOIN[insight.segment];
-    if (segmentJoin !== undefined) joins.add(segmentJoin);
+  for (const kind of kinds) {
+    const join = SLICE_JOIN[kind];
+    if (join !== undefined) joins.add(join);
   }
   const fragments = JOIN_ORDER.filter((join) => joins.has(join)).map((join) => JOIN_SQL[join]);
   return fragments.length === 0 ? sql`` : sql.join(fragments, sql` `);
 }
 
-function usesCompletedWeek(insight: InsightConfig): boolean {
-  return insight.slice === 'completed_week' || insight.segment === 'completed_week';
-}
-
-interface BarRow {
+interface SliceTotalRow {
   readonly [key: string]: unknown;
   readonly slice_id: string;
   readonly slice_label: string;
-  readonly segment_id: string | null;
-  readonly segment_label: string | null;
   readonly value: number | string;
 }
 
-async function barsRows(
+interface SegmentRow {
+  readonly [key: string]: unknown;
+  readonly slice_id: string;
+  readonly segment_id: string;
+  readonly segment_label: string;
+  readonly value: number | string;
+}
+
+async function sliceTotalsRows(
   principal: Principal,
   resolved: ResolvedAnalyticsQuery,
   insight: InsightConfig,
-): Promise<readonly BarRow[]> {
+): Promise<readonly SliceTotalRow[]> {
   const base = baseAnalyticsPredicate(principal, resolved);
   const sliceDef = SLICE_SQL[insight.slice];
-  const segmentDef = insight.segment === undefined ? null : SLICE_SQL[insight.segment];
-  const segmentIdSql = segmentDef === null ? sql`null::text` : segmentDef.id;
-  const segmentLabelSql = segmentDef === null ? sql`null::text` : segmentDef.label;
   const weight = insight.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
   const filters: SQL<unknown>[] = [base];
-  if (usesCompletedWeek(insight)) filters.push(isNotNull(schema.issue.completedAt));
+  if (insight.slice === 'completed_week') filters.push(isNotNull(schema.issue.completedAt));
   const where = and(...filters) ?? sql`false`;
-  return await db.execute<BarRow>(sql`
+  return await db.execute<SliceTotalRow>(sql`
     select
       ${sliceDef.id} as slice_id,
       ${sliceDef.label} as slice_label,
-      ${segmentIdSql} as segment_id,
-      ${segmentLabelSql} as segment_label,
       sum(${weight}) as value
     from issue
     join workflow_state on workflow_state.id = issue.state_id
-    ${joinsFor(insight)}
+    ${joinsForKinds([insight.slice])}
     where ${where}
-    group by ${sliceDef.id}, ${sliceDef.label}, ${segmentIdSql}, ${segmentLabelSql}
+    group by ${sliceDef.id}, ${sliceDef.label}
     order by value desc
+  `);
+}
+
+async function segmentRows(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  insight: InsightConfig,
+  segment: InsightSlice,
+): Promise<readonly SegmentRow[]> {
+  const base = baseAnalyticsPredicate(principal, resolved);
+  const sliceDef = SLICE_SQL[insight.slice];
+  const segmentDef = SLICE_SQL[segment];
+  const weight = insight.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
+  const filters: SQL<unknown>[] = [base];
+  if (insight.slice === 'completed_week' || segment === 'completed_week') {
+    filters.push(isNotNull(schema.issue.completedAt));
+  }
+  const where = and(...filters) ?? sql`false`;
+  return await db.execute<SegmentRow>(sql`
+    select
+      ${sliceDef.id} as slice_id,
+      ${segmentDef.id} as segment_id,
+      ${segmentDef.label} as segment_label,
+      sum(${weight}) as value
+    from issue
+    join workflow_state on workflow_state.id = issue.state_id
+    ${joinsForKinds([insight.slice, segment])}
+    where ${where}
+    group by ${sliceDef.id}, ${segmentDef.id}, ${segmentDef.label}
   `);
 }
 
@@ -185,31 +209,38 @@ interface SegmentAccumulator {
 interface SliceAccumulator {
   readonly id: string;
   readonly label: string;
-  value: number;
+  readonly value: number;
   readonly segments: Map<string, SegmentAccumulator>;
 }
 
-function accumulateBars(rows: readonly BarRow[]): Map<string, SliceAccumulator> {
+function buildSliceMap(rows: readonly SliceTotalRow[]): Map<string, SliceAccumulator> {
   const slices = new Map<string, SliceAccumulator>();
   for (const row of rows) {
-    const value = Number(row.value);
-    let slice = slices.get(row.slice_id);
-    if (slice === undefined) {
-      slice = { id: row.slice_id, label: row.slice_label, value: 0, segments: new Map() };
-      slices.set(row.slice_id, slice);
-    }
-    slice.value += value;
-    if (row.segment_id !== null) {
-      const segmentLabel = row.segment_label ?? row.segment_id;
-      const segment = slice.segments.get(row.segment_id);
-      if (segment === undefined) {
-        slice.segments.set(row.segment_id, { label: segmentLabel, value });
-      } else {
-        segment.value += value;
-      }
-    }
+    slices.set(row.slice_id, {
+      id: row.slice_id,
+      label: row.slice_label,
+      value: Number(row.value),
+      segments: new Map(),
+    });
   }
   return slices;
+}
+
+function applySegments(
+  slices: ReadonlyMap<string, SliceAccumulator>,
+  rows: readonly SegmentRow[],
+): void {
+  for (const row of rows) {
+    const slice = slices.get(row.slice_id);
+    if (slice === undefined) continue;
+    const value = Number(row.value);
+    const existing = slice.segments.get(row.segment_id);
+    if (existing === undefined) {
+      slice.segments.set(row.segment_id, { label: row.segment_label, value });
+    } else {
+      existing.value += value;
+    }
+  }
 }
 
 function rankByValue<T extends { readonly value: number }>(
@@ -258,8 +289,10 @@ function mergeSegmentMaps(
   return merged;
 }
 
-function buildBuckets(insight: InsightConfig, rows: readonly BarRow[]): readonly InsightBucket[] {
-  const slices = accumulateBars(rows);
+function buildBuckets(
+  insight: InsightConfig,
+  slices: ReadonlyMap<string, SliceAccumulator>,
+): readonly InsightBucket[] {
   const ranked = rankByValue(slices);
   const kept = ranked.slice(0, SLICE_CAP);
   const overflow = ranked.slice(SLICE_CAP);
@@ -279,7 +312,7 @@ function buildBuckets(insight: InsightConfig, rows: readonly BarRow[]): readonly
       label: 'Other',
       value: overflowValue,
       segments: insight.segment === undefined ? [] : capSegments(mergedSegments, insight.segment),
-      cohort: { cohort: `${cohortPrefix}:other` },
+      cohort: null,
     });
   }
   return buckets;
@@ -290,11 +323,16 @@ async function loadBars(
   resolved: ResolvedAnalyticsQuery,
   insight: InsightConfig,
 ): Promise<InsightResult> {
-  const rows = await barsRows(principal, resolved, insight);
+  const totals = await sliceTotalsRows(principal, resolved, insight);
+  const slices = buildSliceMap(totals);
+  if (insight.segment !== undefined) {
+    const rows = await segmentRows(principal, resolved, insight, insight.segment);
+    applySegments(slices, rows);
+  }
   return {
     kind: 'bars',
     unit: insight.measure === 'points' ? 'points' : 'issues',
-    buckets: buildBuckets(insight, rows),
+    buckets: buildBuckets(insight, slices),
   };
 }
 
@@ -314,7 +352,11 @@ function scatterDuration(measure: ScatterMeasure, resolved: ResolvedAnalyticsQue
 function scatterWhere(measure: ScatterMeasure, base: SQL<unknown>): SQL<unknown> {
   const filters: SQL<unknown>[] = [base];
   if (measure === 'cycle_time') {
-    filters.push(isNotNull(schema.issue.startedAt), isNotNull(schema.issue.completedAt));
+    filters.push(
+      isNotNull(schema.issue.startedAt),
+      isNotNull(schema.issue.completedAt),
+      sql`${schema.issue.completedAt} >= ${schema.issue.startedAt}`,
+    );
   } else if (measure === 'lead_time') {
     filters.push(isNotNull(schema.issue.completedAt));
   } else {
