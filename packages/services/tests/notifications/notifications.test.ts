@@ -163,6 +163,7 @@ describe('notifyMany', () => {
       expect(await unreadCounters(tx, fixture.adaId, fixture.organizationId)).toEqual({
         total: 0,
         mentions: 0,
+        activity: 0,
       });
     });
   });
@@ -432,6 +433,50 @@ describe('inbox reads and writes', () => {
       const counters = await unreadCounters(tx, fixture.adaId, fixture.organizationId);
       expect(counters.mentions).toBe(2);
       expect(counters.total).toBe(4);
+    });
+  });
+
+  it('keeps issue field moves out of the activity counter', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [
+        eventFor(fixture, {
+          userIds: [fixture.adaId],
+          type: 'issue_status_changed',
+          entityId: 'iss_a',
+        }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'issue_assigned', entityId: 'iss_b' }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'comment_created', entityId: 'iss_c' }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'mention', entityId: 'iss_d' }),
+      ]);
+
+      const counters = await unreadCounters(tx, fixture.adaId, fixture.organizationId);
+      expect(counters.total).toBe(4);
+      expect(counters.activity).toBe(2);
+      expect(counters.mentions).toBe(1);
+    });
+  });
+
+  it('counts a read field move out of both the total and the activity counter', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [
+        eventFor(fixture, {
+          userIds: [fixture.adaId],
+          type: 'issue_status_changed',
+          entityId: 'iss_a',
+        }),
+        eventFor(fixture, { userIds: [fixture.adaId], type: 'comment_created', entityId: 'iss_b' }),
+      ]);
+      await markRead(tx, {
+        userId: fixture.adaId,
+        organizationId: fixture.organizationId,
+        notificationIds: [outcome.notifications[0]?.id ?? ''],
+      });
+
+      const counters = await unreadCounters(tx, fixture.adaId, fixture.organizationId);
+      expect(counters.total).toBe(1);
+      expect(counters.activity).toBe(1);
     });
   });
 

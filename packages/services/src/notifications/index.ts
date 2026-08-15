@@ -9,6 +9,7 @@ import {
 import {
   actorSchema,
   idSchema,
+  isStatusChangeNotification,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   SLACK_INTEGRATION_ENABLED,
@@ -494,6 +495,7 @@ export async function unreadCount(
 export interface UnreadCounters {
   readonly total: number;
   readonly mentions: number;
+  readonly activity: number;
 }
 
 export async function unreadCounters(
@@ -517,9 +519,11 @@ export async function unreadCounters(
     .groupBy(notification.type);
   let total = 0;
   let mentions = 0;
+  let activity = 0;
   for (const row of rows) {
     total += row.value;
     if (row.type === 'mention') mentions += row.value;
+    if (!isStatusChangeNotification(row.type)) activity += row.value;
   }
-  return { total, mentions };
+  return { total, mentions, activity };
 }

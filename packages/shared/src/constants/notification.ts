@@ -40,6 +40,18 @@ export function isPullRequestNotification(type: NotificationType): boolean {
   return (PULL_REQUEST_NOTIFICATION_TYPES as readonly string[]).includes(type);
 }
 
+export const STATUS_CHANGE_NOTIFICATION_TYPES = [
+  'issue_status_changed',
+  'issue_priority_changed',
+  'issue_assigned',
+  'issue_unassigned',
+  'triage_added',
+] as const satisfies readonly NotificationType[];
+
+export function isStatusChangeNotification(type: string): boolean {
+  return (STATUS_CHANGE_NOTIFICATION_TYPES as readonly string[]).includes(type);
+}
+
 export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'push'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
