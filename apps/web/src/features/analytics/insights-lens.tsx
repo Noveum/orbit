@@ -48,6 +48,7 @@ const SLICE_LABELS: Record<InsightSlice, string> = {
 };
 
 const WEEK_SLICES: ReadonlySet<InsightSlice> = new Set(['created_week', 'completed_week']);
+const DURATION_MEASURES: ReadonlySet<InsightMeasure> = new Set(['cycle_time', 'lead_time', 'age']);
 
 function valueLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -119,6 +120,7 @@ interface InsightPickersProps {
 }
 
 function InsightPickers({ insight, onInsightChange }: InsightPickersProps) {
+  const segmentDisabled = DURATION_MEASURES.has(insight.measure);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Select
@@ -152,8 +154,9 @@ function InsightPickers({ insight, onInsightChange }: InsightPickersProps) {
         </SelectContent>
       </Select>
       <Select
+        disabled={segmentDisabled}
         onValueChange={(value) => onInsightChange(withSegment(insight, value))}
-        value={insight.segment ?? NONE_SEGMENT}
+        value={segmentDisabled ? NONE_SEGMENT : (insight.segment ?? NONE_SEGMENT)}
       >
         <SelectTrigger aria-label="Insight segment" className="h-7 w-auto min-w-36 text-xs">
           <SelectValue />
@@ -248,6 +251,11 @@ export function InsightsLens({ data, query, insight, onInsightChange }: Insights
 
       <AnalyticsCard title={label}>
         <InsightChart data={data} insight={insight} label={label} onActivate={setEvidence} />
+        {insight.segment === 'label' ? (
+          <p className="text-muted text-xs">
+            Issues can carry several labels, so label segments may overlap.
+          </p>
+        ) : null}
       </AnalyticsCard>
 
       {evidence === null ? null : (

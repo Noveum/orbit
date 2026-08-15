@@ -238,4 +238,67 @@ describe('InsightsLens', () => {
 
     expect(screen.getByText('No matching issues for this insight.')).toBeVisible();
   });
+
+  test('disables the segment picker to None for a duration measure like cycle time', () => {
+    const insight = {
+      measure: 'cycle_time' as const,
+      slice: 'state_category' as const,
+      cumulative: false,
+    };
+    render(
+      <InsightsLens data={scatterData} insight={insight} onInsightChange={mock()} query={query} />,
+    );
+
+    const segmentPicker = screen.getByRole('combobox', { name: 'Insight segment' });
+    expect(segmentPicker).toBeDisabled();
+    expect(segmentPicker).toHaveTextContent('No segment');
+  });
+
+  test('leaves the segment picker enabled for a count measure', () => {
+    render(
+      <InsightsLens
+        data={barsData}
+        insight={defaultInsight}
+        onInsightChange={mock()}
+        query={query}
+      />,
+    );
+
+    expect(screen.getByRole('combobox', { name: 'Insight segment' })).toBeEnabled();
+  });
+
+  test('shows the label overlap caption only when segmenting by label', () => {
+    const withLabelSegment = {
+      measure: 'count' as const,
+      slice: 'state_category' as const,
+      segment: 'label' as const,
+      cumulative: false,
+    };
+    const caption = 'Issues can carry several labels, so label segments may overlap.';
+    const { rerender } = render(
+      <InsightsLens
+        data={barsData}
+        insight={withLabelSegment}
+        onInsightChange={mock()}
+        query={query}
+      />,
+    );
+    expect(screen.getByText(caption)).toBeVisible();
+
+    const withAssigneeSegment = {
+      measure: 'count' as const,
+      slice: 'state_category' as const,
+      segment: 'assignee' as const,
+      cumulative: false,
+    };
+    rerender(
+      <InsightsLens
+        data={barsData}
+        insight={withAssigneeSegment}
+        onInsightChange={mock()}
+        query={query}
+      />,
+    );
+    expect(screen.queryByText(caption)).not.toBeInTheDocument();
+  });
 });
