@@ -172,7 +172,7 @@ describe('LinePlot', () => {
       />,
     );
 
-    expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(3);
+    expect(screen.getAllByTestId('plot-grid-line')).toHaveLength(5);
     expect(screen.getByTestId('plot-y-max')).toHaveTextContent('7');
     expect(screen.getByTestId('plot-x-start')).toHaveTextContent('Aug 10');
     expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 11');
@@ -186,7 +186,7 @@ describe('LinePlot', () => {
     expect(screen.getByTestId('plot-legend-completed')).not.toHaveAttribute('stroke-dasharray');
 
     await user.hover(screen.getByTestId('plot-hit-2026-08-11-completed'));
-    expect(screen.getByRole('tooltip')).toHaveStyle({ left: '97.1875%' });
+    expect(screen.getByRole('tooltip')).toHaveStyle({ left: '97.5%' });
   });
 
   test('shows dashed legend keys and short calendar ticks', () => {
@@ -241,7 +241,71 @@ describe('LinePlot', () => {
 
     expect(screen.queryByTestId('plot-point-missing-1')).not.toBeInTheDocument();
     expect(screen.queryByTestId('plot-point-missing-2')).not.toBeInTheDocument();
-    expect(screen.getByTestId('plot-line-remaining').getAttribute('d')).not.toContain(' 218.00');
+    expect(screen.getByTestId('plot-line-remaining').getAttribute('d')).not.toContain(' 236.00');
     expect(screen.getByText('2 dates unavailable')).toBeVisible();
+  });
+
+  test('renders one slot per sprint day with weekend bands and a full-day tooltip', async () => {
+    const user = userEvent.setup();
+    const days = [
+      { date: '2026-08-13', weekend: false, today: false, future: false },
+      { date: '2026-08-14', weekend: false, today: true, future: false },
+      { date: '2026-08-15', weekend: true, today: false, future: true },
+      { date: '2026-08-16', weekend: true, today: false, future: true },
+      { date: '2026-08-17', weekend: false, today: false, future: true },
+    ];
+    render(
+      <LinePlot
+        days={days}
+        label="Burn"
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: [
+              { id: 'r1', label: '2026-08-13', value: 8, cohort: { cohort: 'open' } },
+              { id: 'r2', label: '2026-08-14', value: 7, cohort: { cohort: 'open' } },
+            ],
+          },
+          {
+            id: 'ideal',
+            label: 'Ideal',
+            dashed: true,
+            dots: true,
+            points: days.map((day, index) => ({
+              id: `i${index}`,
+              label: day.date,
+              value: 8 - index,
+              cohort: { cohort: 'open' },
+            })),
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByTestId('plot-weekend-band')).toHaveLength(2);
+    expect(screen.getAllByTestId('plot-day-hit')).toHaveLength(5);
+    await user.hover(screen.getAllByTestId('plot-day-hit')[1] as Element);
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Remaining 7');
+    expect(tooltip).toHaveTextContent('Ideal 7');
+  });
+
+  test('renders the svg at the measured width instead of stretching a viewBox', () => {
+    render(
+      <LinePlot
+        label="Burn"
+        series={[
+          {
+            id: 'remaining',
+            label: 'Remaining',
+            points: [{ id: 'r1', label: '2026-08-13', value: 8, cohort: { cohort: 'open' } }],
+          },
+        ]}
+      />,
+    );
+    const svg = screen.getByRole('application');
+    expect(svg.getAttribute('viewBox')).toBeNull();
+    expect(svg.getAttribute('width')).toBe('640');
   });
 });
