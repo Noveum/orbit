@@ -236,13 +236,17 @@ const insightsBars: AnalyticsInsightsResponse = {
   ],
 };
 
-function renderCockpitWithInsights() {
+function renderCockpitWithInsights(
+  savedViews: readonly SavedAnalyticsViewPayload[] = [],
+  initialInsight = insightConfigSchema.parse({}),
+) {
   const query = analyticsQuerySchema.parse({ lens: 'insights' });
-  const insight = insightConfigSchema.parse({});
   const client = createQueryClient();
   client.setQueryDefaults(analyticsKeys.root, { enabled: false });
   client.setQueryData(
-    analyticsKeys.insights(analyticsInsightsQuerySchema.parse({ ...query, insight })),
+    analyticsKeys.insights(
+      analyticsInsightsQuerySchema.parse({ ...query, insight: initialInsight }),
+    ),
     insightsBars,
   );
   function Wrapper({ children }: { readonly children: ReactNode }) {
@@ -252,7 +256,14 @@ function renderCockpitWithInsights() {
       </QueryClientProvider>
     );
   }
-  return render(<AnalyticsCockpit initialQuery={query} savedViews={[]} />, { wrapper: Wrapper });
+  return render(
+    <AnalyticsCockpit
+      initialInsight={initialInsight}
+      initialQuery={query}
+      savedViews={savedViews}
+    />,
+    { wrapper: Wrapper },
+  );
 }
 
 describe('AnalyticsCockpit', () => {
@@ -559,6 +570,42 @@ describe('AnalyticsCockpit', () => {
     expect(window.location.search).toContain('measure=points');
     expect(window.location.search).toContain('includeArchived=1');
     expect(window.location.search).toContain(`personId=${personId}`);
+  });
+
+  it('restores measure, slice, and segment from a saved insights view', async () => {
+    const user = userEvent.setup();
+    const savedInsight = insightConfigSchema.parse({
+      measure: 'points',
+      slice: 'assignee',
+      segment: 'state',
+    });
+    renderCockpitWithInsights([
+      {
+        id: 'saved_insights_1',
+        name: 'Points by assignee',
+        scopeType: 'workspace',
+        scopeId: null,
+        kind: 'dashboard',
+        config: {
+          kind: 'dashboard',
+          version: 1,
+          query: analyticsQuerySchema.parse({ lens: 'insights' }),
+          insight: savedInsight,
+          pinned: false,
+        },
+        shared: false,
+        ownerId: personId,
+        createdAt: asOf,
+        updatedAt: asOf,
+      },
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Points by assignee' }));
+
+    expect(window.location.search).toContain('lens=insights');
+    expect(window.location.search).toContain('insightMeasure=points');
+    expect(window.location.search).toContain('insightSlice=assignee');
+    expect(window.location.search).toContain('insightSegment=state');
   });
 
   it('dispatches to the insights lens for query.lens insights, rendering its pickers and bar chart', () => {

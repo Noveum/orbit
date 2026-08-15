@@ -1,7 +1,12 @@
 'use client';
 
 import type { SavedAnalyticsViewPayload } from '@orbit/core';
-import { type AnalyticsQuery, analyticsQuerySchema } from '@orbit/shared/validators';
+import {
+  type AnalyticsQuery,
+  analyticsQuerySchema,
+  type InsightConfig,
+  insightConfigSchema,
+} from '@orbit/shared/validators';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pencil, Pin, Save, Trash2, Users } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
@@ -9,19 +14,29 @@ import { Button } from '@/components/ui/button.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { analyticsKeys } from './analytics-keys.ts';
-import { canonicalAnalyticsQuery } from './query-state.ts';
+import { canonicalSavedAnalyticsView, searchParamsForInsightConfig } from './query-state.ts';
 
 interface SavedViewBarProps {
   readonly views: readonly SavedAnalyticsViewPayload[];
   readonly query: AnalyticsQuery;
+  readonly insight: InsightConfig;
   readonly canManage: boolean;
   readonly canManageAll: boolean;
   readonly currentUserId: string | null;
-  readonly onApply: (query: AnalyticsQuery) => void;
+  readonly onApply: (query: AnalyticsQuery, insight?: InsightConfig) => void;
 }
+
+const defaultInsightConfig = insightConfigSchema.parse({});
 
 function queryOf(view: SavedAnalyticsViewPayload): AnalyticsQuery | null {
   const parsed = analyticsQuerySchema.safeParse(view.config['query'] ?? view.config);
+  return parsed.success ? parsed.data : null;
+}
+
+function insightOf(view: SavedAnalyticsViewPayload): InsightConfig | null {
+  const raw = view.config['insight'];
+  if (raw === undefined) return null;
+  const parsed = insightConfigSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
 
@@ -29,9 +44,26 @@ function pinned(view: SavedAnalyticsViewPayload): boolean {
   return view.config['pinned'] === true;
 }
 
+function dashboardConfig(
+  targetQuery: AnalyticsQuery,
+  targetInsight: InsightConfig | null,
+  isPinned: boolean,
+): Record<string, unknown> {
+  const carriesInsight =
+    targetInsight !== null && searchParamsForInsightConfig(targetInsight).toString() !== '';
+  return {
+    kind: 'dashboard',
+    version: 1,
+    query: targetQuery,
+    ...(carriesInsight ? { insight: targetInsight } : {}),
+    pinned: isPinned,
+  };
+}
+
 export function SavedViewBar({
   views,
   query,
+  insight,
   canManage,
   canManageAll,
   currentUserId,
@@ -49,7 +81,12 @@ export function SavedViewBar({
   const dashboards = localViews.filter((view) => view.kind === 'dashboard');
   const active = dashboards.find((view) => {
     const saved = queryOf(view);
-    return saved !== null && canonicalAnalyticsQuery(saved) === canonicalAnalyticsQuery(query);
+    if (saved === null) return false;
+    const savedInsight = insightOf(view) ?? defaultInsightConfig;
+    return (
+      canonicalSavedAnalyticsView(saved, savedInsight) ===
+      canonicalSavedAnalyticsView(query, insight)
+    );
   });
 
   async function refresh(): Promise<void> {
@@ -68,7 +105,7 @@ export function SavedViewBar({
           body: {
             name: name.trim(),
             shared,
-            config: { kind: 'dashboard', version: 1, query, pinned: false },
+            config: dashboardConfig(query, insight, false),
           },
         },
       );
@@ -151,7 +188,8 @@ export function SavedViewBar({
                 className="rounded-l-md px-2.5 py-1.5 text-muted text-xs hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 disabled={saved === null}
                 onClick={() => {
-                  if (saved !== null) onApply(saved);
+                  if (saved === null) return;
+                  onApply(saved, insightOf(view) ?? undefined);
                 }}
                 type="button"
               >
@@ -166,12 +204,11 @@ export function SavedViewBar({
                   disabled={pending}
                   onClick={() =>
                     update(view.id, {
-                      config: {
-                        kind: 'dashboard',
-                        version: 1,
-                        query: saved ?? query,
-                        pinned: !pinned(view),
-                      },
+                      config: dashboardConfig(
+                        saved ?? query,
+                        saved === null ? insight : insightOf(view),
+                        !pinned(view),
+                      ),
                     })
                   }
                   type="button"
@@ -226,7 +263,7 @@ export function SavedViewBar({
           disabled={pending}
           onClick={() =>
             update(active.id, {
-              config: { kind: 'dashboard', version: 1, query, pinned: pinned(active) },
+              config: dashboardConfig(query, insight, pinned(active)),
             })
           }
           size="sm"

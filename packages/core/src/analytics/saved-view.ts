@@ -45,10 +45,12 @@ export function normalizeSavedAnalyticsConfig(
   config: Record<string, unknown>,
 ): SavedDashboardConfig {
   const query = config['query'];
+  const insight = config['insight'];
   return savedDashboardConfigSchema.parse({
     kind: 'dashboard',
     version: 1,
     query: analyticsQuerySchema.parse(typeof query === 'object' && query !== null ? query : config),
+    ...(insight === undefined ? {} : { insight }),
     pinned: config['pinned'] === true,
   });
 }

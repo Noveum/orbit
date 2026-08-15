@@ -18,7 +18,7 @@ import { InsightsLens } from './insights-lens.tsx';
 import { OverviewLens } from './overview-lens.tsx';
 import { PeopleLens } from './people-lens.tsx';
 import { ProjectsLens } from './projects-lens.tsx';
-import { searchParamsForAnalytics, searchParamsForInsightConfig } from './query-state.ts';
+import { searchParamsForSavedAnalyticsView } from './query-state.ts';
 import { SavedViewBar } from './saved-view-bar.tsx';
 import { SprintLens } from './sprint-lens.tsx';
 import { useAnalyticsQuery, useInsightsQuery } from './use-analytics-query.ts';
@@ -27,9 +27,7 @@ const defaultQuery = analyticsQuerySchema.parse({});
 const defaultInsightConfig = insightConfigSchema.parse({});
 
 function writeUrl(query: AnalyticsQuery, insight: InsightConfig) {
-  const params = searchParamsForAnalytics(query);
-  for (const [key, value] of searchParamsForInsightConfig(insight)) params.set(key, value);
-  const search = params.toString();
+  const search = searchParamsForSavedAnalyticsView(query, insight).toString();
   const path = typeof window === 'undefined' ? '/analytics' : window.location.pathname;
   window.history.replaceState(null, '', search.length === 0 ? path : `${path}?${search}`);
 }
@@ -147,6 +145,13 @@ export function AnalyticsCockpit({
     setInsight(parsed);
     writeUrl(query, parsed);
   };
+  const applySavedView = (nextQuery: AnalyticsQuery, nextInsight?: InsightConfig) => {
+    const parsedInsight =
+      nextInsight === undefined ? insight : insightConfigSchema.parse(nextInsight);
+    setQuery(nextQuery);
+    setInsight(parsedInsight);
+    writeUrl(nextQuery, parsedInsight);
+  };
   const reset = () => {
     setQuery(defaultQuery);
     setInsight(defaultInsightConfig);
@@ -194,7 +199,8 @@ export function AnalyticsCockpit({
         canManage={canManageViews}
         canManageAll={canManageAllViews}
         currentUserId={currentUserId}
-        onApply={(saved) => update(saved)}
+        insight={insight}
+        onApply={applySavedView}
         query={query}
         views={savedViews}
       />

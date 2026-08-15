@@ -192,3 +192,16 @@ export function searchParamsForInsights(query: AnalyticsInsightsQuery): URLSearc
 export function canonicalInsightsQuery(query: AnalyticsInsightsQuery): string {
   return searchParamsForInsights(query).toString();
 }
+
+export function searchParamsForSavedAnalyticsView(
+  query: AnalyticsQuery,
+  insight: InsightConfig,
+): URLSearchParams {
+  const params = searchParamsForAnalytics(query);
+  for (const [key, value] of searchParamsForInsightConfig(insight)) params.set(key, value);
+  return params;
+}
+
+export function canonicalSavedAnalyticsView(query: AnalyticsQuery, insight: InsightConfig): string {
+  return searchParamsForSavedAnalyticsView(query, insight).toString();
+}

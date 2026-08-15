@@ -1,4 +1,4 @@
-import { analyticsQuerySchema } from '@orbit/shared/validators';
+import { analyticsQuerySchema, insightConfigSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
 export const MEASURES = ['issues', 'points'] as const;
@@ -49,6 +49,7 @@ export const savedDashboardConfigSchema = z.object({
   kind: z.literal('dashboard'),
   version: z.literal(1),
   query: analyticsQuerySchema,
+  insight: insightConfigSchema.optional(),
   pinned: z.boolean().default(false),
 });
 export type SavedDashboardConfig = z.infer<typeof savedDashboardConfigSchema>;
