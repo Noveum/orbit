@@ -220,6 +220,41 @@ describe('LinePlot', () => {
     expect(screen.getByTestId('plot-x-end')).toHaveTextContent('Aug 24');
   });
 
+  test('lets a series pin an explicit color token instead of taking its array position', () => {
+    render(
+      <LinePlot
+        label="Sprint burn"
+        series={[
+          { ...series[0], id: 'remaining', label: 'Remaining', color: 1 },
+          { ...series[1], id: 'scope', label: 'Scope', color: 4 },
+          {
+            ...series[0],
+            id: 'ideal',
+            label: 'Ideal',
+            points: series[0].points.map((point) => ({ ...point, id: `ideal-${point.id}` })),
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId('plot-line-remaining')).toHaveAttribute(
+      'stroke',
+      'var(--analytics-series-1)',
+    );
+    expect(screen.getByTestId('plot-line-scope')).toHaveAttribute(
+      'stroke',
+      'var(--analytics-series-4)',
+    );
+    expect(screen.getByTestId('plot-legend-scope')).toHaveAttribute(
+      'stroke',
+      'var(--analytics-series-4)',
+    );
+    expect(screen.getByTestId('plot-line-ideal')).toHaveAttribute(
+      'stroke',
+      'var(--analytics-series-3)',
+    );
+  });
+
   test('leaves unavailable history as a visible gap instead of drawing false zeroes', () => {
     render(
       <LinePlot

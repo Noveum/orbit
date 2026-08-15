@@ -51,6 +51,7 @@ function idealSeries(burn: SprintBurnPoints): PlotSeries {
   return {
     id: 'ideal',
     label: 'Ideal',
+    color: 2,
     dashed: true,
     dots: true,
     points: burn.map((point) => ({
@@ -66,6 +67,7 @@ function remainingSeries(burn: SprintBurnPoints): PlotSeries {
   return {
     id: 'remaining',
     label: 'Remaining',
+    color: 1,
     points: capturedPoints(burn).map((point) => ({
       id: `${point.date}-remaining`,
       label: point.date,
@@ -82,6 +84,7 @@ function scopeSeries(
   return {
     id: 'scope',
     label: 'Scope',
+    color: 4,
     ...(options.step === true ? { step: true } : {}),
     points: capturedPoints(burn).map((point) => ({
       id: `${point.date}-scope`,
@@ -96,6 +99,7 @@ function completedSeries(burn: SprintBurnPoints): PlotSeries {
   return {
     id: 'completed',
     label: 'Completed',
+    color: 1,
     points: capturedPoints(burn).map((point) => ({
       id: `${point.date}-completed`,
       label: point.date,
@@ -109,6 +113,7 @@ function startedSeries(burn: SprintBurnPoints): PlotSeries {
   return {
     id: 'started',
     label: 'Started',
+    color: 2,
     points: capturedPoints(burn).map((point) => ({
       id: `${point.date}-started`,
       label: point.date,
@@ -122,6 +127,7 @@ function targetSeries(burn: SprintBurnPoints, initialScope: number): PlotSeries 
   return {
     id: 'target',
     label: 'Target',
+    color: 3,
     dashed: true,
     points: burn.map((point) => ({
       id: `${point.date}-target`,
@@ -155,17 +161,16 @@ function forecastSeriesFor(
   forecast: ReturnType<typeof burnForecast>,
   forecastDateValue: string | null,
   sprintDaysList: readonly SprintDay[],
-): PlotSeries {
+): PlotSeries | null {
   const start = forecast?.points[0];
   const lastDay = sprintDaysList.at(-1);
-  const empty: PlotSeries = { id: 'forecast', label: 'Forecast', dashed: true, points: [] };
   if (
     forecast === null ||
     start === undefined ||
     forecastDateValue === null ||
     lastDay === undefined
   ) {
-    return empty;
+    return null;
   }
   const end = forecastEndPoint(start.label, start.value, forecastDateValue, lastDay.date);
   const points: PlotPoint[] = [
@@ -182,7 +187,7 @@ function forecastSeriesFor(
       cohort: { cohort: 'open' as const },
     },
   ];
-  return { id: 'forecast', label: 'Forecast', dashed: true, points };
+  return { id: 'forecast', label: 'Forecast', color: 3, dashed: true, points };
 }
 
 function SprintBurnChart({
@@ -201,12 +206,13 @@ function SprintBurnChart({
     current.baseline?.retroactive === true
       ? `Capture began ${readableDate(current.baseline.date)}. Earlier days show targets only.`
       : undefined;
+  const forecastSeries = forecastSeriesFor(forecast, forecastDateValue, sprintDaysList);
   const burnSeries: readonly PlotSeries[] =
     burnMode === 'down'
       ? [
           remainingSeries(current.burn),
           idealSeries(current.burn),
-          forecastSeriesFor(forecast, forecastDateValue, sprintDaysList),
+          ...(forecastSeries === null ? [] : [forecastSeries]),
           scopeSeries(current.burn, { step: true }),
         ]
       : [

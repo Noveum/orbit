@@ -38,6 +38,7 @@ export interface PlotSeries {
   readonly dashed?: boolean;
   readonly step?: boolean;
   readonly dots?: boolean;
+  readonly color?: number;
 }
 
 interface ActivePoint {
@@ -73,6 +74,10 @@ interface TooltipRow {
 
 function isAvailable(point: PlotPoint | undefined): boolean {
   return point !== undefined && point.available !== false;
+}
+
+function seriesToken(entry: PlotSeries, index: number): number {
+  return entry.color ?? (index % 4) + 1;
 }
 
 function maxValue(series: readonly PlotSeries[]): number {
@@ -649,9 +654,10 @@ function LegacyLinePlot({
       announcement={announcementOf(series, active, valueFormatter)}
       dataCount={rows.length}
       label={label}
-      legends={series.map((entry) => ({
+      legends={series.map((entry, index) => ({
         id: entry.id,
         label: entry.label,
+        color: seriesToken(entry, index),
         ...(entry.dashed === undefined ? {} : { dashed: entry.dashed }),
       }))}
       table={
@@ -746,7 +752,7 @@ function LegacyLinePlot({
                 d={legacyPathFor(entry, range, plotWidth, max)}
                 data-testid={`plot-line-${entry.id}`}
                 fill="none"
-                stroke={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
+                stroke={`var(--analytics-series-${seriesToken(entry, seriesIndex)})`}
                 strokeDasharray={entry.dashed ? '7 5' : undefined}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -771,7 +777,7 @@ function LegacyLinePlot({
                       cx={cx}
                       cy={cy}
                       data-testid={`plot-point-${point.id}`}
-                      fill={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
+                      fill={`var(--analytics-series-${seriesToken(entry, seriesIndex)})`}
                       pointerEvents="none"
                       r={isActive ? 4 : 3}
                       stroke="var(--color-surface)"
@@ -839,9 +845,10 @@ function DayLinePlot({
       announcement={announcementForDay(activeDayEntry, tooltipRows)}
       dataCount={tableRows.length}
       label={label}
-      legends={series.map((entry) => ({
+      legends={series.map((entry, index) => ({
         id: entry.id,
         label: entry.label,
+        color: seriesToken(entry, index),
         ...(entry.dashed === undefined ? {} : { dashed: entry.dashed }),
       }))}
       table={
@@ -944,7 +951,7 @@ function DayLinePlot({
                 d={dayPathFor(entry, geometry, max)}
                 data-testid={`plot-line-${entry.id}`}
                 fill="none"
-                stroke={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
+                stroke={`var(--analytics-series-${seriesToken(entry, seriesIndex)})`}
                 strokeDasharray={entry.dashed ? '7 5' : undefined}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -956,7 +963,7 @@ function DayLinePlot({
                   cx={dot.x}
                   cy={dot.y}
                   data-testid={`plot-dot-${dot.point.id}`}
-                  fill={`var(--analytics-series-${(seriesIndex % 4) + 1})`}
+                  fill={`var(--analytics-series-${seriesToken(entry, seriesIndex)})`}
                   key={dot.point.id}
                   pointerEvents="none"
                   r={DOT_RADIUS}

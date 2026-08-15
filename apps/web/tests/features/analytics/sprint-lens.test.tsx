@@ -324,6 +324,110 @@ describe('SprintLens', () => {
     expect(screen.getByTestId('plot-line-scope').getAttribute('d')).toContain('H');
   });
 
+  test('omits an unearned forecast entirely instead of a blank legend entry and table column', async () => {
+    const user = userEvent.setup();
+    render(<SprintLens data={data} query={sprintQueryFixture} />);
+
+    expect(screen.getByTestId('plot-line-scope')).toHaveAttribute(
+      'stroke',
+      'var(--analytics-series-4)',
+    );
+    expect(screen.queryByTestId('plot-legend-forecast')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText(/View data/));
+    expect(screen.queryByRole('columnheader', { name: 'Forecast' })).not.toBeInTheDocument();
+  });
+
+  test('clamps a far forecast to the frame edge with an interpolated value', async () => {
+    const user = userEvent.setup();
+    const forecastBurn = [
+      {
+        ...burnDay1,
+        date: '2026-08-11',
+        workingDay: 1,
+        scope: 12,
+        remaining: 10,
+        ideal: 12,
+        future: false,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-12',
+        workingDay: 2,
+        scope: 12,
+        remaining: 8,
+        ideal: 9,
+        future: false,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-13',
+        workingDay: 3,
+        scope: 12,
+        remaining: 6,
+        ideal: 6,
+        future: false,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-14',
+        workingDay: 4,
+        scope: 0,
+        remaining: 0,
+        ideal: 3,
+        available: false,
+        future: true,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-15',
+        workingDay: null,
+        scope: 0,
+        remaining: 0,
+        ideal: 3,
+        available: false,
+        future: true,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-16',
+        workingDay: null,
+        scope: 0,
+        remaining: 0,
+        ideal: 3,
+        available: false,
+        future: true,
+      },
+      {
+        ...burnDay2,
+        date: '2026-08-17',
+        workingDay: 5,
+        scope: 0,
+        remaining: 0,
+        ideal: 0,
+        available: false,
+        future: true,
+      },
+    ];
+    render(
+      <SprintLens
+        data={{
+          ...data,
+          current: data.current === null ? null : { ...data.current, burn: forecastBurn },
+        }}
+        query={analyticsQuerySchema.parse({ lens: 'sprints' })}
+      />,
+    );
+
+    expect(screen.getByText(/forecasts completion around aug 18, 2026/i)).toBeVisible();
+    expect(screen.getByText('Aug 18, 2026 · 1 days late')).toBeVisible();
+
+    const dayHits = screen.getAllByTestId('plot-day-hit');
+    expect(dayHits).toHaveLength(7);
+    await user.hover(dayHits.at(-1) as Element);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Forecast 1.2 points');
+  });
+
   test('does not invent velocity before any sprint exists', () => {
     render(
       <SprintLens
