@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   actualPace,
+  burnForecast,
   forecastDate,
   neededPace,
   personCaptureCaption,
@@ -123,6 +124,26 @@ describe('forecastDate', () => {
       point('2026-08-16', null, { future: true }),
     ];
     expect(forecastDate(mondayToMondayBurn, 12)).toBe('2026-08-18');
+  });
+});
+
+describe('burnForecast', () => {
+  test('projects a completion working day from a real declining slope', () => {
+    const burn = [
+      point('2026-08-11', 1, { remaining: 20 }),
+      point('2026-08-12', 2, { remaining: 15 }),
+      point('2026-08-13', 3, { remaining: 10 }),
+    ];
+    expect(burnForecast(burn)?.completionWorkingDay).toBe(5);
+  });
+
+  test('returns null instead of a runaway forecast when the slope is nearly flat', () => {
+    const burn = [
+      point('2026-08-11', 1, { remaining: 50 }),
+      point('2026-08-12', 2, { remaining: 49.9 }),
+      point('2026-08-13', 3, { remaining: 49.8 }),
+    ];
+    expect(burnForecast(burn)).toBeNull();
   });
 });
 

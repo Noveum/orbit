@@ -1,6 +1,5 @@
 import type { SprintBurnPoint } from '@orbit/core';
 import type { PlotPoint, PlotSeries } from './charts/line-plot.tsx';
-import type { AnalyticsSprintsResponse } from './contracts.ts';
 
 export type BurnPointLike = Pick<
   SprintBurnPoint,
@@ -17,6 +16,7 @@ export interface SprintDay {
 }
 
 const DAY = 86_400_000;
+const MAX_FORECAST_WORKING_DAYS_AHEAD = 90;
 
 function weekday(date: string): number {
   return new Date(`${date}T12:00:00.000Z`).getUTCDay();
@@ -124,7 +124,7 @@ export function forecastDate(
 }
 
 export function burnForecast(
-  burn: NonNullable<AnalyticsSprintsResponse['current']>['burn'],
+  burn: readonly BurnPointLike[],
 ): { readonly completionWorkingDay: number; readonly points: readonly PlotPoint[] } | null {
   const observed = burn.filter((point) => point.available && point.workingDay !== null);
   if (observed.length < 3) return null;
@@ -143,6 +143,7 @@ export function burnForecast(
   const last = observed.at(-1);
   if (last === undefined || last.workingDay === null) return null;
   const completionWorkingDay = Math.max(last.workingDay, Math.ceil(-intercept / slope));
+  if (completionWorkingDay - last.workingDay > MAX_FORECAST_WORKING_DAYS_AHEAD) return null;
   return {
     completionWorkingDay,
     points: [
