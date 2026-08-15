@@ -15,6 +15,7 @@ export default async function InboxPage() {
       items={inbox.items}
       unreadCount={inbox.unreadCount}
       unreadMentions={inbox.unreadMentions}
+      unreadActivity={inbox.unreadActivity}
       nextCursor={inbox.nextCursor}
       userId={context.principal.userId}
       canWriteDocs={can(context.principal, 'doc:write')}

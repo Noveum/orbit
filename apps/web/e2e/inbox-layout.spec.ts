@@ -98,8 +98,8 @@ test('a list longer than the pane never pushes the shell off the page', async ({
     .poll(async () => await list.evaluate((node) => node.scrollHeight - node.clientHeight))
     .toBeGreaterThan(0);
 
-  for (const tab of ['All', 'Unread', 'Mentions', 'Pull requests']) {
-    await reader.getByRole('button', { name: tab, exact: true }).click();
+  for (const tab of ['activity', 'unread', 'mentions', 'pulls', 'status']) {
+    await reader.getByTestId(`inbox-tab-${tab}`).click();
     const measured = await overflowOf(reader);
     expect(measured.documentY, `${tab} pushed the document`).toBe(0);
     expect(measured.mainY, `${tab} left dead space under the shell`).toBe(0);

@@ -27,6 +27,7 @@ export interface InboxData {
   readonly items: InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
+  readonly unreadActivity: number;
   readonly nextCursor: string | null;
 }
 
@@ -64,6 +65,7 @@ export async function loadInbox(principal: Principal): Promise<InboxData> {
   return {
     unreadCount: counters.total,
     unreadMentions: counters.mentions,
+    unreadActivity: counters.activity,
     nextCursor: page.nextCursor,
     items: page.items.map(toInboxItem),
   };

@@ -49,6 +49,11 @@ function action(overrides: Partial<SyncAction> = {}): SyncAction {
   };
 }
 
+function comment(overrides: Partial<SyncAction> = {}): SyncAction {
+  const base = action(overrides);
+  return { ...base, data: { ...base.data, type: 'comment_created' } };
+}
+
 function read(base: SyncAction): SyncAction {
   return {
     ...base,
@@ -149,6 +154,46 @@ describe('applyNotificationDeltas', () => {
   it('lowers the mention badge when another tab reads a mention', () => {
     const patch = applyNotificationDeltas([item({ type: 'mention' })], [read(action())], TAB);
     expect(patch.mentionDelta).toBe(-1);
+  });
+
+  it('leaves the activity count alone when an assignment arrives', () => {
+    const patch = applyNotificationDeltas([], [action()], TAB);
+    expect(patch.unreadDelta).toBe(1);
+    expect(patch.activityDelta).toBe(0);
+  });
+
+  it('raises the activity count when an unread comment arrives', () => {
+    const patch = applyNotificationDeltas([], [comment()], TAB);
+    expect(patch.unreadDelta).toBe(1);
+    expect(patch.activityDelta).toBe(1);
+  });
+
+  it('lowers the activity count when another tab reads a comment', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'comment_created' })],
+      [read(comment())],
+      TAB,
+    );
+    expect(patch.activityDelta).toBe(-1);
+  });
+
+  it('lowers the activity count when an unread comment is deleted', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'comment_created' })],
+      [comment({ action: 'delete' })],
+      TAB,
+    );
+    expect(patch.activityDelta).toBe(-1);
+  });
+
+  it('leaves the activity count alone when a status change is deleted', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'issue_status_changed' })],
+      [action({ action: 'delete' })],
+      TAB,
+    );
+    expect(patch.unreadDelta).toBe(-1);
+    expect(patch.activityDelta).toBe(0);
   });
 });
 

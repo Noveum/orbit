@@ -211,6 +211,12 @@ filters. `Bugs in progress with no assignee` deserves to be a view.
 The inbox collects what happened that involves you: assignments, mentions,
 comments on issues you follow, state changes on work you are watching.
 
+It opens on **Activity**, which is everything people did: comments, replies,
+mentions, reactions, reviews, failed checks, document changes. Issue field moves
+such as `ENG-3 moved to In Progress` and assignments live on the **Status** tab
+instead, so a busy board cannot bury a comment. The two tabs are complements, so
+nothing is hidden, and Unread, Mentions and Pull requests still span both.
+
 In-app notification preferences are per event type, with quiet hours that
 respect your timezone.
 

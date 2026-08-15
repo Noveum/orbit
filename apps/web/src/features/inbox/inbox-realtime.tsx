@@ -7,6 +7,7 @@ export interface InboxRealtimeProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
+  readonly unreadActivity: number;
   readonly nextCursor: string | null;
   readonly userId: string;
   readonly canWriteDocs: boolean;
@@ -17,6 +18,7 @@ export function InboxRealtime({
   items,
   unreadCount,
   unreadMentions,
+  unreadActivity,
   nextCursor,
   userId,
   canWriteDocs,
@@ -27,6 +29,7 @@ export function InboxRealtime({
       items={items}
       unreadCount={unreadCount}
       unreadMentions={unreadMentions}
+      unreadActivity={unreadActivity}
       nextCursor={nextCursor}
       userId={userId}
       canWriteDocs={canWriteDocs}

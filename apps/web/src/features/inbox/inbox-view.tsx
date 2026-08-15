@@ -2,7 +2,11 @@
 
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
 import type { NotificationType } from '@orbit/shared/constants';
-import { isPullRequestNotification, NOTIFICATION_TYPES } from '@orbit/shared/constants';
+import {
+  isPullRequestNotification,
+  isStatusChangeNotification,
+  NOTIFICATION_TYPES,
+} from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { relativeTime } from '@orbit/shared/utils';
@@ -69,18 +73,27 @@ const SOURCE_ICONS: Record<NotificationType, LucideIcon> = {
 };
 
 const TABS = [
-  { id: 'all', label: 'All' },
+  { id: 'activity', label: 'Activity' },
   { id: 'unread', label: 'Unread' },
   { id: 'mentions', label: 'Mentions' },
   { id: 'pulls', label: 'Pull requests' },
+  { id: 'status', label: 'Status' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
 function matchesTab(item: InboxItem, tab: TabId): boolean {
-  if (tab === 'unread') return !item.read;
-  if (tab === 'mentions') return item.type === 'mention';
-  if (tab === 'pulls') return isPullRequestNotification(item.type);
-  return true;
+  switch (tab) {
+    case 'activity':
+      return isActivity(item);
+    case 'status':
+      return isStatusChangeNotification(item.type);
+    case 'unread':
+      return !item.read;
+    case 'mentions':
+      return item.type === 'mention';
+    case 'pulls':
+      return isPullRequestNotification(item.type);
+  }
 }
 
 function openLabel(item: InboxItem): string {
@@ -158,6 +171,7 @@ interface InboxPatch {
   readonly rows: readonly InboxItem[];
   readonly unreadDelta: number;
   readonly mentionDelta: number;
+  readonly activityDelta: number;
 }
 
 function readChange(read: boolean): number {
@@ -166,6 +180,14 @@ function readChange(read: boolean): number {
 
 function unreadMentionCount(item: InboxItem): number {
   return !item.read && item.type === 'mention' ? 1 : 0;
+}
+
+function isActivity(item: InboxItem): boolean {
+  return !isStatusChangeNotification(item.type);
+}
+
+function unreadActivityCount(item: InboxItem): number {
+  return !item.read && isActivity(item) ? 1 : 0;
 }
 
 function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
@@ -179,6 +201,7 @@ function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
       rows: patch.rows.filter((row) => row.id !== item.id),
       unreadDelta: patch.unreadDelta - (previous.read ? 0 : 1),
       mentionDelta: patch.mentionDelta - unreadMentionCount(previous),
+      activityDelta: patch.activityDelta - unreadActivityCount(previous),
     };
   }
   if (previous === undefined) {
@@ -187,6 +210,7 @@ function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
       rows: [item, ...patch.rows],
       unreadDelta: patch.unreadDelta + (item.read ? 0 : 1),
       mentionDelta: patch.mentionDelta + unreadMentionCount(item),
+      activityDelta: patch.activityDelta + unreadActivityCount(item),
     };
   }
   const change = previous.read === item.read ? 0 : readChange(item.read);
@@ -194,6 +218,8 @@ function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
     rows: patch.rows.map((row) => (row.id === item.id ? item : row)),
     unreadDelta: patch.unreadDelta + change,
     mentionDelta: patch.mentionDelta + (unreadMentionCount(item) - unreadMentionCount(previous)),
+    activityDelta:
+      patch.activityDelta + (unreadActivityCount(item) - unreadActivityCount(previous)),
   };
 }
 
@@ -204,7 +230,7 @@ export function applyNotificationDeltas(
 ): InboxPatch {
   return actions
     .filter((action) => action.model === 'notification' && action.originClientId !== tabClientId)
-    .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0 });
+    .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0, activityDelta: 0 });
 }
 
 function LoadMoreRow({
@@ -417,6 +443,7 @@ export interface InboxViewProps {
   readonly items: readonly InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
+  readonly unreadActivity: number;
   readonly nextCursor: string | null;
   readonly userId: string;
   readonly canWriteDocs: boolean;
@@ -427,6 +454,7 @@ export function InboxView({
   items,
   unreadCount,
   unreadMentions,
+  unreadActivity,
   nextCursor,
   userId,
   canWriteDocs,
@@ -435,12 +463,13 @@ export function InboxView({
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
+  const [activity, setActivity] = useState(unreadActivity);
   const [cursor, setCursor] = useState<string | null>(nextCursor);
   const [loadingMore, setLoadingMore] = useState(false);
   const [pagingError, setPagingError] = useState<string | null>(null);
   const inFlight = useRef(false);
   const cursorRef = useRef<string | null>(nextCursor);
-  const [tab, setTab] = useState<TabId>('all');
+  const [tab, setTab] = useState<TabId>('activity');
   const [retainedUnreadIds, setRetainedUnreadIds] = useState<ReadonlySet<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -449,9 +478,10 @@ export function InboxView({
     setRows(items);
     setUnread(unreadCount);
     setMentions(unreadMentions);
+    setActivity(unreadActivity);
     setCursor(nextCursor);
     cursorRef.current = nextCursor;
-  }, [items, unreadCount, unreadMentions, nextCursor]);
+  }, [items, unreadCount, unreadMentions, unreadActivity, nextCursor]);
 
   useScopeSubscription([scopes.user(userId)]);
   useDeltaHandler(
@@ -464,6 +494,9 @@ export function InboxView({
         }
         if (patch.mentionDelta !== 0) {
           setMentions((current) => Math.max(0, current + patch.mentionDelta));
+        }
+        if (patch.activityDelta !== 0) {
+          setActivity((current) => Math.max(0, current + patch.activityDelta));
         }
       },
       [rows],
@@ -550,6 +583,7 @@ export function InboxView({
     async (item: InboxItem, next: boolean) => {
       if (item.read === next) return;
       const isMention = item.type === 'mention';
+      const countsAsActivity = isActivity(item);
       const applyLocally = (read: boolean, step: number) => {
         setRows((list) => list.map((row) => (row.id === item.id ? { ...row, read } : row)));
         if (tab === 'unread') {
@@ -561,6 +595,7 @@ export function InboxView({
           });
         }
         if (isMention) setMentions((count) => Math.max(0, count + step));
+        if (countsAsActivity) setActivity((count) => Math.max(0, count + step));
         setUnread((count) => Math.max(0, count + step));
       };
 
@@ -597,7 +632,11 @@ export function InboxView({
   const snooze = useCallback(async () => {
     if (current === undefined) return;
     const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
+    const wasUnreadMention = unreadMentionCount(current) === 1;
+    const wasUnreadActivity = unreadActivityCount(current) === 1;
     setRows((list) => list.map((row) => (row.id === current.id ? { ...row, snoozedUntil } : row)));
+    if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
+    if (wasUnreadActivity) setActivity((count) => Math.max(0, count - 1));
     applyServerCount(
       await apiRequest(`/api/notifications/${current.id}`, {
         method: 'PATCH',
@@ -608,9 +647,11 @@ export function InboxView({
 
   const remove = useCallback(async () => {
     if (current === undefined) return;
-    const wasUnreadMention = !current.read && current.type === 'mention';
+    const wasUnreadMention = unreadMentionCount(current) === 1;
+    const wasUnreadActivity = unreadActivityCount(current) === 1;
     setRows((list) => list.filter((row) => row.id !== current.id));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
+    if (wasUnreadActivity) setActivity((count) => Math.max(0, count - 1));
     applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
   }, [current, applyServerCount]);
 
@@ -673,16 +714,25 @@ export function InboxView({
               <button
                 key={entry.id}
                 type="button"
+                data-testid={`inbox-tab-${entry.id}`}
                 onClick={() => selectTab(entry.id)}
                 aria-current={tab === entry.id ? 'true' : undefined}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
+                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
                   tab === entry.id
                     ? 'bg-accent-soft font-medium text-accent'
                     : 'text-muted hover:bg-surface-2 hover:text-text',
                 )}
               >
                 {entry.label}
+                {entry.id === 'activity' && activity > 0 ? (
+                  <span
+                    data-testid="inbox-activity-count"
+                    className="text-2xs text-faint tabular-nums"
+                  >
+                    {activity}
+                  </span>
+                ) : null}
               </button>
             ))}
           </nav>

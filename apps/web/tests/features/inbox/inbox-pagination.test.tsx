@@ -113,6 +113,7 @@ function renderInbox(items: readonly InboxItem[], nextCursor: string | null) {
           items={items}
           unreadCount={0}
           unreadMentions={0}
+          unreadActivity={0}
           userId="user_1"
           nextCursor={nextCursor}
           canWriteDocs

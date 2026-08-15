@@ -124,11 +124,20 @@ Once seeded, the count is maintained locally:
 - `setReadState` adjusts it on the optimistic path and reverses that adjustment on the rollback
   path, in the same place it adjusts the mention count.
 - `remove` decrements it when the deleted row was an unread non-field-move.
+- `snooze` decrements it when the snoozed row was an unread non-field-move.
 
 `/api/notifications/read` and the notification `PATCH` and `DELETE` responses continue to return
 only `unreadCount`, so `applyServerCount` corrects the total but never the activity count. This is
 the same contract the mention count already lives under, and it keeps the change out of the route
 layer entirely.
+
+The snooze case is the one place that contract was already broken. `unreadCounters` excludes a
+snoozed row, so the server total drops the moment a row is snoozed, and `applyServerCount` applies
+that drop to the total. The mention count was never given the same treatment, so snoozing an unread
+mention left its badge one too high until the next page load. Adding the activity count to that
+function would have reproduced the same staleness, so `snooze` now adjusts both counts locally the
+way `remove` already did. This is a fix to existing mention behaviour, made because the alternative
+was shipping a new badge with a known stale case.
 
 ## Pagination
 
@@ -149,16 +158,23 @@ problem that has not yet been observed.
   `isStatusChangeNotification`, and disjointness from `PULL_REQUEST_NOTIFICATION_TYPES`.
 - `apps/web/tests/features/inbox/inbox-tabs.test.tsx`, new: `Activity` excludes field moves,
   `Status` shows only field moves, the complement property across a fixture covering every entry
-  in `NOTIFICATION_TYPES`, and the activity count rendering and its absence at zero.
+  in `NOTIFICATION_TYPES`, the activity count rendering and its absence at zero, and the snooze
+  case for both the activity and mention counts.
+- `apps/web/tests/features/inbox/inbox-issue.test.tsx`: the body-duplication test uses an
+  `issue_assigned` fixture, which this change moves to `Status`, so it selects that tab before
+  reading the detail pane. Keeping the fixture preserves assignment coverage rather than swapping
+  it for a type that happens to stay on the default tab.
 - `apps/web/tests/features/inbox/inbox-deltas.test.ts`: `activityDelta` across insert, update and
   delete. The shared fixture defaults to `issue_assigned`, which this change reclassifies as a
   field move, so the existing expectations are revised deliberately rather than left to pass by
   coincidence.
 - `packages/services/tests/notifications/notifications.test.ts`: the `activity` counter, including
-  a case where unread field moves and unread activity coexist. Both existing assertions compare
-  the counter object exactly, so both are updated.
-- `apps/web/e2e/inbox-layout.spec.ts`: the tab label list, which currently hardcodes the four
-  present labels.
+  a case where unread field moves and unread activity coexist, and one where a read field move
+  leaves both counters alone. One existing assertion compares the counter object exactly and is
+  updated; the other reads fields individually and needs no change.
+- `apps/web/e2e/inbox-layout.spec.ts`: the tab list. It matched tabs by exact accessible name,
+  which the count badge changes from `Activity` to `Activity 12`, so the tabs carry
+  `data-testid="inbox-tab-<id>"` and the spec selects them by that instead.
 
 ## Out of scope
 

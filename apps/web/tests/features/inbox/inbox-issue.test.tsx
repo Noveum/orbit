@@ -230,6 +230,7 @@ function renderInbox(
               items={items}
               unreadCount={1}
               unreadMentions={0}
+              unreadActivity={0}
               userId="user_1"
               nextCursor={null}
               canWriteDocs={docAccess.canWriteDocs}
@@ -324,6 +325,7 @@ describe('reading a notification in the inbox', () => {
   });
 
   it('does not repeat a body the issue itself already says', async () => {
+    const user = userEvent.setup();
     renderInbox([
       item({
         type: 'issue_assigned',
@@ -334,6 +336,8 @@ describe('reading a notification in the inbox', () => {
         url: '/issue/ENG-3',
       }),
     ]);
+
+    await user.click(screen.getByTestId('inbox-tab-status'));
 
     await screen.findByTestId('issue-detail');
     expect(screen.queryByTestId('inbox-event-context')).toBeNull();

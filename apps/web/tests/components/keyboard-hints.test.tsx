@@ -133,6 +133,7 @@ function Surfaces({ extra }: { readonly extra?: ReactNode }) {
             items={[]}
             unreadCount={0}
             unreadMentions={0}
+            unreadActivity={0}
             userId="user_1"
             nextCursor={null}
             canWriteDocs
