@@ -286,3 +286,23 @@ describe('rolling back a snooze the server rejected', () => {
     expect(rollback.rows[1]?.snoozedUntil).toBe('2026-03-01T00:00:00.000Z');
   });
 });
+
+describe('a snoozed mention', () => {
+  it('is not counted, because the server counter excludes it too', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'mention', snoozedUntil: '2999-01-01T00:00:00.000Z' })],
+      [action({ action: 'delete' })],
+      TAB,
+    );
+    expect(patch.mentionDelta).toBe(0);
+  });
+
+  it('is counted again once the snooze has expired', () => {
+    const patch = applyNotificationDeltas(
+      [item({ type: 'mention', snoozedUntil: '2020-01-01T00:00:00.000Z' })],
+      [action({ action: 'delete' })],
+      TAB,
+    );
+    expect(patch.mentionDelta).toBe(-1);
+  });
+});

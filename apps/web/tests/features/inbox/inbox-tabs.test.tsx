@@ -241,6 +241,23 @@ describe('a write the server rejects', () => {
   });
 });
 
+describe('overlapping snoozes on one row', () => {
+  it('sends a single request however fast the key is pressed', async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    globalThis.fetch = mock(() => {
+      calls += 1;
+      return new Promise<Response>(() => undefined);
+    }) as unknown as typeof fetch;
+    renderInbox([item({ id: 'notification_unread', read: false })], 1);
+
+    await user.keyboard('h');
+    await user.keyboard('h');
+
+    expect(calls).toBe(1);
+  });
+});
+
 describe('the empty state', () => {
   it('does not claim inbox zero when the notifications are all on another tab', () => {
     renderInbox([statusMove, assignment]);

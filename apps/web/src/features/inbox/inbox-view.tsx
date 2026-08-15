@@ -180,16 +180,16 @@ function readChange(read: boolean): number {
   return read ? -1 : 1;
 }
 
-function unreadMentionCount(item: InboxItem): number {
-  return !item.read && item.type === 'mention' ? 1 : 0;
-}
-
 function isActivity(item: InboxItem): boolean {
   return !isStatusChangeNotification(item.type);
 }
 
 function countsTowardUnread(item: InboxItem, at = Date.now()): boolean {
   return item.snoozedUntil === null || Date.parse(item.snoozedUntil) <= at;
+}
+
+function unreadMentionCount(item: InboxItem): number {
+  return !item.read && countsTowardUnread(item) && item.type === 'mention' ? 1 : 0;
 }
 
 function unreadActivityCount(item: InboxItem): number {
@@ -488,6 +488,7 @@ export function InboxView({
   const [rows, setRows] = useState<readonly InboxItem[]>(items);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const snoozing = useRef<Set<string>>(new Set());
   const [unread, setUnread] = useState(unreadCount);
   const [mentions, setMentions] = useState(unreadMentions);
   const [activity, setActivity] = useState(unreadActivity);
@@ -663,10 +664,11 @@ export function InboxView({
   }, []);
 
   const snooze = useCallback(async () => {
-    if (current === undefined) return;
+    if (current === undefined || snoozing.current.has(current.id)) return;
+    snoozing.current.add(current.id);
     const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
     const previousSnoozedUntil = current.snoozedUntil;
-    const wasUnreadMention = countsTowardUnread(current) && unreadMentionCount(current) === 1;
+    const wasUnreadMention = unreadMentionCount(current) === 1;
     const wasUnreadActivity = unreadActivityCount(current) === 1;
     setRows((list) => list.map((row) => (row.id === current.id ? { ...row, snoozedUntil } : row)));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
@@ -688,6 +690,8 @@ export function InboxView({
       setRows(rollback.rows);
       if (rollback.restoreCounts) restoreCounts(wasUnreadMention, wasUnreadActivity);
       setError(FAILED_SAVE);
+    } finally {
+      snoozing.current.delete(current.id);
     }
   }, [current, applyServerCount, restoreCounts]);
 
