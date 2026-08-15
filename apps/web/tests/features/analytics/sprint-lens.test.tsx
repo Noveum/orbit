@@ -223,6 +223,26 @@ describe('SprintLens', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Completed 3');
   });
 
+  test('shows the burn-up Started tooltip and table with the raw started count while the line still plots the stacked height', async () => {
+    const user = userEvent.setup();
+    render(<SprintLens data={data} query={sprintQueryFixture} />);
+
+    await user.click(screen.getByRole('button', { name: 'Burn up' }));
+    await user.hover(screen.getAllByTestId('plot-day-hit')[1] as Element);
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Started 6 points');
+    expect(tooltip).not.toHaveTextContent('Started 9 points');
+
+    const burnFigure = screen
+      .getByRole('application', { name: 'Sprint burn up' })
+      .closest('figure');
+    if (burnFigure === null) throw new Error('missing burn chart figure');
+    await user.click(within(burnFigure).getByText(/View data/));
+    expect(within(burnFigure).getByRole('cell', { name: '6 points' })).toBeVisible();
+
+    expect(screen.getByTestId('plot-line-started').getAttribute('d')).toContain('34.40');
+  });
+
   test('shows only the ideal target on a pre-capture day instead of a fabricated zero', async () => {
     const user = userEvent.setup();
     const preCaptureBurn = [

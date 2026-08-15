@@ -129,6 +129,7 @@ function startedSeries(burn: SprintBurnPoints): PlotSeries {
       id: `${point.date}-started`,
       label: point.date,
       value: point.completed + point.started,
+      displayValue: point.started,
       cohort: { cohort: 'open' as const },
     })),
   };

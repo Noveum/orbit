@@ -26,6 +26,7 @@ export interface PlotPoint {
   readonly id: string;
   readonly label: string;
   readonly value: number;
+  readonly displayValue?: number;
   readonly cohort: AnalyticsDrilldownCohort;
   readonly x?: number;
   readonly available?: boolean;
@@ -503,7 +504,13 @@ function tooltipRowsForDay(
     );
     return point === undefined
       ? []
-      : [{ id: entry.id, series: entry.label, value: valueFormatter(point.value) }];
+      : [
+          {
+            id: entry.id,
+            series: entry.label,
+            value: valueFormatter(point.displayValue ?? point.value),
+          },
+        ];
   });
 }
 
@@ -552,7 +559,9 @@ function dayTableRows(
     for (const entry of series) {
       const point = entry.points.find((candidate) => candidate.label === day.date);
       const formatted =
-        point !== undefined && isAvailable(point) ? valueFormatter(point.value) : '';
+        point !== undefined && isAvailable(point)
+          ? valueFormatter(point.displayValue ?? point.value)
+          : '';
       cells[entry.id] = formatted;
       if (formatted !== '') parts.push(`${entry.label} ${formatted}`);
     }
