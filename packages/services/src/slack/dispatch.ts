@@ -27,6 +27,8 @@ const credentialsSchema = z.object({ botToken: z.string().min(1).optional() });
 export interface SlackContext {
   readonly integrationId: string;
   readonly token: string | null;
+  readonly scopes: string[];
+  readonly hasDirectMessageScope: boolean;
 }
 
 export async function resolveSlackContext(
@@ -40,13 +42,70 @@ export async function resolveSlackContext(
   ];
   if (externalId !== undefined) filters.push(eq(integration.externalId, externalId));
   const [row] = await database
-    .select({ id: integration.id, credentials: integration.credentials })
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+    })
     .from(integration)
     .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
   const parsed = credentialsSchema.safeParse(row.credentials);
-  return { integrationId: row.id, token: parsed.success ? (parsed.data.botToken ?? null) : null };
+  const configuredScopes = row.config['scopes'];
+  const scopes = Array.isArray(configuredScopes)
+    ? configuredScopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+  return {
+    integrationId: row.id,
+    token: parsed.success ? (parsed.data.botToken ?? null) : null,
+    scopes,
+    hasDirectMessageScope: scopes.includes('im:write'),
+  };
+}
+
+export async function upsertSlackUserMapping(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly integrationId: string;
+    readonly userId: string;
+    readonly slackUserId: string;
+    readonly slackDisplayName: string;
+  },
+): Promise<void> {
+  await database
+    .insert(slackUserMapping)
+    .values({ id: randomUUIDv7(), ...input })
+    .onConflictDoUpdate({
+      target: [slackUserMapping.integrationId, slackUserMapping.userId],
+      set: {
+        slackUserId: input.slackUserId,
+        slackDisplayName: input.slackDisplayName,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+export async function listSlackUserMappings(
+  database: SlackDatabase,
+  organizationId: string,
+  userIds: readonly string[],
+): Promise<{ userId: string; slackUserId: string; slackDisplayName: string }[]> {
+  if (userIds.length === 0) return [];
+  return await database
+    .select({
+      userId: slackUserMapping.userId,
+      slackUserId: slackUserMapping.slackUserId,
+      slackDisplayName: slackUserMapping.slackDisplayName,
+    })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.organizationId, organizationId),
+        inArray(slackUserMapping.userId, [...userIds]),
+      ),
+    );
 }
 
 export async function upsertSlackUserMapping(

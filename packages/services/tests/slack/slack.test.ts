@@ -113,18 +113,24 @@ describe('buildUnfurl', () => {
 describe('SlackClient', () => {
   it('opens a direct message conversation', async () => {
     const requests: { url: string; body: Record<string, unknown> }[] = [];
-    const client = new SlackClient({
-      token: 'xoxb-test',
-      baseUrl: 'https://slack.test/api',
-      fetch: (input, init) => {
+    const fetch = Object.assign(
+      (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
         requests.push({
           url: String(input),
           body: JSON.parse(String(init?.body)) as Record<string, unknown>,
         });
-        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }), {
-          headers: { 'content-type': 'application/json' },
-        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
       },
+      { preconnect: () => undefined },
+    );
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      baseUrl: 'https://slack.test/api',
+      fetch,
     });
 
     await expect(client.openConversation('U123')).resolves.toEqual({ channel: 'D123' });

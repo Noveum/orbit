@@ -16,9 +16,11 @@ import {
   dispatchSlackMessage,
   ensureSlackIntegration,
   issueIdentifierFromUrl,
+  listSlackUserMappings,
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -97,6 +99,43 @@ describe('resolveSlackContext', () => {
       expect(context?.token).toBe('xoxb-test');
     });
   });
+
+  it('persists Slack scopes and exposes whether direct messages are authorized', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+
+      const context = await resolveSlackContext(tx, fixture.organizationId);
+      expect(context?.scopes).toEqual(['chat:write', 'im:write']);
+      expect(context?.hasDirectMessageScope).toBe(true);
+    });
+  });
+});
+
+describe('Slack user mappings', () => {
+  it('upserts and lists organization-scoped mappings', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+
+      expect(await listSlackUserMappings(tx, fixture.organizationId, [fixture.userId])).toEqual([
+        {
+          userId: fixture.userId,
+          slackUserId: 'U123',
+          slackDisplayName: 'Ada Slack',
+        },
+      ]);
+    });
+  });
 });
 
 describe('ensureSlackIntegration', () => {
@@ -154,10 +193,14 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
         token: 'xoxb-acme',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
       expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
         integrationId: globex.integrationId,
         token: 'xoxb-globex',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
     });
   });
@@ -186,6 +229,8 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
         token: 'xoxb-acme',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
     });
   });
