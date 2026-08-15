@@ -110,6 +110,30 @@ describe('buildUnfurl', () => {
   });
 });
 
+describe('SlackClient', () => {
+  it('opens a direct message conversation', async () => {
+    const requests: { url: string; body: Record<string, unknown> }[] = [];
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      baseUrl: 'https://slack.test/api',
+      fetch: (input, init) => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    await expect(client.openConversation('U123')).resolves.toEqual({ channel: 'D123' });
+    expect(requests).toEqual([
+      { url: 'https://slack.test/api/conversations.open', body: { users: 'U123' } },
+    ]);
+  });
+});
+
 describe('commandParser', () => {
   it('parses new and search', () => {
     expect(commandParser('new Fix the router')).toEqual({ kind: 'new', title: 'Fix the router' });

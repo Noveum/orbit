@@ -185,6 +185,10 @@ const viewResponseSchema = slackResponseSchema.extend({
   view: z.object({ id: z.string() }).optional(),
 });
 
+const openConversationResponseSchema = slackResponseSchema.extend({
+  channel: z.object({ id: z.string() }).optional(),
+});
+
 const conversationsResponseSchema = slackResponseSchema.extend({
   channels: z
     .array(
@@ -279,6 +283,13 @@ export class SlackClient {
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),
     });
     return { channel: body.channel ?? input.channel, ts: body.ts ?? '' };
+  }
+
+  async openConversation(userId: string): Promise<{ channel: string }> {
+    const body = await this.call('conversations.open', openConversationResponseSchema, {
+      users: userId,
+    });
+    return { channel: body.channel?.id ?? '' };
   }
 
   async updateMessage(input: UpdateMessageInput): Promise<SlackMessageRef> {
