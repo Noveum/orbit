@@ -261,6 +261,22 @@ describe('collections', () => {
       code: 'forbidden',
     });
   });
+
+  it('refuses to move a doc the caller cannot write', async () => {
+    const { collection } = await createDocCollection(workspace.admin, { name: 'Private' });
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Restricted',
+      collectionId: collection.id,
+      visibility: 'private',
+    });
+    const member = await addMember(workspace, 'member', { name: 'Mina Member' });
+
+    await expect(deleteDocCollection(member.principal, collection.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    expect(await listDocCollections(workspace.admin)).toHaveLength(1);
+    expect((await getDoc(workspace.admin, doc.id)).doc.collectionId).toBe(collection.id);
+  });
 });
 
 describe('published doc urls', () => {

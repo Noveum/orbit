@@ -1551,6 +1551,18 @@ export async function deleteDocCollection(
         .limit(1);
       requireRow(target, 'That collection does not exist.');
     }
+    const docs = await tx
+      .select(DOC_COLUMNS)
+      .from(schema.doc)
+      .where(
+        and(
+          eq(schema.doc.organizationId, principal.organizationId),
+          eq(schema.doc.collectionId, collectionId),
+        ),
+      );
+    for (const doc of docs) {
+      await assertDocWritable(tx, principal, doc);
+    }
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const homeless = await emptyCollection(
