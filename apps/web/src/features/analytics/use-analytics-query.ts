@@ -1,18 +1,20 @@
 'use client';
 
-import type { AnalyticsQuery } from '@orbit/shared/validators';
+import type { AnalyticsInsightsQuery, AnalyticsQuery } from '@orbit/shared/validators';
 import { type UseQueryResult, useQuery } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '@/lib/query/fetcher.ts';
 import { analyticsKeys } from './analytics-keys.ts';
 import {
+  type AnalyticsInsightsResponse,
   type AnalyticsOverviewResponse,
   type AnalyticsPeopleResponse,
   type AnalyticsProjectsResponse,
   type AnalyticsResponseByLens,
   type AnalyticsSprintsResponse,
+  analyticsInsightsWireResponse,
   analyticsLensResponseSchemas,
 } from './contracts.ts';
-import { searchParamsForAnalytics } from './query-state.ts';
+import { searchParamsForAnalytics, searchParamsForInsights } from './query-state.ts';
 
 async function fetchAnalyticsLens(
   query: AnalyticsQuery,
@@ -33,6 +35,16 @@ async function fetchAnalyticsLens(
     case 'insights':
       throw new ApiError(404, 'not_found', 'Insights analytics is not available yet.');
   }
+}
+
+export async function fetchInsights(
+  query: AnalyticsInsightsQuery,
+  signal: AbortSignal,
+): Promise<AnalyticsInsightsResponse> {
+  const search = searchParamsForInsights(query).toString();
+  return await apiFetch(`/api/analytics/insights?${search}`, analyticsInsightsWireResponse, {
+    signal,
+  });
 }
 
 export function useAnalyticsQuery(

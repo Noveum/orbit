@@ -1,8 +1,11 @@
+import { validationFailed } from '@orbit/shared/errors';
 import { encodeFilter, filterGroupSchema, isEmptyFilter } from '@orbit/shared/filters';
 import {
   type AnalyticsDrilldownQuery,
+  type AnalyticsInsightsQuery,
   type AnalyticsQuery,
   analyticsDrilldownQuerySchema,
+  analyticsInsightsQuerySchema,
   analyticsQuerySchema,
 } from '@orbit/shared/validators';
 import { z } from 'zod';
@@ -132,4 +135,28 @@ export function canonicalAnalyticsQuery(query: AnalyticsQuery): string {
 
 export function canonicalDrilldownQuery(query: AnalyticsDrilldownQuery): string {
   return searchParamsForDrilldown(query).toString();
+}
+
+export function analyticsInsightsFromSearchParams(
+  params: AnalyticsSearchParams,
+): AnalyticsInsightsQuery {
+  const raw = parameterValue(params, 'query');
+  let json: unknown;
+  try {
+    json = raw === undefined ? {} : JSON.parse(raw);
+  } catch {
+    throw validationFailed('That analytics insights query is not valid JSON.');
+  }
+  return analyticsInsightsQuerySchema.parse(json);
+}
+
+export function searchParamsForInsights(query: AnalyticsInsightsQuery): URLSearchParams {
+  const parsed = analyticsInsightsQuerySchema.parse(query);
+  const params = new URLSearchParams();
+  params.set('query', JSON.stringify(parsed));
+  return params;
+}
+
+export function canonicalInsightsQuery(query: AnalyticsInsightsQuery): string {
+  return searchParamsForInsights(query).toString();
 }
