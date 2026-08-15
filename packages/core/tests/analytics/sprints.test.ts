@@ -221,6 +221,9 @@ describe('loadSprintAnalytics', () => {
     expect(burn[3]?.ideal).toBeCloseTo(6 / 9, 5);
     expect(currentOf(result).scopeChanges.added).toBe(0);
     expect(result.formulas.burn).toContain('unavailable rather than zero');
+    expect(burn.map((point) => point.calendarDay)).toEqual(
+      Array.from({ length: burn.length }, (_, index) => index + 1),
+    );
   });
 
   it('holds the capture baseline cycle wide for a person scoped burn', async () => {
@@ -441,6 +444,32 @@ describe('loadSprintAnalytics', () => {
     expect(currentOf(result).scopeChanges).toMatchObject({ added: 2, removed: 2 });
     expect(currentOf(result).burn.map((point) => point.scope)).toEqual([1, 1, 1, 2, 1, 1, 0]);
     expect(currentOf(result).cohorts.removed).toContain(moved);
+  });
+
+  it('weights an unestimated membership addition as 1 point, matching the points-mode rule', async () => {
+    const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z');
+    const estimated = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      estimate: 3,
+    });
+    const unestimated = await insertIssue(workspace, {
+      number: 2,
+      state: 'Todo',
+      cycleId,
+      estimate: null,
+    });
+    await membership(cycleId, estimated, { addedAt: '2026-01-02T00:00:00.000Z', estimate: 3 });
+    await membership(cycleId, unestimated, { addedAt: '2026-01-03T00:00:00.000Z', estimate: null });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId, 'points'), {
+      now: new Date('2026-01-04T12:00:00.000Z'),
+    });
+
+    expect(currentOf(result).scopeChanges.added).toBe(4);
+    const addDay = currentOf(result).burn.find((point) => point.date === '2026-01-03');
+    expect(addDay?.added).toBe(1);
   });
 
   it('changes committed scope at known state transitions without applying current backlog backward', async () => {

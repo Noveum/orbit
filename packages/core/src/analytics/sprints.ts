@@ -531,7 +531,7 @@ function burnFor(
       )
       .reduce((sum, entry) => {
         if (measure === 'issues') return sum + 1;
-        return sum + (entry.estimateAtAdd ?? 0);
+        return sum + (entry.estimateAtAdd ?? 1);
       }, 0);
     const removed = facts.issues
       .flatMap((fact) => fact.memberships)
@@ -544,7 +544,7 @@ function burnFor(
       )
       .reduce((sum, entry) => {
         if (measure === 'issues') return sum + 1;
-        return sum + (entry.estimateAtAdd ?? 0);
+        return sum + (entry.estimateAtAdd ?? 1);
       }, 0);
     points.push({
       date: day,
@@ -711,7 +711,7 @@ function summaryFor(
     });
   const eventValue = (rows: readonly MembershipRow[]): number =>
     attributedEvents(rows).reduce(
-      (sum, row) => sum + (measure === 'issues' ? 1 : (row.estimateAtAdd ?? 0)),
+      (sum, row) => sum + (measure === 'issues' ? 1 : (row.estimateAtAdd ?? 1)),
       0,
     );
   const currentFacts = personFacts.filter(

@@ -294,7 +294,7 @@ function otherDimensionPredicate(
     dimension === 'state'
       ? sql`${schema.issue.stateId}`
       : sql`coalesce(${schema.issue.projectId}, 'none')`;
-  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 0)` : sql`1`;
+  const weight = resolved.measure === 'points' ? sql`coalesce(issue.estimate, 1)` : sql`1`;
   return sql`${dimensionId} not in (
     select ranked.dimension_id from (
       select ${dimensionId} as dimension_id
@@ -1082,7 +1082,7 @@ export async function listAnalyticsDrilldown(
     ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(requestedLimit)))
     : 50;
   const weight =
-    resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 0)` : sql`1`;
+    resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
   const [aggregate] = await db.execute<AggregateRow>(sql`
     select
       count(*) as total,

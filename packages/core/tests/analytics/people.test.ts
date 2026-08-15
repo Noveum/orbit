@@ -240,7 +240,7 @@ describe('loadPeopleAnalytics', () => {
 
     expect(row).toMatchObject({
       currentAssignments: 1,
-      currentPoints: 0,
+      currentPoints: 1,
       completedIssues: 2,
       completedPoints: 8,
       activeWeeks: 2,

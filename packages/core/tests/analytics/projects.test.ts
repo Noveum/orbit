@@ -526,7 +526,7 @@ describe('loadProjectAnalytics', () => {
       healthSource: 'manual',
       status: 'in_progress',
       scopeIssues: 4,
-      scopePoints: 10,
+      scopePoints: 11,
       openIssues: 3,
       completedIssues: 1,
       blocked: 1,
@@ -681,12 +681,12 @@ describe('loadProjectAnalytics', () => {
 
     expect(row).toMatchObject({
       scopeIssues: 2,
-      scopePoints: 8,
+      scopePoints: 9,
       unestimated: 1,
       estimateCoverage: 'mixed',
     });
     expect(drilldown.total).toBe(2);
-    expect(drilldown.totalValue).toBe(8);
+    expect(drilldown.totalValue).toBe(9);
   });
 
   it('lets every workspace role inspect projects across teams without crossing organizations', async () => {

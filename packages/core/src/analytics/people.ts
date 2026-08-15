@@ -367,9 +367,9 @@ async function currentStats(
   const rows = await db.execute<CurrentStatRow>(sql`
     select ${personIdSql()} as person_id,
       count(*) filter (where ${open}) as current_assignments,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${open}), 0) as current_points,
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (where ${open}), 0) as current_points,
       count(*) filter (where ${wip}) as current_wip,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${wip}), 0) as current_wip_points,
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (where ${wip}), 0) as current_wip_points,
       count(*) filter (where ${wip} and issue.state_entered_at <= ${resolved.asOf.toISOString()}::timestamptz) as wip_age_valid,
       percentile_cont(0.5) within group (
         order by extract(epoch from (${resolved.asOf.toISOString()}::timestamptz - issue.state_entered_at)) / 86400

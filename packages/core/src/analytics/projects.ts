@@ -370,13 +370,13 @@ async function projectStats(
   const rows = await db.execute<ProjectStatRow>(sql`
     select issue.project_id,
       count(*) as scope_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)), 0) as scope_points,
+      coalesce(sum(coalesce(issue.estimate, 1)), 0) as scope_points,
       count(*) filter (where ${open}) as open_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${open}), 0) as open_points,
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (where ${open}), 0) as open_points,
       count(*) filter (where ${wip}) as wip_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${wip}), 0) as wip_points,
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (where ${wip}), 0) as wip_points,
       count(*) filter (where ${completed}) as completed_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (where ${completed}), 0) as completed_points,
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (where ${completed}), 0) as completed_points,
       count(*) filter (where ${blocked}) as blocked,
       count(*) filter (where ${overdue}) as overdue,
       count(*) filter (where ${open} and issue.updated_at < ${staleBefore}::timestamptz) as stale,
@@ -386,7 +386,7 @@ async function projectStats(
         where issue.completed_at >= ${from.toISOString()}::timestamptz
           and issue.completed_at < ${to.toISOString()}::timestamptz
       ) as completed_range_issues,
-      coalesce(sum(coalesce(issue.estimate, 0)) filter (
+      coalesce(sum(coalesce(issue.estimate, 1)) filter (
         where issue.completed_at >= ${from.toISOString()}::timestamptz
           and issue.completed_at < ${to.toISOString()}::timestamptz
       ), 0) as completed_range_points
