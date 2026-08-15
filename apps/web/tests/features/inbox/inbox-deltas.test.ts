@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import type { InboxItem } from '../../../src/features/inbox/data.ts';
-import { applyNotificationDeltas } from '../../../src/features/inbox/inbox-view.tsx';
+import { applyNotificationDeltas, revertSnooze } from '../../../src/features/inbox/inbox-view.tsx';
 
 const TAB = 'tab_a';
 
@@ -243,5 +243,34 @@ describe('what the reading pane is looking at', () => {
     const row = item({ entityType: 'issue', entityId: 'issue_42' });
     expect(row.entityType).toBe('issue');
     expect(row.entityId).toBe('issue_42');
+  });
+});
+
+describe('reverting a snooze the server rejected', () => {
+  it('puts back the value the row had before the failed request', () => {
+    const rows = [item({ snoozedUntil: '2026-03-01T00:00:00.000Z' })];
+
+    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+
+    expect(reverted[0]?.snoozedUntil).toBeNull();
+  });
+
+  it('leaves a newer snooze alone rather than overwriting it', () => {
+    const rows = [item({ snoozedUntil: '2026-06-01T00:00:00.000Z' })];
+
+    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+
+    expect(reverted[0]?.snoozedUntil).toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  it('leaves every other row untouched', () => {
+    const rows = [
+      item({ id: 'notification_1', snoozedUntil: '2026-03-01T00:00:00.000Z' }),
+      item({ id: 'notification_2', snoozedUntil: '2026-03-01T00:00:00.000Z' }),
+    ];
+
+    const reverted = revertSnooze(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
+
+    expect(reverted[1]?.snoozedUntil).toBe('2026-03-01T00:00:00.000Z');
   });
 });

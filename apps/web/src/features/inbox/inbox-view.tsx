@@ -194,6 +194,17 @@ function unreadActivityCount(item: InboxItem): number {
   return !item.read && countsTowardUnread(item) && isActivity(item) ? 1 : 0;
 }
 
+export function revertSnooze(
+  rows: readonly InboxItem[],
+  id: string,
+  optimistic: string,
+  previous: string | null,
+): readonly InboxItem[] {
+  return rows.map((row) =>
+    row.id === id && row.snoozedUntil === optimistic ? { ...row, snoozedUntil: previous } : row,
+  );
+}
+
 function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
   const item = toInboxItem(action.data);
   if (item === null) return patch;
@@ -657,11 +668,7 @@ export function InboxView({
         }),
       );
     } catch {
-      setRows((list) =>
-        list.map((row) =>
-          row.id === current.id ? { ...row, snoozedUntil: previousSnoozedUntil } : row,
-        ),
-      );
+      setRows((list) => revertSnooze(list, current.id, snoozedUntil, previousSnoozedUntil));
       restoreCounts(wasUnreadMention, wasUnreadActivity);
     }
   }, [current, applyServerCount, restoreCounts]);
