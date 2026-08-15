@@ -293,6 +293,50 @@ export interface DispatchSlackInput {
   readonly fetch?: typeof globalThis.fetch;
 }
 
+export interface DispatchSlackDmInput {
+  readonly organizationId: string;
+  readonly userId: string;
+  readonly text: string;
+  readonly blocks?: SlackBlock[];
+  readonly fetch?: typeof globalThis.fetch;
+}
+
+export async function dispatchSlackDm(
+  database: SlackDatabase,
+  input: DispatchSlackDmInput,
+): Promise<number> {
+  const context = await resolveSlackContext(database, input.organizationId);
+  if (context === null || context.token === null || !context.hasDirectMessageScope) return 0;
+  const [mapping] = await database
+    .select({ slackUserId: slackUserMapping.slackUserId })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.userId, input.userId),
+      ),
+    )
+    .limit(1);
+  if (mapping === undefined) return 0;
+
+  const client = new SlackClient({
+    token: context.token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+  });
+  try {
+    const conversation = await client.openConversation(mapping.slackUserId);
+    await client.postMessage({
+      channel: conversation.channel,
+      text: input.text,
+      ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+    });
+    return 1;
+  } catch (error) {
+    console.error('[orbit] slack DM post failed', error);
+    return 0;
+  }
+}
+
 export async function dispatchSlackMessage(
   database: SlackDatabase,
   input: DispatchSlackInput,

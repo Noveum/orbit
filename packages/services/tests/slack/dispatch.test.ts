@@ -13,6 +13,7 @@ import { eq } from 'drizzle-orm';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
+  dispatchSlackDm,
   dispatchSlackMessage,
   ensureSlackIntegration,
   issueIdentifierFromUrl,
@@ -751,6 +752,68 @@ describe('dispatchSlackMessage', () => {
 
       expect(delivered).toBe(0);
       expect(log.channels).toHaveLength(0);
+    });
+  });
+});
+
+describe('dispatchSlackDm', () => {
+  it('opens the mapped conversation and posts the message', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+      const calls: { method: string; body: Record<string, unknown> }[] = [];
+      const fetch = ((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        calls.push({ method: _url.split('/').pop() ?? '', body });
+        const response = _url.endsWith('conversations.open')
+          ? { ok: true, channel: { id: 'D123' } }
+          : { ok: true, channel: 'D123', ts: '1.0' };
+        return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
+      }) as unknown as typeof globalThis.fetch;
+
+      const delivered = await dispatchSlackDm(tx, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'You were mentioned',
+        fetch,
+      });
+      expect(delivered).toBe(1);
+      expect(calls).toEqual([
+        { method: 'conversations.open', body: { users: 'U123' } },
+        { method: 'chat.postMessage', body: { channel: 'D123', text: 'You were mentioned' } },
+      ]);
+    });
+  });
+
+  it('skips unmapped users and swallows provider failures', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      const fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }), { status: 200 }),
+        )) as unknown as typeof globalThis.fetch;
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'No mapping',
+          fetch,
+        }),
+      ).toBe(0);
     });
   });
 });
