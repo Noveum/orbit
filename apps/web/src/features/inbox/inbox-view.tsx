@@ -39,7 +39,7 @@ import { DocSurface } from '@/features/docs/doc-surface.tsx';
 import { IssueDetailView } from '@/features/issues/issue-detail.tsx';
 import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
-import { rowHover } from '@/lib/interaction.ts';
+import { rowHover, tabHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
@@ -634,31 +634,58 @@ export function InboxView({
     [setReadState],
   );
 
+  const restoreCounts = useCallback((mention: boolean, activityRow: boolean) => {
+    if (mention) setMentions((count) => count + 1);
+    if (activityRow) setActivity((count) => count + 1);
+    setError('That did not save. Check your connection and try again.');
+  }, []);
+
   const snooze = useCallback(async () => {
     if (current === undefined) return;
     const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
+    const previousSnoozedUntil = current.snoozedUntil;
     const wasUnreadMention = countsTowardUnread(current) && unreadMentionCount(current) === 1;
     const wasUnreadActivity = unreadActivityCount(current) === 1;
     setRows((list) => list.map((row) => (row.id === current.id ? { ...row, snoozedUntil } : row)));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
     if (wasUnreadActivity) setActivity((count) => Math.max(0, count - 1));
-    applyServerCount(
-      await apiRequest(`/api/notifications/${current.id}`, {
-        method: 'PATCH',
-        body: { snoozeHours: SNOOZE_HOURS },
-      }),
-    );
-  }, [current, applyServerCount]);
+    try {
+      applyServerCount(
+        await apiRequest(`/api/notifications/${current.id}`, {
+          method: 'PATCH',
+          body: { snoozeHours: SNOOZE_HOURS },
+        }),
+      );
+    } catch {
+      setRows((list) =>
+        list.map((row) =>
+          row.id === current.id ? { ...row, snoozedUntil: previousSnoozedUntil } : row,
+        ),
+      );
+      restoreCounts(wasUnreadMention, wasUnreadActivity);
+    }
+  }, [current, applyServerCount, restoreCounts]);
 
   const remove = useCallback(async () => {
     if (current === undefined) return;
     const wasUnreadMention = unreadMentionCount(current) === 1;
     const wasUnreadActivity = unreadActivityCount(current) === 1;
+    const removedAt = rows.findIndex((row) => row.id === current.id);
     setRows((list) => list.filter((row) => row.id !== current.id));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
     if (wasUnreadActivity) setActivity((count) => Math.max(0, count - 1));
-    applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
-  }, [current, applyServerCount]);
+    try {
+      applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
+    } catch {
+      setRows((list) => {
+        if (list.some((row) => row.id === current.id)) return list;
+        const restored = [...list];
+        restored.splice(removedAt === -1 ? list.length : removedAt, 0, current);
+        return restored;
+      });
+      restoreCounts(wasUnreadMention, wasUnreadActivity);
+    }
+  }, [current, rows, applyServerCount, restoreCounts]);
 
   useHotkey('j', () => move(1), {
     label: 'Next notification',
@@ -723,10 +750,10 @@ export function InboxView({
                 onClick={() => selectTab(entry.id)}
                 aria-current={tab === entry.id ? 'true' : undefined}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-dense transition-colors duration-[var(--duration-fast)]',
+                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-dense',
                   tab === entry.id
                     ? 'bg-accent-soft font-medium text-accent'
-                    : 'text-muted hover:bg-surface-2 hover:text-text',
+                    : cn(tabHover, 'text-muted hover:bg-surface-2'),
                 )}
               >
                 {entry.label}

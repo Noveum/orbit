@@ -36,7 +36,7 @@ are read, snoozed and deleted.
 `packages/shared/src/constants/notification.ts` gains a list beside the existing
 `PULL_REQUEST_NOTIFICATION_TYPES`, declared the same way:
 
-```
+```ts
 STATUS_CHANGE_NOTIFICATION_TYPES = [
   'issue_status_changed',
   'issue_priority_changed',
@@ -68,7 +68,7 @@ and a test asserts this so that a future addition to either list cannot make a t
 
 The tab bar becomes:
 
-```
+```text
 Activity | Unread | Mentions | Pull requests | Status
 ```
 

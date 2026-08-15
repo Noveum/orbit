@@ -29,14 +29,18 @@ afterAll(() => {
 const { InboxView } = await import('@/features/inbox/inbox-view.tsx');
 
 const realFetch = globalThis.fetch;
+let failWrite = false;
 
 beforeEach(() => {
+  failWrite = false;
   globalThis.fetch = mock(() =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ unreadCount: 0 }),
-    }),
+    failWrite
+      ? Promise.reject(new Error('network down'))
+      : Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ unreadCount: 0 }),
+        }),
   ) as unknown as typeof fetch;
 });
 
@@ -205,6 +209,35 @@ describe('the Activity unread count', () => {
     await user.keyboard('u');
 
     expect(screen.getByTestId('inbox-activity-count')).toHaveTextContent('1');
+  });
+});
+
+describe('a write the server rejects', () => {
+  it('puts the activity count back when the snooze does not save', async () => {
+    const user = userEvent.setup();
+    renderInbox([item({ id: 'notification_unread', read: false })], 1);
+    failWrite = true;
+
+    await user.keyboard('h');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('inbox-activity-count')).toHaveTextContent('1');
+  });
+
+  it('puts the row and the activity count back when the delete does not save', async () => {
+    const user = userEvent.setup();
+    renderInbox([item({ id: 'notification_unread', read: false })], 1);
+    failWrite = true;
+
+    await user.keyboard('{Backspace}');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inbox-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('inbox-activity-count')).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /New comment on ENG-3/ })).toBeInTheDocument();
   });
 });
 
