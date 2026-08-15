@@ -562,8 +562,9 @@ function burnFor(
       coverage,
     });
   }
-  if (lastDay < sprintFinalDay) {
-    let day = addDate(lastDay, 1);
+  const lastObservedDay = points.at(-1)?.date ?? startDay;
+  if (lastObservedDay < sprintFinalDay) {
+    let day = addDate(lastObservedDay, 1);
     while (day <= sprintFinalDay) {
       const working = isWorkingDay(day);
       points.push({
@@ -786,7 +787,10 @@ function detailFor(
   });
   const otherMeasure = measure === 'issues' ? ('points' as const) : ('issues' as const);
   const counterpartBurn = burnFor(facts, otherMeasure, now, null);
-  const counterpart = summaryFor(facts, counterpartBurn, cohorts, otherMeasure, now, null);
+  const counterpartBaseline = baselinePointOf(counterpartBurn);
+  const counterpart = summaryFor(facts, counterpartBurn, cohorts, otherMeasure, now, null, null, {
+    baselineScope: counterpartBaseline?.scope ?? null,
+  });
   const personIds = unique(
     facts.issues.flatMap((fact) => [
       ...(fact.assigneeId === null ? [] : [fact.assigneeId]),

@@ -1035,6 +1035,56 @@ describe('loadSprintAnalytics', () => {
     expect(result.formulas.points).toContain('counts as 1 point');
   });
 
+  it('does not duplicate the sprint start date when now predates the sprint start', async () => {
+    const cycleId = await cycle(1, '2026-09-01T00:00:00.000Z', '2026-09-08T00:00:00.000Z');
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    await membership(cycleId, issueId, { addedAt: '2026-08-25T00:00:00.000Z' });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-20T12:00:00.000Z'),
+      selectedSprintId: cycleId,
+    });
+    const burn = currentOf(result).burn;
+    const dates = burn.map((point) => point.date);
+
+    expect(new Set(dates).size).toBe(dates.length);
+    expect(dates[0]).toBe('2026-09-01');
+    expect(dates.at(-1)).toBe('2026-09-07');
+    expect(dates.every((date) => date >= '2026-09-01')).toBe(true);
+  });
+
+  it('adopts each person own retroactive baseline for their planned total', async () => {
+    const cycleId = await cycle(1, '2026-08-11T00:00:00.000Z', '2026-08-25T00:00:00.000Z');
+    const member = await addMember(workspace, 'member', { name: 'Priya' });
+    const issueId = await insertIssue(workspace, {
+      number: 1,
+      state: 'Todo',
+      cycleId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      assigneeId: member.user.id,
+    });
+    await membership(cycleId, issueId, {
+      addedAt: '2026-08-14T07:00:00.000Z',
+      coverage: 'observed',
+      entryKind: 'bootstrap',
+      assigneeId: member.user.id,
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    });
+    const personSummary = currentOf(result).people.find(
+      (entry) => entry.personId === member.user.id,
+    )?.summary;
+
+    expect(personSummary?.planned).toBe(1);
+  });
+
   it('does not call completed outcomes frozen when a relevant membership is observed', async () => {
     const cycleId = await cycle(1, '2026-01-01T00:00:00.000Z', '2026-01-08T00:00:00.000Z', {
       completedAt: '2026-01-08T00:00:00.000Z',
