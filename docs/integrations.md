@@ -95,6 +95,29 @@ complete.
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.
 
+## Slack
+
+Slack is an optional workspace integration for channel notifications and
+personal direct-message notifications. Enable it with `ORBIT_SLACK_ENABLED=1`
+and configure the Slack OAuth app used by the deployment.
+
+The Slack app needs `chat:write` for channel delivery and `im:write` for direct
+messages. Existing installations must reconnect after `im:write` is added;
+Orbit stores granted scopes as non-secret integration metadata and never exposes
+the bot token to the browser.
+
+Slack direct messages are available only when the Orbit user is mapped to a
+Slack member in that workspace. An unmapped user keeps receiving other enabled
+notification channels and does not cause notification creation to fail. Team
+and project notifications continue to use the configured Slack channel;
+personal notifications use Slack DMs. Quiet hours and the urgent-assignment
+bypass apply to DMs using the same notification settings as email.
+
+If the notification settings show that Slack DMs require reauthorization,
+reconnect Slack from **Settings**, **Integrations**. If they show that the user
+is unmapped, the workspace administrator must complete the Orbit-to-Slack user
+mapping before Slack DMs can be enabled.
+
 ### Note on GitHub sign-in
 
 `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are a different thing. Those are
