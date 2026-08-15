@@ -1,5 +1,9 @@
 import { can } from '@orbit/shared/policy';
-import { analyticsInsightsQuerySchema, analyticsQuerySchema } from '@orbit/shared/validators';
+import {
+  analyticsInsightsQuerySchema,
+  analyticsQuerySchema,
+  insightConfigSchema,
+} from '@orbit/shared/validators';
 import { HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
 import { AnalyticsCockpit } from '@/features/analytics/analytics-cockpit.tsx';
@@ -36,7 +40,10 @@ export default async function AnalyticsPage({ searchParams }: PageProps) {
     cleanUrl && typeof pinnedQuery === 'object' && pinnedQuery !== null
       ? analyticsQuerySchema.parse(pinnedQuery)
       : requestedQuery;
-  const initialInsight = insightConfigFromSearchParams(params);
+  const initialInsight =
+    cleanUrl && query.lens === 'insights'
+      ? insightConfigSchema.parse(pinned?.config['insight'] ?? {})
+      : insightConfigFromSearchParams(params);
   const hydrationState =
     query.lens === 'insights'
       ? await dehydratedAnalyticsInsights(
