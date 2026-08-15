@@ -103,7 +103,7 @@ export async function cycleBurndown(
     });
   }
   const scopeStart = points[0]?.scope ?? 0;
-  const last = actual.at(-1);
+  const last = actual.filter((point) => !point.future).at(-1);
   const totalDays = Math.max(1, points.length - 1);
   const compatiblePoints = points.map((point, index) => ({
     ...point,
