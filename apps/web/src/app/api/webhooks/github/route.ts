@@ -91,6 +91,7 @@ export async function POST(request: Request): Promise<Response> {
   if (claimResponse !== null) return claimResponse;
 
   let body: unknown;
+  let deliveryFinalized = false;
   try {
     body = JSON.parse(raw);
   } catch {
@@ -143,6 +144,16 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
+    await db
+      .update(schema.webhookDelivery)
+      .set(
+        outcome.ignoredReason === null
+          ? { status: 'processed', error: null }
+          : { status: 'ignored', error: outcome.ignoredReason },
+      )
+      .where(deliveryMatch(deliveryId));
+    deliveryFinalized = true;
+
     if (slackIntegrationEnabled() && outcome.organizationId !== null) {
       for (const dispatch of outcome.slackDm) {
         const notification = outcome.notifications.find(
@@ -157,24 +168,18 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    await db
-      .update(schema.webhookDelivery)
-      .set(
-        outcome.ignoredReason === null
-          ? { status: 'processed', error: null }
-          : { status: 'ignored', error: outcome.ignoredReason },
-      )
-      .where(deliveryMatch(deliveryId));
     return Response.json({
       ok: true,
       actions: outcome.actions.length,
       ...(outcome.ignoredReason === null ? {} : { ignored: outcome.ignoredReason }),
     });
   } catch (error) {
-    await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'failed' })
-      .where(deliveryMatch(deliveryId));
+    if (!deliveryFinalized) {
+      await db
+        .update(schema.webhookDelivery)
+        .set({ status: 'failed' })
+        .where(deliveryMatch(deliveryId));
+    }
     console.error('[orbit] github webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
