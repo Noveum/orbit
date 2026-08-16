@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
+import { dispatchSlackDm } from '@orbit/services';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
@@ -13,6 +14,15 @@ export async function notifyRecipients(
   const populated = events.filter((event) => event.userIds.length > 0);
   if (populated.length === 0) return [];
   const outcome = await notifyMany(executor, populated);
+  for (const dispatch of outcome.slackDm) {
+    const notification = outcome.notifications.find((item) => item.id === dispatch.notificationId);
+    if (notification === undefined) continue;
+    await dispatchSlackDm(executor, {
+      organizationId: notification.organizationId,
+      userId: dispatch.userId,
+      text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
+    });
+  }
   return outcome.actions;
 }
 
