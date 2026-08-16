@@ -77,9 +77,13 @@ test('filters narrow the list, round trip through the url and save as a view', a
     .poll(async () => Number(await page.getByTestId('issue-count').innerText()))
     .toBe(twoFilters);
 
+  await page.goto(`${BASE}/my-issues`);
+  await expect(page.getByTestId('issue-count')).toBeVisible();
+
   await page.goBack();
-  await page.goForward();
+  await expect(page).toHaveURL(/filter=/);
   await expect(page.getByTestId('filter-chip-assignee')).toBeVisible();
+  await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
 
   await page.getByTestId('display-menu-trigger').first().click();
   await expect(page.getByTestId('display-menu')).toBeVisible();
