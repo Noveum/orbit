@@ -199,6 +199,21 @@ const conversationsResponseSchema = slackResponseSchema.extend({
   response_metadata: z.object({ next_cursor: z.string().default('') }).optional(),
 });
 
+const userResponseSchema = slackResponseSchema.extend({
+  user: z
+    .object({
+      id: z.string(),
+      real_name: z.string().default(''),
+      profile: z
+        .object({
+          email: z.string().email().optional(),
+          display_name: z.string().default(''),
+        })
+        .default({ display_name: '' }),
+    })
+    .optional(),
+});
+
 export interface SlackMessageRef {
   readonly channel: string;
   readonly ts: string;
@@ -214,6 +229,12 @@ export interface SlackChannel {
 export interface SlackConversations {
   readonly channels: SlackChannel[];
   readonly nextCursor: string | null;
+}
+
+export interface SlackUser {
+  readonly id: string;
+  readonly email: string | null;
+  readonly displayName: string;
 }
 
 export interface SlackClientOptions {
@@ -308,6 +329,17 @@ export class SlackClient {
         isArchived: channel.is_archived ?? false,
       })),
       nextCursor: nextCursor.length > 0 ? nextCursor : null,
+    };
+  }
+
+  async lookupUserByEmail(email: string): Promise<SlackUser | null> {
+    const body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    const user = body.user;
+    if (user === undefined) return null;
+    return {
+      id: user.id,
+      email: user.profile.email ?? null,
+      displayName: user.profile.display_name || user.real_name,
     };
   }
 

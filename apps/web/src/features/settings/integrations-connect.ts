@@ -1,5 +1,7 @@
-import { db } from '@orbit/db';
-import { ensureSlackIntegration } from '@orbit/services';
+import { db, eq } from '@orbit/db';
+import { user } from '@orbit/db/schema';
+import { SlackClient } from '@orbit/services/slack';
+import { ensureSlackIntegration, upsertSlackUserMapping } from '@orbit/services/slack/dispatch';
 import { internal } from '@orbit/shared/errors';
 import { z } from 'zod';
 
@@ -11,6 +13,8 @@ const oauthAccessSchema = z.object({
   access_token: z.string().min(1).optional(),
   error: z.string().optional(),
   team: z.object({ id: z.string(), name: z.string().default('') }).optional(),
+  authed_user: z.object({ id: z.string().optional() }).optional(),
+  scope: z.string().optional(),
 });
 
 export async function completeSlackInstall(input: {
@@ -42,9 +46,34 @@ export async function completeSlackInstall(input: {
     throw internal(`Slack OAuth exchange failed: ${parsed.data.error ?? 'unknown_error'}.`);
   }
 
-  await ensureSlackIntegration(db, {
+  const grantedScopes = (parsed.data.scope ?? '')
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
+  const integrationId = await ensureSlackIntegration(db, {
     organizationId: input.organizationId,
     connectedById: input.userId,
     botToken: parsed.data.access_token,
+    ...(parsed.data.team?.id === undefined ? {} : { externalId: parsed.data.team.id }),
+    scopes: grantedScopes,
+  });
+
+  const [orbitUser] = await db
+    .select({ email: user.email })
+    .from(user)
+    .where(eq(user.id, input.userId))
+    .limit(1);
+  if (orbitUser === undefined) return;
+
+  const slackUser = await new SlackClient({ token: parsed.data.access_token }).lookupUserByEmail(
+    orbitUser.email.trim(),
+  );
+  if (slackUser === null) return;
+  await upsertSlackUserMapping(db, {
+    organizationId: input.organizationId,
+    integrationId,
+    userId: input.userId,
+    slackUserId: slackUser.id,
+    slackDisplayName: slackUser.displayName,
   });
 }

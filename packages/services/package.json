@@ -10,7 +10,8 @@
     "./email": "./src/email/index.ts",
     "./github": "./src/github/index.ts",
     "./notifications": "./src/notifications/index.ts",
-    "./slack": "./src/slack/index.ts"
+    "./slack": "./src/slack/index.ts",
+    "./slack/dispatch": "./src/slack/dispatch.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

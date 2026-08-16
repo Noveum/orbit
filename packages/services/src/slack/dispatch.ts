@@ -1,5 +1,13 @@
 import type { Database, Transaction } from '@orbit/db';
-import { integration, issue, slackChannelSync, team, user, workflowState } from '@orbit/db/schema';
+import {
+  integration,
+  issue,
+  slackChannelSync,
+  slackUserMapping,
+  team,
+  user,
+  workflowState,
+} from '@orbit/db/schema';
 import { type Priority, parseIssueIdentifier } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
@@ -41,6 +49,29 @@ export async function resolveSlackContext(
   return { integrationId: row.id, token: parsed.success ? (parsed.data.botToken ?? null) : null };
 }
 
+export async function upsertSlackUserMapping(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly integrationId: string;
+    readonly userId: string;
+    readonly slackUserId: string;
+    readonly slackDisplayName: string;
+  },
+): Promise<void> {
+  await database
+    .insert(slackUserMapping)
+    .values({ id: randomUUIDv7(), ...input })
+    .onConflictDoUpdate({
+      target: [slackUserMapping.integrationId, slackUserMapping.userId],
+      set: {
+        slackUserId: input.slackUserId,
+        slackDisplayName: input.slackDisplayName,
+        updatedAt: new Date(),
+      },
+    });
+}
+
 export async function ensureSlackIntegration(
   database: SlackDatabase,
   input: {
@@ -48,6 +79,7 @@ export async function ensureSlackIntegration(
     readonly connectedById: string;
     readonly botToken: string;
     readonly externalId?: string;
+    readonly scopes?: readonly string[];
   },
 ): Promise<string> {
   const externalId = input.externalId ?? 'default';
@@ -60,10 +92,15 @@ export async function ensureSlackIntegration(
       externalId,
       connectedById: input.connectedById,
       credentials: { botToken: input.botToken },
+      config: { scopes: [...(input.scopes ?? [])] },
     })
     .onConflictDoUpdate({
       target: [integration.organizationId, integration.provider, integration.externalId],
-      set: { credentials: { botToken: input.botToken }, updatedAt: new Date() },
+      set: {
+        credentials: { botToken: input.botToken },
+        config: { scopes: [...(input.scopes ?? [])] },
+        updatedAt: new Date(),
+      },
     })
     .returning({ id: integration.id });
   if (row === undefined) throw new Error('Could not persist the Slack integration.');
