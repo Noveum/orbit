@@ -4,7 +4,7 @@ import { pageContext } from '@/lib/api/handler.ts';
 
 export default async function NotificationSettingsPage() {
   const { principal } = await pageContext();
-  const state = await loadNotificationPreferences(principal.userId);
+  const state = await loadNotificationPreferences(principal.userId, principal.organizationId);
 
   return (
     <section className="flex flex-col gap-5">

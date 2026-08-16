@@ -20,6 +20,7 @@ export interface NotificationPreferenceState {
 
 export async function loadNotificationPreferences(
   userId: string,
+  organizationId: string,
 ): Promise<NotificationPreferenceState> {
   const rows = await db
     .select()
@@ -34,7 +35,12 @@ export async function loadNotificationPreferences(
   const [slack] = await db
     .select({ config: schema.integration.config, integrationId: schema.integration.id })
     .from(schema.integration)
-    .where(eq(schema.integration.provider, 'slack'))
+    .where(
+      and(
+        eq(schema.integration.organizationId, organizationId),
+        eq(schema.integration.provider, 'slack'),
+      ),
+    )
     .limit(1);
   let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
   if (slack !== undefined) {
@@ -63,6 +69,7 @@ export async function loadNotificationPreferences(
 
 export async function saveNotificationPreferences(
   userId: string,
+  organizationId: string,
   input: unknown,
 ): Promise<NotificationPreferenceState> {
   const parsed = notificationSettingsSchema.parse(input);
@@ -106,5 +113,5 @@ export async function saveNotificationPreferences(
       .onConflictDoUpdate({ target: schema.notificationSetting.userId, set: settings });
   });
 
-  return await loadNotificationPreferences(userId);
+  return await loadNotificationPreferences(userId, organizationId);
 }

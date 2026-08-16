@@ -2,6 +2,7 @@ import { and, db, eq, inArray, lt, or, schema } from '@orbit/db';
 import {
   applyGithubEvent,
   applyGithubInstallationEvent,
+  dispatchSlackDm,
   dispatchSlackMessage,
   findGithubInstallationAnywhere,
   handlesGithubEvent,
@@ -121,6 +122,8 @@ export async function POST(request: Request): Promise<Response> {
         organizationId: applied.organizationId,
         teamIds: applied.teamIds,
         actions,
+        notifications: notified.notifications,
+        slackDm: notified.slackDm,
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
       };
@@ -138,6 +141,20 @@ export async function POST(request: Request): Promise<Response> {
         teamIds: outcome.teamIds,
         text: `${outcome.slackText}: ${absoluteUrl('/inbox')}`,
       });
+    }
+
+    if (slackIntegrationEnabled() && outcome.organizationId !== null) {
+      for (const dispatch of outcome.slackDm) {
+        const notification = outcome.notifications.find(
+          (item) => item.id === dispatch.notificationId,
+        );
+        if (notification === undefined) continue;
+        await dispatchSlackDm(db, {
+          organizationId: outcome.organizationId,
+          userId: dispatch.userId,
+          text: `${notification.title}: ${absoluteUrl(notification.url)}`,
+        });
+      }
     }
 
     await db
