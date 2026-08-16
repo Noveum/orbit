@@ -70,6 +70,7 @@ async function claimDelivery(deliveryId: string, eventName: string): Promise<Res
     : Response.json({ status: 'duplicate' });
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: webhook orchestration keeps claim, apply, delivery, and finalization together
 export async function POST(request: Request): Promise<Response> {
   const secret = process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
   const raw = await request.text();
@@ -144,6 +145,22 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
+    if (slackIntegrationEnabled() && outcome.organizationId !== null) {
+      for (const dispatch of outcome.slackDm) {
+        const notification = outcome.notifications.find(
+          (item) => item.id === dispatch.notificationId,
+        );
+        if (notification === undefined) continue;
+        const delivered = await dispatchSlackDm(db, {
+          organizationId: outcome.organizationId,
+          userId: dispatch.userId,
+          clientMsgId: dispatch.notificationId,
+          text: `${notification.title}: ${absoluteUrl(notification.url)}`,
+        });
+        if (delivered !== 1) throw new Error('Slack DM delivery failed.');
+      }
+    }
+
     await db
       .update(schema.webhookDelivery)
       .set(
@@ -153,20 +170,6 @@ export async function POST(request: Request): Promise<Response> {
       )
       .where(deliveryMatch(deliveryId));
     deliveryFinalized = true;
-
-    if (slackIntegrationEnabled() && outcome.organizationId !== null) {
-      for (const dispatch of outcome.slackDm) {
-        const notification = outcome.notifications.find(
-          (item) => item.id === dispatch.notificationId,
-        );
-        if (notification === undefined) continue;
-        await dispatchSlackDm(db, {
-          organizationId: outcome.organizationId,
-          userId: dispatch.userId,
-          text: `${notification.title}: ${absoluteUrl(notification.url)}`,
-        });
-      }
-    }
 
     return Response.json({
       ok: true,

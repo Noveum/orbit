@@ -784,13 +784,17 @@ describe('dispatchSlackDm', () => {
       const delivered = await dispatchSlackDm(tx, {
         organizationId: fixture.organizationId,
         userId: fixture.userId,
+        clientMsgId: 'notification-1',
         text: 'You were mentioned',
         fetch,
       });
       expect(delivered).toBe(1);
       expect(calls).toEqual([
         { method: 'conversations.open', body: { users: 'U123' } },
-        { method: 'chat.postMessage', body: { channel: 'D123', text: 'You were mentioned' } },
+        {
+          method: 'chat.postMessage',
+          body: { channel: 'D123', text: 'You were mentioned', client_msg_id: 'notification-1' },
+        },
       ]);
     });
   });

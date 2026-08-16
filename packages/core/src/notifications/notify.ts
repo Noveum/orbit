@@ -20,6 +20,7 @@ export async function notifyRecipients(
     await dispatchSlackDm(executor, {
       organizationId: notification.organizationId,
       userId: dispatch.userId,
+      clientMsgId: dispatch.notificationId,
       text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
     });
   }
