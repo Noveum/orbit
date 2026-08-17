@@ -117,8 +117,7 @@ contributors and guests do not.
 | <kbd>Cmd</kbd> <kbd>B</kbd> | Switch between board and list |
 | <kbd>[</kbd> | Toggle the left sidebar |
 | <kbd>]</kbd> | Toggle the right panel |
-
-The theme toggle has no key of its own. Run it from the command palette.
+| <kbd>Shift</kbd> <kbd>T</kbd> | Switch between light and dark theme |
 
 ## How the shortcuts resolve
 
@@ -147,7 +146,7 @@ what makes a shortcut appear in the <kbd>?</kbd> dialog. There is no separate
 list to update:
 
 ```ts
-useHotkey('shift+d', duplicateIssue, {
+useHotkey('shift+z', duplicateIssue, {
   label: 'Duplicate issue',
   section: 'Issues',
   scope: 'issues',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import type { NavLink, ShellTeam } from '@/lib/navigation.ts';
-import { buildNavigation, buildSidebarNav } from '@/lib/navigation.ts';
+import type { CommandContext, NavLink, ShellTeam } from '@/lib/navigation.ts';
+import { buildCommands, buildNavigation, buildSidebarNav } from '@/lib/navigation.ts';
 
 const TEAMS: readonly ShellTeam[] = [
   { id: 'team_1', key: 'ENG', name: 'Engineering', openIssues: 4 },
@@ -55,5 +55,22 @@ describe('navigation bindings', () => {
     expect(buildSidebarNav(TEAMS, 7).personal[0]?.count).toBe(7);
     expect(fromSections?.count).toBe(2);
     expect(fromSidebar?.count).toBe(7);
+  });
+});
+
+describe('global commands', () => {
+  it('registers the theme toggle with the shift+t binding', () => {
+    const context: CommandContext = {
+      sections: [],
+      navigate: () => undefined,
+      toggleSidebar: () => undefined,
+      toggleTheme: () => undefined,
+      showShortcuts: () => undefined,
+      dark: false,
+    };
+    const commands = buildCommands(context);
+    const themeCommand = commands.find((cmd) => cmd.id === 'view:theme');
+    expect(themeCommand).toBeDefined();
+    expect(themeCommand?.binding).toBe('shift+t');
   });
 });

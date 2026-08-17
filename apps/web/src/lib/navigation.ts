@@ -208,6 +208,7 @@ export function buildCommands(context: CommandContext): AppCommand[] {
       label: context.dark ? 'Switch to light theme' : 'Switch to dark theme',
       section: 'View',
       icon: context.dark ? Sun : Moon,
+      binding: 'shift+t',
       run: context.toggleTheme,
     },
     {
