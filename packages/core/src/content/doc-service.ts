@@ -257,16 +257,25 @@ export async function docReadableBy(
   return canReadDoc(principal, doc, await grantedDocIds(executor, principal, [doc.id]));
 }
 
+export function evaluateDocAccessLevel(
+  principal: Principal,
+  doc: DocRow,
+  hasWriteGrant: boolean,
+): DocAccessLevel {
+  if (!can(principal, 'doc:write')) return 'read';
+  if (principal.role === 'admin') return 'write';
+  if (doc.authorId === principal.userId) return 'write';
+  if (!isRestricted(doc.visibility)) return 'write';
+  return hasWriteGrant ? 'write' : 'read';
+}
+
 export async function docAccessLevel(
   executor: Executor,
   principal: Principal,
   doc: DocRow,
 ): Promise<DocAccessLevel> {
-  if (!can(principal, 'doc:write')) return 'read';
-  if (principal.role === 'admin') return 'write';
-  if (doc.authorId === principal.userId) return 'write';
-  if (!isRestricted(doc.visibility)) return 'write';
-  return (await writeGrantedDocIds(executor, principal, doc.id)) ? 'write' : 'read';
+  const granted = await writeGrantedDocIds(executor, principal, doc.id);
+  return evaluateDocAccessLevel(principal, doc, granted);
 }
 
 export async function assertDocWritable(
@@ -310,16 +319,7 @@ async function assertDocsMovable(
   const blockingReadable: string[] = [];
   let blockingInvisibleCount = 0;
   for (const doc of docsToCheck) {
-    let canWrite = false;
-    if (principal.role === 'admin') {
-      canWrite = true;
-    } else if (doc.authorId === principal.userId) {
-      canWrite = true;
-    } else if (isRestricted(doc.visibility)) {
-      canWrite = writeGrants.has(doc.id);
-    } else {
-      canWrite = true;
-    }
+    const canWrite = evaluateDocAccessLevel(principal, doc, writeGrants.has(doc.id)) === 'write';
     if (!canWrite) {
       const canRead = canReadDoc(principal, doc, readGrantedArray);
       if (canRead) {
@@ -1581,8 +1581,9 @@ async function emptyCollection(
     .where(
       and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
     );
-
+  if (docsToCheck.length === 0) return [];
   await assertDocsMovable(executor, principal, docsToCheck);
+  const docIds = docsToCheck.map((doc) => doc.id);
   const base = await nextSiblingOrder(executor, organizationId, {
     collectionId: reassignToId,
     projectId: null,
@@ -1592,7 +1593,11 @@ async function emptyCollection(
     .update(schema.doc)
     .set({ collectionId: reassignToId, updatedAt: new Date(), syncId })
     .where(
-      and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
+      and(
+        eq(schema.doc.organizationId, organizationId),
+        eq(schema.doc.collectionId, collectionId),
+        inArray(schema.doc.id, docIds),
+      ),
     )
     .returning({ id: schema.doc.id, parentId: schema.doc.parentId });
   if (orphaned.length === 0) return [];
