@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
-import { dispatchSlackDm } from '@orbit/services';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import { notifyMany } from '@orbit/services/notifications';
+import { dispatchSlackDm } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
