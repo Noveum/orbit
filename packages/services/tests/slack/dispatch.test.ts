@@ -117,14 +117,22 @@ describe('ensureSlackIntegration', () => {
         scopes: ['im:write'],
       });
       const rows = await tx
-        .select({ externalId: integration.externalId, credentials: integration.credentials })
+        .select({
+          externalId: integration.externalId,
+          config: integration.config,
+          credentials: integration.credentials,
+        })
         .from(integration)
         .where(eq(integration.organizationId, fixture.organizationId));
 
       expect(legacy).toBeDefined();
       expect(integrationId).toBe(legacy!.id);
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({ externalId: 'T0123', credentials: { botToken: 'xoxb-new' } });
+      expect(rows[0]).toEqual({
+        externalId: 'default',
+        config: { slackTeamId: 'T0123', scopes: ['im:write'] },
+        credentials: { botToken: 'xoxb-new' },
+      });
     });
   });
 });

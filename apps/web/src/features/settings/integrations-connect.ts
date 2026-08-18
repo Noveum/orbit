@@ -1,8 +1,10 @@
-import { db, eq } from '@orbit/db';
-import { user } from '@orbit/db/schema';
+import { and, db, eq } from '@orbit/db';
+import { member, user } from '@orbit/db/schema';
 import { SlackClient } from '@orbit/services/slack';
 import { ensureSlackIntegration, upsertSlackUserMapping } from '@orbit/services/slack/dispatch';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { internal } from '@orbit/shared/errors';
+import { assertCan } from '@orbit/shared/policy';
 import { z } from 'zod';
 
 const SLACK_OAUTH_ACCESS_URL = 'https://slack.com/api/oauth.v2.access';
@@ -45,17 +47,35 @@ export async function completeSlackInstall(input: {
   if (!parsed.data.ok || parsed.data.access_token === undefined) {
     throw internal(`Slack OAuth exchange failed: ${parsed.data.error ?? 'unknown_error'}.`);
   }
+  const accessToken = parsed.data.access_token;
 
   const grantedScopes = (parsed.data.scope ?? '')
     .split(',')
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0);
-  const integrationId = await ensureSlackIntegration(db, {
-    organizationId: input.organizationId,
-    connectedById: input.userId,
-    botToken: parsed.data.access_token,
-    ...(parsed.data.team?.id === undefined ? {} : { externalId: parsed.data.team.id }),
-    scopes: grantedScopes,
+  const integrationId = await db.transaction(async (tx) => {
+    const [membership] = await tx
+      .select({ role: member.role })
+      .from(member)
+      .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
+      .limit(1)
+      .for('update');
+    assertCan(
+      {
+        organizationId: input.organizationId,
+        userId: input.userId,
+        role: organizationRole(membership?.role),
+        teamIds: [],
+      },
+      'integration:manage',
+    );
+    return await ensureSlackIntegration(tx, {
+      organizationId: input.organizationId,
+      connectedById: input.userId,
+      botToken: accessToken,
+      ...(parsed.data.team?.id === undefined ? {} : { externalId: parsed.data.team.id }),
+      scopes: grantedScopes,
+    });
   });
 
   const [orbitUser] = await db
@@ -66,7 +86,7 @@ export async function completeSlackInstall(input: {
   if (orbitUser === undefined) return;
 
   try {
-    const slackUser = await new SlackClient({ token: parsed.data.access_token }).lookupUserByEmail(
+    const slackUser = await new SlackClient({ token: accessToken }).lookupUserByEmail(
       orbitUser.email.trim().toLowerCase(),
     );
     if (slackUser === null) return;
@@ -80,4 +100,8 @@ export async function completeSlackInstall(input: {
   } catch (error) {
     console.error('Could not map the Slack user after installation.', error);
   }
+}
+
+function organizationRole(role: string | undefined): OrgRole {
+  return ORG_ROLES.find((candidate) => candidate === role) ?? 'guest';
 }

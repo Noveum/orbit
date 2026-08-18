@@ -91,33 +91,24 @@ export async function ensureSlackIntegration(
     readonly scopes?: readonly string[];
   },
 ): Promise<string> {
-  const externalId = input.externalId ?? 'default';
-  if (input.externalId !== undefined) {
-    const [legacy] = await database
-      .select({ id: integration.id })
-      .from(integration)
-      .where(
-        and(
-          eq(integration.organizationId, input.organizationId),
-          eq(integration.provider, 'slack'),
-          eq(integration.externalId, 'default'),
-        ),
-      )
-      .limit(1);
-    if (legacy !== undefined) {
-      const [updated] = await database
-        .update(integration)
-        .set({
-          externalId,
-          credentials: { botToken: input.botToken },
-          ...(input.scopes === undefined ? {} : { config: { scopes: [...input.scopes] } }),
-          updatedAt: new Date(),
-        })
-        .where(eq(integration.id, legacy.id))
-        .returning({ id: integration.id });
-      if (updated !== undefined) return updated.id;
-    }
-  }
+  const externalId = 'default';
+  const [existing] = await database
+    .select({ config: integration.config })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.organizationId, input.organizationId),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, externalId),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  const config = {
+    ...(existing?.config ?? {}),
+    ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
+    ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
+  };
   const [row] = await database
     .insert(integration)
     .values({
@@ -127,13 +118,13 @@ export async function ensureSlackIntegration(
       externalId,
       connectedById: input.connectedById,
       credentials: { botToken: input.botToken },
-      ...(input.scopes === undefined ? {} : { config: { scopes: [...input.scopes] } }),
+      config,
     })
     .onConflictDoUpdate({
       target: [integration.organizationId, integration.provider, integration.externalId],
       set: {
         credentials: { botToken: input.botToken },
-        ...(input.scopes === undefined ? {} : { config: { scopes: [...input.scopes] } }),
+        config,
         updatedAt: new Date(),
       },
     })
