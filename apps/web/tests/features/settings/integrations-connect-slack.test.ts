@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import { completeSlackInstall } from '../../../src/features/settings/integrations-connect.ts';
 
 process.env['BETTER_AUTH_SECRET'] = 'slack-install-test-secret-123';
@@ -98,5 +98,60 @@ describe.serial('completeSlackInstall', () => {
       .where(eq(schema.slackUserMapping.organizationId, workspace.organizationId));
     expect(integrations).toHaveLength(1);
     expect(mappings).toHaveLength(0);
+  });
+
+  it('reconnects a legacy default installation in place', async () => {
+    const [legacy] = await db
+      .insert(schema.integration)
+      .values({
+        id: 'int_slack_legacy',
+        organizationId: workspace.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: workspace.adminUser.id,
+        credentials: { botToken: 'xoxb-legacy' },
+        config: { scopes: ['chat:write'], slackTeamId: 'T0123' },
+      })
+      .returning();
+
+    await complete();
+
+    const integrations = await db
+      .select()
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
+    expect(integrations).toHaveLength(1);
+    expect(integrations[0]).toMatchObject({
+      id: legacy?.id,
+      externalId: 'default',
+      credentials: { botToken: 'xoxb-test' },
+      config: { scopes: ['chat:write', 'im:write', 'users:read.email'], slackTeamId: 'T0123' },
+    });
+  });
+
+  it('rejects installation when the user cannot manage integrations', async () => {
+    await db
+      .update(schema.member)
+      .set({ role: 'member' })
+      .where(
+        and(
+          eq(schema.member.organizationId, workspace.organizationId),
+          eq(schema.member.userId, workspace.adminUser.id),
+        ),
+      );
+
+    let rejected = false;
+    try {
+      await complete();
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
+
+    const integrations = await db
+      .select()
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
+    expect(integrations).toHaveLength(0);
   });
 });
