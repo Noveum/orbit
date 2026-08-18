@@ -14,6 +14,7 @@ import {
   connectSlackChannel,
   disconnectSlackChannel,
   dispatchSlackMessage,
+  ensureSlackIntegration,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
@@ -94,6 +95,36 @@ describe('resolveSlackContext', () => {
       const fixture = await seed(tx);
       const context = await resolveSlackContext(tx, fixture.organizationId);
       expect(context?.token).toBe('xoxb-test');
+    });
+  });
+});
+
+describe('ensureSlackIntegration', () => {
+  it('reuses a legacy default integration when reconnecting with a team id', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, { name: 'Legacy', botToken: 'xoxb-old' });
+      const [legacy] = await tx
+        .update(integration)
+        .set({ externalId: 'default' })
+        .where(eq(integration.id, fixture.integrationId))
+        .returning({ id: integration.id });
+
+      const integrationId = await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-new',
+        externalId: 'T0123',
+        scopes: ['im:write'],
+      });
+      const rows = await tx
+        .select({ externalId: integration.externalId, credentials: integration.credentials })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+
+      expect(legacy).toBeDefined();
+      expect(integrationId).toBe(legacy!.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ externalId: 'T0123', credentials: { botToken: 'xoxb-new' } });
     });
   });
 });

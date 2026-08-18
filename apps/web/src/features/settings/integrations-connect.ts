@@ -65,15 +65,19 @@ export async function completeSlackInstall(input: {
     .limit(1);
   if (orbitUser === undefined) return;
 
-  const slackUser = await new SlackClient({ token: parsed.data.access_token }).lookupUserByEmail(
-    orbitUser.email.trim(),
-  );
-  if (slackUser === null) return;
-  await upsertSlackUserMapping(db, {
-    organizationId: input.organizationId,
-    integrationId,
-    userId: input.userId,
-    slackUserId: slackUser.id,
-    slackDisplayName: slackUser.displayName,
-  });
+  try {
+    const slackUser = await new SlackClient({ token: parsed.data.access_token }).lookupUserByEmail(
+      orbitUser.email.trim().toLowerCase(),
+    );
+    if (slackUser === null) return;
+    await upsertSlackUserMapping(db, {
+      organizationId: input.organizationId,
+      integrationId,
+      userId: input.userId,
+      slackUserId: slackUser.id,
+      slackDisplayName: slackUser.displayName,
+    });
+  } catch (error) {
+    console.error('Could not map the Slack user after installation.', error);
+  }
 }
