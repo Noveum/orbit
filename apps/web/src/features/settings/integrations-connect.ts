@@ -58,8 +58,7 @@ export async function completeSlackInstall(input: {
       .select({ role: member.role })
       .from(member)
       .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
-      .limit(1)
-      .for('update');
+      .limit(1);
     assertCan(
       {
         organizationId: input.organizationId,
