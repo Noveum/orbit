@@ -81,7 +81,7 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   }
 
   await page.goto(`${BASE}/settings/account/connections`);
-  const github = page.getByTestId('provider-github');
+  const github = page.getByTestId('provider-github').filter({ visible: true });
   await expect(github.getByText('Connected')).toBeVisible();
   await expect(github.getByRole('button', { name: 'Disconnect' })).toBeDisabled();
   await expect(
@@ -107,7 +107,10 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
 
   await page.goto(`${BASE}/settings/account/connections`);
   await expect(
-    page.getByTestId('provider-github').getByRole('button', { name: 'Disconnect' }),
+    page
+      .getByTestId('provider-github')
+      .filter({ visible: true })
+      .getByRole('button', { name: 'Disconnect' }),
   ).toBeEnabled();
   await page.screenshot({
     path: `${SHOTS}/04-connections-unlockable.png`,
