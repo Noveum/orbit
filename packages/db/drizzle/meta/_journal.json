@@ -71,6 +71,13 @@
       "when": 1786698447389,
       "tag": "0009_luxuriant_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786887100533,
+      "tag": "0010_cheerful_scalphunter",
+      "breakpoints": true
     }
   ]
 }

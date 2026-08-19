@@ -101,6 +101,18 @@ repositories to install it on.
 for signing in with GitHub, and they come from an OAuth app. You can have
 either, both, or neither. See [Configuration](configuration.md#authentication).
 
+## Slack user mapping
+
+Slack OAuth can persist the workspace installation, the scopes Slack granted,
+and a mapping for the Orbit user who completed the **Connect** flow. The
+current implementation maps only that connecting user by matching their Orbit
+email with Slack; it does not map the other members of the workspace.
+
+There is no administrator mapping screen, workspace-wide backfill, or per-user
+fallback linking flow yet. Users who did not complete the Connect flow remain
+unmapped, so Slack user mapping should not be documented or presented as a
+workspace-wide setup step. Those follow-up flows are separate work.
+
 ## Email
 
 Not an integration you connect, but worth listing since it carries invites and

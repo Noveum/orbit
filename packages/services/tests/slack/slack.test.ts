@@ -234,6 +234,26 @@ describe('SlackClient', () => {
     expect(result.nextCursor).toBe('abc');
   });
 
+  it('looks up a Slack user by email', async () => {
+    const { impl, calls } = stubFetch(200, {
+      ok: true,
+      user: {
+        id: 'U1',
+        real_name: 'Ada Lovelace',
+        profile: { email: 'ADA@example.com', display_name: 'ada' },
+      },
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.lookupUserByEmail('ADA@example.com')).resolves.toEqual({
+      id: 'U1',
+      email: 'ADA@example.com',
+      displayName: 'ada',
+    });
+    expect(calls[0]?.url).toBe('https://slack.com/api/users.lookupByEmail');
+    expect(calls[0]?.init?.body).toContain('ADA@example.com');
+  });
+
   it('returns a null cursor when slack sends an empty one', async () => {
     const { impl } = stubFetch(200, { ok: true, channels: [], response_metadata: {} });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });

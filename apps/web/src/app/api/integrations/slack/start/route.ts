@@ -9,7 +9,8 @@ import {
   slackIntegrationUnavailable,
 } from '@/lib/integrations/slack-capability.ts';
 
-const SLACK_BOT_SCOPES = 'channels:read,groups:read,chat:write,links:read,commands';
+const SLACK_BOT_SCOPES =
+  'channels:read,groups:read,chat:write,links:read,commands,im:write,users:read.email';
 
 export async function GET(): Promise<Response> {
   if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();

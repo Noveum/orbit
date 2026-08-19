@@ -210,17 +210,18 @@ async function grantedDocIds(
   return rows.map((row) => row.docId);
 }
 
-async function writeGrantedDocIds(
+async function batchedWriteGrantedDocIds(
   executor: Executor,
   principal: Principal,
-  docId: string,
-): Promise<boolean> {
+  docIds: readonly string[],
+): Promise<string[]> {
+  if (docIds.length === 0) return [];
   const rows = await executor
     .select({ docId: schema.docAccess.docId })
     .from(schema.docAccess)
     .where(
       and(
-        eq(schema.docAccess.docId, docId),
+        inArray(schema.docAccess.docId, [...docIds]),
         eq(schema.docAccess.level, 'write'),
         or(
           and(
@@ -235,9 +236,17 @@ async function writeGrantedDocIds(
               ),
         ),
       ),
-    )
-    .limit(1);
-  return rows.length > 0;
+    );
+  return rows.map((row) => row.docId);
+}
+
+async function writeGrantedDocIds(
+  executor: Executor,
+  principal: Principal,
+  docId: string,
+): Promise<boolean> {
+  const granted = await batchedWriteGrantedDocIds(executor, principal, [docId]);
+  return granted.length > 0;
 }
 
 export async function docReadableBy(
@@ -248,16 +257,25 @@ export async function docReadableBy(
   return canReadDoc(principal, doc, await grantedDocIds(executor, principal, [doc.id]));
 }
 
+export function evaluateDocAccessLevel(
+  principal: Principal,
+  doc: DocRow,
+  hasWriteGrant: boolean,
+): DocAccessLevel {
+  if (!can(principal, 'doc:write')) return 'read';
+  if (principal.role === 'admin') return 'write';
+  if (doc.authorId === principal.userId) return 'write';
+  if (!isRestricted(doc.visibility)) return 'write';
+  return hasWriteGrant ? 'write' : 'read';
+}
+
 export async function docAccessLevel(
   executor: Executor,
   principal: Principal,
   doc: DocRow,
 ): Promise<DocAccessLevel> {
-  if (!can(principal, 'doc:write')) return 'read';
-  if (principal.role === 'admin') return 'write';
-  if (doc.authorId === principal.userId) return 'write';
-  if (!isRestricted(doc.visibility)) return 'write';
-  return (await writeGrantedDocIds(executor, principal, doc.id)) ? 'write' : 'read';
+  const granted = await writeGrantedDocIds(executor, principal, doc.id);
+  return evaluateDocAccessLevel(principal, doc, granted);
 }
 
 export async function assertDocWritable(
@@ -267,6 +285,54 @@ export async function assertDocWritable(
 ): Promise<void> {
   if ((await docAccessLevel(executor, principal, doc)) === 'write') return;
   throw forbidden('You only have read access to that doc.');
+}
+
+function buildBlockingMessage(blockingReadable: string[], blockingInvisibleCount: number): string {
+  const totalBlocking = blockingReadable.length + blockingInvisibleCount;
+  const noun = totalBlocking === 1 ? 'page' : 'pages';
+  const verb = totalBlocking === 1 ? 'is' : 'are';
+  let msg = `${totalBlocking} ${noun} in this folder ${verb} not yours to move`;
+  if (blockingReadable.length > 0) {
+    msg += `: ${blockingReadable.join(', ')}`;
+  }
+  if (blockingInvisibleCount > 0) {
+    msg +=
+      blockingReadable.length > 0
+        ? `, and ${blockingInvisibleCount} more you cannot see.`
+        : `. You cannot see ${blockingInvisibleCount === 1 ? 'it' : 'them'}.`;
+  } else {
+    msg += '.';
+  }
+  return msg;
+}
+
+async function assertDocsMovable(
+  executor: Executor,
+  principal: Principal,
+  docsToCheck: DocRow[],
+): Promise<void> {
+  if (docsToCheck.length === 0) return;
+  const docIds = docsToCheck.map((doc) => doc.id);
+  const readGrantedArray = await grantedDocIds(executor, principal, docIds);
+  const writeGrantedArray = await batchedWriteGrantedDocIds(executor, principal, docIds);
+  const writeGrants = new Set(writeGrantedArray);
+  const blockingReadable: string[] = [];
+  let blockingInvisibleCount = 0;
+  for (const doc of docsToCheck) {
+    const canWrite = evaluateDocAccessLevel(principal, doc, writeGrants.has(doc.id)) === 'write';
+    if (!canWrite) {
+      const canRead = canReadDoc(principal, doc, readGrantedArray);
+      if (canRead) {
+        blockingReadable.push(doc.title);
+      } else {
+        blockingInvisibleCount++;
+      }
+    }
+  }
+  const totalBlocking = blockingReadable.length + blockingInvisibleCount;
+  if (totalBlocking > 0) {
+    throw forbidden(buildBlockingMessage(blockingReadable, blockingInvisibleCount));
+  }
 }
 
 function assertMayWiden(principal: Principal, current: DocRow, next: string | undefined): void {
@@ -1493,11 +1559,31 @@ export async function updateDocCollection(
 
 async function emptyCollection(
   executor: Executor,
-  organizationId: string,
   collectionId: string,
   syncId: number,
   reassignToId: string | null,
+  principal: Principal,
 ): Promise<DocRow[]> {
+  const organizationId = principal.organizationId;
+  await executor
+    .select({ id: schema.docCollection.id })
+    .from(schema.docCollection)
+    .where(
+      and(
+        eq(schema.docCollection.organizationId, organizationId),
+        eq(schema.docCollection.id, collectionId),
+      ),
+    )
+    .for('update');
+  const docsToCheck = await executor
+    .select(DOC_COLUMNS)
+    .from(schema.doc)
+    .where(
+      and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
+    );
+  if (docsToCheck.length === 0) return [];
+  await assertDocsMovable(executor, principal, docsToCheck);
+  const docIds = docsToCheck.map((doc) => doc.id);
   const base = await nextSiblingOrder(executor, organizationId, {
     collectionId: reassignToId,
     projectId: null,
@@ -1507,11 +1593,14 @@ async function emptyCollection(
     .update(schema.doc)
     .set({ collectionId: reassignToId, updatedAt: new Date(), syncId })
     .where(
-      and(eq(schema.doc.organizationId, organizationId), eq(schema.doc.collectionId, collectionId)),
+      and(
+        eq(schema.doc.organizationId, organizationId),
+        eq(schema.doc.collectionId, collectionId),
+        inArray(schema.doc.id, docIds),
+      ),
     )
     .returning({ id: schema.doc.id, parentId: schema.doc.parentId });
   if (orphaned.length === 0) return [];
-
   const roots = orphaned.filter((row) => row.parentId === null).map((row) => row.id);
   if (roots.length > 0) {
     await renumber(executor, inArray(schema.doc.id, roots), base - SORT_ORDER_STEP, syncId);
@@ -1536,7 +1625,6 @@ export async function deleteDocCollection(
   if (reassignToId === collectionId) {
     throw validationFailed('A collection cannot take over its own pages.');
   }
-
   return await db.transaction(async (tx) => {
     if (reassignToId !== null) {
       const [target] = await tx
@@ -1553,13 +1641,7 @@ export async function deleteDocCollection(
     }
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
-    const homeless = await emptyCollection(
-      tx,
-      principal.organizationId,
-      collectionId,
-      syncId,
-      reassignToId,
-    );
+    const homeless = await emptyCollection(tx, collectionId, syncId, reassignToId, principal);
     const [removed] = await tx
       .delete(schema.docCollection)
       .where(
@@ -1570,7 +1652,6 @@ export async function deleteDocCollection(
       )
       .returning();
     const collection = requireRow(removed, 'That collection does not exist.');
-
     return [
       collectionAction(collection, syncId, actor, 'delete'),
       ...homeless.map((row) => docAction(row, syncId, actor, 'update')),

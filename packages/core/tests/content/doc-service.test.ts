@@ -261,6 +261,74 @@ describe('collections', () => {
       code: 'forbidden',
     });
   });
+
+  it('refuses deletion if the collection contains a document the deleter cannot write', async () => {
+    const member1 = await addMember(workspace, 'member', { name: 'Member One' });
+    const member2 = await addMember(workspace, 'member', { name: 'Member Two' });
+    const { collection } = await createDocCollection(member1.principal, { name: 'Shared Folder' });
+    const { doc } = await createDoc(member2.principal, {
+      title: 'Secret Doc',
+      collectionId: collection.id,
+      visibility: 'private',
+    });
+    await expect(deleteDocCollection(member1.principal, collection.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    const detail = await getDoc(workspace.admin, doc.id);
+    expect(detail.doc.collectionId).toBe(collection.id);
+  });
+
+  it('refuses deletion if the collection contains a team document the deleter cannot write', async () => {
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DES' });
+    const member1 = await addMember(workspace, 'member', { name: 'Member One' });
+    const member2 = await addMember(workspace, 'member', {
+      name: 'Member Two',
+      teamIds: [team.id],
+    });
+    const { collection } = await createDocCollection(member1.principal, { name: 'Shared Folder' });
+    const { doc } = await createDoc(member2.principal, {
+      title: 'Design Specs',
+      collectionId: collection.id,
+      visibility: 'team',
+    });
+    await setDocAccess(member2.principal, doc.id, {
+      grants: [
+        { subjectType: 'team', subjectId: team.id, level: 'write' },
+        { subjectType: 'user', subjectId: member1.principal.userId, level: 'read' },
+      ],
+    });
+    await expect(deleteDocCollection(member1.principal, collection.id)).rejects.toMatchObject({
+      code: 'forbidden',
+      message: expect.stringContaining('Design Specs'),
+    });
+    const detail = await getDoc(workspace.admin, doc.id);
+    expect(detail.doc.collectionId).toBe(collection.id);
+  });
+
+  it("allows an admin to delete a collection containing another member's private document", async () => {
+    const member = await addMember(workspace, 'member', { name: 'Member' });
+    const { collection } = await createDocCollection(workspace.admin, { name: 'Shared Folder' });
+    await createDoc(member.principal, {
+      title: 'Secret Doc',
+      collectionId: collection.id,
+      visibility: 'private',
+    });
+    const actions = await deleteDocCollection(workspace.admin, collection.id);
+    expect(actions[0]?.action).toBe('delete');
+  });
+
+  it("allows a member to delete a collection containing another member's published document", async () => {
+    const member1 = await addMember(workspace, 'member', { name: 'Member One' });
+    const member2 = await addMember(workspace, 'member', { name: 'Member Two' });
+    const { collection } = await createDocCollection(member1.principal, { name: 'Shared Folder' });
+    await createDoc(member2.principal, {
+      title: 'Public Doc',
+      collectionId: collection.id,
+      visibility: 'public',
+    });
+    const actions = await deleteDocCollection(member1.principal, collection.id);
+    expect(actions[0]?.action).toBe('delete');
+  });
 });
 
 describe('published doc urls', () => {
