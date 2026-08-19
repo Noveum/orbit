@@ -650,6 +650,15 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create').className).toContain('max-h-');
   });
 
+  it('holds the description at its natural height so it cannot cover the properties', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(screen.getByTestId('quick-create-description').className).toContain('shrink-0');
+    expect(screen.getByTestId('quick-create-properties').className).toContain('shrink-0');
+    expect(screen.getByTestId('quick-create-title').className).toContain('shrink-0');
+  });
+
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
     workspace = buildWorkspace();
     open();
