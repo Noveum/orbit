@@ -378,10 +378,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
                   event.preventDefault();
               }}
-              className="h-9 border-0 px-0 font-medium text-base shadow-none"
+              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none"
             />
             <RichTextEditor
               key={composerKey}
+              className="shrink-0"
               value={description}
               onChange={setDescription}
               members={members}
@@ -391,12 +392,15 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               onUpload={hold}
             />
             {pending.length === 0 ? null : (
-              <output className="text-2xs text-faint" data-testid="quick-create-pending">
+              <output className="shrink-0 text-2xs text-faint" data-testid="quick-create-pending">
                 {pendingLabel(pending.length)}
               </output>
             )}
 
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div
+              className="flex shrink-0 flex-wrap items-center gap-1.5"
+              data-testid="quick-create-properties"
+            >
               <PropertyMenu
                 title="Team"
                 options={teams.map((team) => ({ id: team.id, label: team.name }))}
