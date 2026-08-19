@@ -36,7 +36,7 @@ describe('HotkeyRegistry collision detection', () => {
     expect(warningMessage).toContain('cmd:two');
   });
 
-  it('HotkeyRegistry does not warn if priorities are different', () => {
+  it('does not warn if priorities are different', () => {
     const registry = new HotkeyRegistry();
     let warned = false;
     const originalWarn = console.warn;
@@ -52,7 +52,7 @@ describe('HotkeyRegistry collision detection', () => {
     expect(warned).toBe(false);
   });
 
-  it('HotkeyRegistry warns on colliding shift specificity with different shift locations', () => {
+  it('warns on colliding shift specificity with different shift locations', () => {
     const registry = new HotkeyRegistry();
     let warningMessage = '';
     const originalWarn = console.warn;
