@@ -3,8 +3,6 @@ import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test
 import { and, db, eq, schema } from '@orbit/db';
 import { completeSlackInstall } from '../../../src/features/settings/integrations-connect.ts';
 
-process.env['BETTER_AUTH_SECRET'] = 'slack-install-test-secret-123';
-
 const originalFetch = globalThis.fetch;
 let workspace: Workspace;
 
