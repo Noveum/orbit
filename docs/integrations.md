@@ -97,31 +97,33 @@ repositories to install it on.
 
 ## Slack
 
-Slack is an optional workspace integration for channel notifications and
-personal direct-message notifications. The Slack surface is currently kept
-disabled by the open-source preview boundary; deployments should configure the
-Slack OAuth app before that boundary is reopened.
+Slack integration status:
 
-The Slack app needs `chat:write` for channel delivery and `im:write` for direct
-messages. Existing installations must reconnect after `im:write` is added;
-Orbit stores granted scopes as non-secret integration metadata and never exposes
-the bot token to the browser.
-
-When enabled, team and project notifications continue to use the configured
-Slack channel while personal notifications use Slack DMs. DM preferences expose
-available, unmapped, reauthorization-required, and unavailable states. Quiet
-hours suppress non-urgent DMs, while the urgent-assignment bypass follows the
-same notification settings as email. An unmapped user keeps receiving other
-enabled notification channels and does not cause notification creation to fail.
-
-Slack OAuth persists the granted scopes and maps only the Orbit user who
-completes the **Connect** flow by matching their Orbit email with Slack. Other
-workspace members remain unmapped; there is no administrator mapping screen,
-workspace-wide backfill, or per-user fallback linking flow yet. Those mapping
-follow-ups are separate work.
-
-While the open-source preview boundary remains closed, Slack DM settings are
-unavailable and no Slack messages are sent.
+- **Disabled by default.** `SLACK_INTEGRATION_ENABLED` remains hardcoded to
+  `false` because Slack is still behind the open-source preview boundary.
+- **Required Slack scopes.** A future enabled deployment needs `chat:write` for
+  channel delivery and `im:write` for direct messages. Granted scopes are stored
+  as non-secret integration metadata; the bot token is never exposed to the
+  browser.
+- **Notification routing.** When enabled, team and project notifications use
+  the configured Slack channel, while personal notifications use Slack DMs.
+  This keeps broadcast activity out of individual conversations.
+- **Availability states.** Notification settings distinguish available,
+  unmapped, reauthorization-required, and unavailable states so a user is not
+  offered a DM preference that the current integration cannot satisfy.
+- **Quiet hours.** Non-urgent Slack DMs are suppressed during quiet hours;
+  urgent assignments can bypass quiet hours using the existing notification
+  setting. Suppression is intentional; this integration does not promise a
+  later retry from quiet hours.
+- **Current mapping behavior.** OAuth maps only the Orbit user who completes
+  **Connect**, by matching their Orbit email with Slack. Other workspace members
+  remain unmapped, so they keep their other enabled notification channels and
+  cannot enable Slack DMs.
+- **Known mapping gap.** There is currently no administrator mapping screen,
+  workspace-wide backfill, or per-user fallback linking flow. Those are separate
+  follow-up work and are not prerequisites for the dark, disabled integration.
+- **Current runtime result.** While the preview boundary is closed, Slack DM
+  settings are unavailable and no Slack messages are sent.
 
 ### Note on GitHub sign-in
 
