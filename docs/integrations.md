@@ -107,23 +107,21 @@ messages. Existing installations must reconnect after `im:write` is added;
 Orbit stores granted scopes as non-secret integration metadata and never exposes
 the bot token to the browser.
 
-Slack direct messages require an Orbit-to-Slack user mapping. The initial Slack
-connection maps only the user who completes OAuth; other users remain unmapped
-because the product does not yet provide an administrator mapping screen,
-workspace-wide backfill, or per-user fallback linking flow. An unmapped user
-keeps receiving other enabled notification channels and does not cause
-notification creation to fail. Team and project notifications continue to use
-the configured Slack channel; personal notifications use Slack DMs when the
-feature is enabled and a mapping is available.
-
-While Slack remains behind the open-source preview boundary, Slack DM settings
-are unavailable. When the feature is later enabled, users without a mapping
-will remain unable to enable Slack DMs until a mapping flow is provided.
+When enabled, team and project notifications continue to use the configured
+Slack channel while personal notifications use Slack DMs. DM preferences expose
+available, unmapped, reauthorization-required, and unavailable states. Quiet
+hours suppress non-urgent DMs, while the urgent-assignment bypass follows the
+same notification settings as email. An unmapped user keeps receiving other
+enabled notification channels and does not cause notification creation to fail.
 
 Slack OAuth persists the granted scopes and maps only the Orbit user who
-completes the **Connect** flow by matching their Orbit email with Slack. It
-does not map other workspace members; administrator mapping, workspace-wide
-backfill, and per-user fallback linking are separate follow-up work.
+completes the **Connect** flow by matching their Orbit email with Slack. Other
+workspace members remain unmapped; there is no administrator mapping screen,
+workspace-wide backfill, or per-user fallback linking flow yet. Those mapping
+follow-ups are separate work.
+
+While the open-source preview boundary remains closed, Slack DM settings are
+unavailable and no Slack messages are sent.
 
 ### Note on GitHub sign-in
 
