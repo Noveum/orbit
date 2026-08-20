@@ -1,4 +1,4 @@
-import { and, asc, count, db, eq, inArray, isNull, ne, schema } from '@orbit/db';
+import { and, asc, count, db, eq, inArray, isNull, ne, notExists, schema } from '@orbit/db';
 import { OPEN_STATE_CATEGORIES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -144,12 +144,38 @@ export async function updateMemberRole(
           eq(schema.member.organizationId, principal.organizationId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
     if (current.role === 'admin' && parsed.role !== 'admin') {
       const others = await countOtherAdmins(tx, principal.organizationId, memberId);
       if (others === 0) throw conflict('A workspace needs at least one admin.');
+      const [inaccessibleReview] = await tx
+        .select({ issueId: schema.issueReviewer.issueId })
+        .from(schema.issueReviewer)
+        .innerJoin(schema.issue, eq(schema.issue.id, schema.issueReviewer.issueId))
+        .where(
+          and(
+            eq(schema.issue.organizationId, principal.organizationId),
+            eq(schema.issueReviewer.userId, current.userId),
+            notExists(
+              tx
+                .select({ teamId: schema.teamMember.teamId })
+                .from(schema.teamMember)
+                .where(
+                  and(
+                    eq(schema.teamMember.userId, current.userId),
+                    eq(schema.teamMember.teamId, schema.issue.teamId),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .limit(1);
+      if (inaccessibleReview !== undefined) {
+        throw conflict('Remove inaccessible reviewer assignments before changing this role.');
+      }
     }
 
     const syncId = await nextSyncId(tx);
@@ -200,7 +226,8 @@ export async function removeMember(
           eq(schema.member.organizationId, principal.organizationId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
     if (current.role === 'admin') {

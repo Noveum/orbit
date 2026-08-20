@@ -758,14 +758,16 @@ async function assertReviewersCanAccessTeam(
     .from(schema.member)
     .where(
       and(eq(schema.member.organizationId, organizationId), inArray(schema.member.userId, ids)),
-    );
+    )
+    .for('update');
   if (new Set(members.map((row) => row.userId)).size !== ids.length) {
     throw validationFailed('Every reviewer must be in this workspace.');
   }
   const teamMembers = await executor
     .select({ userId: schema.teamMember.userId })
     .from(schema.teamMember)
-    .where(and(eq(schema.teamMember.teamId, teamId), inArray(schema.teamMember.userId, ids)));
+    .where(and(eq(schema.teamMember.teamId, teamId), inArray(schema.teamMember.userId, ids)))
+    .for('update');
   const usersWithAccess = new Set([
     ...members.filter((row) => row.role === 'admin').map((row) => row.userId),
     ...teamMembers.map((row) => row.userId),

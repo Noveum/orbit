@@ -9,6 +9,7 @@ import {
   resolvePrincipal,
   updateMemberRole,
 } from '../../src/org/member-service.ts';
+import { addTeamMember, createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -94,6 +95,25 @@ describe('updateMemberRole', () => {
   it('allows demoting an admin once another admin exists', async () => {
     const { user } = await addMember(workspace, 'admin');
     const memberId = await memberIdFor(user.id);
+    const result = await updateMemberRole(workspace.admin, memberId, { role: 'member' });
+    expect(result.member.role).toBe('member');
+  });
+
+  it('keeps reviewer access valid when an admin is demoted', async () => {
+    const reviewer = await addMember(workspace, 'admin');
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DES' });
+    await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Admin review',
+      reviewerIds: [reviewer.user.id],
+    });
+    const memberId = await memberIdFor(reviewer.user.id);
+
+    await expect(
+      updateMemberRole(workspace.admin, memberId, { role: 'member' }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    await addTeamMember(workspace.admin, team.id, { userId: reviewer.user.id });
     const result = await updateMemberRole(workspace.admin, memberId, { role: 'member' });
     expect(result.member.role).toBe('member');
   });

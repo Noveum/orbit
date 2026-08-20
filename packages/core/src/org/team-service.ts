@@ -372,11 +372,43 @@ export async function removeTeamMember(
 
   return await db.transaction(async (tx) => {
     const team = await requireTeam(principal, teamId, tx);
+    const [member] = await tx
+      .select({ role: schema.member.role })
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, principal.organizationId),
+          eq(schema.member.userId, userId),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    const membership = requireRow(member, 'That person is not a member of this organization.');
+    const [teamMember] = await tx
+      .select()
+      .from(schema.teamMember)
+      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, userId)))
+      .limit(1)
+      .for('update');
+    const current = requireRow(teamMember, 'That person is not on this team.');
+
+    if (membership.role !== 'admin') {
+      const [review] = await tx
+        .select({ issueId: schema.issueReviewer.issueId })
+        .from(schema.issueReviewer)
+        .innerJoin(schema.issue, eq(schema.issue.id, schema.issueReviewer.issueId))
+        .where(and(eq(schema.issue.teamId, team.id), eq(schema.issueReviewer.userId, userId)))
+        .limit(1);
+      if (review !== undefined) {
+        throw conflict('Remove this person as a reviewer before removing them from the team.');
+      }
+    }
+
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [removed] = await tx
       .delete(schema.teamMember)
-      .where(and(eq(schema.teamMember.teamId, team.id), eq(schema.teamMember.userId, userId)))
+      .where(eq(schema.teamMember.id, current.id))
       .returning();
     const row = requireRow(removed, 'That person is not on this team.');
     return [
