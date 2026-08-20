@@ -44,11 +44,18 @@ VERDICT="$(
 	PR_JSON="$PR_JSON" READY_LABEL="$READY_LABEL" BLOCK_LABEL="$BLOCK_LABEL" node -e '
 	try {
 		const pr = JSON.parse(process.env.PR_JSON);
-		if (!pr || typeof pr.draft !== "boolean") {
-			console.log("unknown:pull request payload had no draft flag");
+		const wellFormed =
+			pr &&
+			typeof pr.draft === "boolean" &&
+			Number.isInteger(pr.number) &&
+			pr.number > 0 &&
+			Array.isArray(pr.labels) &&
+			pr.labels.every((label) => label && typeof label.name === "string");
+		if (!wellFormed) {
+			console.log("unknown:pull request payload was not a complete pull request");
 			process.exit(0);
 		}
-		const labels = (pr.labels || []).map((label) => String(label.name).toLowerCase());
+		const labels = pr.labels.map((label) => label.name.toLowerCase());
 		if (labels.includes(process.env.BLOCK_LABEL.toLowerCase())) {
 			console.log(`skip:pull request ${pr.number} carries the ${process.env.BLOCK_LABEL} label`);
 		} else if (labels.includes(process.env.READY_LABEL.toLowerCase())) {

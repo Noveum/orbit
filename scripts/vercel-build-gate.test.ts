@@ -150,6 +150,21 @@ describe('vercel build gate', () => {
     expect(runGate(withPullRequest(READY_BLOCKED)).code).toBe(SKIP);
   });
 
+  test('an incomplete pull request payload fails open rather than skipping', () => {
+    const partials = [
+      JSON.stringify({ draft: true }),
+      JSON.stringify({ draft: true, number: 7 }),
+      JSON.stringify({ draft: true, number: 0, labels: [] }),
+      JSON.stringify({ draft: true, number: 7, labels: [{}] }),
+      JSON.stringify({ draft: true, number: 7, labels: 'preview' }),
+      JSON.stringify({ message: 'Not Found' }),
+    ];
+
+    for (const payload of partials) {
+      expect(runGate(withPullRequest(payload)).code).toBe(BUILD);
+    }
+  });
+
   test('an unreadable API response fails open', () => {
     expect(runGate(withPullRequest('not json')).code).toBe(BUILD);
     expect(runGate(withPullRequest('')).code).toBe(BUILD);

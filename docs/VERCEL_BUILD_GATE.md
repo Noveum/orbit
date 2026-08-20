@@ -1,7 +1,8 @@
 # Vercel build gate
 
 Preview deployments only build once a pull request is marked **Ready for review**.
-Production always builds.
+Production always builds. Two labels override the rule: `preview` builds a draft,
+and `no-preview` suppresses a pull request that is ready.
 
 ## Why the gate exists
 
@@ -67,8 +68,8 @@ This repo holds two apps. Only `apps/web` is deployed to Vercel, so a push that
 only touches `apps/realtime` has nothing to preview. `apps/web/vercel.json`
 therefore supplies a default:
 
-```
-BUILD_GATE_WATCH_PATHS="apps/web packages package.json bun.lock"
+```sh
+BUILD_GATE_WATCH_PATHS="apps/web packages package.json bun.lock tsconfig.base.json"
 ```
 
 Setting the variable in project settings overrides that default.
