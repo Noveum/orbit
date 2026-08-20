@@ -55,7 +55,9 @@ to see it.
 ## Issues
 
 The unit of work. An issue has a title, a markdown description, a state, a
-priority, an assignee, labels, an estimate, and relations to other issues.
+priority, an assignee, multiple reviewers, labels, an estimate, and relations
+to other issues. Reviewers are subscribed automatically, and reviewed work
+appears in their My issues page alongside work assigned to them.
 
 Its **identifier** is the team key plus a number, like `ENG-42`. Identifiers are
 allocated atomically, so two people creating issues at the same moment never
@@ -185,16 +187,17 @@ end up here.
 ## Standup
 
 A Kanban board of the whole workspace, with everyone's name in a row of tiles
-along the top. Click a name and the board filters to that person. Click it again,
-or click Everyone, and you are back to the whole team.
+along the top. Click a name and the board filters to work assigned to or reviewed
+by that person. Click it again, or click Everyone, and you are back to the whole
+team.
 
 That is the entire feature. There is no meeting object, no turn order and no
 timer, because the meeting already has a facilitator and they do not need
 software to tell them whose turn it is. What they need is one screen that shows
 what a given person is carrying, in the order the work moves.
 
-Each tile carries a count of the open work for that person, so you can see who
-is loaded before anyone speaks.
+Each tile carries a count of the open work that person owns or reviews, so you
+can see who is loaded before anyone speaks.
 
 ## Views and filters
 

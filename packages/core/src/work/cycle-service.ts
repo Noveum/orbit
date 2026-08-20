@@ -39,6 +39,8 @@ import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from './issue-service.ts';
+import { labelIdsByIssue } from './label-service.ts';
+import { reviewerIdsByIssue } from './reviewer-service.ts';
 
 export type CycleRow = typeof schema.cycle.$inferSelect;
 
@@ -46,6 +48,21 @@ export const DEFAULT_SPRINT_DAYS = 14;
 
 function cycleScopes(row: CycleRow): string[] {
   return [scopes.organization(row.organizationId)];
+}
+
+async function issueDecorations(
+  executor: Executor,
+  issues: readonly { readonly id: string }[],
+): Promise<{
+  labels: ReadonlyMap<string, string[]>;
+  reviewers: ReadonlyMap<string, string[]>;
+}> {
+  const ids = issues.map((issue) => issue.id);
+  const [labels, reviewers] = await Promise.all([
+    labelIdsByIssue(executor, ids),
+    reviewerIdsByIssue(executor, ids),
+  ]);
+  return { labels, reviewers };
 }
 
 async function lockCycles(executor: Executor, organizationId: string): Promise<void> {
@@ -492,6 +509,7 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
       });
     }
 
+    const decorations = await issueDecorations(tx, detached);
     await tx.delete(schema.cycle).where(eq(schema.cycle.id, cycleId));
     return [
       buildSyncAction({
@@ -512,7 +530,11 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
           action: 'update',
           model: 'issue',
           modelId: row.id,
-          data: row,
+          data: {
+            ...row,
+            labelIds: decorations.labels.get(row.id) ?? [],
+            reviewerIds: decorations.reviewers.get(row.id) ?? [],
+          },
           actor,
         }),
       ),
@@ -1259,6 +1281,8 @@ export async function completeCycle(
       .where(eq(schema.cycle.id, cycleId))
       .returning();
     const completed = requireRow(closed, 'That cycle does not exist.');
+    const affectedIssues = [...released, ...rolled];
+    const decorations = await issueDecorations(tx, affectedIssues);
 
     return {
       cycle: completed,
@@ -1276,7 +1300,7 @@ export async function completeCycle(
           data: completed,
           actor,
         }),
-        ...[...released, ...rolled].map((row) =>
+        ...affectedIssues.map((row) =>
           buildSyncAction({
             syncId,
             organizationId: principal.organizationId,
@@ -1284,7 +1308,11 @@ export async function completeCycle(
             action: 'update',
             model: 'issue',
             modelId: row.id,
-            data: row,
+            data: {
+              ...row,
+              labelIds: decorations.labels.get(row.id) ?? [],
+              reviewerIds: decorations.reviewers.get(row.id) ?? [],
+            },
             actor,
           }),
         ),

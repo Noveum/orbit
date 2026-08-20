@@ -82,11 +82,11 @@ yourself and never depend on us at all.
 
 | | |
 | --- | --- |
-| **Issues** | Priorities, labels, states, estimates, assignees and relations. Fast list or drag and drop board |
+| **Issues** | Priorities, labels, states, estimates, assignees, multiple reviewers and relations. Fast list or drag and drop board |
 | **Sprints and cycles** | Timeboxed planning with scope, points, burndown and carryover |
 | **Projects and milestones** | Group work that spans teams and sprints |
 | **Docs** | Rich editor, collections, comments, public share links, self-contained HTML pages |
-| **Standup** | The whole workspace as a Kanban, filtered to one person by clicking their tile |
+| **Standup** | The whole workspace as a Kanban, filtered to work a person owns or reviews by clicking their tile |
 | **Analytics** | Scope, throughput, churn, and distribution by assignee, project, label and estimate |
 | **Search and views** | Filters over everything, saved and shared or kept private |
 | **Realtime** | Every change fans out over a websocket to exactly the people allowed to see it |

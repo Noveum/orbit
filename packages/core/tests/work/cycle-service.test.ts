@@ -252,6 +252,7 @@ describe('deleteCycle', () => {
       teamId: workspace.teamId,
       title: 'Detached',
       cycleId: cycle.id,
+      reviewerIds: [workspace.admin.userId],
     });
 
     await db.execute(
@@ -278,7 +279,9 @@ describe('deleteCycle', () => {
     );
 
     try {
-      await deleteCycle(workspace.admin, cycle.id);
+      const actions = await deleteCycle(workspace.admin, cycle.id);
+      const issueAction = actions.find((action) => action.modelId === issue.id);
+      expect(issueAction?.data['reviewerIds']).toEqual([workspace.admin.userId]);
     } finally {
       await db.execute(
         sql.raw(`
@@ -787,6 +790,7 @@ describe('completeCycle', () => {
       teamId: workspace.teamId,
       title: 'Still open',
       cycleId: cycle.id,
+      reviewerIds: [workspace.admin.userId],
     });
     const done = await createIssue(workspace.admin, {
       stateId: stateNamed(workspace, 'Todo').id,
@@ -802,7 +806,8 @@ describe('completeCycle', () => {
     expect(result.cycle.completedAt).not.toBeNull();
     expect(result.nextCycle.number).toBe(2);
     expect(result.rolledOverIssueIds).toEqual([open.issue.id]);
-    expect(result.actions.some((action) => action.model === 'issue')).toBe(true);
+    const issueAction = result.actions.find((action) => action.modelId === open.issue.id);
+    expect(issueAction?.data['reviewerIds']).toEqual([workspace.admin.userId]);
 
     const [rolled] = await db.select().from(schema.issue).where(eq(schema.issue.id, open.issue.id));
     expect(rolled?.cycleId).toBe(result.nextCycle.id);

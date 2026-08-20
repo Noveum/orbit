@@ -11,6 +11,7 @@ import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from '../work/issue-service.ts';
+import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import type { MemberRow } from './organization-service.ts';
 
@@ -266,7 +267,11 @@ export async function removeMember(
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
     const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
-    const reviewers = await reviewerIdsByIssue(tx, [...changedIssues.keys()]);
+    const changedIssueIds = [...changedIssues.keys()];
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(tx, changedIssueIds),
+      reviewerIdsByIssue(tx, changedIssueIds),
+    ]);
     const actions: SyncAction[] = [
       buildSyncAction({
         syncId,
@@ -286,7 +291,11 @@ export async function removeMember(
           action: 'update',
           model: 'issue',
           modelId: row.id,
-          data: { ...row, reviewerIds: reviewers.get(row.id) ?? [] },
+          data: {
+            ...row,
+            labelIds: labels.get(row.id) ?? [],
+            reviewerIds: reviewers.get(row.id) ?? [],
+          },
           actor,
         }),
       ),

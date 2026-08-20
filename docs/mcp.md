@@ -108,9 +108,9 @@ Seventy odd tools across seven groups. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
 Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
-assignee is a name, handle, email or the literal `"me"`, and a project is a name
-or a slug. Assistants are much better at names than at UUIDs, and Orbit resolves
-them.
+assignee or reviewer is a name, handle, email or the literal `"me"`, and a
+project is a name or a slug. Assistants are much better at names than at UUIDs,
+and Orbit resolves them.
 
 ### Identity and workspace
 
@@ -132,11 +132,11 @@ them.
 | --- | --- | --- |
 | `get_issue` | read | One issue by identifier |
 | `list_issue_comments` | read | The comment thread on an issue, oldest first |
-| `search_issues` | read | Search and filter |
-| `list_my_issues` | read | Assigned to the caller |
+| `search_issues` | read | Search and filter, including work assigned to or reviewed by a participant |
+| `list_my_issues` | read | Assigned to the caller or awaiting their review |
 | `copy_branch_name` | read | The git branch name for an issue |
-| `create_issue` | write | Create one, returns `ENG-42`. Name a label by id when two share a name |
-| `update_issue` | write | Title, description, state, priority, assignee, labels, estimate |
+| `create_issue` | write | Create one with assignee and reviewers, returns `ENG-42`. Name a label by id when two share a name |
+| `update_issue` | write | Title, description, state, priority, assignee, reviewers, labels, estimate |
 | `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |
 | `set_relation` | write | Blocks, blocked by, relates to, duplicates |
@@ -230,7 +230,7 @@ that already works.
 Once connected, these all work:
 
 - "What am I working on this sprint?"
-- "File a bug on Engineering: passkey sign-in fails on Safari when no credential is registered. High priority, assign it to me."
+- "File a bug on Engineering: passkey sign-in fails on Safari when no credential is registered. High priority, assign it to me and ask Rhea to review."
 - "What is blocking the Realtime Sync Engine project?"
 - "Summarise what the team finished last sprint and what carried over."
 - "Read ENG-42 and write the migration it describes."

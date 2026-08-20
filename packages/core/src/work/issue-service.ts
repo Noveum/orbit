@@ -116,19 +116,18 @@ async function assertParentAllowed(
   }
 }
 
+interface IssueDecorations {
+  readonly labels: ReadonlyMap<string, string[]>;
+  readonly reviewers: ReadonlyMap<string, string[]>;
+}
+
 function issueAction(
   row: IssueRow,
   syncId: number,
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
-  labelIds?: readonly string[],
-  reviewerIds?: readonly string[],
+  decorations: { readonly labelIds: readonly string[]; readonly reviewerIds: readonly string[] },
 ): SyncAction {
-  const data = {
-    ...row,
-    ...(labelIds === undefined ? {} : { labelIds: [...labelIds] }),
-    ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
-  };
   return buildSyncAction({
     syncId,
     organizationId: row.organizationId,
@@ -136,9 +135,24 @@ function issueAction(
     action,
     model: 'issue',
     modelId: row.id,
-    data,
+    data: {
+      ...row,
+      labelIds: [...decorations.labelIds],
+      reviewerIds: [...decorations.reviewerIds],
+    },
     actor,
   });
+}
+
+async function issueDecorationsByIssue(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<IssueDecorations> {
+  const [labels, reviewers] = await Promise.all([
+    labelIdsByIssue(executor, issueIds),
+    reviewerIdsByIssue(executor, issueIds),
+  ]);
+  return { labels, reviewers };
 }
 
 async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<number> {
@@ -861,7 +875,10 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     return {
       issue,
       actions: [
-        issueAction(issue, syncId, actor, 'insert', parsed.labelIds, reviewerIds),
+        issueAction(issue, syncId, actor, 'insert', {
+          labelIds: parsed.labelIds,
+          reviewerIds,
+        }),
         ...notifications,
       ],
     };
@@ -976,9 +993,22 @@ async function subscribeChangedReviewers(
   syncId: number,
 ): Promise<void> {
   if (parsed.reviewerIds === undefined) return;
-  for (const entry of changing) {
-    await subscribeUsers(tx, entry.current.id, entry.reviewerIds, syncId);
-  }
+  const subscriptions = changing.flatMap((entry) =>
+    entry.reviewerIds.map((userId) => ({
+      id: newId(),
+      issueId: entry.current.id,
+      userId,
+      syncId,
+    })),
+  );
+  if (subscriptions.length === 0) return;
+  await tx
+    .insert(schema.issueSubscription)
+    .values(subscriptions)
+    .onConflictDoUpdate({
+      target: [schema.issueSubscription.issueId, schema.issueSubscription.userId],
+      set: { syncId },
+    });
 }
 
 async function applyIssueUpdates(
@@ -1082,22 +1112,12 @@ async function applyIssueUpdates(
     updated,
     state,
   });
-  const labels = await labelIdsByIssue(
-    tx,
-    pending.map((entry) => entry.current.id),
-  );
-  const updatedReviewers = await reviewerIdsByIssue(
+  const decorations = await issueDecorationsByIssue(
     tx,
     pending.map((entry) => entry.current.id),
   );
 
-  return updateResults(
-    pending,
-    updated,
-    { notifications, labels, reviewers: updatedReviewers },
-    syncId,
-    actor,
-  );
+  return updateResults(pending, updated, { notifications, ...decorations }, syncId, actor);
 }
 
 async function updateNotifications(
@@ -1135,14 +1155,10 @@ function updateResults(
       issue,
       changes: entry.changes,
       actions: [
-        issueAction(
-          issue,
-          syncId,
-          actor,
-          'update',
-          decorations.labels.get(issue.id) ?? [],
-          decorations.reviewers.get(issue.id) ?? [],
-        ),
+        issueAction(issue, syncId, actor, 'update', {
+          labelIds: decorations.labels.get(issue.id) ?? [],
+          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+        }),
         ...(decorations.notifications.get(issue.id) ?? []),
       ],
     };
@@ -1450,17 +1466,23 @@ export async function moveIssue(
       issue,
     });
 
-    const movedLabels = await labelIdsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+    const affected = [issue, ...rebalanced.filter((row) => row.id !== issueId)];
+    const decorations = await issueDecorationsByIssue(
+      tx,
+      affected.map((row) => row.id),
+    );
     const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
       issue,
       rebalanced,
       actions: [
-        issueAction(issue, syncId, actor, 'update', movedLabels.get(issue.id) ?? []),
-        ...rebalanced
-          .filter((row) => row.id !== issueId)
-          .map((row) => issueAction(row, syncId, actor, 'update', movedLabels.get(row.id) ?? [])),
+        ...affected.map((row) =>
+          issueAction(row, syncId, actor, 'update', {
+            labelIds: decorations.labels.get(row.id) ?? [],
+            reviewerIds: decorations.reviewers.get(row.id) ?? [],
+          }),
+        ),
         ...notifications,
       ],
     };
@@ -1543,16 +1565,14 @@ async function setArchived(
       },
     ]);
 
+    const decorations = await issueDecorationsByIssue(tx, [issue.id]);
     return {
       issue,
       actions: [
-        issueAction(
-          issue,
-          syncId,
-          actor,
-          archivedAt === null ? 'unarchive' : 'archive',
-          (await labelIdsByIssue(tx, [issue.id])).get(issue.id) ?? [],
-        ),
+        issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+          labelIds: decorations.labels.get(issue.id) ?? [],
+          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+        }),
       ],
     };
   });
@@ -1605,7 +1625,7 @@ export async function deleteIssue(
     }
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
-    const labels = await labelIdsByIssue(
+    const decorations = await issueDecorationsByIssue(
       tx,
       orphaned.map((child) => child.id),
     );
@@ -1622,7 +1642,10 @@ export async function deleteIssue(
         actor,
       }),
       ...orphaned.map((child) =>
-        issueAction(child, syncId, actor, 'update', labels.get(child.id) ?? []),
+        issueAction(child, syncId, actor, 'update', {
+          labelIds: decorations.labels.get(child.id) ?? [],
+          reviewerIds: decorations.reviewers.get(child.id) ?? [],
+        }),
       ),
     ];
   });

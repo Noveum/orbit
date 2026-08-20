@@ -1,7 +1,7 @@
 import { listRelatedIssues, type RelatedIssue, removeRelation, setRelation } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
-import { attachLabels } from '@/lib/api/issues.ts';
+import { attachIssueDecorations } from '@/lib/api/issues.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
@@ -12,7 +12,7 @@ async function relationPayload(
   issueId: string,
 ): Promise<{ relations: { id: string; type: string; issue: unknown }[] }> {
   const related: RelatedIssue[] = await listRelatedIssues(principal, issueId);
-  const issues = await attachLabels(related.map((entry) => entry.issue));
+  const issues = await attachIssueDecorations(related.map((entry) => entry.issue));
   return {
     relations: related.map((entry, index) => ({
       id: entry.id,

@@ -56,6 +56,11 @@ const labelsRef = z
   .max(50)
   .describe('Label names or ids. Replaces the labels already on the issue.');
 
+const reviewersRef = z
+  .array(z.string().min(1))
+  .max(50)
+  .describe('Reviewer names, handles, emails, ids, or "me". Replaces the reviewer list.');
+
 async function issueLabelNames(principal: Principal, issueId: string): Promise<string[]> {
   const [assigned, labels] = await Promise.all([
     listIssueLabels(principal, issueId),
@@ -101,6 +106,7 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
           .min(1)
           .optional()
           .describe('Assignee name, handle, email, id, or "me".'),
+        reviewers: reviewersRef.optional(),
         project: z.string().min(1).optional().describe('Project name, slug or id.'),
         cycle: z
           .string()
@@ -137,7 +143,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
       name: 'update_issue',
       title: 'Update an issue',
       description:
-        'Change fields on an existing issue. Only the fields you pass are touched. Pass null to assignee, project or cycle to clear it.',
+        'Change fields on an existing issue. Only the fields you pass are touched. Pass null to assignee, project or cycle to clear it, or an empty reviewers array to clear the reviewer list.',
       readOnly: false,
       inputSchema: {
         issue: issueRef,
@@ -159,6 +165,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
           .nullable()
           .optional()
           .describe('Assignee name, handle, email, id, "me", or null to unassign.'),
+        reviewers: reviewersRef.optional(),
         project: z
           .string()
           .min(1)
@@ -203,6 +210,7 @@ interface IssuePatchArgs {
   readonly state?: string | undefined;
   readonly priority?: keyof typeof PRIORITY_VALUES | undefined;
   readonly assignee?: string | null | undefined;
+  readonly reviewers?: string[] | undefined;
   readonly project?: string | null | undefined;
   readonly milestone?: string | null | undefined;
   readonly cycle?: string | null | undefined;
@@ -249,6 +257,11 @@ async function buildIssuePatch(
   if (args.assignee !== undefined) {
     patch['assigneeId'] =
       args.assignee === null ? null : await resolveUserId(principal, args.assignee);
+  }
+  if (args.reviewers !== undefined) {
+    patch['reviewerIds'] = await Promise.all(
+      args.reviewers.map(async (reviewer) => await resolveUserId(principal, reviewer)),
+    );
   }
   if (args.project !== undefined) {
     patch['projectId'] =
@@ -302,7 +315,7 @@ function registerSearchIssues(server: McpServer, principal: Principal): void {
       name: 'search_issues',
       title: 'Search issues',
       description:
-        'Search issues by free text and by team, project, cycle, assignee, state, state category, label or parent. Returns a page of issues plus a cursor for the next page.',
+        'Search issues by free text and by team, project, cycle, assignee, participant, state, state category, label or parent. A participant is an assignee or reviewer. Returns a page of issues plus a cursor for the next page.',
       readOnly: true,
       inputSchema: {
         query: z
@@ -322,6 +335,11 @@ function registerSearchIssues(server: McpServer, principal: Principal): void {
           .min(1)
           .optional()
           .describe('Assignee name, handle, email, id, or "me".'),
+        participant: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Assignee or reviewer name, handle, email, id, or "me".'),
         state: z.string().min(1).optional().describe('Workflow state name or id. Needs team.'),
         stateCategory: z.enum(STATE_CATEGORIES).optional().describe('Broad status bucket.'),
         label: z.string().min(1).optional().describe('Label name or id.'),
@@ -351,6 +369,7 @@ interface IssueFilterArgs {
   readonly project?: string | undefined;
   readonly cycle?: string | undefined;
   readonly assignee?: string | undefined;
+  readonly participant?: string | undefined;
   readonly state?: string | undefined;
   readonly stateCategory?: (typeof STATE_CATEGORIES)[number] | undefined;
   readonly label?: string | undefined;
@@ -381,6 +400,8 @@ async function buildIssueFilter(
     filter['projectId'] = (await resolveProject(principal, args.project)).id;
   if (args.assignee !== undefined)
     filter['assigneeId'] = await resolveUserId(principal, args.assignee);
+  if (args.participant !== undefined)
+    filter['participantId'] = await resolveUserId(principal, args.participant);
   if (args.parent !== undefined) filter['parentId'] = (await getIssue(principal, args.parent)).id;
   if (args.label !== undefined) {
     const [labelId] = await resolveLabelIds(principal, [args.label], teamId);
@@ -403,7 +424,7 @@ function registerListMyIssues(server: McpServer, principal: Principal): void {
       name: 'list_my_issues',
       title: 'List my issues',
       description:
-        'List the issues assigned to the caller, most recently updated first. Narrow with a state category such as "started" to see only work in flight.',
+        'List issues assigned to the caller or awaiting their review, most recently updated first. Narrow with a state category such as "started" to see only work in flight.',
       readOnly: true,
       inputSchema: {
         stateCategory: z
@@ -415,7 +436,7 @@ function registerListMyIssues(server: McpServer, principal: Principal): void {
     },
     async (args) => {
       const page = await listIssues(principal, {
-        assigneeId: principal.userId,
+        participantId: principal.userId,
         orderBy: 'updated',
         limit: args.limit,
         ...(args.stateCategory === undefined ? {} : { stateCategory: args.stateCategory }),

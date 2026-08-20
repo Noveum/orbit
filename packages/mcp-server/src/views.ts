@@ -1,4 +1,10 @@
-import { type IssueListRow, listMembers, listWorkflowStates } from '@orbit/core';
+import {
+  type IssueListRow,
+  listMembers,
+  listWorkflowStates,
+  reviewerIdsByIssue,
+} from '@orbit/core';
+import { db } from '@orbit/db';
 import { PRIORITY_LABELS } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -15,6 +21,8 @@ export interface IssueView {
   readonly priority: string;
   readonly assignee: string | null;
   readonly assigneeId: string | null;
+  readonly reviewers: readonly string[];
+  readonly reviewerIds: readonly string[];
   readonly projectId: string | null;
   readonly cycleId: string | null;
   readonly milestoneId: string | null;
@@ -43,6 +51,7 @@ function toView(
   row: IssueListRow,
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
+  reviewerIds: readonly string[],
 ): IssueView {
   return {
     id: row.id,
@@ -54,6 +63,8 @@ function toView(
     priority: PRIORITY_NAMES[row.priority] ?? 'No priority',
     assignee: row.assigneeId === null ? null : (userNames.get(row.assigneeId) ?? null),
     assigneeId: row.assigneeId,
+    reviewers: reviewerIds.map((id) => userNames.get(id) ?? id),
+    reviewerIds: [...reviewerIds],
     projectId: row.projectId,
     cycleId: row.cycleId,
     milestoneId: row.milestoneId,
@@ -78,12 +89,17 @@ export async function describeIssues(
     }
   }
 
+  const [members, reviewers] = await Promise.all([
+    listMembers(principal),
+    reviewerIdsByIssue(
+      db,
+      rows.map((row) => row.id),
+    ),
+  ]);
   const userNames = new Map<string, string>();
-  for (const member of await listMembers(principal)) {
-    userNames.set(member.user.id, member.user.name);
-  }
+  for (const member of members) userNames.set(member.user.id, member.user.name);
 
-  return rows.map((row) => toView(row, stateNames, userNames));
+  return rows.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
 }
 
 export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {

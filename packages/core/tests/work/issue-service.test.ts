@@ -498,6 +498,29 @@ describe('reviewer membership', () => {
     });
     expect(updated.actions[0]?.data['reviewerIds']).toEqual([second.user.id]);
   });
+
+  it('keeps reviewers on every issue delta that can place a row into another list', async () => {
+    const reviewer = await addMember(workspace, 'member', { name: 'Persistent Reviewer' });
+    const issue = await newIssue('Moves and archives', { reviewerIds: [reviewer.user.id] });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+    expect(moved.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
+
+    const archived = await archiveIssue(workspace.admin, issue.id);
+    expect(archived.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
+
+    const parent = await newIssue('Deleted parent');
+    const child = await newIssue('Orphaned child', {
+      parentId: parent.id,
+      reviewerIds: [reviewer.user.id],
+    });
+    const deleted = await deleteIssue(workspace.admin, parent.id);
+    expect(deleted.find((action) => action.modelId === child.id)?.data['reviewerIds']).toEqual([
+      reviewer.user.id,
+    ]);
+  });
 });
 
 describe('label deltas', () => {

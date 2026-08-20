@@ -21,6 +21,8 @@ interface IssueShape {
   readonly state: string | null;
   readonly priority: string;
   readonly assignee: string | null;
+  readonly reviewers: readonly string[];
+  readonly reviewerIds: readonly string[];
   readonly cycleId: string | null;
   readonly parentId: string | null;
   readonly dueDate: string | null;
@@ -193,6 +195,36 @@ describe('issues', () => {
     const mine = await newIssue('Mine to finish', { assignee: 'me' });
     const payload = await admin.result('list_my_issues', { limit: 100 });
     expect(issuesOf(payload).map((issue) => issue.identifier)).toContain(mine.identifier);
+  });
+
+  it('creates, finds, updates, and lists work with multiple reviewers', async () => {
+    const owner = await addMember(workspace, 'member', 'Ona Owner');
+    const reviewer = await addMember(workspace, 'member', 'Rhea Reviewer');
+    const created = await newIssue('Review through MCP', {
+      assignee: owner.user.email,
+      reviewers: ['me', reviewer.user.email],
+    });
+
+    expect(created.reviewers).toEqual(
+      expect.arrayContaining([workspace.adminUser.name, reviewer.user.name]),
+    );
+    expect(created.reviewerIds).toEqual(
+      expect.arrayContaining([workspace.adminUser.id, reviewer.user.id]),
+    );
+
+    const mine = await admin.result('list_my_issues', { limit: 100 });
+    expect(issuesOf(mine).map((issue) => issue.id)).toContain(created.id);
+    const involvingReviewer = await admin.result('search_issues', {
+      participant: reviewer.user.email,
+    });
+    expect(issuesOf(involvingReviewer).map((issue) => issue.id)).toContain(created.id);
+
+    const updated = await admin.result('update_issue', {
+      issue: created.identifier,
+      reviewers: [owner.user.email],
+    });
+    expect(issueOf(updated).reviewers).toEqual([owner.user.name]);
+    expect(updated['changed']).toContain('reviewerIds');
   });
 
   it('emits an issue sync action when moving an issue', async () => {

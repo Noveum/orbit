@@ -1,10 +1,13 @@
 import { db, inArray, schema } from '@orbit/db';
 
-export type WithLabels<T> = T & { readonly labelIds: string[]; readonly reviewerIds: string[] };
+export type DecoratedIssue<T> = T & {
+  readonly labelIds: string[];
+  readonly reviewerIds: string[];
+};
 
-export async function attachLabels<T extends { id: string }>(
+export async function attachIssueDecorations<T extends { id: string }>(
   issues: readonly T[],
-): Promise<WithLabels<T>[]> {
+): Promise<DecoratedIssue<T>[]> {
   if (issues.length === 0) return [];
   const issueIds = issues.map((issue) => issue.id);
   const [links, reviewerLinks] = await Promise.all([

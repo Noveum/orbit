@@ -6,6 +6,8 @@ import {
   githubRepositorySync,
   gitLink,
   issue,
+  issueLabel,
+  issueReviewer,
   issueSubscription,
   member,
   nextSyncId,
@@ -914,6 +916,17 @@ async function transitionIssue(
     .returning();
   if (row === undefined) return null;
 
+  const [labels, reviewers] = await Promise.all([
+    database
+      .select({ labelId: issueLabel.labelId })
+      .from(issueLabel)
+      .where(eq(issueLabel.issueId, row.id)),
+    database
+      .select({ userId: issueReviewer.userId })
+      .from(issueReviewer)
+      .where(eq(issueReviewer.issueId, row.id)),
+  ]);
+
   return buildAction({
     syncId: row.syncId,
     organizationId: row.organizationId,
@@ -921,7 +934,11 @@ async function transitionIssue(
     action: 'update',
     model: 'issue',
     modelId: row.id,
-    data: row,
+    data: {
+      ...row,
+      labelIds: labels.map((entry) => entry.labelId),
+      reviewerIds: reviewers.map((entry) => entry.userId).sort(),
+    },
     actor,
     at: now,
   });
