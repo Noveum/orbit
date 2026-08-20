@@ -1,5 +1,6 @@
 'use client';
 
+import { DOC_KINDS } from '@orbit/shared/constants';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { Upload } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -16,7 +17,7 @@ const MAX_IMPORT_BYTES = DOC_CONTENT_LIMIT * 4;
 const importedDocSchema = z.object({
   title: z.string().trim().min(1).max(200),
   content: z.string().max(DOC_CONTENT_LIMIT),
-  kind: z.enum(['markdown', 'html']),
+  kind: z.enum(DOC_KINDS),
 });
 
 export interface DocImportProps {
@@ -55,7 +56,7 @@ export function DocImport({ collectionId, projectId }: DocImportProps) {
       <input
         ref={input}
         type="file"
-        accept=".md,.markdown,.mdx,.html,.htm,text/markdown,text/html"
+        accept=".md,.markdown,.mdx,.html,.htm,.xhtml,text/markdown,text/html,application/xhtml+xml"
         className="hidden"
         data-testid="doc-import-input"
         onChange={(event) => {
