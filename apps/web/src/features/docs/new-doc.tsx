@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { useToast } from '@/components/ui/toast.tsx';
+import { messageOf } from '@/lib/query/fetcher.ts';
 import { useCreateDoc } from '@/lib/query/use-docs.ts';
 import { HTML_PAGE_STARTER, templateById } from './templates.ts';
 
@@ -19,6 +21,7 @@ export interface NewDocProps {
 export function NewDoc({ collectionId, projectId, templateId = null, kind = null }: NewDocProps) {
   const router = useRouter();
   const create = useCreateDoc();
+  const { toast } = useToast();
   const started = useRef(false);
   const run = create.mutateAsync;
 
@@ -41,8 +44,15 @@ export function NewDoc({ collectionId, projectId, templateId = null, kind = null
       projectId,
     })
       .then((doc) => router.replace(`/docs/${doc.id}`))
-      .catch(() => router.replace('/docs'));
-  }, [run, router, collectionId, projectId, templateId, kind]);
+      .catch((error: unknown) => {
+        toast({
+          title: 'Could not create that document',
+          description: messageOf(error),
+          tone: 'danger',
+        });
+        router.replace('/docs');
+      });
+  }, [run, router, toast, collectionId, projectId, templateId, kind]);
 
   return (
     <div className="mx-auto flex w-full max-w-[45rem] flex-col gap-4 px-6 py-10">
