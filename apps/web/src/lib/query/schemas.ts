@@ -1,4 +1,4 @@
-import { ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
+import { DOC_KINDS, ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
 import {
   defaultViewState,
   GROUP_BY_FIELDS,
@@ -309,7 +309,7 @@ export const docSchema = z.object({
   parentId: z.string().nullable(),
   title: z.string(),
   slug: z.string(),
-  kind: z.enum(['markdown', 'html']).optional(),
+  kind: z.enum(DOC_KINDS).default('markdown'),
   content: z.string(),
   sortOrder: z.number().default(0),
   visibility: z.string(),

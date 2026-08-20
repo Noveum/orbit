@@ -234,6 +234,7 @@ describe('doc nesting', () => {
       parentId,
       title: id,
       slug: id,
+      kind: 'markdown' as const,
       content: '',
       sortOrder: 0,
       visibility: 'workspace',

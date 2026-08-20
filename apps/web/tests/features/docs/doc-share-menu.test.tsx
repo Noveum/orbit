@@ -38,6 +38,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     parentId: null,
     title: 'Delta protocol',
     slug: 'delta-protocol',
+    kind: 'markdown',
     content: '',
     sortOrder: 0,
     visibility,
