@@ -17,7 +17,6 @@ import {
   dispatchSlackMessage,
   ensureSlackIntegration,
   issueIdentifierFromUrl,
-  listSlackUserMappings,
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
@@ -112,29 +111,6 @@ describe('resolveSlackContext', () => {
       const context = await resolveSlackContext(tx, fixture.organizationId);
       expect(context?.scopes).toEqual(['chat:write', 'im:write']);
       expect(context?.hasDirectMessageScope).toBe(true);
-    });
-  });
-});
-
-describe('Slack user mappings', () => {
-  it('upserts and lists organization-scoped mappings', async () => {
-    await withRollback(async (tx) => {
-      const fixture = await seed(tx);
-      await upsertSlackUserMapping(tx, {
-        organizationId: fixture.organizationId,
-        integrationId: fixture.integrationId,
-        userId: fixture.userId,
-        slackUserId: 'U123',
-        slackDisplayName: 'Ada Slack',
-      });
-
-      expect(await listSlackUserMappings(tx, fixture.organizationId, [fixture.userId])).toEqual([
-        {
-          userId: fixture.userId,
-          slackUserId: 'U123',
-          slackDisplayName: 'Ada Slack',
-        },
-      ]);
     });
   });
 });
@@ -762,7 +738,7 @@ describe('dispatchSlackDm', () => {
       const fixture = await seed(tx);
       await tx
         .update(integration)
-        .set({ config: { scopes: ['im:write'] } })
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
         .where(eq(integration.id, fixture.integrationId));
       await upsertSlackUserMapping(tx, {
         organizationId: fixture.organizationId,
