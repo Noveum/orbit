@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, render, screen, waitFor } from '@/test/render.tsx';
+import type { ReactNode } from 'react';
+import { cleanup, render, waitFor } from '@/test/render.tsx';
 
 const replace = mock((_href: string) => undefined);
 const created = mock(async (input: Record<string, unknown>) => ({ id: 'doc_new', ...input }));
+const toast = mock((_options: Record<string, unknown>) => undefined);
 
 mock.module('next/navigation', () => ({ useRouter: () => ({ replace }) }));
 mock.module('@/lib/query/use-docs.ts', () => ({
   useCreateDoc: () => ({ mutateAsync: created }),
+}));
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast, dismiss: mock() }),
+  ToastProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 const { NewDoc } = await import('../../../src/features/docs/new-doc.tsx');
@@ -15,6 +21,7 @@ afterEach(() => {
   cleanup();
   replace.mockClear();
   created.mockClear();
+  toast.mockClear();
 });
 
 describe('starting a new doc', () => {
@@ -22,6 +29,7 @@ describe('starting a new doc', () => {
     render(<NewDoc collectionId={null} projectId={null} />);
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/docs/doc_new'));
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it('starts an html page from the html starter', async () => {
@@ -37,9 +45,11 @@ describe('starting a new doc', () => {
     );
     render(<NewDoc collectionId={null} projectId={null} />);
 
-    await waitFor(() =>
-      expect(screen.getByText('The workspace refused that doc.')).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const options = toast.mock.calls[0]?.[0];
+    expect(options?.['title']).toBe('Could not create that document');
+    expect(options?.['description']).toBe('The workspace refused that doc.');
+    expect(options?.['tone']).toBe('danger');
     expect(replace).toHaveBeenCalledWith('/docs');
   });
 });
