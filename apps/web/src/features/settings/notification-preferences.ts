@@ -45,7 +45,7 @@ export async function loadNotificationPreferences(
   let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
   if (slack !== undefined) {
     const scopes = slack.config['scopes'];
-    if (Array.isArray(scopes) && scopes.includes('im:write')) {
+    if (Array.isArray(scopes) && scopes.includes('im:write') && scopes.includes('chat:write')) {
       const [mapping] = await db
         .select({ id: schema.slackUserMapping.id })
         .from(schema.slackUserMapping)

@@ -540,14 +540,18 @@ describe('inbox reads and writes', () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
-      await expect(
-        snooze(tx, {
+      let error: unknown;
+      try {
+        await snooze(tx, {
           userId: fixture.graceId,
           organizationId: fixture.organizationId,
           notificationId: outcome.notifications[0]?.id ?? '',
           until: new Date(),
-        }),
-      ).rejects.toThrow();
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeDefined();
     });
   });
 });

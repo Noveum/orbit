@@ -61,6 +61,8 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
   } else if (props.slackDm === 'reauthorize') {
     slackDmNotice =
       'Slack DMs require permission to send direct messages. Reconnect Slack from Integrations.';
+  } else if (props.slackDm === 'unavailable') {
+    slackDmNotice = 'Slack DMs are unavailable until Slack is connected for this workspace.';
   }
 
   function toggle(channel: NotificationChannel, type: NotificationType): void {

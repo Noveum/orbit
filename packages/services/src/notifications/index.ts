@@ -189,7 +189,8 @@ function planFor(
     timeZone: recipient.timezone,
   };
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
-  const deferred = emailEnabled && !bypass && isWithinQuietHours(now, quietHours);
+  const deferred =
+    (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
   return {
     id: randomUUIDv7(now),
     event,
@@ -198,7 +199,7 @@ function planFor(
       ...(inboxEnabled ? [INBOX_CHANNEL] : []),
       ...(emailEnabled ? ['email'] : []),
       ...(slackEnabled ? ['slack'] : []),
-      ...(slackDmEnabled ? ['slack_dm'] : []),
+      ...(slackDmEnabled && !deferred ? ['slack_dm'] : []),
     ],
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,

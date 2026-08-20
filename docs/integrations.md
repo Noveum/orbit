@@ -107,11 +107,13 @@ Orbit stores granted scopes as non-secret integration metadata and never exposes
 the bot token to the browser.
 
 Slack direct messages are available only when the Orbit user is mapped to a
-Slack member in that workspace. An unmapped user keeps receiving other enabled
-notification channels and does not cause notification creation to fail. Team
-and project notifications continue to use the configured Slack channel;
-personal notifications use Slack DMs. Quiet hours and the urgent-assignment
-bypass apply to DMs using the same notification settings as email.
+Slack member in that workspace. The initial Slack connection maps the user who
+completes OAuth; other users remain unmapped until a later mapping flow is
+available. An unmapped user keeps receiving other enabled notification channels
+and does not cause notification creation to fail. Team and project
+notifications continue to use the configured Slack channel; personal
+notifications use Slack DMs. Quiet hours and the urgent-assignment bypass apply
+to DMs using the same notification settings as email.
 
 If the notification settings show that Slack DMs require reauthorization,
 reconnect Slack from **Settings**, **Integrations**. If they show that the user
