@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import type { ReactNode } from 'react';
 import { cleanup, render, waitFor } from '@/test/render.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile([
+  'next/navigation',
+  '@/lib/query/use-docs.ts',
+  '@/components/ui/toast.tsx',
+]);
 
 const replace = mock((_href: string) => undefined);
 const created = mock(async (input: Record<string, unknown>) => ({ id: 'doc_new', ...input }));
