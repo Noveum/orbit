@@ -131,7 +131,11 @@ export function AssigneeControl({
   const options = useMemo<PropertyOption[]>(
     () => [
       { id: '', label: 'No assignee' },
-      ...workspace.members.map((member) => ({ id: member.id, label: member.name })),
+      ...workspace.members.map((member) => ({
+        id: member.id,
+        label: member.name,
+        icon: <Avatar name={member.name} src={member.image} size="xs" />,
+      })),
     ],
     [workspace.members],
   );

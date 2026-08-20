@@ -14,11 +14,14 @@ const FACET_GROUPS = new Set<string>([
   'project',
   'cycle',
   'milestone',
+  'participant',
 ]);
+
+const SUMMARY_GROUPS = [...GROUP_BY_FIELDS, 'participant'] as const;
 
 const summaryQuerySchema = issueFilterSchema.extend({
   groupBy: z
-    .enum(GROUP_BY_FIELDS)
+    .enum(SUMMARY_GROUPS)
     .optional()
     .transform((value) => (value !== undefined && FACET_GROUPS.has(value) ? value : 'state')),
 });

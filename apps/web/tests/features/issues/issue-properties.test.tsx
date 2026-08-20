@@ -11,7 +11,7 @@ import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
-import type { Issue, Milestone } from '@/lib/query/schemas.ts';
+import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
 
 const patches: Record<string, unknown>[] = [];
 
@@ -22,6 +22,24 @@ mock.module('@/lib/query/use-issues.ts', () => ({
     },
   }),
 }));
+
+const firstReviewer: Member = {
+  id: 'reviewer_1',
+  name: 'Ada Reviewer',
+  email: 'ada@orbit.test',
+  image: '/ada.png',
+  handle: 'ada',
+  role: 'member',
+};
+
+const secondReviewer: Member = {
+  id: 'reviewer_2',
+  name: 'Bo Reviewer',
+  email: 'bo@orbit.test',
+  image: '/bo.png',
+  handle: 'bo',
+  role: 'member',
+};
 
 const workspace: WorkspaceData = {
   ...({} as WorkspaceData),
@@ -40,7 +58,7 @@ const workspace: WorkspaceData = {
     },
   ],
   labels: [],
-  members: [],
+  members: [firstReviewer, secondReviewer],
   projects: [
     {
       id: 'project_launch',
@@ -84,7 +102,10 @@ const workspace: WorkspaceData = {
   seedIssues: [],
   stateById: new Map(),
   labelById: new Map(),
-  memberById: new Map(),
+  memberById: new Map([
+    [firstReviewer.id, firstReviewer],
+    [secondReviewer.id, secondReviewer],
+  ]),
   openQuickCreate: () => undefined,
 };
 
@@ -306,6 +327,40 @@ describe('the project row on the issue properties panel', () => {
     const menu = await screen.findByTestId('menu-project');
 
     expect(within(menu).getByText('Growth')).toBeInTheDocument();
+  });
+});
+
+describe('the reviewer row on the issue properties panel', () => {
+  it('shows every current reviewer and adds another selected person', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ reviewerIds: [firstReviewer.id] }));
+
+    expect(screen.getByTestId('property-reviewers')).toHaveTextContent(firstReviewer.name);
+    await user.click(screen.getByTestId('property-reviewers'));
+    const menu = await screen.findByTestId('menu-reviewers');
+    expect(
+      within(menu).getByText(firstReviewer.name).parentElement?.querySelector('[role="img"]'),
+    ).not.toBeNull();
+    expect(
+      within(menu).getByText(secondReviewer.name).parentElement?.querySelector('[role="img"]'),
+    ).not.toBeNull();
+    await user.click(within(menu).getByText(secondReviewer.name));
+
+    await waitFor(() =>
+      expect(patches).toEqual([{ reviewerIds: [firstReviewer.id, secondReviewer.id] }]),
+    );
+  });
+
+  it('removes a selected reviewer without changing the assignee', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ assigneeId: firstReviewer.id, reviewerIds: [firstReviewer.id] }));
+
+    await user.click(screen.getByTestId('property-reviewers'));
+    await user.click(
+      within(await screen.findByTestId('menu-reviewers')).getByText(firstReviewer.name),
+    );
+
+    await waitFor(() => expect(patches).toEqual([{ reviewerIds: [] }]));
   });
 });
 

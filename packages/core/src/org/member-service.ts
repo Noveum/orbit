@@ -11,6 +11,7 @@ import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from '../work/issue-service.ts';
+import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import type { MemberRow } from './organization-service.ts';
 
 export interface MemberWithUser {
@@ -232,6 +233,20 @@ export async function removeMember(
       )
       .returning();
 
+    const removedReviews = await tx
+      .delete(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.userId, current.userId))
+      .returning({ issueId: schema.issueReviewer.issueId });
+    const reviewedIssueIds = [...new Set(removedReviews.map((row) => row.issueId))];
+    const reviewed =
+      reviewedIssueIds.length === 0
+        ? []
+        : await tx
+            .update(schema.issue)
+            .set({ updatedAt: new Date(), syncId })
+            .where(inArray(schema.issue.id, reviewedIssueIds))
+            .returning();
+
     await tx
       .delete(schema.teamMember)
       .where(
@@ -250,6 +265,8 @@ export async function removeMember(
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
+    const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
+    const reviewers = await reviewerIdsByIssue(tx, [...changedIssues.keys()]);
     const actions: SyncAction[] = [
       buildSyncAction({
         syncId,
@@ -261,7 +278,7 @@ export async function removeMember(
         data: { id: memberId, userId: current.userId },
         actor,
       }),
-      ...reassigned.map((row) =>
+      ...[...changedIssues.values()].map((row) =>
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -269,7 +286,7 @@ export async function removeMember(
           action: 'update',
           model: 'issue',
           modelId: row.id,
-          data: row,
+          data: { ...row, reviewerIds: reviewers.get(row.id) ?? [] },
           actor,
         }),
       ),

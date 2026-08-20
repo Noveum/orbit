@@ -388,6 +388,20 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
+  it('creates an issue with multiple reviewers from the new field', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Review the release');
+    await user.click(screen.getByTestId('quick-create-reviewers'));
+    await user.click(await screen.findByText('Shashank'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]).toMatchObject({ reviewerIds: ['me'] });
+  });
+
   it('offers every accessible project from every team', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspaceWithDesign();

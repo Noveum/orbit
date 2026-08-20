@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { emptyFilterGroup } from '@orbit/shared/filters';
 import {
+  assignedSearch,
   boardSearch,
   columnParamFor,
   groupColumnSearch,
@@ -40,6 +41,15 @@ describe('boardSearch', () => {
 
   it('passes a per column page size when one is asked for', () => {
     expect(params(boardSearch(query, 'state', {}, 10)).get('perGroup')).toBe('10');
+  });
+});
+
+describe('assignedSearch', () => {
+  it('includes issues the person owns or reviews through the participant scope', () => {
+    const search = params(assignedSearch('user_1', query));
+
+    expect(search.get('participantId')).toBe('user_1');
+    expect(search.get('assigneeId')).toBeNull();
   });
 });
 

@@ -13,6 +13,7 @@ import { IssueActionsMenu } from './issue-actions.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
+import { ReviewerAvatars } from './reviewer-avatars.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 
 export const ROW_HEIGHT = 28;
@@ -22,6 +23,7 @@ export interface IssueRowProps {
   readonly state: WorkflowState | undefined;
   readonly labels: readonly Label[];
   readonly assignee: Member | undefined;
+  readonly reviewers?: readonly Member[];
   readonly creator?: Member | undefined;
   readonly project?: { readonly name: string; readonly color: string } | undefined;
   readonly cycle?: { readonly name: string } | undefined;
@@ -39,6 +41,7 @@ export function IssueRow({
   state,
   labels,
   assignee,
+  reviewers = [],
   creator,
   project,
   cycle,
@@ -133,6 +136,7 @@ export function IssueRow({
         subIssueCount={subIssueCount}
         properties={properties}
       />
+      <ReviewerAvatars reviewers={reviewers} />
       {shows('assignee') ? <RowAssignee assignee={assignee} /> : null}
       <IssueActionsMenu issue={issue} className={revealOnHover} />
     </div>

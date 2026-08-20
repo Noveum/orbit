@@ -592,6 +592,23 @@ export const issueLabel = pgTable(
   ],
 );
 
+export const issueReviewer = pgTable(
+  'issue_reviewer',
+  {
+    issueId: text('issue_id')
+      .notNull()
+      .references(() => issue.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('issue_reviewer_unique').on(table.issueId, table.userId),
+    index('issue_reviewer_user_idx').on(table.userId, table.issueId),
+  ],
+);
+
 export const issueRelation = pgTable(
   'issue_relation',
   {

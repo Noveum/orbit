@@ -145,6 +145,7 @@ const SIMPLE_FIELD_COPY: Record<string, string> = {
   created: 'created the issue',
   subscribed: 'subscribed to the issue',
   unsubscribed: 'unsubscribed from the issue',
+  reviewerIds: 'changed the reviewers',
 };
 
 interface RenderedChange {

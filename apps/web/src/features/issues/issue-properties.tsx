@@ -20,6 +20,7 @@ import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { projectsForTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
+import { ReviewerAvatars } from './reviewer-avatars.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
@@ -27,6 +28,7 @@ type MenuKey =
   | 'status'
   | 'priority'
   | 'assignee'
+  | 'reviewers'
   | 'project'
   | 'milestone'
   | 'cycle'
@@ -55,6 +57,11 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const state = workspace.stateById.get(issue.stateId);
   const assignee =
     issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId);
+  const reviewerIds = issue.reviewerIds ?? [];
+  const reviewers = reviewerIds.flatMap((id) => {
+    const reviewer = workspace.memberById.get(id);
+    return reviewer === undefined ? [] : [reviewer];
+  });
   const project = workspace.projects.find((entry) => entry.id === issue.projectId);
   const assignableProjects = projectsForTeam(workspace.projects, issue.teamId, issue.projectId);
   const milestonesQuery = useMilestones(issue.projectId);
@@ -86,6 +93,11 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   });
   useHotkey('a', () => setOpenMenu('assignee'), {
     label: 'Assign issue',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('r', () => setOpenMenu('reviewers'), {
+    label: 'Change reviewers',
     section: 'Issues',
     scope: 'issues',
   });
@@ -193,6 +205,42 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
               )}
             </span>
             {assignee?.name ?? 'Unassigned'}
+          </button>
+        </PropertyMenu>
+      </PropertyRow>
+
+      <PropertyRow label="Reviewers" shortcut="r">
+        <PropertyMenu
+          title="Reviewers"
+          multiple
+          open={openMenu === 'reviewers'}
+          onOpenChange={toggle('reviewers')}
+          options={workspace.members.map((member) => ({
+            id: member.id,
+            label: member.name,
+            icon: <Avatar name={member.name} src={member.image} size="xs" />,
+          }))}
+          selected={reviewerIds}
+          onSelect={(reviewerId) =>
+            patch({
+              reviewerIds: reviewerIds.includes(reviewerId)
+                ? reviewerIds.filter((id) => id !== reviewerId)
+                : [...reviewerIds, reviewerId],
+            })
+          }
+          testId="menu-reviewers"
+        >
+          <button type="button" className={rowClassName} data-testid="property-reviewers">
+            {reviewers.length === 0 ? (
+              'No reviewers'
+            ) : (
+              <>
+                <ReviewerAvatars reviewers={reviewers} />
+                <span className="truncate">
+                  {reviewers.map((reviewer) => reviewer.name).join(', ')}
+                </span>
+              </>
+            )}
           </button>
         </PropertyMenu>
       </PropertyRow>

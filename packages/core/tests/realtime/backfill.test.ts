@@ -76,6 +76,21 @@ describe('catchUp', () => {
     expect(issues[0]?.syncId).toBe(third.issue.syncId);
   });
 
+  it('backfills reviewer ids with each issue', async () => {
+    const reviewer = await addMember(workspace, 'member', { name: 'Rhea Reviewer' });
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Review me',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    const result = await catchUp(workspace.admin, 0);
+    const action = result.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
+    );
+    expect(action?.data['reviewerIds']).toEqual([reviewer.user.id]);
+  });
+
   it('never returns a row from another organization', async () => {
     const other = await createWorkspace('Rival');
     await createIssue(other.admin, { teamId: other.teamId, title: 'Rival roadmap' });

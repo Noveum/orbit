@@ -45,6 +45,7 @@ import {
   awaitsServerRefresh,
   belongsInList,
   flattenIssuePages,
+  participatesIn,
   searchOf,
   withoutSubIssue,
 } from '@/lib/query/sync.ts';
@@ -98,7 +99,7 @@ function membershipOf(key: QueryKey): IssueBelongs | null {
   if (scope === ASSIGNED_SCOPE) {
     const userId = key[2];
     if (typeof userId !== 'string') return null;
-    return (issue: Issue) => issue.assigneeId === userId && belongsInList(search, issue);
+    return (issue: Issue) => participatesIn(issue, userId) && belongsInList(search, issue);
   }
   if (scope === PROJECT_SCOPE) {
     const projectId = key[2];

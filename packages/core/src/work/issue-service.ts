@@ -59,6 +59,7 @@ import {
 } from './issue-fields.ts';
 import { buildIssueWhere } from './issue-query.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
+import { replaceReviewersFor, reviewerIdsByIssue } from './reviewer-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
 export {
@@ -121,7 +122,13 @@ function issueAction(
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
   labelIds?: readonly string[],
+  reviewerIds?: readonly string[],
 ): SyncAction {
+  const data = {
+    ...row,
+    ...(labelIds === undefined ? {} : { labelIds: [...labelIds] }),
+    ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
+  };
   return buildSyncAction({
     syncId,
     organizationId: row.organizationId,
@@ -129,7 +136,7 @@ function issueAction(
     action,
     model: 'issue',
     modelId: row.id,
-    data: labelIds === undefined ? row : { ...row, labelIds: [...labelIds] },
+    data,
     actor,
   });
 }
@@ -723,6 +730,24 @@ async function assertMemberOfWorkspace(
   if (row === undefined) throw validationFailed('That person is not in this workspace.');
 }
 
+async function assertMembersOfWorkspace(
+  executor: Executor,
+  organizationId: string,
+  userIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return;
+  const rows = await executor
+    .select({ userId: schema.member.userId })
+    .from(schema.member)
+    .where(
+      and(eq(schema.member.organizationId, organizationId), inArray(schema.member.userId, ids)),
+    );
+  if (new Set(rows.map((row) => row.userId)).size !== ids.length) {
+    throw validationFailed('Every reviewer must be in this workspace.');
+  }
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
@@ -764,7 +789,9 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       throw validationFailed('That status belongs to another team.');
     }
     const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
     await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
+    await assertMembersOfWorkspace(tx, principal.organizationId, reviewerIds);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -808,7 +835,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
+    await replaceReviewersFor(tx, [issue.id], reviewerIds);
+    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId, ...reviewerIds], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -832,7 +860,10 @@ export async function createIssue(principal: Principal, input: unknown): Promise
 
     return {
       issue,
-      actions: [issueAction(issue, syncId, actor, 'insert', parsed.labelIds), ...notifications],
+      actions: [
+        issueAction(issue, syncId, actor, 'insert', parsed.labelIds, reviewerIds),
+        ...notifications,
+      ],
     };
   });
 }
@@ -847,6 +878,7 @@ interface PendingUpdate {
   readonly current: IssueRow;
   readonly values: IssueValues;
   readonly changes: FieldChange[];
+  readonly reviewerIds: readonly string[];
 }
 
 async function loadIssues(
@@ -882,13 +914,24 @@ interface UpdateContext {
   readonly parsed: ReturnType<typeof issueUpdateSchema.parse>;
   readonly state: Awaited<ReturnType<typeof stateOf>> | null;
   readonly now: Date;
+  readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
 async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Promise<PendingUpdate> {
-  const { tx, principal, parsed, state, now } = context;
+  const { tx, principal, parsed, state, now, reviewers } = context;
   assertInTeam(principal, teamScope(current));
 
   const { values, changes } = collectIssueChanges(current, parsed);
+  const currentReviewerIds = reviewers.get(current.id) ?? [];
+  const reviewerIds =
+    parsed.reviewerIds === undefined ? currentReviewerIds : [...new Set(parsed.reviewerIds)].sort();
+  if (
+    parsed.reviewerIds !== undefined &&
+    (reviewerIds.length !== currentReviewerIds.length ||
+      reviewerIds.some((reviewerId, index) => reviewerId !== currentReviewerIds[index]))
+  ) {
+    changes.push({ field: 'reviewerIds', from: currentReviewerIds, to: reviewerIds });
+  }
   if (values.parentId !== undefined && values.parentId !== null) {
     await assertParentAllowed(tx, principal, current.id, values.parentId);
   }
@@ -899,6 +942,7 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
     Object.assign(values, applyStateTimestamps(current, state.category, now));
   }
   await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
+  await assertMembersOfWorkspace(tx, principal.organizationId, reviewerIds);
   await assertAssignableToTeam(
     tx,
     principal.organizationId,
@@ -909,7 +953,32 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
   if (parsed.labelIds !== undefined) {
     await assertLabelsUsable(tx, principal.organizationId, current.teamId, parsed.labelIds);
   }
-  return { current, values, changes };
+  return { current, values, changes, reviewerIds };
+}
+
+async function replaceChangedReviewers(
+  tx: Executor,
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  changing: readonly PendingUpdate[],
+): Promise<void> {
+  if (parsed.reviewerIds === undefined) return;
+  await replaceReviewersFor(
+    tx,
+    changing.map((entry) => entry.current.id),
+    parsed.reviewerIds,
+  );
+}
+
+async function subscribeChangedReviewers(
+  tx: Executor,
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  changing: readonly PendingUpdate[],
+  syncId: number,
+): Promise<void> {
+  if (parsed.reviewerIds === undefined) return;
+  for (const entry of changing) {
+    await subscribeUsers(tx, entry.current.id, entry.reviewerIds, syncId);
+  }
 }
 
 async function applyIssueUpdates(
@@ -926,7 +995,8 @@ async function applyIssueUpdates(
   }
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
-  const context: UpdateContext = { tx, principal, parsed, state, now };
+  const reviewers = await reviewerIdsByIssue(tx, issueIds);
+  const context: UpdateContext = { tx, principal, parsed, state, now, reviewers };
 
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
@@ -980,10 +1050,13 @@ async function applyIssueUpdates(
     );
   }
 
+  await replaceChangedReviewers(tx, parsed, changing);
+
   const assigned = changing
     .filter((entry) => entry.values.assigneeId !== undefined)
     .map((entry) => ({ issueId: entry.current.id, userId: entry.values.assigneeId ?? null }));
   await subscribeToIssues(tx, assigned);
+  await subscribeChangedReviewers(tx, parsed, changing, syncId);
 
   const described = await describeChanges(
     tx,
@@ -1013,8 +1086,18 @@ async function applyIssueUpdates(
     tx,
     pending.map((entry) => entry.current.id),
   );
+  const updatedReviewers = await reviewerIdsByIssue(
+    tx,
+    pending.map((entry) => entry.current.id),
+  );
 
-  return updateResults(pending, updated, { notifications, labels }, syncId, actor);
+  return updateResults(
+    pending,
+    updated,
+    { notifications, labels, reviewers: updatedReviewers },
+    syncId,
+    actor,
+  );
 }
 
 async function updateNotifications(
@@ -1035,6 +1118,7 @@ async function updateNotifications(
 interface UpdateDecorations {
   readonly notifications: ReadonlyMap<string, SyncAction[]>;
   readonly labels: ReadonlyMap<string, string[]>;
+  readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
 function updateResults(
@@ -1051,7 +1135,14 @@ function updateResults(
       issue,
       changes: entry.changes,
       actions: [
-        issueAction(issue, syncId, actor, 'update', decorations.labels.get(issue.id) ?? []),
+        issueAction(
+          issue,
+          syncId,
+          actor,
+          'update',
+          decorations.labels.get(issue.id) ?? [],
+          decorations.reviewers.get(issue.id) ?? [],
+        ),
         ...(decorations.notifications.get(issue.id) ?? []),
       ],
     };
@@ -1765,6 +1856,26 @@ async function milestoneFacet(where: SQL | undefined): Promise<Record<string, nu
   return tally(rows);
 }
 
+async function participantFacet(where: SQL | undefined): Promise<Record<string, number>> {
+  const rows = await db.execute<{ key: string; total: number }>(sql`
+    select participant.key, count(distinct participant.issue_id)::int as total
+    from (
+      select ${schema.issue.id} as issue_id,
+             coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
+      from ${schema.issue}
+      ${where === undefined ? sql`` : sql`where ${where}`}
+      union all
+      select ${schema.issue.id} as issue_id, ${schema.issueReviewer.userId} as key
+      from ${schema.issue}
+      inner join ${schema.issueReviewer}
+        on ${schema.issueReviewer.issueId} = ${schema.issue.id}
+      ${where === undefined ? sql`` : sql`where ${where}`}
+    ) participant
+    group by participant.key
+  `);
+  return tally(rows);
+}
+
 const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn> = {
   state: () => schema.issue.stateId,
   assignee: () => schema.issue.assigneeId,
@@ -1841,17 +1952,22 @@ async function allFacets(where: SQL | undefined): Promise<FacetCounts> {
   return { ...columns, label, milestone };
 }
 
+type SummaryGroupProperty = FacetProperty | 'participant';
+
 function facetFor(
-  property: FacetProperty,
+  property: SummaryGroupProperty,
   where: SQL | undefined,
 ): Promise<Record<string, number>> {
+  if (property === 'participant') return participantFacet(where);
   if (property === 'label') return labelFacet(where);
   if (property === 'milestone') return milestoneFacet(where);
   return facetOf(FACET_COLUMNS[property](), where);
 }
 
+const SUMMARY_GROUP_PROPERTIES = [...FACET_PROPERTIES, 'participant'] as const;
+
 const summarySchema = issueListSchema.extend({
-  groupBy: z.enum(FACET_PROPERTIES).default('state'),
+  groupBy: z.enum(SUMMARY_GROUP_PROPERTIES).default('state'),
 });
 
 export const BOARD_GROUP_PROPERTIES = [

@@ -147,6 +147,27 @@ describe('removeMember', () => {
     expect(refreshed?.assigneeId).toBe(stayer.user.id);
   });
 
+  it('removes the person from every reviewer list and publishes the changed issue', async () => {
+    const reviewer = await addMember(workspace, 'member');
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Needs a new reviewer',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    const result = await removeMember(workspace.admin, await memberIdFor(reviewer.user.id));
+    const links = await db
+      .select()
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.issueId, issue.id));
+    const action = result.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === issue.id,
+    );
+
+    expect(links).toHaveLength(0);
+    expect(action?.data['reviewerIds']).toEqual([]);
+  });
+
   it('refuses to remove the last admin', async () => {
     await expect(
       removeMember(workspace.admin, await memberIdFor(workspace.admin.userId)),

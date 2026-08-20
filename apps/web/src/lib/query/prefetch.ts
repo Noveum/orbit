@@ -27,7 +27,7 @@ async function serverIssuePage(principal: Principal, teamId: string): Promise<Is
 
 async function serverAssignedPage(principal: Principal): Promise<IssuePage> {
   const page = await listIssues(principal, {
-    assigneeId: principal.userId,
+    participantId: principal.userId,
     orderBy: 'updated',
     limit: ISSUE_PAGE_SIZE,
   });

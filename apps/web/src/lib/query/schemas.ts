@@ -23,6 +23,7 @@ export const issueSchema = z.object({
   priority: z.number(),
   creatorId: z.string(),
   assigneeId: z.string().nullable(),
+  reviewerIds: z.array(z.string()).optional(),
   projectId: z.string().nullable(),
   milestoneId: z.string().nullable(),
   cycleId: z.string().nullable(),

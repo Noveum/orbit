@@ -52,7 +52,19 @@ function definedFields(value: Record<string, unknown>): IssueDelta {
   return Object.fromEntries(entries) as IssueDelta;
 }
 
+function reviewerDelta(
+  data: Record<string, unknown>,
+  incoming: { readonly reviewerIds?: string[] | undefined },
+) {
+  if (data['reviewerIds'] === undefined || incoming.reviewerIds === undefined) return {};
+  return { reviewerIds: incoming.reviewerIds };
+}
+
 export type IssueBelongs = (issue: Issue) => boolean;
+
+export function participatesIn(issue: Issue, userId: string): boolean {
+  return issue.assigneeId === userId || (issue.reviewerIds ?? []).includes(userId);
+}
 
 const SCOPED_PARAMS = ['teamId', 'stateId', 'assigneeId', 'projectId', 'cycleId'] as const;
 
@@ -66,10 +78,15 @@ const ISSUE_FIELD_OF: Record<(typeof SCOPED_PARAMS)[number], keyof Issue> = {
 
 export function belongsInList(search: string, issue: Issue): boolean {
   const params = new URLSearchParams(search);
-  return SCOPED_PARAMS.every((name) => {
+  const scoped = SCOPED_PARAMS.every((name) => {
     const expected = params.get(name);
     return expected === null || issue[ISSUE_FIELD_OF[name]] === expected;
   });
+  if (!scoped) return false;
+  const participantId = params.get('participantId');
+  if (participantId === null) return true;
+  if (participantId === 'none') return issue.assigneeId === null;
+  return participatesIn(issue, participantId);
 }
 
 const GROUPED_PARAMS = ['stateId', 'assigneeId', 'projectId', 'cycleId'] as const;
@@ -138,6 +155,7 @@ export function applyIssueDelta(
     ...existing,
     ...definedFields(incoming),
     labelIds: existing.labelIds,
+    ...reviewerDelta(action.data, incoming),
   };
   if (!belongs(merged)) return issues.filter((issue) => issue.id !== incoming.id);
 
@@ -221,6 +239,7 @@ export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?
     ...detail.issue,
     ...definedFields(parsed.data),
     labelIds: detail.issue.labelIds,
+    ...reviewerDelta(action.data, parsed.data),
   };
   const descriptionChanged = issue.description !== detail.issue.description;
   return {
