@@ -684,8 +684,10 @@ describe('moveIssue', () => {
   });
 
   it('requires every reviewer to access the destination team', async () => {
-    const reviewer = await addMember(workspace, 'member', { name: 'Source Reviewer' });
-    const issue = await newIssue('Reviewed transfer', { reviewerIds: [reviewer.user.id] });
+    const firstReviewer = await addMember(workspace, 'member', { name: 'First Reviewer' });
+    const secondReviewer = await addMember(workspace, 'member', { name: 'Second Reviewer' });
+    const reviewerIds = [firstReviewer.user.id, secondReviewer.user.id].sort();
+    const issue = await newIssue('Reviewed transfer', { reviewerIds });
     const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
     const target = states.find((state) => state.category === 'unstarted');
     if (target === undefined) throw new Error('missing target state');
@@ -699,12 +701,16 @@ describe('moveIssue', () => {
     await expect(moveIssue(workspace.admin, issue.id, move)).rejects.toMatchObject({
       code: 'validation_failed',
     });
-    await addTeamMember(workspace.admin, team.id, { userId: reviewer.user.id });
+    await addTeamMember(workspace.admin, team.id, { userId: firstReviewer.user.id });
+    await expect(moveIssue(workspace.admin, issue.id, move)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+    await addTeamMember(workspace.admin, team.id, { userId: secondReviewer.user.id });
 
     const moved = await moveIssue(workspace.admin, issue.id, move);
 
     expect(moved.issue.teamId).toBe(team.id);
-    expect(moved.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
+    expect(moved.actions[0]?.data['reviewerIds']).toEqual(reviewerIds);
   });
 
   it('moves an issue into a sprint without touching its status', async () => {
