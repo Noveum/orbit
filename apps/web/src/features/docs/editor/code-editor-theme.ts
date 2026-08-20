@@ -30,7 +30,10 @@ export const codeEditorHighlightStyle = HighlightStyle.define([
 
 export const codeEditorTheme = EditorView.theme({
   '&': { color: 'var(--color-text)', backgroundColor: 'transparent', height: '100%' },
-  '&.cm-focused': { outline: 'none' },
+  '&.cm-focused': {
+    outline: 'var(--orbit-ring-width) solid var(--color-ring)',
+    outlineOffset: 'var(--orbit-ring-offset)',
+  },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono, ui-monospace, monospace)',
     fontSize: '0.8125rem',
