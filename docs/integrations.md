@@ -98,45 +98,38 @@ repositories to install it on.
 ## Slack
 
 Slack is an optional workspace integration for channel notifications and
-personal direct-message notifications. Enable it with `ORBIT_SLACK_ENABLED=1`
-and configure the Slack OAuth app used by the deployment.
+personal direct-message notifications. The Slack surface is currently kept
+disabled by the open-source preview boundary; deployments should configure the
+Slack OAuth app before that boundary is reopened.
 
 The Slack app needs `chat:write` for channel delivery and `im:write` for direct
 messages. Existing installations must reconnect after `im:write` is added;
 Orbit stores granted scopes as non-secret integration metadata and never exposes
 the bot token to the browser.
 
-Slack direct messages are available only when the Orbit user is mapped to a
-Slack member in that workspace. The initial Slack connection maps the user who
-completes OAuth; other users remain unmapped until a later mapping flow is
-available. An unmapped user keeps receiving other enabled notification channels
-and does not cause notification creation to fail. Team and project
-notifications continue to use the configured Slack channel; personal
-notifications use Slack DMs. Quiet hours and the urgent-assignment bypass apply
-to DMs using the same notification settings as email.
+Slack direct messages require an Orbit-to-Slack user mapping. The initial Slack
+connection maps only the user who completes OAuth; other users remain unmapped
+because the product does not yet provide an administrator mapping screen,
+workspace-wide backfill, or per-user fallback linking flow. An unmapped user
+keeps receiving other enabled notification channels and does not cause
+notification creation to fail. Team and project notifications continue to use
+the configured Slack channel; personal notifications use Slack DMs when the
+feature is enabled and a mapping is available.
 
-If the notification settings show that Slack DMs require reauthorization,
-reconnect Slack from **Settings**, **Integrations**. If they show that the user
-is unmapped, the workspace administrator must complete the Orbit-to-Slack user
-mapping before Slack DMs can be enabled.
+While Slack remains behind the open-source preview boundary, Slack DM settings
+are unavailable. When the feature is later enabled, users without a mapping
+will remain unable to enable Slack DMs until a mapping flow is provided.
+
+Slack OAuth persists the granted scopes and maps only the Orbit user who
+completes the **Connect** flow by matching their Orbit email with Slack. It
+does not map other workspace members; administrator mapping, workspace-wide
+backfill, and per-user fallback linking are separate follow-up work.
 
 ### Note on GitHub sign-in
 
 `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are a different thing. Those are
 for signing in with GitHub, and they come from an OAuth app. You can have
 either, both, or neither. See [Configuration](configuration.md#authentication).
-
-## Slack user mapping
-
-Slack OAuth can persist the workspace installation, the scopes Slack granted,
-and a mapping for the Orbit user who completed the **Connect** flow. The
-current implementation maps only that connecting user by matching their Orbit
-email with Slack; it does not map the other members of the workspace.
-
-There is no administrator mapping screen, workspace-wide backfill, or per-user
-fallback linking flow yet. Users who did not complete the Connect flow remain
-unmapped, so Slack user mapping should not be documented or presented as a
-workspace-wide setup step. Those follow-up flows are separate work.
 
 ## Email
 
