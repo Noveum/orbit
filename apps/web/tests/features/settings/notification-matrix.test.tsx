@@ -36,7 +36,28 @@ function renderMatrix(disabledKeys: string[] = []) {
   );
 }
 
+function renderUnavailableMatrix() {
+  render(
+    <NotificationMatrix
+      disabledKeys={[]}
+      quietHoursEnabled
+      quietHoursStart="18:00"
+      quietHoursEnd="09:00"
+      urgentBypassEnabled
+      slackDm="unavailable"
+    />,
+  );
+}
+
 describe('NotificationMatrix', () => {
+  it('explains when Slack DMs are unavailable', () => {
+    renderUnavailableMatrix();
+    expect(
+      screen.getByText('Slack DMs are unavailable until Slack is connected for this workspace.'),
+    ).toBeVisible();
+    expect(screen.getByLabelText('Slack DM for Mention')).toBeDisabled();
+  });
+
   it('renders a checkbox for every channel and type pair', () => {
     renderMatrix();
     const expected =
