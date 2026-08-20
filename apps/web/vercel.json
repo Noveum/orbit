@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "rm -rf ../../node_modules node_modules && bun install --frozen-lockfile",
+  "ignoreCommand": "BUILD_GATE_WATCH_PATHS=\"${BUILD_GATE_WATCH_PATHS:-apps/web packages package.json bun.lock}\" bash ../../scripts/vercel-build-gate.sh",
   "regions": ["hnd1"],
   "crons": [
     { "path": "/api/cron/analytics-snapshots", "schedule": "0 */6 * * *" },
