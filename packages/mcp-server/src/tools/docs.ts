@@ -198,7 +198,8 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
     {
       name: 'get_doc',
       title: 'Read a document',
-      description: 'Return a document with its full Markdown body.',
+      description:
+        'Return a document with its full body. A markdown document returns Markdown, an html document returns the whole HTML page. The kind field says which.',
       readOnly: true,
       inputSchema: { doc: docRef },
     },
