@@ -157,7 +157,7 @@ export async function POST(request: Request): Promise<Response> {
           clientMsgId: dispatch.notificationId,
           text: `${notification.title}: ${absoluteUrl(notification.url)}`,
         });
-        if (delivered !== 1) throw new Error('Slack DM delivery failed.');
+        if (delivered !== 1) continue;
       }
     }
 

@@ -4,4 +4,4 @@ const runtimeProcess = (
   }
 ).process;
 
-export const SLACK_INTEGRATION_ENABLED = runtimeProcess?.env?.['ORBIT_SLACK_ENABLED'] === '1';
+export const SLACK_INTEGRATION_ENABLED = false;

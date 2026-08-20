@@ -60,52 +60,8 @@ export async function resolveSlackContext(
     integrationId: row.id,
     token: parsed.success ? (parsed.data.botToken ?? null) : null,
     scopes,
-    hasDirectMessageScope: scopes.includes('im:write'),
+    hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
   };
-}
-
-export async function upsertSlackUserMapping(
-  database: SlackDatabase,
-  input: {
-    readonly organizationId: string;
-    readonly integrationId: string;
-    readonly userId: string;
-    readonly slackUserId: string;
-    readonly slackDisplayName: string;
-  },
-): Promise<void> {
-  await database
-    .insert(slackUserMapping)
-    .values({ id: randomUUIDv7(), ...input })
-    .onConflictDoUpdate({
-      target: [slackUserMapping.integrationId, slackUserMapping.userId],
-      set: {
-        slackUserId: input.slackUserId,
-        slackDisplayName: input.slackDisplayName,
-        updatedAt: new Date(),
-      },
-    });
-}
-
-export async function listSlackUserMappings(
-  database: SlackDatabase,
-  organizationId: string,
-  userIds: readonly string[],
-): Promise<{ userId: string; slackUserId: string; slackDisplayName: string }[]> {
-  if (userIds.length === 0) return [];
-  return await database
-    .select({
-      userId: slackUserMapping.userId,
-      slackUserId: slackUserMapping.slackUserId,
-      slackDisplayName: slackUserMapping.slackDisplayName,
-    })
-    .from(slackUserMapping)
-    .where(
-      and(
-        eq(slackUserMapping.organizationId, organizationId),
-        inArray(slackUserMapping.userId, [...userIds]),
-      ),
-    );
 }
 
 export async function upsertSlackUserMapping(
