@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationSettings } from '@orbit/services/notifications';
 import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
+import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
@@ -43,7 +44,7 @@ export async function loadNotificationPreferences(
     )
     .limit(1);
   let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
-  if (slack !== undefined) {
+  if (SLACK_INTEGRATION_ENABLED && slack !== undefined) {
     const scopes = slack.config['scopes'];
     if (Array.isArray(scopes) && scopes.includes('im:write') && scopes.includes('chat:write')) {
       const [mapping] = await db
