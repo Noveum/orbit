@@ -1430,6 +1430,17 @@ export async function moveIssue(
         : await stateOf(tx, parsed.stateId);
     if (state.teamId !== teamId) throw validationFailed('That status belongs to another team.');
 
+    const changingTeam = teamId !== current.teamId;
+    if (changingTeam) {
+      const reviewers = await reviewerIdsByIssue(tx, [issueId]);
+      await assertReviewersCanAccessTeam(
+        tx,
+        principal.organizationId,
+        teamId,
+        reviewers.get(issueId) ?? [],
+      );
+    }
+
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
@@ -1437,7 +1448,6 @@ export async function moveIssue(
     const rebalanced = landing.rebalanced;
 
     const now = new Date();
-    const changingTeam = teamId !== current.teamId;
     await lockMoveCycleAssignments(tx, principal.organizationId, current, teamId, parsed);
     const values = await moveValues(tx, current, team, state, landing, now);
 

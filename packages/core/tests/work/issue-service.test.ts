@@ -4,7 +4,7 @@ import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { ZodError } from 'zod';
-import { createTeam } from '../../src/org/team-service.ts';
+import { addTeamMember, createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -681,6 +681,30 @@ describe('moveIssue', () => {
     expect(moved.issue.identifier).toBe('DSGN-1');
     expect(moved.issue.number).toBe(1);
     expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
+  });
+
+  it('requires every reviewer to access the destination team', async () => {
+    const reviewer = await addMember(workspace, 'member', { name: 'Source Reviewer' });
+    const issue = await newIssue('Reviewed transfer', { reviewerIds: [reviewer.user.id] });
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const target = states.find((state) => state.category === 'unstarted');
+    if (target === undefined) throw new Error('missing target state');
+    const move = {
+      teamId: team.id,
+      stateId: target.id,
+      beforeId: null,
+      afterId: null,
+    };
+
+    await expect(moveIssue(workspace.admin, issue.id, move)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+    await addTeamMember(workspace.admin, team.id, { userId: reviewer.user.id });
+
+    const moved = await moveIssue(workspace.admin, issue.id, move);
+
+    expect(moved.issue.teamId).toBe(team.id);
+    expect(moved.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
   });
 
   it('moves an issue into a sprint without touching its status', async () => {

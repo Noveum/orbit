@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -411,6 +411,41 @@ describe('the new issue dialog', () => {
     expect(created.mock.calls[0]?.[0]).toMatchObject({
       reviewerIds: ['me', 'reviewer_2'],
     });
+  });
+
+  it('caps reviewers at fifty while keeping removal available', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      members: Array.from({ length: 51 }, (_value, index) => ({
+        id: `reviewer_${index + 1}`,
+        name: `Reviewer ${index + 1}`,
+        email: `reviewer-${index + 1}@orbit.test`,
+        image: null,
+        handle: `reviewer-${index + 1}`,
+        role: 'member',
+      })),
+    };
+    open();
+
+    const trigger = screen.getByTestId('quick-create-reviewers');
+    await user.click(trigger);
+    const menu = await screen.findByRole('menu');
+    for (let index = 1; index <= 50; index += 1) {
+      await user.click(within(menu).getByText(`Reviewer ${index}`));
+    }
+    await waitFor(() => expect(trigger).toHaveTextContent('50 reviewers'));
+
+    const blocked = within(menu).getByText('Reviewer 51').closest('[role="menuitemcheckbox"]');
+    const removable = within(menu).getByText('Reviewer 1').closest('[role="menuitemcheckbox"]');
+    if (blocked === null || removable === null) throw new Error('missing reviewer option');
+
+    expect(blocked).toHaveAttribute('data-disabled');
+    await user.click(blocked);
+    expect(trigger).toHaveTextContent('50 reviewers');
+
+    await user.click(removable);
+    await waitFor(() => expect(trigger).toHaveTextContent('49 reviewers'));
   });
 
   it('offers every accessible project from every team', async () => {
