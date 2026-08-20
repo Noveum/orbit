@@ -244,7 +244,7 @@ function toInsert(plan: Plan, now: Date) {
     body: event.body,
     url: event.url,
     externalUrl: event.externalUrl ?? null,
-    deliveredChannels: plan.channels,
+    deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
     syncId: nextSyncId,
     createdAt: now,
   };

@@ -94,7 +94,7 @@ describe('notifyMany', () => {
 
       expect(outcome.slackDm).toHaveLength(1);
       expect(outcome.slack).toHaveLength(0);
-      expect(outcome.notifications[0]?.deliveredChannels).toContain('slack_dm');
+      expect(outcome.notifications[0]?.deliveredChannels).not.toContain('slack_dm');
     });
   });
 
