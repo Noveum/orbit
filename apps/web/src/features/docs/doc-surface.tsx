@@ -1,6 +1,7 @@
 'use client';
 
 import { useScopeSubscription } from '@orbit/realtime-client/react';
+import { isHtmlDoc } from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
@@ -18,7 +19,8 @@ import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
-import type { Doc, DocDetail, DocSummary } from '@/lib/query/schemas.ts';
+import { newDocPath } from '@/lib/docs/paths.ts';
+import type { Doc, DocDetail, DocSummary, Member } from '@/lib/query/schemas.ts';
 import { useDocComments } from '@/lib/query/use-doc-comments.ts';
 import type { DocPatch } from '@/lib/query/use-docs.ts';
 import {
@@ -39,6 +41,8 @@ import { DocHistory } from './doc-history.tsx';
 import { DocBacklinks, DocReader } from './doc-reader.tsx';
 import { DocShareMenu } from './doc-share-menu.tsx';
 import { breadcrumbOf } from './doc-tree-model.ts';
+import { HtmlDocEditor } from './html-doc-editor.tsx';
+import { HtmlDocReader } from './html-doc-reader.tsx';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
 import type { DocAnchorTarget, DocCommenting } from './use-doc-anchors.ts';
@@ -234,7 +238,14 @@ function LoadedDoc({
           archive.mutate(detail.doc.id);
           router.push('/docs');
         }}
-        onNewDoc={() => router.push('/docs/new')}
+        onNewDoc={() =>
+          router.push(
+            newDocPath({
+              collectionId: detail.doc.collectionId,
+              projectId: detail.doc.projectId,
+            }),
+          )
+        }
         share={
           canWrite ? (
             <DocShareMenu
@@ -271,7 +282,7 @@ function LoadedDoc({
           onStatusChange={setStatus}
           commenting={commenting}
           footer={
-            <div className="mt-10 border-border border-t pt-6">
+            <div className={isHtmlDoc(detail.doc.kind) ? '' : 'mt-10 border-border border-t pt-6'}>
               <DocAttachments attachments={detail.attachments} />
               <DocBacklinks backlinks={detail.backlinks} />
               <DocComments
@@ -287,19 +298,12 @@ function LoadedDoc({
           }
         />
       ) : (
-        <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto motion-reduce:scroll-auto">
-          <DocReader
-            doc={detail.doc}
-            contentHtml={detail.contentHtml}
-            attachments={detail.attachments}
-            author={detail.author}
-            followers={detail.followers}
-            collectionName={collectionName}
-            projectName={projectName}
-            backlinks={detail.backlinks}
-          />
-          <DocComments docId={detail.doc.id} members={workspace.members} />
-        </div>
+        <ReadOnlyDoc
+          detail={detail}
+          collectionName={collectionName}
+          projectName={projectName}
+          members={workspace.members}
+        />
       )}
     </div>
   );
@@ -426,6 +430,38 @@ export function NestPickerList({
   );
 }
 
+function ReadOnlyDoc({
+  detail,
+  collectionName,
+  projectName,
+  members,
+}: {
+  readonly detail: DocDetail;
+  readonly collectionName: string | null;
+  readonly projectName: string | null;
+  readonly members: readonly Member[];
+}) {
+  if (isHtmlDoc(detail.doc.kind)) {
+    return <HtmlDocReader title={detail.doc.title} content={detail.doc.content} />;
+  }
+
+  return (
+    <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto motion-reduce:scroll-auto">
+      <DocReader
+        doc={detail.doc}
+        contentHtml={detail.contentHtml}
+        attachments={detail.attachments}
+        author={detail.author}
+        followers={detail.followers}
+        collectionName={collectionName}
+        projectName={projectName}
+        backlinks={detail.backlinks}
+      />
+      <DocComments docId={detail.doc.id} members={members} />
+    </div>
+  );
+}
+
 function EditSession({
   doc,
   save,
@@ -453,7 +489,7 @@ function EditSession({
   const settled = autosave.status === 'saved';
   const server = useRef({ title: doc.title, content: doc.content });
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
-  const outline = useEditorOutline(content, scroller);
+  const outline = useEditorOutline(isHtmlDoc(doc.kind) ? '' : content, scroller);
 
   useEffect(() => onStatusChange(autosave.status), [autosave.status, onStatusChange]);
   useEffect(() => flush, [flush]);
@@ -467,8 +503,8 @@ function EditSession({
   }, [doc.title, doc.content, settled]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col px-6 pt-2 pb-0">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-col px-6 pt-2 pb-0">
         <Input
           value={title}
           aria-label="Doc title"
@@ -477,16 +513,20 @@ function EditSession({
           className="h-auto rounded-sm border-0 bg-transparent px-0 py-0 font-semibold text-text text-2xl outline-none focus-visible:border-0 focus-visible:bg-surface-2/60"
         />
       </div>
-      <DocEditor
-        docId={doc.id}
-        content={content}
-        onChange={setContent}
-        onForceSave={flush}
-        commenting={commenting}
-        footer={footer}
-        scrollRef={setScroller}
-        outline={outline}
-      />
+      {isHtmlDoc(doc.kind) ? (
+        <HtmlDocEditor title={title} content={content} onChange={setContent} footer={footer} />
+      ) : (
+        <DocEditor
+          docId={doc.id}
+          content={content}
+          onChange={setContent}
+          onForceSave={flush}
+          commenting={commenting}
+          footer={footer}
+          scrollRef={setScroller}
+          outline={outline}
+        />
+      )}
       {near ? (
         <p
           data-testid="doc-length-warning"

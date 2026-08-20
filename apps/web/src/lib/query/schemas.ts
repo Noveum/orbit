@@ -309,6 +309,7 @@ export const docSchema = z.object({
   parentId: z.string().nullable(),
   title: z.string(),
   slug: z.string(),
+  kind: z.enum(['markdown', 'html']).optional(),
   content: z.string(),
   sortOrder: z.number().default(0),
   visibility: z.string(),

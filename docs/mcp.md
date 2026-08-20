@@ -195,7 +195,7 @@ read its files.
 | `list_docs`, `get_doc` | read | Docs |
 | `list_doc_collections` | read | Collections |
 | `list_doc_comments` | read | Comments on a doc |
-| `create_doc`, `update_doc`, `archive_doc` | write | |
+| `create_doc`, `update_doc`, `archive_doc` | write | `create_doc` takes `kind`: `markdown` or `html` |
 | `comment_on_doc`, `edit_doc_comment`, `delete_doc_comment` | write | |
 | `create_doc_collection` | write | |
 

@@ -38,6 +38,8 @@ const EXTENSION_CONTENT_TYPES: Readonly<Record<string, string>> = {
   txt: 'text/plain',
   log: 'text/plain',
   md: 'text/markdown',
+  html: 'text/html',
+  htm: 'text/html',
   csv: 'text/csv',
   json: 'application/json',
   zip: 'application/zip',

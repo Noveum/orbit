@@ -59,6 +59,17 @@ async function signIn(page: Page): Promise<void> {
   }
 }
 
+async function firstHtmlDocId(page: Page): Promise<string | null> {
+  const body = await readJson(page, '/api/docs');
+  if (!(isRecord(body) && Array.isArray(body['docs']))) return null;
+  for (const entry of body['docs']) {
+    if (isRecord(entry) && entry['kind'] === 'html' && typeof entry['id'] === 'string') {
+      return entry['id'];
+    }
+  }
+  return null;
+}
+
 async function firstDocId(page: Page): Promise<string | null> {
   const body = await readJson(page, '/api/docs');
   if (!(isRecord(body) && Array.isArray(body['docs']))) return null;
@@ -175,6 +186,16 @@ async function buildShots(page: Page): Promise<Shot[]> {
   const docId = await firstDocId(page);
   if (docId !== null) {
     shots.push({ name: 'doc', path: `/docs/${docId}`, caption: 'Document', settleMs: 1500 });
+  }
+
+  const htmlDocId = await firstHtmlDocId(page);
+  if (htmlDocId !== null) {
+    shots.push({
+      name: 'html-doc',
+      path: `/docs/${htmlDocId}`,
+      caption: 'HTML page',
+      settleMs: 1500,
+    });
   }
 
   const projectSlug = await firstProjectSlug(page);

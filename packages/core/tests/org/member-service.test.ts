@@ -3,6 +3,7 @@ import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import { newId } from '../../src/internal.ts';
 import {
+  findPrincipal,
   listMembers,
   removeMember,
   resolvePrincipal,
@@ -43,6 +44,7 @@ describe('resolvePrincipal', () => {
   it('refuses a user outside the workspace', async () => {
     const outsider = await addMember(workspace, 'member');
     await db.delete(schema.member).where(eq(schema.member.userId, outsider.user.id));
+    expect(await findPrincipal(outsider.user.id, workspace.organizationId)).toBeNull();
     await expect(
       resolvePrincipal(outsider.user.id, workspace.organizationId),
     ).rejects.toMatchObject({ code: 'forbidden' });

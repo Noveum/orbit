@@ -15,7 +15,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     return {
       doc: shared.doc,
       publishUrl: publicDocUrl(
-        { slug: shared.doc.slug, publishToken: shared.publishToken },
+        {
+          slug: shared.doc.slug,
+          publishToken: shared.publishToken,
+          kind: shared.doc.kind,
+        },
         request.url,
       ),
     };

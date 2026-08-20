@@ -7,15 +7,15 @@ import {
   markdown,
   markdownLanguage,
 } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { syntaxHighlighting } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { EditorState } from '@codemirror/state';
 import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
-import { tags } from '@lezer/highlight';
 import { type Ref, useEffect, useImperativeHandle, useRef } from 'react';
 import { cn } from '@/lib/cn.ts';
 import type { EditResult, Selection } from '../markdown-input.ts';
 import { headingLineNumbers } from '../outline.ts';
+import { codeEditorHighlightStyle, codeEditorTheme } from './code-editor-theme.ts';
 
 export type ModKey = 'b' | 'i' | 'k' | 's';
 
@@ -36,48 +36,6 @@ export interface MarkdownCodeEditorProps {
   readonly testId?: string;
   readonly handleRef?: Ref<MarkdownCodeEditorHandle>;
 }
-
-const highlightStyle = HighlightStyle.define([
-  { tag: tags.heading, color: 'var(--color-text)', fontWeight: '600' },
-  { tag: tags.strong, color: 'var(--color-text)', fontWeight: '700' },
-  { tag: tags.emphasis, fontStyle: 'italic' },
-  { tag: tags.strikethrough, textDecoration: 'line-through' },
-  { tag: [tags.link, tags.url], color: 'var(--color-accent)', textDecoration: 'underline' },
-  { tag: tags.monospace, color: 'var(--color-text)' },
-  { tag: tags.list, color: 'var(--color-faint)' },
-  { tag: tags.quote, color: 'var(--color-muted)' },
-  { tag: [tags.meta, tags.processingInstruction], color: 'var(--color-faint)' },
-  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: 'var(--color-accent)' },
-  { tag: [tags.string, tags.special(tags.string)], color: 'var(--color-success)' },
-  { tag: [tags.number, tags.bool, tags.atom], color: 'var(--color-warning)' },
-  {
-    tag: [tags.comment, tags.lineComment, tags.blockComment],
-    color: 'var(--color-faint)',
-    fontStyle: 'italic',
-  },
-  { tag: [tags.function(tags.variableName), tags.variableName], color: 'var(--color-text)' },
-  { tag: [tags.typeName, tags.className], color: 'var(--color-warning)' },
-  { tag: tags.propertyName, color: 'var(--color-danger)' },
-]);
-
-const theme = EditorView.theme({
-  '&': { color: 'var(--color-text)', backgroundColor: 'transparent', height: '100%' },
-  '&.cm-focused': { outline: 'none' },
-  '.cm-scroller': {
-    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-    fontSize: '0.8125rem',
-    lineHeight: '1.6',
-    overflow: 'auto',
-  },
-  '.cm-content': { padding: '1.25rem 1.5rem', caretColor: 'var(--color-text)' },
-  '.cm-line': { padding: '0' },
-  '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--color-text)' },
-  '.cm-placeholder': { color: 'var(--color-faint)' },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'var(--color-selected)',
-  },
-  '.cm-activeLine': { backgroundColor: 'transparent' },
-});
 
 function extractFiles(source: DataTransfer | null): File[] {
   if (source === null) return [];
@@ -170,8 +128,8 @@ export function MarkdownCodeEditor({
             ...defaultKeymap,
           ]),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
-          syntaxHighlighting(highlightStyle),
-          theme,
+          syntaxHighlighting(codeEditorHighlightStyle),
+          codeEditorTheme,
           EditorView.lineWrapping,
           cmPlaceholder(placeholder),
           EditorState.allowMultipleSelections.of(true),

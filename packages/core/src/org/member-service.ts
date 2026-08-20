@@ -25,11 +25,11 @@ function isOrgRole(value: string): value is OrgRole {
   return value === 'admin' || value === 'member' || value === 'contributor' || value === 'guest';
 }
 
-export async function resolvePrincipal(
+export async function findPrincipal(
   userId: string,
   organizationId: string,
   executor: Executor = db,
-): Promise<Principal> {
+): Promise<Principal | null> {
   const [membership] = await executor
     .select({ role: schema.member.role })
     .from(schema.member)
@@ -42,7 +42,7 @@ export async function resolvePrincipal(
       ),
     )
     .limit(1);
-  if (membership === undefined) throw forbidden('You are not a member of this workspace.');
+  if (membership === undefined) return null;
 
   const teams = await executor
     .select({ teamId: schema.teamMember.teamId })
@@ -58,6 +58,16 @@ export async function resolvePrincipal(
     role: isOrgRole(membership.role) ? membership.role : 'guest',
     teamIds: teams.map((row) => row.teamId),
   };
+}
+
+export async function resolvePrincipal(
+  userId: string,
+  organizationId: string,
+  executor: Executor = db,
+): Promise<Principal> {
+  const principal = await findPrincipal(userId, organizationId, executor);
+  if (principal === null) throw forbidden('You are not a member of this workspace.');
+  return principal;
 }
 
 export async function listMembers(principal: Principal): Promise<MemberWithUser[]> {

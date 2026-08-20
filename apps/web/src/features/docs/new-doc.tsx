@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useCreateDoc } from '@/lib/query/use-docs.ts';
-import { templateById } from './templates.ts';
+import { HTML_PAGE_STARTER, templateById } from './templates.ts';
 
 export const NEW_DOC_TITLE = 'Untitled doc';
 export const NEW_DOC_CONTENT = '# Untitled doc\n\nStart writing.\n';
@@ -13,9 +13,10 @@ export interface NewDocProps {
   readonly collectionId: string | null;
   readonly projectId: string | null;
   readonly templateId?: string | null;
+  readonly kind?: string | null;
 }
 
-export function NewDoc({ collectionId, projectId, templateId = null }: NewDocProps) {
+export function NewDoc({ collectionId, projectId, templateId = null, kind = null }: NewDocProps) {
   const router = useRouter();
   const create = useCreateDoc();
   const started = useRef(false);
@@ -24,11 +25,24 @@ export function NewDoc({ collectionId, projectId, templateId = null }: NewDocPro
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    const template = templateById(templateId);
-    run({ title: template.title, content: template.content, collectionId, projectId })
+    const template =
+      templateId === null && kind === 'html'
+        ? {
+            title: 'Untitled page',
+            content: HTML_PAGE_STARTER,
+            kind: 'html' as const,
+          }
+        : templateById(templateId);
+    run({
+      title: template.title,
+      content: template.content,
+      kind: template.kind,
+      collectionId,
+      projectId,
+    })
       .then((doc) => router.replace(`/docs/${doc.id}`))
       .catch(() => router.replace('/docs'));
-  }, [run, router, collectionId, projectId, templateId]);
+  }, [run, router, collectionId, projectId, templateId, kind]);
 
   return (
     <div className="mx-auto flex w-full max-w-[45rem] flex-col gap-4 px-6 py-10">

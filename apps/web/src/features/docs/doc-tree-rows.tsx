@@ -1,7 +1,8 @@
 'use client';
 
 import { useDraggable, useDroppable } from '@dnd-kit/core';
-import { ChevronRight, FileText, Folder, FolderOpen, Lock, Plus } from 'lucide-react';
+import { isHtmlDoc } from '@orbit/shared/constants';
+import { ChevronRight, FileCode, FileText, Folder, FolderOpen, Lock, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { Collapsible } from '@/components/ui/collapsible.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -277,10 +278,17 @@ function DraggablePageRow({
           {...attributes}
           {...listeners}
         >
-          <FileText
-            className={cn('size-3.5 shrink-0', active ? 'text-accent' : 'text-faint')}
-            aria-hidden="true"
-          />
+          {isHtmlDoc(doc.kind) ? (
+            <FileCode
+              className={cn('size-3.5 shrink-0', active ? 'text-accent' : 'text-faint')}
+              aria-hidden="true"
+            />
+          ) : (
+            <FileText
+              className={cn('size-3.5 shrink-0', active ? 'text-accent' : 'text-faint')}
+              aria-hidden="true"
+            />
+          )}
           <span className="min-w-0 flex-1 truncate">{doc.title}</span>
           {unsaved ? (
             <span

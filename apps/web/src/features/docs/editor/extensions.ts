@@ -1,3 +1,4 @@
+import { codeLowlight } from '@orbit/services/markdown';
 import { Extension, mergeAttributes, Node } from '@tiptap/core';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Highlight from '@tiptap/extension-highlight';
@@ -7,7 +8,6 @@ import { TableKit } from '@tiptap/extension-table';
 import { Placeholder } from '@tiptap/extensions';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { common, createLowlight } from 'lowlight';
 import { CodeBlockView } from './code-block-view.tsx';
 import { calloutToneOf } from './markdown.ts';
 
@@ -84,8 +84,6 @@ export const MenuKeymap = Extension.create<{ handler: MenuKeyHandlerRef | null }
   },
 });
 
-const lowlight = createLowlight(common);
-
 const CodeBlock = CodeBlockLowlight.extend({
   addNodeView() {
     return ReactNodeViewRenderer(CodeBlockView);
@@ -101,7 +99,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
       heading: { levels: [1, 2, 3, 4, 5, 6] },
     }),
     Highlight,
-    CodeBlock.configure({ lowlight, defaultLanguage: 'ts' }),
+    CodeBlock.configure({ lowlight: codeLowlight, defaultLanguage: 'ts' }),
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),

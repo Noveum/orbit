@@ -67,6 +67,10 @@ yourself and never depend on us at all.
 <td width="50%"><img src="docs/assets/screenshots/doc-light.png" alt="Docs" /><br /><sub><b>Docs</b> with a rich editor, living beside the issues they describe.</sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/assets/screenshots/html-doc-dark.png" alt="HTML page" /><br /><sub><b>HTML pages</b> as one self-contained file, with a live preview and their own URL.</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/html-doc-light.png" alt="HTML page, light theme" /><br /><sub>Source, split, or preview. CSS and script stay in the file.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/screenshots/standup-dark.png" alt="Standup" /><br /><sub><b>Standup</b>: the whole workspace as a Kanban, filtered to one person with a click.</sub></td>
 <td width="50%"><img src="docs/assets/screenshots/analytics-light.png" alt="Analytics" /><br /><sub><b>Analytics</b>: scope, throughput, churn and distributions.</sub></td>
 </tr>
@@ -81,7 +85,7 @@ yourself and never depend on us at all.
 | **Issues** | Priorities, labels, states, estimates, assignees and relations. Fast list or drag and drop board |
 | **Sprints and cycles** | Timeboxed planning with scope, points, burndown and carryover |
 | **Projects and milestones** | Group work that spans teams and sprints |
-| **Docs** | Rich editor, collections, comments, public share links |
+| **Docs** | Rich editor, collections, comments, public share links, self-contained HTML pages |
 | **Standup** | The whole workspace as a Kanban, filtered to one person by clicking their tile |
 | **Analytics** | Scope, throughput, churn, and distribution by assignee, project, label and estimate |
 | **Search and views** | Filters over everything, saved and shared or kept private |

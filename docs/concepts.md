@@ -165,17 +165,19 @@ is a body of work. An issue is usually in both.
 
 ## Docs
 
-Markdown documents with a rich editor, living beside the issues they describe
-rather than in a separate tool.
+Markdown documents with a rich editor, or a self-contained HTML page, living
+beside the issues they describe rather than in a separate tool.
 
 - Organised into **collections**, and nestable.
-- **Visibility** is workspace-wide, or private to the author.
-- **Shareable** through a public link with a token, for people outside the
-  workspace.
+- **Visibility** is workspace-wide, private to named people, or a published URL.
+- **Shareable** through a members link that still requires sign-in, or a public
+  or unlisted link for people outside the workspace. An HTML page gets its own
+  URL and runs isolated from the app.
 - Commentable, and searchable alongside issues from the command palette.
 - Optionally bound to a path in a repository, so a doc can mirror a file.
 - A fenced `mermaid` block is drawn as a diagram, in the theme's own colours,
   with the source one click away. The rich editor previews it as you type.
+- Import a `.md` or `.html` file. HTML stays as one file, not a project.
 
 Specs, runbooks, meeting notes and architecture decisions are the things that
 end up here.

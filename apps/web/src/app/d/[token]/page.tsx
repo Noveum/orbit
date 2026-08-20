@@ -1,7 +1,6 @@
-import { getPublishedDoc } from '@orbit/core';
-import { renderMarkdownWithHeadingIds, summarize } from '@orbit/services/markdown';
+import { isHtmlDoc } from '@orbit/shared/constants';
 import type { Metadata } from 'next';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { DocReader } from '@/features/docs/doc-reader.tsx';
 import {
   isIndexable,
@@ -10,6 +9,8 @@ import {
   publishedDocMetadata,
 } from '@/features/docs/published-doc-meta.ts';
 import { publicDocPath } from '@/lib/docs/paths.ts';
+import { loadPublishedDoc, lookupPublishedDoc } from '@/lib/docs/published.ts';
+import { renderedDocHtml, summarizeDoc } from '@/lib/docs/render.ts';
 import { serverEnv } from '@/lib/env.ts';
 
 interface PageProps {
@@ -18,14 +19,23 @@ interface PageProps {
 
 export const dynamic = 'force-dynamic';
 
-async function seoFor(token: string): Promise<PublishedDocSeoInput | null> {
-  const detail = await getPublishedDoc(token);
-  if (detail === null) return null;
+function publishedBanner(visibility: string): string {
+  if (isIndexable(visibility)) return 'Published doc, read only';
+  if (visibility === 'members') return 'Members only, read only';
+  return 'Unlisted, read only';
+}
+
+async function seoFor(token: string): Promise<PublishedDocSeoInput | 'sign-in' | null> {
+  const result = await lookupPublishedDoc(token);
+  if (result.status === 'sign-in') return 'sign-in';
+  if (result.status === 'missing') return null;
+  const { detail } = result;
   return {
     title: detail.doc.title,
-    summary: summarize(detail.doc.content, 180),
+    summary: summarizeDoc(detail.doc.kind, detail.doc.content, 180),
     visibility: detail.doc.visibility,
     slug: detail.doc.slug,
+    kind: detail.doc.kind,
     publishToken: detail.doc.publishToken,
     createdAt: detail.doc.createdAt,
     updatedAt: detail.doc.updatedAt,
@@ -37,29 +47,26 @@ async function seoFor(token: string): Promise<PublishedDocSeoInput | null> {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { token } = await params;
   const seo = await seoFor(token);
+  if (seo === 'sign-in') return { title: 'Sign in', robots: { index: false, follow: false } };
   if (seo === null) return { title: 'Doc not found', robots: { index: false, follow: false } };
   return publishedDocMetadata(seo);
 }
 
 export default async function PublishedDocPage({ params }: PageProps) {
   const { token } = await params;
-  const detail = await getPublishedDoc(token);
-  if (detail === null) notFound();
+  const detail = await loadPublishedDoc(token, `/d/${token}`);
 
   const canonicalPath = publicDocPath(detail.doc);
-  if (
-    canonicalPath !== null &&
-    isIndexable(detail.doc.visibility) &&
-    canonicalPath !== `/d/${token}`
-  ) {
+  if (canonicalPath !== null && canonicalPath !== `/d/${token}`) {
     redirect(canonicalPath);
   }
 
   const jsonLd = publishedDocJsonLd({
     title: detail.doc.title,
-    summary: summarize(detail.doc.content, 180),
+    summary: summarizeDoc(detail.doc.kind, detail.doc.content, 180),
     visibility: detail.doc.visibility,
     slug: detail.doc.slug,
+    kind: detail.doc.kind,
     publishToken: detail.doc.publishToken,
     createdAt: detail.doc.createdAt,
     updatedAt: detail.doc.updatedAt,
@@ -80,11 +87,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
       <div className="border-border border-b">
         <div className="mx-auto flex h-11 w-full max-w-[68rem] items-center justify-between px-6">
           <span className="font-medium text-dense text-text">Orbit</span>
-          <span className="text-2xs text-faint">
-            {isIndexable(detail.doc.visibility)
-              ? 'Published doc, read only'
-              : 'Unlisted, read only'}
-          </span>
+          <span className="text-2xs text-faint">{publishedBanner(detail.doc.visibility)}</span>
         </div>
       </div>
       <DocReader
@@ -94,8 +97,9 @@ export default async function PublishedDocPage({ params }: PageProps) {
           updatedAt: detail.doc.updatedAt.toISOString(),
           archivedAt: null,
           publishToken: null,
+          kind: isHtmlDoc(detail.doc.kind) ? 'html' : 'markdown',
         }}
-        contentHtml={renderMarkdownWithHeadingIds(detail.doc.content)}
+        contentHtml={renderedDocHtml(detail.doc.kind, detail.doc.content)}
         attachments={detail.attachments.map((attachment) => ({
           id: attachment.id,
           parentType: attachment.parentType,

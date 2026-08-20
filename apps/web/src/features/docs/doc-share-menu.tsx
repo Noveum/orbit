@@ -1,7 +1,7 @@
 'use client';
 
 import type { DocVisibility } from '@orbit/shared/constants';
-import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
+import { isPublished, isRestricted } from '@orbit/shared/constants';
 import {
   Building2,
   Check,
@@ -11,6 +11,7 @@ import {
   Lock,
   type LucideIcon,
   RefreshCw,
+  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -51,6 +52,13 @@ export const VISIBILITY_CHOICES: readonly VisibilityChoice[] = [
     icon: Building2,
   },
   {
+    value: 'members',
+    label: 'Anyone in this workspace with the link',
+    description:
+      'A published URL. Signed-in workspace members can open it. Nobody outside can, and it stays out of search.',
+    icon: Users,
+  },
+  {
     value: 'link',
     label: 'Anyone with the link',
     description: 'Unlisted: no search engines, no sitemap, and you can reset the link.',
@@ -72,14 +80,19 @@ export function visibilityChoice(visibility: string): VisibilityChoice {
 }
 
 export function visibleChoices(canPublish: boolean): readonly VisibilityChoice[] {
-  return VISIBILITY_CHOICES.filter((choice) => canPublish || !isExternallyShared(choice.value));
+  return VISIBILITY_CHOICES.filter((choice) => canPublish || !isPublished(choice.value));
 }
 
 export function shareTrigger(visibility: string): string {
   if (visibility === 'public') return 'Public';
   if (visibility === 'link') return 'Unlisted';
+  if (visibility === 'members') return 'Members';
   if (visibility === 'workspace') return 'Workspace';
   return 'Private';
+}
+
+export function publishedLinkLabel(visibility: string): string {
+  return visibility === 'members' ? 'Members link' : 'Public link';
 }
 
 function CopyRow({
@@ -212,7 +225,11 @@ export function DocShareMenu({
 
           {publishedUrl === null ? null : (
             <div className="flex flex-col gap-2">
-              <CopyRow label="Public link" url={publishedUrl} testId="doc-copy-public-link" />
+              <CopyRow
+                label={publishedLinkLabel(doc.visibility)}
+                url={publishedUrl}
+                testId="doc-copy-public-link"
+              />
               <Button
                 variant="ghost"
                 size="sm"
@@ -221,7 +238,7 @@ export function DocShareMenu({
                 onClick={() => share.mutate({ visibility: doc.visibility, rotateToken: true })}
               >
                 <RefreshCw className="size-3.5" aria-hidden="true" />
-                Reset the public link
+                {doc.visibility === 'members' ? 'Reset the members link' : 'Reset the public link'}
               </Button>
             </div>
           )}

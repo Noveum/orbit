@@ -1,6 +1,10 @@
 import { common, createLowlight } from 'lowlight';
 
-const lowlight = createLowlight(common);
+export const codeLowlight = createLowlight(common);
+
+if (codeLowlight.registered('xml') && !codeLowlight.registered('html')) {
+  codeLowlight.registerAlias('xml', ['html', 'htm', 'xhtml']);
+}
 
 const ESCAPES: ReadonlyMap<string, string> = new Map([
   ['&', '&amp;'],
@@ -45,9 +49,9 @@ export function languageAlias(raw: string): string {
 
 export function highlightCode(source: string, language: string): string {
   const alias = languageAlias(language);
-  if (alias.length === 0 || !lowlight.registered(alias)) return escapeHtml(source);
+  if (alias.length === 0 || !codeLowlight.registered(alias)) return escapeHtml(source);
   try {
-    return serializeTokens(lowlight.highlight(alias, source));
+    return serializeTokens(codeLowlight.highlight(alias, source));
   } catch {
     return escapeHtml(source);
   }

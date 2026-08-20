@@ -18,6 +18,7 @@ import type { NotificationEvent } from '@orbit/services/notifications';
 import type { DocAccessLevel } from '@orbit/shared/constants';
 import {
   isExternallyShared,
+  isPublished,
   isRestricted,
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
@@ -53,6 +54,7 @@ import { type Executor, newId, newToken, requireRow } from '../internal.ts';
 import { docReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
 import { NOTIFICATION_BODY_LIMIT, notifyRecipients } from '../notifications/notify.ts';
+import { findPrincipal } from '../org/member-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 
@@ -147,13 +149,13 @@ function docAnnouncement(row: DocRow): Record<string, unknown> {
 }
 
 function tokenFor(visibility: string, current: string | null): string | null {
-  if (!isExternallyShared(visibility)) return null;
+  if (!isPublished(visibility)) return null;
   return current ?? newToken();
 }
 
 export function docReadFilter(principal: Principal): SQL {
   if (principal.role === 'admin') return sql`true`;
-  const open = inArray(schema.doc.visibility, ['workspace', 'link', 'public']);
+  const open = inArray(schema.doc.visibility, ['workspace', 'members', 'link', 'public']);
 
   const grants = db
     .select({ docId: schema.docAccess.docId })
@@ -996,7 +998,12 @@ export async function getDoc(principal: Principal, docId: string): Promise<DocDe
   return await detailFor(await loadReadableDoc(db, principal, docId), principal);
 }
 
-export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | null> {
+export type PublishedDocResolution =
+  | { readonly status: 'missing' }
+  | { readonly status: 'sign-in' }
+  | { readonly status: 'ok'; readonly detail: DocDetail };
+
+async function publishedDocByToken(pathSegment: string): Promise<DocRow | null> {
   const token = publishedDocToken(pathSegment);
   if (token.length === 0) return null;
   const [doc] = await db
@@ -1011,9 +1018,28 @@ export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | 
       ),
     )
     .limit(1);
-  if (doc === undefined) return null;
-  if (!isExternallyShared(doc.visibility)) return null;
-  return await detailFor(doc, null);
+  return doc ?? null;
+}
+
+export async function resolvePublishedDoc(
+  pathSegment: string,
+  viewerUserId: string | null,
+): Promise<PublishedDocResolution> {
+  const doc = await publishedDocByToken(pathSegment);
+  if (doc === null) return { status: 'missing' };
+  if (isExternallyShared(doc.visibility)) {
+    return { status: 'ok', detail: await detailFor(doc, null) };
+  }
+  if (doc.visibility !== 'members') return { status: 'missing' };
+  if (viewerUserId === null) return { status: 'sign-in' };
+  const principal = await findPrincipal(viewerUserId, doc.organizationId);
+  if (principal === null) return { status: 'missing' };
+  return { status: 'ok', detail: await detailFor(doc, principal) };
+}
+
+export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | null> {
+  const result = await resolvePublishedDoc(pathSegment, null);
+  return result.status === 'ok' ? result.detail : null;
 }
 
 export async function listPublicDocs(): Promise<DocRow[]> {
@@ -1040,7 +1066,7 @@ export async function isPublishedDoc(docId: string): Promise<boolean> {
     .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
     .where(and(eq(schema.doc.id, docId), isNull(schema.organization.deletionRequestedAt)))
     .limit(1);
-  return row !== undefined && row.archivedAt === null && isExternallyShared(row.visibility);
+  return row !== undefined && row.archivedAt === null && isPublished(row.visibility);
 }
 
 async function docMentionNotifications(
@@ -1072,7 +1098,7 @@ async function docMentionNotifications(
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docCreateSchema.parse(input);
-  if (isExternallyShared(parsed.visibility)) assertCan(principal, 'doc:publish');
+  if (isPublished(parsed.visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
     await assertPlacement(tx, principal, parsed);
@@ -1092,6 +1118,7 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
         ...placement,
         title: parsed.title,
         slug: docSlug(parsed.title),
+        kind: parsed.kind,
         content: parsed.content,
         sortOrder: await nextSiblingOrder(tx, principal.organizationId, placement),
         visibility: parsed.visibility,
@@ -1128,7 +1155,7 @@ function copyTitle(title: string): string {
 }
 
 function copyVisibility(visibility: string): string {
-  return isExternallyShared(visibility) ? 'workspace' : visibility;
+  return isPublished(visibility) ? 'workspace' : visibility;
 }
 
 export async function duplicateDoc(
@@ -1154,6 +1181,7 @@ export async function duplicateDoc(
         parentId: source.parentId,
         title,
         slug: docSlug(title),
+        kind: source.kind,
         content: source.content,
         sortOrder: await orderAfterSibling(tx, principal.organizationId, source),
         visibility: copyVisibility(source.visibility),
@@ -1228,7 +1256,7 @@ export async function updateDoc(
 ): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docUpdateSchema.parse(input);
-  if (parsed.visibility !== undefined && isExternallyShared(parsed.visibility)) {
+  if (parsed.visibility !== undefined && isPublished(parsed.visibility)) {
     assertCan(principal, 'doc:publish');
   }
 
@@ -1452,7 +1480,7 @@ export async function shareDoc(
 ): Promise<SharedDoc> {
   assertCan(principal, 'doc:write');
   const { visibility, rotateToken } = docShareSchema.parse(input);
-  if (isExternallyShared(visibility)) assertCan(principal, 'doc:publish');
+  if (isPublished(visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
     const current = await loadReadableDoc(tx, principal, docId);

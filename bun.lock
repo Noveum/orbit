@@ -36,6 +36,7 @@
       "dependencies": {
         "@better-auth/passkey": "^1.6.26",
         "@codemirror/commands": "^6.10.4",
+        "@codemirror/lang-html": "^6.4.11",
         "@codemirror/lang-markdown": "^6.5.2",
         "@codemirror/language": "^6.12.4",
         "@codemirror/language-data": "^6.5.2",
@@ -254,6 +255,7 @@
     "lefthook",
   ],
   "overrides": {
+    "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
