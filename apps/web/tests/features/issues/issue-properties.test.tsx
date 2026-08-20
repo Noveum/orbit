@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { DEFAULT_ESTIMATE_SCALE } from '@orbit/shared/constants';
+import { DEFAULT_ESTIMATE_SCALE, ISSUE_REVIEWER_MAX_COUNT } from '@orbit/shared/constants';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -41,6 +41,8 @@ const secondReviewer: Member = {
   role: 'member',
 };
 
+const workspaceMembers = [firstReviewer, secondReviewer] as const;
+
 const workspace: WorkspaceData = {
   ...({} as WorkspaceData),
   ready: true,
@@ -58,7 +60,7 @@ const workspace: WorkspaceData = {
     },
   ],
   labels: [],
-  members: [firstReviewer, secondReviewer],
+  members: workspaceMembers,
   projects: [
     {
       id: 'project_launch',
@@ -102,10 +104,7 @@ const workspace: WorkspaceData = {
   seedIssues: [],
   stateById: new Map(),
   labelById: new Map(),
-  memberById: new Map([
-    [firstReviewer.id, firstReviewer],
-    [secondReviewer.id, secondReviewer],
-  ]),
+  memberById: new Map(workspaceMembers.map((member) => [member.id, member])),
   openQuickCreate: () => undefined,
 };
 
@@ -218,6 +217,11 @@ function mountProperties(row: Issue) {
 beforeEach(() => {
   patches.length = 0;
   requested.length = 0;
+  Object.assign(workspace, {
+    role: 'admin',
+    members: workspaceMembers,
+    memberById: new Map(workspaceMembers.map((member) => [member.id, member])),
+  });
   stubFetch();
 });
 
@@ -349,6 +353,39 @@ describe('the reviewer row on the issue properties panel', () => {
     await waitFor(() =>
       expect(patches).toEqual([{ reviewerIds: [firstReviewer.id, secondReviewer.id] }]),
     );
+  });
+
+  it('disables a fifty-first reviewer while keeping removal available', async () => {
+    const user = userEvent.setup();
+    const members = Array.from({ length: ISSUE_REVIEWER_MAX_COUNT + 1 }, (_value, index) => ({
+      id: `reviewer_${index + 1}`,
+      name: `Reviewer ${index + 1}`,
+      email: `reviewer-${index + 1}@orbit.test`,
+      image: null,
+      handle: `reviewer-${index + 1}`,
+      role: 'member',
+    }));
+    const selected = members.slice(0, ISSUE_REVIEWER_MAX_COUNT).map((member) => member.id);
+    Object.assign(workspace, {
+      members,
+      memberById: new Map(members.map((member) => [member.id, member])),
+    });
+    mountProperties(issue({ reviewerIds: selected }));
+
+    await user.click(screen.getByTestId('property-reviewers'));
+    const menu = await screen.findByTestId('menu-reviewers');
+    const blocked = within(menu)
+      .getByText(`Reviewer ${ISSUE_REVIEWER_MAX_COUNT + 1}`)
+      .closest('[role="menuitemcheckbox"]');
+    const removable = within(menu).getByText('Reviewer 1').closest('[role="menuitemcheckbox"]');
+    if (blocked === null || removable === null) throw new Error('missing reviewer option');
+
+    expect(blocked).toHaveAttribute('data-disabled');
+    await user.click(blocked);
+    expect(patches).toEqual([]);
+
+    await user.click(removable);
+    await waitFor(() => expect(patches).toEqual([{ reviewerIds: selected.slice(1) }]));
   });
 
   it('removes a selected reviewer without changing the assignee', async () => {

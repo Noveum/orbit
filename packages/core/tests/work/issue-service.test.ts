@@ -477,6 +477,25 @@ describe('reviewer membership', () => {
     ).rejects.toThrow();
   });
 
+  it('refuses reviewers who cannot access the issue team', async () => {
+    const restricted = await addMember(workspace, 'member', {
+      name: 'Restricted Reviewer',
+      teamIds: [],
+    });
+    const issue = await newIssue('Ours');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Invisible review',
+        reviewerIds: [restricted.user.id],
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      updateIssue(workspace.admin, issue.id, { reviewerIds: [restricted.user.id] }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
   it('replaces multiple reviewers and emits their ids in the issue delta', async () => {
     const first = await addMember(workspace, 'member', { name: 'First Reviewer' });
     const second = await addMember(workspace, 'member', { name: 'Second Reviewer' });

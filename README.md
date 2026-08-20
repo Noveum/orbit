@@ -82,7 +82,7 @@ yourself and never depend on us at all.
 
 | | |
 | --- | --- |
-| **Issues** | Priorities, labels, states, estimates, assignees, multiple reviewers and relations. Fast list or drag and drop board |
+| **Issues** | Priorities, labels, states, estimates, assignees, multiple reviewers and relations. Fast list or drag-and-drop board |
 | **Sprints and cycles** | Timeboxed planning with scope, points, burndown and carryover |
 | **Projects and milestones** | Group work that spans teams and sprints |
 | **Docs** | Rich editor, collections, comments, public share links, self-contained HTML pages |

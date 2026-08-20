@@ -1,6 +1,10 @@
 'use client';
 
-import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
+import {
+  DEFAULT_ESTIMATE_SCALE,
+  ISSUE_REVIEWER_MAX_COUNT,
+  PRIORITIES,
+} from '@orbit/shared/constants';
 import { sprintLabel } from '@orbit/shared/utils';
 import { ArrowUpRight, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
@@ -219,15 +223,19 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             id: member.id,
             label: member.name,
             icon: <Avatar name={member.name} src={member.image} size="xs" />,
+            disabled:
+              reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT && !reviewerIds.includes(member.id),
           }))}
           selected={reviewerIds}
-          onSelect={(reviewerId) =>
+          onSelect={(reviewerId) => {
+            const removing = reviewerIds.includes(reviewerId);
+            if (!removing && reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT) return;
             patch({
-              reviewerIds: reviewerIds.includes(reviewerId)
+              reviewerIds: removing
                 ? reviewerIds.filter((id) => id !== reviewerId)
                 : [...reviewerIds, reviewerId],
-            })
-          }
+            });
+          }}
           testId="menu-reviewers"
         >
           <button type="button" className={rowClassName} data-testid="property-reviewers">

@@ -69,6 +69,14 @@ function buildWorkspace(): WorkspaceData {
     ],
     members: [
       { id: 'me', name: 'Shashank', email: 's@x.co', image: null, handle: 's', role: 'admin' },
+      {
+        id: 'reviewer_2',
+        name: 'Ada Reviewer',
+        email: 'ada@x.co',
+        image: null,
+        handle: 'ada',
+        role: 'member',
+      },
     ],
     labels: [{ id: 'label_bug', teamId: 'team_eng', name: 'Bug', color: '#f00' }],
     projects: [
@@ -396,10 +404,13 @@ describe('the new issue dialog', () => {
     await user.type(screen.getByTestId('quick-create-title'), 'Review the release');
     await user.click(screen.getByTestId('quick-create-reviewers'));
     await user.click(await screen.findByText('Shashank'));
+    await user.click(await screen.findByText('Ada Reviewer'));
     await user.keyboard('{Escape}');
     await user.click(screen.getByTestId('quick-create-submit'));
 
-    expect(created.mock.calls[0]?.[0]).toMatchObject({ reviewerIds: ['me'] });
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      reviewerIds: ['me', 'reviewer_2'],
+    });
   });
 
   it('offers every accessible project from every team', async () => {

@@ -26,6 +26,7 @@ import {
   issueFilterSchema,
   issueMoveSchema,
   issueRelationSchema,
+  issueSummaryQuerySchema,
   issueUpdateSchema,
   paginationSchema,
 } from '@orbit/shared/validators';
@@ -744,21 +745,33 @@ async function assertMemberOfWorkspace(
   if (row === undefined) throw validationFailed('That person is not in this workspace.');
 }
 
-async function assertMembersOfWorkspace(
+async function assertReviewersCanAccessTeam(
   executor: Executor,
   organizationId: string,
+  teamId: string,
   userIds: readonly string[],
 ): Promise<void> {
   const ids = [...new Set(userIds)];
   if (ids.length === 0) return;
-  const rows = await executor
-    .select({ userId: schema.member.userId })
+  const members = await executor
+    .select({ userId: schema.member.userId, role: schema.member.role })
     .from(schema.member)
     .where(
       and(eq(schema.member.organizationId, organizationId), inArray(schema.member.userId, ids)),
     );
-  if (new Set(rows.map((row) => row.userId)).size !== ids.length) {
+  if (new Set(members.map((row) => row.userId)).size !== ids.length) {
     throw validationFailed('Every reviewer must be in this workspace.');
+  }
+  const teamMembers = await executor
+    .select({ userId: schema.teamMember.userId })
+    .from(schema.teamMember)
+    .where(and(eq(schema.teamMember.teamId, teamId), inArray(schema.teamMember.userId, ids)));
+  const usersWithAccess = new Set([
+    ...members.filter((row) => row.role === 'admin').map((row) => row.userId),
+    ...teamMembers.map((row) => row.userId),
+  ]);
+  if (usersWithAccess.size !== ids.length) {
+    throw validationFailed('Every reviewer must have access to this team.');
   }
 }
 
@@ -805,7 +818,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
     const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
     await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
-    await assertMembersOfWorkspace(tx, principal.organizationId, reviewerIds);
+    await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -959,7 +972,7 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
     Object.assign(values, applyStateTimestamps(current, state.category, now));
   }
   await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
-  await assertMembersOfWorkspace(tx, principal.organizationId, reviewerIds);
+  await assertReviewersCanAccessTeam(tx, principal.organizationId, current.teamId, reviewerIds);
   await assertAssignableToTeam(
     tx,
     principal.organizationId,
@@ -1975,7 +1988,7 @@ async function allFacets(where: SQL | undefined): Promise<FacetCounts> {
   return { ...columns, label, milestone };
 }
 
-type SummaryGroupProperty = FacetProperty | 'participant';
+type SummaryGroupProperty = ReturnType<typeof issueSummaryQuerySchema.parse>['groupBy'];
 
 function facetFor(
   property: SummaryGroupProperty,
@@ -1986,12 +1999,6 @@ function facetFor(
   if (property === 'milestone') return milestoneFacet(where);
   return facetOf(FACET_COLUMNS[property](), where);
 }
-
-const SUMMARY_GROUP_PROPERTIES = [...FACET_PROPERTIES, 'participant'] as const;
-
-const summarySchema = issueListSchema.extend({
-  groupBy: z.enum(SUMMARY_GROUP_PROPERTIES).default('state'),
-});
 
 export const BOARD_GROUP_PROPERTIES = [
   'state',
@@ -2121,7 +2128,7 @@ export async function getIssueSummary(
   input: unknown = {},
 ): Promise<IssueSummary> {
   assertCan(principal, 'issue:read');
-  const filter = summarySchema.parse(input);
+  const filter = issueSummaryQuerySchema.parse(input);
   const matching = buildIssueWhere(principal, {
     visibility: 'team',
     filter,

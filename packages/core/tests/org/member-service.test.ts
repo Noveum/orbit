@@ -168,6 +168,43 @@ describe('removeMember', () => {
     expect(action?.data['reviewerIds']).toEqual([]);
   });
 
+  it('keeps reviewer assignments in another workspace', async () => {
+    const reviewer = await addMember(workspace, 'member');
+    const localMemberId = await memberIdFor(reviewer.user.id);
+    const { issue: localIssue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Local review',
+      reviewerIds: [reviewer.user.id],
+    });
+    const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: newId(),
+      organizationId: other.organizationId,
+      userId: reviewer.user.id,
+      role: 'member',
+    });
+    await db.insert(schema.teamMember).values({
+      id: newId(),
+      teamId: other.teamId,
+      userId: reviewer.user.id,
+    });
+    const { issue: foreignIssue } = await createIssue(other.admin, {
+      teamId: other.teamId,
+      title: 'Foreign review',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    const result = await removeMember(workspace.admin, localMemberId);
+    const links = await db
+      .select()
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.userId, reviewer.user.id));
+
+    expect(links.map((row) => row.issueId)).toEqual([foreignIssue.id]);
+    expect(links.some((row) => row.issueId === localIssue.id)).toBe(false);
+    expect(result.actions.some((action) => action.modelId === foreignIssue.id)).toBe(false);
+  });
+
   it('refuses to remove the last admin', async () => {
     await expect(
       removeMember(workspace.admin, await memberIdFor(workspace.admin.userId)),

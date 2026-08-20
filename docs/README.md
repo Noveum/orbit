@@ -30,7 +30,7 @@ that page for the full commands and troubleshooting notes.
 ## What Orbit is
 
 - **Issues** with priorities, labels, states, estimates, assignees, multiple
-  reviewers and relations, as a fast list or a drag and drop board.
+  reviewers and relations, as a fast list or a drag-and-drop board.
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
 - **Projects and milestones** that group work across teams.
 - **Docs** with a rich editor, living next to the issues they describe.

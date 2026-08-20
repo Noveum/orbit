@@ -1,6 +1,10 @@
 'use client';
 
-import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
+import {
+  DEFAULT_ESTIMATE_SCALE,
+  ISSUE_REVIEWER_MAX_COUNT,
+  PRIORITIES,
+} from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
 import { Box, ChevronRight, RefreshCw, Tag, Users } from 'lucide-react';
@@ -497,14 +501,19 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                   id: member.id,
                   label: member.name,
                   icon: <Avatar name={member.name} src={member.image} size="xs" />,
+                  disabled:
+                    reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT &&
+                    !reviewerIds.includes(member.id),
                 }))}
                 selected={reviewerIds}
                 onSelect={(id) =>
-                  setReviewerIds((current) =>
-                    current.includes(id)
-                      ? current.filter((entry) => entry !== id)
-                      : [...current, id],
-                  )
+                  setReviewerIds((current) => {
+                    if (current.includes(id)) {
+                      return current.filter((entry) => entry !== id);
+                    }
+                    if (current.length >= ISSUE_REVIEWER_MAX_COUNT) return current;
+                    return [...current, id];
+                  })
                 }
               >
                 <button

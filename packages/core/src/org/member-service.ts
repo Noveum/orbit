@@ -234,9 +234,18 @@ export async function removeMember(
       )
       .returning();
 
+    const organizationIssueIds = tx
+      .select({ id: schema.issue.id })
+      .from(schema.issue)
+      .where(eq(schema.issue.organizationId, principal.organizationId));
     const removedReviews = await tx
       .delete(schema.issueReviewer)
-      .where(eq(schema.issueReviewer.userId, current.userId))
+      .where(
+        and(
+          eq(schema.issueReviewer.userId, current.userId),
+          inArray(schema.issueReviewer.issueId, organizationIssueIds),
+        ),
+      )
       .returning({ issueId: schema.issueReviewer.issueId });
     const reviewedIssueIds = [...new Set(removedReviews.map((row) => row.issueId))];
     const reviewed =
@@ -245,7 +254,12 @@ export async function removeMember(
         : await tx
             .update(schema.issue)
             .set({ updatedAt: new Date(), syncId })
-            .where(inArray(schema.issue.id, reviewedIssueIds))
+            .where(
+              and(
+                eq(schema.issue.organizationId, principal.organizationId),
+                inArray(schema.issue.id, reviewedIssueIds),
+              ),
+            )
             .returning();
 
     await tx
