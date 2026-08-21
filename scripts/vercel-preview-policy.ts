@@ -42,9 +42,10 @@ function metadataValue(deployment: VercelDeployment, key: string): string | null
 export function matchesVercelPullRequest(
   deployment: VercelDeployment,
   pullRequest: GithubPreviewPullRequest,
+  projectId: string,
   headSha?: string,
 ): boolean {
-  if (deployment.target === 'production') return false;
+  if (deployment.projectId !== projectId || deployment.target !== null) return false;
 
   const metadataMatches =
     metadataValue(deployment, 'orbitGithubRepositoryId') === String(pullRequest.base.repo.id) &&

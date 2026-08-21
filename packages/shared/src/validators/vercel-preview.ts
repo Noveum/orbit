@@ -4,6 +4,7 @@ const boundedString = (maximum: number) => z.string().trim().min(1).max(maximum)
 const positiveIntegerSchema = z.number().int().positive();
 const githubPullRequestNumberSchema = positiveIntegerSchema.max(2_147_483_647);
 const nonnegativeCursorSchema = z.number().finite().int().nonnegative().nullable();
+const nonnegativeIntegerSchema = z.number().finite().int().nonnegative();
 const githubWorkflowConclusionSchema = z
   .enum([
     'success',
@@ -26,6 +27,17 @@ const githubWorkflowRunStatusSchema = z.enum([
   'pending',
 ]);
 const vercelMetadataValueSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
+const vercelTargetSchema = z.enum(['production', 'staging']).nullable();
+const vercelReadyStateSchema = z.enum([
+  'QUEUED',
+  'INITIALIZING',
+  'BUILDING',
+  'READY',
+  'ERROR',
+  'CANCELED',
+  'BLOCKED',
+  'DELETED',
+]);
 
 export const gitShaSchema = z.string().regex(/^[a-f0-9]{40}$/);
 
@@ -88,6 +100,7 @@ export const githubPreviewPullRequestTargetEventSchema = z
       'converted_to_draft',
       'labeled',
       'unlabeled',
+      'closed',
     ]),
     number: positiveIntegerSchema,
     pull_request: githubPreviewPullRequestSchema,
@@ -165,26 +178,21 @@ export const githubPreviewFilesSchema = z.array(
 export type GithubPreviewFiles = z.infer<typeof githubPreviewFilesSchema>;
 
 export const githubPreviewWorkflowRunsSchema = z
-  .object({ workflow_runs: z.array(githubPreviewWorkflowRunSchema).max(100) })
+  .object({
+    total_count: nonnegativeIntegerSchema,
+    workflow_runs: z.array(githubPreviewWorkflowRunSchema).max(100),
+  })
   .passthrough();
 export type GithubPreviewWorkflowRuns = z.infer<typeof githubPreviewWorkflowRunsSchema>;
 
 export const vercelDeploymentSchema = z
   .object({
     uid: boundedString(100),
+    projectId: boundedString(255),
     url: boundedString(255).nullable(),
-    target: z.enum(['production', 'staging']).nullable().optional(),
-    readyState: z.enum([
-      'QUEUED',
-      'INITIALIZING',
-      'BUILDING',
-      'READY',
-      'ERROR',
-      'CANCELED',
-      'BLOCKED',
-      'DELETED',
-    ]),
-    meta: z.record(z.string(), vercelMetadataValueSchema),
+    target: vercelTargetSchema.optional(),
+    readyState: vercelReadyStateSchema,
+    meta: z.record(z.string(), vercelMetadataValueSchema).optional().default({}),
   })
   .passthrough();
 export type VercelDeployment = z.infer<typeof vercelDeploymentSchema>;
@@ -192,30 +200,34 @@ export type VercelDeployment = z.infer<typeof vercelDeploymentSchema>;
 export const vercelDeploymentsPageSchema = z
   .object({
     deployments: z.array(vercelDeploymentSchema).max(100),
-    pagination: z.object({ next: nonnegativeCursorSchema, prev: nonnegativeCursorSchema }),
+    pagination: z.object({
+      count: nonnegativeIntegerSchema,
+      next: nonnegativeCursorSchema,
+      prev: nonnegativeCursorSchema,
+    }),
   })
   .passthrough();
 export type VercelDeploymentsPage = z.infer<typeof vercelDeploymentsPageSchema>;
 
-export const vercelCreatedDeploymentSchema = z
+const vercelDeploymentMutationSchema = z
   .object({
     id: boundedString(100),
-    url: boundedString(255).nullable(),
-    target: z.enum(['production', 'staging']).nullable().optional(),
-    readyState: z.enum([
-      'QUEUED',
-      'INITIALIZING',
-      'BUILDING',
-      'READY',
-      'ERROR',
-      'CANCELED',
-      'BLOCKED',
-      'DELETED',
-    ]),
+    projectId: boundedString(255),
+    url: boundedString(255),
+    target: vercelTargetSchema,
+    readyState: vercelReadyStateSchema,
     meta: z.record(z.string(), vercelMetadataValueSchema),
   })
   .passthrough();
+
+export const vercelCreatedDeploymentSchema = vercelDeploymentMutationSchema;
 export type VercelCreatedDeployment = z.infer<typeof vercelCreatedDeploymentSchema>;
+
+export const vercelDeploymentDetailSchema = vercelDeploymentMutationSchema;
+export type VercelDeploymentDetail = z.infer<typeof vercelDeploymentDetailSchema>;
+
+export const vercelCanceledDeploymentSchema = vercelDeploymentMutationSchema;
+export type VercelCanceledDeployment = z.infer<typeof vercelCanceledDeploymentSchema>;
 
 export const vercelPreviewEnvironmentSchema = z.object({
   GITHUB_EVENT_NAME: z.enum(['pull_request_target', 'workflow_run', 'repository_dispatch']),

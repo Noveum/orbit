@@ -8,7 +8,9 @@ import {
   githubPreviewWorkflowRunEventSchema,
   githubPreviewWorkflowRunsSchema,
   githubPreviewWorkflowSchema,
+  vercelCanceledDeploymentSchema,
   vercelCreatedDeploymentSchema,
+  vercelDeploymentDetailSchema,
   vercelDeploymentSchema,
   vercelDeploymentsPageSchema,
   vercelPreviewEnvironmentSchema,
@@ -40,6 +42,7 @@ const pullRequest = {
 
 const deployment = {
   uid: 'dpl_preview',
+  projectId: 'prj_orbit',
   url: null,
   target: null,
   readyState: 'BLOCKED' as const,
@@ -53,6 +56,15 @@ const deployment = {
     retried: false,
     note: null,
   },
+};
+
+const mutationDeployment = {
+  id: 'dpl_preview',
+  projectId: 'prj_orbit',
+  url: 'orbit-preview.vercel.app',
+  target: null,
+  readyState: 'INITIALIZING' as const,
+  meta: deployment.meta,
 };
 
 const workflowRun = {
@@ -115,12 +127,12 @@ describe('Vercel Preview GitHub schemas', () => {
   test('accept a pull request state event', () => {
     expect(
       githubPreviewPullRequestTargetEventSchema.parse({
-        action: 'ready_for_review',
+        action: 'closed',
         number: pullRequest.number,
         pull_request: pullRequest,
         repository,
       }),
-    ).toMatchObject({ action: 'ready_for_review', number: pullRequest.number });
+    ).toMatchObject({ action: 'closed', number: pullRequest.number });
   });
 
   test('accept a successful CI workflow event', () => {
@@ -149,27 +161,39 @@ describe('Vercel Preview GitHub schemas', () => {
     ).toHaveLength(1);
     expect(
       githubPreviewWorkflowRunsSchema.parse({
+        total_count: 1,
         workflow_runs: [workflowRun],
       }).workflow_runs,
     ).toHaveLength(1);
   });
 
-  test('accept Vercel deployment pages and create responses', () => {
+  test('requires a workflow run total count', () => {
+    expect(() => githubPreviewWorkflowRunsSchema.parse({ workflow_runs: [workflowRun] })).toThrow();
+  });
+
+  test('accept Vercel deployment pages and mutation responses', () => {
     expect(vercelDeploymentSchema.parse(deployment).readyState).toBe('BLOCKED');
+    const page = vercelDeploymentsPageSchema.parse({
+      deployments: [
+        deployment,
+        {
+          uid: 'dpl_unrelated',
+          projectId: 'prj_orbit',
+          url: null,
+          target: null,
+          readyState: 'READY',
+        },
+      ],
+      pagination: { count: 2, next: 123, prev: null },
+    });
+    expect(page.pagination.next).toBe(123);
+    expect(page.deployments[1]?.meta).toEqual({});
+    expect(vercelCreatedDeploymentSchema.parse(mutationDeployment).id).toBe('dpl_preview');
+    expect(vercelDeploymentDetailSchema.parse(mutationDeployment).url).toBe(
+      'orbit-preview.vercel.app',
+    );
     expect(
-      vercelDeploymentsPageSchema.parse({
-        deployments: [deployment],
-        pagination: { next: 123, prev: null },
-      }).pagination.next,
-    ).toBe(123);
-    expect(
-      vercelCreatedDeploymentSchema.parse({
-        id: 'dpl_preview',
-        url: null,
-        target: null,
-        readyState: 'INITIALIZING',
-        meta: deployment.meta,
-      }).id,
+      vercelCanceledDeploymentSchema.parse({ ...mutationDeployment, readyState: 'CANCELED' }).id,
     ).toBe('dpl_preview');
   });
 
@@ -211,6 +235,25 @@ describe('Vercel Preview GitHub schemas', () => {
 
   test('reject an unknown Vercel ready state', () => {
     expect(() => vercelDeploymentSchema.parse({ ...deployment, readyState: 'UNKNOWN' })).toThrow();
+  });
+
+  test('reject mutation responses without complete deployment identity', () => {
+    expect(() => vercelCreatedDeploymentSchema.parse({ ...mutationDeployment, id: '' })).toThrow();
+    expect(() => {
+      const { projectId: _projectId, ...withoutProjectId } = mutationDeployment;
+      return vercelDeploymentDetailSchema.parse(withoutProjectId);
+    }).toThrow();
+    expect(() =>
+      vercelCanceledDeploymentSchema.parse({ ...mutationDeployment, url: null }),
+    ).toThrow();
+    expect(() => {
+      const { meta: _meta, ...withoutMetadata } = mutationDeployment;
+      return vercelCreatedDeploymentSchema.parse(withoutMetadata);
+    }).toThrow();
+    expect(() => {
+      const { target: _target, ...withoutTarget } = mutationDeployment;
+      return vercelDeploymentDetailSchema.parse(withoutTarget);
+    }).toThrow();
   });
 
   test('reject malformed repository dispatch pull request inputs', () => {
@@ -263,7 +306,13 @@ describe('Vercel Preview GitHub schemas', () => {
     expect(() =>
       vercelDeploymentsPageSchema.parse({
         deployments: [],
-        pagination: { next: Number.POSITIVE_INFINITY, prev: null },
+        pagination: { next: null, prev: null },
+      }),
+    ).toThrow();
+    expect(() =>
+      vercelDeploymentsPageSchema.parse({
+        deployments: [],
+        pagination: { count: 0, next: Number.POSITIVE_INFINITY, prev: null },
       }),
     ).toThrow();
   });

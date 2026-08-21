@@ -3,6 +3,7 @@ import type {
   GithubPreviewPullRequest,
   VercelDeployment,
 } from '../packages/shared/src/validators/index.ts';
+import { vercelDeploymentSchema } from '../packages/shared/src/validators/index.ts';
 import {
   isActiveVercelDeployment,
   isPreviewEligible,
@@ -40,6 +41,7 @@ const forkPullRequest: GithubPreviewPullRequest = {
 
 const deployment: VercelDeployment = {
   uid: 'dpl_preview',
+  projectId: 'prj_orbit',
   url: null,
   target: null,
   readyState: 'READY',
@@ -91,7 +93,7 @@ describe('Web Preview path policy', () => {
 
 describe('Vercel deployment policy', () => {
   test('matches Preview metadata after normalizing Vercel metadata values', () => {
-    expect(matchesVercelPullRequest(deployment, readyPullRequest, SHA)).toBe(true);
+    expect(matchesVercelPullRequest(deployment, readyPullRequest, 'prj_orbit', SHA)).toBe(true);
   });
 
   test('requires repository, pull request, ref, and supplied SHA to match', () => {
@@ -99,6 +101,7 @@ describe('Vercel deployment policy', () => {
       matchesVercelPullRequest(
         { ...deployment, meta: { ...deployment.meta, orbitGithubRepositoryId: '456' } },
         readyPullRequest,
+        'prj_orbit',
         SHA,
       ),
     ).toBe(false);
@@ -106,6 +109,7 @@ describe('Vercel deployment policy', () => {
       matchesVercelPullRequest(
         { ...deployment, meta: { ...deployment.meta, orbitGithubPrNumber: '342' } },
         readyPullRequest,
+        'prj_orbit',
         SHA,
       ),
     ).toBe(false);
@@ -113,16 +117,48 @@ describe('Vercel deployment policy', () => {
       matchesVercelPullRequest(
         { ...deployment, meta: { ...deployment.meta, orbitGithubHeadRef: 'other-ref' } },
         readyPullRequest,
+        'prj_orbit',
         SHA,
       ),
     ).toBe(false);
-    expect(matchesVercelPullRequest(deployment, readyPullRequest, 'b'.repeat(40))).toBe(false);
+    expect(
+      matchesVercelPullRequest(deployment, readyPullRequest, 'prj_orbit', 'b'.repeat(40)),
+    ).toBe(false);
   });
 
-  test('never matches a production deployment', () => {
+  test('requires the configured project Preview environment', () => {
+    expect(matchesVercelPullRequest(deployment, readyPullRequest, 'prj_other', SHA)).toBe(false);
     expect(
-      matchesVercelPullRequest({ ...deployment, target: 'production' }, readyPullRequest, SHA),
+      matchesVercelPullRequest(
+        { ...deployment, target: 'staging' },
+        readyPullRequest,
+        'prj_orbit',
+        SHA,
+      ),
     ).toBe(false);
+    expect(
+      matchesVercelPullRequest(
+        { ...deployment, target: 'production' },
+        readyPullRequest,
+        'prj_orbit',
+        SHA,
+      ),
+    ).toBe(false);
+    const { target: _target, ...withoutTarget } = deployment;
+    expect(matchesVercelPullRequest(withoutTarget, readyPullRequest, 'prj_orbit', SHA)).toBe(false);
+  });
+
+  test('does not match an unrelated deployment without metadata', () => {
+    const withoutMetadata = vercelDeploymentSchema.parse({
+      uid: 'dpl_unrelated',
+      projectId: 'prj_orbit',
+      url: null,
+      target: null,
+      readyState: 'READY',
+    });
+    expect(matchesVercelPullRequest(withoutMetadata, readyPullRequest, 'prj_orbit', SHA)).toBe(
+      false,
+    );
   });
 
   test('recognizes only queued, initializing, and building deployments as active', () => {
