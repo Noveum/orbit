@@ -8,6 +8,12 @@ const WORKFLOW_PATH = join(ROOT, '.github/workflows/vercel-preview.yml');
 const CI_PATH = join(ROOT, '.github/workflows/ci.yml');
 const VERCEL_PATH = join(ROOT, 'apps/web/vercel.json');
 const GUIDE_PATH = join(ROOT, 'docs/VERCEL_BUILD_GATE.md');
+const legacySettingNames = [
+  ['BUILD', 'GATE', 'GITHUB', 'TOKEN'].join('_'),
+  ['BUILD', 'GATE', 'WATCH', 'PATHS'].join('_'),
+  ['BUILD', 'GATE', 'READY', 'LABEL'].join('_'),
+  ['BUILD', 'GATE', 'BLOCK', 'LABEL'].join('_'),
+];
 
 type VercelConfiguration = {
   readonly git?: {
@@ -205,10 +211,9 @@ describe('Vercel Preview repository configuration', () => {
 
   test('removes the old build gate and its Vercel settings', () => {
     expect(oldGatePaths.every((path) => !existsSync(path))).toBe(true);
-    expect(allGateFiles).not.toContain('BUILD_GATE_GITHUB_TOKEN');
-    expect(allGateFiles).not.toContain('BUILD_GATE_WATCH_PATHS');
-    expect(allGateFiles).not.toContain('BUILD_GATE_READY_LABEL');
-    expect(allGateFiles).not.toContain('BUILD_GATE_BLOCK_LABEL');
+    for (const legacySettingName of legacySettingNames) {
+      expect(allGateFiles).not.toContain(legacySettingName);
+    }
   });
 
   test('uses only the exact trusted triggers, permissions, and serialized concurrency', () => {
