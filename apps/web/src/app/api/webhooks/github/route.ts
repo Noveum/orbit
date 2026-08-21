@@ -9,7 +9,11 @@ import {
   isGithubInstallationEvent,
   verifyGithubSignature,
 } from '@orbit/services';
-import { markNotificationDelivered, notifyMany } from '@orbit/services/notifications';
+import {
+  markNotificationDelivered,
+  markSlackDmDelivery,
+  notifyMany,
+} from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -165,8 +169,12 @@ export async function POST(request: Request): Promise<Response> {
         } catch (error) {
           console.error('[orbit] slack DM delivery deferred for retry', error);
         }
-        if (delivered !== 1) continue;
+        if (delivered !== 1) {
+          await markSlackDmDelivery(db, notification.id, dispatch.userId, false);
+          continue;
+        }
         await markNotificationDelivered(db, notification.id, 'slack_dm');
+        await markSlackDmDelivery(db, notification.id, dispatch.userId, true);
       }
     }
 

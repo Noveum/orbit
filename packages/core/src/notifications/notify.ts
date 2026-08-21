@@ -1,6 +1,10 @@
 import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { markNotificationDelivered, notifyMany } from '@orbit/services/notifications';
+import {
+  markNotificationDelivered,
+  markSlackDmDelivery,
+  notifyMany,
+} from '@orbit/services/notifications';
 import { dispatchSlackDm } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
@@ -31,6 +35,9 @@ export async function notifyRecipients(
     }
     if (delivered === 1) {
       await markNotificationDelivered(executor, notification.id, 'slack_dm');
+      await markSlackDmDelivery(executor, notification.id, dispatch.userId, true);
+    } else {
+      await markSlackDmDelivery(executor, notification.id, dispatch.userId, false);
     }
   }
   return outcome.actions;
