@@ -99,6 +99,7 @@ export interface SlackDispatch {
 export interface SlackDmDispatch {
   readonly userId: string;
   readonly notificationId: string;
+  readonly sendAt: Date;
 }
 
 export interface NotifyOutcome {
@@ -123,6 +124,7 @@ interface Plan {
   readonly channels: string[];
   readonly emailAt: Date | null;
   readonly emailDeferred: boolean;
+  readonly slackDmAt: Date | null;
 }
 
 export async function notifyMany(
@@ -230,11 +232,22 @@ function planFor(
       ...(inboxEnabled ? [INBOX_CHANNEL] : []),
       ...(emailEnabled ? ['email'] : []),
       ...(slackEnabled ? ['slack'] : []),
-      ...(slackDmEnabled && !deferred ? ['slack_dm'] : []),
+      ...(slackDmEnabled ? ['slack_dm'] : []),
     ],
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
+    slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
   };
+}
+
+function slackDmSendAt(
+  enabled: boolean,
+  deferred: boolean,
+  now: Date,
+  quietHours: QuietHours,
+): Date | null {
+  if (!enabled) return null;
+  return deferred ? nextQuietHoursEnd(now, quietHours) : now;
 }
 
 function emailSendAt(
@@ -307,8 +320,8 @@ function buildOutcome(
     if (plan.channels.includes('slack')) {
       slack.push({ userId: row.userId, notificationId: row.id });
     }
-    if (plan.channels.includes('slack_dm')) {
-      slackDm.push({ userId: row.userId, notificationId: row.id });
+    if (plan.channels.includes('slack_dm') && plan.slackDmAt !== null) {
+      slackDm.push({ userId: row.userId, notificationId: row.id, sendAt: plan.slackDmAt });
     }
   }
   return { notifications: rows, actions, email, slack, slackDm, deduped };

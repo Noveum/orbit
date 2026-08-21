@@ -149,6 +149,7 @@ export async function POST(request: Request): Promise<Response> {
 
     if (slackIntegrationEnabled() && outcome.organizationId !== null) {
       for (const dispatch of outcome.slackDm) {
+        if (dispatch.sendAt > new Date()) continue;
         const notification = outcome.notifications.find(
           (item) => item.id === dispatch.notificationId,
         );

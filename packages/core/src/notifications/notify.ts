@@ -15,6 +15,7 @@ export async function notifyRecipients(
   if (populated.length === 0) return [];
   const outcome = await notifyMany(executor, populated);
   for (const dispatch of outcome.slackDm) {
+    if (dispatch.sendAt > new Date()) continue;
     const notification = outcome.notifications.find((item) => item.id === dispatch.notificationId);
     if (notification === undefined) continue;
     const delivered = await dispatchSlackDm(executor, {

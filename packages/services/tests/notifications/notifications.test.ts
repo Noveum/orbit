@@ -147,6 +147,28 @@ describe('notifyMany', () => {
     });
   });
 
+  it('retains a Slack DM with a deferred send time when email is also enabled', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'UTC');
+      await tx.insert(notificationPreference).values({
+        id: `np_${randomUUIDv7()}`,
+        userId: fixture.adaId,
+        channel: 'inbox',
+        type: 'comment_created',
+        enabled: false,
+      });
+      const now = new Date('2026-07-22T20:00:00.000Z');
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { now, slackEnabled: true },
+      );
+      expect(outcome.email).toHaveLength(1);
+      expect(outcome.slackDm).toHaveLength(1);
+      expect(outcome.slackDm[0]?.sendAt.getTime()).toBeGreaterThan(now.getTime());
+    });
+  });
+
   it('always writes an inbox row and returns valid sync actions', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
