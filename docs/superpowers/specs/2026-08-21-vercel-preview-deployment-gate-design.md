@@ -72,11 +72,11 @@ variables or an ignored-build exit-code convention.
 paths:
 
 - `pull_request_target` handles `opened`, `reopened`, `ready_for_review`,
-  `converted_to_draft`, `labeled`, and `unlabeled` state transitions.
+  `converted_to_draft`, `labeled`, `unlabeled`, and `closed` state transitions.
 - `workflow_run` handles a completed `CI` workflow and proceeds only when the source event was a
   pull request and the conclusion was success.
-- `workflow_dispatch` accepts a pull request number for maintainer recovery when an event was
-  missed or a deployment needs to be retried.
+- `repository_dispatch` accepts the custom `vercel-preview-reconcile` event with a pull request
+  number for maintainer recovery when an event was missed or a deployment needs to be retried.
 
 The workflow checks out only the trusted workflow SHA from the default branch with persisted Git
 credentials disabled. It never
@@ -87,9 +87,9 @@ values and API request bodies, never as shell source.
 Permissions are limited to `actions: read`, `contents: read`, and `pull-requests: read`. The Vercel
 token is a GitHub Actions secret. Team ID, project ID, and project name are Actions variables.
 Concurrency is keyed by pull request number when the event supplies one and does not cancel an
-in-progress reconciler. Vercel metadata checks provide a second idempotency boundary. A rare
-workflow-run payload without a pull request number uses its exact head SHA until the controller
-resolves the pull request through GitHub.
+in-progress reconciler. Vercel metadata checks provide a second idempotency boundary. A
+workflow-run payload without a linked pull request is rejected because it cannot prove the run's
+base SHA and repository association.
 
 ## Controller and validation
 
@@ -99,39 +99,62 @@ Vercel response, and configuration before using them.
 
 The controller resolves one or more pull request numbers from the triggering event, then refetches
 each pull request from GitHub. An event is stale when its recorded head SHA no longer equals the
-live pull request head. Stale events are no-ops. Closed pull requests and fork heads are also
-no-ops.
+live pull request head. Stale events are no-ops. Fork heads and pull requests targeting another
+repository or branch are also no-ops. A proven closed pull request follows the active-cancellation
+path without requiring CI.
 
-For a pull request state event or manual dispatch, the controller queries completed runs of
-`.github/workflows/ci.yml` and requires a successful `pull_request` run for the exact head SHA. A
-successful `workflow_run` event already supplies that fact, but the controller still verifies
-that its head SHA matches the live pull request.
+For every eligible event, the controller resolves the canonical `.github/workflows/ci.yml`, fetches
+the live `main` ref, and queries every bounded page of runs for the exact head SHA. It selects the
+maximum creation time and run ID rather than filtering to successful runs. The run must be
+completed successfully and its linked pull request must match the current number, repository IDs,
+head ref and SHA, base ref, and live base SHA. A newer queued, failed, canceled, or stale-base run
+blocks deployment even when an older green run exists. The triggering `workflow_run` is only a
+wake-up signal and is not trusted as proof. Immediately before mutation, the controller refetches
+live pull request state and repeats the current CI proof so a concurrent push, label change, or
+newer run cannot authorize stale work.
 
 Changed files are read from the paginated pull request files endpoint. The web deployment is
 affected when a filename is below `apps/web/` or `packages/`, or is exactly `package.json`,
 `bun.lock`, or `tsconfig.base.json`. Configuration is fixed in trusted code rather than split
 between Vercel and GitHub settings.
 
-GitHub and Vercel requests have a finite timeout. Rate-limit and server failures use bounded
-retries. Authentication failures, malformed payloads, exhausted pagination, and unsuccessful
-mutations fail the workflow visibly. Logs never contain either token.
+GitHub and Vercel requests have a finite timeout. Safe reads use bounded retries for network
+failures, server failures, 429 responses, and 403 responses carrying explicit GitHub rate-limit
+evidence. Mutations are never retried blindly. Authentication failures, malformed payloads,
+exhausted pagination, and unsuccessful mutations fail the workflow visibly. Redirects are rejected
+for token-bearing requests, and logs never contain either token.
 
 ## Vercel API contract
 
-Before mutation, the controller lists deployments for the configured project and filters them by
-Preview target and metadata for repository ID, pull request number, branch ref, and commit SHA.
-Pagination is bounded and every page is validated.
+Before mutation, the controller lists deployments through Vercel's current `/v7/deployments`
+endpoint, using the configured project plus branch and SHA filters where applicable. It filters
+again by exact project ID, null Preview target, and namespaced Orbit metadata for repository ID,
+pull request number, branch ref, and commit SHA. List metadata may be absent on unrelated historical
+deployments. Pagination is bounded, repeated cursors are rejected, and every page is validated.
 
-If an exact deployment is queued, initializing, building, or ready, deployment is a no-op. If no
-such deployment exists, the controller calls Vercel's Create Deployment endpoint with the linked
-GitHub repository ID, exact branch ref, and exact SHA. `target` is omitted so Vercel selects the
-Preview environment. Metadata repeats the repository, pull request, branch, and SHA so later runs
-can identify the deployment without guessing.
+If an exact deployment is ready, it is reused. An exact queued, initializing, or building
+deployment is polled rather than duplicated. If no such deployment exists, the controller calls
+Vercel's Create Deployment endpoint with the linked GitHub repository ID, exact branch ref, and
+exact SHA. `target` is omitted so Vercel selects the Preview environment. Namespaced metadata
+repeats the repository, pull request, branch, SHA, workflow run ID, and reason so later runs can
+identify the deployment without guessing. `forceNew=1` is used only when a new reconciliation has
+already observed an exact terminal failed deployment. Create, detail, and cancel responses must
+prove deployment ID, project ID, null Preview target, state, and Orbit metadata. The workflow polls
+the created deployment immediately and then through at most 240 five-second sleeps to a ready or
+terminal state, requiring a nonempty final URL.
+
+Create Deployment has no idempotency key. After a network error, timeout, 429, 5xx, 409, or an
+unparseable success response, the controller marks the one POST as attempted and performs only a
+short bounded exact-list observation. A newly visible ready or active deployment is reused; a
+terminal deployment or no visible new deployment fails the workflow. The same reconciliation never
+sends a second create request.
 
 When current pull request state is ineligible, active deployments associated with that pull
 request are canceled through Vercel's cancel endpoint. The filter requires the configured project,
-Preview target, repository ID, pull request number, and branch ref before cancellation. Ready,
-failed, and canceled deployments are left unchanged.
+null Preview target, repository ID, pull request number, and branch ref before cancellation. Ready,
+failed, and canceled deployments are left unchanged. A 400 or ambiguous cancel response is followed
+by one validated detail read so a normal transition to a terminal state is not mistaken for an
+unsafe retry.
 
 ## Fork policy
 
@@ -179,11 +202,13 @@ unknown states, and malformed pagination.
 Controller tests use injected fetch and delay functions. They cover ready and draft policy,
 control-label precedence, state transitions, CI success for the exact SHA, stale events, closed
 pull requests, fork refusal, relevant and irrelevant paths, GitHub pagination, Vercel pagination,
-existing active and ready deployments, one exact create, active cancellation, bounded retries,
-timeouts, authentication failures, invalid JSON, invalid response shapes, and missing settings.
+existing active and ready deployments, exact project and Preview identity, one exact create,
+ambiguous create observation, active cancellation races, bounded retries, timeouts, authentication
+failures, invalid JSON, invalid response shapes, and missing settings.
 
 Repository checks cover the branch deployment map, the managed labels, removal of the old ignored
-command and token references, and discovery of the script tests by the root test command.
+command and token references, discovery of the script tests by the root test command, and the two
+source-policy checks that hosted CI previously omitted from `bun run verify`.
 
 ## Out of scope
 
