@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  githubPreviewCommitPullsSchema,
   githubPreviewFilesSchema,
   githubPreviewPullRequestSchema,
   githubPreviewPullRequestTargetEventSchema,
   githubPreviewRefSchema,
-  githubPreviewWorkflowDispatchEventSchema,
+  githubPreviewRepositoryDispatchEventSchema,
   githubPreviewWorkflowRunEventSchema,
   githubPreviewWorkflowRunsSchema,
   githubPreviewWorkflowSchema,
@@ -68,14 +67,22 @@ const workflowRun = {
   pull_requests: [
     {
       number: pullRequest.number,
-      head: { sha: SHA, ref: 'feature/preview', repo: repository },
-      base: { sha: 'b'.repeat(40), ref: 'main', repo: repository },
+      head: {
+        sha: SHA,
+        ref: 'feature/preview',
+        repo: { id: 123, name: 'orbit', url: 'https://api.github.com/repos/Noveum/orbit' },
+      },
+      base: {
+        sha: 'b'.repeat(40),
+        ref: 'main',
+        repo: { id: 123, name: 'orbit', url: 'https://api.github.com/repos/Noveum/orbit' },
+      },
     },
   ],
 };
 
 const environment = {
-  GITHUB_EVENT_NAME: 'pull_request_target',
+  GITHUB_EVENT_NAME: 'repository_dispatch',
   GITHUB_EVENT_PATH: '/tmp/event.json',
   GITHUB_REPOSITORY: 'Noveum/orbit',
   GITHUB_TOKEN: 'github-token',
@@ -126,16 +133,17 @@ describe('Vercel Preview GitHub schemas', () => {
     ).toMatchObject({ workflow_run: { head_sha: SHA } });
   });
 
-  test('accept a manual pull request input', () => {
+  test('accept a repository dispatch pull request input', () => {
     expect(
-      githubPreviewWorkflowDispatchEventSchema.parse({
-        inputs: { pull_request: '341' },
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        action: 'vercel-preview-reconcile',
+        client_payload: { pull_request: 341 },
         repository,
-      }).inputs.pull_request,
-    ).toBe('341');
+      }).client_payload.pull_request,
+    ).toBe(341);
   });
 
-  test('accept GitHub files, workflow runs, and commit pull pages', () => {
+  test('accept GitHub files and workflow runs with minimal linked repositories', () => {
     expect(
       githubPreviewFilesSchema.parse([{ filename: 'apps/web/src/app/page.tsx' }]),
     ).toHaveLength(1);
@@ -144,7 +152,6 @@ describe('Vercel Preview GitHub schemas', () => {
         workflow_runs: [workflowRun],
       }).workflow_runs,
     ).toHaveLength(1);
-    expect(githubPreviewCommitPullsSchema.parse([{ number: pullRequest.number }])).toHaveLength(1);
   });
 
   test('accept Vercel deployment pages and create responses', () => {
@@ -168,6 +175,15 @@ describe('Vercel Preview GitHub schemas', () => {
 
   test('accept a complete controller environment', () => {
     expect(vercelPreviewEnvironmentSchema.parse(environment).VERCEL_PROJECT_ID).toBe('prj_orbit');
+  });
+
+  test('reject a manual workflow dispatch environment', () => {
+    expect(() =>
+      vercelPreviewEnvironmentSchema.parse({
+        ...environment,
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+      }),
+    ).toThrow();
   });
 
   test('reject a short pull request head SHA', () => {
@@ -197,11 +213,48 @@ describe('Vercel Preview GitHub schemas', () => {
     expect(() => vercelDeploymentSchema.parse({ ...deployment, readyState: 'UNKNOWN' })).toThrow();
   });
 
-  test('reject a nonnumeric manual pull request input', () => {
+  test('reject malformed repository dispatch pull request inputs', () => {
+    const event = {
+      action: 'vercel-preview-reconcile',
+      repository,
+      client_payload: { pull_request: 341 },
+    };
+
     expect(() =>
-      githubPreviewWorkflowDispatchEventSchema.parse({
-        inputs: { pull_request: '341a' },
-        repository,
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        action: event.action,
+        repository: event.repository,
+        client_payload: {},
+      }),
+    ).toThrow();
+    expect(() =>
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        ...event,
+        client_payload: { pull_request: '341' },
+      }),
+    ).toThrow();
+    expect(() =>
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        ...event,
+        client_payload: { pull_request: 341.5 },
+      }),
+    ).toThrow();
+    expect(() =>
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        ...event,
+        client_payload: { pull_request: 0 },
+      }),
+    ).toThrow();
+    expect(() =>
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        ...event,
+        client_payload: { pull_request: -1 },
+      }),
+    ).toThrow();
+    expect(() =>
+      githubPreviewRepositoryDispatchEventSchema.parse({
+        ...event,
+        client_payload: { pull_request: 2_147_483_648 },
       }),
     ).toThrow();
   });

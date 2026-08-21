@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const boundedString = (maximum: number) => z.string().trim().min(1).max(maximum);
 const positiveIntegerSchema = z.number().int().positive();
+const githubPullRequestNumberSchema = positiveIntegerSchema.max(2_147_483_647);
 const nonnegativeCursorSchema = z.number().finite().int().nonnegative().nullable();
 const githubWorkflowConclusionSchema = z
   .enum([
@@ -97,18 +98,39 @@ export type GithubPreviewPullRequestTargetEvent = z.infer<
   typeof githubPreviewPullRequestTargetEventSchema
 >;
 
+export const githubPreviewRepositoryDispatchEventSchema = z
+  .object({
+    action: z.literal('vercel-preview-reconcile'),
+    client_payload: z.object({ pull_request: githubPullRequestNumberSchema }),
+    repository: githubPreviewRepositorySchema,
+  })
+  .passthrough();
+export type GithubPreviewRepositoryDispatchEvent = z.infer<
+  typeof githubPreviewRepositoryDispatchEventSchema
+>;
+
+export const githubPreviewWorkflowLinkedRepositorySchema = z
+  .object({
+    id: positiveIntegerSchema,
+    name: boundedString(100),
+  })
+  .passthrough();
+export type GithubPreviewWorkflowLinkedRepository = z.infer<
+  typeof githubPreviewWorkflowLinkedRepositorySchema
+>;
+
 const githubPreviewWorkflowPullRequestSchema = z
   .object({
     number: positiveIntegerSchema,
     head: z.object({
       sha: gitShaSchema,
       ref: boundedString(255),
-      repo: githubPreviewRepositorySchema,
+      repo: githubPreviewWorkflowLinkedRepositorySchema,
     }),
     base: z.object({
       sha: gitShaSchema,
       ref: boundedString(255),
-      repo: githubPreviewRepositorySchema,
+      repo: githubPreviewWorkflowLinkedRepositorySchema,
     }),
   })
   .passthrough();
@@ -137,21 +159,6 @@ export const githubPreviewWorkflowRunEventSchema = z
   .passthrough();
 export type GithubPreviewWorkflowRunEvent = z.infer<typeof githubPreviewWorkflowRunEventSchema>;
 
-export const githubPreviewWorkflowDispatchEventSchema = z
-  .object({
-    inputs: z.object({
-      pull_request: z
-        .string()
-        .regex(/^[1-9]\d*$/)
-        .max(10),
-    }),
-    repository: githubPreviewRepositorySchema,
-  })
-  .passthrough();
-export type GithubPreviewWorkflowDispatchEvent = z.infer<
-  typeof githubPreviewWorkflowDispatchEventSchema
->;
-
 export const githubPreviewFilesSchema = z.array(
   z.object({ filename: boundedString(1024) }).passthrough(),
 );
@@ -161,15 +168,6 @@ export const githubPreviewWorkflowRunsSchema = z
   .object({ workflow_runs: z.array(githubPreviewWorkflowRunSchema).max(100) })
   .passthrough();
 export type GithubPreviewWorkflowRuns = z.infer<typeof githubPreviewWorkflowRunsSchema>;
-
-export const githubPreviewCommitPullsSchema = z.array(
-  z
-    .object({
-      number: positiveIntegerSchema,
-    })
-    .passthrough(),
-);
-export type GithubPreviewCommitPulls = z.infer<typeof githubPreviewCommitPullsSchema>;
 
 export const vercelDeploymentSchema = z
   .object({
@@ -220,7 +218,7 @@ export const vercelCreatedDeploymentSchema = z
 export type VercelCreatedDeployment = z.infer<typeof vercelCreatedDeploymentSchema>;
 
 export const vercelPreviewEnvironmentSchema = z.object({
-  GITHUB_EVENT_NAME: z.enum(['pull_request_target', 'workflow_run', 'workflow_dispatch']),
+  GITHUB_EVENT_NAME: z.enum(['pull_request_target', 'workflow_run', 'repository_dispatch']),
   GITHUB_EVENT_PATH: boundedString(4096),
   GITHUB_REPOSITORY: z
     .string()
