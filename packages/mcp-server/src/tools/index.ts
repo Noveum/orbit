@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Principal } from '@orbit/shared/policy';
 import { registerAdminTools } from './admin.ts';
+import { registerAnalyticsTools } from './analytics.ts';
 import { registerDocTools } from './docs.ts';
 import { registerGithubTools } from './github.ts';
 import { registerIdentityTools } from './identity.ts';
@@ -15,6 +16,7 @@ import { registerWorkspaceTools } from './workspace.ts';
 export function registerTools(server: McpServer, principal: Principal): void {
   registerIdentityTools(server, principal);
   registerInboxTools(server, principal);
+  registerAnalyticsTools(server, principal);
   registerIssueTools(server, principal);
   registerPlanningTools(server, principal);
   registerScrumTools(server, principal);
