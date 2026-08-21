@@ -62,9 +62,12 @@ forks. A future move to a disconnected or dedicated Preview project can make aut
 suppression independent of pull request contents; that external migration is not required to
 remove the token exposure or to stop normal feature-branch builds in this change.
 
-The repository removes `scripts/vercel-build-gate.sh` and its tests. No secret is made available to
-code from a pull request checkout, and the gate no longer depends on Vercel system environment
-variables or an ignored-build exit-code convention.
+The repository removes `scripts/vercel-build-gate.sh` and its tests. The trusted GitHub controller
+never exposes `VERCEL_TOKEN` to a pull request checkout, and the gate no longer depends on Vercel
+system environment variables or an ignored-build exit-code convention. The Preview deployment
+still builds same-repository pull request code inside Vercel and can receive that project's Preview
+environment values. Same-repository authors therefore remain inside the Vercel project trust
+boundary.
 
 ## Trusted workflow
 
@@ -87,9 +90,11 @@ values and API request bodies, never as shell source.
 Permissions are limited to `actions: read`, `contents: read`, and `pull-requests: read`. The Vercel
 token is a GitHub Actions secret. Team ID, project ID, and project name are Actions variables.
 Concurrency is keyed by pull request number when the event supplies one and does not cancel an
-in-progress reconciler. Vercel metadata checks provide a second idempotency boundary. A
-workflow-run payload without a linked pull request is rejected because it cannot prove the run's
-base SHA and repository association.
+in-progress reconciler. Recovery dispatches require a bounded positive numeric pull request input
+and share that pull request's group. Vercel metadata checks provide a second idempotency boundary.
+A workflow-run payload with no linked pull request, or with more than one distinct linked pull
+request, is rejected because one Actions concurrency group cannot serialize multiple pull requests
+and the event cannot prove one unambiguous base association.
 
 ## Controller and validation
 
@@ -97,11 +102,11 @@ base SHA and repository association.
 `@orbit/shared/validators` and validates the GitHub event payload, every GitHub response, every
 Vercel response, and configuration before using them.
 
-The controller resolves one or more pull request numbers from the triggering event, then refetches
-each pull request from GitHub. An event is stale when its recorded head SHA no longer equals the
-live pull request head. Stale events are no-ops. Fork heads and pull requests targeting another
-repository or branch are also no-ops. A proven closed pull request follows the active-cancellation
-path without requiring CI.
+The controller resolves one pull request number from an actionable event, then refetches that pull
+request from GitHub. Duplicate links to the same pull request are deduplicated. An event is stale
+when its recorded head SHA no longer equals the live pull request head. Stale events are no-ops.
+Fork heads and pull requests targeting another repository or branch are also no-ops. A proven
+closed pull request follows the active-cancellation path without requiring CI.
 
 For every eligible event, the controller resolves the canonical `.github/workflows/ci.yml`, fetches
 the live `main` ref, and queries every bounded page of runs for the exact head SHA. It selects the
@@ -118,11 +123,13 @@ affected when a filename is below `apps/web/` or `packages/`, or is exactly `pac
 `bun.lock`, or `tsconfig.base.json`. Configuration is fixed in trusted code rather than split
 between Vercel and GitHub settings.
 
-GitHub and Vercel requests have a finite timeout. Safe reads use bounded retries for network
-failures, server failures, 429 responses, and 403 responses carrying explicit GitHub rate-limit
-evidence. Mutations are never retried blindly. Authentication failures, malformed payloads,
-exhausted pagination, and unsuccessful mutations fail the workflow visibly. Redirects are rejected
-for token-bearing requests, and logs never contain either token.
+GitHub and Vercel requests have a finite timeout. One monotonic 23-minute reconciliation deadline
+also bounds every request, retry, pagination loop, observation, poll, and sleep beneath the
+workflow's 25-minute job limit. Safe reads use bounded retries for network failures, server
+failures, 429 responses, and 403 responses carrying explicit GitHub rate-limit evidence. Mutations
+are never retried blindly. Authentication failures, malformed payloads, exhausted pagination, and
+unsuccessful mutations fail the workflow visibly. Redirects are rejected for token-bearing
+requests, and logs never contain either token.
 
 ## Vercel API contract
 
@@ -140,8 +147,9 @@ repeats the repository, pull request, branch, SHA, workflow run ID, and reason s
 identify the deployment without guessing. `forceNew=1` is used only when a new reconciliation has
 already observed an exact terminal failed deployment. Create, detail, and cancel responses must
 prove deployment ID, project ID, null Preview target, state, and Orbit metadata. The workflow polls
-the created deployment immediately and then through at most 240 five-second sleeps to a ready or
-terminal state, requiring a nonempty final URL.
+the created deployment immediately and then through at most 240 five-second sleeps plus one final
+GET to a ready or terminal state, requiring a nonempty final URL. The 23-minute controller deadline
+may stop this sequence earlier.
 
 Create Deployment has no idempotency key. After a network error, timeout, 429, 5xx, 409, or an
 unparseable success response, the controller marks the one POST as attempted and performs only a
@@ -152,9 +160,10 @@ sends a second create request.
 When current pull request state is ineligible, active deployments associated with that pull
 request are canceled through Vercel's cancel endpoint. The filter requires the configured project,
 null Preview target, repository ID, pull request number, and branch ref before cancellation. Ready,
-failed, and canceled deployments are left unchanged. A 400 or ambiguous cancel response is followed
-by one validated detail read so a normal transition to a terminal state is not mistaken for an
-unsafe retry.
+failed, and canceled deployments are left unchanged. Live pull request identity and ineligibility
+are refetched immediately before every individual cancellation mutation. A 400 or ambiguous cancel
+response is followed by one validated detail read so a normal transition to a terminal state is not
+mistaken for an unsafe retry.
 
 ## Fork policy
 
@@ -192,7 +201,10 @@ removed from Vercel. Git Fork Protection stays enabled.
 The workflow is defined by the default branch, so pull request 341 can prove its controller and
 workflow structure locally but cannot exercise the new privileged event path until the workflow
 has landed on `main`. The first same-repository test pull request after merge is the production
-canary for Vercel Git metadata, the Preview URL, and label transitions.
+canary. It starts as a web-impacting draft with no Preview, applies `preview` and waits for exact-head
+CI plus one Preview, then removes the label or applies `no-preview` to prove active cancellation
+without deleting a ready URL. A new ready head proves exact-SHA behavior. Separate docs-only and
+fork cases prove that neither receives an automatic Preview.
 
 ## Tests
 
