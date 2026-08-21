@@ -66,6 +66,7 @@ export async function markSlackDmDelivery(
   delivered: boolean,
   error?: string,
 ): Promise<void> {
+  const retryAt = new Date(Date.now() + 30_000);
   await database
     .update(notificationDelivery)
     .set({
@@ -73,7 +74,7 @@ export async function markSlackDmDelivery(
       attempts: sql`${notificationDelivery.attempts} + 1`,
       ...(delivered
         ? { deliveredAt: new Date(), lastError: null }
-        : { lastError: error ?? 'delivery failed' }),
+        : { lastError: error ?? 'delivery failed', availableAt: retryAt }),
     })
     .where(
       and(
@@ -82,6 +83,40 @@ export async function markSlackDmDelivery(
         eq(notificationDelivery.channel, 'slack_dm'),
       ),
     );
+}
+
+export async function claimSlackDmDeliveries(
+  database: NotificationDatabase,
+  limit = 100,
+  now = new Date(),
+): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+  const candidates = await database
+    .select()
+    .from(notificationDelivery)
+    .where(
+      and(
+        eq(notificationDelivery.channel, 'slack_dm'),
+        or(eq(notificationDelivery.status, 'pending'), eq(notificationDelivery.status, 'failed')),
+        lte(notificationDelivery.availableAt, now),
+      ),
+    )
+    .limit(limit);
+  if (candidates.length === 0) return [];
+  const claimed: (typeof notificationDelivery.$inferSelect)[] = [];
+  for (const candidate of candidates) {
+    const [row] = await database
+      .update(notificationDelivery)
+      .set({ status: 'processing', claimedAt: now })
+      .where(
+        and(
+          eq(notificationDelivery.id, candidate.id),
+          or(eq(notificationDelivery.status, 'pending'), eq(notificationDelivery.status, 'failed')),
+        ),
+      )
+      .returning();
+    if (row !== undefined) claimed.push(row);
+  }
+  return claimed;
 }
 
 export const DEDUPE_WINDOW_MS = 60_000;

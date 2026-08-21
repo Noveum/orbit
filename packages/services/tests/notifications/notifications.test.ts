@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   notification,
+  notificationDelivery,
   notificationPreference,
   notificationSetting,
   organization,
@@ -10,11 +11,13 @@ import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@or
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import {
+  claimSlackDmDeliveries,
   defaultPreferences,
   isWithinQuietHours,
   listInbox,
   markAllRead,
   markRead,
+  markSlackDmDelivery,
   type NotificationEvent,
   nextQuietHoursEnd,
   notifyMany,
@@ -166,6 +169,29 @@ describe('notifyMany', () => {
       expect(outcome.email).toHaveLength(1);
       expect(outcome.slackDm).toHaveLength(1);
       expect(outcome.slackDm[0]?.sendAt.getTime()).toBeGreaterThan(now.getTime());
+    });
+  });
+
+  it('claims failed Slack DM deliveries for retry without claiming succeeded rows', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { slackEnabled: true },
+      );
+      const first = await claimSlackDmDeliveries(tx, 10, new Date());
+      expect(first).toHaveLength(1);
+      const delivery = first[0];
+      if (delivery === undefined) return;
+      await markSlackDmDelivery(tx, outcome.notifications[0]?.id ?? '', fixture.adaId, false);
+      const retry = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 31_000));
+      expect(retry.map((row) => row.id)).toContain(delivery.id);
+      await markSlackDmDelivery(tx, outcome.notifications[0]?.id ?? '', fixture.adaId, true);
+      const afterSuccess = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 60_000));
+      expect(afterSuccess).toHaveLength(0);
+      const rows = await tx.select().from(notificationDelivery);
+      expect(rows[0]?.status).toBe('succeeded');
     });
   });
 
