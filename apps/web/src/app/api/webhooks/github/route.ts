@@ -9,7 +9,7 @@ import {
   isGithubInstallationEvent,
   verifyGithubSignature,
 } from '@orbit/services';
-import { notifyMany } from '@orbit/services/notifications';
+import { markNotificationDelivered, notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -158,6 +158,7 @@ export async function POST(request: Request): Promise<Response> {
           text: `${notification.title}: ${absoluteUrl(notification.url)}`,
         });
         if (delivered !== 1) continue;
+        await markNotificationDelivered(db, notification.id, 'slack_dm');
       }
     }
 

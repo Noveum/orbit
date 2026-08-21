@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { notifyMany } from '@orbit/services/notifications';
+import { markNotificationDelivered, notifyMany } from '@orbit/services/notifications';
 import { dispatchSlackDm } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
@@ -17,12 +17,15 @@ export async function notifyRecipients(
   for (const dispatch of outcome.slackDm) {
     const notification = outcome.notifications.find((item) => item.id === dispatch.notificationId);
     if (notification === undefined) continue;
-    await dispatchSlackDm(executor, {
+    const delivered = await dispatchSlackDm(executor, {
       organizationId: notification.organizationId,
       userId: dispatch.userId,
       clientMsgId: dispatch.notificationId,
       text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
     });
+    if (delivered === 1) {
+      await markNotificationDelivered(executor, notification.id, 'slack_dm');
+    }
   }
   return outcome.actions;
 }

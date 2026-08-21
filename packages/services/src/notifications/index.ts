@@ -37,6 +37,27 @@ export * from './quiet-hours.ts';
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
 
+export async function markNotificationDelivered(
+  database: NotificationDatabase,
+  notificationId: string,
+  channel: string,
+): Promise<void> {
+  await database
+    .update(notification)
+    .set({
+      deliveredChannels: sql`(
+        SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
+        FROM (
+          SELECT value
+          FROM jsonb_array_elements_text(${notification.deliveredChannels} || ${JSON.stringify([channel])}::jsonb)
+          GROUP BY value
+          ORDER BY MIN(value)
+        ) values
+      )`,
+    })
+    .where(eq(notification.id, notificationId));
+}
+
 export const DEDUPE_WINDOW_MS = 60_000;
 export const INBOX_CHANNEL = 'inbox';
 
