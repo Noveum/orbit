@@ -142,7 +142,8 @@ describe('ensureSlackIntegration', () => {
         .where(eq(integration.organizationId, fixture.organizationId));
 
       expect(legacy).toBeDefined();
-      expect(integrationId).toBe(legacy!.id);
+      if (legacy === undefined) throw new Error('Expected the existing integration row.');
+      expect(integrationId).toBe(legacy.id);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toEqual({
         externalId: 'default',

@@ -346,7 +346,13 @@ export class SlackClient {
   }
 
   async lookupUserByEmail(email: string): Promise<SlackUser | null> {
-    const body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    let body: z.infer<typeof userResponseSchema>;
+    try {
+      body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('users_not_found')) return null;
+      throw error;
+    }
     const user = body.user;
     if (user === undefined) return null;
     return {

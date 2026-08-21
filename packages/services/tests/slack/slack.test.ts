@@ -284,6 +284,12 @@ describe('SlackClient', () => {
     expect(calls[0]?.init?.body).toContain('ADA@example.com');
   });
 
+  it('treats an unmapped Slack email as unavailable', async () => {
+    const { impl } = stubFetch(200, { ok: false, error: 'users_not_found' });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+    await expect(client.lookupUserByEmail('missing@example.com')).resolves.toBeNull();
+  });
+
   it('returns a null cursor when slack sends an empty one', async () => {
     const { impl } = stubFetch(200, { ok: true, channels: [], response_metadata: {} });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
