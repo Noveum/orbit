@@ -257,7 +257,7 @@ type PreviewCandidate = {
 - `workflow_run`: no candidates unless the workflow is `CI`, source event is `pull_request`, conclusion is `success`, and action is `completed`; candidates use the workflow head SHA and `ciProven: true`; use the commit-pulls endpoint when the payload list is empty.
 - `workflow_dispatch`: one candidate from the positive integer input, no expected SHA, with `ciProven: false`.
 
-For every candidate, refetch `/repos/{owner}/{repo}/pulls/{number}` and require an open PR targeting the event repository and `main`, a same-repository head, and an exact expected SHA when one exists. If `ciProven` is false, query `/repos/{owner}/{repo}/actions/workflows/ci.yml/runs?event=pull_request&head_sha={sha}&status=completed&per_page=100` and require a successful run with the same head SHA. Query pull request files with `per_page=100&page=N` and require at least one `isWebPreviewFile` match before a create.
+For every candidate, refetch `/repos/{owner}/{repo}/pulls/{number}` and require an open PR targeting the event repository and `main`, a same-repository head, and an exact expected SHA when one exists. Evaluate current labels and draft state next; an ineligible state event follows the cancellation path without requiring successful CI. For an eligible candidate whose `ciProven` is false, query `/repos/{owner}/{repo}/actions/workflows/ci.yml/runs?event=pull_request&head_sha={sha}&status=completed&per_page=100` and require a successful run with the same head SHA. Query pull request files with `per_page=100&page=N` and require at least one `isWebPreviewFile` match before a create.
 
 - [ ] **Step 4: Write failing idempotency and cancellation tests**
 
@@ -407,7 +407,9 @@ Run: `bun run lint && bun run check-comments && bun run check-bytes && bun run c
 
 Expected: all commands PASS.
 
-Run: `rg -n 'BUILD_GATE_|vercel-build-gate|Generated with|Claude|—' apps/web/vercel.json scripts docs/VERCEL_BUILD_GATE.md .github/workflows/vercel-preview.yml`
+Run: `rg -n 'BUILD_GATE_|vercel-build-gate|Generated with|Claude|—' apps/web/vercel.json scripts .github/workflows/vercel-preview.yml`
+
+Run: `rg -n 'Generated with|Claude|—' docs/VERCEL_BUILD_GATE.md docs/README.md`
 
 Expected: no old gate setting, prohibited attribution, or em-dash match. A link or historical plan outside this task's changed files is not edited.
 
@@ -449,7 +451,7 @@ Run: `git diff --check origin/main...HEAD`
 
 Run: `git diff --stat origin/main...HEAD && git log --oneline origin/main..HEAD`
 
-Run: `rg -n 'Generated with|Claude|—|BUILD_GATE_GITHUB_TOKEN|BUILD_GATE_WATCH_PATHS|BUILD_GATE_READY_LABEL|BUILD_GATE_BLOCK_LABEL' $(git diff --name-only --diff-filter=ACMR origin/main...HEAD)`
+Run the attribution and em-dash scan against every changed text file. Run the four legacy-setting scan against changed code and workflow files, excluding `docs/VERCEL_BUILD_GATE.md`, where the removal instructions intentionally name them.
 
 Expected: no whitespace error, prohibited attribution, em dash, or old token/config reference in changed files except the operations guide's explicit removal instructions for the four legacy setting names.
 
