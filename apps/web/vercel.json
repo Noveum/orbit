@@ -1,6 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "rm -rf ../../node_modules node_modules && bun install --frozen-lockfile",
+  "git": {
+    "deploymentEnabled": {
+      "**": false,
+      "main": true
+    }
+  },
   "regions": ["hnd1"],
   "crons": [
     { "path": "/api/cron/analytics-snapshots", "schedule": "0 */6 * * *" },
