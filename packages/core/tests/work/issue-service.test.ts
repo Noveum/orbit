@@ -4,7 +4,7 @@ import { DomainError } from '@orbit/shared/errors';
 import { scopes } from '@orbit/shared/events';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { ZodError } from 'zod';
-import { createTeam } from '../../src/org/team-service.ts';
+import { addTeamMember, createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -139,6 +139,31 @@ describe('createIssue', () => {
       .where(eq(schema.issueActivity.issueId, issue.id));
     expect(activity).toHaveLength(1);
     expect(activity[0]?.field).toBe('created');
+  });
+
+  it('stores every reviewer once and subscribes them to the issue', async () => {
+    const first = await addMember(workspace, 'member', { name: 'First Reviewer' });
+    const second = await addMember(workspace, 'member', { name: 'Second Reviewer' });
+
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Needs review',
+      reviewerIds: [second.user.id, first.user.id, second.user.id],
+    });
+
+    const reviewers = await db
+      .select({ userId: schema.issueReviewer.userId })
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.issueId, created.issue.id));
+    expect(reviewers.map((row) => row.userId).sort()).toEqual(
+      [first.user.id, second.user.id].sort(),
+    );
+
+    const subscribers = await listSubscribers(workspace.admin, created.issue.id);
+    expect(subscribers.map((row) => row.userId).sort()).toEqual(
+      [workspace.admin.userId, first.user.id, second.user.id].sort(),
+    );
+    expect(created.actions[0]?.data['reviewerIds']).toEqual([first.user.id, second.user.id].sort());
   });
 
   it('scopes a sync action to the team and the issue, never to the whole organization', async () => {
@@ -435,6 +460,88 @@ describe('assignee membership', () => {
   });
 });
 
+describe('reviewer membership', () => {
+  it('refuses reviewers outside the workspace on create and update', async () => {
+    const outside = await createWorkspace('Elsewhere');
+    const issue = await newIssue('Ours');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Reviewed by a stranger',
+        reviewerIds: [outside.admin.userId],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      updateIssue(workspace.admin, issue.id, { reviewerIds: [outside.admin.userId] }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses reviewers who cannot access the issue team', async () => {
+    const restricted = await addMember(workspace, 'member', {
+      name: 'Restricted Reviewer',
+      teamIds: [],
+    });
+    const issue = await newIssue('Ours');
+
+    await expect(
+      createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Invisible review',
+        reviewerIds: [restricted.user.id],
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      updateIssue(workspace.admin, issue.id, { reviewerIds: [restricted.user.id] }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('replaces multiple reviewers and emits their ids in the issue delta', async () => {
+    const first = await addMember(workspace, 'member', { name: 'First Reviewer' });
+    const second = await addMember(workspace, 'member', { name: 'Second Reviewer' });
+    const issue = await newIssue('Review rotation', { reviewerIds: [first.user.id] });
+
+    const updated = await updateIssue(workspace.admin, issue.id, {
+      reviewerIds: [second.user.id],
+    });
+    const reviewers = await db
+      .select({ userId: schema.issueReviewer.userId })
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.issueId, issue.id));
+
+    expect(reviewers.map((row) => row.userId)).toEqual([second.user.id]);
+    expect(updated.changes).toContainEqual({
+      field: 'reviewerIds',
+      from: [first.user.id],
+      to: [second.user.id],
+    });
+    expect(updated.actions[0]?.data['reviewerIds']).toEqual([second.user.id]);
+  });
+
+  it('keeps reviewers on every issue delta that can place a row into another list', async () => {
+    const reviewer = await addMember(workspace, 'member', { name: 'Persistent Reviewer' });
+    const issue = await newIssue('Moves and archives', { reviewerIds: [reviewer.user.id] });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+    expect(moved.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
+
+    const archived = await archiveIssue(workspace.admin, issue.id);
+    expect(archived.actions[0]?.data['reviewerIds']).toEqual([reviewer.user.id]);
+
+    const parent = await newIssue('Deleted parent');
+    const child = await newIssue('Orphaned child', {
+      parentId: parent.id,
+      reviewerIds: [reviewer.user.id],
+    });
+    const deleted = await deleteIssue(workspace.admin, parent.id);
+    expect(deleted.find((action) => action.modelId === child.id)?.data['reviewerIds']).toEqual([
+      reviewer.user.id,
+    ]);
+  });
+});
+
 describe('label deltas', () => {
   async function starterLabel() {
     const [label] = await db
@@ -574,6 +681,36 @@ describe('moveIssue', () => {
     expect(moved.issue.identifier).toBe('DSGN-1');
     expect(moved.issue.number).toBe(1);
     expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
+  });
+
+  it('requires every reviewer to access the destination team', async () => {
+    const firstReviewer = await addMember(workspace, 'member', { name: 'First Reviewer' });
+    const secondReviewer = await addMember(workspace, 'member', { name: 'Second Reviewer' });
+    const reviewerIds = [firstReviewer.user.id, secondReviewer.user.id].sort();
+    const issue = await newIssue('Reviewed transfer', { reviewerIds });
+    const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const target = states.find((state) => state.category === 'unstarted');
+    if (target === undefined) throw new Error('missing target state');
+    const move = {
+      teamId: team.id,
+      stateId: target.id,
+      beforeId: null,
+      afterId: null,
+    };
+
+    await expect(moveIssue(workspace.admin, issue.id, move)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+    await addTeamMember(workspace.admin, team.id, { userId: firstReviewer.user.id });
+    await expect(moveIssue(workspace.admin, issue.id, move)).rejects.toMatchObject({
+      code: 'validation_failed',
+    });
+    await addTeamMember(workspace.admin, team.id, { userId: secondReviewer.user.id });
+
+    const moved = await moveIssue(workspace.admin, issue.id, move);
+
+    expect(moved.issue.teamId).toBe(team.id);
+    expect(moved.actions[0]?.data['reviewerIds']).toEqual(reviewerIds);
   });
 
   it('moves an issue into a sprint without touching its status', async () => {
@@ -726,6 +863,31 @@ describe('listIssues', () => {
     const unassigned = await listIssues(workspace.admin, { assigneeId: 'none' });
 
     expect(unassigned.issues.map((issue) => issue.id)).toEqual([orphan.id]);
+  });
+
+  it('lists issues a person owns or reviews and counts each issue once per person', async () => {
+    const participant = await addMember(workspace, 'member', { name: 'Participant' });
+    const other = await addMember(workspace, 'member', { name: 'Owner' });
+    const owned = await newIssue('Owned', { assigneeId: participant.user.id });
+    const reviewed = await newIssue('Reviewed', {
+      assigneeId: other.user.id,
+      reviewerIds: [participant.user.id],
+    });
+    await newIssue('Owned and reviewed', {
+      assigneeId: participant.user.id,
+      reviewerIds: [participant.user.id],
+    });
+    await newIssue('Unrelated', { assigneeId: other.user.id });
+
+    const involved = await listIssues(workspace.admin, { participantId: participant.user.id });
+    expect(involved.issues.map((issue) => issue.id)).toEqual(
+      expect.arrayContaining([owned.id, reviewed.id]),
+    );
+    expect(involved.issues).toHaveLength(3);
+
+    const summary = await getIssueSummary(workspace.admin, { groupBy: 'participant' });
+    expect(summary.groupTotals[participant.user.id]).toBe(3);
+    expect(summary.groupTotals[other.user.id]).toBe(2);
   });
 
   it('counts the unowned issues under the same key the facets use', async () => {

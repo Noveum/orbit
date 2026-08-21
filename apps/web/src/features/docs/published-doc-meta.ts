@@ -7,6 +7,7 @@ export interface PublishedDocSeoInput {
   readonly visibility: string;
   readonly slug: string;
   readonly publishToken: string | null;
+  readonly kind?: string | null | undefined;
   readonly updatedAt: Date;
   readonly createdAt: Date;
   readonly authorName: string;
@@ -18,7 +19,11 @@ export function isIndexable(visibility: string): boolean {
 }
 
 export function canonicalDocUrl(input: PublishedDocSeoInput): string | null {
-  const path = publicDocPath({ slug: input.slug, publishToken: input.publishToken });
+  const path = publicDocPath({
+    slug: input.slug,
+    publishToken: input.publishToken,
+    kind: input.kind,
+  });
   return path === null ? null : new URL(path, input.origin).toString();
 }
 

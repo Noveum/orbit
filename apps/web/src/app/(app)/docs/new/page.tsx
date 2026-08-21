@@ -7,7 +7,12 @@ export const metadata: Metadata = { title: 'New doc' };
 export default async function NewDocPage({
   searchParams,
 }: {
-  searchParams: Promise<{ collection?: string; project?: string; template?: string }>;
+  searchParams: Promise<{
+    collection?: string;
+    project?: string;
+    template?: string;
+    kind?: string;
+  }>;
 }) {
   await pageContext();
   const query = await searchParams;
@@ -16,6 +21,7 @@ export default async function NewDocPage({
       collectionId={query.collection ?? null}
       projectId={query.project ?? null}
       templateId={query.template ?? null}
+      kind={query.kind ?? null}
     />
   );
 }

@@ -1,9 +1,9 @@
 import { docsHome, getDoc, isFavoriteDoc } from '@orbit/core';
-import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { isDomainError } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { docListPayload } from '@/lib/api/docs.ts';
+import { renderedDocHtml } from '@/lib/docs/render.ts';
 import { queryKeys } from './keys.ts';
 import type { DocDetail, DocList, DocsHome } from './schemas.ts';
 import { docDetailSchema, docListSchema, docsHomeSchema } from './schemas.ts';
@@ -21,7 +21,7 @@ async function docDetail(principal: Principal, docId: string): Promise<DocDetail
     const detail = await getDoc(principal, docId);
     return asWire(docDetailSchema, {
       ...detail,
-      contentHtml: renderMarkdownWithHeadingIds(detail.doc.content),
+      contentHtml: renderedDocHtml(detail.doc.kind, detail.doc.content),
       favorite: await isFavoriteDoc(principal, detail.doc.id),
     });
   } catch (error) {

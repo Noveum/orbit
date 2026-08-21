@@ -134,16 +134,26 @@ function NewComment({
   );
 }
 
+type FocusedCommentTarget = Pick<Element, 'scrollIntoView'>;
+
+export function landOnFocusedComment(
+  commentId: string | null,
+  landedCommentId: string | null,
+  targetById: (id: string) => FocusedCommentTarget | null = (id) => document.getElementById(id),
+): string | null {
+  if (commentId === null || landedCommentId === commentId) return landedCommentId;
+  const target = targetById(commentAnchorId(commentId));
+  if (target === null) return landedCommentId;
+  target.scrollIntoView({ block: 'start' });
+  return commentId;
+}
+
 function useFocusedComment(commentId: string | null, readySignature: string): void {
   const landed = useRef<string | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run until the comment mounts so a thread opened from the inbox lands on the comment it was opened for
   useEffect(() => {
-    if (commentId === null || landed.current === commentId) return;
-    const target = document.getElementById(commentAnchorId(commentId));
-    if (target === null) return;
-    landed.current = commentId;
-    target.scrollIntoView({ block: 'start' });
+    landed.current = landOnFocusedComment(commentId, landed.current);
   }, [commentId, readySignature]);
 }
 

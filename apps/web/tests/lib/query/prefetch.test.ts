@@ -60,7 +60,10 @@ mock.module(CORE_MODULE, () => ({
   listIssues: held('issues', { issues: [], nextCursor: null }),
 }));
 
-mock.module(ISSUES_MODULE, () => ({ ...realIssues, attachLabels: () => Promise.resolve([]) }));
+mock.module(ISSUES_MODULE, () => ({
+  ...realIssues,
+  attachIssueDecorations: () => Promise.resolve([]),
+}));
 
 afterAll(() => {
   mock.module(BOOTSTRAP_MODULE, () => realBootstrap);

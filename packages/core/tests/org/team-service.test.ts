@@ -16,6 +16,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
+import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
 
 let nova: Workspace;
 let vega: Workspace;
@@ -74,6 +75,24 @@ describe('team membership boundary inside one workspace', () => {
       code: 'forbidden',
     });
     expect(await listTeamMembers(engineer.principal, nova.teamId)).toHaveLength(2);
+  });
+
+  it('keeps a reviewer on the team until their assignments are removed', async () => {
+    const reviewer = await addMember(nova, 'member', { teamIds: [nova.teamId] });
+    const { issue } = await createIssue(nova.admin, {
+      teamId: nova.teamId,
+      title: 'Protect reviewer access',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    await expect(removeTeamMember(nova.admin, nova.teamId, reviewer.user.id)).rejects.toMatchObject(
+      { code: 'conflict' },
+    );
+    expect(await teamMemberCount(nova.teamId, reviewer.user.id)).toBe(1);
+
+    await updateIssue(nova.admin, issue.id, { reviewerIds: [] });
+    await removeTeamMember(nova.admin, nova.teamId, reviewer.user.id);
+    expect(await teamMemberCount(nova.teamId, reviewer.user.id)).toBe(0);
   });
 });
 

@@ -126,7 +126,9 @@ describe('warming a card the pointer is dragging', () => {
 
   it('warms from a board card on hover, and holds off while it is being dragged', async () => {
     const { asked, client } = warmed();
-    render(wrap(<IssueCard issue={issue()} labels={[]} assignee={undefined} />, client));
+    render(
+      wrap(<IssueCard issue={issue()} labels={[]} assignee={undefined} properties={[]} />, client),
+    );
 
     const card = screen.getByTestId('issue-card-ENG-420');
     fireEvent.pointerEnter(card, { buttons: 1 });

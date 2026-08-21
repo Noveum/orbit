@@ -100,7 +100,7 @@ export function facetsSearch(
 
 export function assignedSearch(userId: string, query?: IssueQuery): string {
   const params = searchParams(query ?? { ...DEFAULT_ISSUE_QUERY, orderBy: 'updated' });
-  params.set('assigneeId', userId);
+  params.set('participantId', userId);
   return params.toString();
 }
 

@@ -29,13 +29,13 @@ The canonical quick start is in [Getting started](getting-started.md). Follow
 that page for the full commands and troubleshooting notes.
 ## What Orbit is
 
-- **Issues** with priorities, labels, states, estimates, assignees and
-  relations, as a fast list or a drag and drop board.
+- **Issues** with priorities, labels, states, estimates, assignees, multiple
+  reviewers and relations, as a fast list or a drag-and-drop board.
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
 - **Projects and milestones** that group work across teams.
 - **Docs** with a rich editor, living next to the issues they describe.
-- **Standup** as a Kanban of the whole workspace, filtered to one person with a
-  click.
+- **Standup** as a Kanban of the whole workspace, filtered to work a person
+  owns or reviews with a click.
 - **Analytics**: scope, throughput, churn and distribution by assignee, project,
   label and estimate.
 - **Search, filters and saved views**, shared with the team or kept private.

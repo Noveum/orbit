@@ -1,0 +1,1 @@
+ALTER TABLE "doc" ADD COLUMN "kind" text DEFAULT 'markdown' NOT NULL;

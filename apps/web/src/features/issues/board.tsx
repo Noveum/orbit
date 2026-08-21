@@ -224,6 +224,10 @@ function IssueCardView({
         return label === undefined ? [] : [label];
       })}
       assignee={issue.assigneeId === null ? undefined : lookups.memberById.get(issue.assigneeId)}
+      reviewers={(issue.reviewerIds ?? []).flatMap((id) => {
+        const reviewer = lookups.memberById.get(id);
+        return reviewer === undefined ? [] : [reviewer];
+      })}
       state={lookups.stateById.get(issue.stateId)}
       creator={lookups.memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : lookups.projectById.get(issue.projectId)}

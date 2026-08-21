@@ -12,11 +12,13 @@ import { AssigneeControl, PriorityControl, StatusControl } from './card-controls
 import { IssueActionsMenu } from './issue-actions.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
+import { ReviewerAvatars } from './reviewer-avatars.tsx';
 
 export interface IssueCardProps {
   readonly issue: Issue;
   readonly labels: readonly Label[];
   readonly assignee: Member | undefined;
+  readonly reviewers?: readonly Member[];
   readonly state?: WorkflowState | undefined;
   readonly creator?: Member | undefined;
   readonly project?: { readonly name: string; readonly color: string } | undefined;
@@ -32,6 +34,7 @@ export function IssueCard({
   issue,
   labels,
   assignee,
+  reviewers = [],
   state,
   creator,
   project,
@@ -100,6 +103,7 @@ export function IssueCard({
           subIssueCount={subIssueCount}
           properties={properties}
         />
+        <ReviewerAvatars reviewers={reviewers} size="sm" />
         {shows('assignee') ? (
           <CardAssigneeSlot issue={issue} assignee={assignee} dragging={dragging} />
         ) : null}

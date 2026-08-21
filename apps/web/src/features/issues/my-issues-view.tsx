@@ -33,7 +33,9 @@ export function assignedTo(
   ordering: IssueOrdering = 'manual',
 ): Issue[] {
   if (userId === null) return [];
-  const mine = issues.filter((issue) => issue.assigneeId === userId);
+  const mine = issues.filter(
+    (issue) => issue.assigneeId === userId || (issue.reviewerIds ?? []).includes(userId),
+  );
   return ordering === 'manual' ? sortIssues(mine) : mine;
 }
 
@@ -70,7 +72,7 @@ export function MyIssuesView() {
   );
 
   const scope = useMemo(
-    () => (workspace.userId === null ? {} : { assigneeId: workspace.userId }),
+    () => (workspace.userId === null ? {} : { participantId: workspace.userId }),
     [workspace.userId],
   );
   const model = useIssueViewModel({
@@ -203,8 +205,8 @@ function MyIssuesBody({
     return (
       <EmptyState
         icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
-        title={loading ? 'Loading your issues' : 'Nothing assigned to you'}
-        description="Issues assigned to you across every team show up here. Press C to create one."
+        title={loading ? 'Loading your issues' : 'Nothing assigned or awaiting your review'}
+        description="Issues you own or review across every team show up here. Press C to create one."
         className="flex-1"
       />
     );
@@ -255,6 +257,10 @@ function MyIssuesBody({
               assignee={
                 issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId)
               }
+              reviewers={(issue.reviewerIds ?? []).flatMap((id) => {
+                const reviewer = workspace.memberById.get(id);
+                return reviewer === undefined ? [] : [reviewer];
+              })}
               creator={workspace.memberById.get(issue.creatorId)}
               active={peekId === issue.id}
               selected={false}

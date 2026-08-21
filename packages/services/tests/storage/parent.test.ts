@@ -258,6 +258,29 @@ describe('isPubliclyReadable', () => {
     });
   });
 
+  it('is false for a members-only doc, so its files still need a session', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const membersDocId = `doc_mem_${randomUUIDv7()}`;
+      await tx.insert(doc).values({
+        id: membersDocId,
+        organizationId: fixture.organizationId,
+        authorId: fixture.userId,
+        title: 'Members',
+        content: '',
+        visibility: 'members',
+      });
+
+      expect(
+        await isPubliclyReadable(tx, {
+          organizationId: fixture.organizationId,
+          parentType: 'doc',
+          parentId: membersDocId,
+        }),
+      ).toBe(false);
+    });
+  });
+
   it('is false while permanent workspace deletion is pending', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

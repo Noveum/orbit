@@ -1,9 +1,13 @@
 'use client';
 
-import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
+import {
+  DEFAULT_ESTIMATE_SCALE,
+  ISSUE_REVIEWER_MAX_COUNT,
+  PRIORITIES,
+} from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
-import { Box, ChevronRight, RefreshCw, Tag } from 'lucide-react';
+import { Box, ChevronRight, RefreshCw, Tag, Users } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -45,6 +49,11 @@ const chipClassName =
 function pendingLabel(count: number): string {
   const noun = count === 1 ? 'file' : 'files';
   return `${count} ${noun} will be attached once the issue is created.`;
+}
+
+function reviewersLabel(count: number): string {
+  if (count === 0) return 'Reviewers';
+  return `${count} reviewer${count === 1 ? '' : 's'}`;
 }
 
 function compatibleTeamId(
@@ -164,6 +173,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [stateId, setStateId] = useState<string | null>(null);
   const [priority, setPriority] = useState(0);
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
+  const [reviewerIds, setReviewerIds] = useState<readonly string[]>([]);
   const [labelIds, setLabelIds] = useState<readonly string[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [cycleId, setCycleId] = useState<string | null>(null);
@@ -194,6 +204,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setStateId(null);
     setPriority(0);
     setAssigneeId(null);
+    setReviewerIds([]);
     setLabelIds([]);
     setProjectId(null);
     setEstimate(null);
@@ -307,6 +318,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
         ...(stateId === null ? {} : { stateId }),
         priority,
         assigneeId,
+        reviewerIds,
         projectId,
         cycleId,
         estimate,
@@ -479,6 +491,38 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                     )}
                   </span>
                   {assignee?.name ?? 'Assignee'}
+                </button>
+              </PropertyMenu>
+
+              <PropertyMenu
+                title="Reviewers"
+                multiple
+                options={members.map((member) => ({
+                  id: member.id,
+                  label: member.name,
+                  icon: <Avatar name={member.name} src={member.image} size="xs" />,
+                  disabled:
+                    reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT &&
+                    !reviewerIds.includes(member.id),
+                }))}
+                selected={reviewerIds}
+                onSelect={(id) =>
+                  setReviewerIds((current) => {
+                    if (current.includes(id)) {
+                      return current.filter((entry) => entry !== id);
+                    }
+                    if (current.length >= ISSUE_REVIEWER_MAX_COUNT) return current;
+                    return [...current, id];
+                  })
+                }
+              >
+                <button
+                  type="button"
+                  className={chipClassName}
+                  data-testid="quick-create-reviewers"
+                >
+                  <Users className="size-3.5" aria-hidden="true" />
+                  {reviewersLabel(reviewerIds.length)}
                 </button>
               </PropertyMenu>
 

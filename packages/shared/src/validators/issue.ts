@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   ISSUE_DESCRIPTION_MAX_LENGTH,
   ISSUE_RELATION_TYPES,
+  ISSUE_REVIEWER_MAX_COUNT,
   PRIORITIES,
   STATE_CATEGORIES,
 } from '../constants/index.ts';
@@ -35,6 +36,7 @@ export const issueCreateSchema = z.object({
   stateId: idSchema.optional(),
   priority: prioritySchema.default(0),
   assigneeId: idSchema.nullable().optional(),
+  reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).default([]),
   projectId: idSchema.nullable().default(null),
   milestoneId: idSchema.nullable().default(null),
   cycleId: idSchema.nullable().default(null),
@@ -51,6 +53,7 @@ export const issueUpdateSchema = z
     stateId: idSchema,
     priority: prioritySchema,
     assigneeId: idSchema.nullable(),
+    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT),
     projectId: idSchema.nullable(),
     milestoneId: idSchema.nullable(),
     cycleId: idSchema.nullable(),
@@ -84,6 +87,7 @@ export const issueFilterSchema = z.object({
   cycleId: idSchema.optional(),
   milestoneId: idSchema.optional(),
   assigneeId: idSchema.optional(),
+  participantId: idSchema.optional(),
   stateId: idSchema.optional(),
   stateCategory: z.enum(STATE_CATEGORIES).optional(),
   labelId: idSchema.optional(),
@@ -93,6 +97,32 @@ export const issueFilterSchema = z.object({
   includeSubIssues: booleanFlag(true),
   orderBy: z.enum(ISSUE_ORDERINGS).default('manual'),
   filter: filterGroupQuerySchema,
+});
+
+export const ISSUE_SUMMARY_GROUPS = [
+  'state',
+  'assignee',
+  'creator',
+  'priority',
+  'estimate',
+  'label',
+  'project',
+  'cycle',
+  'milestone',
+  'participant',
+] as const;
+
+export type IssueSummaryGroup = (typeof ISSUE_SUMMARY_GROUPS)[number];
+
+const ISSUE_SUMMARY_INPUT_GROUPS = [...ISSUE_SUMMARY_GROUPS, 'none'] as const;
+
+export const issueSummaryQuerySchema = issueFilterSchema.extend({
+  groupBy: z
+    .enum(ISSUE_SUMMARY_INPUT_GROUPS)
+    .optional()
+    .transform(
+      (value): IssueSummaryGroup => (value === undefined || value === 'none' ? 'state' : value),
+    ),
 });
 
 export const issueRelationSchema = z.object({
@@ -107,3 +137,4 @@ export const issueRefSchema = z.string().trim().min(1).max(128);
 export type IssueCreateInput = z.infer<typeof issueCreateSchema>;
 export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;
+export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;

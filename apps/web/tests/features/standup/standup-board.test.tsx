@@ -87,7 +87,12 @@ function issue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
-const ADA_ISSUE = issue({ id: 'issue_ada', identifier: 'ENG-1', assigneeId: ada.id });
+const ADA_ISSUE = issue({
+  id: 'issue_ada',
+  identifier: 'ENG-1',
+  assigneeId: ada.id,
+  reviewerIds: [bo.id],
+});
 const BO_ISSUE = issue({
   id: 'issue_bo',
   identifier: 'ENG-2',
@@ -132,8 +137,8 @@ function buildWorkspace(): WorkspaceData {
 
 const originalFetch = globalThis.fetch;
 
-function assigneeIdIn(url: string): string | null {
-  return new URL(url, 'http://localhost:3000').searchParams.get('assigneeId');
+function participantIdIn(url: string): string | null {
+  return new URL(url, 'http://localhost:3000').searchParams.get('participantId');
 }
 
 function json(body: unknown, status = 200): Response {
@@ -151,10 +156,12 @@ interface Served {
 
 const ISSUES = [ADA_ISSUE, BO_ISSUE, ORPHAN_ISSUE];
 
-function ownedBy(assignee: string | null): readonly Issue[] {
-  if (assignee === null) return ISSUES;
-  if (assignee === 'none') return ISSUES.filter((row) => row.assigneeId === null);
-  return ISSUES.filter((row) => row.assigneeId === assignee);
+function involving(participant: string | null): readonly Issue[] {
+  if (participant === null) return ISSUES;
+  if (participant === 'none') return ISSUES.filter((row) => row.assigneeId === null);
+  return ISSUES.filter(
+    (row) => row.assigneeId === participant || (row.reviewerIds ?? []).includes(participant),
+  );
 }
 
 function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Served {
@@ -166,18 +173,18 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
     const url = String(input);
     const path = url.split('?')[0] ?? url;
     const params = new URL(url, 'http://localhost:3000').searchParams;
-    const assignee = assigneeIdIn(url);
+    const participant = participantIdIn(url);
 
     if (path === '/api/issues/facets') {
       facetUrls.push(url);
-      const counts = assignee === null ? { [ada.id]: 5, [bo.id]: 2 } : { [assignee]: 7 };
+      const counts = participant === null ? { [ada.id]: 5, [bo.id]: 3 } : { [participant]: 7 };
       return Promise.resolve(
         json({ scopeTotal: 8, facets: { ...emptyFacets(), assignee: counts } }),
       );
     }
 
     if (path === '/api/issues/summary') {
-      if (params.get('groupBy') === 'assignee') {
+      if (params.get('groupBy') === 'participant') {
         rosterUrls.push(url);
         if (options.failRoster === true) {
           return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
@@ -186,12 +193,12 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
           json({
             total: 8,
             byState: {},
-            groupTotals: { [ada.id]: 5, [bo.id]: 2, none: 1 },
+            groupTotals: { [ada.id]: 5, [bo.id]: 3, none: 1 },
           }),
         );
       }
       return Promise.resolve(
-        json({ total: ownedBy(assignee).length, byState: {}, groupTotals: {} }),
+        json({ total: involving(participant).length, byState: {}, groupTotals: {} }),
       );
     }
 
@@ -200,7 +207,7 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
       if (options.failList === true) {
         return Promise.resolve(json({ error: { code: 'internal', message: 'nope' } }, 500));
       }
-      return Promise.resolve(json({ issues: ownedBy(assignee), nextCursor: null }));
+      return Promise.resolve(json({ issues: involving(participant), nextCursor: null }));
     }
 
     return Promise.resolve(json({}));
@@ -256,8 +263,8 @@ describe('StandupBoard', () => {
     await screen.findByTestId('standup-kanban');
 
     expect(served.listUrls.length).toBe(1);
-    expect(assigneeIdIn(served.listUrls[0] ?? '')).toBeNull();
-    expect(served.facetUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
+    expect(participantIdIn(served.listUrls[0] ?? '')).toBeNull();
+    expect(served.facetUrls.every((url) => participantIdIn(url) === null)).toBe(true);
   });
 
   it('shows every person work side by side, not one person at a time', async () => {
@@ -292,11 +299,9 @@ describe('StandupBoard', () => {
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
 
     await waitFor(() => {
-      expect(served.listUrls.some((url) => assigneeIdIn(url) === bo.id)).toBe(true);
+      expect(served.listUrls.some((url) => participantIdIn(url) === bo.id)).toBe(true);
     });
-    await waitFor(() => {
-      expect(cardShown('ENG-1')).toBe(false);
-    });
+    expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
   });
 
@@ -312,10 +317,10 @@ describe('StandupBoard', () => {
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
 
     await waitFor(() => {
-      expect(cardShown('ENG-1')).toBe(false);
+      expect(screen.getByTestId(`standup-tile-${bo.id}`)).toHaveAttribute('aria-pressed', 'true');
     });
     expect(tileCount(ada.id)).toBe('5');
-    expect(tileCount(bo.id)).toBe('2');
+    expect(tileCount(bo.id)).toBe('3');
   });
 
   it('marks the tile counts unknown when the roster lookup fails, not zero', async () => {
@@ -351,7 +356,7 @@ describe('StandupBoard', () => {
 
     expect(served.rosterUrls.length).toBeGreaterThan(0);
     expect(served.rosterUrls.every((url) => url.includes('filter='))).toBe(true);
-    expect(served.rosterUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
+    expect(served.rosterUrls.every((url) => participantIdIn(url) === null)).toBe(true);
   });
 
   it('offers the issues nobody owns as their own tile', async () => {
@@ -366,7 +371,7 @@ describe('StandupBoard', () => {
     await user.click(screen.getByTestId('standup-tile-none'));
 
     await waitFor(() => {
-      expect(served.listUrls.some((url) => assigneeIdIn(url) === 'none')).toBe(true);
+      expect(served.listUrls.some((url) => participantIdIn(url) === 'none')).toBe(true);
     });
     await waitFor(() => {
       expect(cardShown('ENG-3')).toBe(true);
@@ -402,9 +407,9 @@ describe('StandupBoard', () => {
 
     await screen.findByTestId('standup-kanban');
 
-    expect(served.listUrls.every((url) => assigneeIdIn(url) === bo.id)).toBe(true);
+    expect(served.listUrls.every((url) => participantIdIn(url) === bo.id)).toBe(true);
     expect(screen.getByTestId(`standup-tile-${bo.id}`).getAttribute('aria-pressed')).toBe('true');
-    expect(cardShown('ENG-1')).toBe(false);
+    expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
   });
 
@@ -416,7 +421,7 @@ describe('StandupBoard', () => {
 
     await screen.findByTestId('standup-kanban');
 
-    expect(served.listUrls.every((url) => assigneeIdIn(url) === null)).toBe(true);
+    expect(served.listUrls.every((url) => participantIdIn(url) === null)).toBe(true);
     expect(screen.getByTestId('standup-tile-everyone').getAttribute('aria-pressed')).toBe('true');
   });
 

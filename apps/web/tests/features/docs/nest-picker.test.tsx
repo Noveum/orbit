@@ -14,6 +14,7 @@ function doc(id: string, title: string): DocSummary {
     parentId: null,
     title,
     slug: id,
+    kind: 'markdown',
     content: '',
     sortOrder: 0,
     visibility: 'workspace',

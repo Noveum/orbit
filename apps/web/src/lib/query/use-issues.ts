@@ -352,6 +352,7 @@ export interface IssuePatch {
   readonly stateId?: string;
   readonly priority?: number;
   readonly assigneeId?: string | null;
+  readonly reviewerIds?: readonly string[];
   readonly projectId?: string | null;
   readonly milestoneId?: string | null;
   readonly cycleId?: string | null;
@@ -485,9 +486,11 @@ export function useUpdateIssue() {
         queryKeys.issue(input.issue.identifier),
       );
 
+      const { reviewerIds, ...patch } = input.patch;
       const optimistic: Issue = {
         ...input.issue,
-        ...input.patch,
+        ...patch,
+        ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
         labelIds:
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
@@ -593,6 +596,7 @@ export interface CreateIssueInput {
   readonly stateId?: string;
   readonly priority: number;
   readonly assigneeId: string | null;
+  readonly reviewerIds?: readonly string[];
   readonly projectId: string | null;
   readonly cycleId: string | null;
   readonly parentId?: string | null;

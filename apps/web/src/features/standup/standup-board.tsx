@@ -64,13 +64,13 @@ export function StandupBoard() {
   );
 
   const scope = useMemo(
-    () => (selectedId === null ? WHOLE_WORKSPACE : { assigneeId: selectedId }),
+    () => (selectedId === null ? WHOLE_WORKSPACE : { participantId: selectedId }),
     [selectedId],
   );
 
   const active = useAllIssues(query, scope, workspace.ready);
   const roster = useIssueSummary(
-    summarySearch(null, query, 'assignee', WHOLE_WORKSPACE),
+    summarySearch(null, query, 'participant', WHOLE_WORKSPACE),
     workspace.ready,
   );
 
@@ -209,7 +209,7 @@ function StandupBody({
       <EmptyState
         icon={<SearchX strokeWidth={1.75} aria-hidden="true" />}
         title="Nothing on the board"
-        description="Assign an issue and it shows up here for whoever owns it."
+        description="Assign an issue or reviewer and it shows up here for everyone involved."
         className="flex-1"
       />
     );

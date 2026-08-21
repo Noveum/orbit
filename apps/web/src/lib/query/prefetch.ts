@@ -2,7 +2,7 @@ import { listIssues } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
 import { dehydrate, QueryClient } from '@tanstack/react-query';
 import { bootstrapPayloadFor, bootstrapTeams } from '@/lib/api/bootstrap.ts';
-import { attachLabels } from '@/lib/api/issues.ts';
+import { attachIssueDecorations } from '@/lib/api/issues.ts';
 import {
   assignedSearch,
   DEFAULT_ISSUE_QUERY,
@@ -20,19 +20,19 @@ function asWire<T>(schema: { parse: (value: unknown) => T }, payload: unknown): 
 async function serverIssuePage(principal: Principal, teamId: string): Promise<IssuePage> {
   const page = await listIssues(principal, { teamId, limit: ISSUE_PAGE_SIZE });
   return asWire(issueListSchema, {
-    issues: await attachLabels(page.issues),
+    issues: await attachIssueDecorations(page.issues),
     nextCursor: page.nextCursor,
   });
 }
 
 async function serverAssignedPage(principal: Principal): Promise<IssuePage> {
   const page = await listIssues(principal, {
-    assigneeId: principal.userId,
+    participantId: principal.userId,
     orderBy: 'updated',
     limit: ISSUE_PAGE_SIZE,
   });
   return asWire(issueListSchema, {
-    issues: await attachLabels(page.issues),
+    issues: await attachIssueDecorations(page.issues),
     nextCursor: page.nextCursor,
   });
 }

@@ -32,6 +32,21 @@ function visibilityFilters(principal: Principal, visibility: IssueVisibility): S
   return visibleTeamFilters(principal);
 }
 
+function participantFilters(participantId: string | undefined): SQL[] {
+  if (participantId === undefined) return [];
+  if (participantId === UNSET_FILTER_VALUE) return [isNull(schema.issue.assigneeId)];
+  return [
+    or(
+      eq(schema.issue.assigneeId, participantId),
+      sql`exists (
+        select 1 from ${schema.issueReviewer}
+        where ${schema.issueReviewer.issueId} = ${schema.issue.id}
+          and ${schema.issueReviewer.userId} = ${participantId}
+      )`,
+    ) ?? sql`false`,
+  ];
+}
+
 function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   const filters: SQL[] = [];
   if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
@@ -47,6 +62,7 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
         : eq(schema.issue.assigneeId, filter.assigneeId),
     );
   }
+  filters.push(...participantFilters(filter.participantId));
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
   if (filter.stateCategory !== undefined) {

@@ -101,8 +101,9 @@ Things worth trying first:
    with no refresh and no polling.
 4. Press <kbd>g</kbd> then <kbd>s</kbd> to jump to sprints, <kbd>g</kbd> then
    <kbd>d</kbd> for docs. Press <kbd>?</kbd> for the full list.
-5. Open an issue and press <kbd>s</kbd>, <kbd>p</kbd>, <kbd>a</kbd> or
-   <kbd>l</kbd> to change status, priority, assignee or labels without clicking.
+5. Open an issue and press <kbd>s</kbd>, <kbd>p</kbd>, <kbd>a</kbd>,
+   <kbd>r</kbd> or <kbd>l</kbd> to change status, priority, assignee, reviewers
+   or labels without clicking.
 
 ## The ports
 

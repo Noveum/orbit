@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { ISSUE_DESCRIPTION_MAX_LENGTH } from '../../src/constants/index.ts';
+import {
+  ISSUE_DESCRIPTION_MAX_LENGTH,
+  ISSUE_REVIEWER_MAX_COUNT,
+} from '../../src/constants/index.ts';
 import {
   bootstrapQuerySchema,
   cycleCreateSchema,
@@ -8,6 +11,7 @@ import {
   docUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
+  issueSummaryQuerySchema,
   issueUpdateSchema,
   labelUpdateSchema,
   milestoneUpdateSchema,
@@ -78,6 +82,7 @@ describe('create schemas still apply their defaults', () => {
     expect(parsed.priority).toBe(0);
     expect(parsed.description).toBe('');
     expect(parsed.labelIds).toEqual([]);
+    expect(parsed.reviewerIds).toEqual([]);
   });
 
   it('leaves an omitted assignee undefined so the service can tell it from a deliberate none', () => {
@@ -90,6 +95,20 @@ describe('create schemas still apply their defaults', () => {
 
     expect(omitted.assigneeId).toBeUndefined();
     expect(cleared.assigneeId).toBeNull();
+  });
+
+  it('accepts multiple reviewers and caps the field at fifty people', () => {
+    expect(issueUpdateSchema.parse({ reviewerIds: ['user_1', 'user_2'] })).toEqual({
+      reviewerIds: ['user_1', 'user_2'],
+    });
+    expect(
+      issueUpdateSchema.safeParse({
+        reviewerIds: Array.from(
+          { length: ISSUE_REVIEWER_MAX_COUNT + 1 },
+          (_value, index) => `user_${index}`,
+        ),
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -125,6 +144,13 @@ describe('validator hardening from review', () => {
   it('rejects a malformed boolean query value rather than reading it as false', () => {
     expect(issueFilterSchema.safeParse({ includeArchived: 'unexpected' }).success).toBe(false);
     expect(issueFilterSchema.parse({ includeArchived: '0' }).includeArchived).toBe(false);
+  });
+
+  it('shares participant summary grouping and its state fallback', () => {
+    expect(issueSummaryQuerySchema.parse({ groupBy: 'participant' }).groupBy).toBe('participant');
+    expect(issueSummaryQuerySchema.parse({ groupBy: 'milestone' }).groupBy).toBe('milestone');
+    expect(issueSummaryQuerySchema.parse({ groupBy: 'none' }).groupBy).toBe('state');
+    expect(issueSummaryQuerySchema.safeParse({ groupBy: 'unknown' }).success).toBe(false);
   });
 
   it('rejects a blank team selector and a blank allowed email domain', () => {

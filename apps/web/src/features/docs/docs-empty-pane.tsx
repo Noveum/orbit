@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { newDocPath } from '@/lib/docs/paths.ts';
 import { useDocs } from '@/lib/query/use-docs.ts';
 import { DocImport } from './doc-import.tsx';
 import { DocsHome } from './docs-home.tsx';
@@ -29,7 +30,7 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
   const list = useDocs('');
   const docs = list.data?.docs ?? [];
 
-  const newDoc = useCallback(() => router.push('/docs/new'), [router]);
+  const newDoc = useCallback(() => router.push(newDocPath()), [router]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="docs-empty-pane">
@@ -59,7 +60,7 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
                 <DropdownMenuItem
                   key={template.id}
                   data-testid={`doc-template-${template.id}`}
-                  onSelect={() => router.push(`/docs/new?template=${template.id}`)}
+                  onSelect={() => router.push(newDocPath({ templateId: template.id }))}
                 >
                   {template.name}
                 </DropdownMenuItem>
@@ -79,7 +80,7 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         <EmptyState
           icon={<FileText strokeWidth={1.75} aria-hidden="true" />}
           title="No docs yet"
-          description="Docs are markdown, live for everyone in the workspace, and can be published to the web."
+          description="Docs are markdown or a self-contained HTML page, live for everyone in the workspace, and can be published to the web."
           className="flex-1"
           action={
             canWrite ? (

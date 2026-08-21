@@ -1,4 +1,4 @@
-import { ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
+import { DOC_KINDS, ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
 import {
   defaultViewState,
   GROUP_BY_FIELDS,
@@ -23,6 +23,7 @@ export const issueSchema = z.object({
   priority: z.number(),
   creatorId: z.string(),
   assigneeId: z.string().nullable(),
+  reviewerIds: z.array(z.string()).optional(),
   projectId: z.string().nullable(),
   milestoneId: z.string().nullable(),
   cycleId: z.string().nullable(),
@@ -309,6 +310,7 @@ export const docSchema = z.object({
   parentId: z.string().nullable(),
   title: z.string(),
   slug: z.string(),
+  kind: z.enum(DOC_KINDS).default('markdown'),
   content: z.string(),
   sortOrder: z.number().default(0),
   visibility: z.string(),

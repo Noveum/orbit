@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { DEFAULT_ESTIMATE_SCALE } from '@orbit/shared/constants';
+import { DEFAULT_ESTIMATE_SCALE, ISSUE_REVIEWER_MAX_COUNT } from '@orbit/shared/constants';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -11,7 +11,7 @@ import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
-import type { Issue, Milestone } from '@/lib/query/schemas.ts';
+import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
 
 const patches: Record<string, unknown>[] = [];
 
@@ -22,6 +22,26 @@ mock.module('@/lib/query/use-issues.ts', () => ({
     },
   }),
 }));
+
+const firstReviewer: Member = {
+  id: 'reviewer_1',
+  name: 'Ada Reviewer',
+  email: 'ada@orbit.test',
+  image: '/ada.png',
+  handle: 'ada',
+  role: 'member',
+};
+
+const secondReviewer: Member = {
+  id: 'reviewer_2',
+  name: 'Bo Reviewer',
+  email: 'bo@orbit.test',
+  image: '/bo.png',
+  handle: 'bo',
+  role: 'member',
+};
+
+const workspaceMembers = [firstReviewer, secondReviewer] as const;
 
 const workspace: WorkspaceData = {
   ...({} as WorkspaceData),
@@ -40,7 +60,7 @@ const workspace: WorkspaceData = {
     },
   ],
   labels: [],
-  members: [],
+  members: workspaceMembers,
   projects: [
     {
       id: 'project_launch',
@@ -84,7 +104,7 @@ const workspace: WorkspaceData = {
   seedIssues: [],
   stateById: new Map(),
   labelById: new Map(),
-  memberById: new Map(),
+  memberById: new Map(workspaceMembers.map((member) => [member.id, member])),
   openQuickCreate: () => undefined,
 };
 
@@ -197,6 +217,11 @@ function mountProperties(row: Issue) {
 beforeEach(() => {
   patches.length = 0;
   requested.length = 0;
+  Object.assign(workspace, {
+    role: 'admin',
+    members: workspaceMembers,
+    memberById: new Map(workspaceMembers.map((member) => [member.id, member])),
+  });
   stubFetch();
 });
 
@@ -306,6 +331,73 @@ describe('the project row on the issue properties panel', () => {
     const menu = await screen.findByTestId('menu-project');
 
     expect(within(menu).getByText('Growth')).toBeInTheDocument();
+  });
+});
+
+describe('the reviewer row on the issue properties panel', () => {
+  it('shows every current reviewer and adds another selected person', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ reviewerIds: [firstReviewer.id] }));
+
+    expect(screen.getByTestId('property-reviewers')).toHaveTextContent(firstReviewer.name);
+    await user.click(screen.getByTestId('property-reviewers'));
+    const menu = await screen.findByTestId('menu-reviewers');
+    expect(
+      within(menu).getByText(firstReviewer.name).parentElement?.querySelector('[role="img"]'),
+    ).not.toBeNull();
+    expect(
+      within(menu).getByText(secondReviewer.name).parentElement?.querySelector('[role="img"]'),
+    ).not.toBeNull();
+    await user.click(within(menu).getByText(secondReviewer.name));
+
+    await waitFor(() =>
+      expect(patches).toEqual([{ reviewerIds: [firstReviewer.id, secondReviewer.id] }]),
+    );
+  });
+
+  it('disables a fifty-first reviewer while keeping removal available', async () => {
+    const user = userEvent.setup();
+    const members = Array.from({ length: ISSUE_REVIEWER_MAX_COUNT + 1 }, (_value, index) => ({
+      id: `reviewer_${index + 1}`,
+      name: `Reviewer ${index + 1}`,
+      email: `reviewer-${index + 1}@orbit.test`,
+      image: null,
+      handle: `reviewer-${index + 1}`,
+      role: 'member',
+    }));
+    const selected = members.slice(0, ISSUE_REVIEWER_MAX_COUNT).map((member) => member.id);
+    Object.assign(workspace, {
+      members,
+      memberById: new Map(members.map((member) => [member.id, member])),
+    });
+    mountProperties(issue({ reviewerIds: selected }));
+
+    await user.click(screen.getByTestId('property-reviewers'));
+    const menu = await screen.findByTestId('menu-reviewers');
+    const blocked = within(menu)
+      .getByText(`Reviewer ${ISSUE_REVIEWER_MAX_COUNT + 1}`)
+      .closest('[role="menuitemcheckbox"]');
+    const removable = within(menu).getByText('Reviewer 1').closest('[role="menuitemcheckbox"]');
+    if (blocked === null || removable === null) throw new Error('missing reviewer option');
+
+    expect(blocked).toHaveAttribute('data-disabled');
+    await user.click(blocked);
+    expect(patches).toEqual([]);
+
+    await user.click(removable);
+    await waitFor(() => expect(patches).toEqual([{ reviewerIds: selected.slice(1) }]));
+  });
+
+  it('removes a selected reviewer without changing the assignee', async () => {
+    const user = userEvent.setup();
+    mountProperties(issue({ assigneeId: firstReviewer.id, reviewerIds: [firstReviewer.id] }));
+
+    await user.click(screen.getByTestId('property-reviewers'));
+    await user.click(
+      within(await screen.findByTestId('menu-reviewers')).getByText(firstReviewer.name),
+    );
+
+    await waitFor(() => expect(patches).toEqual([{ reviewerIds: [] }]));
   });
 });
 

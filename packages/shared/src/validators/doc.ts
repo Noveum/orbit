@@ -1,9 +1,14 @@
 import { z } from 'zod';
-import { DOC_ACCESS_LEVELS, DOC_ACCESS_SUBJECTS, DOC_VISIBILITIES } from '../constants/index.ts';
+import {
+  DOC_ACCESS_LEVELS,
+  DOC_ACCESS_SUBJECTS,
+  DOC_KINDS,
+  DOC_VISIBILITIES,
+} from '../constants/index.ts';
 import { idSchema } from './common.ts';
 import { booleanFlag } from './issue.ts';
 
-export const DOC_CONTENT_LIMIT = 500_000;
+export const DOC_CONTENT_LIMIT = 5_000_000;
 export const DOC_TITLE_LIMIT = 200;
 
 export const docContentSchema = z.string().max(DOC_CONTENT_LIMIT, {
@@ -23,6 +28,7 @@ export const docCreateSchema = z
   .object({
     title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
     content: docContentSchema.default(''),
+    kind: z.enum(DOC_KINDS).default('markdown'),
     projectId: idSchema.nullable().default(null),
     collectionId: idSchema.nullable().default(null),
     parentId: idSchema.nullable().default(null),

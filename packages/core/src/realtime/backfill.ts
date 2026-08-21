@@ -6,6 +6,7 @@ import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
 import type { Executor } from '../internal.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
+import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
 import { buildSyncAction } from './publisher.ts';
 
@@ -377,10 +378,11 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.issue.syncId))
       .limit(limit);
-    const labels = await labelIdsByIssue(
-      executor,
-      rows.map((row) => row.id),
-    );
+    const issueIds = rows.map((row) => row.id);
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(executor, issueIds),
+      reviewerIdsByIssue(executor, issueIds),
+    ]);
     return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
@@ -393,7 +395,11 @@ const LOADERS: Record<SyncModel, Loader> = {
               scopes.issue(row.id),
               scopes.project(row.projectId),
             ],
-      data: { ...row, labelIds: labels.get(row.id) ?? [] },
+      data: {
+        ...row,
+        labelIds: labels.get(row.id) ?? [],
+        reviewerIds: reviewers.get(row.id) ?? [],
+      },
     }));
   },
 

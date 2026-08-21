@@ -398,6 +398,10 @@ function ListRow({
         return label === undefined ? [] : [label];
       })}
       assignee={issue.assigneeId === null ? undefined : memberById.get(issue.assigneeId)}
+      reviewers={(issue.reviewerIds ?? []).flatMap((id) => {
+        const reviewer = memberById.get(id);
+        return reviewer === undefined ? [] : [reviewer];
+      })}
       creator={memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : projectById.get(issue.projectId)}
       cycle={issue.cycleId === null ? undefined : cycleById.get(issue.cycleId)}

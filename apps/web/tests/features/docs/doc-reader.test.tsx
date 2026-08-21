@@ -22,6 +22,7 @@ const doc: Doc = {
   parentId: null,
   title: 'Delta protocol',
   slug: 'delta-protocol',
+  kind: 'markdown',
   content: MARKDOWN,
   sortOrder: 0,
   visibility: 'workspace',

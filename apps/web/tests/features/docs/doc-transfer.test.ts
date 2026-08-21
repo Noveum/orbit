@@ -3,6 +3,7 @@ import {
   absoluteAttachments,
   exportedMarkdown,
   fileNameFor,
+  parseHtmlImport,
   parseMarkdownImport,
 } from '../../../src/features/docs/doc-transfer.ts';
 
@@ -72,5 +73,24 @@ describe('a markdown file arriving as a doc', () => {
   it('never lets a title grow past what the doc validator accepts', () => {
     const parsed = parseMarkdownImport('x.md', `# ${'a'.repeat(400)}\n\nBody.`);
     expect(parsed.title.length).toBe(200);
+  });
+});
+
+describe('an html file arriving as a doc', () => {
+  it('takes the title tag and keeps the whole file', () => {
+    const parsed = parseHtmlImport(
+      'ignored.html',
+      '<!DOCTYPE html><html><head><title>Sync health</title></head><body><p>Live</p></body></html>',
+    );
+    expect(parsed.title).toBe('Sync health');
+    expect(parsed.kind).toBe('html');
+    expect(parsed.content).toContain('<p>Live</p>');
+  });
+
+  it('falls back to the file name when there is no title tag', () => {
+    const parsed = parseHtmlImport('status-board.html', '<div>ok</div>');
+    expect(parsed.title).toBe('status board');
+    expect(parsed.kind).toBe('html');
+    expect(parsed.content).toBe('<div>ok</div>');
   });
 });

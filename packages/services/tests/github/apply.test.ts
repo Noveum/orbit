@@ -7,6 +7,7 @@ import {
   gitLink,
   integration,
   issue,
+  issueReviewer,
   member,
   organization,
   team,
@@ -121,6 +122,7 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
     creatorId,
     assigneeId,
   });
+  await tx.insert(issueReviewer).values({ issueId, userId: creatorId });
 
   const integrationId = `int_${suffix}`;
   await tx.insert(integration).values({
@@ -334,7 +336,8 @@ describe('applyGithubEvent', () => {
       expect(links[0]?.draft).toBe(true);
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Progress');
       expect(result.actions.some((action) => action.model === 'git_link')).toBe(true);
-      expect(result.actions.some((action) => action.model === 'issue')).toBe(true);
+      const issueAction = result.actions.find((action) => action.model === 'issue');
+      expect(issueAction?.data['reviewerIds']).toEqual([fixture.creatorId]);
       expect(result.notificationEvents).toHaveLength(0);
     });
   });

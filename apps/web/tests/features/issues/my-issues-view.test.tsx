@@ -70,6 +70,7 @@ describe('assignedTo', () => {
       [
         issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
         issue({ id: 'b', identifier: 'DES-1', teamId: 'team_des', assigneeId: 'you' }),
+        issue({ id: 'd', identifier: 'OPS-1', assigneeId: 'you', reviewerIds: ['me'] }),
         issue({
           id: 'c',
           identifier: 'DES-2',
@@ -80,7 +81,7 @@ describe('assignedTo', () => {
       ],
       'me',
     );
-    expect(rows.map((row) => row.identifier)).toEqual(['DES-2', 'ENG-1']);
+    expect(rows.map((row) => row.identifier)).toEqual(['DES-2', 'ENG-1', 'OPS-1']);
   });
 
   it('returns nothing before the viewer is known', () => {
@@ -188,7 +189,7 @@ function renderView(viewerId = 'me', layout: 'list' | 'board' = 'list'): void {
         {
           issues: [
             issue({ id: 'a', identifier: 'ENG-1', assigneeId: 'me', sortOrder: 200 }),
-            issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you' }),
+            issue({ id: 'b', identifier: 'ENG-2', assigneeId: 'you', reviewerIds: ['me'] }),
           ],
           nextCursor: null,
         },
@@ -228,12 +229,12 @@ describe('MyIssuesView', () => {
 
     expect(screen.getByTestId('issue-row-DES-9')).toBeInTheDocument();
     expect(screen.getByTestId('issue-row-ENG-1')).toBeInTheDocument();
-    expect(screen.queryByTestId('issue-row-ENG-2')).toBeNull();
+    expect(screen.getByTestId('issue-row-ENG-2')).toBeInTheDocument();
 
     const rendered = screen
       .getAllByTestId(/^issue-row-/)
       .map((row) => row.getAttribute('data-testid'));
-    expect(rendered).toEqual(['issue-row-DES-9', 'issue-row-ENG-1']);
+    expect(rendered).toEqual(['issue-row-DES-9', 'issue-row-ENG-1', 'issue-row-ENG-2']);
   });
 
   it('shows the loading state while the team queries are still pending', () => {
@@ -241,7 +242,7 @@ describe('MyIssuesView', () => {
     renderEmptyCacheView();
 
     expect(screen.getByText('Loading your issues')).toBeInTheDocument();
-    expect(screen.queryByText('Nothing assigned to you')).toBeNull();
+    expect(screen.queryByText('Nothing assigned or awaiting your review')).toBeNull();
     expect(screen.queryByTestId('my-issues-list')).toBeNull();
   });
 
@@ -250,14 +251,14 @@ describe('MyIssuesView', () => {
     renderView('nobody');
 
     expect(screen.queryByTestId('my-issues-list')).toBeNull();
-    expect(screen.getByText('Nothing assigned to you')).toBeInTheDocument();
+    expect(screen.getByText('Nothing assigned or awaiting your review')).toBeInTheDocument();
   });
 
   it('points every row at its own issue page', () => {
     workspace = buildWorkspace();
     renderView();
 
-    for (const identifier of ['DES-9', 'ENG-1']) {
+    for (const identifier of ['DES-9', 'ENG-1', 'ENG-2']) {
       const link = within(screen.getByTestId(`issue-row-${identifier}`)).getByRole('link');
       expect(link.getAttribute('href')).toBe(`/issue/${identifier}`);
     }

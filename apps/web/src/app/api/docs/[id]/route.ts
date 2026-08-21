@@ -1,6 +1,6 @@
 import { archiveDoc, deleteDoc, getDoc, isFavoriteDoc, updateDoc } from '@orbit/core';
-import { renderMarkdownWithHeadingIds } from '@orbit/services/markdown';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
+import { renderedDocHtml } from '@/lib/docs/render.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
@@ -12,7 +12,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     const detail = await getDoc(principal, id);
     return {
       ...detail,
-      contentHtml: renderMarkdownWithHeadingIds(detail.doc.content),
+      contentHtml: renderedDocHtml(detail.doc.kind, detail.doc.content),
       favorite: await isFavoriteDoc(principal, detail.doc.id),
     };
   });
@@ -24,7 +24,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return await handle(async (principal) => {
     const saved = await updateDoc(principal, id, body);
     await publish(saved.actions);
-    return { doc: saved.doc, contentHtml: renderMarkdownWithHeadingIds(saved.doc.content) };
+    return { doc: saved.doc, contentHtml: renderedDocHtml(saved.doc.kind, saved.doc.content) };
   });
 }
 

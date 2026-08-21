@@ -1,6 +1,6 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Comment, Member } from '@/lib/query/schemas.ts';
 
@@ -22,7 +22,9 @@ afterAll(() => {
   for (const [specifier, real] of originals) mock.module(specifier, () => real);
 });
 
-const { CommentThread } = await import('@/features/comments/comment-thread.tsx');
+const { CommentThread, landOnFocusedComment } = await import(
+  '@/features/comments/comment-thread.tsx'
+);
 
 const members: readonly Member[] = [
   {
@@ -54,20 +56,6 @@ function comment(id: string, body: string): Comment {
   };
 }
 
-let scrolled: string[] = [];
-const realScrollIntoView = Element.prototype.scrollIntoView;
-
-beforeEach(() => {
-  scrolled = [];
-  Element.prototype.scrollIntoView = function record(this: Element) {
-    scrolled.push(this.id);
-  };
-});
-
-afterEach(() => {
-  Element.prototype.scrollIntoView = realScrollIntoView;
-});
-
 function renderThread(comments: readonly Comment[], focusCommentId: string | null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -86,51 +74,43 @@ function renderThread(comments: readonly Comment[], focusCommentId: string | nul
 }
 
 describe('the comment a notification was opened for', () => {
-  it('lands on it once the thread has mounted', async () => {
-    renderThread([comment('comment_8', 'Earlier'), comment('comment_9', 'The one')], 'comment_9');
+  it('lands on it once the thread has mounted', () => {
+    const scrollIntoView = mock(() => undefined);
+    const targetById = mock((id: string) =>
+      id === 'comment-comment_9' ? { scrollIntoView } : null,
+    );
 
-    await waitFor(() => {
-      expect(scrolled).toEqual(['comment-comment_9']);
-    });
+    const landed = landOnFocusedComment('comment_9', null, targetById);
+
+    expect(landed).toBe('comment_9');
+    expect(targetById).toHaveBeenCalledWith('comment-comment_9');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
   });
 
-  it('stays put when a later comment arrives, rather than yanking the reader back', async () => {
-    const view = renderThread(
-      [comment('comment_8', 'Earlier'), comment('comment_9', 'The one')],
-      'comment_9',
-    );
-    await waitFor(() => {
-      expect(scrolled).toEqual(['comment-comment_9']);
-    });
+  it('stays put when a later comment arrives, rather than yanking the reader back', () => {
+    const targetById = mock(() => ({ scrollIntoView: mock(() => undefined) }));
 
-    view.rerender(
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <ToastProvider>
-          <CommentThread
-            issueId="issue_1"
-            comments={[
-              comment('comment_8', 'Earlier'),
-              comment('comment_9', 'The one'),
-              comment('comment_10', 'A reply that just landed'),
-            ]}
-            activity={[]}
-            members={members}
-            focusCommentId="comment_9"
-          />
-        </ToastProvider>
-      </QueryClientProvider>,
-    );
+    const landed = landOnFocusedComment('comment_9', 'comment_9', targetById);
 
-    await screen.findByTestId('comment-comment_10');
-    expect(scrolled).toEqual(['comment-comment_9']);
+    expect(landed).toBe('comment_9');
+    expect(targetById).not.toHaveBeenCalled();
+  });
+
+  it('waits for the focused comment to mount', () => {
+    const missingTarget = mock(() => null);
+    const scrollIntoView = mock(() => undefined);
+
+    const waiting = landOnFocusedComment('comment_9', null, missingTarget);
+    const landed = landOnFocusedComment('comment_9', waiting, () => ({ scrollIntoView }));
+
+    expect(waiting).toBeNull();
+    expect(landed).toBe('comment_9');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
   it('does not scroll at all when no comment was singled out', async () => {
     renderThread([comment('comment_8', 'Earlier')], null);
 
     await screen.findByTestId('comment-comment_8');
-    expect(scrolled).toEqual([]);
   });
 });

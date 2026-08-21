@@ -38,6 +38,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     parentId: null,
     title: 'Delta protocol',
     slug: 'delta-protocol',
+    kind: 'markdown',
     content: '',
     sortOrder: 0,
     visibility,
@@ -139,6 +140,7 @@ describe('the share dialog', () => {
   it('hides the outside world from someone who cannot publish', async () => {
     await openShare(doc('workspace'), false);
 
+    expect(screen.queryByTestId('doc-visibility-members')).toBeNull();
     expect(screen.queryByTestId('doc-visibility-link')).toBeNull();
     expect(screen.queryByTestId('doc-visibility-public')).toBeNull();
     expect(choiceFor('private')).toBeInTheDocument();
@@ -178,6 +180,17 @@ describe('copying a link to a doc', () => {
     expect(clipboard.value).toContain('/d/delta-protocol-token_1');
   });
 
+  it('names the signed-in published url a members link, not a workspace link', async () => {
+    const user = await openShare(doc('members', 'token_1'));
+    const clipboard = stubClipboard();
+
+    expect(screen.getByText('Members link')).toBeInTheDocument();
+    expect(screen.getByText('Reset the members link')).toBeInTheDocument();
+    await user.click(screen.getByTestId('doc-copy-public-link'));
+
+    expect(clipboard.value).toContain('/d/delta-protocol-token_1');
+  });
+
   it('keeps the public link and its reset out of sight while the doc has none', async () => {
     await openShare(doc('workspace'));
 
@@ -199,6 +212,7 @@ describe('shareTrigger', () => {
     expect(shareTrigger('private')).toBe('Private');
     expect(shareTrigger('team')).toBe('Private');
     expect(shareTrigger('workspace')).toBe('Workspace');
+    expect(shareTrigger('members')).toBe('Members');
     expect(shareTrigger('link')).toBe('Unlisted');
     expect(shareTrigger('public')).toBe('Public');
   });

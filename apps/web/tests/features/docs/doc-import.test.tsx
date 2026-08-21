@@ -37,6 +37,7 @@ describe('importing a markdown file', () => {
     const input = created.mock.calls[0]?.[0];
     expect(input?.['title']).toBe('Deploy runbook');
     expect(input?.['content']).toBe('How we ship.');
+    expect(input?.['kind']).toBe('markdown');
 
     await waitFor(() => expect(push).toHaveBeenCalledWith('/docs/doc_new'));
   });
@@ -70,5 +71,25 @@ describe('importing a markdown file', () => {
 
     await waitFor(() => expect(created).toHaveBeenCalled());
     expect(created.mock.calls[0]?.[0]?.['collectionId']).toBe('col_1');
+  });
+});
+
+describe('importing an html file', () => {
+  it('creates an html doc from the file and opens it', async () => {
+    render(<DocImport collectionId={null} projectId={null} />);
+    pick(
+      new File(
+        ['<!DOCTYPE html><html><head><title>Board</title></head><body>Hi</body></html>'],
+        'board.html',
+        { type: 'text/html' },
+      ),
+    );
+
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    const input = created.mock.calls[0]?.[0];
+    expect(input?.['title']).toBe('Board');
+    expect(input?.['kind']).toBe('html');
+    expect(input?.['content']).toContain('<body>Hi</body>');
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/docs/doc_new'));
   });
 });

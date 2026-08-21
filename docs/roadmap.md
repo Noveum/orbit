@@ -13,12 +13,13 @@ hand with.
 
 The core is done and in daily use.
 
-- **Issues** with priorities, labels, states, estimates, assignees and
-  relations, as a list or a drag and drop board.
+- **Issues** with priorities, labels, states, estimates, assignees, multiple
+  reviewers and relations, as a list or a drag-and-drop board.
 - **Sprints and cycles** with scope, points, burndown and carryover.
 - **Projects and milestones** across teams.
 - **Docs** with a rich editor, collections, public share links and comments.
-- **Standup** as a workspace Kanban you filter to one person with a click.
+- **Standup** as a workspace Kanban you filter to work a person owns or reviews
+  with a click.
 - **Analytics**: scope, throughput, churn, and distribution by assignee,
   project, label and estimate.
 - **Search, filters and saved views**, shared or private.

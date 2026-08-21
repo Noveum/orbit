@@ -532,6 +532,7 @@ async function seedDocs(
           entry.collection === null ? null : (collections.get(entry.collection) ?? null),
         projectId: entry.project === undefined ? null : (projects.get(entry.project)?.id ?? null),
         title: entry.title,
+        kind: entry.kind ?? 'markdown',
         content: entry.content,
         visibility: 'workspace',
         publishToken: null,

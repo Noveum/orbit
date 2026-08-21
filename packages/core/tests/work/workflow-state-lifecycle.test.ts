@@ -392,6 +392,7 @@ describe('an issue a status change touches goes out whole, labels and all', () =
       title: 'Parked',
       stateId: todo.id,
       labelIds: [label.label.id],
+      reviewerIds: [workspace.admin.userId],
     });
 
     const saved = await updateWorkflowState(workspace.admin, todo.id, { category: 'completed' });
@@ -400,6 +401,7 @@ describe('an issue a status change touches goes out whole, labels and all', () =
       (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
     );
     expect(action?.data['labelIds']).toEqual([label.label.id]);
+    expect(action?.data['reviewerIds']).toEqual([workspace.admin.userId]);
   });
 
   it('carries them through a delete that moves the issues too', async () => {

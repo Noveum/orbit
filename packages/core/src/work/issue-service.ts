@@ -26,6 +26,7 @@ import {
   issueFilterSchema,
   issueMoveSchema,
   issueRelationSchema,
+  issueSummaryQuerySchema,
   issueUpdateSchema,
   paginationSchema,
 } from '@orbit/shared/validators';
@@ -59,6 +60,7 @@ import {
 } from './issue-fields.ts';
 import { buildIssueWhere } from './issue-query.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
+import { replaceReviewersFor, reviewerIdsByIssue } from './reviewer-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
 
 export {
@@ -115,12 +117,17 @@ async function assertParentAllowed(
   }
 }
 
+interface IssueDecorations {
+  readonly labels: ReadonlyMap<string, string[]>;
+  readonly reviewers: ReadonlyMap<string, string[]>;
+}
+
 function issueAction(
   row: IssueRow,
   syncId: number,
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
-  labelIds?: readonly string[],
+  decorations: { readonly labelIds: readonly string[]; readonly reviewerIds: readonly string[] },
 ): SyncAction {
   return buildSyncAction({
     syncId,
@@ -129,9 +136,24 @@ function issueAction(
     action,
     model: 'issue',
     modelId: row.id,
-    data: labelIds === undefined ? row : { ...row, labelIds: [...labelIds] },
+    data: {
+      ...row,
+      labelIds: [...decorations.labelIds],
+      reviewerIds: [...decorations.reviewerIds],
+    },
     actor,
   });
+}
+
+async function issueDecorationsByIssue(
+  executor: Executor,
+  issueIds: readonly string[],
+): Promise<IssueDecorations> {
+  const [labels, reviewers] = await Promise.all([
+    labelIdsByIssue(executor, issueIds),
+    reviewerIdsByIssue(executor, issueIds),
+  ]);
+  return { labels, reviewers };
 }
 
 async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<number> {
@@ -723,6 +745,38 @@ async function assertMemberOfWorkspace(
   if (row === undefined) throw validationFailed('That person is not in this workspace.');
 }
 
+async function assertReviewersCanAccessTeam(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+  userIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return;
+  const members = await executor
+    .select({ userId: schema.member.userId, role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(eq(schema.member.organizationId, organizationId), inArray(schema.member.userId, ids)),
+    )
+    .for('update');
+  if (new Set(members.map((row) => row.userId)).size !== ids.length) {
+    throw validationFailed('Every reviewer must be in this workspace.');
+  }
+  const teamMembers = await executor
+    .select({ userId: schema.teamMember.userId })
+    .from(schema.teamMember)
+    .where(and(eq(schema.teamMember.teamId, teamId), inArray(schema.teamMember.userId, ids)))
+    .for('update');
+  const usersWithAccess = new Set([
+    ...members.filter((row) => row.role === 'admin').map((row) => row.userId),
+    ...teamMembers.map((row) => row.userId),
+  ]);
+  if (usersWithAccess.size !== ids.length) {
+    throw validationFailed('Every reviewer must have access to this team.');
+  }
+}
+
 async function assertAssignableToTeam(
   executor: Executor,
   organizationId: string,
@@ -764,7 +818,9 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       throw validationFailed('That status belongs to another team.');
     }
     const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
     await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
+    await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
     await assertAssignableToTeam(tx, principal.organizationId, team.id, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
@@ -808,7 +864,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId], syncId);
+    await replaceReviewersFor(tx, [issue.id], reviewerIds);
+    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId, ...reviewerIds], syncId);
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -832,7 +889,13 @@ export async function createIssue(principal: Principal, input: unknown): Promise
 
     return {
       issue,
-      actions: [issueAction(issue, syncId, actor, 'insert', parsed.labelIds), ...notifications],
+      actions: [
+        issueAction(issue, syncId, actor, 'insert', {
+          labelIds: parsed.labelIds,
+          reviewerIds,
+        }),
+        ...notifications,
+      ],
     };
   });
 }
@@ -847,6 +910,7 @@ interface PendingUpdate {
   readonly current: IssueRow;
   readonly values: IssueValues;
   readonly changes: FieldChange[];
+  readonly reviewerIds: readonly string[];
 }
 
 async function loadIssues(
@@ -882,13 +946,24 @@ interface UpdateContext {
   readonly parsed: ReturnType<typeof issueUpdateSchema.parse>;
   readonly state: Awaited<ReturnType<typeof stateOf>> | null;
   readonly now: Date;
+  readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
 async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Promise<PendingUpdate> {
-  const { tx, principal, parsed, state, now } = context;
+  const { tx, principal, parsed, state, now, reviewers } = context;
   assertInTeam(principal, teamScope(current));
 
   const { values, changes } = collectIssueChanges(current, parsed);
+  const currentReviewerIds = reviewers.get(current.id) ?? [];
+  const reviewerIds =
+    parsed.reviewerIds === undefined ? currentReviewerIds : [...new Set(parsed.reviewerIds)].sort();
+  if (
+    parsed.reviewerIds !== undefined &&
+    (reviewerIds.length !== currentReviewerIds.length ||
+      reviewerIds.some((reviewerId, index) => reviewerId !== currentReviewerIds[index]))
+  ) {
+    changes.push({ field: 'reviewerIds', from: currentReviewerIds, to: reviewerIds });
+  }
   if (values.parentId !== undefined && values.parentId !== null) {
     await assertParentAllowed(tx, principal, current.id, values.parentId);
   }
@@ -899,6 +974,7 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
     Object.assign(values, applyStateTimestamps(current, state.category, now));
   }
   await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
+  await assertReviewersCanAccessTeam(tx, principal.organizationId, current.teamId, reviewerIds);
   await assertAssignableToTeam(
     tx,
     principal.organizationId,
@@ -909,7 +985,45 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
   if (parsed.labelIds !== undefined) {
     await assertLabelsUsable(tx, principal.organizationId, current.teamId, parsed.labelIds);
   }
-  return { current, values, changes };
+  return { current, values, changes, reviewerIds };
+}
+
+async function replaceChangedReviewers(
+  tx: Executor,
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  changing: readonly PendingUpdate[],
+): Promise<void> {
+  if (parsed.reviewerIds === undefined) return;
+  await replaceReviewersFor(
+    tx,
+    changing.map((entry) => entry.current.id),
+    parsed.reviewerIds,
+  );
+}
+
+async function subscribeChangedReviewers(
+  tx: Executor,
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  changing: readonly PendingUpdate[],
+  syncId: number,
+): Promise<void> {
+  if (parsed.reviewerIds === undefined) return;
+  const subscriptions = changing.flatMap((entry) =>
+    entry.reviewerIds.map((userId) => ({
+      id: newId(),
+      issueId: entry.current.id,
+      userId,
+      syncId,
+    })),
+  );
+  if (subscriptions.length === 0) return;
+  await tx
+    .insert(schema.issueSubscription)
+    .values(subscriptions)
+    .onConflictDoUpdate({
+      target: [schema.issueSubscription.issueId, schema.issueSubscription.userId],
+      set: { syncId },
+    });
 }
 
 async function applyIssueUpdates(
@@ -926,7 +1040,8 @@ async function applyIssueUpdates(
   }
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
-  const context: UpdateContext = { tx, principal, parsed, state, now };
+  const reviewers = await reviewerIdsByIssue(tx, issueIds);
+  const context: UpdateContext = { tx, principal, parsed, state, now, reviewers };
 
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
@@ -980,10 +1095,13 @@ async function applyIssueUpdates(
     );
   }
 
+  await replaceChangedReviewers(tx, parsed, changing);
+
   const assigned = changing
     .filter((entry) => entry.values.assigneeId !== undefined)
     .map((entry) => ({ issueId: entry.current.id, userId: entry.values.assigneeId ?? null }));
   await subscribeToIssues(tx, assigned);
+  await subscribeChangedReviewers(tx, parsed, changing, syncId);
 
   const described = await describeChanges(
     tx,
@@ -1009,12 +1127,12 @@ async function applyIssueUpdates(
     updated,
     state,
   });
-  const labels = await labelIdsByIssue(
+  const decorations = await issueDecorationsByIssue(
     tx,
     pending.map((entry) => entry.current.id),
   );
 
-  return updateResults(pending, updated, { notifications, labels }, syncId, actor);
+  return updateResults(pending, updated, { notifications, ...decorations }, syncId, actor);
 }
 
 async function updateNotifications(
@@ -1035,6 +1153,7 @@ async function updateNotifications(
 interface UpdateDecorations {
   readonly notifications: ReadonlyMap<string, SyncAction[]>;
   readonly labels: ReadonlyMap<string, string[]>;
+  readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
 function updateResults(
@@ -1051,7 +1170,10 @@ function updateResults(
       issue,
       changes: entry.changes,
       actions: [
-        issueAction(issue, syncId, actor, 'update', decorations.labels.get(issue.id) ?? []),
+        issueAction(issue, syncId, actor, 'update', {
+          labelIds: decorations.labels.get(issue.id) ?? [],
+          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+        }),
         ...(decorations.notifications.get(issue.id) ?? []),
       ],
     };
@@ -1310,6 +1432,17 @@ export async function moveIssue(
         : await stateOf(tx, parsed.stateId);
     if (state.teamId !== teamId) throw validationFailed('That status belongs to another team.');
 
+    const changingTeam = teamId !== current.teamId;
+    if (changingTeam) {
+      const reviewers = await reviewerIdsByIssue(tx, [issueId]);
+      await assertReviewersCanAccessTeam(
+        tx,
+        principal.organizationId,
+        teamId,
+        reviewers.get(issueId) ?? [],
+      );
+    }
+
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
@@ -1317,7 +1450,6 @@ export async function moveIssue(
     const rebalanced = landing.rebalanced;
 
     const now = new Date();
-    const changingTeam = teamId !== current.teamId;
     await lockMoveCycleAssignments(tx, principal.organizationId, current, teamId, parsed);
     const values = await moveValues(tx, current, team, state, landing, now);
 
@@ -1359,17 +1491,23 @@ export async function moveIssue(
       issue,
     });
 
-    const movedLabels = await labelIdsByIssue(tx, [issue.id, ...rebalanced.map((row) => row.id)]);
+    const affected = [issue, ...rebalanced.filter((row) => row.id !== issueId)];
+    const decorations = await issueDecorationsByIssue(
+      tx,
+      affected.map((row) => row.id),
+    );
     const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
       issue,
       rebalanced,
       actions: [
-        issueAction(issue, syncId, actor, 'update', movedLabels.get(issue.id) ?? []),
-        ...rebalanced
-          .filter((row) => row.id !== issueId)
-          .map((row) => issueAction(row, syncId, actor, 'update', movedLabels.get(row.id) ?? [])),
+        ...affected.map((row) =>
+          issueAction(row, syncId, actor, 'update', {
+            labelIds: decorations.labels.get(row.id) ?? [],
+            reviewerIds: decorations.reviewers.get(row.id) ?? [],
+          }),
+        ),
         ...notifications,
       ],
     };
@@ -1452,16 +1590,14 @@ async function setArchived(
       },
     ]);
 
+    const decorations = await issueDecorationsByIssue(tx, [issue.id]);
     return {
       issue,
       actions: [
-        issueAction(
-          issue,
-          syncId,
-          actor,
-          archivedAt === null ? 'unarchive' : 'archive',
-          (await labelIdsByIssue(tx, [issue.id])).get(issue.id) ?? [],
-        ),
+        issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+          labelIds: decorations.labels.get(issue.id) ?? [],
+          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+        }),
       ],
     };
   });
@@ -1514,7 +1650,7 @@ export async function deleteIssue(
     }
     await tx.delete(schema.issue).where(eq(schema.issue.id, issueId));
 
-    const labels = await labelIdsByIssue(
+    const decorations = await issueDecorationsByIssue(
       tx,
       orphaned.map((child) => child.id),
     );
@@ -1531,7 +1667,10 @@ export async function deleteIssue(
         actor,
       }),
       ...orphaned.map((child) =>
-        issueAction(child, syncId, actor, 'update', labels.get(child.id) ?? []),
+        issueAction(child, syncId, actor, 'update', {
+          labelIds: decorations.labels.get(child.id) ?? [],
+          reviewerIds: decorations.reviewers.get(child.id) ?? [],
+        }),
       ),
     ];
   });
@@ -1765,6 +1904,26 @@ async function milestoneFacet(where: SQL | undefined): Promise<Record<string, nu
   return tally(rows);
 }
 
+async function participantFacet(where: SQL | undefined): Promise<Record<string, number>> {
+  const rows = await db.execute<{ key: string; total: number }>(sql`
+    select participant.key, count(distinct participant.issue_id)::int as total
+    from (
+      select ${schema.issue.id} as issue_id,
+             coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
+      from ${schema.issue}
+      ${where === undefined ? sql`` : sql`where ${where}`}
+      union all
+      select ${schema.issue.id} as issue_id, ${schema.issueReviewer.userId} as key
+      from ${schema.issue}
+      inner join ${schema.issueReviewer}
+        on ${schema.issueReviewer.issueId} = ${schema.issue.id}
+      ${where === undefined ? sql`` : sql`where ${where}`}
+    ) participant
+    group by participant.key
+  `);
+  return tally(rows);
+}
+
 const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn> = {
   state: () => schema.issue.stateId,
   assignee: () => schema.issue.assigneeId,
@@ -1841,18 +2000,17 @@ async function allFacets(where: SQL | undefined): Promise<FacetCounts> {
   return { ...columns, label, milestone };
 }
 
+type SummaryGroupProperty = ReturnType<typeof issueSummaryQuerySchema.parse>['groupBy'];
+
 function facetFor(
-  property: FacetProperty,
+  property: SummaryGroupProperty,
   where: SQL | undefined,
 ): Promise<Record<string, number>> {
+  if (property === 'participant') return participantFacet(where);
   if (property === 'label') return labelFacet(where);
   if (property === 'milestone') return milestoneFacet(where);
   return facetOf(FACET_COLUMNS[property](), where);
 }
-
-const summarySchema = issueListSchema.extend({
-  groupBy: z.enum(FACET_PROPERTIES).default('state'),
-});
 
 export const BOARD_GROUP_PROPERTIES = [
   'state',
@@ -1982,7 +2140,7 @@ export async function getIssueSummary(
   input: unknown = {},
 ): Promise<IssueSummary> {
   assertCan(principal, 'issue:read');
-  const filter = summarySchema.parse(input);
+  const filter = issueSummaryQuerySchema.parse(input);
   const matching = buildIssueWhere(principal, {
     visibility: 'team',
     filter,

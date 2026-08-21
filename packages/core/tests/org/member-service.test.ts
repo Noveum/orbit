@@ -3,11 +3,13 @@ import { db, eq, schema } from '@orbit/db';
 import { scopes } from '@orbit/shared/events';
 import { newId } from '../../src/internal.ts';
 import {
+  findPrincipal,
   listMembers,
   removeMember,
   resolvePrincipal,
   updateMemberRole,
 } from '../../src/org/member-service.ts';
+import { addTeamMember, createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -43,6 +45,7 @@ describe('resolvePrincipal', () => {
   it('refuses a user outside the workspace', async () => {
     const outsider = await addMember(workspace, 'member');
     await db.delete(schema.member).where(eq(schema.member.userId, outsider.user.id));
+    expect(await findPrincipal(outsider.user.id, workspace.organizationId)).toBeNull();
     await expect(
       resolvePrincipal(outsider.user.id, workspace.organizationId),
     ).rejects.toMatchObject({ code: 'forbidden' });
@@ -96,6 +99,25 @@ describe('updateMemberRole', () => {
     expect(result.member.role).toBe('member');
   });
 
+  it('keeps reviewer access valid when an admin is demoted', async () => {
+    const reviewer = await addMember(workspace, 'admin');
+    const { team } = await createTeam(workspace.admin, { name: 'Design', key: 'DES' });
+    await createIssue(workspace.admin, {
+      teamId: team.id,
+      title: 'Admin review',
+      reviewerIds: [reviewer.user.id],
+    });
+    const memberId = await memberIdFor(reviewer.user.id);
+
+    await expect(
+      updateMemberRole(workspace.admin, memberId, { role: 'member' }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    await addTeamMember(workspace.admin, team.id, { userId: reviewer.user.id });
+    const result = await updateMemberRole(workspace.admin, memberId, { role: 'member' });
+    expect(result.member.role).toBe('member');
+  });
+
   it('stops a non admin from changing roles', async () => {
     const { principal, user } = await addMember(workspace, 'member');
     const memberId = await memberIdFor(user.id);
@@ -143,6 +165,64 @@ describe('removeMember', () => {
 
     const [refreshed] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
     expect(refreshed?.assigneeId).toBe(stayer.user.id);
+  });
+
+  it('removes the person from every reviewer list and publishes the changed issue', async () => {
+    const reviewer = await addMember(workspace, 'member');
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Needs a new reviewer',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    const result = await removeMember(workspace.admin, await memberIdFor(reviewer.user.id));
+    const links = await db
+      .select()
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.issueId, issue.id));
+    const action = result.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === issue.id,
+    );
+
+    expect(links).toHaveLength(0);
+    expect(action?.data['reviewerIds']).toEqual([]);
+  });
+
+  it('keeps reviewer assignments in another workspace', async () => {
+    const reviewer = await addMember(workspace, 'member');
+    const localMemberId = await memberIdFor(reviewer.user.id);
+    const { issue: localIssue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Local review',
+      reviewerIds: [reviewer.user.id],
+    });
+    const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: newId(),
+      organizationId: other.organizationId,
+      userId: reviewer.user.id,
+      role: 'member',
+    });
+    await db.insert(schema.teamMember).values({
+      id: newId(),
+      teamId: other.teamId,
+      userId: reviewer.user.id,
+    });
+    const { issue: foreignIssue } = await createIssue(other.admin, {
+      teamId: other.teamId,
+      title: 'Foreign review',
+      reviewerIds: [reviewer.user.id],
+    });
+
+    const result = await removeMember(workspace.admin, localMemberId);
+    const links = await db
+      .select()
+      .from(schema.issueReviewer)
+      .where(eq(schema.issueReviewer.userId, reviewer.user.id));
+
+    expect(links.map((row) => row.issueId)).toEqual([foreignIssue.id]);
+    expect(links.some((row) => row.issueId === localIssue.id)).toBe(false);
+    expect(result.actions.some((action) => action.modelId === foreignIssue.id)).toBe(false);
   });
 
   it('refuses to remove the last admin', async () => {

@@ -55,7 +55,9 @@ to see it.
 ## Issues
 
 The unit of work. An issue has a title, a markdown description, a state, a
-priority, an assignee, labels, an estimate, and relations to other issues.
+priority, an assignee, multiple reviewers, labels, an estimate, and relations
+to other issues. Reviewers are subscribed automatically, and reviewed work
+appears in their My issues page alongside work assigned to them.
 
 Its **identifier** is the team key plus a number, like `ENG-42`. Identifiers are
 allocated atomically, so two people creating issues at the same moment never
@@ -165,17 +167,19 @@ is a body of work. An issue is usually in both.
 
 ## Docs
 
-Markdown documents with a rich editor, living beside the issues they describe
-rather than in a separate tool.
+Markdown documents with a rich editor, or a self-contained HTML page, living
+beside the issues they describe rather than in a separate tool.
 
 - Organised into **collections**, and nestable.
-- **Visibility** is workspace-wide, or private to the author.
-- **Shareable** through a public link with a token, for people outside the
-  workspace.
+- **Visibility** is workspace-wide, private to named people, or a published URL.
+- **Shareable** through a members link that still requires sign-in, or a public
+  or unlisted link for people outside the workspace. An HTML page gets its own
+  URL and runs isolated from the app.
 - Commentable, and searchable alongside issues from the command palette.
 - Optionally bound to a path in a repository, so a doc can mirror a file.
 - A fenced `mermaid` block is drawn as a diagram, in the theme's own colours,
   with the source one click away. The rich editor previews it as you type.
+- Import a `.md` or `.html` file. HTML stays as one file, not a project.
 
 Specs, runbooks, meeting notes and architecture decisions are the things that
 end up here.
@@ -183,16 +187,17 @@ end up here.
 ## Standup
 
 A Kanban board of the whole workspace, with everyone's name in a row of tiles
-along the top. Click a name and the board filters to that person. Click it again,
-or click Everyone, and you are back to the whole team.
+along the top. Click a name and the board filters to work assigned to or reviewed
+by that person. Click it again, or click Everyone, and you are back to the whole
+team.
 
 That is the entire feature. There is no meeting object, no turn order and no
 timer, because the meeting already has a facilitator and they do not need
 software to tell them whose turn it is. What they need is one screen that shows
 what a given person is carrying, in the order the work moves.
 
-Each tile carries a count of the open work for that person, so you can see who
-is loaded before anyone speaks.
+Each tile carries a count of the open work that person owns or reviews, so you
+can see who is loaded before anyone speaks.
 
 ## Views and filters
 

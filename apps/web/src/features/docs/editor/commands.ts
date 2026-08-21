@@ -101,6 +101,23 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     run: (editor) => editor.chain().focus().toggleCodeBlock().run(),
   },
   {
+    id: 'html-block',
+    label: 'HTML',
+    hint: 'Highlighted HTML',
+    keywords: ['html', 'markup', 'htm'],
+    icon: Code2,
+    run: (editor) =>
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: 'codeBlock',
+          attrs: { language: 'html' },
+          content: [{ type: 'text', text: '<div></div>' }],
+        })
+        .run(),
+  },
+  {
     id: 'diagram',
     label: 'Diagram',
     hint: 'Mermaid',

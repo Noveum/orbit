@@ -121,6 +121,7 @@ export const doc = pgTable(
     projectId: text('project_id').references(() => project.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     slug: text('slug').notNull().default(''),
+    kind: text('kind').notNull().default('markdown'),
     content: text('content').notNull().default(''),
     sortOrder: doublePrecision('sort_order').notNull().default(0),
     searchVector: tsvector('search_vector').generatedAlwaysAs(

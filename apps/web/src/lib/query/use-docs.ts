@@ -118,6 +118,7 @@ export function useCreateDoc() {
     mutationFn: async (input: {
       title: string;
       content?: string;
+      kind?: 'markdown' | 'html';
       collectionId?: string | null;
       projectId?: string | null;
       parentId?: string | null;
