@@ -1,94 +1,154 @@
-# Vercel build gate
+# Vercel Preview deployment gate
 
-Preview deployments only build once a pull request is marked **Ready for review**.
-Production always builds. Two labels override the rule: `preview` builds a draft,
-and `no-preview` suppresses a pull request that is ready.
+Orbit creates Vercel Preview deployments only after the exact pull request head
+has passed CI and still satisfies the repository policy. Production deployments
+from `main` remain enabled through the Vercel Git integration.
 
-## Why the gate exists
+## Eligibility
 
-Orbit ran **700 deployments in the 22 days** after the project was created on
-2026-07-28, peaking at 131 in a single day, and 77% of them were previews.
-Across the team, 81% of 4,393 deployments in the 90 days to 2026-08-19 were
-previews, and builds were $110 of the $506.93 August invoice.
+The controller evaluates the current pull request from GitHub on every event.
+`no-preview` takes precedence over every other state.
 
-## How it works
+| Pull request state | Labels | Result after exact-head CI succeeds |
+| --- | --- | --- |
+| Ready for review | neither managed label | eligible |
+| Ready for review | `preview` | eligible |
+| Ready for review | `no-preview`, with or without `preview` | ineligible |
+| Draft | `preview` without `no-preview` | eligible |
+| Draft | neither managed label | ineligible |
+| Draft | `no-preview`, with or without `preview` | ineligible |
+| Closed | any labels | ineligible |
+| Fork | any state or labels | never eligible for an automatic Preview |
 
-`apps/web/vercel.json` points Vercel's Ignored Build Step at
-`scripts/vercel-build-gate.sh`.
+An eligible pull request must also target `main`, come from the same repository,
+and change at least one web-impacting path:
 
-**Exit codes are inverted from intuition: `exit 0` skips the build, `exit 1` runs it.**
+- `apps/web/**`
+- `packages/**`
+- `package.json`
+- `bun.lock`
+- `tsconfig.base.json`
 
-Decision order:
+Ready status or the `preview` label does not establish trust. The controller
+also proves that the newest `CI` run belongs to the current head SHA, is
+associated with the same pull request and current `main`, and completed
+successfully. A state event can create a Preview immediately when that proof
+already exists. Otherwise the successful `workflow_run` event reconciles the
+pull request after CI finishes. A later non-green run blocks an older success.
 
-| Condition | Result |
-|---|---|
-| `VERCEL_ENV=production` | build |
-| system environment variables not exposed | build |
-| branch has no open PR | skip |
-| PR labelled `no-preview` | skip |
-| PR labelled `preview` | build (even while draft) |
-| PR is a draft | skip |
-| PR is ready for review | build, subject to the path filter |
-| nothing changed under `BUILD_GATE_WATCH_PATHS` | skip |
+## Trust boundary
 
-Every failure path - missing token, GitHub API error, unparseable response,
-unreachable diff base - **builds**. The gate never silently withholds a
-deployment because something broke.
+`Vercel Preview` is a privileged default-branch workflow. It checks out
+`${{ github.sha }}`, which is the trusted base or default-branch commit for its
+three event types. It never selects, fetches, installs, caches, downloads an
+artifact from, builds, or executes pull request code. Dependency lifecycle
+scripts are disabled. The only operational command is
+`bun scripts/vercel-preview-deploy.ts`, and `VERCEL_TOKEN` exists only on that
+step.
 
-The metadata check has to come before the pull request check, and the order is
-load-bearing. `VERCEL_GIT_PULL_REQUEST_ID` is empty both when a branch genuinely
-has no pull request *and* when system environment variables are not exposed at
-all. Testing the PR id first would read the second case as the first and skip
-every preview in the project, silently, which is the one behaviour this gate
-must never have. `VERCEL_GIT_REPO_OWNER` and `VERCEL_GIT_REPO_SLUG` are set
-whenever the variables are exposed, regardless of pull request state, so they
-are what distinguishes the two.
+Only the trusted GitHub controller is isolated from pull request code. The
+API-created Vercel Preview still builds same-repository pull request code with
+the project Preview environment scope. Git Fork Protection must remain enabled,
+and forks are rejected by the controller, but maintainers must still treat the
+Preview environment as available to same-repository pull request code.
 
-## The button
+The `git.deploymentEnabled` map in `apps/web/vercel.json` disables automatic Git
+deployments for `**` and enables them for `main`. This is a repository-controlled
+cost policy, not a security boundary. A repository change can alter that policy,
+so security depends on the trusted workflow and controller validation.
 
-Open the PR as a **draft** while you work. Commits accumulate with zero builds.
-When you want a preview, click **Ready for review** - that is the button. Adding
-the `preview` label also works if you want previews while staying in draft.
+Each API create remains a Vercel deployment. Canceled attempts and reused
+deployments can remain visible in Vercel deployment history and counts. The gate
+reduces unnecessary creation, but it does not promise that an ignored or
+canceled attempt is free.
 
-## Setup per project
+## Reconciliation and Vercel API behavior
 
-1. Project Settings → Environment Variables → tick **Enable access to System
-   Environment Variables**. The gate needs `VERCEL_GIT_PULL_REQUEST_ID`,
-   `VERCEL_GIT_REPO_OWNER`, `VERCEL_GIT_REPO_SLUG` and `VERCEL_GIT_PREVIOUS_SHA`.
-   Note that `VERCEL_GIT_PREVIOUS_SHA` is *only* exposed when an Ignored Build
-   Step is configured.
-2. Add `BUILD_GATE_GITHUB_TOKEN` - a fine-grained token with **Pull requests:
-   read** on the repo. Without it the gate fails open and every push builds.
-3. Optionally add `BUILD_GATE_WATCH_PATHS` (space separated, repo-relative) to
-   skip builds when nothing under those paths changed.
+The controller uses one deployment path:
 
-## Monorepo path filtering
+1. Vercel v7 lists Preview deployments by team, project, branch, and, when
+   creating, exact head SHA.
+2. Vercel v13 creates or reads a deployment with the same-repository GitHub
+   repository ID, head ref, exact head SHA, and Orbit metadata. It omits a
+   target so Vercel uses the project's Preview environment.
+3. Vercel v12 cancels matching active deployments.
 
-This repo holds two apps. Only `apps/web` is deployed to Vercel, so a push that
-only touches `apps/realtime` has nothing to preview. `apps/web/vercel.json`
-therefore supplies a default:
+`QUEUED`, `INITIALIZING`, and `BUILDING` deployments are active. Making a pull
+request ineligible by closing it, converting it to draft without `preview`,
+removing `preview` from an otherwise ineligible draft, or adding `no-preview`
+cancels matching active Preview work. A deployment that is already `READY` is
+not canceled, so its ready URL remains available.
 
-```sh
-BUILD_GATE_WATCH_PATHS="apps/web packages package.json bun.lock tsconfig.base.json"
+Events for stale heads cannot create or cancel work for the current head. An
+existing exact ready or active deployment is reused. Terminal deployment
+history can cause one forced create for the exact head, using the same v13
+endpoint rather than an alternate build path.
+
+## Repository and Vercel setup
+
+The GitHub repository must provide:
+
+- Secret `VERCEL_TOKEN`
+- Variable `VERCEL_TEAM_ID`
+- Variable `VERCEL_PROJECT_ID`
+- Variable `VERCEL_PROJECT_NAME`
+
+Keep Vercel Git Fork Protection enabled. Synchronize the managed `preview` and
+`no-preview` labels with the rest of the repository labels:
+
+```bash
+bun run labels:sync
+bun run labels:sync --apply
 ```
 
-Setting the variable in project settings overrides that default.
+The first command is a dry run. Review its plan before applying it.
 
-Watch paths are **repo-relative**, and the script resolves them against
-`git rev-parse --show-toplevel` rather than the working directory. This matters:
-Vercel runs the Ignored Build Step from the project's **Root Directory**, so for
-a project rooted at `apps/web` a plain `git diff -- apps/web` looks for
-`apps/web/apps/web`, finds nothing, and skips every build. Test any change to
-this script from a subdirectory, not just from the repo root.
+After `.github/workflows/vercel-preview.yml` is present on `main`, remove these
+legacy Vercel environment values:
 
-The diff base is `VERCEL_GIT_PREVIOUS_SHA`, the last **successfully deployed**
-commit - not `HEAD^`. `HEAD^` is wrong whenever more than one commit lands at
-once, which is the normal case for a squash merge or a batch of pushes. If that
-SHA is missing from Vercel's shallow clone the gate builds rather than guessing.
+- `BUILD_GATE_GITHUB_TOKEN`
+- `BUILD_GATE_WATCH_PATHS`
+- `BUILD_GATE_READY_LABEL`
+- `BUILD_GATE_BLOCK_LABEL`
 
-## Testing changes to the gate
+They belonged to the removed Ignored Build Step and are not read by the trusted
+controller.
 
-The script shells out to `curl` and `git`, so it is testable by putting a stub
-`curl` earlier on `PATH`. See the harness used when this landed - it covers
-production, draft, ready, both labels, a missing token, API failure, malformed
-JSON, and the path filter against real git history.
+## Manual recovery
+
+A maintainer can reconcile a positive numeric pull request number with an
+authenticated repository dispatch:
+
+```bash
+gh api repos/Noveum/orbit/dispatches \
+  --method POST \
+  -f event_type=vercel-preview-reconcile \
+  -F 'client_payload[pull_request]=341'
+```
+
+The event type must be `vercel-preview-reconcile`, and
+`client_payload.pull_request` must be a positive number. The event shares the
+same per-pull-request concurrency group as state and CI events. Malformed input
+can form an unused group but is rejected before any Vercel call.
+
+Do not add or use `workflow_dispatch` for recovery. A caller can select a
+non-default ref for that trigger. GitHub runs `repository_dispatch` from the
+last commit on the default branch, preserving the controller trust boundary.
+
+## Post-merge canary
+
+Run this procedure only after the workflow exists on `main`:
+
+1. Confirm Vercel Git Fork Protection is enabled. Configure `VERCEL_TOKEN` and
+   the `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`, and `VERCEL_PROJECT_NAME`
+   repository variables.
+2. Remove the four legacy values only after the workflow is on `main`.
+3. Open a same-repository, web-impacting draft. Confirm that it gets no Preview,
+   apply `preview`, let CI succeed for that exact head, and confirm a Preview is
+   created only then.
+4. Remove `preview` while it is still required, or add `no-preview`. Confirm
+   matching active work is canceled and an already ready URL remains.
+5. Make the pull request ready, push a new relevant head, and confirm only that
+   exact SHA deploys after its CI succeeds.
+6. Repeat with a docs-only change and with a fork. Confirm neither receives an
+   automatic Preview.

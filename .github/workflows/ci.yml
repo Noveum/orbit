@@ -27,6 +27,10 @@ jobs:
         run: bun run lint
       - name: No-comment policy
         run: bun run check-comments
+      - name: Source byte policy
+        run: bun run check-bytes
+      - name: No Bun built-ins in shipped server code
+        run: bun run check-bun-imports
       - name: One copy of every overridden dependency
         run: bun run check-deps
       - name: Typecheck
