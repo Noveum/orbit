@@ -680,7 +680,7 @@ async function pollDeployment(
   deploymentId: string,
   expectedMetadata: Readonly<Record<string, unknown>>,
 ): Promise<VercelDeploymentDetail> {
-  while (true) {
+  for (let detailRequest = 0; detailRequest <= 240; detailRequest += 1) {
     const detail = await requestJson(
       runtime,
       environment,
@@ -712,8 +712,10 @@ async function pollDeployment(
     };
     if (!isActiveVercelDeployment(comparable))
       return fail(`deployment ended in ${detail.readyState}`);
+    if (detailRequest === 240) return fail('deployment polling timed out');
     await runtime.sleep(5000);
   }
+  return fail('deployment polling timed out');
 }
 
 function currentStateMatches(
@@ -807,15 +809,19 @@ async function cancelActiveDeployments(
   if (active.length === 0) {
     return [skipped(pullRequest.number, 'no-active-deployment')];
   }
-  const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
-  if (!currentStateMatches(pullRequest, finalPullRequest)) {
-    return [skipped(pullRequest.number, 'stale-event')];
-  }
-  if (finalPullRequest.state === 'open' && isPreviewEligible(finalPullRequest)) {
-    return [skipped(pullRequest.number, 'preview-ineligible')];
-  }
   const results: PreviewResult[] = [];
   for (const item of active) {
+    const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
+    const identityIsCurrent =
+      currentStateMatches(pullRequest, finalPullRequest) &&
+      repositorySlugMatches(finalPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+      isSameRepositoryPullRequest(finalPullRequest);
+    if (!identityIsCurrent) {
+      return results.length > 0 ? results : [skipped(pullRequest.number, 'stale-event')];
+    }
+    if (finalPullRequest.state === 'open' && isPreviewEligible(finalPullRequest)) {
+      return results.length > 0 ? results : [skipped(pullRequest.number, 'preview-ineligible')];
+    }
     const result = await cancelOneActiveDeployment(runtime, environment, finalPullRequest, item);
     if (result) results.push(result);
   }

@@ -636,6 +636,42 @@ describe('existing deployments, cancellation, and pagination', () => {
     expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(2);
   });
 
+  test('eligibility changing after the first cancellation prevents a second PATCH', async () => {
+    let canceled = false;
+    const harness = createHarness({
+      pullRequest: pullRequest({ draft: true }),
+      deployments: [
+        deployment('BUILDING', { uid: 'dpl_b' }),
+        deployment('BUILDING', { uid: 'dpl_a' }),
+      ],
+      respond: ({ method, url }) => {
+        if (url.endsWith('/pulls/341')) {
+          return json(pullRequest({ draft: !canceled }));
+        }
+        if (method === 'PATCH') {
+          const id = url.split('/').at(-2) ?? 'missing';
+          canceled = true;
+          return json(mutationDeployment(id, 'CANCELED'));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_a',
+        url: 'orbit-preview.vercel.app',
+      },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+    expect(harness.requests.filter(({ url }) => url.endsWith('/pulls/341'))).toHaveLength(3);
+  });
+
   test('cancel 400 accepts a terminal detail race without retrying PATCH', async () => {
     const livePullRequest = pullRequest({ draft: true });
     const harness = createHarness({
@@ -898,6 +934,22 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     ).toHaveLength(3);
   });
 
+  test('active through the final polling GET stops after 240 sleeps and 241 GETs', async () => {
+    let detailReads = 0;
+    const harness = createHarness({
+      deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
+      respond: ({ method, url }) => {
+        if (method !== 'GET' || !url.includes('/v13/deployments/dpl_active')) return undefined;
+        detailReads += 1;
+        return json(mutationDeployment('dpl_active', detailReads === 242 ? 'READY' : 'BUILDING'));
+      },
+    });
+
+    await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('timed out');
+    expect(detailReads).toBe(241);
+    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(240);
+  });
+
   test.each(['ERROR', 'CANCELED', 'BLOCKED', 'DELETED'])(
     'terminal polling state %s fails visibly',
     async (readyState) => {
@@ -1013,15 +1065,15 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 });
 
 describe('identity invariants and bounded edge cases', () => {
-  test('created response must retain every requested Orbit metadata field', async () => {
+  test.each([
+    ['wrong project', { projectId: 'prj_other' }],
+    ['non-null target', { target: 'production' }],
+    ['wrong metadata', { meta: metadata({ orbitGithubWorkflowRunId: 'wrong' }) }],
+  ])('created response rejects %s', async (_name, responseOverrides) => {
     const harness = createHarness({
       respond: ({ method }) =>
         method === 'POST'
-          ? json(
-              mutationDeployment('dpl_created', 'QUEUED', {
-                meta: metadata({ orbitGithubWorkflowRunId: 'wrong' }),
-              }),
-            )
+          ? json(mutationDeployment('dpl_created', 'QUEUED', responseOverrides))
           : undefined,
     });
 
@@ -1029,34 +1081,35 @@ describe('identity invariants and bounded edge cases', () => {
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
   });
 
-  test('detail response must retain metadata from the exact list item', async () => {
+  test.each([
+    ['wrong project', 'dpl_active', { projectId: 'prj_other' }],
+    ['non-null target', 'dpl_active', { target: 'production' }],
+    ['wrong ID', 'dpl_other', {}],
+    ['wrong metadata', 'dpl_active', { meta: metadata({ orbitDeploymentReason: 'wrong' }) }],
+  ])('detail response rejects %s', async (_name, responseId, responseOverrides) => {
     const harness = createHarness({
       deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
       respond: ({ method, url }) =>
         method === 'GET' && url.includes('/v13/deployments/dpl_active')
-          ? json(
-              mutationDeployment('dpl_active', 'READY', {
-                meta: metadata({ orbitDeploymentReason: 'wrong' }),
-              }),
-            )
+          ? json(mutationDeployment(responseId, 'READY', responseOverrides))
           : undefined,
     });
 
     await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('identity drift');
   });
 
-  test('cancel response must retain metadata from the listed deployment', async () => {
-    const livePullRequest = pullRequest({ draft: true });
+  test.each([
+    ['wrong project', 'dpl_active', { projectId: 'prj_other' }],
+    ['non-null target', 'dpl_active', { target: 'production' }],
+    ['wrong ID', 'dpl_other', {}],
+    ['wrong metadata', 'dpl_active', { meta: metadata({ orbitGithubWorkflowRunId: 'wrong' }) }],
+  ])('cancel response rejects %s', async (_name, responseId, responseOverrides) => {
     const harness = createHarness({
-      pullRequest: livePullRequest,
+      pullRequest: pullRequest({ draft: true }),
       deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
       respond: ({ method }) =>
         method === 'PATCH'
-          ? json(
-              mutationDeployment('dpl_active', 'CANCELED', {
-                meta: metadata({ orbitGithubWorkflowRunId: 'wrong' }),
-              }),
-            )
+          ? json(mutationDeployment(responseId, 'CANCELED', responseOverrides))
           : undefined,
     });
 
