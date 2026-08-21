@@ -143,12 +143,19 @@ Run this procedure only after the workflow exists on `main`:
    the `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`, and `VERCEL_PROJECT_NAME`
    repository variables.
 2. Remove the four legacy values only after the workflow is on `main`.
-3. Open a same-repository, web-impacting draft. Confirm that it gets no Preview,
-   apply `preview`, let CI succeed for that exact head, and confirm a Preview is
-   created only then.
-4. Remove `preview` while it is still required, or add `no-preview`. Confirm
-   matching active work is canceled and an already ready URL remains.
-5. Make the pull request ready, push a new relevant head, and confirm only that
-   exact SHA deploys after its CI succeeds.
-6. Repeat with a docs-only change and with a fork. Confirm neither receives an
-   automatic Preview.
+3. Open a same-repository, web-impacting draft at head A. Confirm it gets no
+   Preview, apply `preview`, let CI succeed for exact head A, and wait for its
+   deployment to reach `READY`. Record and retain head A's ready URL.
+4. Keep `preview` applied and push a web-impacting head B. Let exact-head CI
+   succeed and wait until B's deployment is `QUEUED`, `INITIALIZING`, or
+   `BUILDING`. Apply `no-preview`. Confirm the deployment whose metadata names
+   head B is canceled while head A's recorded ready URL remains available.
+5. Keep `no-preview` applied, make the pull request ready for review, and push a
+   web-impacting head C. Let exact-head CI succeed and confirm no deployment is
+   created for C while the label remains. Remove `no-preview`, then confirm a
+   deployment is created for exact head C. Confirm no new deployment is created
+   for head B and no SHA other than C is selected by this reconciliation.
+6. Open a ready same-repository pull request with only a docs change, let its
+   exact-head CI succeed, and confirm it receives no automatic Preview.
+7. Open a ready fork pull request with a web-impacting change, let its exact-head
+   CI succeed, and confirm it receives no automatic Preview.

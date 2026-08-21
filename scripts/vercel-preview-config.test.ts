@@ -41,6 +41,150 @@ const allGateFiles = [
   .map(readIfPresent)
   .join('\n');
 
+const LEGACY_EXPECTED_HEADER = `name: Vercel Preview
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  repository_dispatch:
+    types: [vercel-preview-reconcile]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: vercel-preview-\${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_request || github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: false
+`;
+
+const EXPECTED_WORKFLOW = `${LEGACY_EXPECTED_HEADER}
+jobs:
+  reconcile:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      github.event_name == 'repository_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out trusted controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: \${{ github.repository }}
+          ref: \${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Install trusted controller dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Reconcile Vercel Preview
+        run: bun scripts/vercel-preview-deploy.ts
+        env:
+          GITHUB_TOKEN: \${{ github.token }}
+          VERCEL_TOKEN: \${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: \${{ vars.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: \${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_NAME: \${{ vars.VERCEL_PROJECT_NAME }}
+`;
+
+function partialWorkflowContractAccepts(candidate: string): boolean {
+  const job = capture(candidate, /\njobs:\n {2}reconcile:\n([\s\S]*)$/);
+  const steps = capture(candidate, /\n {4}steps:\n([\s\S]*)$/);
+  const guard =
+    /^ {4}if: >-\n {6}github\.event_name == 'pull_request_target' \|\|\n {6}github\.event_name == 'repository_dispatch' \|\|\n {6}\(github\.event_name == 'workflow_run' &&\n {6}github\.event\.workflow_run\.event == 'pull_request' &&\n {6}github\.event\.workflow_run\.conclusion == 'success'\)\n {4}runs-on: ubuntu-latest\n {4}timeout-minutes: 25\n/;
+  const uses = steps.match(/^\s*uses: .+$/gm);
+  const runs = steps.match(/^\s*run: .+$/gm);
+  const tokenExpression = ['VERCEL_TOKEN: $', '{{ secrets.VERCEL_TOKEN }}'].join('');
+  return (
+    candidate.startsWith(LEGACY_EXPECTED_HEADER) &&
+    !candidate.includes('workflow_dispatch') &&
+    guard.test(job) &&
+    steps.includes('uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1') &&
+    steps.includes('uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6') &&
+    steps.includes('run: bun install --frozen-lockfile --ignore-scripts') &&
+    JSON.stringify(uses) ===
+      JSON.stringify([
+        '        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        '        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
+      ]) &&
+    JSON.stringify(runs) ===
+      JSON.stringify([
+        '        run: bun install --frozen-lockfile --ignore-scripts',
+        '        run: bun scripts/vercel-preview-deploy.ts',
+      ]) &&
+    steps.includes(tokenExpression) &&
+    candidate.match(/VERCEL_TOKEN/g)?.length === 2
+  );
+}
+
+function trustedWorkflowContractAccepts(candidate: string): boolean {
+  return candidate === EXPECTED_WORKFLOW;
+}
+
+const projectNameExpression = [
+  '          VERCEL_PROJECT_NAME: $',
+  '{{ vars.VERCEL_PROJECT_NAME }}',
+].join('');
+
+const legacyAcceptedUnsafeVariants = [
+  [
+    'job-level write permissions',
+    workflow.replace(
+      '    timeout-minutes: 25\n    steps:',
+      '    timeout-minutes: 25\n    permissions:\n      contents: write\n    steps:',
+    ),
+  ],
+  [
+    'workflow run defaults',
+    workflow.replace(
+      '  cancel-in-progress: false\n\njobs:',
+      '  cancel-in-progress: false\n\ndefaults:\n  run:\n    shell: bash -e {0}\n\njobs:',
+    ),
+  ],
+  [
+    'job run defaults',
+    workflow.replace(
+      '    timeout-minutes: 25\n    steps:',
+      '    timeout-minutes: 25\n    defaults:\n      run:\n        shell: bash -e {0}\n    steps:',
+    ),
+  ],
+  [
+    'install step shell override',
+    workflow.replace(
+      '        run: bun install --frozen-lockfile --ignore-scripts',
+      '        run: bun install --frozen-lockfile --ignore-scripts\n        shell: bash -e {0}',
+    ),
+  ],
+  [
+    'controller step shell override',
+    workflow.replace(projectNameExpression, `${projectNameExpression}\n        shell: bash -e {0}`),
+  ],
+  [
+    'continued install command',
+    workflow.replace(
+      '        run: bun install --frozen-lockfile --ignore-scripts',
+      '        run: bun install --frozen-lockfile --ignore-scripts\n          && bun scripts/vercel-preview-deploy.ts',
+    ),
+  ],
+] as const;
+
+const continuedControllerWorkflow = workflow.replace(
+  '        run: bun scripts/vercel-preview-deploy.ts\n        env:',
+  '        run: bun scripts/vercel-preview-deploy.ts\n          && bun scripts/another.ts\n        env:',
+);
+
 describe('Vercel Preview repository configuration', () => {
   test('disables automatic deployment for feature, feature/preview, and codex/review/pr341 while allowing main', () => {
     expect(vercel.git?.deploymentEnabled).toEqual({ '**': false, main: true });
@@ -68,29 +212,12 @@ describe('Vercel Preview repository configuration', () => {
   });
 
   test('uses only the exact trusted triggers, permissions, and serialized concurrency', () => {
-    const expectedHeader = `name: Vercel Preview
-
-on:
-  pull_request_target:
-    branches: [main]
-    types: [opened, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-  repository_dispatch:
-    types: [vercel-preview-reconcile]
-
-permissions:
-  actions: read
-  contents: read
-  pull-requests: read
-
-concurrency:
-  group: vercel-preview-\${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_request || github.event.workflow_run.head_sha || github.run_id }}
-  cancel-in-progress: false
-`;
-    expect(workflow.startsWith(expectedHeader)).toBe(true);
+    expect(workflow.startsWith(LEGACY_EXPECTED_HEADER)).toBe(true);
     expect(workflow).not.toContain('workflow_dispatch');
+  });
+
+  test('matches the complete trusted workflow and effective reconcile job', () => {
+    expect(trustedWorkflowContractAccepts(workflow)).toBe(true);
   });
 
   test('guards successful pull request CI while allowing state and recovery events', () => {
@@ -167,5 +294,17 @@ concurrency:
     expect(guide).toContain('vercel-preview-reconcile');
     expect(guide).toContain('client_payload.pull_request');
     expect(guide).toContain('workflow_dispatch');
+  });
+
+  test.each(legacyAcceptedUnsafeVariants)(
+    'rejects %s even when the partial workflow assertions accept it',
+    (_name, unsafeWorkflow) => {
+      expect(partialWorkflowContractAccepts(unsafeWorkflow)).toBe(true);
+      expect(trustedWorkflowContractAccepts(unsafeWorkflow)).toBe(false);
+    },
+  );
+
+  test('rejects a continued token-bearing controller command', () => {
+    expect(trustedWorkflowContractAccepts(continuedControllerWorkflow)).toBe(false);
   });
 });
