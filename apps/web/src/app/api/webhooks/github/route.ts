@@ -154,12 +154,17 @@ export async function POST(request: Request): Promise<Response> {
           (item) => item.id === dispatch.notificationId,
         );
         if (notification === undefined) continue;
-        const delivered = await dispatchSlackDm(db, {
-          organizationId: outcome.organizationId,
-          userId: dispatch.userId,
-          clientMsgId: dispatch.notificationId,
-          text: `${notification.title}: ${absoluteUrl(notification.url)}`,
-        });
+        let delivered = 0;
+        try {
+          delivered = await dispatchSlackDm(db, {
+            organizationId: outcome.organizationId,
+            userId: dispatch.userId,
+            clientMsgId: dispatch.notificationId,
+            text: `${notification.title}: ${absoluteUrl(notification.url)}`,
+          });
+        } catch (error) {
+          console.error('[orbit] slack DM delivery deferred for retry', error);
+        }
         if (delivered !== 1) continue;
         await markNotificationDelivered(db, notification.id, 'slack_dm');
       }

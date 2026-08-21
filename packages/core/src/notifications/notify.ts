@@ -18,12 +18,17 @@ export async function notifyRecipients(
     if (dispatch.sendAt > new Date()) continue;
     const notification = outcome.notifications.find((item) => item.id === dispatch.notificationId);
     if (notification === undefined) continue;
-    const delivered = await dispatchSlackDm(executor, {
-      organizationId: notification.organizationId,
-      userId: dispatch.userId,
-      clientMsgId: dispatch.notificationId,
-      text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
-    });
+    let delivered = 0;
+    try {
+      delivered = await dispatchSlackDm(executor, {
+        organizationId: notification.organizationId,
+        userId: dispatch.userId,
+        clientMsgId: dispatch.notificationId,
+        text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
+      });
+    } catch (error) {
+      console.error('[orbit] slack DM delivery deferred for retry', error);
+    }
     if (delivered === 1) {
       await markNotificationDelivered(executor, notification.id, 'slack_dm');
     }
