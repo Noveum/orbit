@@ -73,8 +73,6 @@ function eventFor(fixture: Fixture, overrides: Partial<NotificationEvent> = {}):
 }
 
 describe('notifyMany', () => {
-  const slackEnabled = process.env['ORBIT_SLACK_ENABLED'] === '1';
-
   it('offers Slack DM as a distinct personal notification channel', () => {
     expect(NOTIFICATION_CHANNELS).toContain('slack_dm');
     expect(defaultPreferences()).toContainEqual({
@@ -85,12 +83,13 @@ describe('notifyMany', () => {
   });
 
   it('routes a personal event to Slack DM instead of the channel', async () => {
-    if (!slackEnabled) return;
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
-      const outcome = await notifyMany(tx, [
-        eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' }),
-      ]);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { slackEnabled: true },
+      );
 
       expect(outcome.slackDm).toHaveLength(1);
       expect(outcome.slack).toHaveLength(0);
@@ -99,7 +98,6 @@ describe('notifyMany', () => {
   });
 
   it('does not persist or dedupe a DM-only notification during quiet hours', async () => {
-    if (!slackEnabled) return;
     await withRollback(async (tx) => {
       const fixture = await seed(tx, 'UTC');
       await tx.insert(notificationPreference).values([
@@ -121,12 +119,14 @@ describe('notifyMany', () => {
       const event = eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' });
       const deferred = await notifyMany(tx, [event], {
         now: new Date('2026-07-22T20:00:00.000Z'),
+        slackEnabled: true,
       });
       expect(deferred.notifications).toHaveLength(0);
       expect(deferred.deduped).toBe(0);
 
       const delivered = await notifyMany(tx, [event], {
         now: new Date('2026-07-23T10:00:00.000Z'),
+        slackEnabled: true,
       });
       expect(delivered.slackDm).toHaveLength(1);
       expect(delivered.deduped).toBe(0);
@@ -134,12 +134,13 @@ describe('notifyMany', () => {
   });
 
   it('keeps a team event on the Slack channel', async () => {
-    if (!slackEnabled) return;
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
-      const outcome = await notifyMany(tx, [
-        eventFor(fixture, { userIds: [fixture.adaId], reason: 'state_changed' }),
-      ]);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'state_changed' })],
+        { slackEnabled: true },
+      );
 
       expect(outcome.slack).toHaveLength(1);
       expect(outcome.slackDm).toHaveLength(0);

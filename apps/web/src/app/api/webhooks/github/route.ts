@@ -125,6 +125,7 @@ export async function POST(request: Request): Promise<Response> {
         teamIds: applied.teamIds,
         actions,
         notifications: notified.notifications,
+        slack: notified.slack,
         slackDm: notified.slackDm,
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
@@ -136,7 +137,8 @@ export async function POST(request: Request): Promise<Response> {
     if (
       slackIntegrationEnabled() &&
       outcome.organizationId !== null &&
-      outcome.slackText !== null
+      outcome.slackText !== null &&
+      outcome.slack.length > 0
     ) {
       await dispatchSlackMessage(db, {
         organizationId: outcome.organizationId,

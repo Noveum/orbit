@@ -128,10 +128,11 @@ interface Plan {
 export async function notifyMany(
   database: NotificationDatabase,
   events: readonly NotificationEvent[],
-  options: { readonly now?: Date } = {},
+  options: { readonly now?: Date; readonly slackEnabled?: boolean } = {},
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
+  const slackFeatureEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
   const recipientIds = unique(
     parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
@@ -169,6 +170,7 @@ export async function notifyMany(
         settings.get(userId) ?? DEFAULT_SETTINGS,
         disabled,
         now,
+        slackFeatureEnabled,
       );
       if (plan !== null) {
         seen.add(key);
@@ -186,22 +188,27 @@ export async function notifyMany(
   return buildOutcome(plans, rows, deduped);
 }
 
+function resolveSlackFeatureEnabled(value: boolean | undefined): boolean {
+  return value ?? SLACK_INTEGRATION_ENABLED;
+}
+
 function planFor(
   event: ParsedEvent,
   recipient: Recipient,
   settings: NotificationSettings,
   disabled: ReadonlySet<string>,
   now: Date,
+  slackFeatureEnabled: boolean,
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
   const personal = isPersonalNotification(event);
   const slackEnabled =
-    SLACK_INTEGRATION_ENABLED &&
+    slackFeatureEnabled &&
     !personal &&
     isChannelEnabled(disabled, recipient.id, 'slack', event.type);
   const slackDmEnabled =
-    SLACK_INTEGRATION_ENABLED &&
+    slackFeatureEnabled &&
     personal &&
     isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
   if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
