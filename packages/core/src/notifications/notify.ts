@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
+  claimSlackDmDeliveries,
   markNotificationDelivered,
   markSlackDmDelivery,
   notifyMany,
@@ -16,7 +17,10 @@ export async function notifyRecipients(
   events: readonly NotificationEvent[],
 ): Promise<SyncAction[]> {
   const populated = events.filter((event) => event.userIds.length > 0);
-  if (populated.length === 0) return [];
+  if (populated.length === 0) {
+    await retrySlackDmDeliveries(executor);
+    return [];
+  }
   const outcome = await notifyMany(executor, populated);
   for (const dispatch of outcome.slackDm) {
     if (dispatch.sendAt > new Date()) continue;
@@ -40,7 +44,45 @@ export async function notifyRecipients(
       await markSlackDmDelivery(executor, notification.id, dispatch.userId, false);
     }
   }
+  await retrySlackDmDeliveries(executor);
   return outcome.actions;
+}
+
+export async function retrySlackDmDeliveries(executor: Executor, limit = 100): Promise<number> {
+  const claimed = await claimSlackDmDeliveries(executor, limit);
+  if (claimed.length === 0) return 0;
+  const rows = await executor
+    .select()
+    .from(schema.notification)
+    .where(
+      inArray(
+        schema.notification.id,
+        claimed.map((row) => row.notificationId),
+      ),
+    );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  let delivered = 0;
+  for (const delivery of claimed) {
+    const notification = byId.get(delivery.notificationId);
+    if (notification === undefined) continue;
+    let sent = 0;
+    try {
+      sent = await dispatchSlackDm(executor, {
+        organizationId: notification.organizationId,
+        userId: delivery.userId,
+        clientMsgId: notification.id,
+        text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
+      });
+    } catch (error) {
+      console.error('[orbit] Slack DM retry failed', error);
+    }
+    await markSlackDmDelivery(executor, notification.id, delivery.userId, sent === 1);
+    if (sent === 1) {
+      delivered += 1;
+      await markNotificationDelivered(executor, notification.id, 'slack_dm');
+    }
+  }
+  return delivered;
 }
 
 export async function issueSubscriberIds(executor: Executor, issueId: string): Promise<string[]> {
