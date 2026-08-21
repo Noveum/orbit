@@ -98,6 +98,41 @@ describe('notifyMany', () => {
     });
   });
 
+  it('does not persist or dedupe a DM-only notification during quiet hours', async () => {
+    if (!slackEnabled) return;
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'UTC');
+      await tx.insert(notificationPreference).values([
+        {
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel: 'inbox',
+          type: 'comment_created',
+          enabled: false,
+        },
+        {
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel: 'email',
+          type: 'comment_created',
+          enabled: false,
+        },
+      ]);
+      const event = eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' });
+      const deferred = await notifyMany(tx, [event], {
+        now: new Date('2026-07-22T20:00:00.000Z'),
+      });
+      expect(deferred.notifications).toHaveLength(0);
+      expect(deferred.deduped).toBe(0);
+
+      const delivered = await notifyMany(tx, [event], {
+        now: new Date('2026-07-23T10:00:00.000Z'),
+      });
+      expect(delivered.slackDm).toHaveLength(1);
+      expect(delivered.deduped).toBe(0);
+    });
+  });
+
   it('keeps a team event on the Slack channel', async () => {
     if (!slackEnabled) return;
     await withRollback(async (tx) => {

@@ -142,7 +142,6 @@ export async function notifyMany(
         deduped += 1;
         continue;
       }
-      seen.add(key);
       const plan = planFor(
         event,
         recipient,
@@ -150,7 +149,10 @@ export async function notifyMany(
         disabled,
         now,
       );
-      if (plan !== null) plans.push(plan);
+      if (plan !== null) {
+        seen.add(key);
+        plans.push(plan);
+      }
     }
   }
   if (plans.length === 0) return { ...emptyOutcome(), deduped };
@@ -191,6 +193,7 @@ function planFor(
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
   const deferred =
     (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
+  if (deferred && slackDmEnabled && !emailEnabled && !inboxEnabled && !slackEnabled) return null;
   return {
     id: randomUUIDv7(now),
     event,
