@@ -29,7 +29,9 @@ true for the current pull request head:
 The `no-preview` label wins when both control labels are present. Converting a pull request back to
 draft also makes it ineligible unless `preview` remains present. When a state change makes a pull
 request ineligible, the workflow cancels active Preview deployments for that pull request but does
-not delete completed previews.
+not delete completed previews. The reconciler that owns an active deployment poll checks live pull
+request state after every active detail response, so it can cancel its exact deployment while a
+later state event waits in the serialized workflow group.
 
 This design optimizes for avoided Vercel application builds. The small GitHub metadata job still
 uses GitHub Actions time, and an API-created eligible preview is still a normal Vercel deployment.
@@ -92,6 +94,11 @@ token is a GitHub Actions secret. Team ID, project ID, and project name are Acti
 Concurrency is keyed by pull request number when the event supplies one and does not cancel an
 in-progress reconciler. Recovery dispatches require a bounded positive numeric pull request input
 and share that pull request's group. Vercel metadata checks provide a second idempotency boundary.
+A polling owner refetches the current pull request between active deployment reads. It cancels only
+the deployment whose validated metadata names the same pull request head when that exact identity
+becomes closed or ineligible. Identity or head drift ends the old poll without canceling work for a
+different head. This keeps one Create POST and per-pull-request serialization while allowing timely
+cost cancellation.
 A workflow-run payload with no linked pull request, or with more than one distinct linked pull
 request, is rejected because one Actions concurrency group cannot serialize multiple pull requests
 and the event cannot prove one unambiguous base association.
@@ -115,13 +122,16 @@ completed successfully and its linked pull request must match the current number
 head ref and SHA, base ref, and live base SHA. A newer queued, failed, canceled, or stale-base run
 blocks deployment even when an older green run exists. The triggering `workflow_run` is only a
 wake-up signal and is not trusted as proof. Immediately before mutation, the controller refetches
-live pull request state and repeats the current CI proof so a concurrent push, label change, or
-newer run cannot authorize stale work.
+live pull request state and repeats the current CI proof. It then refetches the pull request once
+more after that proof and requires the exact identity, head, state, and labels to remain eligible
+before the Create POST, so a transition during the proof cannot authorize stale work.
 
-Changed files are read from the paginated pull request files endpoint. The web deployment is
-affected when a filename is below `apps/web/` or `packages/`, or is exactly `package.json`,
-`bun.lock`, or `tsconfig.base.json`. Configuration is fixed in trusted code rather than split
-between Vercel and GitHub settings.
+Changed files are read from the paginated pull request files endpoint. Each item retains its
+validated GitHub status, and a renamed item must include a bounded `previous_filename`. The web
+deployment is affected when either the current filename or, for a rename, the previous filename is
+below `apps/web/` or `packages/`, or is exactly `package.json`, `bun.lock`, or
+`tsconfig.base.json`. Configuration is fixed in trusted code rather than split between Vercel and
+GitHub settings.
 
 GitHub and Vercel requests have a finite timeout. One monotonic 23-minute reconciliation deadline
 also bounds every request, retry, pagination loop, observation, poll, and sleep beneath the
@@ -138,6 +148,9 @@ endpoint, using the configured project plus branch and SHA filters where applica
 again by exact project ID, null Preview target, and namespaced Orbit metadata for repository ID,
 pull request number, branch ref, and commit SHA. List metadata may be absent on unrelated historical
 deployments. Pagination is bounded, repeated cursors are rejected, and every page is validated.
+Deployment IDs must contain only ASCII letters, digits, underscores, and hyphens within the fixed
+length bound. Every ID is checked against both tokens before use, and every dynamic deployment path
+segment is URL encoded.
 
 If an exact deployment is ready, it is reused. An exact queued, initializing, or building
 deployment is polled rather than duplicated. If no such deployment exists, the controller calls
@@ -148,8 +161,10 @@ identify the deployment without guessing. `forceNew=1` is used only when a new r
 already observed an exact terminal failed deployment. Create, detail, and cancel responses must
 prove deployment ID, project ID, null Preview target, state, and Orbit metadata. The workflow polls
 the created deployment immediately and then through at most 240 five-second sleeps plus one final
-GET to a ready or terminal state, requiring a nonempty final URL. The 23-minute controller deadline
-may stop this sequence earlier.
+GET to a ready or terminal state, requiring a nonempty final URL. After every active detail, the
+polling owner refetches the pull request. If the same exact identity is now ineligible, it cancels
+only that deployment and returns a canceled result. If the identity or head changed, it returns a
+stale result without canceling. The 23-minute controller deadline may stop this sequence earlier.
 
 Create Deployment has no idempotency key. After a network error, timeout, 429, 5xx, 409, or an
 unparseable success response, the controller marks the one POST as attempted and performs only a
@@ -203,20 +218,21 @@ workflow structure locally but cannot exercise the new privileged event path unt
 has landed on `main`. The first same-repository test pull request after merge is the production
 canary. It starts as a web-impacting draft with no Preview, applies `preview` and waits for exact-head
 CI plus one Preview, then removes the label or applies `no-preview` to prove active cancellation
-without deleting a ready URL. A new ready head proves exact-SHA behavior. Separate docs-only and
-fork cases prove that neither receives an automatic Preview.
+by the polling owner without deleting a ready URL. A new ready head proves exact-SHA behavior.
+Separate docs-only and fork cases prove that neither receives an automatic Preview.
 
 ## Tests
 
 Shared validator tests cover accepted payloads and rejection of missing identifiers, invalid SHAs,
-unknown states, and malformed pagination.
+unknown states, malformed pagination, malformed rename history, and unsafe deployment IDs.
 
 Controller tests use injected fetch and delay functions. They cover ready and draft policy,
 control-label precedence, state transitions, CI success for the exact SHA, stale events, closed
 pull requests, fork refusal, relevant and irrelevant paths, GitHub pagination, Vercel pagination,
 existing active and ready deployments, exact project and Preview identity, one exact create,
-ambiguous create observation, active cancellation races, bounded retries, timeouts, authentication
-failures, invalid JSON, invalid response shapes, and missing settings.
+poll-owner cancellation and head drift, post-CI state races, ambiguous create observation, active
+cancellation races, bounded retries, real abort timeouts, network and body-read failures, invalid
+JSON, invalid response shapes, token-safe results, and missing settings.
 
 Repository checks cover the branch deployment map, the managed labels, removal of the old ignored
 command and token references, discovery of the script tests by the root test command, and the two

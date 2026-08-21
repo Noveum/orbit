@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type {
+  GithubPreviewFile,
   GithubPreviewPullRequest,
   VercelDeployment,
 } from '../packages/shared/src/validators/index.ts';
@@ -78,16 +79,64 @@ describe('Preview eligibility', () => {
 
 describe('Web Preview path policy', () => {
   test('includes the application, packages, and deployment configuration', () => {
-    expect(isWebPreviewFile('apps/web/src/app/page.tsx')).toBe(true);
-    expect(isWebPreviewFile('packages/shared/src/index.ts')).toBe(true);
-    expect(isWebPreviewFile('package.json')).toBe(true);
-    expect(isWebPreviewFile('bun.lock')).toBe(true);
-    expect(isWebPreviewFile('tsconfig.base.json')).toBe(true);
+    for (const filename of [
+      'apps/web/src/app/page.tsx',
+      'packages/shared/src/index.ts',
+      'package.json',
+      'bun.lock',
+      'tsconfig.base.json',
+    ]) {
+      expect(isWebPreviewFile({ filename, status: 'modified' })).toBe(true);
+    }
   });
 
   test('excludes unrelated applications and documentation', () => {
-    expect(isWebPreviewFile('apps/realtime/src/index.ts')).toBe(false);
-    expect(isWebPreviewFile('docs/README.md')).toBe(false);
+    expect(isWebPreviewFile({ filename: 'apps/realtime/src/index.ts', status: 'modified' })).toBe(
+      false,
+    );
+    expect(isWebPreviewFile({ filename: 'docs/README.md', status: 'modified' })).toBe(false);
+  });
+
+  test.each([
+    [
+      'into the web application',
+      {
+        filename: 'apps/web/src/feature.ts',
+        status: 'renamed',
+        previous_filename: 'docs/feature.ts',
+      },
+    ],
+    [
+      'out of the web application',
+      {
+        filename: 'docs/feature.ts',
+        status: 'renamed',
+        previous_filename: 'apps/web/src/feature.ts',
+      },
+    ],
+    [
+      'out of a shared package',
+      {
+        filename: 'docs/shared.ts',
+        status: 'renamed',
+        previous_filename: 'packages/shared/src/shared.ts',
+      },
+    ],
+  ] satisfies readonly (readonly [string, GithubPreviewFile])[])(
+    'treats a rename %s as web-impacting',
+    (_name, file) => {
+      expect(isWebPreviewFile(file)).toBe(true);
+    },
+  );
+
+  test('ignores an unrelated rename', () => {
+    expect(
+      isWebPreviewFile({
+        filename: 'docs/new-name.md',
+        status: 'renamed',
+        previous_filename: 'docs/old-name.md',
+      }),
+    ).toBe(false);
   });
 });
 

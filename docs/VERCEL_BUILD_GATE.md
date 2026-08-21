@@ -29,12 +29,19 @@ and change at least one web-impacting path:
 - `bun.lock`
 - `tsconfig.base.json`
 
+For a renamed file, either the current filename or GitHub's validated
+`previous_filename` can make the change web-impacting. Moving code out of
+`apps/web/**` or `packages/**` therefore still requires a Preview.
+
 Ready status or the `preview` label does not establish trust. The controller
 also proves that the newest `CI` run belongs to the current head SHA, is
 associated with the same pull request and current `main`, and completed
 successfully. A state event can create a Preview immediately when that proof
 already exists. Otherwise the successful `workflow_run` event reconciles the
 pull request after CI finishes. A later non-green run blocks an older success.
+Before Create, the controller repeats the CI proof and then refetches the pull
+request once more. Any head, identity, state, draft, or label change during that
+proof prevents the POST.
 
 ## Trust boundary
 
@@ -73,11 +80,24 @@ The controller uses one deployment path:
    target so Vercel uses the project's Preview environment.
 3. Vercel v12 cancels matching active deployments.
 
+Deployment IDs are accepted only when they contain ASCII letters, digits,
+underscores, and hyphens within the controller's fixed bound. The controller
+checks IDs and URLs against both tokens before they can enter a result, and URL
+encodes every deployment ID used as an API path segment.
+
 `QUEUED`, `INITIALIZING`, and `BUILDING` deployments are active. Making a pull
 request ineligible by closing it, converting it to draft without `preview`,
 removing `preview` from an otherwise ineligible draft, or adding `no-preview`
 cancels matching active Preview work. A deployment that is already `READY` is
 not canceled, so its ready URL remains available.
+
+Per-pull-request workflow runs remain serialized with in-progress cancellation
+disabled. While the owner polls a queued, initializing, or building deployment,
+it refetches the current pull request after every active detail response. If the
+same exact head becomes closed or ineligible, that owner cancels only its exact
+deployment and returns a canceled result. If the head or repository identity
+changed, the old owner stops without canceling the different head. The queued
+state event then reconciles the latest state.
 
 Events for stale heads cannot create or cancel work for the current head. An
 existing exact ready or active deployment is reused. Terminal deployment
@@ -148,8 +168,9 @@ Run this procedure only after the workflow exists on `main`:
    deployment to reach `READY`. Record and retain head A's ready URL.
 4. Keep `preview` applied and push a web-impacting head B. Let exact-head CI
    succeed and wait until B's deployment is `QUEUED`, `INITIALIZING`, or
-   `BUILDING`. Apply `no-preview`. Confirm the deployment whose metadata names
-   head B is canceled while head A's recorded ready URL remains available.
+   `BUILDING`. Apply `no-preview`. Confirm the polling owner observes the new
+   live state and cancels the deployment whose metadata names head B before it
+   reaches `READY`, while head A's recorded ready URL remains available.
 5. Keep `no-preview` applied, make the pull request ready for review, and push a
    web-impacting head C. Let exact-head CI succeed and confirm no deployment is
    created for C while the label remains. Remove `no-preview`, then confirm a

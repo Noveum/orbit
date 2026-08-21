@@ -96,6 +96,7 @@ export type PreviewRuntime = {
   readonly readText: (path: string) => Promise<string>;
   readonly fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   readonly sleep: (milliseconds: number) => Promise<void>;
+  readonly scheduleTimeout: (callback: () => void, milliseconds: number) => () => void;
   readonly now: () => number;
   readonly log: (message: string) => void;
 };
@@ -295,7 +296,7 @@ async function requestJsonAttempt<T>(
 ): Promise<T> {
   const safeRead = method === 'GET';
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const cancelTimeout = runtime.scheduleTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const request: RequestInit = {
     method,
     headers: requestHeaders(environment, kind, body !== undefined),
@@ -328,7 +329,7 @@ async function requestJsonAttempt<T>(
     }
     return interpretResponse(runtime, kind, response, text, schema, safeRead);
   } finally {
-    clearTimeout(timeout);
+    cancelTimeout();
   }
 }
 
@@ -586,7 +587,7 @@ async function affectsWeb(
       url.toString(),
       githubPreviewFilesSchema,
     );
-    if (files.some(({ filename }) => isWebPreviewFile(filename))) return true;
+    if (files.some(isWebPreviewFile)) return true;
     if (files.length < 100) return false;
   }
   return fail('pull request files pagination is incomplete');
@@ -629,6 +630,9 @@ async function listDeployments(
       vercelUrl('/v7/deployments', pageQuery),
       vercelDeploymentsPageSchema,
     );
+    for (const deployment of page.deployments) {
+      assertSafeDeploymentId(deployment.uid, environment);
+    }
     deployments.push(...page.deployments);
     const next = page.pagination.next;
     if (next === null) return deployments;
@@ -673,21 +677,65 @@ function assertSafeDeploymentUrl(url: string, environment: VercelPreviewEnvironm
   return url;
 }
 
+function assertSafeDeploymentId(id: string, environment: VercelPreviewEnvironment): string {
+  if (id.includes(environment.GITHUB_TOKEN) || id.includes(environment.VERCEL_TOKEN)) {
+    fail('deployment ID is unsafe');
+  }
+  return id;
+}
+
+function deploymentPathSegment(id: string, environment: VercelPreviewEnvironment): string {
+  return encodeURIComponent(assertSafeDeploymentId(id, environment));
+}
+
+function assertSafePreviewResults(
+  results: readonly PreviewResult[],
+  environment: VercelPreviewEnvironment,
+): readonly PreviewResult[] {
+  const serialized = JSON.stringify(results);
+  if (
+    serialized.includes(environment.GITHUB_TOKEN) ||
+    serialized.includes(environment.VERCEL_TOKEN)
+  ) {
+    fail('preview result is unsafe');
+  }
+  return results;
+}
+
+type DeploymentPollResult =
+  | { readonly kind: 'ready'; readonly deployment: VercelDeploymentDetail }
+  | { readonly kind: 'interrupted'; readonly result: PreviewResult };
+
+function comparableDeployment(detail: VercelDeploymentDetail): VercelDeployment {
+  return {
+    uid: detail.id,
+    projectId: detail.projectId,
+    url: detail.url,
+    target: detail.target,
+    readyState: detail.readyState,
+    meta: detail.meta,
+  };
+}
+
 async function pollDeployment(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
   pullRequest: GithubPreviewPullRequest,
   deploymentId: string,
   expectedMetadata: Readonly<Record<string, unknown>>,
-): Promise<VercelDeploymentDetail> {
+): Promise<DeploymentPollResult> {
   for (let detailRequest = 0; detailRequest <= 240; detailRequest += 1) {
+    const encodedDeploymentId = deploymentPathSegment(deploymentId, environment);
     const detail = await requestJson(
       runtime,
       environment,
       'vercel',
-      vercelUrl(`/v13/deployments/${deploymentId}`, { teamId: environment.VERCEL_TEAM_ID }),
+      vercelUrl(`/v13/deployments/${encodedDeploymentId}`, {
+        teamId: environment.VERCEL_TEAM_ID,
+      }),
       vercelDeploymentDetailSchema,
     );
+    assertSafeDeploymentId(detail.id, environment);
     assertSafeDeploymentUrl(detail.url, environment);
     if (
       !detailIdentityMatches(
@@ -701,21 +749,63 @@ async function pollDeployment(
     ) {
       return fail('deployment detail identity drift');
     }
-    if (detail.readyState === 'READY') return detail;
-    const comparable: VercelDeployment = {
-      uid: detail.id,
-      projectId: detail.projectId,
-      url: detail.url,
-      target: detail.target,
-      readyState: detail.readyState,
-      meta: detail.meta,
-    };
+    if (detail.readyState === 'READY') return { kind: 'ready', deployment: detail };
+    const comparable = comparableDeployment(detail);
     if (!isActiveVercelDeployment(comparable))
       return fail(`deployment ended in ${detail.readyState}`);
+    const currentPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
+    const exactCurrentIdentity =
+      pullRequestIdentityMatches(pullRequest, currentPullRequest) &&
+      repositorySlugMatches(currentPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+      isSameRepositoryPullRequest(currentPullRequest) &&
+      currentPullRequest.base.ref === 'main';
+    if (!exactCurrentIdentity) {
+      return {
+        kind: 'interrupted',
+        result: skipped(pullRequest.number, 'stale-event'),
+      };
+    }
+    if (currentPullRequest.state !== 'open' || !isPreviewEligible(currentPullRequest)) {
+      const result = await cancelOneActiveDeployment(
+        runtime,
+        environment,
+        currentPullRequest,
+        comparable,
+      );
+      return {
+        kind: 'interrupted',
+        result: result ?? skipped(pullRequest.number, 'no-active-deployment'),
+      };
+    }
     if (detailRequest === 240) return fail('deployment polling timed out');
     await runtime.sleep(5000);
   }
   return fail('deployment polling timed out');
+}
+
+function repositoryIdentityMatches(
+  first: GithubPreviewRepository,
+  current: GithubPreviewRepository,
+): boolean {
+  return (
+    first.id === current.id &&
+    first.name.toLowerCase() === current.name.toLowerCase() &&
+    first.owner.login.toLowerCase() === current.owner.login.toLowerCase()
+  );
+}
+
+function pullRequestIdentityMatches(
+  first: GithubPreviewPullRequest,
+  current: GithubPreviewPullRequest,
+): boolean {
+  return (
+    first.number === current.number &&
+    first.head.sha === current.head.sha &&
+    first.head.ref === current.head.ref &&
+    repositoryIdentityMatches(first.head.repo, current.head.repo) &&
+    first.base.ref === current.base.ref &&
+    repositoryIdentityMatches(first.base.repo, current.base.repo)
+  );
 }
 
 function currentStateMatches(
@@ -731,14 +821,9 @@ function currentStateMatches(
     .sort()
     .join('\n');
   return (
-    first.number === current.number &&
+    pullRequestIdentityMatches(first, current) &&
     first.state === current.state &&
     first.draft === current.draft &&
-    first.head.sha === current.head.sha &&
-    first.head.ref === current.head.ref &&
-    first.head.repo.id === current.head.repo.id &&
-    first.base.ref === current.base.ref &&
-    first.base.repo.id === current.base.repo.id &&
     firstLabels === currentLabels
   );
 }
@@ -750,12 +835,15 @@ async function cancelOneActiveDeployment(
   item: VercelDeployment,
 ): Promise<PreviewResult | null> {
   let canceled: VercelCanceledDeployment;
+  const encodedDeploymentId = deploymentPathSegment(item.uid, environment);
   try {
     canceled = await requestJson(
       runtime,
       environment,
       'vercel',
-      vercelUrl(`/v12/deployments/${item.uid}/cancel`, { teamId: environment.VERCEL_TEAM_ID }),
+      vercelUrl(`/v12/deployments/${encodedDeploymentId}/cancel`, {
+        teamId: environment.VERCEL_TEAM_ID,
+      }),
       vercelCanceledDeploymentSchema,
       { method: 'PATCH' },
     );
@@ -766,9 +854,12 @@ async function cancelOneActiveDeployment(
       runtime,
       environment,
       'vercel',
-      vercelUrl(`/v13/deployments/${item.uid}`, { teamId: environment.VERCEL_TEAM_ID }),
+      vercelUrl(`/v13/deployments/${encodedDeploymentId}`, {
+        teamId: environment.VERCEL_TEAM_ID,
+      }),
       vercelDeploymentDetailSchema,
     );
+    assertSafeDeploymentId(detail.id, environment);
     assertSafeDeploymentUrl(detail.url, environment);
     if (!detailIdentityMatches(detail, item.uid, environment, pullRequest, item.meta)) {
       fail('canceled deployment identity drift');
@@ -778,6 +869,7 @@ async function cancelOneActiveDeployment(
     }
     return null;
   }
+  assertSafeDeploymentId(canceled.id, environment);
   if (
     canceled.readyState !== 'CANCELED' ||
     !detailIdentityMatches(canceled, item.uid, environment, pullRequest, item.meta)
@@ -828,7 +920,7 @@ async function cancelActiveDeployments(
   return results.length > 0 ? results : [skipped(pullRequest.number, 'no-active-deployment')];
 }
 
-async function observedCreateResult(
+async function reusedDeploymentResult(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
   pullRequest: GithubPreviewPullRequest,
@@ -836,9 +928,14 @@ async function observedCreateResult(
 ): Promise<PreviewResult | null> {
   const ready = deployments.find(isReadyVercelDeployment);
   if (ready) {
-    const final = ready.url
-      ? { id: ready.uid, url: assertSafeDeploymentUrl(ready.url, environment) }
-      : await pollDeployment(runtime, environment, pullRequest, ready.uid, ready.meta);
+    let final: { readonly id: string; readonly url: string };
+    if (ready.url) {
+      final = { id: ready.uid, url: assertSafeDeploymentUrl(ready.url, environment) };
+    } else {
+      const polled = await pollDeployment(runtime, environment, pullRequest, ready.uid, ready.meta);
+      if (polled.kind === 'interrupted') return polled.result;
+      final = polled.deployment;
+    }
     return {
       kind: 'created',
       pullRequestNumber: pullRequest.number,
@@ -849,7 +946,9 @@ async function observedCreateResult(
   }
   const active = deployments.find(isActiveVercelDeployment);
   if (!active) return null;
-  const final = await pollDeployment(runtime, environment, pullRequest, active.uid, active.meta);
+  const polled = await pollDeployment(runtime, environment, pullRequest, active.uid, active.meta);
+  if (polled.kind === 'interrupted') return polled.result;
+  const final = polled.deployment;
   return {
     kind: 'created',
     pullRequestNumber: pullRequest.number,
@@ -878,7 +977,7 @@ async function observeAmbiguousCreate(
           pullRequest.head.sha,
         ),
     );
-    const result = await observedCreateResult(runtime, environment, pullRequest, newlyVisible);
+    const result = await reusedDeploymentResult(runtime, environment, pullRequest, newlyVisible);
     if (result) return result;
     if (newlyVisible.length > 0) fail('ambiguous create observed a terminal deployment');
   }
@@ -920,6 +1019,7 @@ async function createDeployment(
         },
       },
     );
+    assertSafeDeploymentId(created.id, environment);
     assertSafeDeploymentUrl(created.url, environment);
     if (
       !detailIdentityMatches(
@@ -937,7 +1037,9 @@ async function createDeployment(
     if (!(error instanceof RequestFailure && error.ambiguousMutation)) throw error;
     return observeAmbiguousCreate(runtime, environment, pullRequest, preCreateDeploymentIds);
   }
-  const ready = await pollDeployment(runtime, environment, pullRequest, created.id, created.meta);
+  const polled = await pollDeployment(runtime, environment, pullRequest, created.id, created.meta);
+  if (polled.kind === 'interrupted') return polled.result;
+  const ready = polled.deployment;
   return {
     kind: 'created',
     pullRequestNumber: pullRequest.number,
@@ -947,6 +1049,27 @@ async function createDeployment(
   };
 }
 
+function candidateIdentityFailure(
+  environment: VercelPreviewEnvironment,
+  eventRepository: GithubPreviewRepository,
+  candidate: PreviewCandidate,
+  pullRequest: GithubPreviewPullRequest,
+): SkippedReason | null {
+  if (
+    !repositorySlugMatches(eventRepository, environment.GITHUB_REPOSITORY) ||
+    eventRepository.id !== pullRequest.base.repo.id ||
+    !repositorySlugMatches(pullRequest.base.repo, environment.GITHUB_REPOSITORY)
+  ) {
+    return 'repository-mismatch';
+  }
+  if (candidate.expectedHeadSha !== null && candidate.expectedHeadSha !== pullRequest.head.sha) {
+    return 'stale-event';
+  }
+  if (!isSameRepositoryPullRequest(pullRequest)) return 'fork-pull-request';
+  if (pullRequest.base.ref !== 'main') return 'base-mismatch';
+  return null;
+}
+
 async function reconcileCandidate(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
@@ -954,20 +1077,13 @@ async function reconcileCandidate(
   candidate: PreviewCandidate,
 ): Promise<readonly PreviewResult[]> {
   const pullRequest = await fetchPullRequest(runtime, environment, candidate.number);
-  if (
-    !repositorySlugMatches(eventRepository, environment.GITHUB_REPOSITORY) ||
-    eventRepository.id !== pullRequest.base.repo.id ||
-    !repositorySlugMatches(pullRequest.base.repo, environment.GITHUB_REPOSITORY)
-  ) {
-    return [skipped(candidate.number, 'repository-mismatch')];
-  }
-  if (candidate.expectedHeadSha !== null && candidate.expectedHeadSha !== pullRequest.head.sha) {
-    return [skipped(candidate.number, 'stale-event')];
-  }
-  if (!isSameRepositoryPullRequest(pullRequest)) {
-    return [skipped(candidate.number, 'fork-pull-request')];
-  }
-  if (pullRequest.base.ref !== 'main') return [skipped(candidate.number, 'base-mismatch')];
+  const identityFailure = candidateIdentityFailure(
+    environment,
+    eventRepository,
+    candidate,
+    pullRequest,
+  );
+  if (identityFailure) return [skipped(candidate.number, identityFailure)];
   if (pullRequest.state !== 'open' || !isPreviewEligible(pullRequest)) {
     return cancelActiveDeployments(runtime, environment, pullRequest);
   }
@@ -985,45 +1101,28 @@ async function reconcileCandidate(
       pullRequest.head.sha,
     ),
   );
-  const ready = exact.find(isReadyVercelDeployment);
-  if (ready) {
-    const readyDeployment = ready.url
-      ? { id: ready.uid, url: assertSafeDeploymentUrl(ready.url, environment) }
-      : await pollDeployment(runtime, environment, pullRequest, ready.uid, ready.meta);
-    return [
-      {
-        kind: 'created',
-        pullRequestNumber: pullRequest.number,
-        reason: 'ready-deployment-reused',
-        deploymentId: readyDeployment.id,
-        url: readyDeployment.url,
-      },
-    ];
-  }
-  const active = exact.find(isActiveVercelDeployment);
-  if (active) {
-    const final = await pollDeployment(runtime, environment, pullRequest, active.uid, active.meta);
-    return [
-      {
-        kind: 'created',
-        pullRequestNumber: pullRequest.number,
-        reason: 'active-deployment-reused',
-        deploymentId: final.id,
-        url: final.url,
-      },
-    ];
-  }
+  const reused = await reusedDeploymentResult(runtime, environment, pullRequest, exact);
+  if (reused) return [reused];
   const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
   if (!currentStateMatches(pullRequest, finalPullRequest)) {
     return [skipped(candidate.number, 'stale-event')];
   }
   const finalCi = await proveCurrentCi(runtime, environment, finalPullRequest);
   if (!finalCi.ok) return [skipped(candidate.number, finalCi.reason)];
+  const mutationPullRequest = await fetchPullRequest(runtime, environment, finalPullRequest.number);
+  const mutationStateIsCurrent =
+    currentStateMatches(finalPullRequest, mutationPullRequest) &&
+    repositorySlugMatches(mutationPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+    isSameRepositoryPullRequest(mutationPullRequest) &&
+    mutationPullRequest.base.ref === 'main' &&
+    mutationPullRequest.state === 'open' &&
+    isPreviewEligible(mutationPullRequest);
+  if (!mutationStateIsCurrent) return [skipped(candidate.number, 'stale-event')];
   return [
     await createDeployment(
       runtime,
       environment,
-      finalPullRequest,
+      mutationPullRequest,
       finalCi.workflowRunId,
       exact.length > 0,
       new Set(listed.map(({ uid }) => uid)),
@@ -1051,7 +1150,7 @@ export async function reconcileVercelPreviews(
         )),
       );
     }
-    return results;
+    return assertSafePreviewResults(results, environment);
   } catch (error) {
     throw new Error(safeMessage(error, environment));
   }
@@ -1063,6 +1162,10 @@ if (import.meta.main) {
     readText: (path) => Bun.file(path).text(),
     fetch: globalThis.fetch,
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    scheduleTimeout: (callback, milliseconds) => {
+      const timeout = setTimeout(callback, milliseconds);
+      return () => clearTimeout(timeout);
+    },
     now: () => Date.now(),
     log: (message) => console.log(message),
   };

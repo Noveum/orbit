@@ -1,4 +1,5 @@
 import type {
+  GithubPreviewFile,
   GithubPreviewPullRequest,
   VercelDeployment,
 } from '../packages/shared/src/validators/index.ts';
@@ -16,13 +17,20 @@ export function isSameRepositoryPullRequest(pullRequest: GithubPreviewPullReques
   return pullRequest.head.repo.id === pullRequest.base.repo.id;
 }
 
-export function isWebPreviewFile(filename: string): boolean {
+function isWebPreviewPath(filename: string): boolean {
   return (
     filename.startsWith('apps/web/') ||
     filename.startsWith('packages/') ||
     filename === 'package.json' ||
     filename === 'bun.lock' ||
     filename === 'tsconfig.base.json'
+  );
+}
+
+export function isWebPreviewFile(file: GithubPreviewFile): boolean {
+  return (
+    isWebPreviewPath(file.filename) ||
+    (file.status === 'renamed' && isWebPreviewPath(file.previous_filename))
   );
 }
 

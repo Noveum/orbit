@@ -12,19 +12,24 @@ type RecordedRequest = {
   readonly url: string;
   readonly headers: Headers;
   readonly body: unknown;
+  readonly signal: AbortSignal | null;
 };
 
 type Scenario = {
   eventName?: string;
   event?: unknown;
   pullRequest?: Record<string, unknown>;
-  files?: readonly string[];
+  files?: readonly (string | Record<string, unknown>)[];
   workflowRuns?: readonly Record<string, unknown>[];
   deployments?: readonly Record<string, unknown>[];
   detailStates?: readonly string[];
-  respond?: (request: RecordedRequest, requestNumber: number) => Response | undefined;
+  respond?: (
+    request: RecordedRequest,
+    requestNumber: number,
+  ) => Response | Promise<Response> | undefined;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  scheduleTimeout?: (callback: () => void, milliseconds: number) => () => void;
 };
 
 const repository = {
@@ -126,6 +131,23 @@ function json(value: unknown, status = 200, headers?: Record<string, string>): R
   });
 }
 
+function unreadableJson(message: string): Response {
+  const response = json({ message: 'unreadable' });
+  Object.defineProperty(response, 'text', {
+    value: () => Promise.reject(new Error(message)),
+  });
+  return response;
+}
+
+async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+    return 'resolved';
+  } catch (error) {
+    return String(error);
+  }
+}
+
 function createHarness(scenario: Scenario = {}) {
   const requests: RecordedRequest[] = [];
   const sleeps: number[] = [];
@@ -148,14 +170,16 @@ function createHarness(scenario: Scenario = {}) {
     const method = init?.method ?? 'GET';
     const headers = new Headers(init?.headers);
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
-    const request = { method, url, headers, body };
+    const request = { method, url, headers, body, signal: init?.signal ?? null };
     requests.push(request);
-    const customResponse = scenario.respond?.(request, requests.length);
+    const customResponse = await scenario.respond?.(request, requests.length);
     if (customResponse) return customResponse;
 
     if (url.includes('/pulls/341/files')) {
       return json(
-        (scenario.files ?? ['apps/web/src/app/page.tsx']).map((filename) => ({ filename })),
+        (scenario.files ?? ['apps/web/src/app/page.tsx']).map((file) =>
+          typeof file === 'string' ? { filename: file, status: 'modified' } : file,
+        ),
       );
     }
     if (url.endsWith('/pulls/341')) return json(currentPullRequest);
@@ -205,6 +229,12 @@ function createHarness(scenario: Scenario = {}) {
       sleeps.push(milliseconds);
       await scenario.sleep?.(milliseconds);
     },
+    scheduleTimeout:
+      scenario.scheduleTimeout ??
+      ((callback, milliseconds) => {
+        const timeout = setTimeout(callback, milliseconds);
+        return () => clearTimeout(timeout);
+      }),
     now: scenario.now ?? (() => Date.parse('2026-08-21T00:00:00Z')),
     log: (message) => {
       logs.push(message);
@@ -352,6 +382,43 @@ describe('event and eligibility reconciliation', () => {
       { kind: 'skipped', pullRequestNumber: 341, reason: 'web-unaffected' },
     ]);
     expect(harness.requests.some(({ method }) => method === 'POST')).toBe(false);
+  });
+
+  test.each([
+    [
+      'into a web path',
+      {
+        filename: 'apps/web/src/feature.ts',
+        status: 'renamed',
+        previous_filename: 'docs/feature.ts',
+      },
+    ],
+    [
+      'out of a web path',
+      {
+        filename: 'docs/feature.ts',
+        status: 'renamed',
+        previous_filename: 'apps/web/src/feature.ts',
+      },
+    ],
+  ])('a rename %s creates a deployment', async (_name, file) => {
+    const harness = createHarness({ files: [file] });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results[0]).toMatchObject({ kind: 'created', reason: 'created-ready' });
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+  });
+
+  test('a malformed rename fails closed before Vercel mutation', async () => {
+    const harness = createHarness({
+      files: [{ filename: 'apps/web/src/feature.ts', status: 'renamed' }],
+    });
+
+    await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('schema');
+    expect(harness.requests.some(({ method }) => method === 'POST' || method === 'PATCH')).toBe(
+      false,
+    );
   });
 
   test('stale event SHA cannot create or cancel the current head', async () => {
@@ -697,6 +764,36 @@ describe('existing deployments, cancellation, and pagination', () => {
     ).toHaveLength(1);
   });
 
+  test.each(['network', '429', '503', 'invalid-success'])(
+    'ambiguous cancel %s sends one PATCH and reconciles through one detail read',
+    async (outcome) => {
+      const harness = createHarness({
+        pullRequest: pullRequest({ draft: true }),
+        deployments: [deployment('BUILDING', { uid: 'dpl_race' })],
+        detailStates: ['CANCELED'],
+        respond: ({ method }) => {
+          if (method !== 'PATCH') return undefined;
+          if (outcome === 'network') throw new Error(`${GITHUB_TOKEN} ${VERCEL_TOKEN}`);
+          if (outcome === '429') return json({ message: VERCEL_TOKEN }, 429);
+          if (outcome === '503') return json({ message: GITHUB_TOKEN }, 503);
+          return new Response('{', { status: 200 });
+        },
+      });
+
+      const results = await reconcileVercelPreviews(harness.runtime);
+
+      expect(results).toEqual([
+        { kind: 'skipped', pullRequestNumber: 341, reason: 'no-active-deployment' },
+      ]);
+      expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+      expect(
+        harness.requests.filter(({ url }) => url.includes('/v13/deployments/dpl_race')),
+      ).toHaveLength(1);
+      expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
+      expect(harness.sleeps).toHaveLength(0);
+    },
+  );
+
   test('a second reconciliation reuses the deployment created by the first', async () => {
     const stored: Record<string, unknown>[] = [];
     const harness = createHarness({
@@ -789,13 +886,14 @@ describe('endpoint pagination and final freshness', () => {
   test('pull request files paginate until a relevant file appears', async () => {
     const fullIrrelevantPage = Array.from({ length: 100 }, (_, index) => ({
       filename: `docs/page-${index}.md`,
+      status: 'modified',
     }));
     const harness = createHarness({
       respond: ({ url }) => {
         if (!url.includes('/pulls/341/files')) return undefined;
         return new URL(url).searchParams.get('page') === '1'
           ? json(fullIrrelevantPage)
-          : json([{ filename: 'packages/shared/src/index.ts' }]);
+          : json([{ filename: 'packages/shared/src/index.ts', status: 'modified' }]);
       },
     });
 
@@ -808,6 +906,7 @@ describe('endpoint pagination and final freshness', () => {
   test('a full final files page fails closed at the 30-page cap', async () => {
     const fullPage = Array.from({ length: 100 }, (_, index) => ({
       filename: `docs/page-${index}.md`,
+      status: 'modified',
     }));
     const harness = createHarness({
       respond: ({ url }) => (url.includes('/pulls/341/files') ? json(fullPage) : undefined),
@@ -835,6 +934,38 @@ describe('endpoint pagination and final freshness', () => {
 
     expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
     expect(harness.requests.some(({ method }) => method === 'POST')).toBe(false);
+  });
+
+  test.each([
+    ['label', pullRequest({ labels: [{ name: 'no-preview' }] })],
+    [
+      'head',
+      pullRequest({
+        head: { sha: 'c'.repeat(40), ref: 'feature/preview-next', repo: repository },
+      }),
+    ],
+  ])('a %s change during the final CI proof prevents Create', async (_name, changedPullRequest) => {
+    let finalCiProofStarted = false;
+    let workflowRunReads = 0;
+    const harness = createHarness({
+      respond: ({ url }) => {
+        if (url.endsWith('/pulls/341')) {
+          return json(finalCiProofStarted ? changedPullRequest : pullRequest());
+        }
+        if (url.includes('/actions/workflows/456/runs')) {
+          workflowRunReads += 1;
+          if (workflowRunReads === 2) finalCiProofStarted = true;
+          return json({ total_count: 1, workflow_runs: [workflowRun()] });
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
+    expect(workflowRunReads).toBe(2);
   });
 
   test('workflow_run with multiple distinct PR associations logs ambiguity and does no work', async () => {
@@ -871,7 +1002,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
     await reconcileVercelPreviews(harness.runtime);
 
-    expect(pullReads).toBe(4);
+    expect(pullReads).toBe(5);
     expect(harness.sleeps.slice(0, 2)).toEqual([1000, 1000]);
   });
 
@@ -887,6 +1018,77 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
     await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow(String(status));
     expect(pullReads).toBe(1);
+  });
+
+  test.each([
+    ['network', 3, 2],
+    ['body-read', 3, 2],
+    ['invalid-json', 1, 0],
+    ['invalid-schema', 1, 0],
+  ] as const)(
+    'safe-read %s failures have bounded attempts and no mutation',
+    async (failure, expectedReads, expectedSleeps) => {
+      let pullReads = 0;
+      const harness = createHarness({
+        respond: ({ url }) => {
+          if (!url.endsWith('/pulls/341')) return undefined;
+          pullReads += 1;
+          if (failure === 'network') throw new Error(`${GITHUB_TOKEN} ${VERCEL_TOKEN}`);
+          if (failure === 'body-read') {
+            return unreadableJson(`${GITHUB_TOKEN} ${VERCEL_TOKEN}`);
+          }
+          if (failure === 'invalid-json') return new Response('{', { status: 200 });
+          return json({ number: 341 });
+        },
+      });
+
+      const message = await rejectionMessage(reconcileVercelPreviews(harness.runtime));
+
+      expect(message).not.toBe('resolved');
+      expect(message).not.toContain(GITHUB_TOKEN);
+      expect(message).not.toContain(VERCEL_TOKEN);
+      expect(pullReads).toBe(expectedReads);
+      expect(harness.sleeps).toHaveLength(expectedSleeps);
+      expect(harness.requests.some(({ method }) => method === 'POST' || method === 'PATCH')).toBe(
+        false,
+      );
+    },
+  );
+
+  test('an injected request timeout aborts each safe-read attempt', async () => {
+    let pendingTimeout: (() => void) | null = null;
+    let pullReads = 0;
+    let scheduledTimeouts = 0;
+    const harness = createHarness({
+      scheduleTimeout: (callback, milliseconds) => {
+        expect(milliseconds).toBe(15_000);
+        scheduledTimeouts += 1;
+        pendingTimeout = callback;
+        return () => {
+          if (pendingTimeout === callback) pendingTimeout = null;
+        };
+      },
+      respond: (request) => {
+        if (!request.url.endsWith('/pulls/341')) return undefined;
+        pullReads += 1;
+        return new Promise<Response>((resolve, reject) => {
+          request.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('timed out', 'AbortError')),
+            { once: true },
+          );
+          queueMicrotask(() => pendingTimeout?.());
+          queueMicrotask(() => resolve(json({ message: 'timeout was not injected' }, 400)));
+        });
+      },
+    });
+
+    await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow();
+
+    expect(pullReads).toBe(3);
+    expect(scheduledTimeouts).toBe(3);
+    expect(harness.requests.every(({ signal }) => signal?.aborted === true)).toBe(true);
+    expect(harness.sleeps).toEqual([1000, 1000]);
   });
 
   test('rate-limited GitHub 403 retries with bounded Retry-After', async () => {
@@ -917,6 +1119,107 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
     await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('redirect rejected');
     expect(harness.requests).toHaveLength(1);
+  });
+
+  test('the polling owner cancels its created deployment when the exact head becomes ineligible', async () => {
+    let createAttempted = false;
+    const harness = createHarness({
+      respond: ({ method, url }) => {
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            createAttempted ? pullRequest({ labels: [{ name: 'no-preview' }] }) : pullRequest(),
+          );
+        }
+        if (method === 'POST') {
+          createAttempted = true;
+          return json(mutationDeployment('dpl_created', 'QUEUED'));
+        }
+        if (method === 'GET' && url.includes('/v13/deployments/dpl_created')) {
+          return json(mutationDeployment('dpl_created', 'BUILDING'));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_created',
+        url: 'orbit-preview.vercel.app',
+      },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
+  });
+
+  test('the polling owner cancels an existing active deployment when the exact head becomes draft', async () => {
+    let pullRequestReads = 0;
+    const harness = createHarness({
+      deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
+      respond: ({ method, url }) => {
+        if (url.endsWith('/pulls/341')) {
+          pullRequestReads += 1;
+          return json(pullRequest({ draft: pullRequestReads > 1 }));
+        }
+        if (method === 'GET' && url.includes('/v13/deployments/dpl_active')) {
+          return json(mutationDeployment('dpl_active', 'BUILDING'));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_active',
+        url: 'orbit-preview.vercel.app',
+      },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
+  });
+
+  test('the polling owner never cancels a deployment after the pull request head changes', async () => {
+    let createAttempted = false;
+    const harness = createHarness({
+      respond: ({ method, url }) => {
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            createAttempted
+              ? pullRequest({
+                  head: { sha: 'c'.repeat(40), ref: 'feature/new-head', repo: repository },
+                  labels: [{ name: 'no-preview' }],
+                })
+              : pullRequest(),
+          );
+        }
+        if (method === 'POST') {
+          createAttempted = true;
+          return json(mutationDeployment('dpl_created', 'QUEUED'));
+        }
+        if (method === 'GET' && url.includes('/v13/deployments/dpl_created')) {
+          return json(mutationDeployment('dpl_created', 'BUILDING'));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
   });
 
   test('active polling sleeps through transitions and returns READY', async () => {
@@ -963,7 +1266,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     },
   );
 
-  test.each(['network', '500', '409', 'invalid-success'])(
+  test.each(['network', '429', '500', '409', 'invalid-success'])(
     'ambiguous create outcome %s sends one POST and observes a newly visible ready deployment',
     async (outcome) => {
       let listReads = 0;
@@ -979,6 +1282,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
           }
           if (method === 'POST') {
             if (outcome === 'network') throw new Error(`${GITHUB_TOKEN} ${VERCEL_TOKEN}`);
+            if (outcome === '429') return json({ message: VERCEL_TOKEN }, 429);
             if (outcome === '500') return json({ message: VERCEL_TOKEN }, 500);
             if (outcome === '409') return json({ message: GITHUB_TOKEN }, 409);
             return new Response('{', { status: 200 });
@@ -991,8 +1295,56 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
       expect(results[0]).toMatchObject({ deploymentId: 'dpl_observed' });
       expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+      expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(2);
+      expect(
+        harness.requests.filter(({ url }) => url.includes('/v13/deployments/dpl_observed')),
+      ).toHaveLength(0);
+      expect(harness.sleeps).toHaveLength(0);
     },
   );
+
+  test('an ambiguous Create timeout sends one POST and uses read-only observation', async () => {
+    let pendingTimeout: (() => void) | null = null;
+    let listReads = 0;
+    const harness = createHarness({
+      scheduleTimeout: (callback) => {
+        pendingTimeout = callback;
+        return () => {
+          if (pendingTimeout === callback) pendingTimeout = null;
+        };
+      },
+      respond: (request) => {
+        if (request.url.includes('/v7/deployments')) {
+          listReads += 1;
+          const items = listReads === 1 ? [] : [deployment('READY', { uid: 'dpl_observed' })];
+          return json({
+            deployments: items,
+            pagination: { count: items.length, next: null, prev: null },
+          });
+        }
+        if (request.method !== 'POST') return undefined;
+        return new Promise<Response>((resolve, reject) => {
+          request.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('timed out', 'AbortError')),
+            { once: true },
+          );
+          queueMicrotask(() => pendingTimeout?.());
+          queueMicrotask(() => resolve(json({ message: 'timeout was not injected' }, 400)));
+        });
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results[0]).toMatchObject({ deploymentId: 'dpl_observed' });
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(listReads).toBe(2);
+    expect(
+      harness.requests.filter(({ url }) => url.includes('/v13/deployments/dpl_observed')),
+    ).toHaveLength(0);
+    expect(harness.sleeps).toHaveLength(0);
+  });
 
   test('ambiguous create ignores a pre-existing exact ID and fails without a second POST', async () => {
     const existing = deployment('ERROR', { uid: 'dpl_existing' });
@@ -1008,6 +1360,9 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
     await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('ambiguous');
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(4);
+    expect(harness.requests.filter(({ url }) => url.includes('/v13/deployments/'))).toHaveLength(0);
+    expect(harness.sleeps).toEqual([2000, 2000]);
   });
 
   test.each([400, 401, 403, 422])(
@@ -1135,6 +1490,52 @@ describe('identity invariants and bounded edge cases', () => {
     expect(message).not.toContain(VERCEL_TOKEN);
   });
 
+  test.each(['list', 'create', 'detail', 'cancel'] as const)(
+    '%s deployment IDs containing either token are rejected before serialization',
+    async (surface) => {
+      for (const secret of [GITHUB_TOKEN, VERCEL_TOKEN]) {
+        let deployments: readonly Record<string, unknown>[] = [];
+        if (surface === 'list') deployments = [deployment('READY', { uid: secret })];
+        if (surface === 'detail' || surface === 'cancel') {
+          deployments = [deployment('BUILDING', { uid: 'dpl_active' })];
+        }
+        const harness = createHarness({
+          pullRequest: pullRequest({ draft: surface === 'cancel' }),
+          deployments,
+          respond: ({ method, url }) => {
+            if (surface === 'create' && method === 'POST') {
+              return json(mutationDeployment(secret, 'QUEUED'));
+            }
+            if (
+              surface === 'detail' &&
+              method === 'GET' &&
+              url.includes('/v13/deployments/dpl_active')
+            ) {
+              return json(mutationDeployment(secret, 'READY'));
+            }
+            if (surface === 'cancel' && method === 'PATCH') {
+              return json(mutationDeployment(secret, 'CANCELED'));
+            }
+            return undefined;
+          },
+        });
+
+        const message = await rejectionMessage(reconcileVercelPreviews(harness.runtime));
+
+        expect(message).toContain('unsafe');
+        expect(message).not.toContain(GITHUB_TOKEN);
+        expect(message).not.toContain(VERCEL_TOKEN);
+        expect(JSON.stringify(harness.logs)).not.toContain(secret);
+        expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(
+          surface === 'create' ? 1 : 0,
+        );
+        expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(
+          surface === 'cancel' ? 1 : 0,
+        );
+      }
+    },
+  );
+
   test('Vercel pagination rejects a repeated zero cursor', async () => {
     const harness = createHarness({
       respond: ({ url }) =>
@@ -1257,8 +1658,8 @@ describe('identity invariants and bounded edge cases', () => {
 
     await reconcileVercelPreviews(runtime);
 
-    expect(signals).toHaveLength(3);
-    expect(new Set(signals).size).toBe(3);
+    expect(signals).toHaveLength(4);
+    expect(new Set(signals).size).toBe(4);
   });
 
   test('missing configuration fails before reading the event', async () => {

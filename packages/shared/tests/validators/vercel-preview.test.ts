@@ -157,7 +157,9 @@ describe('Vercel Preview GitHub schemas', () => {
 
   test('accept GitHub files and workflow runs with minimal linked repositories', () => {
     expect(
-      githubPreviewFilesSchema.parse([{ filename: 'apps/web/src/app/page.tsx' }]),
+      githubPreviewFilesSchema.parse([
+        { filename: 'apps/web/src/app/page.tsx', status: 'modified' },
+      ]),
     ).toHaveLength(1);
     expect(
       githubPreviewWorkflowRunsSchema.parse({
@@ -165,6 +167,44 @@ describe('Vercel Preview GitHub schemas', () => {
         workflow_runs: [workflowRun],
       }).workflow_runs,
     ).toHaveLength(1);
+  });
+
+  test('retains validated rename history from GitHub file responses', () => {
+    const files = githubPreviewFilesSchema.parse([
+      {
+        filename: 'docs/feature.ts',
+        status: 'renamed',
+        previous_filename: 'apps/web/src/feature.ts',
+      },
+      { filename: 'packages/shared/src/index.ts', status: 'modified' },
+    ]);
+
+    expect(files).toEqual([
+      {
+        filename: 'docs/feature.ts',
+        status: 'renamed',
+        previous_filename: 'apps/web/src/feature.ts',
+      },
+      { filename: 'packages/shared/src/index.ts', status: 'modified' },
+    ]);
+  });
+
+  test.each([
+    ['missing previous filename', { filename: 'docs/feature.ts', status: 'renamed' }],
+    [
+      'empty previous filename',
+      { filename: 'docs/feature.ts', status: 'renamed', previous_filename: '' },
+    ],
+    [
+      'oversized previous filename',
+      { filename: 'docs/feature.ts', status: 'renamed', previous_filename: 'a'.repeat(1025) },
+    ],
+    [
+      'nonnumeric status',
+      { filename: 'docs/feature.ts', status: 1, previous_filename: 'apps/web/src/feature.ts' },
+    ],
+  ])('reject a renamed file with %s', (_name, file) => {
+    expect(() => githubPreviewFilesSchema.parse([file])).toThrow();
   });
 
   test('requires a workflow run total count', () => {
@@ -255,6 +295,43 @@ describe('Vercel Preview GitHub schemas', () => {
       return vercelDeploymentDetailSchema.parse(withoutTarget);
     }).toThrow();
   });
+
+  test.each([
+    ['list', vercelDeploymentSchema, { ...deployment, uid: '../dpl?unsafe#fragment' }],
+    [
+      'create',
+      vercelCreatedDeploymentSchema,
+      { ...mutationDeployment, id: '../dpl?unsafe#fragment' },
+    ],
+    [
+      'detail',
+      vercelDeploymentDetailSchema,
+      { ...mutationDeployment, id: '../dpl?unsafe#fragment' },
+    ],
+    [
+      'cancel',
+      vercelCanceledDeploymentSchema,
+      { ...mutationDeployment, id: '../dpl?unsafe#fragment' },
+    ],
+  ])('reject a %s response with a path-delimited deployment ID', (_name, schema, value) => {
+    expect(() => schema.parse(value)).toThrow();
+  });
+
+  test.each([' dpl_preview', 'dpl_preview '])(
+    'reject a deployment ID with unsupported whitespace %j',
+    (id) => {
+      expect(() => vercelDeploymentSchema.parse({ ...deployment, uid: id })).toThrow();
+      expect(() => vercelCreatedDeploymentSchema.parse({ ...mutationDeployment, id })).toThrow();
+    },
+  );
+
+  test.each(['dpl_7Gw5ZMBpQA8h9GF832KGp7nwbuh3', 'custom-deployment_123'])(
+    'accept supported Vercel deployment ID %s',
+    (id) => {
+      expect(vercelDeploymentSchema.parse({ ...deployment, uid: id }).uid).toBe(id);
+      expect(vercelCreatedDeploymentSchema.parse({ ...mutationDeployment, id }).id).toBe(id);
+    },
+  );
 
   test('reject malformed repository dispatch pull request inputs', () => {
     const event = {

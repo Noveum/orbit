@@ -27,6 +27,11 @@ const githubWorkflowRunStatusSchema = z.enum([
   'pending',
 ]);
 const vercelMetadataValueSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
+const vercelDeploymentIdSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9_-]+$/);
 const vercelTargetSchema = z.enum(['production', 'staging']).nullable();
 const vercelReadyStateSchema = z.enum([
   'QUEUED',
@@ -172,9 +177,34 @@ export const githubPreviewWorkflowRunEventSchema = z
   .passthrough();
 export type GithubPreviewWorkflowRunEvent = z.infer<typeof githubPreviewWorkflowRunEventSchema>;
 
-export const githubPreviewFilesSchema = z.array(
-  z.object({ filename: boundedString(1024) }).passthrough(),
-);
+const githubPreviewNonRenameStatusSchema = z.enum([
+  'added',
+  'removed',
+  'modified',
+  'copied',
+  'changed',
+  'unchanged',
+]);
+
+export const githubPreviewFileSchema = z.discriminatedUnion('status', [
+  z
+    .object({
+      filename: boundedString(1024),
+      status: z.literal('renamed'),
+      previous_filename: boundedString(1024),
+    })
+    .passthrough(),
+  z
+    .object({
+      filename: boundedString(1024),
+      status: githubPreviewNonRenameStatusSchema,
+      previous_filename: boundedString(1024).optional(),
+    })
+    .passthrough(),
+]);
+export type GithubPreviewFile = z.infer<typeof githubPreviewFileSchema>;
+
+export const githubPreviewFilesSchema = z.array(githubPreviewFileSchema).max(100);
 export type GithubPreviewFiles = z.infer<typeof githubPreviewFilesSchema>;
 
 export const githubPreviewWorkflowRunsSchema = z
@@ -187,7 +217,7 @@ export type GithubPreviewWorkflowRuns = z.infer<typeof githubPreviewWorkflowRuns
 
 export const vercelDeploymentSchema = z
   .object({
-    uid: boundedString(100),
+    uid: vercelDeploymentIdSchema,
     projectId: boundedString(255),
     url: boundedString(255).nullable(),
     target: vercelTargetSchema.optional(),
@@ -211,7 +241,7 @@ export type VercelDeploymentsPage = z.infer<typeof vercelDeploymentsPageSchema>;
 
 const vercelDeploymentMutationSchema = z
   .object({
-    id: boundedString(100),
+    id: vercelDeploymentIdSchema,
     projectId: boundedString(255),
     url: boundedString(255),
     target: vercelTargetSchema,
