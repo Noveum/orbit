@@ -162,7 +162,7 @@ const githubPreviewWorkflowRunSchema = z
     head_sha: gitShaSchema,
     status: githubWorkflowRunStatusSchema,
     conclusion: githubWorkflowConclusionSchema,
-    created_at: z.string().datetime({ offset: true }),
+    created_at: z.iso.datetime({ offset: true }),
     pull_requests: z.array(githubPreviewWorkflowPullRequestSchema).max(100),
   })
   .passthrough();

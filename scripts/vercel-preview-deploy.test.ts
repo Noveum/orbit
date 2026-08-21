@@ -1638,12 +1638,7 @@ describe('identity invariants and bounded edge cases', () => {
       respond: (request) => {
         if (!request.url.endsWith('/pulls/341')) return undefined;
         pullReads += 1;
-        const matching = harness.requests.at(-1);
-        const signalRequest = matching;
-        if (signalRequest) {
-          const requestSignal = request.headers;
-          expect(requestSignal.get('authorization')).toBe(`Bearer ${GITHUB_TOKEN}`);
-        }
+        expect(request.headers.get('authorization')).toBe(`Bearer ${GITHUB_TOKEN}`);
         return pullReads === 1 ? json({ message: 'temporary' }, 500) : json(pullRequest());
       },
     });

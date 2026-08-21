@@ -651,14 +651,7 @@ function detailIdentityMatches(
   expectedMetadata: Readonly<Record<string, unknown>>,
   headSha?: string,
 ): boolean {
-  const comparable: VercelDeployment = {
-    uid: detail.id,
-    projectId: detail.projectId,
-    url: detail.url,
-    target: detail.target,
-    readyState: detail.readyState,
-    meta: detail.meta,
-  };
+  const comparable = comparableDeployment(detail);
   return (
     detail.id === id &&
     ORBIT_METADATA_KEYS.every((key) => {

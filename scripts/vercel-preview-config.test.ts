@@ -192,7 +192,7 @@ const continuedControllerWorkflow = workflow.replace(
 );
 
 describe('Vercel Preview repository configuration', () => {
-  test('disables automatic deployment for feature, feature/preview, and codex/review/pr341 while allowing main', () => {
+  test('configures automatic Git deployments only for main without an ignore command', () => {
     expect(vercel.git?.deploymentEnabled).toEqual({ '**': false, main: true });
     expect(Object.keys(vercel.git?.deploymentEnabled ?? {})).toEqual(['**', 'main']);
     expect(vercel).not.toHaveProperty('ignoreCommand');

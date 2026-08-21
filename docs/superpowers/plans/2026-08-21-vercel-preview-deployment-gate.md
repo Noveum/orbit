@@ -66,7 +66,7 @@
 - Produces `PREVIEW_LABEL`, `NO_PREVIEW_LABEL`, `isPreviewEligible`, `isSameRepositoryPullRequest`, `isWebPreviewFile`, `isActiveVercelDeployment`, `isReadyVercelDeployment`, and `matchesVercelPullRequest`.
 - The controller in Task 2 consumes every interface above and does not define a second copy of validation or policy.
 
-- [ ] **Step 1: Write failing validator tests**
+- [x] **Step 1: Write failing validator tests**
 
 Create fixtures with a 40-character lowercase SHA and assert the schemas accept a complete open pull request, state event including `closed`, successful CI workflow event, repository-dispatch recovery input, GitHub file page, canonical workflow response, workflow-run page with `total_count`, live Git ref response, Vercel deployment page with `pagination.count`, create response, detail response, cancel response, and complete environment. Add rejection cases for a short SHA, missing repository ID, missing draft state, unknown Vercel ready state, nonnumeric recovery input, invalid pagination, and missing secrets. Workflow-run linked pull requests use GitHub's minimal repository shape with ID and name rather than the full repository shape with `owner.login`. Vercel list items require `projectId` but accept missing metadata as an empty record; mutation and detail responses require `id`, `projectId`, a nonempty URL, target, state, and metadata.
 
@@ -86,13 +86,13 @@ expect(() =>
 ).toThrow();
 ```
 
-- [ ] **Step 2: Run the validator test and confirm failure**
+- [x] **Step 2: Run the validator test and confirm failure**
 
 Run: `bun test packages/shared/tests/validators/vercel-preview.test.ts`
 
 Expected: FAIL because `../../src/validators/vercel-preview.ts` does not exist.
 
-- [ ] **Step 3: Implement the external schemas**
+- [x] **Step 3: Implement the external schemas**
 
 Use strict discriminants for known event, file, and deployment states, a reusable 40-character lowercase SHA, positive integer identifiers, bounded nonempty strings, and `.passthrough()` only where GitHub or Vercel legitimately returns unrelated fields. A renamed file requires a bounded `previous_filename`; other documented file statuses retain an optional validated value. Deployment IDs use the bounded `^[A-Za-z0-9_-]+$` grammar without trimming. The pull request schema must include this complete decision surface:
 
@@ -116,13 +116,13 @@ export const githubPreviewPullRequestSchema = z.object({
 
 The workflow-run schema must retain run `id`, `workflow_id`, `name`, `event`, `head_sha`, `status`, `conclusion`, creation time, and linked pull request head and base identity; the page retains nonnegative `total_count`. The live Git ref schema retains `object.sha`. Vercel metadata accepts string, number, boolean, or null values. Vercel pagination retains nonnegative `count` and finite nonnegative `next` and `prev` cursors or null. Export all inferred types and add `export * from './vercel-preview.ts';` to the validator index.
 
-- [ ] **Step 4: Run the validator tests**
+- [x] **Step 4: Run the validator tests**
 
 Run: `bun test packages/shared/tests/validators/vercel-preview.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Write failing pure-policy tests**
+- [x] **Step 5: Write failing pure-policy tests**
 
 Cover this truth table and identity behavior:
 
@@ -145,13 +145,13 @@ expect(isWebPreviewFile({ filename: 'docs/README.md', status: 'modified' })).toB
 
 Add rename-in, rename-out, and malformed-rename fixtures. Add deployment fixtures proving that a Preview must match repository ID, pull request number, ref, and SHA; a production deployment never matches; `QUEUED`, `INITIALIZING`, and `BUILDING` are active; only `READY` is ready. Reject path delimiters and whitespace in list, create, detail, and cancel IDs while accepting documented system and custom forms.
 
-- [ ] **Step 6: Run the policy tests and confirm failure**
+- [x] **Step 6: Run the policy tests and confirm failure**
 
 Run: `bun test scripts/vercel-preview-policy.test.ts`
 
 Expected: FAIL because `./vercel-preview-policy.ts` does not exist.
 
-- [ ] **Step 7: Implement the pure policy**
+- [x] **Step 7: Implement the pure policy**
 
 Use fixed label and path values:
 
@@ -183,7 +183,7 @@ export function isWebPreviewFile(file: GithubPreviewFile): boolean {
 
 `matchesVercelPullRequest` receives the configured project ID, requires exact `projectId` and `target === null`, and compares normalized metadata values for `orbitGithubRepositoryId`, `orbitGithubPrNumber`, `orbitGithubHeadRef`, and, when supplied, `orbitGithubHeadSha`. Production, staging, missing target, another project, and absent metadata never match.
 
-- [ ] **Step 8: Run Task 1 checks and commit**
+- [x] **Step 8: Run Task 1 checks and commit**
 
 Run: `bun test packages/shared/tests/validators/vercel-preview.test.ts scripts/vercel-preview-policy.test.ts`
 
@@ -208,9 +208,9 @@ Commit: `feat(ci): define preview deployment policy`
 - `PreviewResult` is a closed discriminated union with `kind: 'skipped' | 'created' | 'canceled'`, a pull request number, and a stable reason. `created` and each `canceled` result include deployment ID and URL; `skipped` results do not. An active poll can return a canceled result when its exact head becomes ineligible, or `stale-event` without cancellation when identity drifts. No serialized result may contain either token. Candidates and canceled results are sorted for deterministic output.
 - One monotonic 23-minute controller deadline bounds every request, retry, pagination loop, observation, poll, and sleep beneath the workflow's 25-minute timeout.
 
-Use this closed reason vocabulary: `event-not-actionable`, `workflow-run-unassociated`, `stale-event`, `repository-mismatch`, `fork-pull-request`, `base-mismatch`, `preview-ineligible`, `no-active-deployment`, `web-unaffected`, `ci-unavailable`, `ci-not-current`, `ci-not-green`, `ready-deployment-reused`, `active-deployment-reused`, `created-ready`, and `canceled-active`. Configuration, malformed external data, incomplete pagination, transport failure, identity drift, and terminal build failure throw redacted errors rather than returning a skipped result.
+Use this closed reason vocabulary: `event-not-actionable`, `workflow-run-unassociated`, `stale-event`, `repository-mismatch`, `fork-pull-request`, `base-mismatch`, `preview-ineligible`, `no-active-deployment`, `web-unaffected`, `ci-unavailable`, `ci-not-current`, `ci-not-green`, `ready-deployment-reused`, `active-deployment-reused`, `created-ready`, and `canceled-active`. Stale candidate identity and pre-creation pull request state changes return `stale-event`. Configuration, malformed external data, incomplete pagination, transport failure, deployment-response identity drift, and terminal build failure throw redacted errors rather than returning a skipped result.
 
-- [ ] **Step 1: Write failing event and eligibility tests**
+- [x] **Step 1: Write failing event and eligibility tests**
 
 Use an injected fetch router that records method, URL, headers, and parsed body. Cover:
 
@@ -251,13 +251,13 @@ expect(createRequest.body).toEqual({
 expect(createRequest.body).not.toHaveProperty('target');
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm failure**
+- [x] **Step 2: Run the focused tests and confirm failure**
 
 Run: `bun test scripts/vercel-preview-deploy.test.ts --test-name-pattern 'event|eligibility|creates'`
 
 Expected: FAIL because `./vercel-preview-deploy.ts` does not exist.
 
-- [ ] **Step 3: Implement event resolution and GitHub reconciliation**
+- [x] **Step 3: Implement event resolution and GitHub reconciliation**
 
 Parse `GITHUB_EVENT_NAME`, read `GITHUB_EVENT_PATH`, and select the matching event schema. Resolve candidates as follows:
 
@@ -278,7 +278,7 @@ For every eligible candidate, resolve `/repos/{owner}/{repo}/actions/workflows/c
 
 Query pull request files with `per_page=100&page=N`. Return true as soon as an `isWebPreviewFile` match appears against either the current path or a renamed file's validated previous path. A short page proves no relevant path; a full page at the 30-page cap fails closed. Immediately before a create or cancel mutation, refetch the live pull request. Before create, repeat the live-main and latest-CI proof, then refetch the pull request once more after that proof. Abort the mutation when identity, head, state, labels, base, or CI changed during reconciliation.
 
-- [ ] **Step 4: Write failing idempotency and cancellation tests**
+- [x] **Step 4: Write failing idempotency and cancellation tests**
 
 Cover Vercel pages with an exact deployment on page 2 and prove:
 
@@ -294,13 +294,13 @@ Cover Vercel pages with an exact deployment on page 2 and prove:
 - A cancel 400 or ambiguous response reads detail once and accepts a now-terminal state without retrying PATCH; an active or identity-drifted detail fails.
 - A second reconciliation after creation sees the created metadata and is a no-op.
 
-- [ ] **Step 5: Run the idempotency tests and confirm failure**
+- [x] **Step 5: Run the idempotency tests and confirm failure**
 
 Run: `bun test scripts/vercel-preview-deploy.test.ts --test-name-pattern 'existing|cancel|duplicate|pagination'`
 
 Expected: FAIL because deployment listing, matching, and cancellation are not implemented.
 
-- [ ] **Step 6: Implement bounded Vercel reconciliation**
+- [x] **Step 6: Implement bounded Vercel reconciliation**
 
 List `/v7/deployments` with `teamId`, `projectId`, `branch`, `sha` where appropriate, and `limit=100`. The current endpoint has no documented metadata query. Follow validated `pagination.next` through `until`, preserve every original filter, reject repeated cursors including zero, and fail when a non-null cursor remains at the finite page cap. Filter again in trusted code with exact project, null target, and `matchesVercelPullRequest`. Parse list identifiers from `uid`; create, detail, and cancel responses use `id`. Accept `url: null` only on list items.
 
@@ -312,13 +312,13 @@ An ambiguous create outcome is a network error, timeout, 429, 5xx, 409, or succe
 
 For current ineligible state, list with `teamId`, `projectId`, `branch`, and `limit=100` without SHA, then call `PATCH /v12/deployments/{id}/cancel?teamId={teamId}` only for locally matched active Preview deployments. Refetch and revalidate live pull request identity and ineligibility immediately before every individual PATCH. Never retry PATCH. Validate a successful cancel as the requested ID, project, null target, Orbit metadata, and `CANCELED`, then emit one `canceled-active` result. After a 400 or ambiguous PATCH, read v13 detail once; accept `CANCELED`, `READY`, or another terminal state as a completed race with no active spend, and fail if the deployment remains active or its identity drifted. Race-only reconciliation emits `no-active-deployment`; mixed reconciliation emits results only for deployments actually canceled. A CI failure does not cancel a previously ready Preview; cancellation is driven by current pull request state.
 
-- [ ] **Step 7: Write failing transport and secret-safety tests**
+- [x] **Step 7: Write failing transport and secret-safety tests**
 
 Cover missing configuration, 401, ordinary 403, rate-limited GitHub 403, 429 with delta-seconds and HTTP-date `Retry-After`, 500, network failure, body-read failure, a real injected timeout abort, redirects, invalid JSON, invalid schema, endpoint-specific exhausted or repeated pagination, polling timeout, every terminal build state, and malformed create/detail/cancel responses. Assert safe GET requests use at most three total attempts; ordinary 401/403 do not retry; explicit GitHub rate-limit 403, 429, 5xx, network failure, body-read failure, and timeout may retry within the same cap; and excessive waits fail rather than sleeping without bound.
 
 Assert network, timeout, 429, 500, invalid-success body, and 409 create outcomes each perform one POST total and enter the three-attempt exact-list observation. Active or ready visibility is reused; terminal or absent visibility fails. Assert definitive 400, 401, 403, and 422 create responses send no reconciliation retry and no second POST. Cover cancel 400 plus ambiguous PATCH network, 429, 5xx, and invalid-success outcomes with one PATCH and one detail reconciliation. Assert exact mutation, observation, detail, and bounded-sleep counts. No error body, thrown error, log line, URL, request summary, external deployment ID, or serialized result may contain either token.
 
-- [ ] **Step 8: Implement the bounded JSON client and CLI entry point**
+- [x] **Step 8: Implement the bounded JSON client and CLI entry point**
 
 The JSON client applies a fresh 15-second AbortController per request through the injected timer scheduler and clears its timer after body consumption. It rejects redirects and sends a fixed `User-Agent`; GitHub requests also send `Accept: application/vnd.github+json` and `X-GitHub-Api-Version: 2022-11-28`. Parse response text as JSON, validate with the supplied shared schema, and throw only a token-redacted bounded error. Never include headers or raw external bodies in errors. Validate every deployment ID with the shared safe grammar, check it against both tokens before use, and encode every dynamic Vercel deployment path segment.
 
@@ -326,7 +326,7 @@ Safe GET reads retry network errors, per-attempt timeout, 429, 5xx, and GitHub 4
 
 The executable path uses `Bun.file(path).text()`, global `fetch`, a timer-backed sleep, and `console.log`. Guard it with `if (import.meta.main)`, set `process.exitCode = 1` on error, and print only the redacted error message.
 
-- [ ] **Step 9: Run Task 2 checks and commit**
+- [x] **Step 9: Run Task 2 checks and commit**
 
 Run: `bun test scripts/vercel-preview-deploy.test.ts`
 
@@ -357,7 +357,7 @@ Commit: `feat(ci): deploy previews after successful checks`
 - Uses immutable `actions/checkout` SHA `3d3c42e5aac5ba805825da76410c181273ba90b1` and immutable `oven-sh/setup-bun` SHA `0c5077e51419868618aeaa5fe8019c62421857d6`.
 - Produces managed labels named exactly `preview` and `no-preview`.
 
-- [ ] **Step 1: Write failing repository configuration tests**
+- [x] **Step 1: Write failing repository configuration tests**
 
 Parse `apps/web/vercel.json`, read the workflow and docs as text, and import `LABELS`. Assert the branch map and removal checks below, then use anchored assertions over the intentionally fixed workflow structure rather than global word searches:
 
@@ -371,15 +371,15 @@ expect(allGateFiles).not.toContain('BUILD_GATE_GITHUB_TOKEN');
 
 Require the exact top-level read-only permissions; only the three intended triggers and their exact activity types; no `workflow_dispatch`; the workflow-run job guard for a `pull_request` source and `success` conclusion; `timeout-minutes: 25`; and `cancel-in-progress: false`. Require the exact immutable checkout and setup-Bun SHAs, checkout of `${{ github.repository }}` at `${{ github.sha }}`, disabled persisted credentials, submodules, and LFS, Bun 1.3.14, and `bun install --frozen-lockfile --ignore-scripts`. Prove no cache or artifact-download action exists, no pull request head/ref expression can select checkout code, and the controller is the only run step receiving `VERCEL_TOKEN`.
 
-Assert the `static` job, rather than merely the whole CI file, contains named `bun run check-bytes` and `bun run check-bun-imports` steps. Assert each managed label description matches its executable semantics: `preview` enables an otherwise eligible draft after CI, while `no-preview` suppresses creation and cancels active Preview work. Also test the `**` rule against `feature`, `feature/preview`, and `codex/review/pr341` using the same minimatch semantics documented by Vercel. Do not add a dependency: implement the narrow expected assertion by checking that the configured key is exactly `**` and enumerate the branch examples in the test name.
+Assert the `static` job, rather than merely the whole CI file, contains named `bun run check-bytes` and `bun run check-bun-imports` steps. Assert each managed label description matches its executable semantics: `preview` enables an otherwise eligible draft after CI, while `no-preview` suppresses creation and cancels active Preview work. Assert the deployment map is exactly `{ '**': false, main: true }`, with the wildcard rule before the `main` override, without claiming that the test executes Vercel's glob matcher.
 
-- [ ] **Step 2: Run the configuration test and confirm failure**
+- [x] **Step 2: Run the configuration test and confirm failure**
 
 Run: `bun test scripts/vercel-preview-config.test.ts`
 
 Expected: FAIL because the workflow and managed labels do not exist and `ignoreCommand` remains.
 
-- [ ] **Step 3: Replace the Vercel gate and manage labels**
+- [x] **Step 3: Replace the Vercel gate and manage labels**
 
 Remove `ignoreCommand` from `apps/web/vercel.json` and add:
 
@@ -396,7 +396,7 @@ Add `preview` and `no-preview` beside the status labels in `scripts/labels.ts`, 
 
 Add named `Source byte policy` and `No Bun built-ins in shipped server code` steps to the `static` job in `.github/workflows/ci.yml`, invoking `bun run check-bytes` and `bun run check-bun-imports`. This makes the canonical `CI` success used by the dispatcher cover every non-test verification command from `bun run verify`.
 
-- [ ] **Step 4: Add the default-branch workflow**
+- [x] **Step 4: Add the default-branch workflow**
 
 Create a workflow named `Vercel Preview` with this trigger and trust boundary:
 
@@ -425,7 +425,7 @@ Keep `cancel-in-progress: false`: canceling a controller after an ambiguous Crea
 
 The controller rejects a workflow run linked to more than one distinct pull request, so the first linked number is used only for an event that resolves to one PR. Recovery requires a positive numeric `client_payload.pull_request`, which shares the same per-PR group as state and CI events; malformed recovery input may form an unused group but is rejected before any Vercel call. The job condition allows state events and repository dispatch, and allows a workflow run only when `github.event.workflow_run.event == 'pull_request'` and its conclusion is success. Set `timeout-minutes: 25`; the controller's own 23-minute deadline remains the primary bound. GitHub documents that `repository_dispatch` uses the last commit on the default branch, unlike `workflow_dispatch`, which can run a workflow version from a selected non-default ref. Checkout the trusted default-branch workflow commit using the pinned checkout action, `repository: ${{ github.repository }}`, `ref: ${{ github.sha }}`, `persist-credentials: false`, `submodules: false`, and `lfs: false`. Set up Bun 1.3.14 with the pinned setup action, run `bun install --frozen-lockfile --ignore-scripts`, then run `bun scripts/vercel-preview-deploy.ts` with tokens and settings scoped only to that controller step through `env`.
 
-- [ ] **Step 5: Rewrite the operations guide and documentation index**
+- [x] **Step 5: Rewrite the operations guide and documentation index**
 
 Document the exact eligibility table, CI-green timing, same-repository restriction, active cancellation including closed pull requests, web path list, Vercel API behavior, GitHub secret and variables, label synchronization, Git Fork Protection, the deployment-count caveat, the repository-controlled cost-policy limitation, and removal of all four old `BUILD_GATE_*` Vercel values. State precisely that only the trusted GitHub controller is isolated from pull request code: the API-created Vercel Preview still builds same-repository pull request code with the project's Preview environment scope. Manual recovery uses a maintainer-authenticated `repository_dispatch` named `vercel-preview-reconcile` with numeric `client_payload.pull_request`; explicitly forbid `workflow_dispatch` because a caller can select a non-default ref. Link the guide from `docs/README.md` under the contributor/operations entries.
 
@@ -433,7 +433,7 @@ Make the post-merge canary an ordered procedure: confirm Git Fork Protection and
 
 Do not claim that ignored builds are free, that Ready alone is trust, that fork previews are automatic, or that the privileged workflow can be exercised before it exists on `main`.
 
-- [ ] **Step 6: Run Task 3 checks and commit**
+- [x] **Step 6: Run Task 3 checks and commit**
 
 Run: `bun test scripts/vercel-preview-config.test.ts scripts/vercel-preview-policy.test.ts scripts/vercel-preview-deploy.test.ts packages/shared/tests/validators/vercel-preview.test.ts`
 
@@ -461,7 +461,7 @@ Commit: `chore(vercel): gate previews after CI`
 - Consumes the complete branch from Tasks 1 through 3.
 - Produces a branch merged with current `origin/main`, a green local verification record, an updated remote branch, an accurate PR body, and resolved addressed threads.
 
-- [ ] **Step 1: Merge the latest main and rerun focused tests**
+- [x] **Step 1: Merge the latest main and rerun focused tests**
 
 Run: `git fetch origin main && git merge --no-edit origin/main`
 
@@ -479,7 +479,7 @@ Run: `ORBIT_TEST_LANE=preview-gate bun run verify`
 
 Expected: lint, comment policy, source-byte check, Bun-import check, dependency dedupe, all typechecks, and all tests PASS. If a database service is unavailable, start the repository's existing infrastructure and initialize only the isolated `preview-gate` test lane before rerunning.
 
-- [ ] **Step 3: Review the final diff and operational text**
+- [x] **Step 3: Review the final diff and operational text**
 
 Run: `git diff --check origin/main...HEAD`
 
@@ -489,7 +489,7 @@ Run the attribution and em-dash scan against every changed text file. Run the fo
 
 Expected: no whitespace error, prohibited attribution, em dash, or old token/config reference in changed files except the operations guide's explicit removal instructions for the four legacy setting names.
 
-- [ ] **Step 4: Push and update pull request 341**
+- [x] **Step 4: Push and update pull request 341**
 
 Push `chore/gate-preview-builds` after all local checks pass. Replace the PR body with the final motivation, architecture, security boundary, setup requirements, test evidence, and the honest post-merge canary limitation. Remove the stale test count and all attribution.
 
