@@ -18,6 +18,7 @@ import {
   markAllRead,
   markRead,
   markSlackDmDelivery,
+  markSlackDmUnavailable,
   type NotificationEvent,
   nextQuietHoursEnd,
   notifyMany,
@@ -180,7 +181,7 @@ describe('notifyMany', () => {
         [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
         { slackEnabled: true },
       );
-      const first = await claimSlackDmDeliveries(tx, 10, new Date());
+      const first = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 86_400_000));
       expect(first).toHaveLength(1);
       const delivery = first[0];
       if (delivery === undefined) return;
@@ -192,6 +193,21 @@ describe('notifyMany', () => {
       expect(afterSuccess).toHaveLength(0);
       const rows = await tx.select().from(notificationDelivery);
       expect(rows[0]?.status).toBe('succeeded');
+    });
+  });
+
+  it('does not retry a delivery marked unavailable', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        {
+          slackEnabled: true,
+        },
+      );
+      await markSlackDmUnavailable(tx, outcome.notifications[0]?.id ?? '', fixture.adaId);
+      expect(await claimSlackDmDeliveries(tx, 10, new Date())).toHaveLength(0);
     });
   });
 

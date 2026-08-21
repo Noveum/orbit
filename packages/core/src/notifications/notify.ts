@@ -4,9 +4,10 @@ import {
   claimSlackDmDeliveries,
   markNotificationDelivered,
   markSlackDmDelivery,
+  markSlackDmUnavailable,
   notifyMany,
 } from '@orbit/services/notifications';
-import { dispatchSlackDm } from '@orbit/services/slack/dispatch';
+import { dispatchSlackDm, slackDmAvailable } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -26,6 +27,10 @@ export async function notifyRecipients(
     if (dispatch.sendAt > new Date()) continue;
     const notification = outcome.notifications.find((item) => item.id === dispatch.notificationId);
     if (notification === undefined) continue;
+    if (!(await slackDmAvailable(executor, notification.organizationId, dispatch.userId))) {
+      await markSlackDmUnavailable(executor, notification.id, dispatch.userId);
+      continue;
+    }
     let delivered = 0;
     try {
       delivered = await dispatchSlackDm(executor, {
@@ -65,6 +70,10 @@ export async function retrySlackDmDeliveries(executor: Executor, limit = 100): P
   for (const delivery of claimed) {
     const notification = byId.get(delivery.notificationId);
     if (notification === undefined) continue;
+    if (!(await slackDmAvailable(executor, notification.organizationId, delivery.userId))) {
+      await markSlackDmUnavailable(executor, notification.id, delivery.userId);
+      continue;
+    }
     let sent = 0;
     try {
       sent = await dispatchSlackDm(executor, {

@@ -7,11 +7,13 @@ import {
   findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
+  slackDmAvailable,
   verifyGithubSignature,
 } from '@orbit/services';
 import {
   markNotificationDelivered,
   markSlackDmDelivery,
+  markSlackDmUnavailable,
   notifyMany,
 } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
@@ -158,6 +160,10 @@ export async function POST(request: Request): Promise<Response> {
           (item) => item.id === dispatch.notificationId,
         );
         if (notification === undefined) continue;
+        if (!(await slackDmAvailable(db, notification.organizationId, dispatch.userId))) {
+          await markSlackDmUnavailable(db, notification.id, dispatch.userId);
+          continue;
+        }
         let delivered = 0;
         try {
           delivered = await dispatchSlackDm(db, {

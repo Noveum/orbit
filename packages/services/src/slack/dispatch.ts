@@ -295,6 +295,26 @@ export async function dispatchSlackDm(
   }
 }
 
+export async function slackDmAvailable(
+  database: SlackDatabase,
+  organizationId: string,
+  userId: string,
+): Promise<boolean> {
+  const context = await resolveSlackContext(database, organizationId);
+  if (context === null || context.token === null || !context.hasDirectMessageScope) return false;
+  const [mapping] = await database
+    .select({ id: slackUserMapping.id })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.userId, userId),
+      ),
+    )
+    .limit(1);
+  return mapping !== undefined;
+}
+
 export async function dispatchSlackMessage(
   database: SlackDatabase,
   input: DispatchSlackInput,

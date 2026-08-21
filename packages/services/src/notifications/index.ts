@@ -85,6 +85,23 @@ export async function markSlackDmDelivery(
     );
 }
 
+export async function markSlackDmUnavailable(
+  database: NotificationDatabase,
+  notificationId: string,
+  userId: string,
+): Promise<void> {
+  await database
+    .update(notificationDelivery)
+    .set({ status: 'skipped', lastError: 'Slack user mapping unavailable' })
+    .where(
+      and(
+        eq(notificationDelivery.notificationId, notificationId),
+        eq(notificationDelivery.userId, userId),
+        eq(notificationDelivery.channel, 'slack_dm'),
+      ),
+    );
+}
+
 export async function claimSlackDmDeliveries(
   database: NotificationDatabase,
   limit = 100,
