@@ -189,19 +189,24 @@ describe('notifyMany', () => {
   it('claims failed Slack DM deliveries for retry without claiming succeeded rows', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
-      const outcome = await notifyMany(
-        tx,
-        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
-        { slackEnabled: true },
-      );
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
       const first = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 86_400_000));
       expect(first).toHaveLength(1);
       const delivery = first[0];
       if (delivery === undefined) return;
-      await markSlackDmDelivery(tx, outcome.notifications[0]?.id ?? '', fixture.adaId, false);
+      await markSlackDmDelivery(tx, delivery.id, delivery.claimedAt ?? new Date(0), false);
       const retry = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 31_000));
       expect(retry.map((row) => row.id)).toContain(delivery.id);
-      await markSlackDmDelivery(tx, outcome.notifications[0]?.id ?? '', fixture.adaId, true);
+      const retriedDelivery = retry[0];
+      if (retriedDelivery === undefined) return;
+      await markSlackDmDelivery(
+        tx,
+        retriedDelivery.id,
+        retriedDelivery.claimedAt ?? new Date(0),
+        true,
+      );
       const afterSuccess = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 60_000));
       expect(afterSuccess).toHaveLength(0);
       const rows = await tx.select().from(notificationDelivery);
@@ -230,17 +235,36 @@ describe('notifyMany', () => {
     });
   });
 
-  it('does not retry a delivery marked unavailable', async () => {
+  it('does not finalize a delivery with an outdated claim after reclaim', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       const outcome = await notifyMany(
         tx,
         [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
-        {
-          slackEnabled: true,
-        },
+        { slackEnabled: true },
       );
-      await markSlackDmUnavailable(tx, outcome.notifications[0]?.id ?? '', fixture.adaId);
+      const first = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:00:00Z'));
+      const original = first[0];
+      if (original === undefined || original.claimedAt === null) return;
+      const reclaimed = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:05:01Z'));
+      const replacement = reclaimed[0];
+      if (replacement === undefined || replacement.claimedAt === null) return;
+
+      expect(await markSlackDmDelivery(tx, original.id, original.claimedAt, true)).toBe(false);
+      expect(await markSlackDmDelivery(tx, replacement.id, replacement.claimedAt, true)).toBe(true);
+      expect(outcome.notifications).toHaveLength(1);
+    });
+  });
+
+  it('does not retry a delivery marked unavailable', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const [delivery] = await claimSlackDmDeliveries(tx, 10, new Date());
+      if (delivery === undefined) return;
+      await markSlackDmUnavailable(tx, delivery.id, delivery.claimedAt ?? new Date(0));
       expect(await claimSlackDmDeliveries(tx, 10, new Date())).toHaveLength(0);
     });
   });

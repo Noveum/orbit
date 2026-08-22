@@ -61,13 +61,13 @@ export async function markNotificationDelivered(
 
 export async function markSlackDmDelivery(
   database: NotificationDatabase,
-  notificationId: string,
-  userId: string,
+  deliveryId: string,
+  claimedAt: Date,
   delivered: boolean,
   error?: string,
-): Promise<void> {
+): Promise<boolean> {
   const retryAt = new Date(Date.now() + 30_000);
-  await database
+  const updated = await database
     .update(notificationDelivery)
     .set({
       status: delivered ? 'succeeded' : 'failed',
@@ -78,28 +78,34 @@ export async function markSlackDmDelivery(
     })
     .where(
       and(
-        eq(notificationDelivery.notificationId, notificationId),
-        eq(notificationDelivery.userId, userId),
+        eq(notificationDelivery.id, deliveryId),
         eq(notificationDelivery.channel, 'slack_dm'),
+        eq(notificationDelivery.status, 'processing'),
+        eq(notificationDelivery.claimedAt, claimedAt),
       ),
-    );
+    )
+    .returning({ id: notificationDelivery.id });
+  return updated.length > 0;
 }
 
 export async function markSlackDmUnavailable(
   database: NotificationDatabase,
-  notificationId: string,
-  userId: string,
-): Promise<void> {
-  await database
+  deliveryId: string,
+  claimedAt: Date,
+): Promise<boolean> {
+  const updated = await database
     .update(notificationDelivery)
     .set({ status: 'skipped', lastError: 'Slack user mapping unavailable' })
     .where(
       and(
-        eq(notificationDelivery.notificationId, notificationId),
-        eq(notificationDelivery.userId, userId),
+        eq(notificationDelivery.id, deliveryId),
         eq(notificationDelivery.channel, 'slack_dm'),
+        eq(notificationDelivery.status, 'processing'),
+        eq(notificationDelivery.claimedAt, claimedAt),
       ),
-    );
+    )
+    .returning({ id: notificationDelivery.id });
+  return updated.length > 0;
 }
 
 export async function claimSlackDmDeliveries(

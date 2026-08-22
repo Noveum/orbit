@@ -1,4 +1,3 @@
-import { deliverPendingSlackDms } from '@orbit/core';
 import { and, db, eq, inArray, lt, or, schema } from '@orbit/db';
 import {
   applyGithubEvent,
@@ -143,10 +142,6 @@ export async function POST(request: Request): Promise<Response> {
         teamIds: outcome.teamIds,
         text: `${outcome.slackText}: ${absoluteUrl('/inbox')}`,
       });
-    }
-
-    if (slackEnabled) {
-      await deliverPendingSlackDms(db);
     }
 
     await db

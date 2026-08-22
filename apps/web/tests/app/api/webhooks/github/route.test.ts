@@ -255,7 +255,7 @@ describe('POST /api/webhooks/github', () => {
     const personal = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-personal'));
     expect(personal.status).toBe(200);
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
-    expect(deliverPendingSlackDms).toHaveBeenCalledTimes(1);
+    expect(deliverPendingSlackDms).not.toHaveBeenCalled();
 
     notifyMany.mockImplementationOnce(async () => ({
       actions: [],

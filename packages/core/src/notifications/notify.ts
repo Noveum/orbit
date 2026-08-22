@@ -46,7 +46,7 @@ export async function deliverPendingSlackDms(
       continue;
     }
     if (!(await slackDmAvailable(database, notification.organizationId, delivery.userId))) {
-      await markSlackDmUnavailable(database, notification.id, delivery.userId);
+      await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
       continue;
     }
     let sent = 0;
@@ -59,8 +59,13 @@ export async function deliverPendingSlackDms(
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
     }
-    await markSlackDmDelivery(database, notification.id, delivery.userId, sent === 1);
-    if (sent === 1) {
+    const finalized = await markSlackDmDelivery(
+      database,
+      delivery.id,
+      delivery.claimedAt ?? new Date(0),
+      sent === 1,
+    );
+    if (finalized && sent === 1) {
       delivered += 1;
       await markNotificationDelivered(database, notification.id, 'slack_dm');
     }
