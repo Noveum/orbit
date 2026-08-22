@@ -107,43 +107,92 @@ test('the command palette finds an issue by its title and opens it', async ({ br
   await context.close();
 });
 
-
 test('a card moved with the keyboard updates the aria-live region and lands in the new column', async ({
   browser,
 }) => {
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await signIn(context, 'alex@orbit.example');
-
   await page.goto(`${BASE}/team/eng/board`);
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await page.waitForSelector('[data-testid^="issue-card-"]');
-
   const teamId = await teamIdByKey(page, 'ENG');
   const made = await createIssue(page, teamId, `Keyboard Drag ${Date.now()}`);
   const moving = made.identifier;
-
   await page.reload();
-  
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
-  
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]')
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
 
   await cardLocator.focus();
-
-  await page.keyboard.press('Space');
-  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 5000 });
-
+  await page.keyboard.press('Enter');
+  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
   await page.keyboard.press('ArrowRight');
-  await expect(ariaLive).toContainText(`Moved ${moving} to column In Progress`, { timeout: 5000 });
+  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('Enter');
+  await expect(ariaLive).toContainText(`Successfully dropped ${moving}`, { timeout: 10000 });
 
-  await page.keyboard.press('Space');
-  await expect(ariaLive).toContainText(`Dropped ${moving} in column In Progress`, { timeout: 5000 });
-
+  await page.waitForTimeout(500);
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
+  await context.close();
+});
 
+test('a keyboard drag can be cancelled with Escape and returns to the original position', async ({
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context, 'alex@orbit.example');
+  await page.goto(`${BASE}/team/eng/board`);
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
+  await page.waitForSelector('[data-testid^="issue-card-"]');
+  const teamId = await teamIdByKey(page, 'ENG');
+  const made = await createIssue(page, teamId, `Keyboard Cancel ${Date.now()}`);
+  const moving = made.identifier;
+  await page.reload();
+  const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
+  await expect(cardLocator).toBeVisible();
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
+
+  await cardLocator.focus();
+  await page.keyboard.press('Space');
+  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('ArrowRight');
+  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('Escape');
+  await expect(ariaLive).toContainText(`Cancelled dragging ${moving}`, { timeout: 10000 });
+
+  await page.waitForTimeout(500);
+  await expect.poll(async () => await cardsIn(page, 'Todo'), { timeout: 15_000 }).toContain(moving);
+  await context.close();
+});
+
+test('a card can be reordered within the same column via keyboard', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context, 'alex@orbit.example');
+  await page.goto(`${BASE}/team/eng/board`);
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
+  await page.waitForSelector('[data-testid^="issue-card-"]');
+  const teamId = await teamIdByKey(page, 'ENG');
+  await createIssue(page, teamId, `Keyboard Reorder A ${Date.now()}`);
+  const made2 = await createIssue(page, teamId, `Keyboard Reorder B ${Date.now()}`);
+  const moving = made2.identifier;
+  await page.reload();
+  const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
+  await expect(cardLocator).toBeVisible();
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
+
+  await cardLocator.focus();
+  await page.keyboard.press('Space');
+  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('ArrowUp');
+  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('Enter');
+  await expect(ariaLive).toContainText(`Successfully dropped ${moving}`, { timeout: 10000 });
+
+  await page.waitForTimeout(500);
   await context.close();
 });

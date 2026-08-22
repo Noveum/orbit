@@ -1,13 +1,13 @@
 'use client';
 
 import {
-type CollisionDetection,
+  type CollisionDetection,
   DndContext,
-  type DragEndEvent,
-  type DragStartEvent,
-  type DragOverEvent,
   type DragCancelEvent,
+  type DragEndEvent,
+  type DragOverEvent,
   DragOverlay,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   pointerWithin,
@@ -148,6 +148,65 @@ function neighboursIn(
     before: insertAt === 0 ? null : (siblings[insertAt - 1] ?? null),
     after: siblings[insertAt] ?? null,
   };
+}
+
+function getNewPosition(
+  groups: readonly IssueGroup[],
+  activeId: string,
+  overId: string,
+): { column: string; pos: number; total: number } | null {
+  const overGroup = targetGroupFor(groups, overId);
+  if (overGroup === undefined) return null;
+  const siblings = overGroup.issues.filter((i) => i.id !== activeId);
+  let overIndex = siblings.findIndex((i) => i.id === overId);
+  if (overGroup.id === overId) overIndex = siblings.length;
+  const pos = (overIndex === -1 ? siblings.length : overIndex) + 1;
+  return { column: overGroup.title, pos, total: siblings.length + 1 };
+}
+
+function getAdjacentColumnCard(
+  columns: Element[],
+  targetColIndex: number,
+  currentCardIndex: number,
+): HTMLElement | null {
+  const col = columns[targetColIndex];
+  if (col === undefined) return null;
+  const cards = Array.from(col.querySelectorAll('li[tabindex]'));
+  if (cards.length === 0) return null;
+  const safeIndex = Math.max(0, Math.min(currentCardIndex, cards.length - 1));
+  return (cards[safeIndex] ?? null) as HTMLElement | null;
+}
+
+function getDOMIndices(currentFocus: Element): {
+  cols: Element[];
+  colIndex: number;
+  cardsInCol: Element[];
+  cardIndex: number;
+} | null {
+  const currentCol = currentFocus.closest('[data-testid^="board-column-"]');
+  if (currentCol === null) return null;
+  const cols = Array.from(document.querySelectorAll('[data-testid^="board-column-"]'));
+  const cardsInCol = Array.from(currentCol.querySelectorAll('li[tabindex]'));
+  return {
+    cols,
+    colIndex: cols.indexOf(currentCol),
+    cardsInCol,
+    cardIndex: cardsInCol.indexOf(currentFocus),
+  };
+}
+
+function getNextCardTarget(
+  key: string,
+  cols: Element[],
+  colIndex: number,
+  cardsInCol: Element[],
+  cardIndex: number,
+): HTMLElement | null {
+  if (key === 'ArrowDown') return (cardsInCol[cardIndex + 1] ?? null) as HTMLElement | null;
+  if (key === 'ArrowUp') return (cardsInCol[cardIndex - 1] ?? null) as HTMLElement | null;
+  if (key === 'ArrowRight') return getAdjacentColumnCard(cols, colIndex + 1, cardIndex);
+  if (key === 'ArrowLeft') return getAdjacentColumnCard(cols, colIndex - 1, cardIndex);
+  return null;
 }
 
 export function planDrop(
@@ -345,6 +404,22 @@ export function Board({
   const peekIssue =
     peekId === null ? undefined : issuesInPlay().find((issue) => issue.id === peekId);
   const activeIssue = activeId === null ? undefined : dragged.current;
+  const liveActiveIssue =
+    activeId === null ? undefined : issuesInPlay().find((i) => i.id === activeId);
+  useEffect(() => {
+    if (
+      activeId !== null &&
+      dragged.current !== undefined &&
+      liveActiveIssue !== undefined &&
+      dragged.current.updatedAt !== liveActiveIssue.updatedAt
+    ) {
+      dragged.current = liveActiveIssue;
+      const el = document.querySelector('[id^="DndLiveRegion-"][aria-live="assertive"]');
+      if (el !== null) {
+        el.textContent = `Note: ${liveActiveIssue.identifier} was updated in the background.`;
+      }
+    }
+  }, [activeId, liveActiveIssue]);
 
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
@@ -352,22 +427,65 @@ export function Board({
     setActiveId(id);
   };
 
-  const onDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = (event: DragEndEvent) => {
+    const dragId = String(event.active.id);
     setActiveId(null);
+
+    const announce = (msg: string) => {
+      setTimeout(() => {
+        const el = document.querySelector('[id^="DndLiveRegion-"][aria-live="assertive"]');
+        if (el !== null) el.textContent = msg;
+      }, 50);
+    };
+
     if (event.over === null) return;
+    const overId = String(event.over.id);
+    if (dragId === overId) return;
+
     const placement = planDrop(
       loadedGroups(),
       issuesInPlay(),
-      String(event.active.id),
-      String(event.over.id),
+      dragId,
+      overId,
       groupBy,
       resolveState,
       reorderable,
     );
-    if (placement !== null) move.mutate(placement);
+
+    const issue = issuesInPlay().find((i) => i.id === dragId);
+    const title = issue?.identifier ?? 'item';
+
+    if (placement === null) {
+      announce(`Cannot place ${title} here. Returned to original position.`);
+      return;
+    }
+
+    const info = getNewPosition(loadedGroups(), dragId, overId);
+    const dest = info === null ? 'new position' : `column ${info.column}, position ${info.pos}`;
+
+    move.mutate(placement, {
+      onSuccess: () => announce(`Successfully dropped ${title} in ${dest}.`),
+      onError: () => announce(`Failed to move ${title}. Returned to original position.`),
+    });
   };
 
-const accessibility = useMemo(
+  const handleBoardKeyDown = (e: React.KeyboardEvent) => {
+    if (activeId !== null) return;
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+
+    const currentFocus = document.activeElement;
+    if (currentFocus === null) return;
+    const dom = getDOMIndices(currentFocus);
+    if (dom === null) return;
+
+    e.preventDefault();
+    const { cols, colIndex, cardsInCol, cardIndex } = dom;
+
+    const nextFocus = getNextCardTarget(e.key, cols, colIndex, cardsInCol, cardIndex);
+    if (nextFocus !== null) nextFocus.focus();
+  };
+
+  const accessibility = useMemo(
     () => ({
       announcements: {
         onDragStart({ active }: DragStartEvent) {
@@ -375,82 +493,42 @@ const accessibility = useMemo(
           if (issue === undefined) return 'Picked up item.';
           const group = loadedGroups().find((g) => g.issues.some((r) => r.id === active.id));
           const groupName = group === undefined ? '' : ` in column ${group.title}`;
-          return `Picked up ${issue.identifier}: ${issue.title}${groupName}.`;
+          const siblings = group?.issues ?? [];
+          const pos = siblings.findIndex((i) => i.id === active.id) + 1;
+          return `Picked up ${issue.identifier}: ${issue.title}${groupName}, position ${pos} of ${siblings.length}.`;
         },
         onDragOver({ active, over }: DragOverEvent) {
-          if (over === null) return 'Moving item.';
-          const activeId = String(active.id);
+          if (over === null) return 'Moving item outside of board.';
+          if (active.id === over.id) return undefined;
+
+          const dragId = String(active.id);
           const overId = String(over.id);
-          const issue = issuesInPlay().find((i) => i.id === activeId);
+          const issue = issuesInPlay().find((i) => i.id === dragId);
           const title = issue === undefined ? 'item' : issue.identifier;
-
-          const overGroup = loadedGroups().find((g) => g.id === g.id && g.id === overId) ?? targetGroupFor(loadedGroups(), overId);
-          if (overGroup !== undefined) {
-            const placement = planDrop(
-              loadedGroups(),
-              issuesInPlay(),
-              activeId,
-              overId,
-              groupBy,
-              resolveState,
-              reorderable,
-            );
-            if (placement === null) {
-              return `Cannot move ${title} to column ${overGroup.title}.`;
-            }
-            return `Moved ${title} to column ${overGroup.title}.`;
-          }
-
-          const overIssue = issuesInPlay().find((i) => i.id === overId);
-          if (overIssue !== undefined) {
-            const group = loadedGroups().find((g) =>
-              g.issues.some((row) => row.id === overIssue.id)
-            );
-            if (group !== undefined) {
-              return `Moved ${title} over ${overIssue.identifier} in column ${group.title}.`;
-            }
-          }
-
-          return `Moved ${title}.`;
-        },
-        onDragEnd({ active, over }: DragEndEvent) {
-          const activeId = String(active.id);
-          const issue = issuesInPlay().find((i) => i.id === activeId);
-          const title = issue === undefined ? 'item' : issue.identifier;
-
-          if (over === null) return `Dropped ${title}.`;
-          const overId = String(over.id);
 
           const placement = planDrop(
             loadedGroups(),
             issuesInPlay(),
-            activeId,
+            dragId,
             overId,
             groupBy,
             resolveState,
             reorderable,
           );
 
-          if (placement === null) {
-            return `Cannot place ${title} here. Released ${title}.`;
-          }
+          if (placement === null) return `Cannot move ${title} here.`;
 
-          const overGroup = loadedGroups().find((g) => g.id === overId);
-          if (overGroup !== undefined) {
-            return `Dropped ${title} in column ${overGroup.title}.`;
+          const info = getNewPosition(loadedGroups(), dragId, overId);
+          if (info !== null) {
+            return `Moved ${title} to column ${info.column}, position ${info.pos} of ${info.total}.`;
           }
-
-          const overIssue = issuesInPlay().find((i) => i.id === overId);
-          if (overIssue !== undefined) {
-            const group = loadedGroups().find((g) =>
-              g.issues.some((row) => row.id === overIssue.id)
-            );
-            if (group !== undefined) {
-              return `Dropped ${title} in column ${group.title}.`;
-            }
-          }
-
-          return `Dropped ${title}.`;
+          return `Moved ${title}.`;
+        },
+        onDragEnd({ active, over }: DragEndEvent) {
+          const title = issuesInPlay().find((i) => i.id === active.id)?.identifier ?? 'item';
+          if (over === null) return `Could not drop ${title}. Returned to original position.`;
+          if (active.id === over.id) return `Dropped ${title} in original position.`;
+          return `Dropping ${title}...`;
         },
         onDragCancel({ active }: DragCancelEvent) {
           const issue = issuesInPlay().find((i) => i.id === active.id);
@@ -463,12 +541,12 @@ const accessibility = useMemo(
           'To pick up this issue, press Space or Enter. While dragging, use the arrow keys to move it. Press Space or Enter again to drop, or Escape to cancel.',
       },
     }),
-    [issuesInPlay, loadedGroups, groupBy, resolveState, reorderable]
+    [issuesInPlay, loadedGroups, groupBy, resolveState, reorderable],
   );
 
-
   const columns = (
-    <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
+    // biome-ignore lint/a11y/noStaticElementInteractions: event delegation for focus management
+    <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3" onKeyDown={handleBoardKeyDown}>
       {groups.map((group) => (
         <BoardColumn
           key={group.id}
@@ -502,11 +580,11 @@ const accessibility = useMemo(
 
   return (
     <DndContext
-     sensors={sensors}
+      sensors={sensors}
       collisionDetection={boardCollision}
       accessibility={accessibility}
       onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
       {columns}
