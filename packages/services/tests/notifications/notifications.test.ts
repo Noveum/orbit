@@ -175,6 +175,14 @@ describe('notifyMany', () => {
         .from(notificationDelivery)
         .where(eq(notificationDelivery.userId, fixture.adaId));
       expect(deliveries).toEqual([{ channel: 'slack_dm', status: 'pending' }]);
+      const deferredAt = outcome.slackDm[0]?.sendAt;
+      if (deferredAt === undefined) throw new Error('Expected a deferred Slack DM.');
+      const claimedAfterQuietHours = await claimSlackDmDeliveries(
+        tx,
+        10,
+        new Date(deferredAt.getTime() + 1),
+      );
+      expect(claimedAfterQuietHours).toHaveLength(1);
     });
   });
 
