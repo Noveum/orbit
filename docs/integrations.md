@@ -111,10 +111,10 @@ Slack integration status:
 - **Availability states.** Notification settings distinguish available,
   unmapped, reauthorization-required, and unavailable states so a user is not
   offered a DM preference that the current integration cannot satisfy.
-- **Quiet hours.** Non-urgent Slack DMs are suppressed during quiet hours;
-  urgent assignments can bypass quiet hours using the existing notification
-  setting. Suppression is intentional; this integration does not promise a
-  later retry from quiet hours.
+- **Quiet hours.** Non-urgent Slack DMs are deferred until the quiet-hours
+  window ends; urgent assignments can bypass quiet hours using the existing
+  notification setting. A DM-only notification with no other enabled channel
+  is not persisted during quiet hours.
 - **Current mapping behavior.** OAuth maps only the Orbit user who completes
   **Connect**, by matching their Orbit email with Slack. Other workspace members
   remain unmapped, so they keep their other enabled notification channels and

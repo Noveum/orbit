@@ -1,1 +1,1 @@
-export const SLACK_INTEGRATION_ENABLED = false;
+export const SLACK_INTEGRATION_ENABLED: boolean = false;
