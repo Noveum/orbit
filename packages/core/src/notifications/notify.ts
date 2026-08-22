@@ -54,7 +54,7 @@ export async function deliverPendingSlackDms(
       sent = await dispatchSlackDm(database, {
         organizationId: notification.organizationId,
         userId: delivery.userId,
-        text: `${notification.title}: ${notification.externalUrl ?? notification.url}`,
+        text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
       });
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
@@ -66,6 +66,17 @@ export async function deliverPendingSlackDms(
     }
   }
   return delivered;
+}
+
+function absoluteNotificationUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = process.env['NEXT_PUBLIC_APP_URL'] ?? process.env['APP_URL'] ?? '';
+  if (base.length === 0) return url;
+  try {
+    return new URL(url, base).toString();
+  } catch {
+    return url;
+  }
 }
 
 export async function issueSubscriberIds(executor: Executor, issueId: string): Promise<string[]> {
