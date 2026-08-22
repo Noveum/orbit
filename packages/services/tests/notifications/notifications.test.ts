@@ -209,6 +209,27 @@ describe('notifyMany', () => {
     });
   });
 
+  it('reclaims Slack DM deliveries left processing by an interrupted worker', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const claimAt = new Date(Date.now() + 86_400_000);
+      const pendingRows = await tx.select().from(notificationDelivery);
+      expect(pendingRows).toHaveLength(1);
+      const claimed = await claimSlackDmDeliveries(tx, 10, claimAt);
+      expect(claimed).toHaveLength(1);
+      const reclaimed = await claimSlackDmDeliveries(
+        tx,
+        10,
+        new Date(claimAt.getTime() + 5 * 60_000 + 1),
+      );
+      expect(reclaimed).toHaveLength(1);
+      expect(reclaimed[0]?.id).toBe(claimed[0]?.id);
+    });
+  });
+
   it('does not retry a delivery marked unavailable', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

@@ -107,13 +107,21 @@ export async function claimSlackDmDeliveries(
   limit = 100,
   now = new Date(),
 ): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+  const staleBefore = new Date(now.getTime() - 5 * 60_000);
   const candidates = await database
     .select()
     .from(notificationDelivery)
     .where(
       and(
         eq(notificationDelivery.channel, 'slack_dm'),
-        or(eq(notificationDelivery.status, 'pending'), eq(notificationDelivery.status, 'failed')),
+        or(
+          eq(notificationDelivery.status, 'pending'),
+          eq(notificationDelivery.status, 'failed'),
+          and(
+            eq(notificationDelivery.status, 'processing'),
+            lt(notificationDelivery.claimedAt, staleBefore),
+          ),
+        ),
         lte(notificationDelivery.availableAt, now),
       ),
     )
@@ -121,13 +129,24 @@ export async function claimSlackDmDeliveries(
   if (candidates.length === 0) return [];
   const claimed: (typeof notificationDelivery.$inferSelect)[] = [];
   for (const candidate of candidates) {
+    const staleProcessing =
+      candidate.claimedAt === null
+        ? sql`false`
+        : and(
+            eq(notificationDelivery.status, 'processing'),
+            eq(notificationDelivery.claimedAt, candidate.claimedAt),
+          );
     const [row] = await database
       .update(notificationDelivery)
       .set({ status: 'processing', claimedAt: now })
       .where(
         and(
           eq(notificationDelivery.id, candidate.id),
-          or(eq(notificationDelivery.status, 'pending'), eq(notificationDelivery.status, 'failed')),
+          or(
+            eq(notificationDelivery.status, 'pending'),
+            eq(notificationDelivery.status, 'failed'),
+            staleProcessing,
+          ),
         ),
       )
       .returning();
