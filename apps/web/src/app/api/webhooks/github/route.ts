@@ -1,21 +1,15 @@
+import { deliverPendingSlackDms } from '@orbit/core';
 import { and, db, eq, inArray, lt, or, schema } from '@orbit/db';
 import {
   applyGithubEvent,
   applyGithubInstallationEvent,
-  dispatchSlackDm,
   dispatchSlackMessage,
   findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
-  slackDmAvailable,
   verifyGithubSignature,
 } from '@orbit/services';
-import {
-  markNotificationDelivered,
-  markSlackDmDelivery,
-  markSlackDmUnavailable,
-  notifyMany,
-} from '@orbit/services/notifications';
+import { notifyMany } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -76,7 +70,6 @@ async function claimDelivery(deliveryId: string, eventName: string): Promise<Res
     : Response.json({ status: 'duplicate' });
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: webhook orchestration keeps claim, apply, delivery, and finalization together
 export async function POST(request: Request): Promise<Response> {
   const secret = process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
   const raw = await request.text();
@@ -130,9 +123,7 @@ export async function POST(request: Request): Promise<Response> {
         organizationId: applied.organizationId,
         teamIds: applied.teamIds,
         actions,
-        notifications: notified.notifications,
         slack: notified.slack,
-        slackDm: notified.slackDm,
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
       };
@@ -153,35 +144,8 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
-    if (slackIntegrationEnabled() && outcome.organizationId !== null) {
-      for (const dispatch of outcome.slackDm) {
-        if (dispatch.sendAt > new Date()) continue;
-        const notification = outcome.notifications.find(
-          (item) => item.id === dispatch.notificationId,
-        );
-        if (notification === undefined) continue;
-        if (!(await slackDmAvailable(db, notification.organizationId, dispatch.userId))) {
-          await markSlackDmUnavailable(db, notification.id, dispatch.userId);
-          continue;
-        }
-        let delivered = 0;
-        try {
-          delivered = await dispatchSlackDm(db, {
-            organizationId: outcome.organizationId,
-            userId: dispatch.userId,
-            clientMsgId: dispatch.notificationId,
-            text: `${notification.title}: ${absoluteUrl(notification.url)}`,
-          });
-        } catch (error) {
-          console.error('[orbit] slack DM delivery deferred for retry', error);
-        }
-        if (delivered !== 1) {
-          await markSlackDmDelivery(db, notification.id, dispatch.userId, false);
-          continue;
-        }
-        await markNotificationDelivered(db, notification.id, 'slack_dm');
-        await markSlackDmDelivery(db, notification.id, dispatch.userId, true);
-      }
+    if (slackIntegrationEnabled()) {
+      await deliverPendingSlackDms(db);
     }
 
     await db

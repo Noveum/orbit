@@ -185,9 +185,16 @@ const viewResponseSchema = slackResponseSchema.extend({
   view: z.object({ id: z.string() }).optional(),
 });
 
-const openConversationResponseSchema = slackResponseSchema.extend({
-  channel: z.object({ id: z.string() }).optional(),
-});
+const openConversationResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    channel: z.object({ id: z.string().min(1) }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
 
 const conversationsResponseSchema = slackResponseSchema.extend({
   channels: z
@@ -291,7 +298,8 @@ export class SlackClient {
     const body = await this.call('conversations.open', openConversationResponseSchema, {
       users: userId,
     });
-    return { channel: body.channel?.id ?? '' };
+    if (!body.ok) throw internal('Slack conversations.open did not return a channel.');
+    return { channel: body.channel.id };
   }
 
   async updateMessage(input: UpdateMessageInput): Promise<SlackMessageRef> {

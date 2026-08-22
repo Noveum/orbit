@@ -82,19 +82,20 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
     setError(null);
     setSaved(false);
     try {
+      const preferences = NOTIFICATION_CHANNELS.flatMap((channel) =>
+        NOTIFICATION_TYPES.flatMap((type) => {
+          if (channel === 'slack_dm' && props.slackDm !== 'available') return [];
+          return {
+            channel,
+            type,
+            enabled: channel !== 'slack' && !disabled.has(matrixKey(channel, type)),
+          };
+        }),
+      );
       await apiRequest('/api/notifications/preferences', {
         method: 'PUT',
         body: {
-          preferences: NOTIFICATION_CHANNELS.flatMap((channel) =>
-            NOTIFICATION_TYPES.map((type) => ({
-              channel,
-              type,
-              enabled:
-                channel !== 'slack' &&
-                (channel !== 'slack_dm' || props.slackDm === 'available') &&
-                !disabled.has(matrixKey(channel, type)),
-            })),
-          ),
+          preferences,
           quietHoursEnabled,
           quietHoursStart,
           quietHoursEnd,

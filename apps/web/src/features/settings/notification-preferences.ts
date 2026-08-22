@@ -75,8 +75,14 @@ export async function saveNotificationPreferences(
 ): Promise<NotificationPreferenceState> {
   const parsed = notificationSettingsSchema.parse(input);
 
+  const current = await loadNotificationPreferences(userId, organizationId);
+  const preferences =
+    current.slackDm === 'available'
+      ? parsed.preferences
+      : parsed.preferences.filter((preference) => preference.channel !== 'slack_dm');
+
   await db.transaction(async (tx) => {
-    for (const preference of parsed.preferences) {
+    for (const preference of preferences) {
       await tx
         .insert(schema.notificationPreference)
         .values({

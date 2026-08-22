@@ -138,6 +138,30 @@ describe('SlackClient', () => {
       { url: 'https://slack.test/api/conversations.open', body: { users: 'U123' } },
     ]);
   });
+
+  it('rejects a successful response without a non-empty conversation id', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true, channel: { id: '' } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/unexpected payload/);
+  });
+
+  it('preserves Slack errors from a failed conversation response', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'users_not_found' }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/users_not_found/);
+  });
 });
 
 describe('commandParser', () => {

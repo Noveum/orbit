@@ -252,7 +252,6 @@ export interface DispatchSlackInput {
 export interface DispatchSlackDmInput {
   readonly organizationId: string;
   readonly userId: string;
-  readonly clientMsgId?: string;
   readonly text: string;
   readonly blocks?: SlackBlock[];
   readonly fetch?: typeof globalThis.fetch;
@@ -285,7 +284,6 @@ export async function dispatchSlackDm(
     await client.postMessage({
       channel: conversation.channel,
       text: input.text,
-      ...(input.clientMsgId === undefined ? {} : { clientMsgId: input.clientMsgId }),
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
     });
     return 1;

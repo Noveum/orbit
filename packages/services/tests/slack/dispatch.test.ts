@@ -761,7 +761,6 @@ describe('dispatchSlackDm', () => {
       const delivered = await dispatchSlackDm(tx, {
         organizationId: fixture.organizationId,
         userId: fixture.userId,
-        clientMsgId: 'notification-1',
         text: 'You were mentioned',
         fetch,
       });
@@ -770,7 +769,7 @@ describe('dispatchSlackDm', () => {
         { method: 'conversations.open', body: { users: 'U123' } },
         {
           method: 'chat.postMessage',
-          body: { channel: 'D123', text: 'You were mentioned', client_msg_id: 'notification-1' },
+          body: { channel: 'D123', text: 'You were mentioned' },
         },
       ]);
     });
@@ -781,8 +780,15 @@ describe('dispatchSlackDm', () => {
       const fixture = await seed(tx);
       await tx
         .update(integration)
-        .set({ config: { scopes: ['im:write'] } })
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
         .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
       const fetch = (() =>
         Promise.resolve(
           new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }), { status: 200 }),
@@ -791,7 +797,7 @@ describe('dispatchSlackDm', () => {
         await dispatchSlackDm(tx, {
           organizationId: fixture.organizationId,
           userId: fixture.userId,
-          text: 'No mapping',
+          text: 'Provider failure',
           fetch,
         }),
       ).toBe(0);

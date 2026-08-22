@@ -170,6 +170,11 @@ describe('notifyMany', () => {
       expect(outcome.email).toHaveLength(1);
       expect(outcome.slackDm).toHaveLength(1);
       expect(outcome.slackDm[0]?.sendAt.getTime()).toBeGreaterThan(now.getTime());
+      const deliveries = await tx
+        .select({ channel: notificationDelivery.channel, status: notificationDelivery.status })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.userId, fixture.adaId));
+      expect(deliveries).toEqual([{ channel: 'slack_dm', status: 'pending' }]);
     });
   });
 

@@ -58,6 +58,18 @@ describe('NotificationMatrix', () => {
     expect(screen.getByLabelText('Slack DM for Mention')).toBeDisabled();
   });
 
+  it('does not overwrite Slack DM preferences while Slack is unavailable', async () => {
+    const user = userEvent.setup();
+    renderUnavailableMatrix();
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    const preferences = (sentBody as { preferences: { channel: string }[] }).preferences;
+    expect(preferences.some((entry) => entry.channel === 'slack_dm')).toBe(false);
+  });
+
   it('renders a checkbox for every channel and type pair', () => {
     renderMatrix();
     const expected =
