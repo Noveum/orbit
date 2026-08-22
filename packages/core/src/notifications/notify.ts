@@ -1,6 +1,13 @@
-import { and, eq, inArray, isNull, or, schema } from '@orbit/db';
+import { and, type Database, db, eq, inArray, isNull, or, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { notifyMany } from '@orbit/services/notifications';
+import {
+  claimSlackDmDeliveries,
+  markNotificationDelivered,
+  markSlackDmDelivery,
+  markSlackDmUnavailable,
+  notifyMany,
+} from '@orbit/services/notifications';
+import { dispatchSlackDm, slackDmAvailable } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -14,6 +21,67 @@ export async function notifyRecipients(
   if (populated.length === 0) return [];
   const outcome = await notifyMany(executor, populated);
   return outcome.actions;
+}
+
+export async function deliverPendingSlackDms(
+  database: Database = db,
+  limit = 100,
+): Promise<number> {
+  const claimed = await claimSlackDmDeliveries(database, limit);
+  if (claimed.length === 0) return 0;
+  const rows = await database
+    .select()
+    .from(schema.notification)
+    .where(
+      inArray(
+        schema.notification.id,
+        claimed.map((row) => row.notificationId),
+      ),
+    );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  let delivered = 0;
+  for (const delivery of claimed) {
+    const notification = byId.get(delivery.notificationId);
+    if (notification === undefined) {
+      continue;
+    }
+    if (!(await slackDmAvailable(database, notification.organizationId, delivery.userId))) {
+      await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
+      continue;
+    }
+    let sent = 0;
+    try {
+      sent = await dispatchSlackDm(database, {
+        organizationId: notification.organizationId,
+        userId: delivery.userId,
+        text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
+      });
+    } catch (error) {
+      console.error('[orbit] Slack DM retry failed', error);
+    }
+    const finalized = await markSlackDmDelivery(
+      database,
+      delivery.id,
+      delivery.claimedAt ?? new Date(0),
+      sent === 1,
+    );
+    if (finalized && sent === 1) {
+      delivered += 1;
+      await markNotificationDelivered(database, notification.id, 'slack_dm');
+    }
+  }
+  return delivered;
+}
+
+function absoluteNotificationUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = process.env['NEXT_PUBLIC_APP_URL'] ?? process.env['APP_URL'] ?? '';
+  if (base.length === 0) return url;
+  try {
+    return new URL(url, base).toString();
+  } catch {
+    return url;
+  }
 }
 
 export async function issueSubscriberIds(executor: Executor, issueId: string): Promise<string[]> {

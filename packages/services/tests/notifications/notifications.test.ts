@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   notification,
+  notificationDelivery,
   notificationPreference,
   notificationSetting,
   organization,
@@ -10,11 +11,14 @@ import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@or
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import {
+  claimSlackDmDeliveries,
   defaultPreferences,
   isWithinQuietHours,
   listInbox,
   markAllRead,
   markRead,
+  markSlackDmDelivery,
+  markSlackDmUnavailable,
   type NotificationEvent,
   nextQuietHoursEnd,
   notifyMany,
@@ -73,6 +77,198 @@ function eventFor(fixture: Fixture, overrides: Partial<NotificationEvent> = {}):
 }
 
 describe('notifyMany', () => {
+  it('offers Slack DM as a distinct personal notification channel', () => {
+    expect(NOTIFICATION_CHANNELS).toContain('slack_dm');
+    expect(defaultPreferences()).toContainEqual({
+      channel: 'slack_dm',
+      type: 'mention',
+      enabled: false,
+    });
+  });
+
+  it('routes a personal event to Slack DM instead of the channel', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { slackEnabled: true },
+      );
+
+      expect(outcome.slackDm).toHaveLength(1);
+      expect(outcome.slack).toHaveLength(0);
+      expect(outcome.notifications[0]?.deliveredChannels).not.toContain('slack_dm');
+    });
+  });
+
+  it('does not persist or dedupe a DM-only notification during quiet hours', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'UTC');
+      await tx.insert(notificationPreference).values([
+        {
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel: 'inbox',
+          type: 'comment_created',
+          enabled: false,
+        },
+        {
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel: 'email',
+          type: 'comment_created',
+          enabled: false,
+        },
+      ]);
+      const event = eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' });
+      const deferred = await notifyMany(tx, [event], {
+        now: new Date('2026-07-22T20:00:00.000Z'),
+        slackEnabled: true,
+      });
+      expect(deferred.notifications).toHaveLength(0);
+      expect(deferred.deduped).toBe(0);
+
+      const delivered = await notifyMany(tx, [event], {
+        now: new Date('2026-07-23T10:00:00.000Z'),
+        slackEnabled: true,
+      });
+      expect(delivered.slackDm).toHaveLength(1);
+      expect(delivered.deduped).toBe(0);
+    });
+  });
+
+  it('keeps a team event on the Slack channel', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'state_changed' })],
+        { slackEnabled: true },
+      );
+
+      expect(outcome.slack).toHaveLength(1);
+      expect(outcome.slackDm).toHaveLength(0);
+    });
+  });
+
+  it('retains a Slack DM with a deferred send time when email is also enabled', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'UTC');
+      await tx.insert(notificationPreference).values({
+        id: `np_${randomUUIDv7()}`,
+        userId: fixture.adaId,
+        channel: 'inbox',
+        type: 'comment_created',
+        enabled: false,
+      });
+      const now = new Date('2026-07-22T20:00:00.000Z');
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { now, slackEnabled: true },
+      );
+      expect(outcome.email).toHaveLength(1);
+      expect(outcome.slackDm).toHaveLength(1);
+      expect(outcome.slackDm[0]?.sendAt.getTime()).toBeGreaterThan(now.getTime());
+      const deliveries = await tx
+        .select({ channel: notificationDelivery.channel, status: notificationDelivery.status })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.userId, fixture.adaId));
+      expect(deliveries).toEqual([{ channel: 'slack_dm', status: 'pending' }]);
+      const deferredAt = outcome.slackDm[0]?.sendAt;
+      if (deferredAt === undefined) throw new Error('Expected a deferred Slack DM.');
+      const claimedAfterQuietHours = await claimSlackDmDeliveries(
+        tx,
+        10,
+        new Date(deferredAt.getTime() + 1),
+      );
+      expect(claimedAfterQuietHours).toHaveLength(1);
+    });
+  });
+
+  it('claims failed Slack DM deliveries for retry without claiming succeeded rows', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const first = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 86_400_000));
+      expect(first).toHaveLength(1);
+      const delivery = first[0];
+      if (delivery === undefined) return;
+      await markSlackDmDelivery(tx, delivery.id, delivery.claimedAt ?? new Date(0), false);
+      const retry = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 31_000));
+      expect(retry.map((row) => row.id)).toContain(delivery.id);
+      const retriedDelivery = retry[0];
+      if (retriedDelivery === undefined) return;
+      await markSlackDmDelivery(
+        tx,
+        retriedDelivery.id,
+        retriedDelivery.claimedAt ?? new Date(0),
+        true,
+      );
+      const afterSuccess = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 60_000));
+      expect(afterSuccess).toHaveLength(0);
+      const rows = await tx.select().from(notificationDelivery);
+      expect(rows[0]?.status).toBe('succeeded');
+    });
+  });
+
+  it('reclaims Slack DM deliveries left processing by an interrupted worker', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const claimAt = new Date(Date.now() + 86_400_000);
+      const pendingRows = await tx.select().from(notificationDelivery);
+      expect(pendingRows).toHaveLength(1);
+      const claimed = await claimSlackDmDeliveries(tx, 10, claimAt);
+      expect(claimed).toHaveLength(1);
+      const reclaimed = await claimSlackDmDeliveries(
+        tx,
+        10,
+        new Date(claimAt.getTime() + 5 * 60_000 + 1),
+      );
+      expect(reclaimed).toHaveLength(1);
+      expect(reclaimed[0]?.id).toBe(claimed[0]?.id);
+    });
+  });
+
+  it('does not finalize a delivery with an outdated claim after reclaim', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(
+        tx,
+        [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
+        { slackEnabled: true },
+      );
+      const first = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:00:00Z'));
+      const original = first[0];
+      if (original === undefined || original.claimedAt === null) return;
+      const reclaimed = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:05:01Z'));
+      const replacement = reclaimed[0];
+      if (replacement === undefined || replacement.claimedAt === null) return;
+
+      expect(await markSlackDmDelivery(tx, original.id, original.claimedAt, true)).toBe(false);
+      expect(await markSlackDmDelivery(tx, replacement.id, replacement.claimedAt, true)).toBe(true);
+      expect(outcome.notifications).toHaveLength(1);
+    });
+  });
+
+  it('does not retry a delivery marked unavailable', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const [delivery] = await claimSlackDmDeliveries(tx, 10, new Date());
+      if (delivery === undefined) return;
+      await markSlackDmUnavailable(tx, delivery.id, delivery.claimedAt ?? new Date(0));
+      expect(await claimSlackDmDeliveries(tx, 10, new Date())).toHaveLength(0);
+    });
+  });
+
   it('always writes an inbox row and returns valid sync actions', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -502,14 +698,18 @@ describe('inbox reads and writes', () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
-      await expect(
-        snooze(tx, {
+      let error: unknown;
+      try {
+        await snooze(tx, {
           userId: fixture.graceId,
           organizationId: fixture.organizationId,
           notificationId: outcome.notifications[0]?.id ?? '',
           until: new Date(),
-        }),
-      ).rejects.toThrow();
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeDefined();
     });
   });
 });
@@ -520,10 +720,14 @@ describe('defaultPreferences', () => {
     expect(matrix).toHaveLength(NOTIFICATION_CHANNELS.length * NOTIFICATION_TYPES.length);
     expect(new Set(matrix.map((entry) => entry.channel)).size).toBe(NOTIFICATION_CHANNELS.length);
     expect(
-      matrix.filter((entry) => entry.channel === 'slack').every((entry) => !entry.enabled),
+      matrix
+        .filter((entry) => entry.channel === 'slack' || entry.channel === 'slack_dm')
+        .every((entry) => !entry.enabled),
     ).toBe(true);
     expect(
-      matrix.filter((entry) => entry.channel !== 'slack').every((entry) => entry.enabled),
+      matrix
+        .filter((entry) => entry.channel !== 'slack' && entry.channel !== 'slack_dm')
+        .every((entry) => entry.enabled),
     ).toBe(true);
   });
 });

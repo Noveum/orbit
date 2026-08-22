@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationSettings } from '@orbit/services/notifications';
 import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
+import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 
@@ -15,10 +16,12 @@ export const notificationSettingsSchema = notificationPreferencesUpdateSchema.ex
 export interface NotificationPreferenceState {
   readonly disabledKeys: string[];
   readonly settings: NotificationSettings;
+  readonly slackDm: 'available' | 'unmapped' | 'reauthorize' | 'unavailable';
 }
 
 export async function loadNotificationPreferences(
   userId: string,
+  organizationId: string,
 ): Promise<NotificationPreferenceState> {
   const rows = await db
     .select()
@@ -30,20 +33,56 @@ export async function loadNotificationPreferences(
     .where(eq(schema.notificationSetting.userId, userId))
     .limit(1);
 
+  const [slack] = await db
+    .select({ config: schema.integration.config, integrationId: schema.integration.id })
+    .from(schema.integration)
+    .where(
+      and(
+        eq(schema.integration.organizationId, organizationId),
+        eq(schema.integration.provider, 'slack'),
+      ),
+    )
+    .limit(1);
+  let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
+  if (SLACK_INTEGRATION_ENABLED && slack !== undefined) {
+    const scopes = slack.config['scopes'];
+    if (Array.isArray(scopes) && scopes.includes('im:write') && scopes.includes('chat:write')) {
+      const [mapping] = await db
+        .select({ id: schema.slackUserMapping.id })
+        .from(schema.slackUserMapping)
+        .where(
+          and(
+            eq(schema.slackUserMapping.integrationId, slack.integrationId),
+            eq(schema.slackUserMapping.userId, userId),
+          ),
+        )
+        .limit(1);
+      slackDm = mapping === undefined ? 'unmapped' : 'available';
+    } else slackDm = 'reauthorize';
+  }
+
   return {
     disabledKeys: rows.filter((row) => !row.enabled).map((row) => `${row.channel}:${row.type}`),
     settings: setting ?? DEFAULT_SETTINGS,
+    slackDm,
   };
 }
 
 export async function saveNotificationPreferences(
   userId: string,
+  organizationId: string,
   input: unknown,
 ): Promise<NotificationPreferenceState> {
   const parsed = notificationSettingsSchema.parse(input);
 
+  const current = await loadNotificationPreferences(userId, organizationId);
+  const preferences =
+    current.slackDm === 'available'
+      ? parsed.preferences
+      : parsed.preferences.filter((preference) => preference.channel !== 'slack_dm');
+
   await db.transaction(async (tx) => {
-    for (const preference of parsed.preferences) {
+    for (const preference of preferences) {
       await tx
         .insert(schema.notificationPreference)
         .values({
@@ -81,5 +120,5 @@ export async function saveNotificationPreferences(
       .onConflictDoUpdate({ target: schema.notificationSetting.userId, set: settings });
   });
 
-  return await loadNotificationPreferences(userId);
+  return await loadNotificationPreferences(userId, organizationId);
 }

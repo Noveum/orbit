@@ -81,6 +81,7 @@ export const pool =
     ? cached.sql
     : postgres(connectionString, {
         max: poolMax.data,
+        connect_timeout: 5,
         idle_timeout: 30,
         prepare: prepareStatements,
       });

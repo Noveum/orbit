@@ -66,6 +66,35 @@ export const notification = pgTable(
   ],
 );
 
+export const notificationDelivery = pgTable(
+  'notification_delivery',
+  {
+    id: text('id').primaryKey(),
+    notificationId: text('notification_id')
+      .notNull()
+      .references(() => notification.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('notification_delivery_unique').on(
+      table.notificationId,
+      table.userId,
+      table.channel,
+    ),
+    index('notification_delivery_pending_idx').on(table.status, table.availableAt),
+  ],
+);
+
 export const notificationPreference = pgTable(
   'notification_preference',
   {

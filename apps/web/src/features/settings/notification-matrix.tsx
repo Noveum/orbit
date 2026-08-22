@@ -23,6 +23,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   inbox: 'Inbox',
   email: 'Email',
   slack: 'Slack',
+  slack_dm: 'Slack DM',
   push: 'Push',
 };
 
@@ -42,6 +43,7 @@ export interface NotificationMatrixProps {
   readonly quietHoursStart: string;
   readonly quietHoursEnd: string;
   readonly urgentBypassEnabled: boolean;
+  readonly slackDm: 'available' | 'unmapped' | 'reauthorize' | 'unavailable';
 }
 
 export function NotificationMatrix(props: NotificationMatrixProps) {
@@ -53,8 +55,18 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  let slackDmNotice: string | null = null;
+  if (props.slackDm === 'unmapped') {
+    slackDmNotice = 'Connect your Orbit account to Slack to enable Slack DMs.';
+  } else if (props.slackDm === 'reauthorize') {
+    slackDmNotice =
+      'Slack DMs require permission to send direct messages. Reconnect Slack from Integrations.';
+  } else if (props.slackDm === 'unavailable') {
+    slackDmNotice = 'Slack DMs are unavailable until Slack is connected for this workspace.';
+  }
 
   function toggle(channel: NotificationChannel, type: NotificationType): void {
+    if (channel === 'slack_dm' && props.slackDm !== 'available') return;
     setSaved(false);
     const key = matrixKey(channel, type);
     setDisabled((current) => {
@@ -70,16 +82,20 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
     setError(null);
     setSaved(false);
     try {
+      const preferences = NOTIFICATION_CHANNELS.flatMap((channel) =>
+        NOTIFICATION_TYPES.flatMap((type) => {
+          if (channel === 'slack_dm' && props.slackDm !== 'available') return [];
+          return {
+            channel,
+            type,
+            enabled: channel !== 'slack' && !disabled.has(matrixKey(channel, type)),
+          };
+        }),
+      );
       await apiRequest('/api/notifications/preferences', {
         method: 'PUT',
         body: {
-          preferences: NOTIFICATION_CHANNELS.flatMap((channel) =>
-            NOTIFICATION_TYPES.map((type) => ({
-              channel,
-              type,
-              enabled: channel !== 'slack' && !disabled.has(matrixKey(channel, type)),
-            })),
-          ),
+          preferences,
           quietHoursEnabled,
           quietHoursStart,
           quietHoursEnd,
@@ -120,8 +136,12 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
                   <td key={channel} className="px-3 py-1.5 text-center">
                     <Checkbox
                       className="mx-auto"
-                      checked={!disabled.has(matrixKey(channel, type))}
+                      checked={
+                        !disabled.has(matrixKey(channel, type)) &&
+                        (channel !== 'slack_dm' || props.slackDm === 'available')
+                      }
                       onCheckedChange={() => toggle(channel, type)}
+                      disabled={channel === 'slack_dm' && props.slackDm !== 'available'}
                       aria-label={`${CHANNEL_LABELS[channel]} for ${typeLabel(type)}`}
                     />
                   </td>
@@ -131,6 +151,8 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
           </tbody>
         </table>
       </div>
+
+      {slackDmNotice === null ? null : <p className="text-muted text-xs">{slackDmNotice}</p>}
 
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <label htmlFor="quiet-hours" className="flex items-center justify-between gap-3">

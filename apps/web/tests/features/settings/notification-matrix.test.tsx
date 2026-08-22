@@ -31,11 +31,45 @@ function renderMatrix(disabledKeys: string[] = []) {
       quietHoursStart="18:00"
       quietHoursEnd="09:00"
       urgentBypassEnabled
+      slackDm="available"
+    />,
+  );
+}
+
+function renderUnavailableMatrix() {
+  render(
+    <NotificationMatrix
+      disabledKeys={[]}
+      quietHoursEnabled
+      quietHoursStart="18:00"
+      quietHoursEnd="09:00"
+      urgentBypassEnabled
+      slackDm="unavailable"
     />,
   );
 }
 
 describe('NotificationMatrix', () => {
+  it('explains when Slack DMs are unavailable', () => {
+    renderUnavailableMatrix();
+    expect(
+      screen.getByText('Slack DMs are unavailable until Slack is connected for this workspace.'),
+    ).toBeVisible();
+    expect(screen.getByLabelText('Slack DM for Mention')).toBeDisabled();
+  });
+
+  it('does not overwrite Slack DM preferences while Slack is unavailable', async () => {
+    const user = userEvent.setup();
+    renderUnavailableMatrix();
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    const preferences = (sentBody as { preferences: { channel: string }[] }).preferences;
+    expect(preferences.some((entry) => entry.channel === 'slack_dm')).toBe(false);
+  });
+
   it('renders a checkbox for every channel and type pair', () => {
     renderMatrix();
     const expected =

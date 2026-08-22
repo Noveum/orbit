@@ -185,6 +185,17 @@ const viewResponseSchema = slackResponseSchema.extend({
   view: z.object({ id: z.string() }).optional(),
 });
 
+const openConversationResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    channel: z.object({ id: z.string().min(1) }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
+
 const conversationsResponseSchema = slackResponseSchema.extend({
   channels: z
     .array(
@@ -281,6 +292,14 @@ export class SlackClient {
     return { channel: body.channel ?? input.channel, ts: body.ts ?? '' };
   }
 
+  async openConversation(userId: string): Promise<{ channel: string }> {
+    const body = await this.call('conversations.open', openConversationResponseSchema, {
+      users: userId,
+    });
+    if (!body.ok) throw internal('Slack conversations.open did not return a channel.');
+    return { channel: body.channel.id };
+  }
+
   async updateMessage(input: UpdateMessageInput): Promise<SlackMessageRef> {
     const body = await this.call('chat.update', postMessageResponseSchema, {
       channel: input.channel,
@@ -333,7 +352,13 @@ export class SlackClient {
   }
 
   async lookupUserByEmail(email: string): Promise<SlackUser | null> {
-    const body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    let body: z.infer<typeof userResponseSchema>;
+    try {
+      body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('users_not_found')) return null;
+      throw error;
+    }
     const user = body.user;
     if (user === undefined) return null;
     return {

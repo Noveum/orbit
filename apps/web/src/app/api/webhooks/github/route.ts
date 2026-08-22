@@ -90,6 +90,7 @@ export async function POST(request: Request): Promise<Response> {
   if (claimResponse !== null) return claimResponse;
 
   let body: unknown;
+  let deliveryFinalized = false;
   try {
     body = JSON.parse(raw);
   } catch {
@@ -113,14 +114,16 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
+    const slackEnabled = slackIntegrationEnabled();
     const outcome = await db.transaction(async (tx) => {
       const applied = await applyGithubEvent(tx, { eventName, body, organizationId });
-      const notified = await notifyMany(tx, applied.notificationEvents);
+      const notified = await notifyMany(tx, applied.notificationEvents, { slackEnabled });
       const actions: SyncAction[] = [...applied.actions, ...notified.actions];
       return {
         organizationId: applied.organizationId,
         teamIds: applied.teamIds,
         actions,
+        slack: notified.slack,
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
       };
@@ -129,9 +132,10 @@ export async function POST(request: Request): Promise<Response> {
     await publish(outcome.actions);
 
     if (
-      slackIntegrationEnabled() &&
+      slackEnabled &&
       outcome.organizationId !== null &&
-      outcome.slackText !== null
+      outcome.slackText !== null &&
+      outcome.slack.length > 0
     ) {
       await dispatchSlackMessage(db, {
         organizationId: outcome.organizationId,
@@ -148,16 +152,20 @@ export async function POST(request: Request): Promise<Response> {
           : { status: 'ignored', error: outcome.ignoredReason },
       )
       .where(deliveryMatch(deliveryId));
+    deliveryFinalized = true;
+
     return Response.json({
       ok: true,
       actions: outcome.actions.length,
       ...(outcome.ignoredReason === null ? {} : { ignored: outcome.ignoredReason }),
     });
   } catch (error) {
-    await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'failed' })
-      .where(deliveryMatch(deliveryId));
+    if (!deliveryFinalized) {
+      await db
+        .update(schema.webhookDelivery)
+        .set({ status: 'failed' })
+        .where(deliveryMatch(deliveryId));
+    }
     console.error('[orbit] github webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }

@@ -52,7 +52,7 @@ export function isStatusChangeNotification(type: string): boolean {
   return (STATUS_CHANGE_NOTIFICATION_TYPES as readonly string[]).includes(type);
 }
 
-export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'push'] as const;
+export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'slack_dm', 'push'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
 export const NOTIFICATION_REASONS = [

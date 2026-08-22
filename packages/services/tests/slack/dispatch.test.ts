@@ -13,12 +13,14 @@ import { eq } from 'drizzle-orm';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
+  dispatchSlackDm,
   dispatchSlackMessage,
   ensureSlackIntegration,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -97,6 +99,20 @@ describe('resolveSlackContext', () => {
       expect(context?.token).toBe('xoxb-test');
     });
   });
+
+  it('persists Slack scopes and exposes whether direct messages are authorized', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+
+      const context = await resolveSlackContext(tx, fixture.organizationId);
+      expect(context?.scopes).toEqual(['chat:write', 'im:write']);
+      expect(context?.hasDirectMessageScope).toBe(true);
+    });
+  });
 });
 
 describe('ensureSlackIntegration', () => {
@@ -126,7 +142,8 @@ describe('ensureSlackIntegration', () => {
         .where(eq(integration.organizationId, fixture.organizationId));
 
       expect(legacy).toBeDefined();
-      expect(integrationId).toBe(legacy!.id);
+      if (legacy === undefined) throw new Error('Expected the existing integration row.');
+      expect(integrationId).toBe(legacy.id);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toEqual({
         externalId: 'default',
@@ -154,10 +171,14 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
         token: 'xoxb-acme',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
       expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
         integrationId: globex.integrationId,
         token: 'xoxb-globex',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
     });
   });
@@ -186,6 +207,8 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
         token: 'xoxb-acme',
+        scopes: [],
+        hasDirectMessageScope: false,
       });
     });
   });
@@ -706,6 +729,78 @@ describe('dispatchSlackMessage', () => {
 
       expect(delivered).toBe(0);
       expect(log.channels).toHaveLength(0);
+    });
+  });
+});
+
+describe('dispatchSlackDm', () => {
+  it('opens the mapped conversation and posts the message', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+      const calls: { method: string; body: Record<string, unknown> }[] = [];
+      const fetch = ((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        calls.push({ method: _url.split('/').pop() ?? '', body });
+        const response = _url.endsWith('conversations.open')
+          ? { ok: true, channel: { id: 'D123' } }
+          : { ok: true, channel: 'D123', ts: '1.0' };
+        return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
+      }) as unknown as typeof globalThis.fetch;
+
+      const delivered = await dispatchSlackDm(tx, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'You were mentioned',
+        fetch,
+      });
+      expect(delivered).toBe(1);
+      expect(calls).toEqual([
+        { method: 'conversations.open', body: { users: 'U123' } },
+        {
+          method: 'chat.postMessage',
+          body: { channel: 'D123', text: 'You were mentioned' },
+        },
+      ]);
+    });
+  });
+
+  it('skips unmapped users and swallows provider failures', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+      const fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }), { status: 200 }),
+        )) as unknown as typeof globalThis.fetch;
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'Provider failure',
+          fetch,
+        }),
+      ).toBe(0);
     });
   });
 });

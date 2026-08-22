@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@orbit/db';
 import {
   nextSyncId,
   notification,
+  notificationDelivery,
   notificationPreference,
   notificationSetting,
   user,
@@ -36,6 +37,129 @@ export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
+
+export async function markNotificationDelivered(
+  database: NotificationDatabase,
+  notificationId: string,
+  channel: string,
+): Promise<void> {
+  await database
+    .update(notification)
+    .set({
+      deliveredChannels: sql`(
+        SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
+        FROM (
+          SELECT value
+          FROM jsonb_array_elements_text(${notification.deliveredChannels} || ${JSON.stringify([channel])}::jsonb)
+          GROUP BY value
+          ORDER BY MIN(value)
+        ) values
+      )`,
+    })
+    .where(eq(notification.id, notificationId));
+}
+
+export async function markSlackDmDelivery(
+  database: NotificationDatabase,
+  deliveryId: string,
+  claimedAt: Date,
+  delivered: boolean,
+  error?: string,
+): Promise<boolean> {
+  const retryAt = new Date(Date.now() + 30_000);
+  const updated = await database
+    .update(notificationDelivery)
+    .set({
+      status: delivered ? 'succeeded' : 'failed',
+      attempts: sql`${notificationDelivery.attempts} + 1`,
+      ...(delivered
+        ? { deliveredAt: new Date(), lastError: null }
+        : { lastError: error ?? 'delivery failed', availableAt: retryAt }),
+    })
+    .where(
+      and(
+        eq(notificationDelivery.id, deliveryId),
+        eq(notificationDelivery.channel, 'slack_dm'),
+        eq(notificationDelivery.status, 'processing'),
+        eq(notificationDelivery.claimedAt, claimedAt),
+      ),
+    )
+    .returning({ id: notificationDelivery.id });
+  return updated.length > 0;
+}
+
+export async function markSlackDmUnavailable(
+  database: NotificationDatabase,
+  deliveryId: string,
+  claimedAt: Date,
+): Promise<boolean> {
+  const updated = await database
+    .update(notificationDelivery)
+    .set({ status: 'skipped', lastError: 'Slack user mapping unavailable' })
+    .where(
+      and(
+        eq(notificationDelivery.id, deliveryId),
+        eq(notificationDelivery.channel, 'slack_dm'),
+        eq(notificationDelivery.status, 'processing'),
+        eq(notificationDelivery.claimedAt, claimedAt),
+      ),
+    )
+    .returning({ id: notificationDelivery.id });
+  return updated.length > 0;
+}
+
+export async function claimSlackDmDeliveries(
+  database: NotificationDatabase,
+  limit = 100,
+  now = new Date(),
+): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+  const staleBefore = new Date(now.getTime() - 5 * 60_000);
+  const candidates = await database
+    .select()
+    .from(notificationDelivery)
+    .where(
+      and(
+        eq(notificationDelivery.channel, 'slack_dm'),
+        or(
+          eq(notificationDelivery.status, 'pending'),
+          eq(notificationDelivery.status, 'failed'),
+          and(
+            eq(notificationDelivery.status, 'processing'),
+            lt(notificationDelivery.claimedAt, staleBefore),
+          ),
+        ),
+        lte(notificationDelivery.availableAt, now),
+      ),
+    )
+    .limit(limit);
+  if (candidates.length === 0) return [];
+  const claimed: (typeof notificationDelivery.$inferSelect)[] = [];
+  for (const candidate of candidates) {
+    const staleProcessing =
+      candidate.claimedAt === null
+        ? sql`false`
+        : and(
+            eq(notificationDelivery.status, 'processing'),
+            eq(notificationDelivery.claimedAt, candidate.claimedAt),
+          );
+    const [row] = await database
+      .update(notificationDelivery)
+      .set({ status: 'processing', claimedAt: now })
+      .where(
+        and(
+          eq(notificationDelivery.id, candidate.id),
+          or(
+            eq(notificationDelivery.status, 'pending'),
+            eq(notificationDelivery.status, 'failed'),
+            staleProcessing,
+          ),
+        ),
+      )
+      .returning();
+    if (row !== undefined) claimed.push(row);
+  }
+  return claimed;
+}
 
 export const DEDUPE_WINDOW_MS = 60_000;
 export const INBOX_CHANNEL = 'inbox';
@@ -75,11 +199,18 @@ export interface SlackDispatch {
   readonly notificationId: string;
 }
 
+export interface SlackDmDispatch {
+  readonly userId: string;
+  readonly notificationId: string;
+  readonly sendAt: Date;
+}
+
 export interface NotifyOutcome {
   readonly notifications: NotificationRecord[];
   readonly actions: SyncAction[];
   readonly email: EmailDispatch[];
   readonly slack: SlackDispatch[];
+  readonly slackDm: SlackDmDispatch[];
   readonly deduped: number;
 }
 
@@ -96,15 +227,18 @@ interface Plan {
   readonly channels: string[];
   readonly emailAt: Date | null;
   readonly emailDeferred: boolean;
+  readonly slackDmAt: Date | null;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: notification planning coordinates dedupe, preferences, persistence, and delivery scheduling
 export async function notifyMany(
   database: NotificationDatabase,
   events: readonly NotificationEvent[],
-  options: { readonly now?: Date } = {},
+  options: { readonly now?: Date; readonly slackEnabled?: boolean } = {},
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
+  const slackFeatureEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
   const recipientIds = unique(
     parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
@@ -136,15 +270,18 @@ export async function notifyMany(
         deduped += 1;
         continue;
       }
-      seen.add(key);
       const plan = planFor(
         event,
         recipient,
         settings.get(userId) ?? DEFAULT_SETTINGS,
         disabled,
         now,
+        slackFeatureEnabled,
       );
-      if (plan !== null) plans.push(plan);
+      if (plan !== null) {
+        seen.add(key);
+        plans.push(plan);
+      }
     }
   }
   if (plans.length === 0) return { ...emptyOutcome(), deduped };
@@ -154,7 +291,31 @@ export async function notifyMany(
     .values(plans.map((plan) => toInsert(plan, now)))
     .returning();
 
+  const deliveryRows = slackDeliveryRows(rows, plans, now);
+  if (deliveryRows.length > 0) await database.insert(notificationDelivery).values(deliveryRows);
+
   return buildOutcome(plans, rows, deduped);
+}
+
+function slackDeliveryRows(rows: readonly NotificationRecord[], plans: readonly Plan[], now: Date) {
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  return rows.flatMap((row) => {
+    const plan = planById.get(row.id);
+    if (plan === undefined || !plan.channels.includes('slack_dm')) return [];
+    return [
+      {
+        id: randomUUIDv7(now),
+        notificationId: row.id,
+        userId: row.userId,
+        channel: 'slack_dm',
+        availableAt: plan.slackDmAt ?? now,
+      },
+    ];
+  });
+}
+
+function resolveSlackFeatureEnabled(value: boolean | undefined): boolean {
+  return value ?? SLACK_INTEGRATION_ENABLED;
 }
 
 function planFor(
@@ -163,12 +324,20 @@ function planFor(
   settings: NotificationSettings,
   disabled: ReadonlySet<string>,
   now: Date,
+  slackFeatureEnabled: boolean,
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
+  const personal = isPersonalNotification(event);
   const slackEnabled =
-    SLACK_INTEGRATION_ENABLED && isChannelEnabled(disabled, recipient.id, 'slack', event.type);
-  if (!(inboxEnabled || emailEnabled || slackEnabled)) return null;
+    slackFeatureEnabled &&
+    !personal &&
+    isChannelEnabled(disabled, recipient.id, 'slack', event.type);
+  const slackDmEnabled =
+    slackFeatureEnabled &&
+    personal &&
+    isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
+  if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
   const quietHours: QuietHours = {
     enabled: settings.quietHoursEnabled,
     start: settings.quietHoursStart,
@@ -176,7 +345,9 @@ function planFor(
     timeZone: recipient.timezone,
   };
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
-  const deferred = emailEnabled && !bypass && isWithinQuietHours(now, quietHours);
+  const deferred =
+    (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
+  if (deferred && slackDmEnabled && !emailEnabled && !inboxEnabled && !slackEnabled) return null;
   return {
     id: randomUUIDv7(now),
     event,
@@ -185,10 +356,22 @@ function planFor(
       ...(inboxEnabled ? [INBOX_CHANNEL] : []),
       ...(emailEnabled ? ['email'] : []),
       ...(slackEnabled ? ['slack'] : []),
+      ...(slackDmEnabled ? ['slack_dm'] : []),
     ],
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
+    slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
   };
+}
+
+function slackDmSendAt(
+  enabled: boolean,
+  deferred: boolean,
+  now: Date,
+  quietHours: QuietHours,
+): Date | null {
+  if (!enabled) return null;
+  return deferred ? nextQuietHoursEnd(now, quietHours) : now;
 }
 
 function emailSendAt(
@@ -204,6 +387,12 @@ function emailSendAt(
 
 function isUrgent(event: ParsedEvent): boolean {
   return event.type === 'issue_assigned' && event.priority === 1;
+}
+
+function isPersonalNotification(event: ParsedEvent): boolean {
+  return ['assigned', 'mentioned', 'subscribed', 'commented', 'review_requested'].includes(
+    event.reason,
+  );
 }
 
 function toInsert(plan: Plan, now: Date) {
@@ -223,7 +412,7 @@ function toInsert(plan: Plan, now: Date) {
     body: event.body,
     url: event.url,
     externalUrl: event.externalUrl ?? null,
-    deliveredChannels: plan.channels,
+    deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
     syncId: nextSyncId,
     createdAt: now,
   };
@@ -238,6 +427,7 @@ function buildOutcome(
   const actions: SyncAction[] = [];
   const email: EmailDispatch[] = [];
   const slack: SlackDispatch[] = [];
+  const slackDm: SlackDmDispatch[] = [];
   for (const row of rows) {
     const plan = planById.get(row.id);
     if (plan === undefined) continue;
@@ -254,8 +444,11 @@ function buildOutcome(
     if (plan.channels.includes('slack')) {
       slack.push({ userId: row.userId, notificationId: row.id });
     }
+    if (plan.channels.includes('slack_dm') && plan.slackDmAt !== null) {
+      slackDm.push({ userId: row.userId, notificationId: row.id, sendAt: plan.slackDmAt });
+    }
   }
-  return { notifications: rows, actions, email, slack, deduped };
+  return { notifications: rows, actions, email, slack, slackDm, deduped };
 }
 
 function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
@@ -347,7 +540,7 @@ function dedupeKey(
 }
 
 function emptyOutcome(): NotifyOutcome {
-  return { notifications: [], actions: [], email: [], slack: [], deduped: 0 };
+  return { notifications: [], actions: [], email: [], slack: [], slackDm: [], deduped: 0 };
 }
 
 export const markReadSchema = z.object({

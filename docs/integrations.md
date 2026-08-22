@@ -95,23 +95,41 @@ complete.
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.
 
+## Slack
+
+Slack integration status:
+
+- **Disabled by default.** `SLACK_INTEGRATION_ENABLED` remains hardcoded to
+  `false` because Slack is still behind the open-source preview boundary.
+- **Required Slack scopes.** A future enabled deployment needs `chat:write` for
+  channel delivery and `im:write` for direct messages. Granted scopes are stored
+  as non-secret integration metadata; the bot token is never exposed to the
+  browser.
+- **Notification routing.** When enabled, team and project notifications use
+  the configured Slack channel, while personal notifications use Slack DMs.
+  This keeps broadcast activity out of individual conversations.
+- **Availability states.** Notification settings distinguish available,
+  unmapped, reauthorization-required, and unavailable states so a user is not
+  offered a DM preference that the current integration cannot satisfy.
+- **Quiet hours.** Non-urgent Slack DMs are deferred until the quiet-hours
+  window ends; urgent assignments can bypass quiet hours using the existing
+  notification setting. A DM-only notification with no other enabled channel
+  is not persisted during quiet hours.
+- **Current mapping behavior.** OAuth maps only the Orbit user who completes
+  **Connect**, by matching their Orbit email with Slack. Other workspace members
+  remain unmapped, so they keep their other enabled notification channels and
+  cannot enable Slack DMs.
+- **Known mapping gap.** There is currently no administrator mapping screen,
+  workspace-wide backfill, or per-user fallback linking flow. Those are separate
+  follow-up work and are not prerequisites for the dark, disabled integration.
+- **Current runtime result.** While the preview boundary is closed, Slack DM
+  settings are unavailable and no Slack messages are sent.
+
 ### Note on GitHub sign-in
 
 `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are a different thing. Those are
 for signing in with GitHub, and they come from an OAuth app. You can have
 either, both, or neither. See [Configuration](configuration.md#authentication).
-
-## Slack user mapping
-
-Slack OAuth can persist the workspace installation, the scopes Slack granted,
-and a mapping for the Orbit user who completed the **Connect** flow. The
-current implementation maps only that connecting user by matching their Orbit
-email with Slack; it does not map the other members of the workspace.
-
-There is no administrator mapping screen, workspace-wide backfill, or per-user
-fallback linking flow yet. Users who did not complete the Connect flow remain
-unmapped, so Slack user mapping should not be documented or presented as a
-workspace-wide setup step. Those follow-up flows are separate work.
 
 ## Email
 

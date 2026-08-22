@@ -110,6 +110,60 @@ describe('buildUnfurl', () => {
   });
 });
 
+describe('SlackClient', () => {
+  it('opens a direct message conversation', async () => {
+    const requests: { url: string; body: Record<string, unknown> }[] = [];
+    const fetch = Object.assign(
+      (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      },
+      { preconnect: () => undefined },
+    );
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      baseUrl: 'https://slack.test/api',
+      fetch,
+    });
+
+    await expect(client.openConversation('U123')).resolves.toEqual({ channel: 'D123' });
+    expect(requests).toEqual([
+      { url: 'https://slack.test/api/conversations.open', body: { users: 'U123' } },
+    ]);
+  });
+
+  it('rejects a successful response without a non-empty conversation id', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true, channel: { id: '' } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/unexpected payload/);
+  });
+
+  it('preserves Slack errors from a failed conversation response', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'users_not_found' }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/users_not_found/);
+  });
+});
+
 describe('commandParser', () => {
   it('parses new and search', () => {
     expect(commandParser('new Fix the router')).toEqual({ kind: 'new', title: 'Fix the router' });
@@ -252,6 +306,12 @@ describe('SlackClient', () => {
     });
     expect(calls[0]?.url).toBe('https://slack.com/api/users.lookupByEmail');
     expect(calls[0]?.init?.body).toContain('ADA@example.com');
+  });
+
+  it('treats an unmapped Slack email as unavailable', async () => {
+    const { impl } = stubFetch(200, { ok: false, error: 'users_not_found' });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+    await expect(client.lookupUserByEmail('missing@example.com')).resolves.toBeNull();
   });
 
   it('returns a null cursor when slack sends an empty one', async () => {

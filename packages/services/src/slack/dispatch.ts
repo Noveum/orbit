@@ -27,6 +27,8 @@ const credentialsSchema = z.object({ botToken: z.string().min(1).optional() });
 export interface SlackContext {
   readonly integrationId: string;
   readonly token: string | null;
+  readonly scopes: string[];
+  readonly hasDirectMessageScope: boolean;
 }
 
 export async function resolveSlackContext(
@@ -40,13 +42,26 @@ export async function resolveSlackContext(
   ];
   if (externalId !== undefined) filters.push(eq(integration.externalId, externalId));
   const [row] = await database
-    .select({ id: integration.id, credentials: integration.credentials })
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+    })
     .from(integration)
     .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
   const parsed = credentialsSchema.safeParse(row.credentials);
-  return { integrationId: row.id, token: parsed.success ? (parsed.data.botToken ?? null) : null };
+  const configuredScopes = row.config['scopes'];
+  const scopes = Array.isArray(configuredScopes)
+    ? configuredScopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+  return {
+    integrationId: row.id,
+    token: parsed.success ? (parsed.data.botToken ?? null) : null,
+    scopes,
+    hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
+  };
 }
 
 export async function upsertSlackUserMapping(
@@ -232,6 +247,70 @@ export interface DispatchSlackInput {
   readonly text: string;
   readonly blocks?: SlackBlock[];
   readonly fetch?: typeof globalThis.fetch;
+}
+
+export interface DispatchSlackDmInput {
+  readonly organizationId: string;
+  readonly userId: string;
+  readonly text: string;
+  readonly blocks?: SlackBlock[];
+  readonly fetch?: typeof globalThis.fetch;
+}
+
+export async function dispatchSlackDm(
+  database: SlackDatabase,
+  input: DispatchSlackDmInput,
+): Promise<number> {
+  const context = await resolveSlackContext(database, input.organizationId);
+  if (context === null || context.token === null || !context.hasDirectMessageScope) return 0;
+  const [mapping] = await database
+    .select({ slackUserId: slackUserMapping.slackUserId })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.userId, input.userId),
+      ),
+    )
+    .limit(1);
+  if (mapping === undefined) return 0;
+
+  const client = new SlackClient({
+    token: context.token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+  });
+  try {
+    const conversation = await client.openConversation(mapping.slackUserId);
+    await client.postMessage({
+      channel: conversation.channel,
+      text: input.text,
+      ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+    });
+    return 1;
+  } catch (error) {
+    console.error('[orbit] slack DM post failed', error);
+    return 0;
+  }
+}
+
+export async function slackDmAvailable(
+  database: SlackDatabase,
+  organizationId: string,
+  userId: string,
+): Promise<boolean> {
+  const context = await resolveSlackContext(database, organizationId);
+  if (context === null || context.token === null || !context.hasDirectMessageScope) return false;
+  const [mapping] = await database
+    .select({ id: slackUserMapping.id })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.userId, userId),
+      ),
+    )
+    .limit(1);
+  return mapping !== undefined;
 }
 
 export async function dispatchSlackMessage(
