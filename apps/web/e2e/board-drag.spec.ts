@@ -128,7 +128,7 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
   
-  const ariaLive = page.locator('[aria-live="assertive"]');
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]')
 
   await cardLocator.focus();
 
