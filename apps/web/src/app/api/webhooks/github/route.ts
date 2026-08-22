@@ -115,9 +115,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
+    const slackEnabled = slackIntegrationEnabled();
     const outcome = await db.transaction(async (tx) => {
       const applied = await applyGithubEvent(tx, { eventName, body, organizationId });
-      const notified = await notifyMany(tx, applied.notificationEvents);
+      const notified = await notifyMany(tx, applied.notificationEvents, { slackEnabled });
       const actions: SyncAction[] = [...applied.actions, ...notified.actions];
       return {
         organizationId: applied.organizationId,
@@ -132,7 +133,7 @@ export async function POST(request: Request): Promise<Response> {
     await publish(outcome.actions);
 
     if (
-      slackIntegrationEnabled() &&
+      slackEnabled &&
       outcome.organizationId !== null &&
       outcome.slackText !== null &&
       outcome.slack.length > 0
@@ -144,7 +145,7 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
-    if (slackIntegrationEnabled()) {
+    if (slackEnabled) {
       await deliverPendingSlackDms(db);
     }
 

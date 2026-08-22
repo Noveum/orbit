@@ -18,15 +18,26 @@ process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 const published: SyncAction[][] = [];
 const core = await import('@orbit/core');
 const services = await import('@orbit/services');
+const notifications = await import('@orbit/services/notifications');
+const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(() => Promise.resolve(0));
+const deliverPendingSlackDms = mock(() => Promise.resolve(0));
+const notifyMany = mock(notifications.notifyMany);
+let slackEnabledForTest = false;
+notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
+  deliverPendingSlackDms,
   publishDeltas: (actions: readonly SyncAction[]) => {
     published.push([...actions]);
     return Promise.resolve(undefined);
   },
 }));
 mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
+mock.module('@orbit/services/notifications', () => ({ ...notifications, notifyMany }));
+mock.module('@/lib/integrations/slack-capability.ts', () => ({
+  slackIntegrationEnabled: () => slackEnabledForTest,
+}));
 
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
@@ -164,6 +175,10 @@ async function linkCount(): Promise<number> {
 beforeEach(async () => {
   published.length = 0;
   dispatchSlackMessage.mockClear();
+  deliverPendingSlackDms.mockClear();
+  notifyMany.mockClear();
+  notifyMany.mockImplementation(realNotifyMany);
+  slackEnabledForTest = false;
   await seed();
 });
 
@@ -224,6 +239,37 @@ describe('POST /api/webhooks/github', () => {
 
     expect(response.status).toBe(200);
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
+  });
+
+  it('passes enabled routing outcomes through without double-delivering', async () => {
+    slackEnabledForTest = true;
+    notifyMany.mockImplementationOnce(async () => ({
+      actions: [],
+      deduped: 0,
+      email: [],
+      notifications: [],
+      slack: [],
+      slackDm: [{ userId: 'user-1', notificationId: 'notification-1', sendAt: new Date() }],
+    }));
+
+    const personal = await POST(signed(pullRequestBody('orb-3-dashboard'), 'delivery-personal'));
+    expect(personal.status).toBe(200);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
+    expect(deliverPendingSlackDms).toHaveBeenCalledTimes(1);
+
+    notifyMany.mockImplementationOnce(async () => ({
+      actions: [],
+      deduped: 0,
+      email: [],
+      notifications: [],
+      slack: [{ userId: 'user-1', notificationId: 'notification-2' }],
+      slackDm: [],
+    }));
+    const broadcast = await POST(
+      signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-broadcast'),
+    );
+    expect(broadcast.status).toBe(200);
+    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {
