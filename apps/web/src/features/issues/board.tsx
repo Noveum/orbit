@@ -3,7 +3,9 @@
 import {
   type CollisionDetection,
   DndContext,
+  type DragCancelEvent,
   type DragEndEvent,
+  type DragOverEvent,
   DragOverlay,
   type DragStartEvent,
   KeyboardSensor,
@@ -365,6 +367,107 @@ export function Board({
     if (placement !== null) move.mutate(placement);
   };
 
+  const accessibility = useMemo(
+    () => ({
+      announcements: {
+        onDragStart({ active }: DragStartEvent) {
+          const issue = issuesInPlay().find((i) => i.id === active.id);
+          if (issue === undefined) return 'Picked up item.';
+          const group = loadedGroups().find((g) => g.issues.some((r) => r.id === active.id));
+          const groupName = group === undefined ? '' : ` in column ${group.title}`;
+          return `Picked up ${issue.identifier}: ${issue.title}${groupName}.`;
+        },
+        onDragOver({ active, over }: DragOverEvent) {
+          if (over === null) return 'Moving item.';
+          const activeId = String(active.id);
+          const overId = String(over.id);
+          const issue = issuesInPlay().find((i) => i.id === activeId);
+          const title = issue === undefined ? 'item' : issue.identifier;
+
+          const overGroup =
+            loadedGroups().find((g) => g.id === overId)??
+            targetGroupFor(loadedGroups(), overId);
+          if (overGroup !== undefined) {
+            const placement = planDrop(
+              loadedGroups(),
+              issuesInPlay(),
+              activeId,
+              overId,
+              groupBy,
+              resolveState,
+              reorderable,
+            );
+            if (placement === null) {
+              return `Cannot move ${title} to column ${overGroup.title}.`;
+            }
+            return `Moved ${title} to column ${overGroup.title}.`;
+          }
+
+          const overIssue = issuesInPlay().find((i) => i.id === overId);
+          if (overIssue !== undefined) {
+            const group = loadedGroups().find((g) =>
+              g.issues.some((row) => row.id === overIssue.id),
+            );
+            if (group !== undefined) {
+              return `Moved ${title} over ${overIssue.identifier} in column ${group.title}.`;
+            }
+          }
+
+          return `Moved ${title}.`;
+        },
+        onDragEnd({ active, over }: DragEndEvent) {
+          const activeId = String(active.id);
+          const issue = issuesInPlay().find((i) => i.id === activeId);
+          const title = issue === undefined ? 'item' : issue.identifier;
+
+          if (over === null) return `Could not drop ${title}. Returned to original position.`;
+          const overId = String(over.id);
+
+          const placement = planDrop(
+            loadedGroups(),
+            issuesInPlay(),
+            activeId,
+            overId,
+            groupBy,
+            resolveState,
+            reorderable,
+          );
+
+          if (placement === null) {
+            return `Cannot place ${title} here. Released ${title}.`;
+          }
+
+          const overGroup = loadedGroups().find((g) => g.id === overId);
+          if (overGroup !== undefined) {
+            return `Dropped ${title} in column ${overGroup.title}.`;
+          }
+
+          const overIssue = issuesInPlay().find((i) => i.id === overId);
+          if (overIssue !== undefined) {
+            const group = loadedGroups().find((g) =>
+              g.issues.some((row) => row.id === overIssue.id),
+            );
+            if (group !== undefined) {
+              return `Dropped ${title} in column ${group.title}.`;
+            }
+          }
+
+          return `Dropped ${title}.`;
+        },
+        onDragCancel({ active }: DragCancelEvent) {
+          const issue = issuesInPlay().find((i) => i.id === active.id);
+          if (issue === undefined) return 'Cancelled drag.';
+          return `Cancelled dragging ${issue.identifier}. Returned to original position.`;
+        },
+      },
+      screenReaderInstructions: {
+        draggable:
+          'To pick up this issue, press Space or Enter. While dragging, use the arrow keys to move it. Press Space or Enter again to drop, or Escape to cancel.',
+      },
+    }),
+    [issuesInPlay, loadedGroups, groupBy, resolveState, reorderable],
+  );
+
   const columns = (
     <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
       {groups.map((group) => (
@@ -402,6 +505,7 @@ export function Board({
     <DndContext
       sensors={sensors}
       collisionDetection={boardCollision}
+      accessibility={accessibility}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
