@@ -107,7 +107,6 @@ test('the command palette finds an issue by its title and opens it', async ({ br
   await context.close();
 });
 
-
 test('a card moved with the keyboard updates the aria-live region and lands in the new column', async ({
   browser,
 }) => {
@@ -124,11 +123,11 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   const moving = made.identifier;
 
   await page.reload();
-  
+
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
-  
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]')
+
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
 
   await cardLocator.focus();
 
@@ -139,7 +138,9 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   await expect(ariaLive).toContainText(`Moved ${moving} to column In Progress`, { timeout: 5000 });
 
   await page.keyboard.press('Space');
-  await expect(ariaLive).toContainText(`Dropped ${moving} in column In Progress`, { timeout: 5000 });
+  await expect(ariaLive).toContainText(`Dropped ${moving} in column In Progress`, {
+    timeout: 5000,
+  });
 
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })

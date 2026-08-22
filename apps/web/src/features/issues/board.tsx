@@ -1,13 +1,13 @@
 'use client';
 
 import {
-type CollisionDetection,
+  type CollisionDetection,
   DndContext,
-  type DragEndEvent,
-  type DragStartEvent,
-  type DragOverEvent,
   type DragCancelEvent,
+  type DragEndEvent,
+  type DragOverEvent,
   DragOverlay,
+  type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
   pointerWithin,
@@ -367,7 +367,7 @@ export function Board({
     if (placement !== null) move.mutate(placement);
   };
 
-const accessibility = useMemo(
+  const accessibility = useMemo(
     () => ({
       announcements: {
         onDragStart({ active }: DragStartEvent) {
@@ -384,7 +384,9 @@ const accessibility = useMemo(
           const issue = issuesInPlay().find((i) => i.id === activeId);
           const title = issue === undefined ? 'item' : issue.identifier;
 
-          const overGroup = loadedGroups().find((g) => g.id === g.id && g.id === overId) ?? targetGroupFor(loadedGroups(), overId);
+          const overGroup =
+            loadedGroups().find((g) => g.id === overId)??
+            targetGroupFor(loadedGroups(), overId);
           if (overGroup !== undefined) {
             const placement = planDrop(
               loadedGroups(),
@@ -404,7 +406,7 @@ const accessibility = useMemo(
           const overIssue = issuesInPlay().find((i) => i.id === overId);
           if (overIssue !== undefined) {
             const group = loadedGroups().find((g) =>
-              g.issues.some((row) => row.id === overIssue.id)
+              g.issues.some((row) => row.id === overIssue.id),
             );
             if (group !== undefined) {
               return `Moved ${title} over ${overIssue.identifier} in column ${group.title}.`;
@@ -418,7 +420,7 @@ const accessibility = useMemo(
           const issue = issuesInPlay().find((i) => i.id === activeId);
           const title = issue === undefined ? 'item' : issue.identifier;
 
-          if (over === null) return `Dropped ${title}.`;
+          if (over === null) return `Could not drop ${title}. Returned to original position.`;
           const overId = String(over.id);
 
           const placement = planDrop(
@@ -443,7 +445,7 @@ const accessibility = useMemo(
           const overIssue = issuesInPlay().find((i) => i.id === overId);
           if (overIssue !== undefined) {
             const group = loadedGroups().find((g) =>
-              g.issues.some((row) => row.id === overIssue.id)
+              g.issues.some((row) => row.id === overIssue.id),
             );
             if (group !== undefined) {
               return `Dropped ${title} in column ${group.title}.`;
@@ -463,9 +465,8 @@ const accessibility = useMemo(
           'To pick up this issue, press Space or Enter. While dragging, use the arrow keys to move it. Press Space or Enter again to drop, or Escape to cancel.',
       },
     }),
-    [issuesInPlay, loadedGroups, groupBy, resolveState, reorderable]
+    [issuesInPlay, loadedGroups, groupBy, resolveState, reorderable],
   );
-
 
   const columns = (
     <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
@@ -502,7 +503,7 @@ const accessibility = useMemo(
 
   return (
     <DndContext
-     sensors={sensors}
+      sensors={sensors}
       collisionDetection={boardCollision}
       accessibility={accessibility}
       onDragStart={onDragStart}
