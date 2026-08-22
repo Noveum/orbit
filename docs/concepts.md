@@ -34,6 +34,8 @@ uses it to hide buttons you cannot use, never as the only gate.
 Guests are the useful one to understand: a contractor or a stakeholder can be in
 the workspace, read the board and comment, without being able to change work.
 
+> **Analytics Visibility Rule:** Analytics totals and aggregate charts span the entire workspace for every role (including guests and contributors) to prevent misleading partial dashboards. However, issue-level drilldown rows and outliers strictly follow team membership and permissions; items from unauthorized teams are filtered out and reported as a withheld count.
+
 ## Teams
 
 Teams are how work is divided, and they own the parts of Orbit that need a
