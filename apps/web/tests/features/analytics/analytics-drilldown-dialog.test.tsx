@@ -58,6 +58,7 @@ function page(nextCursor: string | null, identifier: string) {
     ],
     nextCursor,
     limit: 1,
+    withheldCount: 0,
     asOf: '2026-08-13T12:00:00.000Z',
     from: '2026-08-01T00:00:00.000Z',
     to: '2026-08-14T00:00:00.000Z',

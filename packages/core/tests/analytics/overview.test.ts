@@ -571,8 +571,8 @@ describe('loadAnalyticsOverview', () => {
         },
         { now, timezone: 'UTC' },
       );
-      expect(rows.issues.map((entry) => entry.title)).toEqual(['Other team issue']);
-      expect(Object.keys(rows.issues[0] ?? {}).includes('organizationId')).toBe(false);
+      expect(rows.issues.map((entry) => entry.title)).toEqual([]);
+      expect(rows.withheldCount).toBe(1);
     }
   });
 });

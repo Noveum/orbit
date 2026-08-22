@@ -73,6 +73,7 @@ describe('OverviewLens', () => {
             issues: [],
             nextCursor: null,
             limit: 50,
+            withheldCount: 0,
             asOf,
             from: '2026-08-01T00:00:00.000Z',
             to: '2026-08-15T00:00:00.000Z',

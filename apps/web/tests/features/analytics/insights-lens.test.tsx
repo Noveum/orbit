@@ -121,6 +121,7 @@ describe('InsightsLens', () => {
             issues: [],
             nextCursor: null,
             limit: 50,
+            withheldCount: 0,
             asOf: '2026-08-15T00:00:00.000Z',
             from: '2026-08-01T00:00:00.000Z',
             to: '2026-08-15T00:00:00.000Z',

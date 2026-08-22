@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { asc, db, eq, schema } from '@orbit/db';
 import type { FilterGroup } from '@orbit/shared/filters';
-import { inCondition } from '@orbit/shared/filters';
+import { emptyFilterGroup, inCondition } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
 import { type IssueFilterInput, issueFilterSchema } from '@orbit/shared/validators';
+import { listAnalyticsDrilldown } from '../../src/index.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -272,5 +273,54 @@ describe('buildIssueWhere predicate parity', () => {
     expect(await titlesMatching(workspace.admin, 'team', { filter })).toEqual([
       'Inside supplied window',
     ]);
+  });
+});
+
+describe('analytics drilldown team scoping (#317)', () => {
+  it('keeps analytics aggregates workspace-wide while scoping drilldown rows to authorized teams and reporting withheld count', async () => {
+    const { team: opsTeam, states: opsStates } = await createTeam(workspace.admin, {
+      name: 'Operations',
+      key: 'OPS',
+    });
+    const opsState = opsStates.find((s) => s.category === 'unstarted');
+    if (opsState === undefined) throw new Error('missing ops state');
+
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Engineering issue 1' });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Engineering issue 2' });
+    await createIssue(workspace.admin, {
+      teamId: opsTeam.id,
+      stateId: opsState.id,
+      title: 'Operations issue 1',
+    });
+
+    const guestUser = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+
+    const drilldownInput = {
+      query: {
+        version: 1 as const,
+        lens: 'overview' as const,
+        range: { preset: 'last_30_days' as const },
+        compare: 'none' as const,
+        measure: 'issues' as const,
+        filter: emptyFilterGroup(),
+        includeArchived: false,
+        includeCanceled: true,
+        focus: {},
+      },
+      cohort: { cohort: 'current' as const },
+    };
+
+    const page = await listAnalyticsDrilldown(guestUser.principal, drilldownInput, {
+      now: injectedNow,
+    });
+
+    expect(page.total).toBe(3);
+
+    expect(page.issues.map((i) => i.title).sort()).toEqual([
+      'Engineering issue 1',
+      'Engineering issue 2',
+    ]);
+
+    expect(page.withheldCount).toBe(1);
   });
 });

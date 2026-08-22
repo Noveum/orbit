@@ -12,6 +12,7 @@ import {
   cohortPredicate,
   priorityLabel,
   resolveOverviewQuery,
+  teamDrilldownBase,
 } from './drilldown.ts';
 import { bucketDates } from './filter.ts';
 import type {
@@ -330,8 +331,9 @@ async function outliers(
   principal: Principal,
   resolved: ResolvedAnalyticsQuery,
 ): Promise<readonly OutlierRow[]> {
-  const base = baseAnalyticsPredicate(principal, resolved);
+  const base = teamDrilldownBase(principal, resolved, { cohort: 'cycle-time' });
   const current = cohortPredicate(resolved, { cohort: 'cycle-time' });
+
   return await db.execute<OutlierRow>(sql`
     select issue.id, issue.identifier, issue.title,
       extract(epoch from (issue.completed_at - issue.started_at)) / 86400 as cycle_time_days
