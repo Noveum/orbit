@@ -16,16 +16,9 @@ export function registerAnalyticsTools(server: McpServer, principal: Principal):
       readOnly: true,
       inputSchema: {
         range: z
-          .enum([
-            'auto',
-            'active_sprint',
-            'previous_sprint',
-            'last_30_days',
-            'last_90_days',
-            'all_time',
-          ])
+          .enum(['auto', 'last_30_days', 'last_90_days', 'all_time'])
           .default('auto')
-          .describe('The time period to analyze. Use active_sprint for current team progress.'),
+          .describe('The time period to analyze.'),
         measure: z
           .enum(['issues', 'points'])
           .default('issues')
@@ -43,20 +36,20 @@ export function registerAnalyticsTools(server: McpServer, principal: Principal):
         includeCanceled: false,
         focus: {},
       });
+
       const overview = await loadAnalyticsOverview(principal, query);
+
       return {
         asOf: overview.asOf,
+        resolvedRange: args.range,
         metrics: overview.cards.map((card) => ({
+          id: card.id,
           metric: card.label,
           value: card.value,
           unit: card.unit,
           comparisonDelta: card.comparisonDelta,
         })),
-        outliers: overview.outliers.map((outlier) => ({
-          identifier: outlier.identifier,
-          title: outlier.title,
-          cycleTimeDays: outlier.cycleTimeDays,
-        })),
+        outliersWithheld: overview.outliers?.length ?? 0,
       };
     },
   );

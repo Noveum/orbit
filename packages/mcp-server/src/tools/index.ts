@@ -14,9 +14,9 @@ import { registerTaxonomyTools } from './taxonomy.ts';
 import { registerWorkspaceTools } from './workspace.ts';
 
 export function registerTools(server: McpServer, principal: Principal): void {
+  registerAnalyticsTools(server, principal);
   registerIdentityTools(server, principal);
   registerInboxTools(server, principal);
-  registerAnalyticsTools(server, principal);
   registerIssueTools(server, principal);
   registerPlanningTools(server, principal);
   registerScrumTools(server, principal);
