@@ -5,8 +5,10 @@ import {
   markNotificationDelivered,
   markSlackDmDelivery,
   markSlackDmUnavailable,
+  markSlackReauthorizationRequired,
   notifyMany,
 } from '@orbit/services/notifications';
+import { SlackApiError } from '@orbit/services/slack';
 import { dispatchSlackDm, slackDmAvailable } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
@@ -58,6 +60,8 @@ export async function deliverPendingSlackDms(
       });
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
+      await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
+      continue;
     }
     const finalized = await markSlackDmDelivery(
       database,
@@ -76,12 +80,33 @@ export async function deliverPendingSlackDms(
 function absoluteNotificationUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   const base = process.env['NEXT_PUBLIC_APP_URL'] ?? process.env['APP_URL'] ?? '';
-  if (base.length === 0) return url;
+  if (base.length === 0) throw new Error('APP_URL is required for Slack notification links');
   try {
     return new URL(url, base).toString();
   } catch {
     return url;
   }
+}
+
+async function finalizeSlackDmFailure(
+  database: Database,
+  organizationId: string,
+  delivery: Awaited<ReturnType<typeof claimSlackDmDeliveries>>[number],
+  error: unknown,
+): Promise<void> {
+  const code = error instanceof SlackApiError ? error.code : '';
+  if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
+    await markSlackReauthorizationRequired(database, organizationId);
+    await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
+    return;
+  }
+  await markSlackDmDelivery(
+    database,
+    delivery.id,
+    delivery.claimedAt ?? new Date(0),
+    false,
+    error instanceof Error ? error.message : 'delivery failed',
+  );
 }
 
 export async function issueSubscriberIds(executor: Executor, issueId: string): Promise<string[]> {

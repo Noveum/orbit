@@ -1,5 +1,6 @@
 import type { Database, Transaction } from '@orbit/db';
 import {
+  integration,
   nextSyncId,
   notification,
   notificationDelivery,
@@ -106,6 +107,16 @@ export async function markSlackDmUnavailable(
     )
     .returning({ id: notificationDelivery.id });
   return updated.length > 0;
+}
+
+export async function markSlackReauthorizationRequired(
+  database: NotificationDatabase,
+  organizationId: string,
+): Promise<void> {
+  await database
+    .update(integration)
+    .set({ config: sql`jsonb_set(${integration.config}, '{slackReauthorize}', 'true'::jsonb)` })
+    .where(and(eq(integration.organizationId, organizationId), eq(integration.provider, 'slack')));
 }
 
 export async function claimSlackDmDeliveries(
@@ -347,7 +358,6 @@ function planFor(
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
   const deferred =
     (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
-  if (deferred && slackDmEnabled && !emailEnabled && !inboxEnabled && !slackEnabled) return null;
   return {
     id: randomUUIDv7(now),
     event,

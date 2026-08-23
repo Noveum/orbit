@@ -101,7 +101,7 @@ describe('notifyMany', () => {
     });
   });
 
-  it('does not persist or dedupe a DM-only notification during quiet hours', async () => {
+  it('persists a DM-only notification until quiet hours end', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx, 'UTC');
       await tx.insert(notificationPreference).values([
@@ -125,15 +125,14 @@ describe('notifyMany', () => {
         now: new Date('2026-07-22T20:00:00.000Z'),
         slackEnabled: true,
       });
-      expect(deferred.notifications).toHaveLength(0);
+      expect(deferred.notifications).toHaveLength(1);
+      expect(deferred.slackDm).toHaveLength(1);
       expect(deferred.deduped).toBe(0);
-
-      const delivered = await notifyMany(tx, [event], {
-        now: new Date('2026-07-23T10:00:00.000Z'),
-        slackEnabled: true,
-      });
-      expect(delivered.slackDm).toHaveLength(1);
-      expect(delivered.deduped).toBe(0);
+      const pending = await tx.select().from(notificationDelivery);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.availableAt.getTime()).toBeGreaterThan(
+        new Date('2026-07-22T20:00:00.000Z').getTime(),
+      );
     });
   });
 

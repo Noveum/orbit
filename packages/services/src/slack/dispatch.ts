@@ -14,6 +14,7 @@ import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   buildUnfurl,
+  SlackApiError,
   type SlackBlock,
   SlackClient,
   type SlackIssue,
@@ -288,8 +289,9 @@ export async function dispatchSlackDm(
     });
     return 1;
   } catch (error) {
+    if (error instanceof SlackApiError) throw error;
     console.error('[orbit] slack DM post failed', error);
-    return 0;
+    throw error;
   }
 }
 

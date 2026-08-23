@@ -230,6 +230,16 @@ export interface SlackMessageRef {
   readonly ts: string;
 }
 
+export class SlackApiError extends Error {
+  constructor(
+    readonly method: string,
+    readonly code: string,
+  ) {
+    super(`Slack ${method} failed: ${code}.`);
+    this.name = 'SlackApiError';
+  }
+}
+
 export interface SlackChannel {
   readonly id: string;
   readonly name: string;
@@ -388,7 +398,7 @@ export class SlackClient {
     const parsed = schema.safeParse(await readJson(response, method));
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
-    if (!body.ok) throw internal(`Slack ${method} failed: ${body.error ?? 'unknown_error'}.`);
+    if (!body.ok) throw new SlackApiError(method, body.error ?? 'unknown_error');
     return parsed.data;
   }
 }

@@ -46,7 +46,12 @@ export async function loadNotificationPreferences(
   let slackDm: NotificationPreferenceState['slackDm'] = 'unavailable';
   if (SLACK_INTEGRATION_ENABLED && slack !== undefined) {
     const scopes = slack.config['scopes'];
-    if (Array.isArray(scopes) && scopes.includes('im:write') && scopes.includes('chat:write')) {
+    if (slack.config['slackReauthorize'] === true) slackDm = 'reauthorize';
+    else if (
+      Array.isArray(scopes) &&
+      scopes.includes('im:write') &&
+      scopes.includes('chat:write')
+    ) {
       const [mapping] = await db
         .select({ id: schema.slackUserMapping.id })
         .from(schema.slackUserMapping)
