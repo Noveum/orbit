@@ -208,7 +208,7 @@ Commit: `feat(ci): define preview deployment policy`
 - `PreviewResult` is a closed discriminated union with `kind: 'skipped' | 'created' | 'canceled'`, a pull request number, and a stable reason. `created` and each `canceled` result include deployment ID and URL; `skipped` results do not. An active poll can return a canceled result when its exact head becomes ineligible, or `stale-event` without cancellation when identity drifts. No serialized result may contain either token. Candidates and canceled results are sorted for deterministic output.
 - One monotonic 23-minute controller deadline bounds every request, retry, pagination loop, observation, poll, and sleep beneath the workflow's 25-minute timeout.
 
-Use this closed reason vocabulary: `event-not-actionable`, `workflow-run-unassociated`, `stale-event`, `repository-mismatch`, `fork-pull-request`, `base-mismatch`, `preview-ineligible`, `no-active-deployment`, `web-unaffected`, `ci-unavailable`, `ci-not-current`, `ci-not-green`, `ready-deployment-reused`, `active-deployment-reused`, `created-ready`, and `canceled-active`. Stale candidate identity and pre-creation pull request state changes return `stale-event`. Configuration, malformed external data, incomplete pagination, transport failure, deployment-response identity drift, and terminal build failure throw redacted errors rather than returning a skipped result.
+Use this closed reason vocabulary: `event-not-actionable`, `workflow-run-unassociated`, `stale-event`, `repository-mismatch`, `fork-pull-request`, `base-mismatch`, `preview-eligible`, `no-active-deployment`, `web-unaffected`, `ci-unavailable`, `ci-not-current`, `ci-not-green`, `ready-deployment-reused`, `active-deployment-reused`, `created-ready`, and `canceled-active`. Stale candidate identity and pre-creation pull request state changes return `stale-event`. A cancellation abandoned because the live pull request became eligible returns `preview-eligible`. Configuration, malformed external data, incomplete pagination, transport failure, deployment-response identity drift, and terminal build failure throw redacted errors rather than returning a skipped result.
 
 - [x] **Step 1: Write failing event and eligibility tests**
 
@@ -268,7 +268,7 @@ type PreviewCandidate = {
 };
 ```
 
-- `pull_request_target`: one candidate from the matching event and embedded PR number plus event head SHA; `closed` is an accepted cancellation transition.
+- `pull_request_target`: one candidate from the matching event and embedded PR number plus event head SHA; `closed` and `synchronize` are accepted transitions.
 - `workflow_run`: no candidates unless the workflow is `CI`, source event is `pull_request`, conclusion is `success`, action is `completed`, and the payload links exactly one distinct pull request; duplicate links to that same number are deduplicated. Empty or ambiguous linked lists log a stable reason and return no candidates.
 - `repository_dispatch`: one candidate from the validated positive integer `client_payload.pull_request` and no expected SHA.
 
@@ -288,7 +288,8 @@ Cover Vercel pages with an exact deployment on page 2 and prove:
 - A list item without metadata is ignored without rejecting its page.
 - An ineligible current state cancels every matching active Preview for that PR and does not cancel ready, canceled, errored, staging, production, another project, ref, or repository.
 - An existing active deployment is polled instead of duplicated; an existing ready deployment is reused.
-- A created or reused active deployment is canceled by its polling owner when the same exact head becomes ineligible before `READY`; a different or newer head is never canceled by the old owner.
+- A created or reused active deployment is canceled by its polling owner when the same exact head becomes ineligible before `READY`. When only the SHA changes for the same head ref and pull request identity, the owner cancels its superseded active deployment. Other identity changes return `stale-event` without cancellation.
+- Every trusted eligible reconciliation cancels only validated active prior-head deployments with a different valid SHA and exact project, repository, pull request, and head ref metadata. READY prior-head deployments remain available.
 - Exact READY wins over duplicate active and terminal items; exact active wins over terminal items.
 - Successful create, detail, and cancel responses must retain requested ID, project, null target, and Orbit metadata. Cancel must return `CANCELED`.
 - A cancel 400 or ambiguous response reads detail once and accepts a now-terminal state without retrying PATCH; an active or identity-drifted detail fails.
@@ -304,9 +305,13 @@ Expected: FAIL because deployment listing, matching, and cancellation are not im
 
 List `/v7/deployments` with `teamId`, `projectId`, `branch`, `sha` where appropriate, and `limit=100`. The current endpoint has no documented metadata query. Follow validated `pagination.next` through `until`, preserve every original filter, reject repeated cursors including zero, and fail when a non-null cursor remains at the finite page cap. Filter again in trusted code with exact project, null target, and `matchesVercelPullRequest`. Parse list identifiers from `uid`; create, detail, and cancel responses use `id`. Accept `url: null` only on list items.
 
-For eligible PRs, prefer any exact ready deployment, then any exact active deployment, then terminal history. Fetch detail when a READY list item has no URL. Poll an active deployment immediately, then allow at most 240 five-second sleeps followed by a final GET. After every active detail response, refetch live pull request identity and eligibility. If the same exact head is now closed or ineligible, cancel only that exact deployment and return its canceled result. If head or repository identity drifted, return `stale-event` without canceling. Keep per-PR serialization and `cancel-in-progress: false`. The 23-minute controller deadline may stop this sequence earlier. Require ID, project, null target, and Orbit metadata on every detail. `READY` with a nonempty URL succeeds; `ERROR`, `CANCELED`, `BLOCKED`, or `DELETED` fails; an active final response times out.
+Before current-head CI, list the branch without SHA and cancel active prior-head deployments only when their metadata carries a different valid 40-character hexadecimal SHA and exact project, repository ID, pull request number, and head ref. Run this sweep for every trusted current candidate so `workflow_run` and `repository_dispatch` repair a missed `synchronize` cleanup. Leave every non-active state, including READY, unchanged.
+
+For eligible PRs, prefer any exact ready deployment, then any exact active deployment, then terminal history. Fetch detail when a READY list item has no URL. Poll an active deployment immediately, then allow at most 240 five-second sleeps followed by a final GET. After every active detail response, refetch live pull request identity and eligibility. If the same exact head is now closed or ineligible, cancel only that exact deployment and return its canceled result. If only the SHA changed for the same pull request identity and head ref, cancel the superseded active deployment. Other identity drift returns `stale-event` without canceling. Keep per-PR serialization and `cancel-in-progress: false`. The 23-minute controller deadline may stop this sequence earlier. Require ID, project, null target, and Orbit metadata on every detail. `READY` with a nonempty URL succeeds; `ERROR`, `CANCELED`, `BLOCKED`, or `DELETED` fails; an active final response times out.
 
 When no ready or active exact deployment exists, create one deployment with `POST /v13/deployments?teamId={teamId}`, omitted `target`, exact Git source, and the metadata shown in Step 1. Add `forceNew=1` only when the complete pre-create list already contained an exact terminal deployment. Record all pre-create deployment IDs and enforce one POST per reconciliation.
+
+Immediately before every Create or Cancel mutation, read `/v9/projects/{projectId}?teamId={teamId}` and validate the response. Require its project ID, project name, and account ID to equal the configured project ID, project name, and team ID. Repeat this proof at each mutation boundary so a long poll cannot rely on stale project ownership.
 
 An ambiguous create outcome is a network error, timeout, 429, 5xx, 409, or successful response that cannot be parsed, validated, or matched to the requested identity. Ordinary 4xx responses are definitive. After ambiguity, set `createAttempted` and make a second POST impossible. Run three exact-list observation attempts separated by two seconds. Reuse only a newly visible ready or active ID that was not in the pre-create set. A new terminal deployment or no new exact ID fails visibly. A later event starts a new reconciliation from a complete list and may decide independently.
 
@@ -404,7 +409,7 @@ Create a workflow named `Vercel Preview` with this trigger and trust boundary:
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -421,7 +426,7 @@ concurrency:
   cancel-in-progress: false
 ```
 
-Keep `cancel-in-progress: false`: canceling a controller after an ambiguous Create could lose its read-only observation and permit a later duplicate attempt. Timely ineligibility is handled inside the polling owner, which refetches exact live identity and eligibility after every active detail response.
+Keep `cancel-in-progress: false`: canceling a controller after an ambiguous Create could lose its read-only observation and permit a later duplicate attempt. Timely ineligibility and same-ref head supersession are handled inside the polling owner, which refetches exact live identity and eligibility after every active detail response.
 
 The controller rejects a workflow run linked to more than one distinct pull request, so the first linked number is used only for an event that resolves to one PR. Recovery requires a positive numeric `client_payload.pull_request`, which shares the same per-PR group as state and CI events; malformed recovery input may form an unused group but is rejected before any Vercel call. The job condition allows state events and repository dispatch, and allows a workflow run only when `github.event.workflow_run.event == 'pull_request'` and its conclusion is success. Set `timeout-minutes: 25`; the controller's own 23-minute deadline remains the primary bound. GitHub documents that `repository_dispatch` uses the last commit on the default branch, unlike `workflow_dispatch`, which can run a workflow version from a selected non-default ref. Checkout the trusted default-branch workflow commit using the pinned checkout action, `repository: ${{ github.repository }}`, `ref: ${{ github.sha }}`, `persist-credentials: false`, `submodules: false`, and `lfs: false`. Set up Bun 1.3.14 with the pinned setup action, run `bun install --frozen-lockfile --ignore-scripts`, then run `bun scripts/vercel-preview-deploy.ts` with tokens and settings scoped only to that controller step through `env`.
 

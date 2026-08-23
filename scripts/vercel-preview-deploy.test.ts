@@ -3,6 +3,7 @@ import type { PreviewRuntime } from './vercel-preview-deploy.ts';
 import { reconcileVercelPreviews } from './vercel-preview-deploy.ts';
 
 const SHA = 'a'.repeat(40);
+const NEW_SHA = 'c'.repeat(40);
 const MAIN_SHA = 'b'.repeat(40);
 const GITHUB_TOKEN = 'github-secret-token';
 const VERCEL_TOKEN = 'vercel-secret-token';
@@ -124,6 +125,15 @@ function mutationDeployment(
   return { id, ...rest, url: 'orbit-preview.vercel.app' };
 }
 
+function vercelProject(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'prj_orbit',
+    name: 'orbit',
+    accountId: 'team_orbit',
+    ...overrides,
+  };
+}
+
 function json(value: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -191,6 +201,7 @@ function createHarness(scenario: Scenario = {}) {
       const runs = scenario.workflowRuns ?? [workflowRun()];
       return json({ total_count: runs.length, workflow_runs: runs });
     }
+    if (url.includes('/v9/projects/')) return json(vercelProject());
     if (url.includes('/v7/deployments')) {
       const deployments = scenario.deployments ?? [];
       return json({
@@ -264,10 +275,13 @@ describe('event and eligibility reconciliation', () => {
     );
     expect(creates).toHaveLength(1);
     const createRequest = creates[0];
-    expect(createRequest?.method).toBe('POST');
-    expect(createRequest?.url).toContain('/v13/deployments');
-    expect(createRequest?.url).not.toContain('forceNew=1');
-    expect(createRequest?.body).toEqual({
+    if (createRequest === undefined) {
+      throw new Error('Expected one Vercel deployment creation request');
+    }
+    expect(createRequest.method).toBe('POST');
+    expect(createRequest.url).toContain('/v13/deployments');
+    expect(createRequest.url).not.toContain('forceNew=1');
+    expect(createRequest.body).toEqual({
       name: 'orbit',
       project: 'prj_orbit',
       gitSource: { type: 'github', repoId: 123, ref: 'feature/preview', sha: SHA },
@@ -280,7 +294,20 @@ describe('event and eligibility reconciliation', () => {
         orbitGithubWorkflowRunId: '987654321',
       },
     });
-    expect(createRequest?.body).not.toHaveProperty('target');
+    expect(createRequest.body).not.toHaveProperty('target');
+    const projectLookupIndex = harness.requests.findIndex(
+      ({ method, url }) => method === 'GET' && url.includes('/v9/projects/prj_orbit'),
+    );
+    expect(projectLookupIndex).toBeGreaterThanOrEqual(0);
+    expect(projectLookupIndex).toBeLessThan(harness.requests.indexOf(createRequest));
+    expect(
+      new URL(harness.requests[projectLookupIndex]?.url ?? '').searchParams.get('teamId'),
+    ).toBe('team_orbit');
+    expect(
+      harness.requests.filter(
+        ({ method, url }) => method === 'GET' && url.includes('/v9/projects/'),
+      ),
+    ).toHaveLength(1);
   });
 
   test('repository_dispatch follows current eligibility and exact CI proof', async () => {
@@ -610,6 +637,9 @@ describe('existing deployments, cancellation, and pagination', () => {
     const harness = createHarness({
       respond: ({ url }) => {
         if (!url.includes('/v7/deployments')) return undefined;
+        if (!new URL(url).searchParams.has('sha')) {
+          return json({ deployments: [], pagination: { count: 0, next: null, prev: null } });
+        }
         listPage += 1;
         if (listPage === 1) {
           return json({ deployments: [], pagination: { count: 0, next: 123, prev: null } });
@@ -628,16 +658,20 @@ describe('existing deployments, cancellation, and pagination', () => {
       deploymentId: 'dpl_page_two',
     });
     const pages = harness.requests.filter(({ url }) => url.includes('/v7/deployments'));
-    expect(pages).toHaveLength(2);
+    const exactHeadPages = pages.filter(({ url }) => new URL(url).searchParams.has('sha'));
+    expect(pages).toHaveLength(3);
+    expect(exactHeadPages).toHaveLength(2);
     for (const request of pages) {
       const url = new URL(request.url);
       expect(url.searchParams.get('teamId')).toBe('team_orbit');
       expect(url.searchParams.get('projectId')).toBe('prj_orbit');
       expect(url.searchParams.get('branch')).toBe('feature/preview');
-      expect(url.searchParams.get('sha')).toBe(SHA);
       expect(url.searchParams.get('limit')).toBe('100');
     }
-    expect(new URL(pages[1]?.url ?? '').searchParams.get('until')).toBe('123');
+    for (const request of exactHeadPages) {
+      expect(new URL(request.url).searchParams.get('sha')).toBe(SHA);
+    }
+    expect(new URL(exactHeadPages[1]?.url ?? '').searchParams.get('until')).toBe('123');
   });
 
   test('an exact active deployment wins over terminal history', async () => {
@@ -701,6 +735,115 @@ describe('existing deployments, cancellation, and pagination', () => {
       'dpl_b',
     ]);
     expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(2);
+  });
+
+  test('synchronize cancels only validated active prior heads and retains ready history', async () => {
+    const currentPullRequest = pullRequest({
+      head: { sha: NEW_SHA, ref: 'feature/preview', repo: repository },
+    });
+    const harness = createHarness({
+      eventName: 'pull_request_target',
+      event: {
+        action: 'synchronize',
+        number: 341,
+        pull_request: currentPullRequest,
+        repository,
+      },
+      pullRequest: currentPullRequest,
+      workflowRuns: [],
+      deployments: [
+        deployment('BUILDING', { uid: 'dpl_prior' }),
+        deployment('READY', { uid: 'dpl_prior_ready' }),
+        deployment('BUILDING', {
+          uid: 'dpl_current',
+          meta: metadata({ orbitGithubHeadSha: NEW_SHA }),
+        }),
+        deployment('BUILDING', { uid: 'dpl_project', projectId: 'prj_other' }),
+        deployment('BUILDING', {
+          uid: 'dpl_repository',
+          meta: metadata({ orbitGithubRepositoryId: '999' }),
+        }),
+        deployment('BUILDING', {
+          uid: 'dpl_pull_request',
+          meta: metadata({ orbitGithubPrNumber: '342' }),
+        }),
+        deployment('BUILDING', {
+          uid: 'dpl_ref',
+          meta: metadata({ orbitGithubHeadRef: 'feature/other' }),
+        }),
+        deployment('BUILDING', {
+          uid: 'dpl_malformed_sha',
+          meta: metadata({ orbitGithubHeadSha: 'not-a-sha' }),
+        }),
+      ],
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_prior',
+        url: 'orbit-preview.vercel.app',
+      },
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'ci-unavailable' },
+    ]);
+    expect(
+      harness.requests
+        .filter(({ method }) => method === 'PATCH')
+        .map(({ url }) => url.split('/').at(-2)),
+    ).toEqual(['dpl_prior']);
+    expect(
+      harness.requests.some(({ url }) => url.includes('/v13/deployments/dpl_prior_ready')),
+    ).toBe(false);
+  });
+
+  test('repository dispatch recovers an active deployment left by a prior head', async () => {
+    const currentPullRequest = pullRequest({
+      head: { sha: NEW_SHA, ref: 'feature/preview', repo: repository },
+    });
+    const harness = createHarness({
+      eventName: 'repository_dispatch',
+      pullRequest: currentPullRequest,
+      workflowRuns: [],
+      deployments: [deployment('BUILDING', { uid: 'dpl_prior' })],
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_prior',
+        url: 'orbit-preview.vercel.app',
+      },
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'ci-unavailable' },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+  });
+
+  test('cancellation reversal reports that the pull request became eligible', async () => {
+    let pullRequestReads = 0;
+    const harness = createHarness({
+      pullRequest: pullRequest({ draft: true }),
+      deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
+      respond: ({ url }) => {
+        if (!url.endsWith('/pulls/341')) return undefined;
+        pullRequestReads += 1;
+        return json(pullRequest({ draft: pullRequestReads === 1 }));
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'preview-eligible' },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
   });
 
   test('eligibility changing after the first cancellation prevents a second PATCH', async () => {
@@ -1157,6 +1300,37 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
   });
 
+  test('project identity drift before a poll-triggered cancel blocks the PATCH', async () => {
+    let createAttempted = false;
+    let projectReads = 0;
+    const harness = createHarness({
+      respond: ({ method, url }) => {
+        if (url.includes('/v9/projects/')) {
+          projectReads += 1;
+          return json(vercelProject(projectReads === 1 ? {} : { accountId: 'team_transferred' }));
+        }
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            createAttempted ? pullRequest({ labels: [{ name: 'no-preview' }] }) : pullRequest(),
+          );
+        }
+        if (method === 'POST') {
+          createAttempted = true;
+          return json(mutationDeployment('dpl_created', 'QUEUED'));
+        }
+        if (method === 'GET' && url.includes('/v13/deployments/dpl_created')) {
+          return json(mutationDeployment('dpl_created', 'BUILDING'));
+        }
+        return undefined;
+      },
+    });
+
+    await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('project identity');
+    expect(projectReads).toBe(2);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+  });
+
   test('the polling owner cancels an existing active deployment when the exact head becomes draft', async () => {
     let pullRequestReads = 0;
     const harness = createHarness({
@@ -1189,7 +1363,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
   });
 
-  test('the polling owner never cancels a deployment after the pull request head changes', async () => {
+  test('the polling owner cancels its active deployment after a same-ref head change', async () => {
     let createAttempted = false;
     const harness = createHarness({
       respond: ({ method, url }) => {
@@ -1197,8 +1371,47 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
           return json(
             createAttempted
               ? pullRequest({
-                  head: { sha: 'c'.repeat(40), ref: 'feature/new-head', repo: repository },
-                  labels: [{ name: 'no-preview' }],
+                  head: { sha: NEW_SHA, ref: 'feature/preview', repo: repository },
+                })
+              : pullRequest(),
+          );
+        }
+        if (method === 'POST') {
+          createAttempted = true;
+          return json(mutationDeployment('dpl_created', 'QUEUED'));
+        }
+        if (method === 'GET' && url.includes('/v13/deployments/dpl_created')) {
+          return json(mutationDeployment('dpl_created', 'BUILDING'));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      {
+        kind: 'canceled',
+        pullRequestNumber: 341,
+        reason: 'canceled-active',
+        deploymentId: 'dpl_created',
+        url: 'orbit-preview.vercel.app',
+      },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
+    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
+  });
+
+  test('the polling owner does not cancel after the pull request head ref changes', async () => {
+    let createAttempted = false;
+    const harness = createHarness({
+      respond: ({ method, url }) => {
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            createAttempted
+              ? pullRequest({
+                  head: { sha: NEW_SHA, ref: 'feature/new-head', repo: repository },
                 })
               : pullRequest(),
           );
@@ -1219,7 +1432,6 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
     expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
-    expect(harness.sleeps.filter((milliseconds) => milliseconds === 5000)).toHaveLength(0);
   });
 
   test('active polling sleeps through transitions and returns READY', async () => {
@@ -1273,6 +1485,9 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
       const harness = createHarness({
         respond: ({ method, url }) => {
           if (url.includes('/v7/deployments')) {
+            if (!new URL(url).searchParams.has('sha')) {
+              return json({ deployments: [], pagination: { count: 0, next: null, prev: null } });
+            }
             listReads += 1;
             const items = listReads === 1 ? [] : [deployment('READY', { uid: 'dpl_observed' })];
             return json({
@@ -1295,7 +1510,8 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
       expect(results[0]).toMatchObject({ deploymentId: 'dpl_observed' });
       expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
-      expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(2);
+      expect(listReads).toBe(2);
+      expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(3);
       expect(
         harness.requests.filter(({ url }) => url.includes('/v13/deployments/dpl_observed')),
       ).toHaveLength(0);
@@ -1315,6 +1531,9 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
       },
       respond: (request) => {
         if (request.url.includes('/v7/deployments')) {
+          if (!new URL(request.url).searchParams.has('sha')) {
+            return json({ deployments: [], pagination: { count: 0, next: null, prev: null } });
+          }
           listReads += 1;
           const items = listReads === 1 ? [] : [deployment('READY', { uid: 'dpl_observed' })];
           return json({
@@ -1340,6 +1559,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
     expect(results[0]).toMatchObject({ deploymentId: 'dpl_observed' });
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
     expect(listReads).toBe(2);
+    expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(3);
     expect(
       harness.requests.filter(({ url }) => url.includes('/v13/deployments/dpl_observed')),
     ).toHaveLength(0);
@@ -1360,7 +1580,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
     await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('ambiguous');
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
-    expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(4);
+    expect(harness.requests.filter(({ url }) => url.includes('/v7/deployments'))).toHaveLength(5);
     expect(harness.requests.filter(({ url }) => url.includes('/v13/deployments/'))).toHaveLength(0);
     expect(harness.sleeps).toEqual([2000, 2000]);
   });
@@ -1379,7 +1599,7 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 
       await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow(String(status));
       expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
-      expect(listReads).toBe(1);
+      expect(listReads).toBe(2);
     },
   );
 
@@ -1420,6 +1640,39 @@ describe('bounded transport, polling, and ambiguity recovery', () => {
 });
 
 describe('identity invariants and bounded edge cases', () => {
+  test.each([
+    ['project ID', { id: 'prj_other' }, 'project identity'],
+    ['project name', { name: 'other' }, 'project identity'],
+    ['team ID', { accountId: 'team_other' }, 'project identity'],
+    ['response schema', { accountId: undefined }, 'schema'],
+  ])(
+    'a mismatched Vercel %s blocks create before mutation',
+    async (_name, projectOverrides, message) => {
+      const harness = createHarness({
+        respond: ({ url }) =>
+          url.includes('/v9/projects/') ? json(vercelProject(projectOverrides)) : undefined,
+      });
+
+      await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow(message);
+      expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
+      expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+    },
+  );
+
+  test('a mismatched Vercel project blocks cancellation before mutation', async () => {
+    const harness = createHarness({
+      pullRequest: pullRequest({ draft: true }),
+      deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
+      respond: ({ url }) =>
+        url.includes('/v9/projects/')
+          ? json(vercelProject({ accountId: 'team_other' }))
+          : undefined,
+    });
+
+    await expect(reconcileVercelPreviews(harness.runtime)).rejects.toThrow('project identity');
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+  });
+
   test.each([
     ['wrong project', { projectId: 'prj_other' }],
     ['non-null target', { target: 'production' }],

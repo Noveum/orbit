@@ -76,7 +76,7 @@ boundary.
 `.github/workflows/vercel-preview.yml` runs from the default branch through three trusted event
 paths:
 
-- `pull_request_target` handles `opened`, `reopened`, `ready_for_review`,
+- `pull_request_target` handles `opened`, `reopened`, `synchronize`, `ready_for_review`,
   `converted_to_draft`, `labeled`, `unlabeled`, and `closed` state transitions.
 - `workflow_run` handles a completed `CI` workflow and proceeds only when the source event was a
   pull request and the conclusion was success.
@@ -96,9 +96,10 @@ in-progress reconciler. Recovery dispatches require a bounded positive numeric p
 and share that pull request's group. Vercel metadata checks provide a second idempotency boundary.
 A polling owner refetches the current pull request between active deployment reads. It cancels only
 the deployment whose validated metadata names the same pull request head when that exact identity
-becomes closed or ineligible. Identity or head drift ends the old poll without canceling work for a
-different head. This keeps one Create POST and per-pull-request serialization while allowing timely
-cost cancellation.
+becomes closed or ineligible. It also cancels that deployment when only the head SHA is superseded
+and the pull request, repositories, base, and head ref still match. Other identity drift ends the old
+poll without mutation. This keeps one Create POST and per-pull-request serialization while allowing
+timely cost cancellation.
 A workflow-run payload with no linked pull request, or with more than one distinct linked pull
 request, is rejected because one Actions concurrency group cannot serialize multiple pull requests
 and the event cannot prove one unambiguous base association.
@@ -114,6 +115,12 @@ request from GitHub. Duplicate links to the same pull request are deduplicated. 
 when its recorded head SHA no longer equals the live pull request head. Stale events are no-ops.
 Fork heads and pull requests targeting another repository or branch are also no-ops. A proven
 closed pull request follows the active-cancellation path without requiring CI.
+
+Before CI, every trusted current-candidate reconciliation lists the branch and cancels only active
+prior-head deployments with a different valid 40-character hexadecimal SHA and exact project,
+repository ID, pull request number, and head ref metadata. This lets `synchronize` cancel promptly
+and lets later CI or recovery events repair a missed cleanup. READY prior-head deployments remain
+unchanged.
 
 For every eligible event, the controller resolves the canonical `.github/workflows/ci.yml`, fetches
 the live `main` ref, and queries every bounded page of runs for the exact head SHA. It selects the
@@ -152,6 +159,10 @@ Deployment IDs must contain only ASCII letters, digits, underscores, and hyphens
 length bound. Every ID is checked against both tokens before use, and every dynamic deployment path
 segment is URL encoded.
 
+Immediately before each Create or Cancel request, the controller reads `/v9/projects/{projectId}`
+through the configured team scope. The validated project ID, name, and account ID must match the
+configured project and team, including after a long deployment poll.
+
 If an exact deployment is ready, it is reused. An exact queued, initializing, or building
 deployment is polled rather than duplicated. If no such deployment exists, the controller calls
 Vercel's Create Deployment endpoint with the linked GitHub repository ID, exact branch ref, and
@@ -163,8 +174,10 @@ prove deployment ID, project ID, null Preview target, state, and Orbit metadata.
 the created deployment immediately and then through at most 240 five-second sleeps plus one final
 GET to a ready or terminal state, requiring a nonempty final URL. After every active detail, the
 polling owner refetches the pull request. If the same exact identity is now ineligible, it cancels
-only that deployment and returns a canceled result. If the identity or head changed, it returns a
-stale result without canceling. The 23-minute controller deadline may stop this sequence earlier.
+only that deployment and returns a canceled result. If only the SHA changed for the same head ref
+and pull request identity, it cancels the superseded active deployment. Other identity changes
+return a stale result without canceling. The 23-minute controller deadline may stop this sequence
+earlier.
 
 Create Deployment has no idempotency key. After a network error, timeout, 429, 5xx, 409, or an
 unparseable success response, the controller marks the one POST as attempted and performs only a

@@ -52,7 +52,7 @@ const LEGACY_EXPECTED_HEADER = `name: Vercel Preview
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, reopened, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, closed]
   workflow_run:
     workflows: [CI]
     types: [completed]

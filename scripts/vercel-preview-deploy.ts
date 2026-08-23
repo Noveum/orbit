@@ -10,6 +10,7 @@ import {
   githubPreviewWorkflowRunEventSchema,
   githubPreviewWorkflowRunsSchema,
   githubPreviewWorkflowSchema,
+  gitShaSchema,
   type VercelCanceledDeployment,
   type VercelCreatedDeployment,
   type VercelDeployment,
@@ -20,6 +21,7 @@ import {
   vercelDeploymentDetailSchema,
   vercelDeploymentsPageSchema,
   vercelPreviewEnvironmentSchema,
+  vercelProjectSchema,
 } from '../packages/shared/src/validators/index.ts';
 import {
   isActiveVercelDeployment,
@@ -54,7 +56,7 @@ type PreviewReason =
   | 'repository-mismatch'
   | 'fork-pull-request'
   | 'base-mismatch'
-  | 'preview-ineligible'
+  | 'preview-eligible'
   | 'no-active-deployment'
   | 'web-unaffected'
   | 'ci-unavailable'
@@ -372,6 +374,27 @@ function vercelUrl(path: string, query: Readonly<Record<string, string>>): strin
   const url = new URL(path, VERCEL_API);
   for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
   return url.toString();
+}
+
+async function verifyVercelProjectIdentity(
+  runtime: ControllerRuntime,
+  environment: VercelPreviewEnvironment,
+): Promise<void> {
+  const projectId = encodeURIComponent(environment.VERCEL_PROJECT_ID);
+  const project = await requestJson(
+    runtime,
+    environment,
+    'vercel',
+    vercelUrl(`/v9/projects/${projectId}`, { teamId: environment.VERCEL_TEAM_ID }),
+    vercelProjectSchema,
+  );
+  if (
+    project.id !== environment.VERCEL_PROJECT_ID ||
+    project.name !== environment.VERCEL_PROJECT_NAME ||
+    project.accountId !== environment.VERCEL_TEAM_ID
+  ) {
+    fail('Vercel project identity mismatch');
+  }
 }
 
 function repositorySlugMatches(
@@ -710,6 +733,49 @@ function comparableDeployment(detail: VercelDeploymentDetail): VercelDeployment 
   };
 }
 
+function trustedCurrentPullRequest(
+  environment: VercelPreviewEnvironment,
+  pullRequest: GithubPreviewPullRequest,
+): boolean {
+  return (
+    repositorySlugMatches(pullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+    isSameRepositoryPullRequest(pullRequest) &&
+    pullRequest.base.ref === 'main'
+  );
+}
+
+async function cancelPolledDeployment(
+  runtime: ControllerRuntime,
+  environment: VercelPreviewEnvironment,
+  pullRequest: GithubPreviewPullRequest,
+  deployment: VercelDeployment,
+): Promise<PreviewResult> {
+  return (
+    (await cancelOneActiveDeployment(runtime, environment, pullRequest, deployment)) ??
+    skipped(pullRequest.number, 'no-active-deployment')
+  );
+}
+
+async function pollingInterruption(
+  runtime: ControllerRuntime,
+  environment: VercelPreviewEnvironment,
+  originalPullRequest: GithubPreviewPullRequest,
+  currentPullRequest: GithubPreviewPullRequest,
+  deployment: VercelDeployment,
+): Promise<PreviewResult | null> {
+  if (!trustedCurrentPullRequest(environment, currentPullRequest)) {
+    return skipped(originalPullRequest.number, 'stale-event');
+  }
+  if (pullRequestIdentityMatches(originalPullRequest, currentPullRequest)) {
+    if (currentPullRequest.state === 'open' && isPreviewEligible(currentPullRequest)) return null;
+    return await cancelPolledDeployment(runtime, environment, currentPullRequest, deployment);
+  }
+  if (!supersedingHeadMatches(originalPullRequest, currentPullRequest)) {
+    return skipped(originalPullRequest.number, 'stale-event');
+  }
+  return await cancelPolledDeployment(runtime, environment, originalPullRequest, deployment);
+}
+
 async function pollDeployment(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
@@ -747,29 +813,14 @@ async function pollDeployment(
     if (!isActiveVercelDeployment(comparable))
       return fail(`deployment ended in ${detail.readyState}`);
     const currentPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
-    const exactCurrentIdentity =
-      pullRequestIdentityMatches(pullRequest, currentPullRequest) &&
-      repositorySlugMatches(currentPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
-      isSameRepositoryPullRequest(currentPullRequest) &&
-      currentPullRequest.base.ref === 'main';
-    if (!exactCurrentIdentity) {
-      return {
-        kind: 'interrupted',
-        result: skipped(pullRequest.number, 'stale-event'),
-      };
-    }
-    if (currentPullRequest.state !== 'open' || !isPreviewEligible(currentPullRequest)) {
-      const result = await cancelOneActiveDeployment(
-        runtime,
-        environment,
-        currentPullRequest,
-        comparable,
-      );
-      return {
-        kind: 'interrupted',
-        result: result ?? skipped(pullRequest.number, 'no-active-deployment'),
-      };
-    }
+    const interruption = await pollingInterruption(
+      runtime,
+      environment,
+      pullRequest,
+      currentPullRequest,
+      comparable,
+    );
+    if (interruption) return { kind: 'interrupted', result: interruption };
     if (detailRequest === 240) return fail('deployment polling timed out');
     await runtime.sleep(5000);
   }
@@ -794,6 +845,20 @@ function pullRequestIdentityMatches(
   return (
     first.number === current.number &&
     first.head.sha === current.head.sha &&
+    first.head.ref === current.head.ref &&
+    repositoryIdentityMatches(first.head.repo, current.head.repo) &&
+    first.base.ref === current.base.ref &&
+    repositoryIdentityMatches(first.base.repo, current.base.repo)
+  );
+}
+
+function supersedingHeadMatches(
+  first: GithubPreviewPullRequest,
+  current: GithubPreviewPullRequest,
+): boolean {
+  return (
+    first.number === current.number &&
+    first.head.sha !== current.head.sha &&
     first.head.ref === current.head.ref &&
     repositoryIdentityMatches(first.head.repo, current.head.repo) &&
     first.base.ref === current.base.ref &&
@@ -829,6 +894,7 @@ async function cancelOneActiveDeployment(
 ): Promise<PreviewResult | null> {
   let canceled: VercelCanceledDeployment;
   const encodedDeploymentId = deploymentPathSegment(item.uid, environment);
+  await verifyVercelProjectIdentity(runtime, environment);
   try {
     canceled = await requestJson(
       runtime,
@@ -878,6 +944,64 @@ async function cancelOneActiveDeployment(
   };
 }
 
+type PriorHeadCancellation = {
+  readonly current: boolean;
+  readonly results: readonly PreviewResult[];
+};
+
+function isActivePriorHeadDeployment(
+  deployment: VercelDeployment,
+  pullRequest: GithubPreviewPullRequest,
+  projectId: string,
+): boolean {
+  const headSha = deployment.meta['orbitGithubHeadSha'];
+  const parsedHeadSha = gitShaSchema.safeParse(headSha);
+  return (
+    isActiveVercelDeployment(deployment) &&
+    matchesVercelPullRequest(deployment, pullRequest, projectId) &&
+    parsedHeadSha.success &&
+    parsedHeadSha.data !== pullRequest.head.sha
+  );
+}
+
+async function cancelPriorHeadDeployments(
+  runtime: ControllerRuntime,
+  environment: VercelPreviewEnvironment,
+  pullRequest: GithubPreviewPullRequest,
+): Promise<PriorHeadCancellation> {
+  const listed = await listDeployments(runtime, environment, pullRequest, false);
+  const activePriorHeads = listed
+    .filter((deployment) =>
+      isActivePriorHeadDeployment(deployment, pullRequest, environment.VERCEL_PROJECT_ID),
+    )
+    .sort((left, right) => left.uid.localeCompare(right.uid));
+  const results: PreviewResult[] = [];
+  for (const deployment of activePriorHeads) {
+    const currentPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
+    const stateIsCurrent =
+      currentStateMatches(pullRequest, currentPullRequest) &&
+      repositorySlugMatches(currentPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+      isSameRepositoryPullRequest(currentPullRequest) &&
+      currentPullRequest.base.ref === 'main' &&
+      currentPullRequest.state === 'open' &&
+      isPreviewEligible(currentPullRequest);
+    if (!stateIsCurrent) {
+      return {
+        current: false,
+        results: results.length > 0 ? results : [skipped(pullRequest.number, 'stale-event')],
+      };
+    }
+    const result = await cancelOneActiveDeployment(
+      runtime,
+      environment,
+      currentPullRequest,
+      deployment,
+    );
+    if (result) results.push(result);
+  }
+  return { current: true, results };
+}
+
 async function cancelActiveDeployments(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
@@ -898,14 +1022,14 @@ async function cancelActiveDeployments(
   for (const item of active) {
     const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
     const identityIsCurrent =
-      currentStateMatches(pullRequest, finalPullRequest) &&
+      pullRequestIdentityMatches(pullRequest, finalPullRequest) &&
       repositorySlugMatches(finalPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
       isSameRepositoryPullRequest(finalPullRequest);
     if (!identityIsCurrent) {
       return results.length > 0 ? results : [skipped(pullRequest.number, 'stale-event')];
     }
     if (finalPullRequest.state === 'open' && isPreviewEligible(finalPullRequest)) {
-      return results.length > 0 ? results : [skipped(pullRequest.number, 'preview-ineligible')];
+      return results.length > 0 ? results : [skipped(pullRequest.number, 'preview-eligible')];
     }
     const result = await cancelOneActiveDeployment(runtime, environment, finalPullRequest, item);
     if (result) results.push(result);
@@ -986,6 +1110,7 @@ async function createDeployment(
   preCreateDeploymentIds: ReadonlySet<string>,
 ): Promise<PreviewResult> {
   const metadata = deploymentMetadata(pullRequest, workflowRunId);
+  await verifyVercelProjectIdentity(runtime, environment);
   let created: VercelCreatedDeployment;
   try {
     created = await requestJson(
@@ -1080,10 +1205,13 @@ async function reconcileCandidate(
   if (pullRequest.state !== 'open' || !isPreviewEligible(pullRequest)) {
     return cancelActiveDeployments(runtime, environment, pullRequest);
   }
+  const priorHeadCancellation = await cancelPriorHeadDeployments(runtime, environment, pullRequest);
+  if (!priorHeadCancellation.current) return priorHeadCancellation.results;
+  const priorHeadResults = priorHeadCancellation.results;
   const ci = await proveCurrentCi(runtime, environment, pullRequest);
-  if (!ci.ok) return [skipped(candidate.number, ci.reason)];
+  if (!ci.ok) return [...priorHeadResults, skipped(candidate.number, ci.reason)];
   if (!(await affectsWeb(runtime, environment, pullRequest.number))) {
-    return [skipped(candidate.number, 'web-unaffected')];
+    return [...priorHeadResults, skipped(candidate.number, 'web-unaffected')];
   }
   const listed = await listDeployments(runtime, environment, pullRequest, true);
   const exact = listed.filter((item) =>
@@ -1095,13 +1223,13 @@ async function reconcileCandidate(
     ),
   );
   const reused = await reusedDeploymentResult(runtime, environment, pullRequest, exact);
-  if (reused) return [reused];
+  if (reused) return [...priorHeadResults, reused];
   const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
   if (!currentStateMatches(pullRequest, finalPullRequest)) {
-    return [skipped(candidate.number, 'stale-event')];
+    return [...priorHeadResults, skipped(candidate.number, 'stale-event')];
   }
   const finalCi = await proveCurrentCi(runtime, environment, finalPullRequest);
-  if (!finalCi.ok) return [skipped(candidate.number, finalCi.reason)];
+  if (!finalCi.ok) return [...priorHeadResults, skipped(candidate.number, finalCi.reason)];
   const mutationPullRequest = await fetchPullRequest(runtime, environment, finalPullRequest.number);
   const mutationStateIsCurrent =
     currentStateMatches(finalPullRequest, mutationPullRequest) &&
@@ -1110,8 +1238,11 @@ async function reconcileCandidate(
     mutationPullRequest.base.ref === 'main' &&
     mutationPullRequest.state === 'open' &&
     isPreviewEligible(mutationPullRequest);
-  if (!mutationStateIsCurrent) return [skipped(candidate.number, 'stale-event')];
+  if (!mutationStateIsCurrent) {
+    return [...priorHeadResults, skipped(candidate.number, 'stale-event')];
+  }
   return [
+    ...priorHeadResults,
     await createDeployment(
       runtime,
       environment,

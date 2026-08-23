@@ -73,12 +73,16 @@ canceled attempt is free.
 
 The controller uses one deployment path:
 
-1. Vercel v7 lists Preview deployments by team, project, branch, and, when
-   creating, exact head SHA.
-2. Vercel v13 creates or reads a deployment with the same-repository GitHub
+1. Vercel v7 lists Preview deployments by team, project, and branch before CI
+   to find active work from prior heads. It lists by exact head SHA again when
+   creating or reusing current-head work.
+2. Vercel v9 reads the configured project immediately before every mutation.
+   The validated project ID, name, and account ID must match the configured
+   project and team.
+3. Vercel v13 creates or reads a deployment with the same-repository GitHub
    repository ID, head ref, exact head SHA, and Orbit metadata. It omits a
    target so Vercel uses the project's Preview environment.
-3. Vercel v12 cancels matching active deployments.
+4. Vercel v12 cancels matching active deployments.
 
 Deployment IDs are accepted only when they contain ASCII letters, digits,
 underscores, and hyphens within the controller's fixed bound. The controller
@@ -95,9 +99,19 @@ Per-pull-request workflow runs remain serialized with in-progress cancellation
 disabled. While the owner polls a queued, initializing, or building deployment,
 it refetches the current pull request after every active detail response. If the
 same exact head becomes closed or ineligible, that owner cancels only its exact
-deployment and returns a canceled result. If the head or repository identity
-changed, the old owner stops without canceling the different head. The queued
-state event then reconciles the latest state.
+deployment and returns a canceled result. If only the head SHA changed while the
+pull request, repositories, base, and head ref remain identical, the old owner
+cancels its superseded active deployment. Any other identity change returns a
+stale event without mutation.
+
+`pull_request_target` includes `synchronize`, so a pushed head immediately runs
+the trusted controller. Every trusted current-candidate reconciliation also
+sweeps active prior-head work before checking current-head CI. A candidate for
+cancellation must have a different valid 40-character hexadecimal SHA and exact
+configured project, repository ID, pull request number, and head ref metadata.
+This repeated sweep lets later CI and repository-dispatch events recover after a
+transient synchronize failure or an interrupted polling owner. READY prior-head
+deployments are retained, so their URLs remain available.
 
 Events for stale heads cannot create or cancel work for the current head. An
 existing exact ready or active deployment is reused. Terminal deployment

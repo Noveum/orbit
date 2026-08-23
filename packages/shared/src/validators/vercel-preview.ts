@@ -101,6 +101,7 @@ export const githubPreviewPullRequestTargetEventSchema = z
     action: z.enum([
       'opened',
       'reopened',
+      'synchronize',
       'ready_for_review',
       'converted_to_draft',
       'labeled',
@@ -238,6 +239,15 @@ export const vercelDeploymentsPageSchema = z
   })
   .passthrough();
 export type VercelDeploymentsPage = z.infer<typeof vercelDeploymentsPageSchema>;
+
+export const vercelProjectSchema = z
+  .object({
+    id: boundedString(255),
+    name: boundedString(100),
+    accountId: boundedString(255),
+  })
+  .passthrough();
+export type VercelProject = z.infer<typeof vercelProjectSchema>;
 
 const vercelDeploymentMutationSchema = z
   .object({

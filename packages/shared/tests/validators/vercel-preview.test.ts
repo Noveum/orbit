@@ -14,6 +14,7 @@ import {
   vercelDeploymentSchema,
   vercelDeploymentsPageSchema,
   vercelPreviewEnvironmentSchema,
+  vercelProjectSchema,
 } from '../../src/validators/vercel-preview.ts';
 
 const SHA = 'a'.repeat(40);
@@ -135,6 +136,17 @@ describe('Vercel Preview GitHub schemas', () => {
     ).toMatchObject({ action: 'closed', number: pullRequest.number });
   });
 
+  test('accept a pull request synchronize event', () => {
+    expect(
+      githubPreviewPullRequestTargetEventSchema.parse({
+        action: 'synchronize',
+        number: pullRequest.number,
+        pull_request: pullRequest,
+        repository,
+      }),
+    ).toMatchObject({ action: 'synchronize', number: pullRequest.number });
+  });
+
   test('accept a successful CI workflow event', () => {
     expect(
       githubPreviewWorkflowRunEventSchema.parse({
@@ -235,6 +247,13 @@ describe('Vercel Preview GitHub schemas', () => {
     expect(
       vercelCanceledDeploymentSchema.parse({ ...mutationDeployment, readyState: 'CANCELED' }).id,
     ).toBe('dpl_preview');
+  });
+
+  test('validate the Vercel project identity boundary', () => {
+    expect(
+      vercelProjectSchema.parse({ id: 'prj_orbit', name: 'orbit', accountId: 'team_orbit' }),
+    ).toMatchObject({ id: 'prj_orbit', name: 'orbit', accountId: 'team_orbit' });
+    expect(() => vercelProjectSchema.parse({ id: 'prj_orbit', name: 'orbit' })).toThrow();
   });
 
   test('accept a complete controller environment', () => {
