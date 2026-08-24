@@ -174,6 +174,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         scopes: [],
         hasDirectMessageScope: false,
         reauthorize: false,
+        updatedAt: expect.any(Date),
       });
       expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
         integrationId: globex.integrationId,
@@ -181,6 +182,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         scopes: [],
         hasDirectMessageScope: false,
         reauthorize: false,
+        updatedAt: expect.any(Date),
       });
     });
   });
@@ -212,6 +214,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         scopes: [],
         hasDirectMessageScope: false,
         reauthorize: false,
+        updatedAt: expect.any(Date),
       });
     });
   });
