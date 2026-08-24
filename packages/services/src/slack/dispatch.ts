@@ -30,6 +30,7 @@ export interface SlackContext {
   readonly token: string | null;
   readonly scopes: string[];
   readonly hasDirectMessageScope: boolean;
+  readonly reauthorize: boolean;
 }
 
 export async function resolveSlackContext(
@@ -57,11 +58,13 @@ export async function resolveSlackContext(
   const scopes = Array.isArray(configuredScopes)
     ? configuredScopes.filter((scope): scope is string => typeof scope === 'string')
     : [];
+  const reauthorize = row.config['slackReauthorize'] === true;
   return {
     integrationId: row.id,
     token: parsed.success ? (parsed.data.botToken ?? null) : null,
     scopes,
     hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
+    reauthorize,
   };
 }
 
@@ -304,7 +307,13 @@ export async function slackDmAvailable(
   userId: string,
 ): Promise<boolean> {
   const context = await resolveSlackContext(database, organizationId);
-  if (context === null || context.token === null || !context.hasDirectMessageScope) return false;
+  if (
+    context === null ||
+    context.token === null ||
+    context.reauthorize ||
+    !context.hasDirectMessageScope
+  )
+    return false;
   const [mapping] = await database
     .select({ id: slackUserMapping.id })
     .from(slackUserMapping)

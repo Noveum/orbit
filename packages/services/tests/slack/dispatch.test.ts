@@ -173,12 +173,14 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         token: 'xoxb-acme',
         scopes: [],
         hasDirectMessageScope: false,
+        reauthorize: false,
       });
       expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
         integrationId: globex.integrationId,
         token: 'xoxb-globex',
         scopes: [],
         hasDirectMessageScope: false,
+        reauthorize: false,
       });
     });
   });
@@ -209,6 +211,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         token: 'xoxb-acme',
         scopes: [],
         hasDirectMessageScope: false,
+        reauthorize: false,
       });
     });
   });
