@@ -263,10 +263,16 @@ export interface DispatchSlackDmInput {
   readonly fetch?: typeof globalThis.fetch;
 }
 
-export async function dispatchSlackDm(
+export interface SlackDmDispatchResult {
+  readonly delivered: number;
+  readonly channel: string | null;
+  readonly ts: string | null;
+}
+
+export async function dispatchSlackDmResult(
   database: SlackDatabase,
   input: DispatchSlackDmInput,
-): Promise<number> {
+): Promise<SlackDmDispatchResult> {
   const context = await resolveSlackContext(database, input.organizationId);
   if (
     context === null ||
@@ -274,7 +280,7 @@ export async function dispatchSlackDm(
     context.reauthorize ||
     !context.hasDirectMessageScope
   )
-    return 0;
+    return { delivered: 0, channel: null, ts: null };
   const [mapping] = await database
     .select({ slackUserId: slackUserMapping.slackUserId })
     .from(slackUserMapping)
@@ -285,21 +291,27 @@ export async function dispatchSlackDm(
       ),
     )
     .limit(1);
-  if (mapping === undefined) return 0;
-
+  if (mapping === undefined) return { delivered: 0, channel: null, ts: null };
   const client = new SlackClient({
     token: context.token,
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
+  const conversation = await client.openConversation(mapping.slackUserId);
+  const message = await client.postMessage({
+    channel: conversation.channel,
+    text: input.text,
+    ...(input.clientMsgId === undefined ? {} : { clientMsgId: input.clientMsgId }),
+    ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+  });
+  return { delivered: 1, channel: message.channel, ts: message.ts };
+}
+
+export async function dispatchSlackDm(
+  database: SlackDatabase,
+  input: DispatchSlackDmInput,
+): Promise<number> {
   try {
-    const conversation = await client.openConversation(mapping.slackUserId);
-    await client.postMessage({
-      channel: conversation.channel,
-      text: input.text,
-      ...(input.clientMsgId === undefined ? {} : { clientMsgId: input.clientMsgId }),
-      ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
-    });
-    return 1;
+    return (await dispatchSlackDmResult(database, input)).delivered;
   } catch (error) {
     if (error instanceof SlackApiError) throw error;
     console.error('[orbit] slack DM post failed', error);
