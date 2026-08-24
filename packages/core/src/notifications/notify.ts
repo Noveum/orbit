@@ -64,7 +64,7 @@ export async function deliverPendingSlackDms(
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
         clientMsgId: delivery.id,
       });
-      sent = providerMessage.delivered;
+      sent = providerMessage.channel !== null && providerMessage.ts !== null ? 1 : 0;
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
       await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
