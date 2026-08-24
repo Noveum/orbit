@@ -62,7 +62,6 @@ export async function deliverPendingSlackDms(
         organizationId: notification.organizationId,
         userId: delivery.userId,
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
-        clientMsgId: delivery.id,
       });
       sent = providerMessage.channel !== null && providerMessage.ts !== null ? 1 : 0;
     } catch (error) {
@@ -109,7 +108,12 @@ async function finalizeSlackDmFailure(
   const code = error instanceof SlackApiError ? error.code : '';
   if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
     const context = await resolveSlackContext(database, organizationId);
-    await markSlackReauthorizationRequired(database, organizationId, context?.integrationId);
+    await markSlackReauthorizationRequired(
+      database,
+      organizationId,
+      context?.integrationId,
+      context?.updatedAt,
+    );
     await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0), code);
     return;
   }

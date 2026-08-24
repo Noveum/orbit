@@ -120,17 +120,24 @@ export async function markSlackReauthorizationRequired(
   database: NotificationDatabase,
   organizationId: string,
   integrationId?: string,
-): Promise<void> {
-  await database
+  expectedUpdatedAt?: Date,
+): Promise<boolean> {
+  const updated = await database
     .update(integration)
-    .set({ config: sql`jsonb_set(${integration.config}, '{slackReauthorize}', 'true'::jsonb)` })
+    .set({
+      config: sql`jsonb_set(${integration.config}, '{slackReauthorize}', 'true'::jsonb)`,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(integration.organizationId, organizationId),
         eq(integration.provider, 'slack'),
         ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
+        ...(expectedUpdatedAt === undefined ? [] : [eq(integration.updatedAt, expectedUpdatedAt)]),
       ),
-    );
+    )
+    .returning({ id: integration.id });
+  return updated.length > 0;
 }
 
 export async function claimSlackDmDeliveries(

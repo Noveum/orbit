@@ -31,6 +31,7 @@ export interface SlackContext {
   readonly scopes: string[];
   readonly hasDirectMessageScope: boolean;
   readonly reauthorize: boolean;
+  readonly updatedAt?: Date;
 }
 
 export async function resolveSlackContext(
@@ -48,6 +49,7 @@ export async function resolveSlackContext(
       id: integration.id,
       credentials: integration.credentials,
       config: integration.config,
+      updatedAt: integration.updatedAt,
     })
     .from(integration)
     .where(and(...filters))
@@ -65,6 +67,7 @@ export async function resolveSlackContext(
     scopes,
     hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
     reauthorize,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -258,7 +261,6 @@ export interface DispatchSlackDmInput {
   readonly organizationId: string;
   readonly userId: string;
   readonly text: string;
-  readonly clientMsgId?: string;
   readonly blocks?: SlackBlock[];
   readonly fetch?: typeof globalThis.fetch;
 }
@@ -300,7 +302,6 @@ export async function dispatchSlackDmResult(
   const message = await client.postMessage({
     channel: conversation.channel,
     text: input.text,
-    ...(input.clientMsgId === undefined ? {} : { clientMsgId: input.clientMsgId }),
     ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
   });
   return { delivered: 1, channel: message.channel, ts: message.ts };

@@ -765,7 +765,6 @@ describe('dispatchSlackDm', () => {
         organizationId: fixture.organizationId,
         userId: fixture.userId,
         text: 'You were mentioned',
-        clientMsgId: 'delivery-123',
         fetch,
       });
       expect(delivered).toBe(1);
@@ -773,7 +772,7 @@ describe('dispatchSlackDm', () => {
         { method: 'conversations.open', body: { users: 'U123' } },
         {
           method: 'chat.postMessage',
-          body: { channel: 'D123', text: 'You were mentioned', client_msg_id: 'delivery-123' },
+          body: { channel: 'D123', text: 'You were mentioned' },
         },
       ]);
     });
