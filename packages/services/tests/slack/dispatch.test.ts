@@ -163,11 +163,6 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         slackTeamId: 'T-acme',
         botToken: 'xoxb-acme',
       });
-      const [before] = await tx
-        .select({ updatedAt: integration.updatedAt })
-        .from(integration)
-        .where(eq(integration.id, fixture.integrationId));
-      if (before === undefined) throw new Error('Expected integration fixture.');
       await tx
         .update(integration)
         .set({ credentials: { botToken: 'xoxb-refreshed' }, updatedAt: new Date() })
@@ -177,7 +172,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
           tx,
           fixture.organizationId,
           fixture.integrationId,
-          before.updatedAt,
+          'xoxb-acme',
         ),
       ).toBe(false);
       const [after] = await tx

@@ -100,10 +100,15 @@ export async function markSlackDmUnavailable(
   deliveryId: string,
   claimedAt: Date,
   error = 'Slack user mapping unavailable',
+  attempted = false,
 ): Promise<boolean> {
   const updated = await database
     .update(notificationDelivery)
-    .set({ status: 'skipped', lastError: error })
+    .set({
+      status: 'skipped',
+      lastError: error,
+      ...(attempted ? { attempts: sql`${notificationDelivery.attempts} + 1` } : {}),
+    })
     .where(
       and(
         eq(notificationDelivery.id, deliveryId),
@@ -120,7 +125,7 @@ export async function markSlackReauthorizationRequired(
   database: NotificationDatabase,
   organizationId: string,
   integrationId?: string,
-  expectedUpdatedAt?: Date,
+  expectedBotToken?: string,
 ): Promise<boolean> {
   const updated = await database
     .update(integration)
@@ -133,7 +138,9 @@ export async function markSlackReauthorizationRequired(
         eq(integration.organizationId, organizationId),
         eq(integration.provider, 'slack'),
         ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
-        ...(expectedUpdatedAt === undefined ? [] : [eq(integration.updatedAt, expectedUpdatedAt)]),
+        ...(expectedBotToken === undefined
+          ? []
+          : [sql`${integration.credentials}->>'botToken' = ${expectedBotToken}`]),
       ),
     )
     .returning({ id: integration.id });

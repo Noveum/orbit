@@ -1,0 +1,215 @@
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { db, eq, schema } from '@orbit/db';
+import { claimSlackDmDeliveries } from '@orbit/services/notifications';
+import { randomUUIDv7 } from '@orbit/shared/utils';
+import { deliverPendingSlackDms } from '../../src/notifications/notify.ts';
+import { resetDatabase } from '../../src/test-support.ts';
+
+interface Fixture {
+  readonly organizationId: string;
+  readonly userId: string;
+  readonly integrationId: string;
+}
+
+async function seedPendingSlackDm(): Promise<Fixture> {
+  const suffix = randomUUIDv7();
+  const organizationId = `org_${suffix}`;
+  const userId = `usr_${suffix}`;
+  const integrationId = `int_${suffix}`;
+  const notificationId = `not_${suffix}`;
+  await db.insert(schema.organization).values({
+    id: organizationId,
+    name: 'Acme',
+    slug: `acme-${suffix.toLowerCase()}`,
+  });
+  await db.insert(schema.user).values({
+    id: userId,
+    name: 'Ada',
+    email: `ada.${suffix}@orbit.local`,
+    handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await db.insert(schema.integration).values({
+    id: integrationId,
+    organizationId,
+    provider: 'slack',
+    externalId: 'default',
+    connectedById: userId,
+    credentials: { botToken: 'xoxb-old' },
+    config: { scopes: ['chat:write', 'im:write'] },
+  });
+  await db.insert(schema.slackUserMapping).values({
+    id: `map_${suffix}`,
+    organizationId,
+    integrationId,
+    userId,
+    slackUserId: 'U123',
+    slackDisplayName: 'Ada Slack',
+  });
+  await db.insert(schema.notification).values({
+    id: notificationId,
+    organizationId,
+    userId,
+    type: 'mention',
+    reason: 'mentioned',
+    actorId: `actor_${suffix}`,
+    actorName: 'Grace',
+    entityType: 'issue',
+    entityId: `issue_${suffix}`,
+    title: 'You were mentioned',
+    url: '/issue/ORB-1',
+  });
+  await db.insert(schema.notificationDelivery).values({
+    id: `delivery_${suffix}`,
+    notificationId,
+    userId,
+    channel: 'slack_dm',
+  });
+  return { organizationId, userId, integrationId };
+}
+
+beforeEach(async () => {
+  await resetDatabase();
+  process.env['APP_URL'] = 'https://orbit.example';
+  delete process.env['NEXT_PUBLIC_APP_URL'];
+});
+
+describe('deliverPendingSlackDms', () => {
+  it('sends an absolute notification link and records the provider message identity', async () => {
+    await seedPendingSlackDm();
+    const requests: Record<string, unknown>[] = [];
+    const fetch = ((_input: URL | RequestInfo, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return Promise.resolve(
+        requests.length === 1
+          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
+          : new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' })),
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(1);
+
+    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
+    const [storedNotification] = await db
+      .select({ deliveredChannels: schema.notification.deliveredChannels })
+      .from(schema.notification);
+    expect(requests[1]).toEqual({
+      channel: 'D123',
+      text: 'You were mentioned: https://orbit.example/issue/ORB-1',
+    });
+    expect(storedDelivery).toMatchObject({
+      status: 'succeeded',
+      attempts: 1,
+      providerMessageChannel: 'D123',
+      providerMessageTs: '123.456',
+    });
+    expect(storedNotification?.deliveredChannels).toEqual(['slack_dm']);
+  });
+
+  it('retries without calling Slack when an absolute application URL is unavailable', async () => {
+    await seedPendingSlackDm();
+    delete process.env['APP_URL'];
+    const fetch = (() => {
+      throw new Error('Slack must not receive a relative notification URL.');
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+
+    const [stored] = await db
+      .select({
+        status: schema.notificationDelivery.status,
+        attempts: schema.notificationDelivery.attempts,
+        lastError: schema.notificationDelivery.lastError,
+      })
+      .from(schema.notificationDelivery);
+    expect(stored).toEqual({
+      status: 'failed',
+      attempts: 1,
+      lastError: 'APP_URL is required for Slack notification links',
+    });
+  });
+
+  it('keeps a transient provider failure available for retry', async () => {
+    await seedPendingSlackDm();
+    let calls = 0;
+    const fetch = (() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
+          : new Response(JSON.stringify({ ok: false, error: 'ratelimited' })),
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(stored?.lastError).toContain('ratelimited');
+    if (stored === undefined) throw new Error('Expected a failed delivery.');
+    const reclaimed = await db.transaction((tx) =>
+      claimSlackDmDeliveries(tx, 10, new Date(stored.availableAt.getTime() + 1)),
+    );
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0]?.id).toBe(stored.id);
+  });
+
+  it('records a permanent provider failure and requires Slack reauthorization', async () => {
+    const fixture = await seedPendingSlackDm();
+    let calls = 0;
+    const fetch = (() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
+          : new Response(JSON.stringify({ ok: false, error: 'token_revoked' })),
+      );
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+
+    const [storedIntegration] = await db
+      .select({ config: schema.integration.config })
+      .from(schema.integration)
+      .where(eq(schema.integration.id, fixture.integrationId));
+    const [storedDelivery] = await db
+      .select({
+        status: schema.notificationDelivery.status,
+        attempts: schema.notificationDelivery.attempts,
+        lastError: schema.notificationDelivery.lastError,
+      })
+      .from(schema.notificationDelivery);
+    expect(storedDelivery).toEqual({ status: 'skipped', attempts: 1, lastError: 'token_revoked' });
+    expect(storedIntegration?.config['slackReauthorize']).toBe(true);
+  });
+
+  it('does not mark a refreshed Slack token for reauthorization after an old token fails', async () => {
+    const fixture = await seedPendingSlackDm();
+    let calls = 0;
+    const fetch = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }));
+      }
+      await db
+        .update(schema.integration)
+        .set({
+          credentials: { botToken: 'xoxb-refreshed' },
+          config: { scopes: ['chat:write', 'im:write'] },
+          updatedAt: new Date(Date.now() + 1_000),
+        })
+        .where(eq(schema.integration.id, fixture.integrationId));
+      return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }));
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+
+    const [stored] = await db
+      .select({ config: schema.integration.config, credentials: schema.integration.credentials })
+      .from(schema.integration)
+      .where(eq(schema.integration.id, fixture.integrationId));
+    expect(stored).toEqual({
+      config: { scopes: ['chat:write', 'im:write'] },
+      credentials: { botToken: 'xoxb-refreshed' },
+    });
+  });
+});

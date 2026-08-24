@@ -271,6 +271,26 @@ export interface SlackDmDispatchResult {
   readonly ts: string | null;
 }
 
+export class SlackDmDispatchError extends Error {
+  readonly #integrationToken: string;
+  readonly integrationId: string;
+  readonly slackCode: string | undefined;
+  override readonly cause: unknown;
+
+  constructor(context: SlackContext, cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Slack DM dispatch failed');
+    this.name = 'SlackDmDispatchError';
+    this.#integrationToken = context.token ?? '';
+    this.integrationId = context.integrationId;
+    this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
+    this.cause = cause;
+  }
+
+  tokenUsed(): string {
+    return this.#integrationToken;
+  }
+}
+
 export async function dispatchSlackDmResult(
   database: SlackDatabase,
   input: DispatchSlackDmInput,
@@ -298,13 +318,17 @@ export async function dispatchSlackDmResult(
     token: context.token,
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
-  const conversation = await client.openConversation(mapping.slackUserId);
-  const message = await client.postMessage({
-    channel: conversation.channel,
-    text: input.text,
-    ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
-  });
-  return { delivered: 1, channel: message.channel, ts: message.ts };
+  try {
+    const conversation = await client.openConversation(mapping.slackUserId);
+    const message = await client.postMessage({
+      channel: conversation.channel,
+      text: input.text,
+      ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+    });
+    return { delivered: 1, channel: message.channel, ts: message.ts };
+  } catch (error) {
+    throw new SlackDmDispatchError(context, error);
+  }
 }
 
 export async function dispatchSlackDm(
@@ -314,9 +338,10 @@ export async function dispatchSlackDm(
   try {
     return (await dispatchSlackDmResult(database, input)).delivered;
   } catch (error) {
-    if (error instanceof SlackApiError) throw error;
-    console.error('[orbit] slack DM post failed', error);
-    throw error;
+    const cause = error instanceof SlackDmDispatchError ? error.cause : error;
+    if (cause instanceof SlackApiError) throw cause;
+    console.error('[orbit] slack DM post failed', cause);
+    throw cause;
   }
 }
 

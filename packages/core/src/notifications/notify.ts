@@ -11,7 +11,7 @@ import {
 import { SlackApiError } from '@orbit/services/slack';
 import {
   dispatchSlackDmResult,
-  resolveSlackContext,
+  SlackDmDispatchError,
   slackDmAvailable,
 } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
@@ -112,16 +112,24 @@ async function finalizeSlackDmFailure(
   delivery: Awaited<ReturnType<typeof claimSlackDmDeliveries>>[number],
   error: unknown,
 ): Promise<void> {
-  const code = error instanceof SlackApiError ? error.code : '';
+  const cause = error instanceof SlackDmDispatchError ? error.cause : error;
+  let code = '';
+  if (error instanceof SlackDmDispatchError) code = error.slackCode ?? '';
+  else if (cause instanceof SlackApiError) code = cause.code;
   if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
-    const context = await resolveSlackContext(database, organizationId);
     await markSlackReauthorizationRequired(
       database,
       organizationId,
-      context?.integrationId,
-      context?.updatedAt,
+      error instanceof SlackDmDispatchError ? error.integrationId : undefined,
+      error instanceof SlackDmDispatchError ? error.tokenUsed() : undefined,
     );
-    await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0), code);
+    await markSlackDmUnavailable(
+      database,
+      delivery.id,
+      delivery.claimedAt ?? new Date(0),
+      code,
+      true,
+    );
     return;
   }
   await markSlackDmDelivery(
@@ -129,7 +137,7 @@ async function finalizeSlackDmFailure(
     delivery.id,
     delivery.claimedAt ?? new Date(0),
     false,
-    error instanceof Error ? error.message : 'delivery failed',
+    cause instanceof Error ? cause.message : 'delivery failed',
   );
 }
 
