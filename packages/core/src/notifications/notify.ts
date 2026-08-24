@@ -69,17 +69,22 @@ export async function deliverPendingSlackDms(
       await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
       continue;
     }
-    const finalized = await markSlackDmDelivery(
-      database,
-      delivery.id,
-      delivery.claimedAt ?? new Date(0),
-      sent === 1,
-      undefined,
-      providerMessage,
-    );
+    const finalized = await database.transaction(async (tx) => {
+      const updated = await markSlackDmDelivery(
+        tx,
+        delivery.id,
+        delivery.claimedAt ?? new Date(0),
+        sent === 1,
+        undefined,
+        providerMessage,
+      );
+      if (updated && sent === 1) {
+        await markNotificationDelivered(tx, notification.id, 'slack_dm');
+      }
+      return updated;
+    });
     if (finalized && sent === 1) {
       delivered += 1;
-      await markNotificationDelivered(database, notification.id, 'slack_dm');
     }
   }
   return delivered;
