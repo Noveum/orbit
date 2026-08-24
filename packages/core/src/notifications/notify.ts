@@ -33,7 +33,7 @@ export async function deliverPendingSlackDms(
   database: Database = db,
   limit = 100,
 ): Promise<number> {
-  const claimed = await claimSlackDmDeliveries(database, limit);
+  const claimed = await claimSlackDmDeliveries(database, limit, new Date(), true);
   if (claimed.length === 0) return 0;
   const rows = await database
     .select()

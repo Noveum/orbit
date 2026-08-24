@@ -144,7 +144,11 @@ export async function claimSlackDmDeliveries(
   database: NotificationDatabase,
   limit = 100,
   now = new Date(),
+  atomic = false,
 ): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+  if (atomic && 'transaction' in database) {
+    return await database.transaction((tx) => claimSlackDmDeliveries(tx, limit, now));
+  }
   const staleBefore = new Date(now.getTime() - 5 * 60_000);
   const candidates = await database
     .select()
