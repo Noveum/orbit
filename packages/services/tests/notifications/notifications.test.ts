@@ -213,7 +213,7 @@ describe('notifyMany', () => {
     });
   });
 
-  it('reclaims Slack DM deliveries left processing by an interrupted worker', async () => {
+  it('reclaims an unfinalized Slack DM for at-least-once delivery', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
@@ -231,6 +231,8 @@ describe('notifyMany', () => {
       );
       expect(reclaimed).toHaveLength(1);
       expect(reclaimed[0]?.id).toBe(claimed[0]?.id);
+      expect(reclaimed[0]?.status).toBe('processing');
+      expect(reclaimed[0]?.claimedAt?.getTime()).toBe(claimAt.getTime() + 5 * 60_000 + 1);
     });
   });
 
