@@ -10,6 +10,7 @@ import {
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
+import { markSlackReauthorizationRequired } from '../../src/notifications/index.ts';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
@@ -155,6 +156,38 @@ describe('ensureSlackIntegration', () => {
 });
 
 describe('resolveSlackContext stays inside the workspace it was asked about', () => {
+  it('does not mark a refreshed integration from a stale provider failure', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'Acme',
+        slackTeamId: 'T-acme',
+        botToken: 'xoxb-acme',
+      });
+      const [before] = await tx
+        .select({ updatedAt: integration.updatedAt })
+        .from(integration)
+        .where(eq(integration.id, fixture.integrationId));
+      if (before === undefined) throw new Error('Expected integration fixture.');
+      await tx
+        .update(integration)
+        .set({ credentials: { botToken: 'xoxb-refreshed' }, updatedAt: new Date() })
+        .where(eq(integration.id, fixture.integrationId));
+      expect(
+        await markSlackReauthorizationRequired(
+          tx,
+          fixture.organizationId,
+          fixture.integrationId,
+          before.updatedAt,
+        ),
+      ).toBe(false);
+      const [after] = await tx
+        .select({ config: integration.config })
+        .from(integration)
+        .where(eq(integration.id, fixture.integrationId));
+      expect(after?.config['slackReauthorize']).toBeUndefined();
+    });
+  });
+
   it('hands each workspace its own integration row and its own bot token', async () => {
     await withRollback(async (tx) => {
       const acme = await seedWorkspace(tx, {
