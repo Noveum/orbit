@@ -762,6 +762,7 @@ describe('dispatchSlackDm', () => {
         organizationId: fixture.organizationId,
         userId: fixture.userId,
         text: 'You were mentioned',
+        clientMsgId: 'delivery-123',
         fetch,
       });
       expect(delivered).toBe(1);
@@ -769,13 +770,13 @@ describe('dispatchSlackDm', () => {
         { method: 'conversations.open', body: { users: 'U123' } },
         {
           method: 'chat.postMessage',
-          body: { channel: 'D123', text: 'You were mentioned' },
+          body: { channel: 'D123', text: 'You were mentioned', client_msg_id: 'delivery-123' },
         },
       ]);
     });
   });
 
-  it('skips unmapped users and swallows provider failures', async () => {
+  it('propagates permanent provider failures for worker classification', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await tx
@@ -793,14 +794,18 @@ describe('dispatchSlackDm', () => {
         Promise.resolve(
           new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }), { status: 200 }),
         )) as unknown as typeof globalThis.fetch;
-      expect(
+      let error: unknown;
+      try {
         await dispatchSlackDm(tx, {
           organizationId: fixture.organizationId,
           userId: fixture.userId,
           text: 'Provider failure',
           fetch,
-        }),
-      ).toBe(0);
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toMatchObject({ code: 'invalid_auth' });
     });
   });
 });

@@ -268,6 +268,7 @@ export interface PostMessageInput {
   readonly channel: string;
   readonly text: string;
   readonly blocks?: SlackBlock[];
+  readonly clientMsgId?: string;
   readonly threadTs?: string;
   readonly unfurlLinks?: boolean;
 }
@@ -295,6 +296,7 @@ export class SlackClient {
     const body = await this.call('chat.postMessage', postMessageResponseSchema, {
       channel: input.channel,
       text: input.text,
+      ...(input.clientMsgId === undefined ? {} : { client_msg_id: input.clientMsgId }),
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
       ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),

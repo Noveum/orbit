@@ -57,6 +57,7 @@ export async function deliverPendingSlackDms(
         organizationId: notification.organizationId,
         userId: delivery.userId,
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
+        clientMsgId: delivery.id,
       });
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
@@ -82,9 +83,12 @@ function absoluteNotificationUrl(url: string): string {
   const base = process.env['NEXT_PUBLIC_APP_URL'] ?? process.env['APP_URL'] ?? '';
   if (base.length === 0) throw new Error('APP_URL is required for Slack notification links');
   try {
-    return new URL(url, base).toString();
+    const parsedBase = new URL(base);
+    if (!/^https?:$/.test(parsedBase.protocol))
+      throw new Error('APP_URL must be an absolute HTTP URL');
+    return new URL(url, parsedBase).toString();
   } catch {
-    return url;
+    throw new Error('APP_URL must be an absolute HTTP URL');
   }
 }
 

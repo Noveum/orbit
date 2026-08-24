@@ -114,7 +114,7 @@ Slack integration status:
 - **Quiet hours.** Non-urgent Slack DMs are deferred until the quiet-hours
   window ends; urgent assignments can bypass quiet hours using the existing
   notification setting. A DM-only notification with no other enabled channel
-  is not persisted during quiet hours.
+  is persisted with a deferred delivery time and sent after quiet hours end.
 - **Current mapping behavior.** OAuth maps only the Orbit user who completes
   **Connect**, by matching their Orbit email with Slack. Other workspace members
   remain unmapped, so they keep their other enabled notification channels and

@@ -120,8 +120,9 @@ export async function ensureSlackIntegration(
     )
     .limit(1)
     .for('update');
+  const { slackReauthorize: _staleReauthorize, ...previousConfig } = existing?.config ?? {};
   const config = {
-    ...(existing?.config ?? {}),
+    ...previousConfig,
     ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
     ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
   };
@@ -254,6 +255,7 @@ export interface DispatchSlackDmInput {
   readonly organizationId: string;
   readonly userId: string;
   readonly text: string;
+  readonly clientMsgId?: string;
   readonly blocks?: SlackBlock[];
   readonly fetch?: typeof globalThis.fetch;
 }
@@ -285,6 +287,7 @@ export async function dispatchSlackDm(
     await client.postMessage({
       channel: conversation.channel,
       text: input.text,
+      ...(input.clientMsgId === undefined ? {} : { clientMsgId: input.clientMsgId }),
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
     });
     return 1;
