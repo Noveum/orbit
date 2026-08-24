@@ -142,7 +142,12 @@ describe('applyCatchup against a real database', () => {
     expect(tables).toHaveLength(1);
   }, 30_000);
 
-  it('adds workspace agent instructions idempotently with an empty default', async () => {
+  it('repairs a partial workspace agent instructions column and stays idempotent', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table public.organization drop column if exists agent_instructions`;
+      await sql`insert into public.organization (id) values ('partial-org') on conflict do nothing`;
+      await sql`alter table public.organization add column agent_instructions text`;
+    });
     await applyCatchup(urlFor(SCRATCH), 'workspace-agent-instructions.sql');
     await applyCatchup(urlFor(SCRATCH), 'workspace-agent-instructions.sql');
 
@@ -160,6 +165,13 @@ describe('applyCatchup against a real database', () => {
     expect(column?.column_name).toBe('agent_instructions');
     expect(column?.is_nullable).toBe('NO');
     expect(column?.column_default).toContain("''::text");
+    const [organization] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ agent_instructions: string }[]>`
+        select agent_instructions from public.organization where id = 'partial-org'
+      `,
+    );
+    expect(organization?.agent_instructions).toBe('');
   }, 30_000);
 
   it('indexes a doc body once the search vector exists', async () => {
