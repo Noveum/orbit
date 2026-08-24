@@ -120,20 +120,29 @@ describe('IssueRow', () => {
     expect(onToggleSelected).toHaveBeenCalledTimes(1);
   });
 
-  it('reveals the checkbox on hover and keeps it reachable from the keyboard', async () => {
+  it('reveals the checkbox on hover and preserves the row-local tab order', async () => {
     const user = userEvent.setup();
     render(
-      <IssueRow
-        issue={issue()}
-        state={todo}
-        labels={[]}
-        assignee={undefined}
-        active={false}
-        selected={false}
-        onOpen={mock()}
-        onToggleSelected={mock()}
-        onFocus={mock()}
-      />,
+      <>
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Match Radix focus guard markup */}
+        <span data-radix-focus-guard="" tabIndex={0} />
+      </>,
+    );
+    render(
+      <>
+        <button data-testid="issue-row-focus-start" type="button" />
+        <IssueRow
+          issue={issue()}
+          state={todo}
+          labels={[]}
+          assignee={undefined}
+          active={false}
+          selected={false}
+          onOpen={mock()}
+          onToggleSelected={mock()}
+          onFocus={mock()}
+        />
+      </>,
     );
 
     const checkbox = screen.getByLabelText('Select ENG-7');
@@ -141,6 +150,9 @@ describe('IssueRow', () => {
     expect(checkbox.className).toContain('group-hover:opacity-100');
     expect(checkbox.className).toContain('focus-visible:opacity-100');
 
+    const focusStart = screen.getByTestId('issue-row-focus-start');
+    focusStart.focus();
+    expect(focusStart).toHaveFocus();
     await user.tab();
     expect(checkbox).toHaveFocus();
   });
