@@ -9,7 +9,11 @@ import {
   notifyMany,
 } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
-import { dispatchSlackDm, slackDmAvailable } from '@orbit/services/slack/dispatch';
+import {
+  dispatchSlackDm,
+  resolveSlackContext,
+  slackDmAvailable,
+} from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -100,7 +104,8 @@ async function finalizeSlackDmFailure(
 ): Promise<void> {
   const code = error instanceof SlackApiError ? error.code : '';
   if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
-    await markSlackReauthorizationRequired(database, organizationId);
+    const context = await resolveSlackContext(database, organizationId);
+    await markSlackReauthorizationRequired(database, organizationId, context?.integrationId);
     await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0), code);
     return;
   }

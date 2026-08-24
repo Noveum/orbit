@@ -113,11 +113,18 @@ export async function markSlackDmUnavailable(
 export async function markSlackReauthorizationRequired(
   database: NotificationDatabase,
   organizationId: string,
+  integrationId?: string,
 ): Promise<void> {
   await database
     .update(integration)
     .set({ config: sql`jsonb_set(${integration.config}, '{slackReauthorize}', 'true'::jsonb)` })
-    .where(and(eq(integration.organizationId, organizationId), eq(integration.provider, 'slack')));
+    .where(
+      and(
+        eq(integration.organizationId, organizationId),
+        eq(integration.provider, 'slack'),
+        ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
+      ),
+    );
 }
 
 export async function claimSlackDmDeliveries(

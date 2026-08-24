@@ -268,7 +268,13 @@ export async function dispatchSlackDm(
   input: DispatchSlackDmInput,
 ): Promise<number> {
   const context = await resolveSlackContext(database, input.organizationId);
-  if (context === null || context.token === null || !context.hasDirectMessageScope) return 0;
+  if (
+    context === null ||
+    context.token === null ||
+    context.reauthorize ||
+    !context.hasDirectMessageScope
+  )
+    return 0;
   const [mapping] = await database
     .select({ slackUserId: slackUserMapping.slackUserId })
     .from(slackUserMapping)
