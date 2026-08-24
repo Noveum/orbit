@@ -97,7 +97,7 @@ async function finalizeSlackDmFailure(
   const code = error instanceof SlackApiError ? error.code : '';
   if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
     await markSlackReauthorizationRequired(database, organizationId);
-    await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
+    await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0), code);
     return;
   }
   await markSlackDmDelivery(

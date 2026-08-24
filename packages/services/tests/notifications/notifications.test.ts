@@ -263,8 +263,18 @@ describe('notifyMany', () => {
       });
       const [delivery] = await claimSlackDmDeliveries(tx, 10, new Date());
       if (delivery === undefined) return;
-      await markSlackDmUnavailable(tx, delivery.id, delivery.claimedAt ?? new Date(0));
+      await markSlackDmUnavailable(
+        tx,
+        delivery.id,
+        delivery.claimedAt ?? new Date(0),
+        'missing_scope',
+      );
       expect(await claimSlackDmDeliveries(tx, 10, new Date())).toHaveLength(0);
+      const [stored] = await tx
+        .select({ status: notificationDelivery.status, lastError: notificationDelivery.lastError })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.id, delivery.id));
+      expect(stored).toEqual({ status: 'skipped', lastError: 'missing_scope' });
     });
   });
 

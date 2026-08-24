@@ -93,10 +93,11 @@ export async function markSlackDmUnavailable(
   database: NotificationDatabase,
   deliveryId: string,
   claimedAt: Date,
+  error = 'Slack user mapping unavailable',
 ): Promise<boolean> {
   const updated = await database
     .update(notificationDelivery)
-    .set({ status: 'skipped', lastError: 'Slack user mapping unavailable' })
+    .set({ status: 'skipped', lastError: error })
     .where(
       and(
         eq(notificationDelivery.id, deliveryId),
