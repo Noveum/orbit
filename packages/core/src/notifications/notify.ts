@@ -32,6 +32,7 @@ export async function notifyRecipients(
 export async function deliverPendingSlackDms(
   database: Database = db,
   limit = 100,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<number> {
   const claimed = await claimSlackDmDeliveries(database, limit, new Date(), true);
   if (claimed.length === 0) return 0;
@@ -62,6 +63,7 @@ export async function deliverPendingSlackDms(
         organizationId: notification.organizationId,
         userId: delivery.userId,
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
+        fetch,
       });
       sent = providerMessage.channel !== null && providerMessage.ts !== null ? 1 : 0;
     } catch (error) {
