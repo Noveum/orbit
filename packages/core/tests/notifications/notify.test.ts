@@ -153,6 +153,26 @@ describe('deliverPendingSlackDms', () => {
     expect(reclaimed[0]?.id).toBe(stored.id);
   });
 
+  it('does not count an attempt when Slack becomes unavailable before dispatch', async () => {
+    await seedPendingSlackDm();
+    const dispatch = async () => ({ delivered: 0, channel: null, ts: null });
+
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
+
+    const [stored] = await db
+      .select({
+        status: schema.notificationDelivery.status,
+        attempts: schema.notificationDelivery.attempts,
+        lastError: schema.notificationDelivery.lastError,
+      })
+      .from(schema.notificationDelivery);
+    expect(stored).toEqual({
+      status: 'skipped',
+      attempts: 0,
+      lastError: 'Slack user mapping unavailable',
+    });
+  });
+
   it('records a permanent provider failure and requires Slack reauthorization', async () => {
     const fixture = await seedPendingSlackDm();
     let calls = 0;

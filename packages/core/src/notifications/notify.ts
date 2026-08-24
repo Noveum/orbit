@@ -9,11 +9,7 @@ import {
   notifyMany,
 } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
-import {
-  dispatchSlackDmResult,
-  SlackDmDispatchError,
-  slackDmAvailable,
-} from '@orbit/services/slack/dispatch';
+import { dispatchSlackDmResult, SlackDmDispatchError } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -33,6 +29,7 @@ export async function deliverPendingSlackDms(
   database: Database = db,
   limit = 100,
   fetch: typeof globalThis.fetch = globalThis.fetch,
+  dispatch: typeof dispatchSlackDmResult = dispatchSlackDmResult,
 ): Promise<number> {
   const claimed = await claimSlackDmDeliveries(database, limit, new Date(), true);
   if (claimed.length === 0) return 0;
@@ -52,14 +49,10 @@ export async function deliverPendingSlackDms(
     if (notification === undefined) {
       continue;
     }
-    if (!(await slackDmAvailable(database, notification.organizationId, delivery.userId))) {
-      await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
-      continue;
-    }
     let sent = 0;
-    let providerMessage: { channel: string | null; ts: string | null } | undefined;
+    let providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>> | undefined;
     try {
-      providerMessage = await dispatchSlackDmResult(database, {
+      providerMessage = await dispatch(database, {
         organizationId: notification.organizationId,
         userId: delivery.userId,
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
@@ -69,6 +62,10 @@ export async function deliverPendingSlackDms(
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
       await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
+      continue;
+    }
+    if (providerMessage.delivered === 0) {
+      await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
       continue;
     }
     const finalized = await database.transaction(async (tx) => {
