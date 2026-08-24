@@ -66,6 +66,7 @@ export async function markSlackDmDelivery(
   claimedAt: Date,
   delivered: boolean,
   error?: string,
+  providerMessage?: { channel: string | null; ts: string | null },
 ): Promise<boolean> {
   const retryAt = new Date(Date.now() + 30_000);
   const updated = await database
@@ -74,7 +75,12 @@ export async function markSlackDmDelivery(
       status: delivered ? 'succeeded' : 'failed',
       attempts: sql`${notificationDelivery.attempts} + 1`,
       ...(delivered
-        ? { deliveredAt: new Date(), lastError: null }
+        ? {
+            deliveredAt: new Date(),
+            lastError: null,
+            providerMessageChannel: providerMessage?.channel ?? null,
+            providerMessageTs: providerMessage?.ts ?? null,
+          }
         : { lastError: error ?? 'delivery failed', availableAt: retryAt }),
     })
     .where(

@@ -10,7 +10,7 @@ import {
 } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
 import {
-  dispatchSlackDm,
+  dispatchSlackDmResult,
   resolveSlackContext,
   slackDmAvailable,
 } from '@orbit/services/slack/dispatch';
@@ -56,13 +56,15 @@ export async function deliverPendingSlackDms(
       continue;
     }
     let sent = 0;
+    let providerMessage: { channel: string | null; ts: string | null } | undefined;
     try {
-      sent = await dispatchSlackDm(database, {
+      providerMessage = await dispatchSlackDmResult(database, {
         organizationId: notification.organizationId,
         userId: delivery.userId,
         text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
         clientMsgId: delivery.id,
       });
+      sent = providerMessage.delivered;
     } catch (error) {
       console.error('[orbit] Slack DM retry failed', error);
       await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
@@ -73,6 +75,8 @@ export async function deliverPendingSlackDms(
       delivery.id,
       delivery.claimedAt ?? new Date(0),
       sent === 1,
+      undefined,
+      providerMessage,
     );
     if (finalized && sent === 1) {
       delivered += 1;
