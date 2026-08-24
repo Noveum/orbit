@@ -146,38 +146,51 @@ export async function claimSlackDmDeliveries(
   now = new Date(),
 ): Promise<(typeof notificationDelivery.$inferSelect)[]> {
   const staleBefore = new Date(now.getTime() - 5 * 60_000);
-  return await database.transaction(async (tx) => {
-    const candidates = await tx
-      .select()
-      .from(notificationDelivery)
-      .where(
-        and(
-          eq(notificationDelivery.channel, 'slack_dm'),
-          or(
-            eq(notificationDelivery.status, 'pending'),
-            eq(notificationDelivery.status, 'failed'),
-            and(
-              eq(notificationDelivery.status, 'processing'),
-              lt(notificationDelivery.claimedAt, staleBefore),
-            ),
+  const candidates = await database
+    .select()
+    .from(notificationDelivery)
+    .where(
+      and(
+        eq(notificationDelivery.channel, 'slack_dm'),
+        or(
+          eq(notificationDelivery.status, 'pending'),
+          eq(notificationDelivery.status, 'failed'),
+          and(
+            eq(notificationDelivery.status, 'processing'),
+            lt(notificationDelivery.claimedAt, staleBefore),
           ),
-          lte(notificationDelivery.availableAt, now),
         ),
-      )
-      .limit(limit)
-      .for('update', { skipLocked: true });
-    if (candidates.length === 0) return [];
-    return await tx
+        lte(notificationDelivery.availableAt, now),
+      ),
+    )
+    .limit(limit);
+  if (candidates.length === 0) return [];
+  const claimed: (typeof notificationDelivery.$inferSelect)[] = [];
+  for (const candidate of candidates) {
+    const staleProcessing =
+      candidate.claimedAt === null
+        ? sql`false`
+        : and(
+            eq(notificationDelivery.status, 'processing'),
+            eq(notificationDelivery.claimedAt, candidate.claimedAt),
+          );
+    const [row] = await database
       .update(notificationDelivery)
       .set({ status: 'processing', claimedAt: now })
       .where(
-        inArray(
-          notificationDelivery.id,
-          candidates.map((candidate) => candidate.id),
+        and(
+          eq(notificationDelivery.id, candidate.id),
+          or(
+            eq(notificationDelivery.status, 'pending'),
+            eq(notificationDelivery.status, 'failed'),
+            staleProcessing,
+          ),
         ),
       )
       .returning();
-  });
+    if (row !== undefined) claimed.push(row);
+  }
+  return claimed;
 }
 
 export const DEDUPE_WINDOW_MS = 60_000;
