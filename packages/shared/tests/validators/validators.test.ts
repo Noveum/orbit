@@ -161,6 +161,17 @@ describe('validator hardening from review', () => {
   });
 });
 
+describe('workspace agent instructions', () => {
+  it('accepts up to 4000 characters and rejects longer instructions', () => {
+    expect(
+      organizationUpdateSchema.safeParse({ agentInstructions: 'x'.repeat(4000) }).success,
+    ).toBe(true);
+    expect(
+      organizationUpdateSchema.safeParse({ agentInstructions: 'x'.repeat(4001) }).success,
+    ).toBe(false);
+  });
+});
+
 describe('calendar dates', () => {
   const dayOf = (value: unknown): string | null => {
     const parsed = issueUpdateSchema.safeParse({ dueDate: value });

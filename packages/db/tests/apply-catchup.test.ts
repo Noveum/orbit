@@ -142,6 +142,26 @@ describe('applyCatchup against a real database', () => {
     expect(tables).toHaveLength(1);
   }, 30_000);
 
+  it('adds workspace agent instructions idempotently with an empty default', async () => {
+    await applyCatchup(urlFor(SCRATCH), 'workspace-agent-instructions.sql');
+    await applyCatchup(urlFor(SCRATCH), 'workspace-agent-instructions.sql');
+
+    const [column] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ column_name: string; is_nullable: string; column_default: string | null }[]>`
+        select column_name, is_nullable, column_default
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'organization'
+          and column_name = 'agent_instructions'
+      `,
+    );
+
+    expect(column?.column_name).toBe('agent_instructions');
+    expect(column?.is_nullable).toBe('NO');
+    expect(column?.column_default).toContain("''::text");
+  }, 30_000);
+
   it('indexes a doc body once the search vector exists', async () => {
     await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
 

@@ -92,6 +92,13 @@
       "when": 1787233740635,
       "tag": "0012_magenta_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787562015902,
+      "tag": "0013_strange_harrier",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { AGENT_INSTRUCTIONS_MAX_LENGTH } from '@orbit/shared/constants';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -23,15 +24,23 @@ export interface GeneralFormProps {
   readonly name: string;
   readonly logo: string | null;
   readonly allowedEmailDomains: readonly string[];
+  readonly agentInstructions: string;
   readonly canManage: boolean;
 }
 
-export function GeneralForm({ name, logo, allowedEmailDomains, canManage }: GeneralFormProps) {
+export function GeneralForm({
+  name,
+  logo,
+  allowedEmailDomains,
+  agentInstructions,
+  canManage,
+}: GeneralFormProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [workspaceName, setWorkspaceName] = useState(name);
   const [logoUrl, setLogoUrl] = useState(logo ?? '');
   const [domains, setDomains] = useState(allowedEmailDomains.join(', '));
+  const [instructions, setInstructions] = useState(agentInstructions);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +57,7 @@ export function GeneralForm({ name, logo, allowedEmailDomains, canManage }: Gene
           name: workspaceName,
           logo: logoUrl.trim().length === 0 ? null : logoUrl.trim(),
           allowedEmailDomains: parsedDomains,
+          agentInstructions: instructions,
         },
       });
       toast({ title: 'Workspace updated', tone: 'success' });
@@ -116,6 +126,29 @@ export function GeneralForm({ name, logo, allowedEmailDomains, canManage }: Gene
               ))}
             </span>
           ) : null}
+        </label>
+
+        <label htmlFor="settings-agent-instructions" className="flex flex-col gap-1.5">
+          <span className="font-medium text-dense text-text">Agent instructions</span>
+          <textarea
+            id="settings-agent-instructions"
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
+            name="agentInstructions"
+            rows={8}
+            aria-describedby="settings-agent-instructions-help settings-agent-instructions-count"
+            className="w-full resize-y rounded-md border border-border bg-surface px-2.5 py-2 text-dense text-text placeholder:text-faint transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)] not-disabled:hover:border-border-strong focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder="Describe how this workspace works for connected agents."
+          />
+          <span id="settings-agent-instructions-help" className="text-faint text-xs">
+            Shared workspace guidance for connected agents. This is advisory context, not a
+            permission boundary.
+          </span>
+          <span id="settings-agent-instructions-count" className="text-faint text-xs">
+            {instructions.length.toLocaleString()} /{' '}
+            {AGENT_INSTRUCTIONS_MAX_LENGTH.toLocaleString()} characters
+          </span>
         </label>
       </fieldset>
 

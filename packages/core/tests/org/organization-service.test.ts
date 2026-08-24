@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
+import { ZodError } from 'zod';
 import {
   createOrganization,
   getOrganizationBySlug,
@@ -30,6 +31,7 @@ describe('createOrganization', () => {
     const bootstrap = await createOrganization(user.id, { name: 'Comet', slug: 'comet' });
 
     expect(bootstrap.member.role).toBe('admin');
+    expect(bootstrap.organization.agentInstructions).toBe('');
     expect(bootstrap.team.key).toBe('COMET');
     expect(bootstrap.states).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
     expect(new Set(bootstrap.states.map((state) => state.category))).toEqual(
@@ -72,6 +74,20 @@ describe('updateOrganization', () => {
     expect(actions[0]?.model).toBe('organization');
   });
 
+  it('lets an administrator update workspace agent instructions', async () => {
+    const instructions = 'Use the Platform team for bugs.';
+    const result = await updateOrganization(workspace.admin, { agentInstructions: instructions });
+
+    expect(result.organization.agentInstructions).toBe(instructions);
+    expect(result.actions[0]?.data['agentInstructions']).toBe(instructions);
+  });
+
+  it('rejects workspace agent instructions longer than 4000 characters', async () => {
+    await expect(
+      updateOrganization(workspace.admin, { agentInstructions: 'x'.repeat(4001) }),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
+
   it('refuses a non admin', async () => {
     const user = await createUser('Mo Member');
     await db.insert(schema.member).values({
@@ -84,6 +100,13 @@ describe('updateOrganization', () => {
       updateOrganization(
         { userId: user.id, organizationId: workspace.organizationId, role: 'member', teamIds: [] },
         { name: 'Nope' },
+      ),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+
+    await expect(
+      updateOrganization(
+        { userId: user.id, organizationId: workspace.organizationId, role: 'member', teamIds: [] },
+        { agentInstructions: 'Members cannot edit this.' },
       ),
     ).rejects.toMatchObject({ code: 'forbidden' });
   });

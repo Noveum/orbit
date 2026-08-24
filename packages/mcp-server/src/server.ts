@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { verifyMcpAccessToken } from '@orbit/core';
+import { getOrganization, verifyMcpAccessToken } from '@orbit/core';
 import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { errorFields, logger } from './logger.ts';
@@ -40,10 +40,18 @@ export function grantsWrites(scopes: string): boolean {
   return granted(scopes).has(ORBIT_WRITE_SCOPE);
 }
 
-export function createOrbitMcpServer(principal: Principal, scopes = EVERY_ORBIT_SCOPE): McpServer {
+export async function createOrbitMcpServer(
+  principal: Principal,
+  scopes = EVERY_ORBIT_SCOPE,
+): Promise<McpServer> {
+  const organization = await getOrganization(principal.organizationId);
+  const workspaceInstructions = grantsReads(scopes) ? organization.agentInstructions : '';
+  const instructions = [INSTRUCTIONS, workspaceInstructions]
+    .filter((entry) => entry.length > 0)
+    .join('\n\n');
   const server = new McpServer(
     { name: 'orbit', version: SERVER_VERSION },
-    { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions },
   );
   allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes) });
   registerTools(server, principal);
@@ -75,7 +83,7 @@ async function dispatch(request: Request): Promise<Response> {
   if (!(grantsReads(identity.scopes) || grantsWrites(identity.scopes))) {
     throw forbidden('This client holds neither the orbit.read nor the orbit.write scope.');
   }
-  const server = createOrbitMcpServer(identity.principal, identity.scopes);
+  const server = await createOrbitMcpServer(identity.principal, identity.scopes);
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);
 

@@ -54,6 +54,27 @@ is registered.
 Give an agent `orbit.read` alone unless you specifically want it changing
 things.
 
+## Workspace instructions
+
+Workspace administrators can maintain up to 4,000 characters of guidance for
+connected agents in **Settings**, **Workspace**, **General**. Use it for
+conventions such as naming, routing, labels and estimates. It is shared
+workspace context, not a prompt template and not a permission boundary.
+
+The server includes the current workspace instructions in the MCP `instructions`
+field during initialization, so a newly connected client receives them with its
+other Orbit context. A client that stays connected while the text changes can
+refresh deliberately with the read-only `get_workspace_instructions` tool.
+
+Reading the tool requires `orbit.read` and membership in the selected workspace.
+Any workspace member with that scope can read the text. Only administrators can
+edit it, through the existing `org:manage` permission. Rules written in this
+field are advisory. Policy checks and OAuth scopes remain the authorization
+boundary for every action.
+
+The first version stores one set of instructions per workspace. Team-specific
+overrides are not supported yet.
+
 ## Connect a client
 
 ### Claude Code
@@ -117,6 +138,7 @@ and Orbit resolves them.
 | Tool | Scope | Does |
 | --- | --- | --- |
 | `get_me` | read | Who the token belongs to, and their role |
+| `get_workspace_instructions` | read | Current workspace guidance for connected agents |
 | `list_teams` | read | Teams in the workspace |
 | `list_users` | read | Members |
 | `list_states` | read | Workflow states on a team |

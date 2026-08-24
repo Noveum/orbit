@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { isReservedWorkspaceSlug, ORG_ROLES } from '../constants/index.ts';
+import {
+  AGENT_INSTRUCTIONS_MAX_LENGTH,
+  isReservedWorkspaceSlug,
+  ORG_ROLES,
+} from '../constants/index.ts';
 import { SLUG_PATTERN } from '../constants/pattern.ts';
 import { emailSchema, idSchema } from './common.ts';
 
@@ -24,6 +28,7 @@ export const organizationUpdateSchema = z
     name: z.string().trim().min(2).max(64),
     logo: z.string().url().max(2048).nullable(),
     allowedEmailDomains: z.array(z.string().trim().toLowerCase().min(1).max(255)).max(20),
+    agentInstructions: z.string().max(AGENT_INSTRUCTIONS_MAX_LENGTH),
   })
   .partial();
 

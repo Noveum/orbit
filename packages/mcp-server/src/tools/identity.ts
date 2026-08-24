@@ -20,6 +20,22 @@ export function registerIdentityTools(server: McpServer, principal: Principal): 
   defineTool(
     server,
     {
+      name: 'get_workspace_instructions',
+      title: 'Get workspace instructions',
+      description:
+        'Return the current workspace guidance for connected agents. This is advisory context, not a permission boundary.',
+      readOnly: true,
+      inputSchema: {},
+    },
+    async () => {
+      const organization = await getOrganization(principal.organizationId);
+      return { agentInstructions: organization.agentInstructions };
+    },
+  );
+
+  defineTool(
+    server,
+    {
       name: 'get_me',
       title: 'Get the current identity',
       description:

@@ -146,6 +146,9 @@ export async function updateOrganization(
     if (parsed.allowedEmailDomains !== undefined) {
       values.allowedEmailDomains = parsed.allowedEmailDomains;
     }
+    if (parsed.agentInstructions !== undefined) {
+      values.agentInstructions = parsed.agentInstructions;
+    }
 
     const syncId = await nextSyncId(tx);
     const [updated] = await tx
