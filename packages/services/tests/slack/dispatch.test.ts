@@ -811,6 +811,39 @@ describe('dispatchSlackDm', () => {
       expect(error).toMatchObject({ code: 'invalid_auth' });
     });
   });
+
+  it('propagates transient provider failures for worker retry handling', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+      const fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), { status: 200 }),
+        )) as unknown as typeof globalThis.fetch;
+      let error: unknown;
+      try {
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'Retry me',
+          fetch,
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toMatchObject({ code: 'ratelimited' });
+    });
+  });
 });
 
 describe('issueIdentifierFromUrl', () => {
