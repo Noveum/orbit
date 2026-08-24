@@ -80,6 +80,8 @@ export const notificationDelivery = pgTable(
     status: text('status').notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
+    providerMessageChannel: text('provider_message_channel'),
+    providerMessageTs: text('provider_message_ts'),
     availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
