@@ -34,8 +34,8 @@ export default async function IntegrationsSettingsPage({
       <div className="flex flex-col gap-1">
         <h2 className="font-medium text-lg text-text">Integrations</h2>
         <p className="text-muted text-xs">
-          Connect GitHub and any MCP client. Orbit verifies GitHub webhooks, links pull requests to
-          issues, and keeps both sides in sync in realtime.
+          Connect GitHub and compatible MCP clients. Orbit verifies GitHub webhooks, links pull
+          requests to issues, and keeps both sides in sync in realtime.
         </p>
       </div>
       {githubStatus === null ? null : <GithubConnectNotice status={githubStatus} />}

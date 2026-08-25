@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import {
   CHATGPT_CONNECTORS_URL,
   CLAUDE_CONNECTORS_URL,
-} from '../../../src/features/settings/mcp-install-links.ts';
-import { type McpConnection, McpPanel } from '../../../src/features/settings/mcp-panel.tsx';
+} from '@/features/settings/mcp-install-links.ts';
+import { type McpConnection, McpPanel } from '@/features/settings/mcp-panel.tsx';
 
 const refresh = mock();
 
@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 describe('McpPanel', () => {
-  it('shows the server url so any client can be pointed at it', () => {
+  it('shows the server url for compatible clients', () => {
     render(<McpPanel mcpUrl={MCP_URL} connections={[]} />);
 
     expect(screen.getByTestId('mcp-url').textContent).toBe(MCP_URL);
@@ -120,13 +120,21 @@ describe('McpPanel', () => {
     expect(vscode?.getAttribute('href')?.startsWith('vscode:mcp/install?')).toBe(true);
   });
 
-  it('offers a pasteable config for a client with no shortcut of its own', () => {
+  it('offers compatible remote clients the url without promising a config shape', async () => {
+    const user = userEvent.setup();
+    installClipboard();
     render(<McpPanel mcpUrl={MCP_URL} connections={[]} />);
 
-    const block = screen.getByTestId('mcp-client-other').querySelector('code');
-    expect(JSON.parse(block?.textContent ?? '{}')).toEqual({
-      mcpServers: { orbit: { type: 'http', url: MCP_URL } },
-    });
+    const tile = screen.getByTestId('mcp-client-other');
+    expect(tile.textContent).toContain('remote HTTP');
+    expect(tile.textContent).toContain('OAuth');
+    expect(tile.querySelector('code')?.textContent).toBe(MCP_URL);
+    expect(tile.textContent).not.toContain('mcpServers');
+
+    await user.click(
+      screen.getByRole('button', { name: 'Copy the Orbit server URL for Other remote clients' }),
+    );
+    await waitFor(() => expect(clipboard).toEqual([MCP_URL]));
   });
 
   it('says so when nothing is connected yet', () => {

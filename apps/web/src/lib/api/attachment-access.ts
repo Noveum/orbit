@@ -1,25 +1,10 @@
 import { db, eq, schema } from '@orbit/db';
 import { assertAttachmentVisible, isPubliclyReadable } from '@orbit/services/storage';
 import { notFound } from '@orbit/shared/errors';
-import { z } from 'zod';
+import { storageKeySchema } from '@orbit/shared/validators';
 import { apiContext } from './handler.ts';
 
 type AttachmentRecord = typeof schema.attachment.$inferSelect;
-
-const storageKeySchema = z
-  .array(
-    z
-      .string()
-      .min(1)
-      .max(200)
-      .regex(/^[A-Za-z0-9._-]+$/, 'A storage key segment may only contain safe characters.')
-      .refine(
-        (segment) => segment !== '.' && segment !== '..',
-        'A storage key segment may not walk the path.',
-      ),
-  )
-  .min(1)
-  .max(8);
 
 export function storageKeyFrom(segments: readonly string[]): string {
   const parsed = storageKeySchema.safeParse(segments);

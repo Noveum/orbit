@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher.tsx';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
-import { WorkspaceSwitcher } from '../../../src/components/layout/workspace-switcher.tsx';
 
 const push = mock();
 const refresh = mock();

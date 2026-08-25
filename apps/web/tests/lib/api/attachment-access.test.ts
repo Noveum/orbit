@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { storageKeyFrom } from '../../../src/lib/api/attachment-access.ts';
+import { storageKeyFrom } from '@/lib/api/attachment-access.ts';
 
 describe('storageKeyFrom', () => {
   it('joins the segments a route handed it', () => {

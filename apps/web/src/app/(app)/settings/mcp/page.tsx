@@ -12,8 +12,9 @@ export default async function McpSettingsPage() {
       <div className="flex flex-col gap-1">
         <h2 className="font-medium text-lg text-text">MCP server</h2>
         <p className="text-muted text-xs">
-          Give Claude, ChatGPT, or any other MCP client access to your issues, docs, and projects.
-          Every client signs in with OAuth and acts as you, so it can only reach what you can.
+          Give Claude, ChatGPT, or another compatible MCP client access to your issues, docs, and
+          projects. Every client signs in with OAuth and acts as you, so it can only reach what you
+          can.
         </p>
       </div>
       <McpPanel mcpUrl={mcpServerUrl()} connections={connections} />

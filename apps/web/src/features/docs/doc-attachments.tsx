@@ -3,7 +3,11 @@
 import { formatBytes } from '@orbit/shared/utils';
 import { FileText, Paperclip } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
-import { HTML_IFRAME_SANDBOX, isHtmlAttachment } from '@/lib/docs/html-artifact.ts';
+import {
+  HTML_IFRAME_SANDBOX,
+  isHtmlAttachment,
+  MAX_HTML_PREVIEW_BYTES,
+} from '@/lib/docs/html-artifact.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Attachment } from '@/lib/query/schemas.ts';
 
@@ -20,9 +24,7 @@ export function htmlAttachmentUrl(storageKey: string): string {
 }
 
 export function attachmentHref(attachment: Attachment): string {
-  return isHtmlAttachment(attachment.contentType)
-    ? htmlAttachmentUrl(attachment.storageKey)
-    : fileUrl(attachment.storageKey);
+  return fileUrl(attachment.storageKey);
 }
 
 function kindOf(contentType: string): 'image' | 'video' | 'audio' | 'pdf' | 'html' | 'other' {
@@ -55,7 +57,7 @@ function Preview({ attachment }: { attachment: Attachment }) {
       </video>
     );
   }
-  if (kind === 'html') {
+  if (kind === 'html' && attachment.size <= MAX_HTML_PREVIEW_BYTES) {
     return (
       <iframe
         src={htmlAttachmentUrl(attachment.storageKey)}
@@ -76,17 +78,18 @@ function Preview({ attachment }: { attachment: Attachment }) {
       </div>
     );
   }
+  let label = 'File';
+  if (kind === 'pdf') label = 'PDF';
+  if (kind === 'html') label = 'HTML';
   return (
     <div className="flex h-32 items-center justify-center rounded-t-lg bg-surface-2">
       <span className="flex flex-col items-center gap-1.5 text-faint">
-        {kind === 'pdf' ? (
+        {kind === 'pdf' || kind === 'html' ? (
           <FileText className="size-6" aria-hidden="true" strokeWidth={1.5} />
         ) : (
           <Paperclip className="size-6" aria-hidden="true" strokeWidth={1.5} />
         )}
-        <span className="font-medium font-mono text-2xs uppercase tracking-wide">
-          {kind === 'pdf' ? 'PDF' : 'File'}
-        </span>
+        <span className="font-medium font-mono text-2xs uppercase tracking-wide">{label}</span>
       </span>
     </div>
   );

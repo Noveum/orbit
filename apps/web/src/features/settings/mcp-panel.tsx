@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
-import { CopyBlock, CopyRow, IntegrationCard, useCopy } from './integration-card.tsx';
+import { CopyRow, IntegrationCard, useCopy } from './integration-card.tsx';
 import { type McpClient, mcpClients } from './mcp-install-links.ts';
 
 export interface McpConnection {
@@ -21,7 +21,7 @@ export interface McpPanelProps {
 }
 
 const MCP_DESCRIPTION =
-  'Connect an MCP-aware AI client to Orbit. The client signs in with your Orbit account and acts as you, within your permissions. No API key needed.';
+  'Connect a compatible AI client to Orbit. The client signs in with your Orbit account and acts as you, within your permissions. No API key needed.';
 
 function formatLastUsed(iso: string | null): string {
   if (iso === null) return 'Never used yet';
@@ -137,10 +137,10 @@ function McpClientTile({
         />
       ) : null}
 
-      {action.kind === 'config' ? (
-        <CopyBlock
-          value={action.json}
-          label={`Copy the Orbit config for ${client.name}`}
+      {action.kind === 'url' ? (
+        <CopyRow
+          value={action.url}
+          label={`Copy the Orbit server URL for ${client.name}`}
           onError={onError}
         />
       ) : null}

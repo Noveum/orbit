@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { db, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { MAX_HTML_PREVIEW_BYTES } from '../../../../../src/lib/docs/html-artifact.ts';
+import { MAX_HTML_PREVIEW_BYTES } from '@/lib/docs/html-artifact.ts';
 import {
   buildIssueRoutesWorld,
   forgetObjects,
@@ -13,7 +13,7 @@ import {
   storeObjectBytes,
 } from '../../../../../tests-support-issue-routes.ts';
 
-const route = await import('../../../../../src/app/api/attachments/html/[...key]/route.ts');
+const route = await import('@/app/api/attachments/html/[...key]/route.ts');
 
 const PAGE = '<!doctype html><title>Sync health</title><p>All green</p>';
 

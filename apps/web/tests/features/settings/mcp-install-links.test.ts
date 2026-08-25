@@ -4,10 +4,9 @@ import {
   CLAUDE_CONNECTORS_URL,
   claudeCodeCommand,
   cursorInstallHref,
-  mcpClientConfigJson,
   mcpClients,
   vscodeInstallHref,
-} from '../../../src/features/settings/mcp-install-links.ts';
+} from '@/features/settings/mcp-install-links.ts';
 
 const URL_ = 'https://orbit.noveum.ai/mcp';
 
@@ -37,17 +36,35 @@ describe('mcp install links', () => {
     });
   });
 
-  it('builds a client config without any api key', () => {
-    const json = mcpClientConfigJson(URL_);
-    expect(JSON.parse(json)).toEqual({ mcpServers: { orbit: { type: 'http', url: URL_ } } });
-    expect(json).not.toContain('Authorization');
-  });
-
   it('offers Claude and ChatGPT as connector clients, not deeplinks', () => {
     const byId = new Map(mcpClients(URL_).map((client) => [client.id, client]));
 
     expect(byId.get('claude')?.action).toEqual({ kind: 'open', href: CLAUDE_CONNECTORS_URL });
     expect(byId.get('chatgpt')?.action).toEqual({ kind: 'open', href: CHATGPT_CONNECTORS_URL });
+    expect(CLAUDE_CONNECTORS_URL).toBe('https://claude.ai/');
+    expect(CHATGPT_CONNECTORS_URL).toBe('https://chatgpt.com/');
+  });
+
+  it('uses the current Claude connector paths for individuals and organizations', () => {
+    const claude = mcpClients(URL_).find((client) => client.id === 'claude');
+    const steps = claude?.steps.join(' ') ?? '';
+
+    expect(steps).toContain('Customize');
+    expect(steps).toContain('Add custom connector');
+    expect(steps).toContain('Organization settings');
+    expect(steps).toContain('owner');
+  });
+
+  it('uses current ChatGPT Apps terms and explains the eligibility gate', () => {
+    const chatgpt = mcpClients(URL_).find((client) => client.id === 'chatgpt');
+    const steps = chatgpt?.steps.join(' ') ?? '';
+
+    expect(chatgpt?.summary).toContain('eligible plans and workspace roles');
+    expect(steps).toContain('developer mode');
+    expect(steps).toContain('Advanced settings');
+    expect(steps).toContain('Workspace settings');
+    expect(steps).toContain('Apps');
+    expect(steps).not.toContain('Add custom connector');
   });
 
   it('carries the server url into every client that needs it', () => {
@@ -67,10 +84,12 @@ describe('mcp install links', () => {
     });
   });
 
-  it('falls back to a pasteable config for any client without a shortcut', () => {
+  it('gives other compatible clients the remote server url without assuming a config format', () => {
     const other = mcpClients(URL_).find((client) => client.id === 'other');
 
-    expect(other?.action).toEqual({ kind: 'config', json: mcpClientConfigJson(URL_) });
+    expect(other?.action).toEqual({ kind: 'url', url: URL_ });
+    expect(other?.summary).toContain('remote HTTP');
+    expect(other?.summary).toContain('OAuth');
   });
 
   it('gives every client a name and at least one step', () => {
