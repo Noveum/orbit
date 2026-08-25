@@ -105,6 +105,40 @@ describe('deliverPendingSlackDms', () => {
     expect(storedNotification?.deliveredChannels).toEqual(['slack_dm']);
   });
 
+  it('reclaims an accepted DM after finalization is interrupted', async () => {
+    await seedPendingSlackDm();
+    let dispatches = 0;
+    const dispatch = () => {
+      dispatches += 1;
+      return Promise.resolve({ delivered: 1, channel: 'D123', ts: `123.${dispatches}` });
+    };
+
+    expect(
+      await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch, async () => false),
+    ).toBe(0);
+
+    const [interrupted] = await db.select().from(schema.notificationDelivery);
+    expect(interrupted).toMatchObject({ status: 'processing', attempts: 0 });
+    if (interrupted?.claimedAt === null || interrupted === undefined)
+      throw new Error('Expected a claimed delivery.');
+    await db
+      .update(schema.notificationDelivery)
+      .set({ claimedAt: new Date(interrupted.claimedAt.getTime() - 5 * 60_000 - 1) })
+      .where(eq(schema.notificationDelivery.id, interrupted.id));
+
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(1);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(dispatches).toBe(2);
+    expect(stored).toMatchObject({
+      id: interrupted.id,
+      status: 'succeeded',
+      attempts: 1,
+      providerMessageChannel: 'D123',
+      providerMessageTs: '123.2',
+    });
+  });
+
   it('retries without calling Slack when an absolute application URL is unavailable', async () => {
     await seedPendingSlackDm();
     delete process.env['APP_URL'];

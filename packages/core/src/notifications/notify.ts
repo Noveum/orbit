@@ -15,6 +15,14 @@ import type { Executor } from '../internal.ts';
 
 export const NOTIFICATION_BODY_LIMIT = 240;
 
+type SlackDmFinalizer = (input: {
+  readonly deliveryId: string;
+  readonly notificationId: string;
+  readonly claimedAt: Date;
+  readonly sent: boolean;
+  readonly providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>>;
+}) => Promise<boolean>;
+
 export async function notifyRecipients(
   executor: Executor,
   events: readonly NotificationEvent[],
@@ -30,6 +38,7 @@ export async function deliverPendingSlackDms(
   limit = 100,
   fetch: typeof globalThis.fetch = globalThis.fetch,
   dispatch: typeof dispatchSlackDmResult = dispatchSlackDmResult,
+  finalize?: SlackDmFinalizer,
 ): Promise<number> {
   const claimed = await claimSlackDmDeliveries(database, limit, new Date(), true);
   if (claimed.length === 0) return 0;
@@ -68,19 +77,33 @@ export async function deliverPendingSlackDms(
       await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
       continue;
     }
-    const finalized = await database.transaction(async (tx) => {
-      const updated = await markSlackDmDelivery(
-        tx,
-        delivery.id,
-        delivery.claimedAt ?? new Date(0),
-        sent === 1,
-        undefined,
-        providerMessage,
-      );
-      if (updated && sent === 1) {
-        await markNotificationDelivered(tx, notification.id, 'slack_dm');
-      }
-      return updated;
+    const finalizeDelivery: SlackDmFinalizer = async ({
+      deliveryId,
+      notificationId,
+      claimedAt,
+      sent,
+      providerMessage,
+    }) =>
+      await database.transaction(async (tx) => {
+        const updated = await markSlackDmDelivery(
+          tx,
+          deliveryId,
+          claimedAt,
+          sent,
+          undefined,
+          providerMessage,
+        );
+        if (updated && sent) {
+          await markNotificationDelivered(tx, notificationId, 'slack_dm');
+        }
+        return updated;
+      });
+    const finalized = await (finalize ?? finalizeDelivery)({
+      deliveryId: delivery.id,
+      notificationId: notification.id,
+      claimedAt: delivery.claimedAt ?? new Date(0),
+      sent: sent === 1,
+      providerMessage,
     });
     if (finalized && sent === 1) {
       delivered += 1;
