@@ -4,7 +4,7 @@ import { notFound } from '@orbit/shared/errors';
 import { z } from 'zod';
 import { apiContext } from './handler.ts';
 
-export type AttachmentRecord = typeof schema.attachment.$inferSelect;
+type AttachmentRecord = typeof schema.attachment.$inferSelect;
 
 const storageKeySchema = z
   .array(
