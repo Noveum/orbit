@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  CHATGPT_CONNECTORS_URL,
+  CLAUDE_CONNECTORS_URL,
   claudeCodeCommand,
   cursorInstallHref,
   mcpClientConfigJson,
+  mcpClients,
   vscodeInstallHref,
 } from '../../../src/features/settings/mcp-install-links.ts';
 
@@ -38,5 +41,36 @@ describe('mcp install links', () => {
     const json = mcpClientConfigJson(URL_);
     expect(JSON.parse(json)).toEqual({ mcpServers: { orbit: { type: 'http', url: URL_ } } });
     expect(json).not.toContain('Authorization');
+  });
+
+  it('offers Claude and ChatGPT as connector clients, not deeplinks', () => {
+    const byId = new Map(mcpClients(URL_).map((client) => [client.id, client]));
+
+    expect(byId.get('claude')?.action).toEqual({ kind: 'open', href: CLAUDE_CONNECTORS_URL });
+    expect(byId.get('chatgpt')?.action).toEqual({ kind: 'open', href: CHATGPT_CONNECTORS_URL });
+  });
+
+  it('carries the server url into every client that needs it', () => {
+    const byId = new Map(mcpClients(URL_).map((client) => [client.id, client]));
+
+    expect(byId.get('claude-code')?.action).toEqual({
+      kind: 'command',
+      command: claudeCodeCommand(URL_),
+    });
+    expect(byId.get('cursor')?.action).toEqual({
+      kind: 'deeplink',
+      href: cursorInstallHref(URL_),
+    });
+    expect(byId.get('vscode')?.action).toEqual({
+      kind: 'deeplink',
+      href: vscodeInstallHref(URL_),
+    });
+  });
+
+  it('gives every client a name and at least one step', () => {
+    for (const client of mcpClients(URL_)) {
+      expect(client.name.length).toBeGreaterThan(0);
+      expect(client.steps.length).toBeGreaterThan(0);
+    }
   });
 });
