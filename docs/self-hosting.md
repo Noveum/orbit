@@ -261,11 +261,13 @@ bun run build
 Always complete the database release before the code that depends on it goes live.
 The production Vercel build refuses to deploy when the configured database cannot
 be verified or is missing a required schema object. Additional legacy tables and
-indexes are reported and preserved. Orbit ships continuously from `main` and there
-is no backporting, so track `main` or a recent tag.
+indexes are reported and preserved. Orbit ships continuously from `main`. We
+also publish automated weekly dated tags and GitHub releases, with manual
+workflow dispatch available when needed, so you can track `main` or a recent
+dated tag for deployed versions.
 
 Watch the [releases](https://github.com/Noveum/orbit/releases) for anything
-labelled `breaking change`.
+labelled `breaking change` and follow the upgrade notes in the associated release.
 
 ### Backups
 
