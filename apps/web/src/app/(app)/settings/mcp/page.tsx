@@ -1,17 +1,11 @@
-import { listMcpGrants } from '@orbit/core';
+import { loadMcpConnections } from '@/features/settings/mcp-data.ts';
 import { McpPanel } from '@/features/settings/mcp-panel.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { mcpServerUrl } from '@/lib/env.ts';
 
 export default async function McpSettingsPage() {
   const { principal } = await pageContext();
-  const grants = await listMcpGrants(principal.userId);
-  const connections = grants.map((grant) => ({
-    id: grant.id,
-    clientName: grant.clientName,
-    organizationName: grant.organizationName,
-    lastUsedAt: grant.lastUsedAt === null ? null : grant.lastUsedAt.toISOString(),
-  }));
+  const connections = await loadMcpConnections(principal.userId);
 
   return (
     <section className="flex flex-col gap-5">

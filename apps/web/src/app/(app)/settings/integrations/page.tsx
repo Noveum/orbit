@@ -1,4 +1,3 @@
-import { listMcpGrants } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
 import {
   GithubConnectNotice,
@@ -11,6 +10,7 @@ import {
   loadIntegrationSettings,
 } from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
+import { loadMcpConnections } from '@/features/settings/mcp-data.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 import { mcpServerUrl } from '@/lib/env.ts';
 
@@ -23,17 +23,11 @@ export default async function IntegrationsSettingsPage({
   const query = await searchParams;
   const githubStatus =
     githubConnectStatusOf(query['github']) ?? (misroutedGithubInstall(query) ? 'misrouted' : null);
-  const [settings, grants, deliveries] = await Promise.all([
+  const [settings, mcpConnections, deliveries] = await Promise.all([
     loadIntegrationSettings(principal),
-    listMcpGrants(principal.userId),
+    loadMcpConnections(principal.userId),
     loadGithubDeliveries(principal),
   ]);
-  const mcpConnections = grants.map((grant) => ({
-    id: grant.id,
-    clientName: grant.clientName,
-    organizationName: grant.organizationName,
-    lastUsedAt: grant.lastUsedAt === null ? null : grant.lastUsedAt.toISOString(),
-  }));
 
   return (
     <section className="flex flex-col gap-5">
