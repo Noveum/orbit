@@ -12,7 +12,11 @@ const storageKeySchema = z
       .string()
       .min(1)
       .max(200)
-      .regex(/^[A-Za-z0-9._-]+$/, 'A storage key segment may only contain safe characters.'),
+      .regex(/^[A-Za-z0-9._-]+$/, 'A storage key segment may only contain safe characters.')
+      .refine(
+        (segment) => segment !== '.' && segment !== '..',
+        'A storage key segment may not walk the path.',
+      ),
   )
   .min(1)
   .max(8);

@@ -7,7 +7,7 @@ function toBase64(value: string): string {
 }
 
 export function claudeCodeCommand(mcpUrl: string): string {
-  return `claude mcp add --transport http orbit ${mcpUrl}`;
+  return `claude mcp add --scope user --transport http orbit ${mcpUrl}`;
 }
 
 export function cursorInstallHref(mcpUrl: string): string {

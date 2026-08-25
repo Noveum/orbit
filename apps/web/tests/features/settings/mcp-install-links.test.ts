@@ -12,9 +12,9 @@ import {
 const URL_ = 'https://orbit.noveum.ai/mcp';
 
 describe('mcp install links', () => {
-  it('builds the Claude Code command', () => {
+  it('installs Claude Code at user scope, so every project on the machine sees it', () => {
     expect(claudeCodeCommand(URL_)).toBe(
-      'claude mcp add --transport http orbit https://orbit.noveum.ai/mcp',
+      'claude mcp add --scope user --transport http orbit https://orbit.noveum.ai/mcp',
     );
   });
 

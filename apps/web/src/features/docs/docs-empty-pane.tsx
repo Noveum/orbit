@@ -53,7 +53,12 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         {canWrite ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="secondary" size="sm" data-testid="doc-templates">
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="doc-templates"
+                className="hidden sm:inline-flex"
+              >
                 <LayoutTemplate className="size-3.5" aria-hidden="true" />
                 Templates
               </Button>
@@ -72,15 +77,13 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="new-html-page"
-            className="hidden sm:inline-flex"
-            onClick={newHtmlPage}
-          >
+          <span className="hidden sm:inline-flex">
+            <DocImport collectionId={null} projectId={null} />
+          </span>
+        ) : null}
+        {canWrite ? (
+          <Button variant="secondary" size="sm" data-testid="new-html-page" onClick={newHtmlPage}>
             <FileCode className="size-3.5" aria-hidden="true" />
             New HTML page
           </Button>

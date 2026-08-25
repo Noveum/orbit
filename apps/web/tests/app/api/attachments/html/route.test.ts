@@ -34,6 +34,7 @@ async function attach(input: {
   readonly commentId: string;
   readonly contentType?: string;
   readonly size?: number;
+  readonly status?: string;
 }): Promise<string> {
   const storageKey = `org/${randomUUIDv7()}/page.html`;
   await db.insert(schema.attachment).values({
@@ -45,7 +46,7 @@ async function attach(input: {
     contentType: input.contentType ?? 'text/html',
     size: input.size ?? PAGE.length,
     storageKey,
-    status: 'ready',
+    status: input.status ?? 'ready',
     uploadedById: world.admin.userId,
   });
   storeObject(storageKey, PAGE);
@@ -144,6 +145,15 @@ describe('GET /api/attachments/html/[...key]', () => {
     const response = await route.GET(request(), contextFor(storageKey));
 
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(latin1);
+  });
+
+  it('refuses an upload that never completed', async () => {
+    const storageKey = await attach({ commentId: world.openCommentId, status: 'pending' });
+
+    const response = await route.GET(request(), contextFor(storageKey));
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain('All green');
   });
 
   it('is a not found when no attachment owns the key', async () => {

@@ -19,6 +19,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     const storageKey = storageKeyFrom((await context.params).key);
     const { record } = await readableAttachment(storageKey);
 
+    if (record.status !== 'ready') throw notFound('That file does not exist.');
     if (!isHtmlAttachment(record.contentType)) {
       throw notFound('That file is not an HTML page.');
     }
