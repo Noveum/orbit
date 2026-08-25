@@ -1,6 +1,6 @@
 'use client';
 
-import { FileText, LayoutTemplate } from 'lucide-react';
+import { FileCode, FileText, LayoutTemplate } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -31,6 +31,10 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
   const docs = list.data?.docs ?? [];
 
   const newDoc = useCallback(() => router.push(newDocPath()), [router]);
+  const newHtmlPage = useCallback(
+    () => router.push(newDocPath({ templateId: 'html-page' })),
+    [router],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="docs-empty-pane">
@@ -70,6 +74,12 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         ) : null}
         {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
+          <Button variant="secondary" size="sm" data-testid="new-html-page" onClick={newHtmlPage}>
+            <FileCode className="size-3.5" aria-hidden="true" />
+            New HTML page
+          </Button>
+        ) : null}
+        {canWrite ? (
           <Button variant="primary" size="sm" data-testid="new-doc" onClick={newDoc}>
             New doc
             <Kbd keys={['c']} className="ml-1 opacity-70" />
@@ -84,9 +94,15 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
           className="flex-1"
           action={
             canWrite ? (
-              <Button variant="secondary" size="sm" onClick={newDoc}>
-                New doc
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button variant="secondary" size="sm" onClick={newDoc}>
+                  New doc
+                </Button>
+                <Button variant="secondary" size="sm" onClick={newHtmlPage}>
+                  <FileCode className="size-3.5" aria-hidden="true" />
+                  New HTML page
+                </Button>
+              </div>
             ) : undefined
           }
         />
