@@ -71,6 +71,18 @@ describe('GET /api/attachments/html/[...key]', () => {
     expect(response.headers.get('content-type')).toBe('text/html');
   });
 
+  it('keeps an xhtml page on its own content type', async () => {
+    const storageKey = await attach({
+      commentId: world.openCommentId,
+      contentType: 'application/xhtml+xml',
+    });
+
+    const response = await route.GET(request(), contextFor(storageKey));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/xhtml+xml');
+  });
+
   it('sandboxes the page so it cannot reach the orbit origin', async () => {
     const storageKey = await attach({ commentId: world.openCommentId });
 

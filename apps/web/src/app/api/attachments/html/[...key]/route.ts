@@ -3,7 +3,7 @@ import { notFound, payloadTooLarge } from '@orbit/shared/errors';
 import { readableAttachment, storageKeyFrom } from '@/lib/api/attachment-access.ts';
 import { errorResponse } from '@/lib/api/handler.ts';
 import {
-  htmlUploadHeaders,
+  htmlAttachmentHeaders,
   isHtmlAttachment,
   MAX_HTML_PREVIEW_BYTES,
 } from '@/lib/docs/html-artifact.ts';
@@ -28,7 +28,9 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     if (body === null) throw notFound('That file does not exist.');
     if (body.byteLength > MAX_HTML_PREVIEW_BYTES) throw payloadTooLarge(TOO_LARGE);
 
-    return new Response(new Uint8Array(body), { headers: htmlUploadHeaders() });
+    return new Response(new Uint8Array(body), {
+      headers: htmlAttachmentHeaders(record.contentType),
+    });
   } catch (error: unknown) {
     return errorResponse(error);
   }
