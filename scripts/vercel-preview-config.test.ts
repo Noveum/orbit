@@ -290,6 +290,11 @@ describe('Vercel Preview repository configuration', () => {
     );
   });
 
+  test('gives every CI job only read access to repository contents', () => {
+    expect(ci).toContain('\npermissions:\n  contents: read\n\nconcurrency:\n');
+    expect(ci.match(/^ *permissions:/gm)).toEqual(['permissions:']);
+  });
+
   test('documents the Preview build security boundary and safe recovery event', () => {
     const prose = guide.replace(/\s+/g, ' ');
     expect(prose).toContain(
