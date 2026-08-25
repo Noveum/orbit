@@ -4,10 +4,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import type { IntegrationSettings } from '../../../src/features/settings/integrations-data.ts';
-import {
-  IntegrationsPanel,
-  type McpConnection,
-} from '../../../src/features/settings/integrations-panel.tsx';
+import { IntegrationsPanel } from '../../../src/features/settings/integrations-panel.tsx';
+import type { McpConnection } from '../../../src/features/settings/mcp-panel.tsx';
 
 const refresh = mock();
 
