@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   Home,
   LogOut,
+  Plug,
   Plus,
   Settings,
   SunMoon,
@@ -154,6 +155,10 @@ export function WorkspaceSwitcher({
         <DropdownMenuItem onSelect={() => router.push('/settings/account')}>
           <UserCog className="size-4" aria-hidden="true" />
           Account settings
+        </DropdownMenuItem>
+        <DropdownMenuItem data-testid="mcp-link" onSelect={() => router.push('/settings/mcp')}>
+          <Plug className="size-4" aria-hidden="true" />
+          MCP server
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>
           <SunMoon className="size-4" aria-hidden="true" />
