@@ -67,6 +67,12 @@ describe('mcp install links', () => {
     });
   });
 
+  it('falls back to a pasteable config for any client without a shortcut', () => {
+    const other = mcpClients(URL_).find((client) => client.id === 'other');
+
+    expect(other?.action).toEqual({ kind: 'config', json: mcpClientConfigJson(URL_) });
+  });
+
   it('gives every client a name and at least one step', () => {
     for (const client of mcpClients(URL_)) {
       expect(client.name.length).toBeGreaterThan(0);

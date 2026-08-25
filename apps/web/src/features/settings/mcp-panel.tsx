@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
-import { CopyRow, IntegrationCard, useCopy } from './integration-card.tsx';
+import { CopyBlock, CopyRow, IntegrationCard, useCopy } from './integration-card.tsx';
 import { type McpClient, mcpClients } from './mcp-install-links.ts';
 
 export interface McpConnection {
@@ -133,6 +133,14 @@ function McpClientTile({
         <CopyRow
           value={action.command}
           label={`Copy the ${client.name} command`}
+          onError={onError}
+        />
+      ) : null}
+
+      {action.kind === 'config' ? (
+        <CopyBlock
+          value={action.json}
+          label={`Copy the Orbit config for ${client.name}`}
           onError={onError}
         />
       ) : null}

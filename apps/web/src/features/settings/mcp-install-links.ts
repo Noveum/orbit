@@ -27,7 +27,8 @@ export function mcpClientConfigJson(mcpUrl: string): string {
 export type McpConnectAction =
   | { readonly kind: 'open'; readonly href: string }
   | { readonly kind: 'deeplink'; readonly href: string }
-  | { readonly kind: 'command'; readonly command: string };
+  | { readonly kind: 'command'; readonly command: string }
+  | { readonly kind: 'config'; readonly json: string };
 
 export interface McpClient {
   readonly id: string;
@@ -83,6 +84,13 @@ export function mcpClients(mcpUrl: string): readonly McpClient[] {
       summary: 'Opens VS Code with the server already filled in.',
       action: { kind: 'deeplink', href: vscodeInstallHref(mcpUrl) },
       steps: ['Confirm the server VS Code offers to install.', APPROVE_STEP],
+    },
+    {
+      id: 'other',
+      name: 'Any other client',
+      summary: 'Anything that speaks MCP over HTTP, from its own config file.',
+      action: { kind: 'config', json: mcpClientConfigJson(mcpUrl) },
+      steps: ['Paste the block into the client MCP config.', APPROVE_STEP],
     },
   ];
 }

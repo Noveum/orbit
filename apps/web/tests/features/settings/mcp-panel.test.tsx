@@ -83,7 +83,7 @@ describe('McpPanel', () => {
   it('offers every supported client', () => {
     render(<McpPanel mcpUrl={MCP_URL} connections={[]} />);
 
-    for (const id of ['claude', 'chatgpt', 'claude-code', 'cursor', 'vscode']) {
+    for (const id of ['claude', 'chatgpt', 'claude-code', 'cursor', 'vscode', 'other']) {
       expect(screen.getByTestId(`mcp-client-${id}`)).toBeDefined();
     }
   });
@@ -118,6 +118,15 @@ describe('McpPanel', () => {
 
     expect(cursor?.getAttribute('href')?.startsWith('cursor://')).toBe(true);
     expect(vscode?.getAttribute('href')?.startsWith('vscode:mcp/install?')).toBe(true);
+  });
+
+  it('offers a pasteable config for a client with no shortcut of its own', () => {
+    render(<McpPanel mcpUrl={MCP_URL} connections={[]} />);
+
+    const block = screen.getByTestId('mcp-client-other').querySelector('code');
+    expect(JSON.parse(block?.textContent ?? '{}')).toEqual({
+      mcpServers: { orbit: { type: 'http', url: MCP_URL } },
+    });
   });
 
   it('says so when nothing is connected yet', () => {

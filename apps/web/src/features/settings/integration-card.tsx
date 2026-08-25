@@ -80,3 +80,36 @@ export function CopyRow({
     </div>
   );
 }
+
+export function CopyBlock({
+  value,
+  label,
+  onError,
+}: {
+  value: string;
+  label: string;
+  onError: (message: string) => void;
+}) {
+  const { copied, copy } = useCopy(onError);
+
+  async function handleCopy(): Promise<void> {
+    await copy(value);
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <pre className="overflow-x-auto rounded-md border border-border bg-surface-2 p-2 font-mono text-2xs text-text">
+        <code>{value}</code>
+      </pre>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="w-fit"
+        onClick={handleCopy}
+        aria-label={label}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  );
+}

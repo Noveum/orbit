@@ -47,7 +47,7 @@ export function McpSettingsSkeleton() {
         </div>
         <Skeleton className="h-9 w-full rounded-md" />
         <div className="grid gap-2 sm:grid-cols-2">
-          {['claude', 'chatgpt', 'claude-code', 'cursor'].map((client) => (
+          {['claude', 'chatgpt', 'claude-code', 'cursor', 'vscode', 'other'].map((client) => (
             <div key={client} className="flex flex-col gap-2 rounded-lg border border-border p-3">
               <Skeleton className="h-3 w-24" />
               <Skeleton className="h-8 w-40 rounded-md" />
