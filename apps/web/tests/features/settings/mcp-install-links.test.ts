@@ -58,12 +58,18 @@ describe('mcp install links', () => {
   it('uses current ChatGPT Apps terms and explains the eligibility gate', () => {
     const chatgpt = mcpClients(URL_).find((client) => client.id === 'chatgpt');
     const steps = chatgpt?.steps.join(' ') ?? '';
+    const businessStep = chatgpt?.steps.find((step) => step.startsWith('On Business')) ?? '';
+    const enterpriseStep =
+      chatgpt?.steps.find((step) => step.startsWith('On Enterprise or Edu')) ?? '';
 
     expect(chatgpt?.summary).toContain('eligible plans and workspace roles');
     expect(steps).toContain('developer mode');
-    expect(steps).toContain('Advanced settings');
-    expect(steps).toContain('Workspace settings');
     expect(steps).toContain('Apps');
+    expect(businessStep).toContain('Workspace settings');
+    expect(businessStep).toContain('Create');
+    expect(businessStep).not.toContain('Advanced settings');
+    expect(enterpriseStep).toContain('Advanced settings');
+    expect(enterpriseStep).toContain('admin grants access');
     expect(steps).not.toContain('Add custom connector');
   });
 

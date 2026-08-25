@@ -57,8 +57,9 @@ export function mcpClients(mcpUrl: string): readonly McpClient[] {
       action: { kind: 'open', href: CHATGPT_CONNECTORS_URL },
       steps: [
         'We copy the server URL and open ChatGPT in a new tab.',
-        'Enable developer mode under Settings, Apps, then Advanced settings if your plan and workspace role allow it.',
-        'Choose Create under Settings, then Apps, or under Workspace settings, then Apps, and paste the URL.',
+        'On Business, an admin or owner opens Workspace settings, then Apps, chooses Create, and enables developer mode there.',
+        'On Enterprise or Edu, an admin grants access, then an enabled member turns on developer mode under Settings, Apps, then Advanced settings.',
+        'Choose Create under Workspace settings, then Apps, or under Settings, then Apps if your role allows it, and paste the URL.',
         'Create the app, then sign in to Orbit, pick a workspace, and approve.',
       ],
     },

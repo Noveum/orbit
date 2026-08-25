@@ -13,11 +13,11 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from '@/features/docs/templates.ts';
 import { newDocPath } from '@/lib/docs/paths.ts';
 import { useDocs } from '@/lib/query/use-docs.ts';
 import { DocImport } from './doc-import.tsx';
 import { DocsHome } from './docs-home.tsx';
-import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from './templates.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 
 export interface DocsEmptyPaneProps {
