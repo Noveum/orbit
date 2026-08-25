@@ -35,7 +35,7 @@ import { newDocPath } from '@/lib/docs/paths.ts';
 import type { Doc, DocCollection } from '@/lib/query/schemas.ts';
 import { DocExportItems } from './doc-export-menu.tsx';
 import { DocImport } from './doc-import.tsx';
-import { DOC_TEMPLATES } from './templates.ts';
+import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from './templates.ts';
 import { type EditorMode, type ReadingWidth, useDocPreferences } from './use-doc-preferences.ts';
 
 export interface DocHeaderProps {
@@ -315,7 +315,9 @@ export function DocHeader({
           {canWrite ? (
             <DropdownMenuItem
               data-testid="doc-new-html"
-              onSelect={() => router.push(newDocPath({ ...createPath, templateId: 'html-page' }))}
+              onSelect={() =>
+                router.push(newDocPath({ ...createPath, templateId: HTML_PAGE_TEMPLATE_ID }))
+              }
             >
               <FileCode className="size-3.5" aria-hidden="true" />
               New HTML page

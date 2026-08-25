@@ -17,7 +17,7 @@ import { newDocPath } from '@/lib/docs/paths.ts';
 import { useDocs } from '@/lib/query/use-docs.ts';
 import { DocImport } from './doc-import.tsx';
 import { DocsHome } from './docs-home.tsx';
-import { DOC_TEMPLATES } from './templates.ts';
+import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from './templates.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 
 export interface DocsEmptyPaneProps {
@@ -32,7 +32,7 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
 
   const newDoc = useCallback(() => router.push(newDocPath()), [router]);
   const newHtmlPage = useCallback(
-    () => router.push(newDocPath({ templateId: 'html-page' })),
+    () => router.push(newDocPath({ templateId: HTML_PAGE_TEMPLATE_ID })),
     [router],
   );
 
@@ -74,7 +74,13 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         ) : null}
         {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
-          <Button variant="secondary" size="sm" data-testid="new-html-page" onClick={newHtmlPage}>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="new-html-page"
+            className="hidden sm:inline-flex"
+            onClick={newHtmlPage}
+          >
             <FileCode className="size-3.5" aria-hidden="true" />
             New HTML page
           </Button>

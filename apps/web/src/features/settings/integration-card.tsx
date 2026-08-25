@@ -28,7 +28,7 @@ export function IntegrationCard({
   );
 }
 
-export const COPY_FAILED = 'Could not copy to the clipboard. Select and copy it manually.';
+const COPY_FAILED = 'Could not copy to the clipboard. Select and copy it manually.';
 
 export function useCopy(onError: (message: string) => void): {
   copied: boolean;

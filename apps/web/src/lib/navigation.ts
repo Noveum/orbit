@@ -206,7 +206,7 @@ export function buildCommands(context: CommandContext): AppCommand[] {
     },
     {
       id: 'navigate:/settings/mcp',
-      label: 'Connect an AI client, MCP server',
+      label: 'Go to MCP server',
       section: 'Navigation',
       icon: Plug,
       run: () => context.navigate('/settings/mcp'),

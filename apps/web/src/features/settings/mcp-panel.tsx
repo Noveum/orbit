@@ -69,6 +69,9 @@ export function McpPanel({ mcpUrl, connections }: McpPanelProps) {
             <McpClientTile key={client.id} client={client} mcpUrl={mcpUrl} onError={setError} />
           ))}
         </ul>
+        <p className="text-2xs text-faint">
+          Ask the client to call get_me once it is connected, to confirm it can reach Orbit.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -114,14 +117,7 @@ function McpClientTile({
   mcpUrl: string;
   onError: (message: string) => void;
 }) {
-  const { copied, copy } = useCopy(onError);
   const action = client.action;
-
-  async function openConnector(href: string): Promise<void> {
-    const copying = copy(mcpUrl);
-    window.open(href, '_blank', 'noopener,noreferrer');
-    await copying;
-  }
 
   return (
     <li
@@ -142,22 +138,13 @@ function McpClientTile({
       ) : null}
 
       {action.kind === 'deeplink' ? (
-        <a href={action.href} className="self-start">
-          <Button variant="secondary" size="sm">
-            Add to {client.name}
-          </Button>
-        </a>
+        <Button asChild variant="secondary" size="sm" className="w-fit">
+          <a href={action.href}>Add to {client.name}</a>
+        </Button>
       ) : null}
 
       {action.kind === 'open' ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="self-start"
-          onClick={() => openConnector(action.href)}
-        >
-          {copied ? `URL copied, opening ${client.name}` : `Copy URL and open ${client.name}`}
-        </Button>
+        <ConnectorButton name={client.name} href={action.href} mcpUrl={mcpUrl} onError={onError} />
       ) : null}
 
       <ol className="flex list-inside list-decimal flex-col gap-0.5 text-2xs text-muted">
@@ -166,5 +153,31 @@ function McpClientTile({
         ))}
       </ol>
     </li>
+  );
+}
+
+function ConnectorButton({
+  name,
+  href,
+  mcpUrl,
+  onError,
+}: {
+  name: string;
+  href: string;
+  mcpUrl: string;
+  onError: (message: string) => void;
+}) {
+  const { copied, copy } = useCopy(onError);
+
+  async function openConnector(): Promise<void> {
+    const copying = copy(mcpUrl);
+    window.open(href, '_blank', 'noopener,noreferrer');
+    await copying;
+  }
+
+  return (
+    <Button variant="secondary" size="sm" className="w-fit" onClick={openConnector}>
+      {copied ? `URL copied, opening ${name}` : `Copy URL and open ${name}`}
+    </Button>
   );
 }
