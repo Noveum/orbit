@@ -134,4 +134,21 @@ describe('WorkspaceSwitcher', () => {
 
     expect(push).toHaveBeenCalledWith('/workspaces/new');
   });
+
+  it('routes to the MCP server page, so connecting a client is one click from the menu', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceSwitcher
+        workspace={NOVEUM}
+        workspaces={[NOVEUM, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+    await openMenu();
+
+    await user.click(screen.getByTestId('mcp-link'));
+
+    expect(push).toHaveBeenCalledWith('/settings/mcp');
+  });
 });

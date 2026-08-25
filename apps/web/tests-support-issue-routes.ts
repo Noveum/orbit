@@ -68,7 +68,11 @@ export function forgetUploads(): void {
 }
 
 export function storeObject(key: string, body: string): void {
-  objects.set(key, new TextEncoder().encode(body));
+  storeObjectBytes(key, new TextEncoder().encode(body));
+}
+
+export function storeObjectBytes(key: string, body: Uint8Array): void {
+  objects.set(key, body);
 }
 
 export function forgetObjects(): void {

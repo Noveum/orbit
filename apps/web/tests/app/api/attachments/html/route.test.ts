@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { db, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
+import { MAX_HTML_PREVIEW_BYTES } from '../../../../../src/lib/docs/html-artifact.ts';
 import {
   buildIssueRoutesWorld,
   forgetObjects,
@@ -9,6 +10,7 @@ import {
   installRouteMocks,
   signInAs,
   storeObject,
+  storeObjectBytes,
 } from '../../../../../tests-support-issue-routes.ts';
 
 const route = await import('../../../../../src/app/api/attachments/html/[...key]/route.ts');
@@ -66,7 +68,7 @@ describe('GET /api/attachments/html/[...key]', () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(PAGE);
-    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(response.headers.get('content-type')).toBe('text/html');
   });
 
   it('sandboxes the page so it cannot reach the orbit origin', async () => {
@@ -102,15 +104,34 @@ describe('GET /api/attachments/html/[...key]', () => {
     expect(response.status).toBe(404);
   });
 
-  it('refuses a page too large to buffer', async () => {
+  it('refuses a page whose recorded size is over the cap', async () => {
     const storageKey = await attach({
       commentId: world.openCommentId,
-      size: route.MAX_HTML_PREVIEW_BYTES + 1,
+      size: MAX_HTML_PREVIEW_BYTES + 1,
     });
 
     const response = await route.GET(request(), contextFor(storageKey));
 
     expect(response.status).toBe(413);
+  });
+
+  it('refuses a page whose stored bytes exceed the cap the row understated', async () => {
+    const storageKey = await attach({ commentId: world.openCommentId });
+    storeObjectBytes(storageKey, new Uint8Array(MAX_HTML_PREVIEW_BYTES + 1));
+
+    const response = await route.GET(request(), contextFor(storageKey));
+
+    expect(response.status).toBe(413);
+  });
+
+  it('serves the stored bytes untouched so a page is not re-encoded', async () => {
+    const storageKey = await attach({ commentId: world.openCommentId });
+    const latin1 = new Uint8Array([0x3c, 0x70, 0x3e, 0xe9, 0x74, 0xe9, 0x3c, 0x2f, 0x70, 0x3e]);
+    storeObjectBytes(storageKey, latin1);
+
+    const response = await route.GET(request(), contextFor(storageKey));
+
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(latin1);
   });
 
   it('is a not found when no attachment owns the key', async () => {

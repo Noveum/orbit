@@ -26,6 +26,7 @@ const CONNECTED: readonly McpConnection[] = [
 
 const realFetch = globalThis.fetch;
 const realOpen = globalThis.window.open;
+const realClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
 
 let lastRequest: { url: string; method: string } | null = null;
 let opened: string[] = [];
@@ -65,6 +66,11 @@ function installClipboard(): void {
 afterEach(() => {
   globalThis.fetch = realFetch;
   globalThis.window.open = realOpen;
+  if (realClipboard === undefined) {
+    Reflect.deleteProperty(globalThis.navigator, 'clipboard');
+  } else {
+    Object.defineProperty(globalThis.navigator, 'clipboard', realClipboard);
+  }
 });
 
 describe('McpPanel', () => {

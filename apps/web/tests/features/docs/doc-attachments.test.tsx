@@ -11,13 +11,15 @@ import type { Attachment } from '../../../src/lib/query/schemas.ts';
 function attachment(overrides: Partial<Attachment>): Attachment {
   return {
     id: 'att-1',
+    parentType: 'doc',
+    parentId: 'doc-1',
     fileName: 'report.html',
     contentType: 'text/html',
     size: 2048,
     storageKey: 'org-1/doc-1/report.html',
     status: 'ready',
     ...overrides,
-  } as Attachment;
+  };
 }
 
 describe('doc attachments', () => {
