@@ -19,3 +19,10 @@ export function htmlArtifactHeaders(): HeadersInit {
     'cache-control': 'private, no-store',
   };
 }
+
+const HTML_CONTENT_TYPES = ['text/html', 'application/xhtml+xml'];
+
+export function isHtmlAttachment(contentType: string): boolean {
+  const mime = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  return HTML_CONTENT_TYPES.includes(mime);
+}
