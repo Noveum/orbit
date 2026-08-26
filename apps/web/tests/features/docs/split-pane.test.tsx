@@ -123,22 +123,40 @@ describe('the split pane', () => {
     expect(basis()).toBeCloseTo(70, 5);
   });
 
-  it('moves a step at a time from the keyboard and jumps to either end', () => {
+  it('moves a step at a time from the keyboard and jumps to either end', async () => {
+    const user = userEvent.setup();
     renderSplit();
     const handle = screen.getByTestId('split-pane-handle');
 
-    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    await user.tab();
+    expect(handle).toHaveFocus();
+
+    await user.keyboard('{ArrowRight}');
     expect(basis()).toBeCloseTo(52, 5);
 
-    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
     expect(basis()).toBeCloseTo(48, 5);
 
-    fireEvent.keyDown(handle, { key: 'End' });
+    await user.keyboard('{End}');
     expect(basis()).toBeCloseTo(MAX_SPLIT_RATIO * 100, 5);
 
-    fireEvent.keyDown(handle, { key: 'Home' });
+    await user.keyboard('{Home}');
     expect(basis()).toBeCloseTo(MIN_SPLIT_RATIO * 100, 5);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('0.2000');
+  });
+
+  it('names the panes it resizes for a screen reader', () => {
+    renderSplit();
+    const handle = screen.getByTestId('split-pane-handle');
+    const controls = (handle.getAttribute('aria-controls') ?? '').split(' ');
+
+    expect(controls).toHaveLength(2);
+    expect(document.getElementById(controls[0] ?? '')).toContainElement(
+      screen.getByTestId('first-pane'),
+    );
+    expect(document.getElementById(controls[1] ?? '')).toContainElement(
+      screen.getByTestId('second-pane'),
+    );
   });
 
   it('goes back to an even split on a double click', async () => {

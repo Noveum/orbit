@@ -5,6 +5,7 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useId,
   useRef,
   useState,
 } from 'react';
@@ -59,6 +60,7 @@ export function SplitPane({
   const [ratio, setRatio] = useState(DEFAULT_SPLIT_RATIO);
   const [dragging, setDragging] = useState(false);
   const container = useRef<HTMLDivElement>(null);
+  const paneId = useId();
 
   useEffect(() => {
     setRatio(readStoredRatio(storageKey));
@@ -131,6 +133,7 @@ export function SplitPane({
       data-testid="split-pane"
     >
       <div
+        id={`${paneId}-first`}
         style={{ flexBasis: `${ratio * 100}%` }}
         className={cn('min-h-0 min-w-0 shrink-0 grow-0 overflow-hidden', firstClassName)}
       >
@@ -138,6 +141,7 @@ export function SplitPane({
       </div>
       <hr
         tabIndex={0}
+        aria-controls={`${paneId}-first ${paneId}-second`}
         aria-label={label}
         aria-orientation="vertical"
         aria-valuenow={Math.round(ratio * 100)}
@@ -154,7 +158,12 @@ export function SplitPane({
           dragging ? 'bg-accent' : null,
         )}
       />
-      <div className={cn('min-h-0 min-w-0 flex-1 overflow-hidden', secondClassName)}>{second}</div>
+      <div
+        id={`${paneId}-second`}
+        className={cn('min-h-0 min-w-0 flex-1 overflow-hidden', secondClassName)}
+      >
+        {second}
+      </div>
     </div>
   );
 }
