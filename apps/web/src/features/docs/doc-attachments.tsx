@@ -122,8 +122,22 @@ export function DocAttachments({ attachments }: DocAttachmentsProps) {
               >
                 {attachment.fileName}
               </a>
-              <span data-numeric className="shrink-0 text-2xs text-faint">
-                {formatBytes(attachment.size)}
+              <span className="flex shrink-0 items-baseline gap-2">
+                {kindOf(attachment.contentType) === 'html' &&
+                attachment.size <= MAX_HTML_PREVIEW_BYTES ? (
+                  <a
+                    href={htmlAttachmentUrl(attachment.storageKey)}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid="html-attachment-open"
+                    className="text-2xs text-muted hover:text-accent"
+                  >
+                    Open
+                  </a>
+                ) : null}
+                <span data-numeric className="text-2xs text-faint">
+                  {formatBytes(attachment.size)}
+                </span>
               </span>
             </div>
           </li>

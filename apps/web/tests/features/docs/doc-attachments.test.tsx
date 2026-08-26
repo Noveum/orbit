@@ -84,4 +84,28 @@ describe('doc attachments', () => {
 
     expect(screen.queryByTestId('html-attachment-preview')).toBeNull();
   });
+
+  it('opens an html attachment full size through the sandboxed route', () => {
+    render(<DocAttachments attachments={[attachment({})]} />);
+
+    const open = screen.getByTestId('html-attachment-open');
+    expect(open.getAttribute('href')).toBe(htmlAttachmentUrl('org-1/doc-1/report.html'));
+    expect(open.getAttribute('target')).toBe('_blank');
+  });
+
+  it('offers no full size link for an html attachment too large to preview', () => {
+    render(<DocAttachments attachments={[attachment({ size: MAX_HTML_PREVIEW_BYTES + 1 })]} />);
+
+    expect(screen.queryByTestId('html-attachment-open')).toBeNull();
+  });
+
+  it('offers no full size link for a file that is not html', () => {
+    render(
+      <DocAttachments
+        attachments={[attachment({ fileName: 'spec.pdf', contentType: 'application/pdf' })]}
+      />,
+    );
+
+    expect(screen.queryByTestId('html-attachment-open')).toBeNull();
+  });
 });
