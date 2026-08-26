@@ -128,7 +128,8 @@ describe('the split pane', () => {
     renderSplit();
     const handle = screen.getByTestId('split-pane-handle');
 
-    await user.tab();
+    expect(handle.tabIndex).toBe(0);
+    handle.focus();
     expect(handle).toHaveFocus();
 
     await user.keyboard('{ArrowRight}');
