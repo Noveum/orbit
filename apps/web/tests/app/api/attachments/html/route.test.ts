@@ -94,6 +94,7 @@ describe('GET /api/attachments/html/[...key]', () => {
     expect(csp).not.toContain('allow-same-origin');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 
   it('refuses an attachment on a comment the caller cannot see', async () => {
