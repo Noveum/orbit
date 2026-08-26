@@ -236,7 +236,60 @@ describe('deliverPendingSlackDms', () => {
     expect(storedIntegration?.config['slackReauthorize']).toBe(true);
   });
 
-  it('does not mark a refreshed Slack token for reauthorization after an old token fails', async () => {
+  it('retries a permanent failure after a concurrent token refresh', async () => {
+    const fixture = await seedPendingSlackDm();
+    let calls = 0;
+    const authorization: string[] = [];
+    const fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      calls += 1;
+      authorization.push(String(new Headers(init?.headers).get('authorization')));
+      if (calls === 1) {
+        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }));
+      }
+      if (calls === 2) {
+        await db
+          .update(schema.integration)
+          .set({
+            credentials: { botToken: 'xoxb-refreshed' },
+            config: { scopes: ['chat:write', 'im:write'] },
+            updatedAt: new Date(Date.now() + 1_000),
+          })
+          .where(eq(schema.integration.id, fixture.integrationId));
+        return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }));
+      }
+      return calls === 3
+        ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
+        : new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' }));
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+
+    const [storedIntegration] = await db
+      .select({ config: schema.integration.config, credentials: schema.integration.credentials })
+      .from(schema.integration)
+      .where(eq(schema.integration.id, fixture.integrationId));
+    const [failedDelivery] = await db.select().from(schema.notificationDelivery);
+    expect(storedIntegration).toEqual({
+      config: { scopes: ['chat:write', 'im:write'] },
+      credentials: { botToken: 'xoxb-refreshed' },
+    });
+    expect(failedDelivery).toMatchObject({ status: 'failed', attempts: 1 });
+    if (failedDelivery === undefined) throw new Error('Expected a retryable delivery.');
+    await db
+      .update(schema.notificationDelivery)
+      .set({ availableAt: new Date(0) })
+      .where(eq(schema.notificationDelivery.id, failedDelivery.id));
+
+    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(1);
+    expect(authorization).toEqual([
+      'Bearer xoxb-old',
+      'Bearer xoxb-old',
+      'Bearer xoxb-refreshed',
+      'Bearer xoxb-refreshed',
+    ]);
+  });
+
+  it('does not mark a same-token refreshed Slack integration for reauthorization', async () => {
     const fixture = await seedPendingSlackDm();
     let calls = 0;
     const fetch = (async () => {
@@ -247,8 +300,7 @@ describe('deliverPendingSlackDms', () => {
       await db
         .update(schema.integration)
         .set({
-          credentials: { botToken: 'xoxb-refreshed' },
-          config: { scopes: ['chat:write', 'im:write'] },
+          config: { scopes: ['chat:write', 'im:write'], reconnectMarker: 'fresh' },
           updatedAt: new Date(Date.now() + 1_000),
         })
         .where(eq(schema.integration.id, fixture.integrationId));
@@ -257,13 +309,15 @@ describe('deliverPendingSlackDms', () => {
 
     expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
 
-    const [stored] = await db
-      .select({ config: schema.integration.config, credentials: schema.integration.credentials })
+    const [storedIntegration] = await db
+      .select({ config: schema.integration.config })
       .from(schema.integration)
       .where(eq(schema.integration.id, fixture.integrationId));
-    expect(stored).toEqual({
-      config: { scopes: ['chat:write', 'im:write'] },
-      credentials: { botToken: 'xoxb-refreshed' },
+    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
+    expect(storedIntegration?.config).toEqual({
+      scopes: ['chat:write', 'im:write'],
+      reconnectMarker: 'fresh',
     });
+    expect(storedDelivery).toMatchObject({ status: 'failed', attempts: 1 });
   });
 });

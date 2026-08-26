@@ -126,6 +126,7 @@ export async function markSlackReauthorizationRequired(
   organizationId: string,
   integrationId?: string,
   expectedBotToken?: string,
+  expectedIntegrationVersion?: string,
 ): Promise<boolean> {
   const updated = await database
     .update(integration)
@@ -141,6 +142,9 @@ export async function markSlackReauthorizationRequired(
         ...(expectedBotToken === undefined
           ? []
           : [sql`${integration.credentials}->>'botToken' = ${expectedBotToken}`]),
+        ...(expectedIntegrationVersion === undefined
+          ? []
+          : [sql`${integration.updatedAt}::text = ${expectedIntegrationVersion}`]),
       ),
     )
     .returning({ id: integration.id });

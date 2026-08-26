@@ -10,7 +10,7 @@ import {
 } from '@orbit/db/schema';
 import { type Priority, parseIssueIdentifier } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   buildUnfurl,
@@ -27,11 +27,12 @@ const credentialsSchema = z.object({ botToken: z.string().min(1).optional() });
 
 export interface SlackContext {
   readonly integrationId: string;
+  readonly integrationVersion: string;
   readonly token: string | null;
   readonly scopes: string[];
   readonly hasDirectMessageScope: boolean;
   readonly reauthorize: boolean;
-  readonly updatedAt?: Date;
+  readonly updatedAt: Date;
 }
 
 export async function resolveSlackContext(
@@ -50,6 +51,7 @@ export async function resolveSlackContext(
       credentials: integration.credentials,
       config: integration.config,
       updatedAt: integration.updatedAt,
+      integrationVersion: sql<string>`${integration.updatedAt}::text`,
     })
     .from(integration)
     .where(and(...filters))
@@ -63,6 +65,7 @@ export async function resolveSlackContext(
   const reauthorize = row.config['slackReauthorize'] === true;
   return {
     integrationId: row.id,
+    integrationVersion: row.integrationVersion,
     token: parsed.success ? (parsed.data.botToken ?? null) : null,
     scopes,
     hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
@@ -273,6 +276,7 @@ export interface SlackDmDispatchResult {
 
 export class SlackDmDispatchError extends Error {
   readonly #integrationToken: string;
+  readonly #integrationVersion: string;
   readonly integrationId: string;
   readonly slackCode: string | undefined;
   override readonly cause: unknown;
@@ -281,6 +285,7 @@ export class SlackDmDispatchError extends Error {
     super(cause instanceof Error ? cause.message : 'Slack DM dispatch failed');
     this.name = 'SlackDmDispatchError';
     this.#integrationToken = context.token ?? '';
+    this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
     this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
     this.cause = cause;
@@ -288,6 +293,10 @@ export class SlackDmDispatchError extends Error {
 
   tokenUsed(): string {
     return this.#integrationToken;
+  }
+
+  integrationVersion(): string {
+    return this.#integrationVersion;
   }
 }
 

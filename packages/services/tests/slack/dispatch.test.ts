@@ -198,6 +198,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
 
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
+        integrationVersion: expect.any(String),
         token: 'xoxb-acme',
         scopes: [],
         hasDirectMessageScope: false,
@@ -206,6 +207,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
       });
       expect(await resolveSlackContext(tx, globex.organizationId)).toEqual({
         integrationId: globex.integrationId,
+        integrationVersion: expect.any(String),
         token: 'xoxb-globex',
         scopes: [],
         hasDirectMessageScope: false,
@@ -238,6 +240,7 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
 
       expect(await resolveSlackContext(tx, acme.organizationId)).toEqual({
         integrationId: acme.integrationId,
+        integrationVersion: expect.any(String),
         token: 'xoxb-acme',
         scopes: [],
         hasDirectMessageScope: false,
