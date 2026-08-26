@@ -51,7 +51,7 @@ export async function resolveSlackContext(
       credentials: integration.credentials,
       config: integration.config,
       updatedAt: integration.updatedAt,
-      integrationVersion: sql<string>`${integration.updatedAt}::text`,
+      integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
     })
     .from(integration)
     .where(and(...filters))

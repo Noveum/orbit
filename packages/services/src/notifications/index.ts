@@ -144,7 +144,9 @@ export async function markSlackReauthorizationRequired(
           : [sql`${integration.credentials}->>'botToken' = ${expectedBotToken}`]),
         ...(expectedIntegrationVersion === undefined
           ? []
-          : [sql`${integration.updatedAt}::text = ${expectedIntegrationVersion}`]),
+          : [
+              sql`extract(epoch from ${integration.updatedAt})::text = ${expectedIntegrationVersion}`,
+            ]),
       ),
     )
     .returning({ id: integration.id });
