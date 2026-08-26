@@ -95,17 +95,18 @@ function Preview({ attachment }: { attachment: Attachment }) {
   );
 }
 
-export interface DocAttachmentsProps {
+export interface AttachmentGalleryProps {
   readonly attachments: readonly Attachment[];
+  readonly title?: string;
 }
 
-export function DocAttachments({ attachments }: DocAttachmentsProps) {
+export function AttachmentGallery({ attachments, title = 'Attachments' }: AttachmentGalleryProps) {
   const ready = attachments.filter((attachment) => attachment.status === 'ready');
   if (ready.length === 0) return null;
 
   return (
     <section className="mt-10" data-testid="doc-attachments">
-      <h2 className="mb-3 font-medium text-2xs text-faint uppercase tracking-wide">Attachments</h2>
+      <h2 className="mb-3 font-medium text-2xs text-faint uppercase tracking-wide">{title}</h2>
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {ready.map((attachment) => (
           <li

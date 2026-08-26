@@ -268,6 +268,7 @@ export interface IssueAttachment {
   readonly fileName: string;
   readonly contentType: string;
   readonly size: number;
+  readonly storageKey: string;
   readonly parentType: string;
   readonly parentId: string;
   readonly uploadedById: string;
@@ -300,6 +301,7 @@ function toIssueAttachment(row: AttachmentRecord): IssueAttachment {
     fileName: row.fileName,
     contentType: row.contentType,
     size: row.size,
+    storageKey: row.storageKey,
     parentType: row.parentType,
     parentId: row.parentId,
     uploadedById: row.uploadedById,

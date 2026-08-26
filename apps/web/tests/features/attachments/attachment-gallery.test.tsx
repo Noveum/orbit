@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import {
+  AttachmentGallery,
   attachmentHref,
-  DocAttachments,
   fileUrl,
   htmlAttachmentUrl,
-} from '@/features/docs/doc-attachments.tsx';
+} from '@/features/attachments/attachment-gallery.tsx';
 import { MAX_HTML_PREVIEW_BYTES } from '@/lib/docs/html-artifact.ts';
 import type { Attachment } from '@/lib/query/schemas.ts';
 
@@ -23,7 +23,7 @@ function attachment(overrides: Partial<Attachment>): Attachment {
   };
 }
 
-describe('doc attachments', () => {
+describe('attachment gallery', () => {
   it('previews html through the sandboxed route and downloads it through the file route', () => {
     const html = attachment({});
 
@@ -43,7 +43,7 @@ describe('doc attachments', () => {
   it('treats an html content type carrying a charset as html', () => {
     const html = attachment({ contentType: 'text/html; charset=utf-8' });
 
-    render(<DocAttachments attachments={[html]} />);
+    render(<AttachmentGallery attachments={[html]} />);
 
     expect(screen.getByTestId('html-attachment-preview').getAttribute('src')).toBe(
       htmlAttachmentUrl(html.storageKey),
@@ -54,7 +54,7 @@ describe('doc attachments', () => {
   });
 
   it('renders an html attachment in a sandboxed frame', () => {
-    render(<DocAttachments attachments={[attachment({})]} />);
+    render(<AttachmentGallery attachments={[attachment({})]} />);
 
     const frame = screen.getByTestId('html-attachment-preview');
     expect(frame.getAttribute('src')).toBe('/api/attachments/html/org-1/doc-1/report.html');
@@ -66,7 +66,7 @@ describe('doc attachments', () => {
   });
 
   it('keeps an oversized html attachment downloadable when its preview is refused', () => {
-    render(<DocAttachments attachments={[attachment({ size: MAX_HTML_PREVIEW_BYTES + 1 })]} />);
+    render(<AttachmentGallery attachments={[attachment({ size: MAX_HTML_PREVIEW_BYTES + 1 })]} />);
 
     expect(screen.queryByTestId('html-attachment-preview')).toBeNull();
     expect(screen.getByText('HTML')).toBeDefined();
@@ -77,7 +77,7 @@ describe('doc attachments', () => {
 
   it('does not frame a non-html attachment', () => {
     render(
-      <DocAttachments
+      <AttachmentGallery
         attachments={[attachment({ fileName: 'spec.pdf', contentType: 'application/pdf' })]}
       />,
     );
@@ -86,7 +86,7 @@ describe('doc attachments', () => {
   });
 
   it('opens an html attachment full size through the sandboxed route', () => {
-    render(<DocAttachments attachments={[attachment({})]} />);
+    render(<AttachmentGallery attachments={[attachment({})]} />);
 
     const open = screen.getByTestId('html-attachment-open');
     expect(open.getAttribute('href')).toBe(htmlAttachmentUrl('org-1/doc-1/report.html'));
@@ -94,18 +94,24 @@ describe('doc attachments', () => {
   });
 
   it('offers no full size link for an html attachment too large to preview', () => {
-    render(<DocAttachments attachments={[attachment({ size: MAX_HTML_PREVIEW_BYTES + 1 })]} />);
+    render(<AttachmentGallery attachments={[attachment({ size: MAX_HTML_PREVIEW_BYTES + 1 })]} />);
 
     expect(screen.queryByTestId('html-attachment-open')).toBeNull();
   });
 
   it('offers no full size link for a file that is not html', () => {
     render(
-      <DocAttachments
+      <AttachmentGallery
         attachments={[attachment({ fileName: 'spec.pdf', contentType: 'application/pdf' })]}
       />,
     );
 
     expect(screen.queryByTestId('html-attachment-open')).toBeNull();
+  });
+
+  it('carries a caller supplied heading, so an issue can label its own files', () => {
+    render(<AttachmentGallery attachments={[attachment({})]} title="Artifacts" />);
+
+    expect(screen.getByText('Artifacts')).toBeDefined();
   });
 });
