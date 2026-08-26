@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, setSystemTime } from 'bun:test';
 import { relativeTime } from '@orbit/shared/utils';
 import { act, render, screen } from '@testing-library/react';
+import { Glob } from 'bun';
 import type { ReactElement } from 'react';
 import type { Root } from 'react-dom/client';
 import { hydrateRoot } from 'react-dom/client';
@@ -72,5 +73,21 @@ describe('RelativeTime', () => {
     const stamp = screen.getByText('just now');
     expect(stamp.tagName).toBe('TIME');
     expect(stamp).toHaveAttribute('datetime', LAST_SEEN);
+  });
+});
+
+describe('relative timestamps across apps/web', () => {
+  it('are rendered through RelativeTime and never inline', async () => {
+    const sourceRoot = `${import.meta.dir}/../../../src/`;
+    const offenders: string[] = [];
+    let scanned = 0;
+    for await (const relative of new Glob('**/*.{ts,tsx}').scan(sourceRoot)) {
+      scanned += 1;
+      if (relative === 'components/ui/relative-time.tsx') continue;
+      const source = await Bun.file(`${sourceRoot}${relative}`).text();
+      if (source.includes('relativeTime(')) offenders.push(relative);
+    }
+    expect(scanned).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
   });
 });
