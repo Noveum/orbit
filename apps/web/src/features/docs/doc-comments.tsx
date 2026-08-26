@@ -1,11 +1,12 @@
 'use client';
 
-import { docCommentAnchorId, isDocAnchorOrphaned, relativeTime } from '@orbit/shared/utils';
+import { docCommentAnchorId, isDocAnchorOrphaned } from '@orbit/shared/utils';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { Quote, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { CommentComposer } from '@/features/comments/comment-composer.tsx';
 import { CommentBody } from '@/features/comments/comment-thread.tsx';
 import { cn } from '@/lib/cn.ts';
@@ -194,7 +195,7 @@ function DocCommentItem({
         <div className="flex items-center gap-2 text-2xs">
           <span className="font-medium text-text">{author?.name ?? 'Unknown'}</span>
           <span className="text-faint">
-            {relativeTime(new Date(entry.comment.createdAt), new Date())}
+            <RelativeTime at={entry.comment.createdAt} />
           </span>
           {entry.comment.editedAt === null ? null : <span className="text-faint">edited</span>}
         </div>
