@@ -59,6 +59,17 @@ describe('DocsEmptyPane HTML creation', () => {
     expect(push).toHaveBeenCalledWith(newDocPath({ templateId: HTML_PAGE_TEMPLATE_ID }));
   });
 
+  it('keeps templates and import available in the scrollable narrow-screen toolbar', () => {
+    docs = [{ id: 'doc_1' }];
+    render(<DocsEmptyPane canWrite />);
+
+    expect(screen.getByTestId('docs-toolbar').className).toContain('overflow-x-auto');
+    expect(screen.getByTestId('doc-templates').className).not.toContain('hidden');
+    expect(screen.getByTestId('doc-import-stub').parentElement).toBe(
+      screen.getByTestId('docs-toolbar'),
+    );
+  });
+
   it('opens the HTML page template from the empty state', async () => {
     const user = userEvent.setup();
     render(<DocsEmptyPane canWrite />);

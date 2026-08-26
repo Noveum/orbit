@@ -38,7 +38,10 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="docs-empty-pane">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
+      <div
+        className="flex min-h-11 shrink-0 items-center gap-2 overflow-x-auto border-border border-b px-3 py-2"
+        data-testid="docs-toolbar"
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -56,11 +59,11 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
               <Button
                 variant="secondary"
                 size="sm"
+                aria-label="Templates"
                 data-testid="doc-templates"
-                className="hidden sm:inline-flex"
               >
                 <LayoutTemplate className="size-3.5" aria-hidden="true" />
-                Templates
+                <span className="hidden sm:inline">Templates</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -77,21 +80,23 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
+        {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
-          <span className="hidden sm:inline-flex">
-            <DocImport collectionId={null} projectId={null} />
-          </span>
-        ) : null}
-        {canWrite ? (
-          <Button variant="secondary" size="sm" data-testid="new-html-page" onClick={newHtmlPage}>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label="New HTML page"
+            data-testid="new-html-page"
+            onClick={newHtmlPage}
+          >
             <FileCode className="size-3.5" aria-hidden="true" />
-            New HTML page
+            <span className="hidden sm:inline">New HTML page</span>
           </Button>
         ) : null}
         {canWrite ? (
           <Button variant="primary" size="sm" data-testid="new-doc" onClick={newDoc}>
             New doc
-            <Kbd keys={['c']} className="ml-1 opacity-70" />
+            <Kbd keys={['c']} className="ml-1 hidden opacity-70 sm:inline-flex" />
           </Button>
         ) : null}
       </div>

@@ -35,10 +35,13 @@ test('the MCP server page is one click from the workspace menu', async ({ browse
 });
 
 test('an HTML page can be started straight from the docs pane', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 320, height: 700 } });
   const page = await signIn(context, DEMO_EMAIL);
 
   await page.goto(`${BASE}/docs`);
+  for (const testId of ['doc-templates', 'doc-import', 'new-html-page', 'new-doc']) {
+    await expect(page.getByTestId(testId).first()).toBeInViewport();
+  }
   await page.getByTestId('new-html-page').first().click();
   await page.waitForURL(/\/docs\/[^/]+$/);
 
