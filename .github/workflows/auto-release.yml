@@ -1,0 +1,127 @@
+name: Automated Releases
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: automated-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  tag-and-release:
+    name: Create dated tag and release notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine release target
+        id: target
+        run: |
+          set -euo pipefail
+          TARGET_SHA=$(git rev-parse HEAD)
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "Release target: $TARGET_SHA"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Bun for scripts
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.3.14'
+
+      - name: Install JS/TS deps
+        run: bun install --frozen-lockfile
+
+      - name: Build release notes (TypeScript)
+        id: build_notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TARGET_SHA: ${{ steps.target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          bun ./scripts/release-notes.ts
+          test -s RELEASE_NOTES.md
+
+      - name: Select or recover dated tag
+        id: release_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.build_notes.outputs.tag }}
+          TAG_ACTION: ${{ steps.build_notes.outputs.tag_action }}
+          RELEASE_TARGET_SHA: ${{ steps.build_notes.outputs.release_target_sha }}
+        run: |
+          set -euo pipefail
+
+          REPOSITORY_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          case "$TAG_ACTION" in
+            reuse|recover)
+              EXISTING_SHA=$(git rev-list -n 1 "$TAG^{commit}")
+
+              if [ "$EXISTING_SHA" != "$RELEASE_TARGET_SHA" ]; then
+                echo "Selected tag $TAG does not point to release target $RELEASE_TARGET_SHA"
+                exit 1
+              fi
+
+              echo "Using existing tag $TAG at $RELEASE_TARGET_SHA"
+              ;;
+
+            create)
+              echo "Creating annotated tag $TAG at $RELEASE_TARGET_SHA"
+              git tag -a "$TAG" "$RELEASE_TARGET_SHA" -m "Automated release $TAG"
+              git push "$REPOSITORY_URL" "refs/tags/$TAG"
+              ;;
+
+            *)
+              echo "Unknown tag action: $TAG_ACTION"
+              exit 1
+              ;;
+          esac
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish or recover GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)
+            PRERELEASE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease)
+
+            if [ "$DRAFT" = "true" ] || [ "$PRERELEASE" = "true" ]; then
+              echo "Publishing existing release $TAG"
+              gh release edit "$TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft=false \
+                --prerelease=false \
+                --notes-file RELEASE_NOTES.md
+            else
+              echo "Release $TAG already exists. Nothing to publish."
+            fi
+
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file RELEASE_NOTES.md
+
+          echo "Published release $TAG"
