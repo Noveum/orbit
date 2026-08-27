@@ -8,6 +8,7 @@ import {
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
 import { createLabel, insertLabelOn } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
+import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -419,5 +420,51 @@ describe('listAnalyticsDrilldown', () => {
         ),
       ).rejects.toMatchObject({ code: 'validation_failed' });
     }
+  });
+
+  it('scopes drilldown rows to the principal teams but keeps totals workspace wide and reports what was withheld', async () => {
+    const operations = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const operationsTodo = operations.states.find((state) => state.category === 'unstarted');
+    if (operationsTodo === undefined) throw new Error('Missing Operations state.');
+    for (const title of ['Alpha', 'Beta', 'Gamma']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    await createIssue(workspace.admin, { teamId: operations.team.id, title: 'Other team issue' });
+
+    const member = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+
+    const page = await listAnalyticsDrilldown(
+      member.principal,
+      { query: query(), cohort: { cohort: 'current' } },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(page.total).toBe(4);
+    expect(page.issues.map((entry) => entry.title)).toEqual(['Alpha', 'Beta', 'Gamma']);
+    expect(page.withheldCount).toBe(1);
+
+    const adminPage = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'current' } },
+      { now, timezone: 'UTC' },
+    );
+    expect(adminPage.total).toBe(4);
+    expect(adminPage.issues).toHaveLength(4);
+    expect(adminPage.withheldCount).toBe(0);
+  });
+
+  it('withholds every row for a principal with no team membership', async () => {
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Alpha' });
+    const guest = await addMember(workspace, 'guest', { teamIds: [] });
+
+    const page = await listAnalyticsDrilldown(
+      guest.principal,
+      { query: query(), cohort: { cohort: 'current' } },
+      { now, timezone: 'UTC' },
+    );
+
+    expect(page.total).toBe(1);
+    expect(page.issues).toHaveLength(0);
+    expect(page.withheldCount).toBe(1);
   });
 });

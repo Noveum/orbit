@@ -14,7 +14,7 @@ import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/val
 import { calendarDateSchema, issueFilterSchema } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { buildIssueWhere } from '../work/issue-query.ts';
+import { buildIssueWhere, visibleTeamFilters } from '../work/issue-query.ts';
 import {
   bucketDates,
   calendarDateLabel,
@@ -160,6 +160,7 @@ export interface AnalyticsDrilldownPage {
   readonly totalValue: number;
   readonly details: AnalyticsDrilldownDetails;
   readonly issues: readonly AnalyticsIssueRow[];
+  readonly withheldCount: number;
   readonly nextCursor: string | null;
   readonly limit: number;
   readonly asOf: string;
@@ -1050,6 +1051,11 @@ function decodeCursor(cursor: string, binding: string, secret: string): CursorVa
   }
 }
 
+function scopedWhere(base: SQL<unknown>, cohort: SQL | undefined, teamScope: SQL[]): SQL<unknown> {
+  if (teamScope.length === 0) return and(base, cohort) ?? sql`false`;
+  return and(base, cohort, ...teamScope) ?? sql`false`;
+}
+
 export async function listAnalyticsDrilldown(
   principal: Principal,
   input: AnalyticsDrilldownInput,
@@ -1081,6 +1087,30 @@ export async function listAnalyticsDrilldown(
   const limit = Number.isFinite(requestedLimit)
     ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(requestedLimit)))
     : 50;
+  return execDrilldownPage(
+    principal,
+    resolved,
+    semanticCohort,
+    base,
+    cohort,
+    cursor,
+    limit,
+    binding,
+    secret,
+  );
+}
+
+async function execDrilldownPage(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  semanticCohort: AnalyticsDrilldownCohort,
+  base: SQL<unknown>,
+  cohort: SQL | undefined,
+  cursor: CursorValue | null,
+  limit: number,
+  binding: string,
+  secret: string,
+): Promise<AnalyticsDrilldownPage> {
   const weight =
     resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
   const [aggregate] = await db.execute<AggregateRow>(sql`
@@ -1103,6 +1133,8 @@ export async function listAnalyticsDrilldown(
     where ${base} and ${cohort}
   `);
   const cursorPredicate = cursor === null ? sql`true` : gt(schema.issue.id, cursor.id);
+  const teamScope = visibleTeamFilters(principal);
+  const scoped = scopedWhere(base, cohort, teamScope);
   const rows = await db.execute<PageRow>(sql`
     select
       issue.id,
@@ -1130,9 +1162,15 @@ export async function listAnalyticsDrilldown(
     join workflow_state on workflow_state.id = issue.state_id
     left join project on project.id = issue.project_id
     left join "user" assignee on assignee.id = issue.assignee_id
-    where ${base} and ${cohort} and ${cursorPredicate}
+    where ${scoped} and ${cursorPredicate}
     order by issue.id asc
     limit ${limit + 1}
+  `);
+  const [scopedAggregate] = await db.execute<{ total: number }>(sql`
+    select count(*) as total
+    from issue
+    join workflow_state on workflow_state.id = issue.state_id
+    where ${scoped}
   `);
   const page = rows.slice(0, limit);
   const last = page.at(-1);
@@ -1175,6 +1213,10 @@ export async function listAnalyticsDrilldown(
           ? null
           : { id: row.assignee_id, name: row.assignee_name, image: row.assignee_image },
     })),
+    withheldCount: Math.max(
+      0,
+      Number(aggregate?.['total'] ?? 0) - Number(scopedAggregate?.['total'] ?? 0),
+    ),
     nextCursor,
     limit,
     asOf: resolved.asOf.toISOString(),
