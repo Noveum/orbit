@@ -288,7 +288,11 @@ interface Plan {
 export async function notifyMany(
   database: NotificationDatabase,
   events: readonly NotificationEvent[],
-  options: { readonly now?: Date; readonly slackEnabled?: boolean } = {},
+  options: {
+    readonly now?: Date;
+    readonly slackEnabled?: boolean;
+    readonly sourceDeliveryId?: string;
+  } = {},
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
@@ -312,6 +316,23 @@ export async function notifyMany(
       .where(inArray(notificationPreference.userId, recipientIds)),
   );
   const seen = await loadRecentKeys(database, recipientIds, now);
+  const sourceDeliveryKeys =
+    options.sourceDeliveryId === undefined
+      ? new Set<string>()
+      : new Set(
+          (
+            await database
+              .select({ userId: notificationDelivery.userId })
+              .from(notificationDelivery)
+              .where(
+                and(
+                  eq(notificationDelivery.sourceDeliveryId, options.sourceDeliveryId),
+                  eq(notificationDelivery.channel, 'slack_dm'),
+                  inArray(notificationDelivery.userId, recipientIds),
+                ),
+              )
+          ).map((row) => row.userId),
+        );
 
   const plans: Plan[] = [];
   let deduped = 0;
@@ -319,6 +340,10 @@ export async function notifyMany(
     for (const userId of event.userIds) {
       const recipient = recipients.get(userId);
       if (userId === event.actor.id || recipient === undefined) continue;
+      if (sourceDeliveryKeys.has(userId)) {
+        deduped += 1;
+        continue;
+      }
       const key = dedupeKey(userId, event.type, event.entityId, event.externalUrl ?? null);
       if (seen.has(key)) {
         deduped += 1;
@@ -345,13 +370,18 @@ export async function notifyMany(
     .values(plans.map((plan) => toInsert(plan, now)))
     .returning();
 
-  const deliveryRows = slackDeliveryRows(rows, plans, now);
+  const deliveryRows = slackDeliveryRows(rows, plans, now, options.sourceDeliveryId);
   if (deliveryRows.length > 0) await database.insert(notificationDelivery).values(deliveryRows);
 
   return buildOutcome(plans, rows, deduped);
 }
 
-function slackDeliveryRows(rows: readonly NotificationRecord[], plans: readonly Plan[], now: Date) {
+function slackDeliveryRows(
+  rows: readonly NotificationRecord[],
+  plans: readonly Plan[],
+  now: Date,
+  sourceDeliveryId?: string,
+) {
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
   return rows.flatMap((row) => {
     const plan = planById.get(row.id);
@@ -360,6 +390,7 @@ function slackDeliveryRows(rows: readonly NotificationRecord[], plans: readonly 
       {
         id: randomUUIDv7(now),
         notificationId: row.id,
+        sourceDeliveryId: sourceDeliveryId ?? null,
         userId: row.userId,
         channel: 'slack_dm',
         availableAt: plan.slackDmAt ?? now,

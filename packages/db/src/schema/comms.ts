@@ -73,6 +73,7 @@ export const notificationDelivery = pgTable(
     notificationId: text('notification_id')
       .notNull()
       .references(() => notification.id, { onDelete: 'cascade' }),
+    sourceDeliveryId: text('source_delivery_id'),
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
@@ -90,6 +91,11 @@ export const notificationDelivery = pgTable(
   (table) => [
     uniqueIndex('notification_delivery_unique').on(
       table.notificationId,
+      table.userId,
+      table.channel,
+    ),
+    uniqueIndex('notification_delivery_source_unique').on(
+      table.sourceDeliveryId,
       table.userId,
       table.channel,
     ),

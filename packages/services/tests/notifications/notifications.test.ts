@@ -464,6 +464,35 @@ describe('notifyMany', () => {
     });
   });
 
+  it('deduplicates Slack DMs across retries of the same source delivery', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const sourceDeliveryId = 'github-delivery-retry';
+      const now = new Date('2026-07-22T12:00:00.000Z');
+
+      const first = await notifyMany(tx, [eventFor(fixture)], {
+        now,
+        slackEnabled: true,
+        sourceDeliveryId,
+      });
+      const retry = await notifyMany(tx, [eventFor(fixture)], {
+        now: new Date(now.getTime() + 61_000),
+        slackEnabled: true,
+        sourceDeliveryId,
+      });
+
+      expect(first.slackDm.length).toBeGreaterThan(0);
+      expect(retry.slackDm).toEqual([]);
+      expect(retry.deduped).toBeGreaterThan(0);
+      expect(
+        await tx
+          .select({ id: notificationDelivery.id })
+          .from(notificationDelivery)
+          .where(eq(notificationDelivery.sourceDeliveryId, sourceDeliveryId)),
+      ).toHaveLength(first.slackDm.length);
+    });
+  });
+
   it('collapses duplicates inside a single batch', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

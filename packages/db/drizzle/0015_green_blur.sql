@@ -1,0 +1,2 @@
+ALTER TABLE "notification_delivery" ADD COLUMN "source_delivery_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "notification_delivery_source_unique" ON "notification_delivery" USING btree ("source_delivery_id","user_id","channel");

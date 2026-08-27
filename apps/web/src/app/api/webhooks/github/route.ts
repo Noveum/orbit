@@ -117,7 +117,10 @@ export async function POST(request: Request): Promise<Response> {
     const slackEnabled = slackIntegrationEnabled();
     const outcome = await db.transaction(async (tx) => {
       const applied = await applyGithubEvent(tx, { eventName, body, organizationId });
-      const notified = await notifyMany(tx, applied.notificationEvents, { slackEnabled });
+      const notified = await notifyMany(tx, applied.notificationEvents, {
+        slackEnabled,
+        sourceDeliveryId: deliveryId,
+      });
       const actions: SyncAction[] = [...applied.actions, ...notified.actions];
       return {
         organizationId: applied.organizationId,
