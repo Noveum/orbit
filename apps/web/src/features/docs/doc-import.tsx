@@ -78,12 +78,13 @@ export function DocImport({ collectionId, projectId }: DocImportProps) {
       <Button
         variant="ghost"
         size="sm"
+        aria-label="Import"
         disabled={busy}
         data-testid="doc-import"
         onClick={() => input.current?.click()}
       >
         <Upload className="size-3.5" aria-hidden="true" />
-        Import
+        <span className="hidden sm:inline">Import</span>
       </Button>
     </>
   );

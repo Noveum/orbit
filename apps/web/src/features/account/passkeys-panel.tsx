@@ -1,6 +1,5 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
 import { Fingerprint, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -8,6 +7,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Input } from '@/components/ui/input.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
@@ -189,9 +189,13 @@ export function PasskeysPanel({ passkeys, accountCount }: PasskeysPanelProps) {
                     </span>
                     <span className="truncate text-2xs text-faint">
                       Added {formatDate(passkey.createdAt)}
-                      {passkey.lastUsedAt === null
-                        ? ', never used yet'
-                        : `, last used ${relativeTime(new Date(passkey.lastUsedAt))}`}
+                      {passkey.lastUsedAt === null ? (
+                        ', never used yet'
+                      ) : (
+                        <>
+                          , last used <RelativeTime at={passkey.lastUsedAt} />
+                        </>
+                      )}
                     </span>
                   </span>
                   <Button

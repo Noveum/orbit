@@ -1,9 +1,9 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
 import type { LucideIcon } from 'lucide-react';
 import { Clock, FileText, History, Star } from 'lucide-react';
 import Link from 'next/link';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
@@ -16,7 +16,6 @@ export interface DocsHomeSectionProps {
   readonly icon: LucideIcon;
   readonly entries: readonly DocHomeEntry[];
   readonly emptyLabel: string;
-  readonly now: Date;
 }
 
 export function DocsHomeSection({
@@ -25,7 +24,6 @@ export function DocsHomeSection({
   icon: Icon,
   entries,
   emptyLabel,
-  now,
 }: DocsHomeSectionProps) {
   return (
     <section data-testid={`docs-home-${id}`} className="flex min-w-0 flex-col gap-1">
@@ -50,7 +48,7 @@ export function DocsHomeSection({
                 <FileText className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">{entry.title}</span>
                 <span className="shrink-0 text-2xs text-faint tabular-nums">
-                  {relativeTime(new Date(entry.updatedAt), now)}
+                  <RelativeTime at={entry.updatedAt} />
                 </span>
               </Link>
             </li>
@@ -63,7 +61,6 @@ export function DocsHomeSection({
 
 export function DocsHome() {
   const home = useDocsHome();
-  const now = new Date();
 
   if (home.isPending) {
     return (
@@ -88,7 +85,6 @@ export function DocsHome() {
         icon={Clock}
         entries={data.recent}
         emptyLabel="Docs you open show up here."
-        now={now}
       />
       <DocsHomeSection
         id="favorites"
@@ -96,7 +92,6 @@ export function DocsHome() {
         icon={Star}
         entries={data.favorites}
         emptyLabel="Star a doc to keep it here."
-        now={now}
       />
       <DocsHomeSection
         id="updated"
@@ -104,7 +99,6 @@ export function DocsHome() {
         icon={History}
         entries={data.updated}
         emptyLabel="Nothing has changed yet."
-        now={now}
       />
     </div>
   );

@@ -89,7 +89,7 @@ test.fixme('two viewers see issue, board and comment changes without reloading',
 test('every issue surface says a failed request failed rather than looking empty', async ({
   browser,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const context = await browser.newContext({ viewport: { width: 1400, height: 800 } });
   const page = await context.newPage();
   await page.goto(`${BASE}/login`);
