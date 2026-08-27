@@ -176,10 +176,17 @@ const slackResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-const postMessageResponseSchema = slackResponseSchema.extend({
-  ts: z.string().optional(),
-  channel: z.string().optional(),
-});
+const postMessageResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    ts: z.string().min(1),
+    channel: z.string().min(1),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
 
 const viewResponseSchema = slackResponseSchema.extend({
   view: z.object({ id: z.string() }).optional(),
@@ -301,7 +308,7 @@ export class SlackClient {
       ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),
     });
-    return { channel: body.channel ?? input.channel, ts: body.ts ?? '' };
+    return { channel: body.channel, ts: body.ts };
   }
 
   async openConversation(userId: string): Promise<{ channel: string }> {

@@ -22,7 +22,7 @@ import {
   validationFailed,
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
 import {
@@ -179,6 +179,11 @@ export async function claimSlackDmDeliveries(
         ),
         lte(notificationDelivery.availableAt, now),
       ),
+    )
+    .orderBy(
+      asc(notificationDelivery.attempts),
+      asc(notificationDelivery.availableAt),
+      asc(notificationDelivery.createdAt),
     )
     .limit(limit);
   if (candidates.length === 0) return [];
