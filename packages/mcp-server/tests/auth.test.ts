@@ -215,6 +215,126 @@ describe('http transport', () => {
     expect(response.headers.get('allow')).toBe('POST');
     await response.body?.cancel();
   });
+
+  it('loads workspace instructions only while initializing a read connection', async () => {
+    const token = await mintToken(
+      workspace.organizationId,
+      workspace.adminUser.id,
+      'Initialization loader',
+      'openid orbit.read',
+    );
+    const loadWorkspaceInstructions = mock((organizationId: string) => {
+      expect(organizationId).toBe(workspace.organizationId);
+      return Promise.resolve('Initialization guidance.');
+    });
+    const initialize = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'test', version: '1' },
+          },
+        }),
+      }),
+      { publicUrl: 'http://localhost:3000', loadWorkspaceInstructions },
+    );
+    expect(initialize.status).toBe(200);
+    expect(loadWorkspaceInstructions).toHaveBeenCalledTimes(1);
+    await initialize.body?.cancel();
+
+    const listed = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+      }),
+      { publicUrl: 'http://localhost:3000', loadWorkspaceInstructions },
+    );
+    expect(listed.status).toBe(200);
+    expect(loadWorkspaceInstructions).toHaveBeenCalledTimes(1);
+    await listed.body?.cancel();
+
+    const writeToken = await mintToken(
+      workspace.organizationId,
+      workspace.adminUser.id,
+      'Write initialization loader',
+      'openid orbit.write',
+    );
+    const writeInitialize = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${writeToken}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-06-18',
+            capabilities: {},
+            clientInfo: { name: 'test', version: '1' },
+          },
+        }),
+      }),
+      { publicUrl: 'http://localhost:3000', loadWorkspaceInstructions },
+    );
+    expect(writeInitialize.status).toBe(200);
+    expect(loadWorkspaceInstructions).toHaveBeenCalledTimes(1);
+    await writeInitialize.body?.cancel();
+  });
+
+  it('loads workspace instructions when a batch contains initialize', async () => {
+    const token = await mintToken(
+      workspace.organizationId,
+      workspace.adminUser.id,
+      'Batch initialization loader',
+      'openid orbit.read',
+    );
+    const loadWorkspaceInstructions = mock(() => Promise.resolve('Batch guidance.'));
+    const response = await handleMcpRequest(
+      new Request(`${MCP_TEST_ORIGIN}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify([
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-06-18',
+              capabilities: {},
+              clientInfo: { name: 'test', version: '1' },
+            },
+          },
+        ]),
+      }),
+      { publicUrl: 'http://localhost:3000', loadWorkspaceInstructions },
+    );
+    expect(response.status).toBe(200);
+    await response.body?.cancel();
+    expect(loadWorkspaceInstructions).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('the granted oauth scopes decide which tools exist', () => {

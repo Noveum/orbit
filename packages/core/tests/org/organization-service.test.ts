@@ -82,6 +82,43 @@ describe('updateOrganization', () => {
     expect(result.actions[0]?.data['agentInstructions']).toBe(instructions);
   });
 
+  it('rejects stale workspace agent instructions without overwriting the newer value', async () => {
+    const [initial] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+    if (initial === undefined) throw new Error('Expected the workspace');
+
+    const first = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use ENG for engineering issues.',
+      expectedSyncId: initial.syncId,
+    });
+
+    await expect(
+      updateOrganization(workspace.admin, {
+        agentInstructions: 'Use DESIGN for every issue.',
+        expectedSyncId: initial.syncId,
+      }),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: { reason: 'stale_workspace_instructions' },
+    });
+
+    const [stored] = await db
+      .select({ agentInstructions: schema.organization.agentInstructions })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+    expect(stored?.agentInstructions).toBe(first.organization.agentInstructions);
+  });
+
+  it('keeps updates without an expected workspace version compatible', async () => {
+    const result = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use the current workspace conventions.',
+    });
+
+    expect(result.organization.agentInstructions).toBe('Use the current workspace conventions.');
+  });
+
   it('rejects workspace agent instructions longer than 4000 characters', async () => {
     await expect(
       updateOrganization(workspace.admin, { agentInstructions: 'x'.repeat(4001) }),

@@ -61,10 +61,11 @@ connected agents in **Settings**, **Workspace**, **General**. Use it for
 conventions such as naming, routing, labels and estimates. It is shared
 workspace context, not a prompt template and not a permission boundary.
 
-The server includes the current workspace instructions in the MCP `instructions`
-field during initialization, so a newly connected client receives them with its
-other Orbit context. A client that stays connected while the text changes can
-refresh deliberately with the read-only `get_workspace_instructions` tool.
+For a connection granted `orbit.read`, the server includes the current workspace
+instructions in the MCP `instructions` field during initialization, so a newly
+connected client receives them with its other Orbit context. A client that stays
+connected while the text changes can refresh deliberately with the read-only
+`get_workspace_instructions` tool.
 
 Reading the tool requires `orbit.read` and membership in the selected workspace.
 Any workspace member with that scope can read the text. Only administrators can

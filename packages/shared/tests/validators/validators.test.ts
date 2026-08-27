@@ -170,6 +170,14 @@ describe('workspace agent instructions', () => {
       organizationUpdateSchema.safeParse({ agentInstructions: 'x'.repeat(4001) }).success,
     ).toBe(false);
   });
+
+  it('accepts only a nonnegative integer as the expected workspace version', () => {
+    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 0 }).success).toBe(true);
+    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 42 }).success).toBe(true);
+    expect(organizationUpdateSchema.safeParse({ expectedSyncId: -1 }).success).toBe(false);
+    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 1.5 }).success).toBe(false);
+    expect(organizationUpdateSchema.safeParse({ expectedSyncId: '42' }).success).toBe(false);
+  });
 });
 
 describe('calendar dates', () => {

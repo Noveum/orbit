@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { getOrganization, verifyMcpAccessToken } from '@orbit/core';
 import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
@@ -40,12 +41,11 @@ export function grantsWrites(scopes: string): boolean {
   return granted(scopes).has(ORBIT_WRITE_SCOPE);
 }
 
-export async function createOrbitMcpServer(
+export function createOrbitMcpServer(
   principal: Principal,
   scopes = EVERY_ORBIT_SCOPE,
-): Promise<McpServer> {
-  const organization = await getOrganization(principal.organizationId);
-  const workspaceInstructions = grantsReads(scopes) ? organization.agentInstructions : '';
+  workspaceInstructions = '',
+): McpServer {
   const instructions = [INSTRUCTIONS, workspaceInstructions]
     .filter((entry) => entry.length > 0)
     .join('\n\n');
@@ -56,6 +56,22 @@ export async function createOrbitMcpServer(
   allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes) });
   registerTools(server, principal);
   return server;
+}
+
+async function requestInitializesConnection(request: Request): Promise<boolean> {
+  try {
+    const payload: unknown = await request.clone().json();
+    const messages = Array.isArray(payload) ? payload : [payload];
+    return messages.some(isInitializeRequest);
+  } catch {
+    return false;
+  }
+}
+
+type WorkspaceInstructionsLoader = (organizationId: string) => Promise<string>;
+
+async function loadWorkspaceInstructions(organizationId: string): Promise<string> {
+  return (await getOrganization(organizationId)).agentInstructions;
 }
 
 function bearerToken(request: Request): string {
@@ -76,14 +92,22 @@ function rpcError(status: number, message: string, headers: Record<string, strin
 export interface McpRequestOptions {
   readonly publicUrl: string;
   readonly dispatch?: ((request: Request) => Promise<Response>) | undefined;
+  readonly loadWorkspaceInstructions?: WorkspaceInstructionsLoader | undefined;
 }
 
-async function dispatch(request: Request): Promise<Response> {
+async function dispatch(
+  request: Request,
+  instructionsLoader: WorkspaceInstructionsLoader,
+): Promise<Response> {
   const identity = await verifyMcpAccessToken(bearerToken(request));
   if (!(grantsReads(identity.scopes) || grantsWrites(identity.scopes))) {
     throw forbidden('This client holds neither the orbit.read nor the orbit.write scope.');
   }
-  const server = await createOrbitMcpServer(identity.principal, identity.scopes);
+  const workspaceInstructions =
+    grantsReads(identity.scopes) && (await requestInitializesConnection(request))
+      ? await instructionsLoader(identity.organizationId)
+      : '';
+  const server = createOrbitMcpServer(identity.principal, identity.scopes, workspaceInstructions);
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);
 
@@ -114,7 +138,9 @@ export async function handleMcpRequest(
   }
 
   try {
-    return await (options.dispatch ?? dispatch)(request);
+    return await (options.dispatch === undefined
+      ? dispatch(request, options.loadWorkspaceInstructions ?? loadWorkspaceInstructions)
+      : options.dispatch(request));
   } catch (error: unknown) {
     const domain = toDomainError(error);
     const fields = { code: domain.code, ...errorFields(error) };

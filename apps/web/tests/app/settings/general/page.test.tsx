@@ -25,6 +25,7 @@ mock.module('@orbit/core', () => ({
       logo: null,
       allowedEmailDomains: [],
       agentInstructions: '',
+      syncId: 42,
     }),
 }));
 
