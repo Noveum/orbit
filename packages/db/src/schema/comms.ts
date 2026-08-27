@@ -94,11 +94,6 @@ export const notificationDelivery = pgTable(
       table.userId,
       table.channel,
     ),
-    uniqueIndex('notification_delivery_source_unique').on(
-      table.sourceDeliveryId,
-      table.userId,
-      table.channel,
-    ),
     index('notification_delivery_pending_idx').on(table.status, table.availableAt),
   ],
 );

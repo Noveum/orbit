@@ -1,0 +1,1 @@
+DROP INDEX "notification_delivery_source_unique";
