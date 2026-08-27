@@ -16,7 +16,7 @@
     "push": "bun src/ensure-extensions.ts && drizzle-kit push --force",
     "studio": "drizzle-kit studio",
     "seed": "bun --env-file=../../.env src/seed/index.ts",
-    "test": "bun --env-file=../../.env test --timeout 20000",
+    "test": "bun --env-file=../../.env test --timeout 20000 --max-concurrency 1",
     "check-drift": "bun --env-file=../../.env src/check-drift.ts",
     "catchup": "bun --env-file=../../.env src/apply-catchup.ts",
     "test-setup": "bun --env-file=../../.env src/ensure-test-databases.ts",
