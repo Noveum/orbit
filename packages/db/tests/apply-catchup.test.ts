@@ -54,7 +54,7 @@ async function run<T>(url: string, work: (sql: postgres.Sql) => Promise<T>): Pro
   try {
     return await work(sql);
   } finally {
-    await sql.end();
+    await sql.end({ timeout: 1 });
   }
 }
 
