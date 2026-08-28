@@ -1,3 +1,15 @@
+export const HOSTED_ACCESS_NOTICE =
+  'The hosted Orbit demo is currently limited to Noveum employees. To use Orbit with your own team, self-host it.';
+
+const HOSTED_APP_ORIGIN = 'https://orbit.noveum.ai';
+
+export function hostedAccessNoticeFor(appUrl: string): string | undefined {
+  return new URL(appUrl).origin === HOSTED_APP_ORIGIN ? HOSTED_ACCESS_NOTICE : undefined;
+}
+
+const EMAIL_DOMAIN_NOT_ALLOWED_MESSAGE =
+  'This Orbit instance is restricted to approved email domains. Ask an admin for access, or self-host Orbit for your team.';
+
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   "email_doesn't_match":
     'That provider account uses a different email than your Orbit account. Connect one whose primary email matches, or line up the emails first.',
@@ -8,8 +20,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   unable_to_get_user_info:
     'The provider did not share your account details. Check the connection permissions and try again.',
   email_not_found: 'No Orbit account matches that provider email. Sign up first, then connect it.',
-  email_domain_not_allowed:
-    'Your email domain is not allowed on this workspace. Ask an admin to invite you.',
+  email_domain_not_allowed: EMAIL_DOMAIN_NOT_ALLOWED_MESSAGE,
   signup_disabled: 'New accounts are not open on this server. Ask an admin for an invite.',
   access_denied: 'You cancelled before granting access. Try again when you are ready.',
   no_code: 'The sign in did not finish. Start again.',

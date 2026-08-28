@@ -26,7 +26,9 @@ import Link from 'next/link';
 import type { CSSProperties, ReactNode } from 'react';
 import { OrbitWordmark } from '@/components/brand/orbit-logo.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { hostedAccessNoticeFor } from '@/lib/auth/oauth-error.ts';
 import { cn } from '@/lib/cn.ts';
+import { publicAppUrl } from '@/lib/env.ts';
 import { EnterToSignIn } from './enter-to-sign-in.tsx';
 
 const SIGN_IN_HREF = '/login';
@@ -390,7 +392,7 @@ function ProductWindow() {
   );
 }
 
-function Hero() {
+function Hero({ hostedAccessNotice }: { hostedAccessNotice: string | undefined }) {
   return (
     <section className="relative">
       <HeroBackdrop />
@@ -415,6 +417,14 @@ function Hero() {
           synced to every open screen the instant anything changes, driven entirely from the
           keyboard.
         </p>
+        {hostedAccessNotice === undefined ? null : (
+          <p
+            className="landing-lede landing-rise mx-auto mt-3 max-w-xl text-sm text-muted"
+            style={{ animationDelay: '180ms' }}
+          >
+            {hostedAccessNotice}
+          </p>
+        )}
         <div
           className="landing-rise mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row"
           style={{ animationDelay: '210ms' }}
@@ -930,12 +940,14 @@ function LandingFooter() {
 }
 
 export function LandingPage() {
+  const hostedAccessNotice = hostedAccessNoticeFor(publicAppUrl());
+
   return (
     <div className="flex min-h-dvh flex-col">
       <EnterToSignIn />
       <LandingHeader />
       <main className="flex-1">
-        <Hero />
+        <Hero hostedAccessNotice={hostedAccessNotice} />
         <FeaturesSection />
         <RealtimeSection />
         <KeyboardSection />

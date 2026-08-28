@@ -16,6 +16,7 @@ const MIN_PASSWORD_LENGTH = 12;
 export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
+  readonly hostedAccessNotice?: string;
   readonly passwordEnabled?: boolean;
 }
 
@@ -163,6 +164,11 @@ interface OtpFieldsProps {
   readonly onChangeEmail: () => void;
 }
 
+function HostedAccessNotice({ message }: { readonly message: string | undefined }) {
+  if (message === undefined) return null;
+  return <p className="text-center text-2xs text-muted">{message}</p>;
+}
+
 function OtpFields({ sent, value, pending, onChange, onResend, onChangeEmail }: OtpFieldsProps) {
   if (!sent) return null;
   return (
@@ -238,6 +244,7 @@ function LoginFooter({
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
+  hostedAccessNotice,
   passwordEnabled = false,
 }: LoginFormProps) {
   const { toast } = useToast();
@@ -350,6 +357,7 @@ export function LoginForm({
             ? 'Pick how you want in.'
             : 'Passwordless by design. Pick how you want in.'}
         </p>
+        <HostedAccessNotice message={hostedAccessNotice} />
       </div>
 
       <Button

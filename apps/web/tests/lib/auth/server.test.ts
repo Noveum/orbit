@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { auth, passwordAuthEnabled } from '../../../src/lib/auth/server.ts';
 
+const SOCIAL_PROVIDERS = [['google'], ['github']] as const;
+
 describe('password authentication', () => {
   it('stays off unless ORBIT_PASSWORD_AUTH is set', () => {
     expect(process.env['ORBIT_PASSWORD_AUTH']).toBeUndefined();
@@ -61,19 +63,22 @@ describe('email domain allowlist', () => {
       });
   }
 
-  it('rejects an address outside the allowlist whichever provider created it', async () => {
+  it.each(SOCIAL_PROVIDERS)('rejects an ineligible first-time %s account', async (provider) => {
     process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
     const hook = createUserHook();
 
     let thrown: unknown;
     try {
-      await hook('kpulkit15234@gmail.com');
+      await hook(`${provider}-kpulkit15234@gmail.com`);
     } catch (error) {
       thrown = error;
     }
     expect(thrown).toMatchObject({ status: 'FORBIDDEN' });
+  });
 
-    const allowed = await hook('shashank@magicapi.com');
+  it('allows an address from the configured domain', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = 'magicapi.com,noveum.ai';
+    const allowed = await createUserHook()('shashank@magicapi.com');
     expect(allowed.data.email).toBe('shashank@magicapi.com');
   });
 

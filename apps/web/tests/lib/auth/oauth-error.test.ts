@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { authErrorCode, describeAuthError } from '../../../src/lib/auth/oauth-error.ts';
+import {
+  authErrorCode,
+  describeAuthError,
+  HOSTED_ACCESS_NOTICE,
+  hostedAccessNoticeFor,
+} from '../../../src/lib/auth/oauth-error.ts';
 
 describe('describeAuthError', () => {
   it('maps the email mismatch code returned by the GitHub callback', () => {
@@ -11,7 +16,9 @@ describe('describeAuthError', () => {
   });
 
   it('maps the server domain-restriction code', () => {
-    expect(describeAuthError('EMAIL_DOMAIN_NOT_ALLOWED')).toContain('domain is not allowed');
+    expect(describeAuthError('EMAIL_DOMAIN_NOT_ALLOWED')).toBe(
+      'This Orbit instance is restricted to approved email domains. Ask an admin for access, or self-host Orbit for your team.',
+    );
   });
 
   it('falls back to a friendly message for unknown codes', () => {
@@ -34,5 +41,15 @@ describe('authErrorCode', () => {
     expect(authErrorCode(undefined)).toBeUndefined();
     expect(authErrorCode('')).toBeUndefined();
     expect(authErrorCode([])).toBeUndefined();
+  });
+});
+
+describe('hostedAccessNoticeFor', () => {
+  it('shows the hosted access notice for the official deployment', () => {
+    expect(hostedAccessNoticeFor('https://orbit.noveum.ai')).toBe(HOSTED_ACCESS_NOTICE);
+  });
+
+  it('does not advertise the hosted restriction on another deployment', () => {
+    expect(hostedAccessNoticeFor('https://orbit.example.com')).toBeUndefined();
   });
 });

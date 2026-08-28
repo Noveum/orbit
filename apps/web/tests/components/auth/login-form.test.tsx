@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HOSTED_ACCESS_NOTICE } from '../../../src/lib/auth/oauth-error.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 const requestPasswordReset = mock();
@@ -69,6 +70,26 @@ describe('LoginForm', () => {
     expect(screen.getByText('Create an account with a password')).toBeDefined();
     expect(screen.getByText('Email me a code')).toBeDefined();
     expect(screen.getByText('Continue with passkey')).toBeDefined();
+  });
+
+  it('explains hosted access before social sign in', () => {
+    render(
+      <LoginForm providers={['google', 'github']} hostedAccessNotice={HOSTED_ACCESS_NOTICE} />,
+    );
+
+    expect(
+      screen.getByText(
+        'The hosted Orbit demo is currently limited to Noveum employees. To use Orbit with your own team, self-host it.',
+      ),
+    ).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Continue with GitHub' })).toBeDefined();
+  });
+
+  it('does not show hosted access copy when the deployment does not provide it', () => {
+    render(<LoginForm providers={['google', 'github']} />);
+
+    expect(screen.queryByText(HOSTED_ACCESS_NOTICE)).toBeNull();
   });
 
   it('hides the forgot password affordance while password auth is off', () => {

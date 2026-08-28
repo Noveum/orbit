@@ -34,6 +34,18 @@ describe('AuthErrorNotice', () => {
     expect(options.description).toContain('cancelled');
   });
 
+  it('toasts the restricted-access message for a domain callback error', async () => {
+    window.history.replaceState({}, '', '/login?error=EMAIL_DOMAIN_NOT_ALLOWED');
+    render(<AuthErrorNotice code="EMAIL_DOMAIN_NOT_ALLOWED" />);
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledWith({
+      title: 'Sign in failed',
+      description:
+        'This Orbit instance is restricted to approved email domains. Ask an admin for access, or self-host Orbit for your team.',
+      tone: 'danger',
+    });
+  });
+
   it('uses a custom title when provided', async () => {
     window.history.replaceState({}, '', "/settings/account/connections?error=email_doesn't_match");
     render(<AuthErrorNotice code="email_doesn't_match" title="Couldn't connect account" />);

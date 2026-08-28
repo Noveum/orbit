@@ -5,9 +5,10 @@ import { DevSignIn } from '@/components/auth/dev-sign-in.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
 import { devLoginEnabled } from '@/lib/api/dev-login.ts';
 import { listDevUsers } from '@/lib/api/dev-users.ts';
-import { authErrorCode } from '@/lib/auth/oauth-error.ts';
+import { authErrorCode, hostedAccessNoticeFor } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
+import { publicAppUrl } from '@/lib/env.ts';
 import { mcpContinueUrl, safeCallback } from './continue-url.ts';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -24,12 +25,14 @@ export default async function LoginPage({
   if (session !== null) redirect(callbackUrl ?? '/my-issues');
 
   const devUsers = devLoginEnabled() ? await listDevUsers() : [];
+  const hostedAccessNotice = hostedAccessNoticeFor(publicAppUrl());
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg px-5 py-12">
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-pop sm:p-7">
         <LoginForm
           providers={enabledSocialProviders}
+          {...(hostedAccessNotice === undefined ? {} : { hostedAccessNotice })}
           passwordEnabled={passwordAuthEnabled}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
