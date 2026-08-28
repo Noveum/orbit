@@ -17,6 +17,12 @@ describe('prepareStandalone', () => {
     await expect(prepareStandalone(root, '1')).resolves.toBeUndefined();
   });
 
+  it('refuses a local build without standalone output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orbit-standalone-'));
+    roots.push(root);
+    await expect(prepareStandalone(root, undefined)).rejects.toThrow('Missing standalone output');
+  });
+
   it('copies public assets and static output and builds the node entrypoint', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orbit-standalone-'));
     roots.push(root);
