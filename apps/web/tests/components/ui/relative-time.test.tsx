@@ -83,7 +83,7 @@ describe('relative timestamps across apps/web', () => {
     let scanned = 0;
     for await (const relative of new Glob('**/*.{ts,tsx}').scan(sourceRoot)) {
       scanned += 1;
-      if (relative === 'components/ui/relative-time.tsx') continue;
+      if (relative.replaceAll('\\', '/') === 'components/ui/relative-time.tsx') continue;
       const source = await Bun.file(`${sourceRoot}${relative}`).text();
       if (source.includes('relativeTime(')) offenders.push(relative);
     }
