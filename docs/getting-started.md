@@ -182,4 +182,4 @@ Anything else, see [Troubleshooting](troubleshooting.md).
 
 - [Concepts](concepts.md), so the vocabulary makes sense.
 - [Architecture](architecture.md), for how the realtime layer works.
-- [CONTRIBUTING.md](../CONTRIBUTING.md), if you want to send a change.
+- [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md), if you want to send a change.

@@ -289,7 +289,7 @@ things that give out first, roughly in order:
 
 ## Security before you go public
 
-Read [SECURITY.md](../SECURITY.md), which has the full checklist. The short
+Read [SECURITY.md](https://github.com/Noveum/orbit/blob/main/SECURITY.md), which has the full checklist. The short
 version:
 
 - Fresh `BETTER_AUTH_SECRET`.
