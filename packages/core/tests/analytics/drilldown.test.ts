@@ -8,6 +8,7 @@ import {
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
 import { createLabel, insertLabelOn } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
+import { resolvePrincipal } from '../../src/org/member-service.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -466,5 +467,46 @@ describe('listAnalyticsDrilldown', () => {
     expect(page.total).toBe(1);
     expect(page.issues).toHaveLength(0);
     expect(page.withheldCount).toBe(1);
+  });
+
+  it('invalidates a cursor minted under a wider team scope once membership narrows', async () => {
+    const operations = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    for (const title of ['Alpha', 'Beta']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    await createIssue(workspace.admin, { teamId: operations.team.id, title: 'Other team issue' });
+    const member = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId, operations.team.id],
+    });
+
+    const first = await listAnalyticsDrilldown(
+      member.principal,
+      { query: query(), cohort: { cohort: 'current' }, limit: 2 },
+      { now, timezone: 'UTC' },
+    );
+    expect(first.nextCursor).not.toBeNull();
+    expect(first.issues.map((entry) => entry.title)).toEqual(['Alpha', 'Beta']);
+
+    await db.delete(schema.teamMember).where(eq(schema.teamMember.userId, member.user.id));
+    await db.insert(schema.teamMember).values({
+      id: newId(),
+      teamId: workspace.teamId,
+      userId: member.user.id,
+    });
+
+    const narrowed = await resolvePrincipal(member.user.id, workspace.organizationId);
+
+    await expect(
+      listAnalyticsDrilldown(
+        narrowed,
+        {
+          query: query(),
+          cohort: { cohort: 'current' },
+          cursor: first.nextCursor as string,
+          limit: 2,
+        },
+        { now, timezone: 'UTC' },
+      ),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 });

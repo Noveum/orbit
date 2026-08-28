@@ -953,6 +953,8 @@ function cursorRequestBinding(
 ): string {
   return JSON.stringify({
     organizationId: principal.organizationId,
+    role: principal.role,
+    teamIds: [...principal.teamIds].sort(),
     query: {
       version: query.version,
       lens: query.lens,
