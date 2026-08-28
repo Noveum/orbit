@@ -1,20 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
 import { applyCatchup, catchupPath, targetName } from '../src/apply-catchup.ts';
 
 describe('catchupPath', () => {
   it('resolves a script by name inside the catchup directory', () => {
-    expect(catchupPath('doc-tree-schema-catchup.sql')).toEndWith(
-      '/catchup/doc-tree-schema-catchup.sql',
-    );
+    const path = catchupPath('doc-tree-schema-catchup.sql');
+    expect(basename(path)).toBe('doc-tree-schema-catchup.sql');
+    expect(basename(dirname(path))).toBe('catchup');
   });
 
   it('accepts the repository relative path the runbook prints', () => {
-    expect(catchupPath('packages/db/catchup/doc-tree-order-catchup.sql')).toEndWith(
-      '/catchup/doc-tree-order-catchup.sql',
-    );
+    const path = catchupPath('packages/db/catchup/doc-tree-order-catchup.sql');
+    expect(basename(path)).toBe('doc-tree-order-catchup.sql');
+    expect(basename(dirname(path))).toBe('catchup');
   });
 
   it('refuses a file outside the catchup directory', () => {
@@ -53,7 +54,7 @@ async function run<T>(url: string, work: (sql: postgres.Sql) => Promise<T>): Pro
   try {
     return await work(sql);
   } finally {
-    await sql.end();
+    await sql.end({ timeout: 1 });
   }
 }
 

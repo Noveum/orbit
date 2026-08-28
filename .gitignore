@@ -34,3 +34,6 @@ next-env.d.ts
 .env*
 
 .claude/launch.json
+
+docs/.vitepress/cache/
+docs/.vitepress/dist/

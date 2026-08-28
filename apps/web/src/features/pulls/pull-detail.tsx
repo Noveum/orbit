@@ -1,4 +1,3 @@
-import { relativeTime } from '@orbit/shared/utils';
 import {
   ArrowLeft,
   CircleCheck,
@@ -11,6 +10,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { CommentBody } from '@/features/comments/comment-thread.tsx';
 import { DocBody } from '@/features/docs/doc-body.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
@@ -171,7 +171,7 @@ export function PullDetail({ pull }: { readonly pull: PullRequestDetail }) {
                         <span className="font-medium text-text">{activity.actorLogin}</span>
                         <span className="text-muted">{activityLabel(activity)}</span>
                         <span className="text-faint text-xs">
-                          {relativeTime(new Date(activity.occurredAt))}
+                          <RelativeTime at={activity.occurredAt} />
                         </span>
                       </div>
                       {activity.path === null ? null : (

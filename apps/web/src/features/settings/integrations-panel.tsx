@@ -1,12 +1,13 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { type ReactNode, useState } from 'react';
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 import { GithubPanel } from './github-panel.tsx';
+import { IntegrationCard } from './integration-card.tsx';
 import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
 import type {
   ConnectedChannel,
@@ -14,19 +15,12 @@ import type {
   IntegrationTeam,
   SlackIntegrationSettings,
 } from './integrations-data.ts';
-import { claudeCodeCommand, cursorInstallHref, vscodeInstallHref } from './mcp-install-links.ts';
+import { type McpConnection, McpPanel } from './mcp-panel.tsx';
 import { type PickerChannel, useChannelSearch } from './use-integration-lists.ts';
 
 function teamName(teams: readonly IntegrationTeam[], teamId: string | null): string {
   if (teamId === null) return 'Workspace-wide';
   return teams.find((team) => team.id === teamId)?.name ?? 'Unknown team';
-}
-
-export interface McpConnection {
-  readonly id: string;
-  readonly clientName: string;
-  readonly organizationName: string;
-  readonly lastUsedAt: string | null;
 }
 
 export interface IntegrationsPanelProps {
@@ -79,7 +73,7 @@ export function IntegrationsPanel({
       ) : (
         <WorkspaceIntegrationsWithheld />
       )}
-      <McpSection mcpUrl={mcpUrl} connections={mcpConnections} onError={setError} onCall={call} />
+      <McpPanel mcpUrl={mcpUrl} connections={mcpConnections} />
     </div>
   );
 }
@@ -97,31 +91,6 @@ function WorkspaceIntegrationsWithheld() {
 }
 
 type CallFn = (path: string, method: string, body: Record<string, unknown>) => Promise<void>;
-
-function IntegrationCard({
-  title,
-  description,
-  status,
-  children,
-}: {
-  title: string;
-  description: string;
-  status: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="font-medium text-dense text-text">{title}</h3>
-          {status}
-        </div>
-        <p className="text-muted text-xs">{description}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
 
 function ConnectionBadge({ connected }: { connected: boolean }) {
   return connected ? (
@@ -325,139 +294,6 @@ function SlackSection({
           pendingHint="Ask a workspace admin to finish configuring the Slack app before connecting."
         />
       )}
-    </IntegrationCard>
-  );
-}
-
-function CopyRow({
-  value,
-  label,
-  testId,
-  onError,
-}: {
-  value: string;
-  label: string;
-  testId?: string;
-  onError: (message: string) => void;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      onError('Could not copy to the clipboard. Select and copy it manually.');
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <code
-        {...(testId === undefined ? {} : { 'data-testid': testId })}
-        className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-dense text-text"
-      >
-        {value}
-      </code>
-      <Button variant="secondary" onClick={copy} aria-label={label}>
-        {copied ? 'Copied' : 'Copy'}
-      </Button>
-    </div>
-  );
-}
-
-function formatLastUsed(iso: string | null): string {
-  if (iso === null) return 'Never used yet';
-  return `Last used ${new Date(iso).toLocaleDateString()}`;
-}
-
-function McpSection({
-  mcpUrl,
-  connections,
-  onError,
-  onCall,
-}: {
-  mcpUrl: string;
-  connections: readonly McpConnection[];
-  onError: (message: string) => void;
-  onCall: CallFn;
-}) {
-  return (
-    <IntegrationCard
-      title="MCP server"
-      description="Connect an MCP-aware AI client to Orbit. Sign in with your Orbit account and choose a workspace: the client acts as you, within your permissions. No API key needed."
-      status={<Badge tone="accent">OAuth</Badge>}
-    >
-      <div className="flex flex-col gap-1.5">
-        <span className="text-2xs text-faint">Server URL</span>
-        <CopyRow value={mcpUrl} label="Copy MCP server URL" testId="mcp-url" onError={onError} />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <span className="text-2xs text-faint">Add to Claude Code</span>
-        <CopyRow
-          value={claudeCodeCommand(mcpUrl)}
-          label="Copy the Claude Code command"
-          onError={onError}
-        />
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <a href={cursorInstallHref(mcpUrl)}>
-          <Button variant="secondary" size="sm">
-            Add to Cursor
-          </Button>
-        </a>
-        <a href={vscodeInstallHref(mcpUrl)}>
-          <Button variant="secondary" size="sm">
-            Add to VS Code
-          </Button>
-        </a>
-      </div>
-
-      <ol className="flex flex-col gap-1 text-muted text-xs">
-        <li>Add Orbit to your MCP client with a link above, or point it at the server URL.</li>
-        <li>Your browser opens: sign in to Orbit, pick a workspace, and approve.</li>
-        <li>Ask the client to call get_me to confirm the connection.</li>
-      </ol>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-2xs text-faint">Connected clients</span>
-        <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
-          {connections.length === 0 ? (
-            <li className="px-3 py-2.5 text-faint text-xs">No clients connected yet.</li>
-          ) : (
-            connections.map((connection) => (
-              <li
-                key={connection.id}
-                className="flex items-center justify-between gap-3 border-border border-b px-3 py-2.5 last:border-b-0"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-dense text-text">{connection.clientName}</span>
-                  <span className="text-2xs text-faint">
-                    {connection.organizationName} · {formatLastUsed(connection.lastUsedAt)}
-                  </span>
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Disconnect ${connection.clientName}`}
-                  onClick={() =>
-                    onCall(
-                      `/api/integrations/mcp?grantId=${encodeURIComponent(connection.id)}`,
-                      'DELETE',
-                      {},
-                    )
-                  }
-                >
-                  Disconnect
-                </Button>
-              </li>
-            ))
-          )}
-        </ul>
-      </div>
     </IntegrationCard>
   );
 }

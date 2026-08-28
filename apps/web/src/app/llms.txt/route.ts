@@ -30,8 +30,8 @@ export function GET(): Response {
 - [Landing page](${base}/)
 - [Sign in](${absoluteUrl('/login')}) with Google, GitHub, a passkey, or an email code
 - [Source code](https://github.com/Noveum/orbit)
-- [Documentation](https://github.com/Noveum/orbit/tree/main/docs)
-- [Self-hosting guide](https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md)
+- [Documentation](https://noveum.github.io/orbit/)
+- [Self-hosting guide](https://noveum.github.io/orbit/self-hosting.html)
 `;
   return new Response(body, {
     headers: { 'content-type': 'text/plain; charset=utf-8' },

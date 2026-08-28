@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher.tsx';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
-import { WorkspaceSwitcher } from '../../../src/components/layout/workspace-switcher.tsx';
 
 const push = mock();
 const refresh = mock();
@@ -133,5 +133,22 @@ describe('WorkspaceSwitcher', () => {
     await user.click(screen.getByTestId('create-workspace'));
 
     expect(push).toHaveBeenCalledWith('/workspaces/new');
+  });
+
+  it('routes to the MCP server page, so connecting a client is one click from the menu', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceSwitcher
+        workspace={NOVEUM}
+        workspaces={[NOVEUM, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+    await openMenu();
+
+    await user.click(screen.getByTestId('mcp-link'));
+
+    expect(push).toHaveBeenCalledWith('/settings/mcp');
   });
 });

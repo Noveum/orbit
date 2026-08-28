@@ -111,10 +111,10 @@ describe('AnalyticsDrilldownDialog', () => {
     expect(await screen.findByRole('dialog', { name: 'Completed work' })).toBeVisible();
     expect(await screen.findByText('Ship analytics')).toBeVisible();
     expect(screen.getByText(/Predicate: completed/)).toBeVisible();
-    const formattedDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
+    const coverageDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
       new Date('2026-08-13T12:00:00.000Z'),
     );
-    expect(screen.getByText(`Data through ${formattedDate}`, { exact: false })).toBeVisible();
+    expect(screen.getByText(new RegExp(`Data through ${coverageDate}`))).toBeVisible();
     expect(screen.queryByRole('link', { name: 'Export CSV' })).not.toBeInTheDocument();
 
     const evidence = screen.getByRole('table', { name: 'Completed work evidence' });

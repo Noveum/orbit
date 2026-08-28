@@ -21,6 +21,7 @@ const NAVIGABLE_ROUTES: readonly RegExp[] = [
   /^\/settings\/members$/,
   /^\/settings\/teams$/,
   /^\/settings\/integrations$/,
+  /^\/settings\/mcp$/,
   /^\/settings\/notifications$/,
   /^\/settings\/account$/,
   /^\/settings\/account\/connections$/,
@@ -38,7 +39,11 @@ function isNavigable(path: string): boolean {
   return NAVIGABLE_ROUTES.some((route) => route.test(path));
 }
 
+const SEGMENT_LABELS: Readonly<Record<string, string>> = { mcp: 'MCP server' };
+
 function titleize(segment: string): string {
+  const named = SEGMENT_LABELS[segment];
+  if (named !== undefined) return named;
   const words = segment.replace(/-/g, ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }

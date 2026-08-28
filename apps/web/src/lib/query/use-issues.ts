@@ -322,6 +322,7 @@ export function previewDetail(issue: Issue): IssueDetail {
     subIssues: [],
     parent: null,
     subscribed: false,
+    attachments: [],
   };
 }
 

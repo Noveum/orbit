@@ -4,6 +4,7 @@ import {
   getIssue,
   getParentIssue,
   listActivityPage,
+  listIssueAttachments,
   listIssues,
   listSubscribers,
   updateIssue,
@@ -49,6 +50,16 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       subIssues: await attachIssueDecorations(subPage.issues),
       parent: parent ?? null,
       subscribed: subscribers.some((row) => row.userId === principal.userId),
+      attachments: (await listIssueAttachments(principal, row.id)).map((file) => ({
+        id: file.id,
+        parentType: file.parentType,
+        parentId: file.parentId,
+        fileName: file.fileName,
+        contentType: file.contentType,
+        size: file.size,
+        storageKey: file.storageKey,
+        status: 'ready',
+      })),
     };
   });
 }

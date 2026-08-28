@@ -29,3 +29,15 @@ export const inlineUploadSchema = uploadRequestSchema.omit({ size: true }).exten
 });
 
 export type InlineUploadInput = z.infer<typeof inlineUploadSchema>;
+
+const storageKeySegmentSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._-]+$/, 'A storage key segment may only contain safe characters.')
+  .refine(
+    (segment) => segment !== '.' && segment !== '..',
+    'A storage key segment may not walk the path.',
+  );
+
+export const storageKeySchema = z.array(storageKeySegmentSchema).min(1).max(8);
