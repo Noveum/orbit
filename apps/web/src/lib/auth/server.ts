@@ -99,7 +99,12 @@ export const passwordAuthEnabled: boolean = serverEnv().ORBIT_PASSWORD_AUTH;
 const SIGN_IN_ATTEMPTS_PER_MINUTE = 5;
 const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
 const SIGN_IN_CODE_SENDS_PER_HOUR = 20;
-const SIGN_IN_CODE_ATTEMPTS_PER_QUARTER_HOUR = 20;
+
+const AUTH_RATE_LIMIT_RULES = {
+  '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
+  '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
+  '/email-otp/send-verification-otp': { window: 3600, max: SIGN_IN_CODE_SENDS_PER_HOUR },
+};
 
 async function takenHandles(candidates: readonly string[]): Promise<Set<string>> {
   const rows = await db
@@ -141,19 +146,6 @@ function emailAndPassword() {
   } as const;
 }
 
-function rateLimit() {
-  return {
-    rateLimit: {
-      customRules: {
-        '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
-        '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
-        '/email-otp/send-verification-otp': { window: 3600, max: SIGN_IN_CODE_SENDS_PER_HOUR },
-        '/sign-in/email-otp': { window: 900, max: SIGN_IN_CODE_ATTEMPTS_PER_QUARTER_HOUR },
-      },
-    },
-  };
-}
-
 function assertSignUpAllowed(email: string): void {
   try {
     assertEmailDomainAllowed(email);
@@ -181,7 +173,7 @@ export const auth = betterAuth({
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
-  ...rateLimit(),
+  rateLimit: { customRules: AUTH_RATE_LIMIT_RULES },
   socialProviders: socialProviders(),
   account: {
     accountLinking: { enabled: true, allowUnlinkingAll: true, allowDifferentEmails: true },

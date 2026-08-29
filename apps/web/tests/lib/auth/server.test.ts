@@ -41,15 +41,34 @@ describe('password authentication', () => {
 describe('open signup rate limits', () => {
   const rules = auth.options.rateLimit?.customRules ?? {};
 
+  function registeredPaths(): Set<string> {
+    const paths = new Set<string>();
+    for (const endpoint of Object.values(auth.api)) {
+      const path = (endpoint as { path?: unknown }).path;
+      if (typeof path === 'string') paths.add(path);
+    }
+    return paths;
+  }
+
   it('caps sign in codes even though password auth is off', () => {
     expect(passwordAuthEnabled).toBe(false);
     expect(rules['/email-otp/send-verification-otp']).toEqual({ window: 3600, max: 20 });
-    expect(rules['/sign-in/email-otp']).toEqual({ window: 900, max: 20 });
   });
 
   it('keeps the password rules for deployments that enable them', () => {
     expect(rules['/sign-in/email']).toEqual({ window: 60, max: 5 });
     expect(rules['/sign-up/email']).toEqual({ window: 3600, max: 5 });
+  });
+
+  it('names paths that better-auth actually serves, so no rule is dead', () => {
+    const served = registeredPaths();
+    expect(served.size).toBeGreaterThan(0);
+    for (const path of Object.keys(rules)) expect(served).toContain(path);
+  });
+
+  it('matches rules against the path better-auth strips the base from', async () => {
+    const context = await auth.$context;
+    expect(new URL(context.baseURL).pathname).toBe('/api/auth');
   });
 });
 
