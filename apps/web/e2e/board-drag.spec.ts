@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { z } from 'zod';
 import { createIssue, stateIdByName, stateIdOf, teamIdByKey } from './api.ts';
 import { BASE } from './base-url.ts';
 
@@ -32,6 +33,34 @@ async function dragCardToColumn(page: Page, identifier: string, column: string):
   await page.mouse.down();
   await page.mouse.move(to.x + to.width / 2, to.y + 120, { steps: 12 });
   await page.mouse.up();
+}
+
+async function updateIssue(page: Page, issueId: string, patch: Record<string, unknown>) {
+  const response = await page.request.patch(`${BASE}/api/issues/${issueId}`, { data: patch });
+  expect(response.ok()).toBe(true);
+}
+
+async function deleteIssue(page: Page, issueId: string) {
+  const response = await page.request.delete(`${BASE}/api/issues/${issueId}`);
+  expect(response.ok()).toBe(true);
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (resolvePromise === undefined) throw new Error('deferred promise did not initialize');
+  return { promise, resolve: resolvePromise };
+}
+
+function filterParam(property: string, values: readonly string[]): string {
+  const tree = {
+    kind: 'group',
+    combinator: 'and',
+    children: [{ kind: 'condition', property, operator: 'in', values, negate: false }],
+  };
+  return `filter=${encodeURIComponent(JSON.stringify(tree))}`;
 }
 
 test('a card dragged to another column lands there and stays after a reload', async ({
@@ -116,21 +145,81 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
   const boardStatus = page.getByTestId('board-drag-status');
 
   await cardLocator.focus();
   await page.keyboard.press('Enter');
-  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toHaveText(
+    new RegExp(`Picked up ${moving}: .+ in column Todo, position \\d+ of \\d+\\.`),
+    { timeout: 10_000 },
+  );
   await page.keyboard.press('ArrowRight');
-  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toHaveText(
+    new RegExp(`Moved ${moving} to column In Progress, position \\d+ of \\d+\\.`),
+    { timeout: 10_000 },
+  );
   await page.keyboard.press('Enter');
-  await expect(boardStatus).toContainText(`Moved ${moving} from column Todo`, { timeout: 10000 });
-  await expect(boardStatus).toContainText('to column In Progress');
+  await expect(boardStatus).toHaveText(`Moved ${moving} from column Todo to column In Progress.`, {
+    timeout: 10_000,
+  });
 
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
+  await expect(cardLocator).toBeFocused();
+  await context.close();
+});
+
+test('a filtered My Issues keyboard move announces success and focuses the destination list', async ({
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/login?next=${encodeURIComponent('/settings/general')}`);
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
+  await page.waitForURL(`${BASE}/settings/general`);
+  const bootstrapResponse = await page.request.get(`${BASE}/api/bootstrap`);
+  expect(bootstrapResponse.ok()).toBe(true);
+  const viewer = z
+    .object({ userId: z.string().min(1) })
+    .parse(await bootstrapResponse.json()).userId;
+  const teamId = await teamIdByKey(page, 'ENG');
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const made = await createIssue(page, teamId, `Filtered Keyboard Drag ${Date.now()}`, todo);
+  const anchor = await createIssue(page, teamId, `Filtered Keyboard Anchor ${Date.now()}`, todo);
+  await updateIssue(page, made.id, { assigneeId: viewer });
+  await updateIssue(page, anchor.id, { assigneeId: viewer });
+  const preferenceResponse = await page.request.put(`${BASE}/api/view-preferences`, {
+    data: { page: 'my_issues', scope: '', layout: 'board', display: {} },
+  });
+  expect(preferenceResponse.ok()).toBe(true);
+
+  await page.goto(`${BASE}/my-issues?${filterParam('state', [todo])}`);
+  await expect(page.getByTestId('my-issues-board')).toBeVisible();
+  const card = page.getByRole('listitem', { name: new RegExp(`^${made.identifier}:`) });
+  const destinationList = page.getByTestId('board-column-In Progress').locator('ul');
+  const boardStatus = page.getByTestId('board-drag-status');
+  await expect(card).toBeVisible();
+  await expect(destinationList).toBeVisible();
+
+  await card.focus();
+  await page.keyboard.press('Enter');
+  await expect(boardStatus).toContainText(`Picked up ${made.identifier}`, { timeout: 10_000 });
+  await expect(async () => {
+    await page.keyboard.press('ArrowRight');
+    await expect(boardStatus).toContainText(`Moved ${made.identifier} to column In Progress`, {
+      timeout: 2_000,
+    });
+  }).toPass({ timeout: 10_000 });
+  await page.keyboard.press('Enter');
+
+  await expect(boardStatus).toHaveText(
+    `Moved ${made.identifier} from column Todo to column In Progress.`,
+    { timeout: 10_000 },
+  );
+  await expect(card).toHaveCount(0);
+  await expect(destinationList).toBeFocused();
   await context.close();
 });
 
@@ -150,18 +239,62 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
+  const boardStatus = page.getByTestId('board-drag-status');
+  let moveRequestCount = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith(`/api/issues/${made.id}/move`)) {
+      moveRequestCount += 1;
+    }
+  });
 
   await cardLocator.focus();
   await page.keyboard.press('Space');
-  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toContainText(`Picked up ${moving}`, { timeout: 10_000 });
   await page.keyboard.press('ArrowRight');
-  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toContainText(`Moved ${moving}`, { timeout: 10_000 });
   await page.keyboard.press('Escape');
-  await expect(ariaLive).toContainText(`Cancelled dragging ${moving}`, { timeout: 10000 });
-  await expect(ariaLive).toContainText('Returned to column Todo');
+  await expect(boardStatus).toContainText(`Cancelled dragging ${moving}`, { timeout: 10_000 });
+  await expect(boardStatus).toContainText('Returned to column Todo');
+  expect(moveRequestCount).toBe(0);
 
   await expect.poll(async () => await cardsIn(page, 'Todo'), { timeout: 15_000 }).toContain(moving);
+
+  const remote = await context.newPage();
+  await remote.goto(`${BASE}/my-issues`);
+  const inProgress = await stateIdByName(remote, teamId, 'In Progress');
+  const cardBox = await page.getByTestId(`issue-card-${moving}`).boundingBox();
+  if (cardBox === null) throw new Error('the card has no box');
+  await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cardBox.x + cardBox.width / 2 + 8, cardBox.y + cardBox.height / 2, {
+    steps: 4,
+  });
+  await expect(boardStatus).toContainText(`Picked up ${moving}`);
+  await updateIssue(remote, made.id, { stateId: inProgress });
+  await expect(boardStatus).toContainText(`${moving} moved in the background`, {
+    timeout: 15_000,
+  });
+  await expect(boardStatus).toHaveText(
+    new RegExp(
+      `${moving} moved in the background to column In Progress, position \\d+(?: of \\d+)?\\. Drag cancelled\\.`,
+    ),
+  );
+  await expect(cardLocator).toBeFocused();
+  await page.mouse.up();
+  await page.mouse.move(0, 0);
+  expect(moveRequestCount).toBe(0);
+
+  const regroupedCard = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
+  await regroupedCard.focus();
+  await page.keyboard.press('Enter');
+  await expect(boardStatus).toContainText(`Picked up ${moving}`);
+  await expect(boardStatus).toContainText('in column In Progress');
+  await deleteIssue(remote, made.id);
+  await expect(boardStatus).toHaveText(`${moving} is no longer visible. Drag cancelled.`, {
+    timeout: 15_000,
+  });
+  await expect(regroupedCard).toHaveCount(0);
+  expect(moveRequestCount).toBe(0);
   await context.close();
 });
 
@@ -178,10 +311,11 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
   const made = await createIssue(page, teamId, `Keyboard Rollback ${Date.now()}`, todo);
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${made.identifier}"])`);
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
   const boardStatus = page.getByTestId('board-drag-status');
   await expect(cardLocator).toBeVisible();
+  const failure = deferred();
   await page.route(`**/api/issues/${made.id}/move`, async (route) => {
+    await failure.promise;
     await route.fulfill({
       status: 500,
       contentType: 'application/json',
@@ -191,11 +325,19 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
 
   await cardLocator.focus();
   await page.keyboard.press('Enter');
-  await expect(ariaLive).toContainText(`Picked up ${made.identifier}`, { timeout: 10_000 });
+  await expect(boardStatus).toContainText(`Picked up ${made.identifier}`, { timeout: 10_000 });
   await page.keyboard.press('ArrowRight');
-  await expect(ariaLive).toContainText(`Moved ${made.identifier}`, { timeout: 10_000 });
+  await expect(boardStatus).toContainText(`Moved ${made.identifier}`, { timeout: 10_000 });
   await page.keyboard.press('Enter');
 
+  await expect(boardStatus).toContainText(`Dropping ${made.identifier}`, { timeout: 10_000 });
+  await expect
+    .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
+    .toContain(made.identifier);
+  await expect(
+    page.getByRole('listitem', { name: new RegExp(`^${made.identifier}:`) }),
+  ).toHaveAttribute('aria-disabled', 'true');
+  failure.resolve();
   await expect(boardStatus).toContainText(`Failed to move ${made.identifier}`, { timeout: 10_000 });
   await expect(boardStatus).toContainText('Returned to column Todo');
   await expect
@@ -203,6 +345,9 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
     .toContain(made.identifier);
   expect(await cardsIn(page, 'In Progress')).not.toContain(made.identifier);
   expect(await stateIdOf(page, made.identifier)).toBe(todo);
+  await expect(
+    page.getByRole('listitem', { name: new RegExp(`^${made.identifier}:`) }),
+  ).toBeFocused();
   await context.close();
 });
 
@@ -221,7 +366,6 @@ test('a card can be reordered within the same column via keyboard', async ({ bro
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
-  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
   const boardStatus = page.getByTestId('board-drag-status');
 
   await expect
@@ -233,16 +377,15 @@ test('a card can be reordered within the same column via keyboard', async ({ bro
 
   await cardLocator.focus();
   await page.keyboard.press('Space');
-  await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toContainText(`Picked up ${moving}`, { timeout: 10_000 });
   await page.keyboard.press('ArrowDown');
-  await expect(ariaLive).toContainText(`Moved ${moving} to column Todo, position 2`, {
-    timeout: 10000,
+  await expect(boardStatus).toContainText(`Moved ${moving} to column Todo, position 2`, {
+    timeout: 10_000,
   });
   await page.keyboard.press('Enter');
-  await expect(boardStatus).toContainText(`Moved ${moving} from column Todo, position 1`, {
-    timeout: 10000,
+  await expect(boardStatus).toHaveText(`Moved ${moving} from column Todo to column Todo.`, {
+    timeout: 10_000,
   });
-  await expect(boardStatus).toContainText('to column Todo, position 2');
 
   await expect
     .poll(async () => {

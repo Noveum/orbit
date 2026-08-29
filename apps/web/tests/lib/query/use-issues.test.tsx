@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type { Issue } from '../../../src/lib/query/schemas.ts';
+import type { IssuePages } from '../../../src/lib/query/sync.ts';
+import { flattenIssuePages, mapIssuePages } from '../../../src/lib/query/sync.ts';
 
 mock.module('@/components/ui/toast.tsx', () => ({ useToast: () => ({ toast: () => undefined }) }));
 
-const { useAssignedIssues, useDeleteIssues, useIssues, useMoveIssue } = await import(
-  '../../../src/lib/query/use-issues.ts'
-);
+const {
+  authoritativeCachedIssue,
+  DEFAULT_ISSUE_QUERY,
+  useAssignedIssues,
+  useColumnIssues,
+  useDeleteIssues,
+  useIssues,
+  useMoveIssue,
+} = await import('../../../src/lib/query/use-issues.ts');
 const { queryKeys } = await import('../../../src/lib/query/keys.ts');
 
 const TEAM = 'team_eng';
@@ -59,6 +67,20 @@ interface FetchLog {
   readonly methods: string[];
 }
 
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (resolvePromise === undefined) throw new Error('deferred promise did not initialize');
+  return { promise, resolve: resolvePromise };
+}
+
 function stubFetch(handler: (url: string, init: RequestInit | undefined) => unknown): FetchLog {
   const log: FetchLog = { urls: [], methods: [] };
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
@@ -83,6 +105,26 @@ function wrapper(client: QueryClient) {
 
 function newClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+function cachedIssue(client: QueryClient): Issue | undefined {
+  for (const [, pages] of client.getQueriesData<IssuePages>({
+    queryKey: queryKeys.issueTeam(TEAM),
+  })) {
+    const found = pages === undefined ? undefined : flattenIssuePages(pages)[0];
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function issuePages(issues: readonly Issue[]): IssuePages {
+  return { pages: [{ issues: [...issues], nextCursor: null }], pageParams: [null] };
+}
+
+function issueFromPagesForTest(pages: IssuePages | undefined, issueId: string): Issue | undefined {
+  return pages === undefined
+    ? undefined
+    : flattenIssuePages(pages).find((row) => row.id === issueId);
 }
 
 afterEach(() => {
@@ -151,6 +193,450 @@ describe('issue mutations patch the cache without a refetch drain', () => {
 
     expect(log.methods.filter((method) => method === 'POST')).toHaveLength(1);
     expect(log.methods.filter((method) => method === 'GET')).toHaveLength(1);
+  });
+
+  it('does not let a failed move roll back a newer cached issue', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_doing'));
+    act(() => {
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) =>
+              issues.map((row) =>
+                row.id === 'issue_1' ? issue({ stateId: 'state_done', syncId: 3 }) : row,
+              ),
+            ),
+      );
+    });
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_done'));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
+    expect(cachedIssue(client)).toMatchObject({ stateId: 'state_done', syncId: 3 });
+  });
+
+  it('does not roll back an equal-head intervening cache write', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_doing'));
+    act(() => {
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) =>
+              issues.map((row) => (row.id === 'issue_1' ? issue({ stateId: 'state_done' }) : row)),
+            ),
+      );
+    });
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
+    expect(cachedIssue(client)).toMatchObject({ stateId: 'state_done', syncId: 1 });
+  });
+
+  it('rolls back a failed move without overwriting a newer sibling', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1', 'issue_2'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toHaveLength(2));
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_doing'));
+
+    act(() => {
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) =>
+              issues.map((row) =>
+                row.id === 'issue_2' ? { ...row, title: 'Updated sibling', syncId: 3 } : row,
+              ),
+            ),
+      );
+    });
+    await waitFor(() =>
+      expect(list.result.current.data?.find((row) => row.id === 'issue_2')).toMatchObject({
+        title: 'Updated sibling',
+        syncId: 3,
+      }),
+    );
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+    await waitFor(() =>
+      expect(list.result.current.data?.find((row) => row.id === 'issue_1')).toMatchObject({
+        stateId: 'state_todo',
+      }),
+    );
+    expect(list.result.current.data?.find((row) => row.id === 'issue_2')).toMatchObject({
+      title: 'Updated sibling',
+      syncId: 3,
+    });
+  });
+
+  for (const scenario of [
+    {
+      name: 'waits for canonical restoration when a failed move leaves no optimistic cache occurrence',
+      refreshed: page(['issue_1'], null),
+      expectedIds: ['issue_1'],
+    },
+    {
+      name: 'does not resurrect an intervening delete when a failed move leaves no optimistic cache occurrence',
+      refreshed: page([], null),
+      expectedIds: [],
+    },
+  ] as const) {
+    it(scenario.name, async () => {
+      const pendingMove = deferred<Response>();
+      const pendingRefresh = deferred<Response>();
+      let listRequests = 0;
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') return pendingMove.promise;
+        listRequests += 1;
+        if (listRequests === 1) {
+          return Promise.resolve(Response.json(page(['issue_1'], null)));
+        }
+        return pendingRefresh.promise;
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const column = {
+        query: DEFAULT_ISSUE_QUERY,
+        groupBy: 'state',
+        scope: { teamId: TEAM },
+      };
+      const source = renderHook(() => useColumnIssues(column, 'state_todo', true), {
+        wrapper: wrapper(client),
+      });
+      await waitFor(() =>
+        expect(source.result.current.data?.map((row) => row.id)).toEqual(['issue_1']),
+      );
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      const settlement = { status: 'pending' as 'pending' | 'success' | 'error' };
+
+      let result: Promise<'success' | 'error'> | undefined;
+      await act(async () => {
+        result = move.result.current
+          .mutateAsync({
+            issue: issue(),
+            stateId: 'state_doing',
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          })
+          .then(
+            () => {
+              settlement.status = 'success';
+              return 'success' as const;
+            },
+            () => {
+              settlement.status = 'error';
+              return 'error' as const;
+            },
+          );
+        await Promise.resolve();
+      });
+      if (result === undefined) throw new Error('missing move promise');
+      await waitFor(() => expect(source.result.current.data).toHaveLength(0));
+
+      await act(async () => {
+        pendingMove.resolve(
+          Response.json(
+            { error: { code: 'move_failed', message: 'The move failed.' } },
+            { status: 500 },
+          ),
+        );
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(listRequests).toBe(2));
+      expect(settlement.status).toBe('pending');
+      expect(source.result.current.data).toHaveLength(0);
+
+      await act(async () => {
+        pendingRefresh.resolve(Response.json(scenario.refreshed));
+        expect(await result).toBe('error');
+      });
+      await waitFor(() => expect(move.result.current.isError).toBe(true));
+      await waitFor(() =>
+        expect(source.result.current.data?.map((row) => row.id)).toEqual([...scenario.expectedIds]),
+      );
+    });
+  }
+
+  it('does not let a stale move response replace a newer cached issue', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<readonly Issue[]> | undefined;
+    await act(async () => {
+      result = move.result.current.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_doing'));
+
+    act(() => {
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) =>
+              issues.map((row) =>
+                row.id === 'issue_1' ? issue({ stateId: 'state_done', syncId: 3 }) : row,
+              ),
+            ),
+      );
+    });
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_done'));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({ issue: issue({ stateId: 'state_doing', syncId: 2 }), rebalanced: [] }),
+      );
+      await result;
+    });
+    await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+    expect(cachedIssue(client)).toMatchObject({ stateId: 'state_done', syncId: 3 });
+    expect(authoritativeCachedIssue(client, 'issue_1')).toMatchObject({
+      kind: 'found',
+      issue: { stateId: 'state_done', syncId: 3 },
+    });
+  });
+
+  it('does not resurrect an issue deleted while a successful move response is in flight', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<readonly Issue[]> | undefined;
+    await act(async () => {
+      result = move.result.current.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(list.result.current.data?.[0]?.stateId).toBe('state_doing'));
+
+    act(() => {
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) => issues.filter((row) => row.id !== 'issue_1')),
+      );
+    });
+    await waitFor(() => expect(list.result.current.data).toHaveLength(0));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({ issue: issue({ stateId: 'state_doing', syncId: 2 }), rebalanced: [] }),
+      );
+      await result;
+    });
+    await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+    expect(authoritativeCachedIssue(client, 'issue_1')).toEqual({ kind: 'missing' });
+    await waitFor(() => expect(list.result.current.data).toHaveLength(0));
+  });
+
+  it('does not re-admit a stale move response into an old group column', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pending.promise;
+      return Promise.resolve(Response.json(page(['issue_1'], null)));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const doingKey = queryKeys.issues(TEAM, `teamId=${TEAM}&stateId=state_doing`);
+    client.setQueryData(doingKey, issuePages([]));
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.data).toBeDefined());
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<readonly Issue[]> | undefined;
+    await act(async () => {
+      result = move.result.current.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() =>
+      expect(
+        issueFromPagesForTest(client.getQueryData<IssuePages>(doingKey), 'issue_1'),
+      ).toMatchObject({ stateId: 'state_doing' }),
+    );
+
+    act(() => {
+      client.setQueryData<IssuePages>(doingKey, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) => issues.filter((row) => row.id !== 'issue_1')),
+      );
+      client.setQueriesData<IssuePages>({ queryKey: queryKeys.issueTeam(TEAM) }, (current) =>
+        current === undefined
+          ? current
+          : mapIssuePages(current, (issues) =>
+              issues.map((row) =>
+                row.id === 'issue_1' ? issue({ stateId: 'state_done', syncId: 3 }) : row,
+              ),
+            ),
+      );
+    });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({ issue: issue({ stateId: 'state_doing', syncId: 2 }), rebalanced: [] }),
+      );
+      await result;
+    });
+    await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+    expect(
+      issueFromPagesForTest(client.getQueryData<IssuePages>(doingKey), 'issue_1'),
+    ).toBeUndefined();
+    expect(authoritativeCachedIssue(client, 'issue_1')).toMatchObject({
+      kind: 'found',
+      issue: { stateId: 'state_done', syncId: 3 },
+    });
+  });
+
+  it('treats equal-head cache disagreement as ambiguous', () => {
+    const client = newClient();
+    client.setQueryData(
+      queryKeys.issues(TEAM, 'first'),
+      issuePages([issue({ stateId: 'state_todo', syncId: 2 })]),
+    );
+    client.setQueryData(
+      queryKeys.issues(TEAM, 'second'),
+      issuePages([issue({ stateId: 'state_done', syncId: 2 })]),
+    );
+
+    expect(authoritativeCachedIssue(client, 'issue_1').kind).toBe('ambiguous');
   });
 });
 

@@ -4,8 +4,12 @@ import type { IssueGroup } from '@/features/filters/grouping.ts';
 import {
   canDragBoard,
   columnsReadyFor,
+  dragSourceSnapshotFor,
+  dragTargetSnapshotFor,
   dropPositionFor,
+  moveResultWasSuperseded,
   planDrop,
+  sameBoardSource,
   settledDragStatus,
 } from '@/features/issues/board.tsx';
 import { scrollStep } from '@/features/issues/use-board-autoscroll.ts';
@@ -44,7 +48,7 @@ function issue(id: string, overrides: Partial<Issue> = {}): Issue {
   } as Issue;
 }
 
-function group(id: string, issues: readonly Issue[]): IssueGroup {
+function group(id: string, issues: readonly Issue[], total = issues.length): IssueGroup {
   return {
     id,
     title: id,
@@ -52,7 +56,7 @@ function group(id: string, issues: readonly Issue[]): IssueGroup {
     category: null,
     issues,
     subGroups: [],
-    total: issues.length,
+    total,
   };
 }
 
@@ -116,6 +120,13 @@ describe('reordering a card within its current column', () => {
     expect(move?.beforeId).toBe('first');
     expect(move?.afterId).toBe('second');
   });
+
+  it('does not present a loaded subset count as the column total', () => {
+    expect(dropPositionFor([group('todo', rows, 40)], 'second', 'third')).toEqual({
+      column: 'todo',
+      position: 3,
+    });
+  });
 });
 
 describe('settling keyboard drag feedback', () => {
@@ -159,7 +170,7 @@ describe('settling keyboard drag feedback', () => {
     ).toBeNull();
   });
 
-  it('announces both endpoints and ordinals when the current move succeeds', () => {
+  it('does not repeat planned ordinals after the current move succeeds', () => {
     expect(
       settledDragStatus({
         latestSession: 1,
@@ -167,10 +178,10 @@ describe('settling keyboard drag feedback', () => {
         completed,
         outcome: 'success',
       }),
-    ).toBe('Moved ENG-1 from column Todo, position 1 of 2, to column Todo, position 2 of 2.');
+    ).toBe('Moved ENG-1 from column Todo to column Todo.');
   });
 
-  it('announces the source ordinal when the current move fails', () => {
+  it('does not claim a planned source ordinal after the current move fails', () => {
     expect(
       settledDragStatus({
         latestSession: 1,
@@ -178,7 +189,176 @@ describe('settling keyboard drag feedback', () => {
         completed,
         outcome: 'error',
       }),
-    ).toBe('Failed to move ENG-1. Returned to column Todo, position 1 of 2.');
+    ).toBe('Failed to move ENG-1. Returned to column Todo.');
+  });
+
+  it('suppresses a planned endpoint when a newer cache head already won', () => {
+    const response = issue('held', { stateId: 'done', syncId: 2 });
+    const current = issue('held', { stateId: 'todo', syncId: 3 });
+
+    expect(moveResultWasSuperseded({ kind: 'found', issue: current }, response, 'success')).toBe(
+      true,
+    );
+    expect(moveResultWasSuperseded({ kind: 'ambiguous' }, response, 'success')).toBe(true);
+    expect(moveResultWasSuperseded({ kind: 'found', issue: response }, response, 'success')).toBe(
+      false,
+    );
+  });
+
+  it('accepts a successful move that intentionally exits every filtered list', () => {
+    const response = issue('held', { stateId: 'done', syncId: 2 });
+
+    expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'success')).toBe(false);
+    expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'error')).toBe(true);
+  });
+});
+
+describe('identifying the authoritative drag source', () => {
+  it('distinguishes same-named groups by stable identity', () => {
+    expect(
+      sameBoardSource(
+        { groupId: 'member_1', column: 'Alex', position: 1, total: 2 },
+        { groupId: 'member_2', column: 'Alex', position: 1, total: 2 },
+      ),
+    ).toBe(false);
+  });
+
+  it('ignores a total-only change in the same group and position', () => {
+    expect(
+      sameBoardSource(
+        { groupId: 'member_1', column: 'Alex', position: 1, total: 2 },
+        { groupId: 'member_1', column: 'Alex', position: 1, total: 3 },
+      ),
+    ).toBe(true);
+  });
+
+  it('fails closed when equal-head mirrors disagree about the source', () => {
+    const todo = issue('held', { syncId: 2, stateId: 'todo' });
+    const done = issue('held', { syncId: 2, stateId: 'done' });
+
+    expect(
+      dragSourceSnapshotFor(
+        [group('todo', [todo]), group('done', [done])],
+        'held',
+        'state',
+        undefined,
+      ).kind,
+    ).toBe('ambiguous');
+  });
+
+  it('uses the first identical source mirror when row windows differ', () => {
+    const held = issue('held', { syncId: 2 });
+    const sibling = issue('sibling', { syncId: 2, sortOrder: 2048 });
+
+    expect(
+      dragSourceSnapshotFor(
+        [group('todo', [sibling, held]), group('todo', [held, sibling])],
+        'held',
+        'state',
+        undefined,
+      ),
+    ).toEqual({
+      kind: 'found',
+      issue: held,
+      source: { groupId: 'todo', column: 'todo', position: 2, total: 2 },
+    });
+  });
+
+  it('ignores transport-only differences in equal-head source mirrors', () => {
+    const detailed = issue('held', {
+      organizationId: 'org',
+      description: 'loaded by the issue list',
+      stateEnteredAt: '2026-01-02T00:00:00.000Z',
+      syncId: 2,
+    });
+    const summarized = issue('held', {
+      organizationId: '',
+      description: '',
+      stateEnteredAt: '',
+      syncId: 2,
+    });
+
+    expect(
+      dragSourceSnapshotFor(
+        [group('todo', [detailed]), group('todo', [summarized])],
+        'held',
+        'state',
+        undefined,
+      ).kind,
+    ).toBe('found');
+  });
+
+  it('waits when the newest mirror has not reached its matching group', () => {
+    const regrouping = issue('held', { syncId: 2, stateId: 'done' });
+
+    expect(
+      dragSourceSnapshotFor([group('todo', [regrouping])], 'held', 'state', undefined).kind,
+    ).toBe('pending');
+  });
+});
+
+describe('identifying the authoritative drop target', () => {
+  it('uses the first identical target mirror when row windows differ', () => {
+    const held = issue('held');
+    const first = issue('first', { stateId: 'done', syncId: 2, sortOrder: 1024 });
+    const target = issue('target', { stateId: 'done', syncId: 2, sortOrder: 2048 });
+
+    expect(
+      dragTargetSnapshotFor(
+        [group('done', [first, target]), group('done', [target, first])],
+        held,
+        'target',
+        'state',
+        undefined,
+        true,
+      ),
+    ).toEqual({
+      kind: 'found',
+      target: {
+        overId: 'target',
+        destination: { groupId: 'done', column: 'done', position: 2, total: 3 },
+        placement: expect.objectContaining({
+          issue: held,
+          stateId: 'done',
+          beforeId: 'first',
+          afterId: 'target',
+        }),
+      },
+    });
+  });
+
+  it('fails closed when equal-head target contents disagree', () => {
+    const held = issue('held');
+    const left = issue('target', { stateId: 'done', syncId: 2, sortOrder: 1024 });
+    const right = issue('target', { stateId: 'done', syncId: 2, sortOrder: 2048 });
+
+    expect(
+      dragTargetSnapshotFor(
+        [group('done', [left]), group('done', [right])],
+        held,
+        'target',
+        'state',
+        undefined,
+        true,
+      ).kind,
+    ).toBe('ambiguous');
+  });
+
+  it('does not claim an ordinal when the board ordering cannot place the drop there', () => {
+    const held = issue('held');
+    const target = issue('target', { stateId: 'done', syncId: 2 });
+    const snapshot = dragTargetSnapshotFor(
+      [group('done', [target])],
+      held,
+      'target',
+      'state',
+      undefined,
+      false,
+    );
+
+    expect(snapshot.kind).toBe('found');
+    if (snapshot.kind !== 'found') throw new Error('missing drop target');
+    expect(snapshot.target.destination).toEqual({ groupId: 'done', column: 'done' });
   });
 });
 

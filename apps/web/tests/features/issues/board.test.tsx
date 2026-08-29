@@ -49,6 +49,15 @@ const todo: WorkflowState = {
   position: 1,
 };
 
+const doing: WorkflowState = {
+  id: 'state_doing',
+  teamId: 'team_1',
+  name: 'In Progress',
+  category: 'started',
+  color: '#5a63c8',
+  position: 2,
+};
+
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: 'issue_1',
@@ -87,13 +96,16 @@ const workspace: WorkspaceData = {
   userId: 'user_1',
   role: 'admin',
   teams: [{ id: 'team_1', name: 'Engineering', key: 'ENG', icon: 'circle', color: '#5a63c8' }],
-  states: [todo],
+  states: [todo, doing],
   labels: [],
   members: [],
   projects: [],
   cycles: [],
   seedIssues: [],
-  stateById: new Map([[todo.id, todo]]),
+  stateById: new Map([
+    [todo.id, todo],
+    [doing.id, doing],
+  ]),
   labelById: new Map(),
   memberById: new Map(),
   openQuickCreate: () => undefined,
@@ -114,6 +126,14 @@ const second = issue({
   title: 'Second task',
 });
 
+const third = issue({
+  id: 'issue_3',
+  number: 3,
+  identifier: 'ENG-3',
+  title: 'Third task',
+  stateId: doing.id,
+});
+
 const ownedColumnSource: BoardColumnSource = {
   query: { filter: emptyFilterGroup(), orderBy: 'manual' },
   groupBy: 'state',
@@ -122,8 +142,14 @@ const ownedColumnSource: BoardColumnSource = {
 };
 
 function boardPage(rows: readonly Issue[]): BoardPage {
+  const groups = [todo, doing].flatMap((state) => {
+    const issues = rows.filter((row) => row.stateId === state.id);
+    return issues.length === 0
+      ? []
+      : [{ id: state.id, total: issues.length, issues, nextCursor: null }];
+  });
   return {
-    groups: [{ id: todo.id, total: rows.length, issues: [...rows], nextCursor: null }],
+    groups,
     truncated: false,
   };
 }
@@ -137,7 +163,7 @@ function renderBoard(
     groupIssues(
       nextRows,
       'state',
-      { states: [todo], members: [], projects: [], cycles: [], labels: [] },
+      { states: [todo, doing], members: [], projects: [], cycles: [], labels: [] },
       { showEmptyGroups: false, ordering: 'manual' },
     );
   const client = new QueryClient({
@@ -153,14 +179,14 @@ function renderBoard(
     );
     seedBoardColumns(client, columnSource, page, Date.now());
   }
-  const board = (nextRows: readonly Issue[]) => (
+  const board = (nextRows: readonly Issue[], nextDraggable: boolean) => (
     <QueryClientProvider client={client}>
       <TooltipProvider>
         <ToastProvider>
           <HotkeyProvider>
             <Board
               groups={makeGroups(nextRows)}
-              draggable={draggable}
+              draggable={nextDraggable}
               {...(columnSource === undefined ? {} : { columnSource })}
             />
           </HotkeyProvider>
@@ -168,11 +194,11 @@ function renderBoard(
       </TooltipProvider>
     </QueryClientProvider>
   );
-  const rendered = render(board(rows));
+  const rendered = render(board(rows, draggable));
   return {
     client,
-    rerenderBoard(nextRows: readonly Issue[]) {
-      rendered.rerender(board(nextRows));
+    rerenderBoard(nextRows: readonly Issue[], nextDraggable = draggable) {
+      rendered.rerender(board(nextRows, nextDraggable));
     },
   };
 }
@@ -182,8 +208,10 @@ describe('Board card keyboard boundaries', () => {
     renderBoard(true);
     const card = screen.getByTestId('issue-card-ENG-1');
     const item = card.closest('li');
+    if (item === null) throw new Error('missing draggable list item');
 
-    expect(item?.getAttribute('role')).toBe('listitem');
+    expect(item.getAttribute('role')).toBe('listitem');
+    expect(screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' })).toBe(item);
     expect(within(card).getByRole('link', { name: 'Domain auto join' })).toBeInTheDocument();
   });
 
@@ -209,30 +237,163 @@ describe('Board card keyboard boundaries', () => {
     expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
   });
 
-  it('reconciles a background update without replacing the active drag announcement', () => {
+  it('moves card focus with all four arrow keys before a drag starts', () => {
+    renderBoard(true, [issue(), second, third]);
+    const firstItem = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    const secondItem = screen.getByRole('listitem', { name: 'ENG-2: Second task' });
+    const thirdItem = screen.getByRole('listitem', { name: 'ENG-3: Third task' });
+    firstItem.focus();
+
+    fireEvent.keyDown(firstItem, { key: 'ArrowDown', code: 'ArrowDown' });
+    expect(document.activeElement).toBe(secondItem);
+    fireEvent.keyDown(secondItem, { key: 'ArrowUp', code: 'ArrowUp' });
+    expect(document.activeElement).toBe(firstItem);
+    fireEvent.keyDown(firstItem, { key: 'ArrowRight', code: 'ArrowRight' });
+    expect(document.activeElement).toBe(thirdItem);
+    fireEvent.keyDown(thirdItem, { key: 'ArrowLeft', code: 'ArrowLeft' });
+    expect(document.activeElement).toBe(firstItem);
+  });
+
+  it('clears an active keyboard session when dragging becomes unavailable', async () => {
+    const rows = [issue(), second];
+    const rendered = renderBoard(true, rows);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2);
+
+    await act(async () => {
+      rendered.rerenderBoard(rows, false);
+      await settleKeyboardSensor();
+    });
+    rendered.rerenderBoard(rows, true);
+
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
+    expect(dndStatus()).toBeEmptyDOMElement();
+    const restarted = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    restarted.focus();
+    fireEvent.keyDown(restarted, { key: 'Enter', code: 'Enter' });
+    expect(dndStatus()).toHaveTextContent('Picked up ENG-1');
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2);
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(restarted, { key: 'Escape', code: 'Escape' });
+    });
+  });
+
+  it('reconciles a background update without replacing the active drag announcement', async () => {
     const rendered = renderBoard(true);
     const card = screen.getByTestId('issue-card-ENG-1').closest('li');
     if (card === null) throw new Error('missing draggable card');
     card.focus();
     fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
 
-    const dndStatus = document.querySelector<HTMLElement>(
-      '[id^="DndLiveRegion-"][aria-live="assertive"]',
-    );
-    if (dndStatus === null) throw new Error('missing drag status');
+    const dndStatus = screen.getByTestId('board-drag-status');
     expect(dndStatus).toHaveTextContent('Picked up ENG-1');
+    const spokenStatuses = Array.from(
+      document.querySelectorAll<HTMLElement>('[aria-live="assertive"]'),
+    ).filter((node) => node.textContent?.trim().length !== 0);
+    expect(spokenStatuses).toEqual([dndStatus]);
 
     const updated = issue({
       syncId: 2,
       updatedAt: '2026-01-02T00:00:00.000Z',
       title: 'Updated domain auto join',
     });
-    rendered.rerenderBoard([updated, second]);
+    await act(async () => {
+      rendered.rerenderBoard([updated, second]);
+      await Promise.resolve();
+    });
 
-    expect(dndStatus).not.toHaveTextContent('updated in the background');
     expect(screen.getByTestId('board-drag-status')).toHaveTextContent(
-      'ENG-1 was updated in the background. Still holding it in column Todo, position 1 of 2.',
+      'Picked up ENG-1: Domain auto join in column Todo, position 1 of 2.',
     );
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, { key: 'Escape', code: 'Escape' });
+    });
+  });
+
+  it('cancels a drag when the held issue is reordered in the background', async () => {
+    const rendered = renderBoard(true);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    await act(async () => {
+      rendered.rerenderBoard([
+        issue({ syncId: 2, sortOrder: 3072, updatedAt: '2026-01-02T00:00:00.000Z' }),
+        second,
+      ]);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-1 moved in the background to column Todo, position 2 of 2. Drag cancelled.',
+      );
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' }),
+    );
+  });
+
+  it('cancels cleanly when the held issue leaves the visible board', async () => {
+    const rendered = renderBoard(true);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    expect(dndStatus()).toHaveTextContent('Picked up ENG-1');
+
+    rendered.rerenderBoard([second]);
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent('ENG-1 is no longer visible. Drag cancelled.');
+    });
+    expect(screen.queryAllByTestId('issue-card-ENG-1')).toHaveLength(0);
+  });
+
+  it('cancels a drag when the held issue is moved in the background', async () => {
+    const rendered = renderBoard(true, [issue(), second, third]);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    const updated = issue({
+      stateId: doing.id,
+      syncId: 2,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    });
+    rendered.rerenderBoard([updated, second, third]);
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-1 moved in the background to column In Progress, position 1 of 2. Drag cancelled.',
+      );
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' }),
+      );
+    });
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
+
+    const relocated = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    await act(async () => {
+      fireEvent.keyDown(relocated, { key: 'Enter', code: 'Enter' });
+      await settleKeyboardSensor();
+    });
+    expect(dndStatus()).toHaveTextContent(
+      'Picked up ENG-1: Domain auto join in column In Progress, position 1 of 2.',
+    );
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2);
+    await act(async () => {
+      fireEvent.keyDown(relocated, { key: 'Escape', code: 'Escape' });
+      await Promise.resolve();
+    });
+    expect(dndStatus()).toHaveTextContent('Returned to column In Progress, position 1 of 2.');
+    await waitFor(() => {
+      expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
+    });
   });
 
   it('reconciles a background update from an owned column query', async () => {
@@ -258,10 +419,170 @@ describe('Board card keyboard boundaries', () => {
       await Promise.resolve();
     });
 
-    expect(dndStatus()).not.toHaveTextContent('updated in the background');
     await waitFor(() => {
-      expect(screen.getByTestId('board-drag-status')).toHaveTextContent(
-        'ENG-1 was updated in the background. Still holding it in column Todo, position 1 of 2.',
+      expect(
+        screen.getByRole('listitem', { name: 'ENG-1: Updated domain auto join' }),
+      ).toBeInTheDocument();
+    });
+    expect(dndStatus()).toHaveTextContent(
+      'Picked up ENG-1: Domain auto join in column Todo, position 1 of 2.',
+    );
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(screen.getByRole('listitem', { name: 'ENG-1: Updated domain auto join' }), {
+        key: 'Escape',
+        code: 'Escape',
+      });
+    });
+  });
+
+  it('cancels when owned rows reorder around the same held issue object', async () => {
+    const held = second;
+    const first = issue();
+    const rendered = renderBoard(true, [first, held], ownedColumnSource);
+    const card = screen.getByRole('listitem', { name: 'ENG-2: Second task' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    expect(dndStatus()).toHaveTextContent('Picked up ENG-2');
+    await act(async () => {
+      await settleKeyboardSensor();
+    });
+
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        boardPage([held, first]),
+        Date.now() + 10_000,
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-2 moved in the background to column Todo, position 1 of 2. Drag cancelled.',
+      );
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole('listitem', { name: 'ENG-2: Second task' }),
+    );
+  });
+
+  it('waits for an owned column handoff before cancelling a background regroup', async () => {
+    const rendered = renderBoard(true, [issue(), second, third], ownedColumnSource);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    const updated = issue({
+      stateId: doing.id,
+      syncId: 2,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      title: 'Regrouped domain auto join',
+    });
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        {
+          groups: [{ id: todo.id, total: 2, issues: [updated, second], nextCursor: null }],
+          truncated: false,
+        },
+        Date.now() + 10_000,
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole('listitem', { name: 'ENG-1: Regrouped domain auto join' }),
+      ).toBeInTheDocument();
+    });
+    expect(dndStatus()).not.toHaveTextContent('updated in the background');
+
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        {
+          groups: [{ id: todo.id, total: 1, issues: [second], nextCursor: null }],
+          truncated: false,
+        },
+        Date.now() + 20_000,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        {
+          groups: [{ id: doing.id, total: 2, issues: [updated, third], nextCursor: null }],
+          truncated: false,
+        },
+        Date.now() + 30_000,
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-1 moved in the background to column In Progress, position 1. Drag cancelled.',
+      );
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByRole('listitem', { name: 'ENG-1: Regrouped domain auto join' }),
+      );
+    });
+  });
+
+  it('uses the newest copy when a regroup briefly appears in both owned columns', async () => {
+    const rendered = renderBoard(true, [issue(), second, third], ownedColumnSource);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    const updated = issue({
+      stateId: doing.id,
+      syncId: 2,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      title: 'Regrouped domain auto join',
+    });
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        {
+          groups: [{ id: doing.id, total: 2, issues: [updated, third], nextCursor: null }],
+          truncated: false,
+        },
+        Date.now() + 10_000,
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-1 moved in the background to column In Progress, position 1. Drag cancelled.',
+      );
+    });
+  });
+
+  it('uses a fresh parent regroup to cancel while the owned column mirror catches up', async () => {
+    const rendered = renderBoard(true, [issue(), second, third], ownedColumnSource);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    rendered.rerenderBoard([
+      issue({ stateId: doing.id, syncId: 2, updatedAt: '2026-01-02T00:00:00.000Z' }),
+      second,
+      third,
+    ]);
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent(
+        'ENG-1 moved in the background to column In Progress, position 1 of 2. Drag cancelled.',
       );
     });
   });
@@ -273,11 +594,11 @@ function cardLink(identifier: string, title: string): HTMLElement {
 }
 
 function dndStatus(): HTMLElement {
-  const status = document.querySelector<HTMLElement>(
-    '[id^="DndLiveRegion-"][aria-live="assertive"]',
-  );
-  if (status === null) throw new Error('missing drag status');
-  return status;
+  return screen.getByTestId('board-drag-status');
+}
+
+async function settleKeyboardSensor(): Promise<void> {
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 }
 
 describe('Board peek', () => {

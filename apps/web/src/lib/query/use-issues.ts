@@ -370,6 +370,8 @@ function reconcile(
   admitNew = false,
 ): readonly Issue[] {
   const index = issues.findIndex((issue) => issue.id === next.id);
+  const current = issues[index];
+  if (current !== undefined && current.syncId > next.syncId) return issues;
   if (!belongsInList(search, next)) {
     return index === -1 ? issues : issues.filter((issue) => issue.id !== next.id);
   }
@@ -380,6 +382,55 @@ function reconcile(
   }
   if (!(admitNew || admitsNewRows(search))) return issues;
   return sortForSearch(search, [...issues, next]);
+}
+
+export type AuthoritativeCachedIssue =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'ambiguous' }
+  | { readonly kind: 'found'; readonly issue: Issue };
+
+export function authoritativeCachedIssue(
+  client: QueryClient,
+  issueId: string,
+): AuthoritativeCachedIssue {
+  const occurrences = client
+    .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
+    .flatMap(([, pages]) =>
+      pages === undefined ? [] : flattenIssuePages(pages).filter((issue) => issue.id === issueId),
+    );
+  const newestSyncId = occurrences.reduce(
+    (newest, issue) => Math.max(newest, issue.syncId),
+    Number.NEGATIVE_INFINITY,
+  );
+  const newest = occurrences.filter((issue) => issue.syncId === newestSyncId);
+  const issue = newest[0];
+  if (issue === undefined) return { kind: 'missing' };
+  const heads = new Set(newest.map((candidate) => JSON.stringify(candidate)));
+  return heads.size === 1 ? { kind: 'found', issue } : { kind: 'ambiguous' };
+}
+
+function issueFromPages(pages: IssuePages | undefined, issueId: string): Issue | undefined {
+  return pages === undefined
+    ? undefined
+    : flattenIssuePages(pages).find((issue) => issue.id === issueId);
+}
+
+function issueFingerprint(issue: Issue): string {
+  return JSON.stringify(issue) ?? '';
+}
+
+function restoreIssueInPages(
+  pages: IssuePages,
+  search: string,
+  issueId: string,
+  before: Issue | undefined,
+): IssuePages {
+  return mapIssuePages(pages, (issues) => {
+    const current = issues.find((issue) => issue.id === issueId);
+    if (before === undefined && current === undefined) return issues;
+    const without = current === undefined ? issues : issues.filter((issue) => issue.id !== issueId);
+    return before === undefined ? without : reconcile(search, without, before, true);
+  });
 }
 
 function filteredListsHolding(
@@ -444,7 +495,10 @@ function placeIssues(client: QueryClient, moved: readonly Issue[]): void {
   const before = filteredListsHolding(client, moved);
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
     let next = issues;
-    for (const issue of moved) next = reconcile(search, next, issue);
+    for (const issue of moved) {
+      if (!next.some((current) => current.id === issue.id)) continue;
+      next = reconcile(search, next, issue);
+    }
     return sortForSearch(search, next);
   });
   settleFilteredLists(client, moved, before);
@@ -568,16 +622,68 @@ export function useMoveIssue() {
     },
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      const before = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
         ...regroupingOf(input),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
       placeMovedIssue(client, optimistic);
-      return {};
+      return {
+        lists: before.map(([key, pages]) => ({
+          key,
+          before: issueFromPages(pages, input.issue.id),
+          optimistic: issueFromPages(client.getQueryData<IssuePages>(key), input.issue.id),
+        })),
+      };
     },
-    onError: (error, input) => {
-      placeIssue(client, input.issue);
+    onError: async (error, input, context) => {
+      const lists = context?.lists ?? [];
+      const refreshes: Promise<void>[] = [];
+      const expected = new Set(
+        lists.flatMap((snapshot) =>
+          snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
+        ),
+      );
+      const current = client
+        .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
+        .flatMap(([, pages]) => {
+          const found = issueFromPages(pages, input.issue.id);
+          return found === undefined ? [] : [found];
+        });
+      const hasOptimistic = current.some((issue) => expected.has(issueFingerprint(issue)));
+      const intervening = current.some((issue) => !expected.has(issueFingerprint(issue)));
+
+      for (const snapshot of lists) {
+        const pages = client.getQueryData<IssuePages>(snapshot.key);
+        const found = issueFromPages(pages, input.issue.id);
+        const stillOptimistic =
+          found === undefined
+            ? snapshot.optimistic === undefined
+            : snapshot.optimistic !== undefined &&
+              issueFingerprint(found) === issueFingerprint(snapshot.optimistic);
+        if (hasOptimistic && !intervening && stillOptimistic) {
+          client.setQueryData<IssuePages>(snapshot.key, (pages) => {
+            if (pages === undefined) return pages;
+            const found = issueFromPages(pages, input.issue.id);
+            if (found !== undefined && !expected.has(issueFingerprint(found))) return pages;
+            return restoreIssueInPages(
+              pages,
+              searchOf(snapshot.key),
+              input.issue.id,
+              snapshot.before,
+            );
+          });
+          continue;
+        }
+        if (intervening && !stillOptimistic) continue;
+        refreshes.push(
+          client
+            .invalidateQueries({ queryKey: snapshot.key, exact: true, refetchType: 'all' })
+            .catch(() => undefined),
+        );
+      }
+      await Promise.all(refreshes);
       toast({ title: 'Could not move that issue', description: messageOf(error), tone: 'danger' });
     },
     onSuccess: (moved) => {
