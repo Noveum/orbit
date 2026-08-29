@@ -4,8 +4,19 @@ export function normalizeDomains(entries: readonly string[]): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-export function parseDomainList(value: string | undefined): string[] {
-  return normalizeDomains((value ?? '').split(','));
+export function parseDomainList(
+  value: string | undefined,
+  name = 'The domain allowlist',
+): string[] {
+  const raw = (value ?? '').trim();
+  if (raw.length === 0) return [];
+  const domains = normalizeDomains(raw.split(','));
+  if (domains.length === 0) {
+    throw new Error(
+      `${name} is set to ${JSON.stringify(value)}, which names no domain. Leave it unset to admit every domain.`,
+    );
+  }
+  return domains;
 }
 
 export function emailDomain(email: string): string | null {

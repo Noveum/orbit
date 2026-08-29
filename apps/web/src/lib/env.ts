@@ -89,7 +89,9 @@ export function serverEnv(): ServerEnv {
 }
 
 export function signUpIsOpen(): boolean {
-  return parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS']).length === 0;
+  return (
+    parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS'], 'ALLOWED_EMAIL_DOMAINS').length === 0
+  );
 }
 
 export interface GithubAppConfig {

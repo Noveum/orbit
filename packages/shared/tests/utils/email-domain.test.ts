@@ -32,10 +32,19 @@ describe('parseDomainList', () => {
     expect(parseDomainList('example.com, @orbit.test')).toEqual(['example.com', 'orbit.test']);
   });
 
-  it('treats unset, empty and separator only values as no restriction', () => {
+  it('treats unset and empty values as no restriction', () => {
     expect(parseDomainList(undefined)).toEqual([]);
     expect(parseDomainList('')).toEqual([]);
     expect(parseDomainList('  ')).toEqual([]);
-    expect(parseDomainList(',,')).toEqual([]);
+  });
+
+  it('refuses a value that is set but names no domain, rather than admitting everyone', () => {
+    expect(() => parseDomainList('@')).toThrow(/names no domain/);
+    expect(() => parseDomainList(',,')).toThrow(/names no domain/);
+    expect(() => parseDomainList('@, @')).toThrow(/names no domain/);
+  });
+
+  it('names the variable it was given so the message is actionable', () => {
+    expect(() => parseDomainList('@', 'ALLOWED_EMAIL_DOMAINS')).toThrow(/ALLOWED_EMAIL_DOMAINS/);
   });
 });

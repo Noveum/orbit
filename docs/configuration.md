@@ -103,11 +103,14 @@ rather than just invites, and it is checked again on every session so an address
 that stops qualifying loses access. A refused address is told so, rather than
 being left waiting for a code that will never arrive.
 
-Set it when an instance should only admit one organisation. A workspace can
-narrow it further with its own `allowedEmailDomains` setting. The hosted instance
-at <https://orbit.noveum.ai> leaves it unset.
+Set it when an instance should only admit one organisation. A value that is set
+but names no domain, such as a bare `@`, is refused rather than read as no
+restriction, so a typo cannot quietly open an instance you meant to close.
 
-Signing in is rate limited per IP whatever the method: 10 sign-in code requests
+A workspace can narrow it further with its own `allowedEmailDomains` setting. The
+hosted instance at <https://orbit.noveum.ai> leaves it unset.
+
+Authentication is rate limited per IP whatever the method: 10 sign-in code requests
 each ten minutes, 5 password sign-ins a minute, and 5 password sign-ups an hour,
 on top of better-auth's own defaults for the paths without a rule of their own.
 Better-auth applies them in production only, and a sign-in code additionally dies

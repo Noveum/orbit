@@ -227,7 +227,7 @@ export function matchAllowedDomain(
 }
 
 export function configuredEmailDomains(): string[] {
-  return parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS']);
+  return parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS'], 'ALLOWED_EMAIL_DOMAINS');
 }
 
 export function assertEmailDomainAllowed(
