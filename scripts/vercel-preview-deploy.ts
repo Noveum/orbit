@@ -477,7 +477,7 @@ function fetchPullRequest(
 }
 
 type CiProof =
-  | { readonly ok: true; readonly workflowRunId: number }
+  | { readonly ok: true; readonly workflowRunId: number; readonly mainSha: string }
   | { readonly ok: false; readonly reason: 'ci-unavailable' | 'ci-not-current' | 'ci-not-green' };
 
 function newestWorkflowRun(
@@ -589,7 +589,7 @@ async function proveCurrentCi(
   if (newest.status !== 'completed' || newest.conclusion !== 'success') {
     return { ok: false, reason: 'ci-not-green' };
   }
-  return { ok: true, workflowRunId: newest.id };
+  return { ok: true, workflowRunId: newest.id, mainSha: main.object.sha };
 }
 
 async function affectsWeb(
@@ -749,9 +749,10 @@ async function cancelPolledDeployment(
   environment: VercelPreviewEnvironment,
   pullRequest: GithubPreviewPullRequest,
   deployment: VercelDeployment,
+  intent: CancellationIntent,
 ): Promise<PreviewResult> {
   return (
-    (await cancelOneActiveDeployment(runtime, environment, pullRequest, deployment)) ??
+    (await cancelOneActiveDeployment(runtime, environment, pullRequest, deployment, intent)) ??
     skipped(pullRequest.number, 'no-active-deployment')
   );
 }
@@ -768,12 +769,24 @@ async function pollingInterruption(
   }
   if (pullRequestIdentityMatches(originalPullRequest, currentPullRequest)) {
     if (currentPullRequest.state === 'open' && isPreviewEligible(currentPullRequest)) return null;
-    return await cancelPolledDeployment(runtime, environment, currentPullRequest, deployment);
+    return await cancelPolledDeployment(
+      runtime,
+      environment,
+      currentPullRequest,
+      deployment,
+      'ineligible-current',
+    );
   }
   if (!supersedingHeadMatches(originalPullRequest, currentPullRequest)) {
     return skipped(originalPullRequest.number, 'stale-event');
   }
-  return await cancelPolledDeployment(runtime, environment, originalPullRequest, deployment);
+  return await cancelPolledDeployment(
+    runtime,
+    environment,
+    originalPullRequest,
+    deployment,
+    'superseded-head',
+  );
 }
 
 async function pollDeployment(
@@ -886,15 +899,42 @@ function currentStateMatches(
   );
 }
 
+type CancellationIntent = 'eligible-current' | 'ineligible-current' | 'superseded-head';
+
+function cancellationPreflightFailure(
+  environment: VercelPreviewEnvironment,
+  expectedPullRequest: GithubPreviewPullRequest,
+  currentPullRequest: GithubPreviewPullRequest,
+  intent: CancellationIntent,
+): SkippedReason | null {
+  if (!trustedCurrentPullRequest(environment, currentPullRequest)) return 'stale-event';
+  if (intent === 'superseded-head') {
+    return supersedingHeadMatches(expectedPullRequest, currentPullRequest) ? null : 'stale-event';
+  }
+  if (!pullRequestIdentityMatches(expectedPullRequest, currentPullRequest)) return 'stale-event';
+  const eligible = currentPullRequest.state === 'open' && isPreviewEligible(currentPullRequest);
+  if (intent === 'eligible-current') return eligible ? null : 'stale-event';
+  return eligible ? 'preview-eligible' : null;
+}
+
 async function cancelOneActiveDeployment(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
   pullRequest: GithubPreviewPullRequest,
   item: VercelDeployment,
+  intent: CancellationIntent,
 ): Promise<PreviewResult | null> {
   let canceled: VercelCanceledDeployment;
   const encodedDeploymentId = deploymentPathSegment(item.uid, environment);
   await verifyVercelProjectIdentity(runtime, environment);
+  const currentPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
+  const preflightFailure = cancellationPreflightFailure(
+    environment,
+    pullRequest,
+    currentPullRequest,
+    intent,
+  );
+  if (preflightFailure !== null) return skipped(pullRequest.number, preflightFailure);
   try {
     canceled = await requestJson(
       runtime,
@@ -996,10 +1036,32 @@ async function cancelPriorHeadDeployments(
       environment,
       currentPullRequest,
       deployment,
+      'eligible-current',
     );
+    if (result?.kind === 'skipped') {
+      return {
+        current: false,
+        results: results.length > 0 ? results : [result],
+      };
+    }
     if (result) results.push(result);
   }
   return { current: true, results };
+}
+
+function activeCancellationFailure(
+  environment: VercelPreviewEnvironment,
+  expectedPullRequest: GithubPreviewPullRequest,
+  currentPullRequest: GithubPreviewPullRequest,
+): SkippedReason | null {
+  const identityIsCurrent =
+    pullRequestIdentityMatches(expectedPullRequest, currentPullRequest) &&
+    repositorySlugMatches(currentPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+    isSameRepositoryPullRequest(currentPullRequest);
+  if (!identityIsCurrent) return 'stale-event';
+  return currentPullRequest.state === 'open' && isPreviewEligible(currentPullRequest)
+    ? 'preview-eligible'
+    : null;
 }
 
 async function cancelActiveDeployments(
@@ -1021,17 +1083,18 @@ async function cancelActiveDeployments(
   const results: PreviewResult[] = [];
   for (const item of active) {
     const finalPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
-    const identityIsCurrent =
-      pullRequestIdentityMatches(pullRequest, finalPullRequest) &&
-      repositorySlugMatches(finalPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
-      isSameRepositoryPullRequest(finalPullRequest);
-    if (!identityIsCurrent) {
-      return results.length > 0 ? results : [skipped(pullRequest.number, 'stale-event')];
+    const failure = activeCancellationFailure(environment, pullRequest, finalPullRequest);
+    if (failure !== null) {
+      return results.length > 0 ? results : [skipped(pullRequest.number, failure)];
     }
-    if (finalPullRequest.state === 'open' && isPreviewEligible(finalPullRequest)) {
-      return results.length > 0 ? results : [skipped(pullRequest.number, 'preview-eligible')];
-    }
-    const result = await cancelOneActiveDeployment(runtime, environment, finalPullRequest, item);
+    const result = await cancelOneActiveDeployment(
+      runtime,
+      environment,
+      finalPullRequest,
+      item,
+      'ineligible-current',
+    );
+    if (result?.kind === 'skipped') return results.length > 0 ? results : [result];
     if (result) results.push(result);
   }
   return results.length > 0 ? results : [skipped(pullRequest.number, 'no-active-deployment')];
@@ -1105,12 +1168,30 @@ async function createDeployment(
   runtime: ControllerRuntime,
   environment: VercelPreviewEnvironment,
   pullRequest: GithubPreviewPullRequest,
-  workflowRunId: number,
   forceNew: boolean,
   preCreateDeploymentIds: ReadonlySet<string>,
 ): Promise<PreviewResult> {
-  const metadata = deploymentMetadata(pullRequest, workflowRunId);
   await verifyVercelProjectIdentity(runtime, environment);
+  const ci = await proveCurrentCi(runtime, environment, pullRequest);
+  if (!ci.ok) return skipped(pullRequest.number, ci.reason);
+  const mutationPullRequest = await fetchPullRequest(runtime, environment, pullRequest.number);
+  const mutationStateIsCurrent =
+    currentStateMatches(pullRequest, mutationPullRequest) &&
+    repositorySlugMatches(mutationPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
+    isSameRepositoryPullRequest(mutationPullRequest) &&
+    mutationPullRequest.base.ref === 'main' &&
+    mutationPullRequest.state === 'open' &&
+    isPreviewEligible(mutationPullRequest);
+  if (!mutationStateIsCurrent) return skipped(pullRequest.number, 'stale-event');
+  const currentMain = await requestJson(
+    runtime,
+    environment,
+    'github',
+    githubUrl(environment.GITHUB_REPOSITORY, '/git/ref/heads/main'),
+    githubPreviewRefSchema,
+  );
+  if (currentMain.object.sha !== ci.mainSha) return skipped(pullRequest.number, 'ci-not-current');
+  const metadata = deploymentMetadata(mutationPullRequest, ci.workflowRunId);
   let created: VercelCreatedDeployment;
   try {
     created = await requestJson(
@@ -1129,9 +1210,9 @@ async function createDeployment(
           project: environment.VERCEL_PROJECT_ID,
           gitSource: {
             type: 'github',
-            repoId: pullRequest.base.repo.id,
-            ref: pullRequest.head.ref,
-            sha: pullRequest.head.sha,
+            repoId: mutationPullRequest.base.repo.id,
+            ref: mutationPullRequest.head.ref,
+            sha: mutationPullRequest.head.sha,
           },
           meta: metadata,
         },
@@ -1144,23 +1225,34 @@ async function createDeployment(
         created,
         created.id,
         environment,
-        pullRequest,
+        mutationPullRequest,
         metadata,
-        pullRequest.head.sha,
+        mutationPullRequest.head.sha,
       )
     ) {
       throw new RequestFailure('created deployment identity drift', 200, true);
     }
   } catch (error) {
     if (!(error instanceof RequestFailure && error.ambiguousMutation)) throw error;
-    return observeAmbiguousCreate(runtime, environment, pullRequest, preCreateDeploymentIds);
+    return observeAmbiguousCreate(
+      runtime,
+      environment,
+      mutationPullRequest,
+      preCreateDeploymentIds,
+    );
   }
-  const polled = await pollDeployment(runtime, environment, pullRequest, created.id, created.meta);
+  const polled = await pollDeployment(
+    runtime,
+    environment,
+    mutationPullRequest,
+    created.id,
+    created.meta,
+  );
   if (polled.kind === 'interrupted') return polled.result;
   const ready = polled.deployment;
   return {
     kind: 'created',
-    pullRequestNumber: pullRequest.number,
+    pullRequestNumber: mutationPullRequest.number,
     reason: 'created-ready',
     deploymentId: ready.id,
     url: ready.url,
@@ -1228,26 +1320,12 @@ async function reconcileCandidate(
   if (!currentStateMatches(pullRequest, finalPullRequest)) {
     return [...priorHeadResults, skipped(candidate.number, 'stale-event')];
   }
-  const finalCi = await proveCurrentCi(runtime, environment, finalPullRequest);
-  if (!finalCi.ok) return [...priorHeadResults, skipped(candidate.number, finalCi.reason)];
-  const mutationPullRequest = await fetchPullRequest(runtime, environment, finalPullRequest.number);
-  const mutationStateIsCurrent =
-    currentStateMatches(finalPullRequest, mutationPullRequest) &&
-    repositorySlugMatches(mutationPullRequest.base.repo, environment.GITHUB_REPOSITORY) &&
-    isSameRepositoryPullRequest(mutationPullRequest) &&
-    mutationPullRequest.base.ref === 'main' &&
-    mutationPullRequest.state === 'open' &&
-    isPreviewEligible(mutationPullRequest);
-  if (!mutationStateIsCurrent) {
-    return [...priorHeadResults, skipped(candidate.number, 'stale-event')];
-  }
   return [
     ...priorHeadResults,
     await createDeployment(
       runtime,
       environment,
-      mutationPullRequest,
-      finalCi.workflowRunId,
+      finalPullRequest,
       exact.length > 0,
       new Set(listed.map(({ uid }) => uid)),
     ),

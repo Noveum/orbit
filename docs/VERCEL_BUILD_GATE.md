@@ -76,9 +76,10 @@ The controller uses one deployment path:
 1. Vercel v7 lists Preview deployments by team, project, and branch before CI
    to find active work from prior heads. It lists by exact head SHA again when
    creating or reusing current-head work.
-2. Vercel v9 reads the configured project immediately before every mutation.
+2. Vercel v9 validates the configured project before every mutation preflight.
    The validated project ID, name, and account ID must match the configured
-   project and team.
+   project and team. Create then re-proves CI, refreshes the pull request, and
+   re-reads `main`. Cancel refreshes its path-specific intent before the PATCH.
 3. Vercel v13 creates or reads a deployment with the same-repository GitHub
    repository ID, head ref, exact head SHA, and Orbit metadata. It omits a
    target so Vercel uses the project's Preview environment.

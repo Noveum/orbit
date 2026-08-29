@@ -159,9 +159,11 @@ Deployment IDs must contain only ASCII letters, digits, underscores, and hyphens
 length bound. Every ID is checked against both tokens before use, and every dynamic deployment path
 segment is URL encoded.
 
-Immediately before each Create or Cancel request, the controller reads `/v9/projects/{projectId}`
+Before each Create or Cancel mutation preflight, the controller reads `/v9/projects/{projectId}`
 through the configured team scope. The validated project ID, name, and account ID must match the
-configured project and team, including after a long deployment poll.
+configured project and team, including after a long deployment poll. Create then re-proves current
+CI, refreshes pull request state, and re-reads `main` immediately before POST. Cancel refreshes the
+path-specific eligibility or superseded-head intent immediately before PATCH.
 
 If an exact deployment is ready, it is reused. An exact queued, initializing, or building
 deployment is polled rather than duplicated. If no such deployment exists, the controller calls

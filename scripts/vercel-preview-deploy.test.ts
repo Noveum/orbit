@@ -846,6 +846,65 @@ describe('existing deployments, cancellation, and pagination', () => {
     expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
   });
 
+  test('eligibility changing during project validation prevents cancellation', async () => {
+    let projectValidated = false;
+    const harness = createHarness({
+      pullRequest: pullRequest({ draft: true }),
+      deployments: [deployment('BUILDING', { uid: 'dpl_active' })],
+      respond: ({ url }) => {
+        if (url.includes('/v9/projects/')) {
+          projectValidated = true;
+          return json(vercelProject());
+        }
+        if (url.endsWith('/pulls/341')) {
+          return json(pullRequest({ draft: !projectValidated }));
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'preview-eligible' },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+  });
+
+  test('head changing during project validation prevents prior-head cancellation', async () => {
+    let projectValidated = false;
+    const currentPullRequest = pullRequest({
+      head: { sha: NEW_SHA, ref: 'feature/preview', repo: repository },
+    });
+    const harness = createHarness({
+      eventName: 'repository_dispatch',
+      pullRequest: currentPullRequest,
+      workflowRuns: [],
+      deployments: [deployment('BUILDING', { uid: 'dpl_prior' })],
+      respond: ({ url }) => {
+        if (url.includes('/v9/projects/')) {
+          projectValidated = true;
+          return json(vercelProject());
+        }
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            projectValidated
+              ? pullRequest({
+                  head: { sha: 'd'.repeat(40), ref: 'feature/preview', repo: repository },
+                })
+              : currentPullRequest,
+          );
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
+    expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(0);
+  });
+
   test('eligibility changing after the first cancellation prevents a second PATCH', async () => {
     let canceled = false;
     const harness = createHarness({
@@ -879,7 +938,7 @@ describe('existing deployments, cancellation, and pagination', () => {
       },
     ]);
     expect(harness.requests.filter(({ method }) => method === 'PATCH')).toHaveLength(1);
-    expect(harness.requests.filter(({ url }) => url.endsWith('/pulls/341'))).toHaveLength(3);
+    expect(harness.requests.filter(({ url }) => url.endsWith('/pulls/341'))).toHaveLength(4);
   });
 
   test('cancel 400 accepts a terminal detail race without retrying PATCH', async () => {
@@ -1109,6 +1168,52 @@ describe('endpoint pagination and final freshness', () => {
     expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
     expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
     expect(workflowRunReads).toBe(2);
+  });
+
+  test('main advancing during project validation prevents Create', async () => {
+    let projectValidated = false;
+    const harness = createHarness({
+      respond: ({ url }) => {
+        if (url.includes('/v9/projects/')) {
+          projectValidated = true;
+          return json(vercelProject());
+        }
+        if (url.endsWith('/git/ref/heads/main')) {
+          return json({ object: { sha: projectValidated ? NEW_SHA : MAIN_SHA } });
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'ci-not-current' },
+    ]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
+  });
+
+  test('pull request state changing during project validation prevents Create', async () => {
+    let projectValidated = false;
+    const harness = createHarness({
+      respond: ({ url }) => {
+        if (url.includes('/v9/projects/')) {
+          projectValidated = true;
+          return json(vercelProject());
+        }
+        if (url.endsWith('/pulls/341')) {
+          return json(
+            projectValidated ? pullRequest({ labels: [{ name: 'no-preview' }] }) : pullRequest(),
+          );
+        }
+        return undefined;
+      },
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([{ kind: 'skipped', pullRequestNumber: 341, reason: 'stale-event' }]);
+    expect(harness.requests.filter(({ method }) => method === 'POST')).toHaveLength(0);
   });
 
   test('workflow_run with multiple distinct PR associations logs ambiguity and does no work', async () => {
