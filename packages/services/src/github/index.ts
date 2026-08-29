@@ -21,7 +21,7 @@ export function verifyGithubSignature(
   const expected = Buffer.from(`sha256=${digest}`, 'utf8');
   const received = Buffer.from(signatureHeader, 'utf8');
   if (expected.length !== received.length) return false;
-  return timingSafeEqual(expected, received);
+  return timingSafeEqual(new Uint8Array(expected), new Uint8Array(received));
 }
 
 export const PULL_REQUEST_STATES = [

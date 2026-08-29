@@ -70,3 +70,18 @@ export const NOTIFICATION_REASONS = [
   'manual',
 ] as const;
 export type NotificationReason = (typeof NOTIFICATION_REASONS)[number];
+
+export const NOTIFICATION_AUDIENCE: Record<NotificationReason, 'personal' | 'broadcast'> = {
+  assigned: 'personal',
+  mentioned: 'personal',
+  subscribed: 'personal',
+  commented: 'personal',
+  state_changed: 'broadcast',
+  review_requested: 'personal',
+  review_approved: 'broadcast',
+  pull_request_merged: 'broadcast',
+  due_soon: 'broadcast',
+  access_requested: 'personal',
+  access_granted: 'personal',
+  manual: 'broadcast',
+};

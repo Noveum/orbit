@@ -54,6 +54,7 @@ const data: AnalyticsOverviewResponse = {
   projects: [],
   priorities: [],
   outliers: [],
+  outliersWithheldCount: 0,
 };
 
 afterEach(() => {
@@ -73,6 +74,7 @@ describe('OverviewLens', () => {
             issues: [],
             nextCursor: null,
             limit: 50,
+            withheldCount: 0,
             asOf,
             from: '2026-08-01T00:00:00.000Z',
             to: '2026-08-15T00:00:00.000Z',
@@ -103,5 +105,41 @@ describe('OverviewLens', () => {
     await user.click(screen.getByRole('button', { name: 'Blocked work, 3 issues' }));
     expect(await screen.findByRole('dialog', { name: 'Blocked work' })).toBeVisible();
     expect(screen.getByText(/Predicate: blocked work/)).toBeVisible();
+  });
+
+  test('discloses workspace outliers hidden alongside visible rows', () => {
+    render(
+      <OverviewLens
+        data={{
+          ...data,
+          outliers: [
+            {
+              issueId: '00000000-0000-7000-8000-000000000001',
+              identifier: 'NOV-1',
+              title: 'Visible slow issue',
+              cycleTimeDays: 12,
+              cohort: { cohort: 'outlier:00000000-0000-7000-8000-000000000001' },
+            },
+          ],
+          outliersWithheldCount: 2,
+        }}
+        query={analyticsQuerySchema.parse({})}
+      />,
+    );
+
+    expect(screen.getByText('Visible slow issue')).toBeVisible();
+    expect(screen.getByText(/2 additional workspace outliers are hidden/)).toBeVisible();
+  });
+
+  test('keeps the outlier card visible when every workspace candidate is hidden', () => {
+    render(
+      <OverviewLens
+        data={{ ...data, outliersWithheldCount: 3 }}
+        query={analyticsQuerySchema.parse({})}
+      />,
+    );
+
+    expect(screen.getByText('Longest cycle time')).toBeVisible();
+    expect(screen.getByText(/All 3 workspace outliers are hidden/)).toBeVisible();
   });
 });

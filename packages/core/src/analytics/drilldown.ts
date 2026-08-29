@@ -14,7 +14,7 @@ import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/val
 import { calendarDateSchema, issueFilterSchema } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { buildIssueWhere } from '../work/issue-query.ts';
+import { buildIssueWhere, issueVisibilityScope } from '../work/issue-query.ts';
 import {
   bucketDates,
   calendarDateLabel,
@@ -158,6 +158,7 @@ export interface AnalyticsDrilldownPage {
   readonly predicate: string;
   readonly total: number;
   readonly totalValue: number;
+  readonly withheldCount: number;
   readonly details: AnalyticsDrilldownDetails;
   readonly issues: readonly AnalyticsIssueRow[];
   readonly nextCursor: string | null;
@@ -952,6 +953,8 @@ function cursorRequestBinding(
 ): string {
   return JSON.stringify({
     organizationId: principal.organizationId,
+    userId: principal.userId,
+    issueVisibility: issueVisibilityScope(principal),
     query: {
       version: query.version,
       lens: query.lens,
@@ -1016,7 +1019,7 @@ function decodeCursor(cursor: string, binding: string, secret: string): CursorVa
     if (
       provided.toString('base64url') !== signature ||
       provided.length !== expected.length ||
-      !timingSafeEqual(provided, expected)
+      !timingSafeEqual(new Uint8Array(provided), new Uint8Array(expected))
     ) {
       throw new Error('invalid');
     }
@@ -1050,6 +1053,44 @@ function decodeCursor(cursor: string, binding: string, secret: string): CursorVa
   }
 }
 
+export function teamDrilldownBase(
+  principal: Principal,
+  resolved: ResolvedAnalyticsQuery,
+  cohort: AnalyticsDrilldownCohort,
+): SQL<unknown> {
+  const teamResolved = resolved;
+  if (!historicalPersonCohort(cohort)) {
+    const filters: SQL[] = [
+      buildIssueWhere(principal, {
+        visibility: 'team',
+        filter: analyticsIssueFilter(teamResolved),
+        now: teamResolved.asOf,
+        calendar: reportingCalendar(teamResolved.asOf, teamResolved.timezone),
+      }),
+    ];
+    if (!teamResolved.includeCanceled)
+      filters.push(sql`${schema.workflowState.category} <> 'canceled'`);
+    return and(...filters) ?? sql`false`;
+  }
+  const person = personCohort(cohort.cohort);
+  if (person === null)
+    return teamDrilldownBase(principal, resolved, { ...cohort, cohort: 'current' });
+  const historical = historicalPersonFilter(teamResolved, person.id);
+
+  const filters: SQL[] = [
+    buildIssueWhere(principal, {
+      visibility: 'team',
+      filter: analyticsIssueFilter(historical.query),
+      now: historical.query.asOf,
+      calendar: reportingCalendar(historical.query.asOf, historical.query.timezone),
+    }),
+  ];
+  if (!historical.query.includeCanceled)
+    filters.push(sql`${schema.workflowState.category} <> 'canceled'`);
+  const teamBase = and(...filters) ?? sql`false`;
+  return sql`${teamBase} and ${historical.matches}`;
+}
+
 export async function listAnalyticsDrilldown(
   principal: Principal,
   input: AnalyticsDrilldownInput,
@@ -1077,31 +1118,49 @@ export async function listAnalyticsDrilldown(
   }
   const base = drilldownBase(principal, resolved, semanticCohort);
   const cohort = cohortPredicate(resolved, semanticCohort, base);
+  const rowBase = teamDrilldownBase(principal, resolved, semanticCohort);
   const requestedLimit = input.limit ?? 50;
   const limit = Number.isFinite(requestedLimit)
     ? Math.max(1, Math.min(MAX_LIMIT, Math.trunc(requestedLimit)))
     : 50;
   const weight =
     resolved.measure === 'points' ? sql`coalesce(${schema.issue.estimate}, 1)` : sql`1`;
-  const [aggregate] = await db.execute<AggregateRow>(sql`
-    select
-      count(*) as total,
-      coalesce(sum(${weight}), 0) as total_value,
-      count(*) filter (where ${schema.issue.completedAt} is not null
-        and ${schema.issue.startedAt} is not null
-        and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as valid_cycle_count,
-      percentile_cont(0.5) within group (
-        order by extract(epoch from (${schema.issue.completedAt} - ${schema.issue.startedAt})) / 86400
-      ) filter (where ${schema.issue.completedAt} is not null and ${schema.issue.startedAt} is not null
-        and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as cycle_time_p50,
-      percentile_cont(0.85) within group (
-        order by extract(epoch from (${schema.issue.completedAt} - ${schema.issue.startedAt})) / 86400
-      ) filter (where ${schema.issue.completedAt} is not null and ${schema.issue.startedAt} is not null
-        and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as cycle_time_p85
-    from issue
-    join workflow_state on workflow_state.id = issue.state_id
-    where ${base} and ${cohort}
-  `);
+
+  const [aggregate, [scopedCountRow]] = await Promise.all([
+    db.execute<AggregateRow>(sql`
+      select
+        count(*) as total,
+        coalesce(sum(${weight}), 0) as total_value,
+        count(*) filter (where ${schema.issue.completedAt} is not null
+          and ${schema.issue.startedAt} is not null
+          and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as valid_cycle_count,
+        percentile_cont(0.5) within group (
+          order by extract(epoch from (${schema.issue.completedAt} - ${schema.issue.startedAt})) / 86400
+        ) filter (where ${schema.issue.completedAt} is not null and ${schema.issue.startedAt} is not null
+          and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as cycle_time_p50,
+        percentile_cont(0.85) within group (
+          order by extract(epoch from (${schema.issue.completedAt} - ${schema.issue.startedAt})) / 86400
+        ) filter (where ${schema.issue.completedAt} is not null and ${schema.issue.startedAt} is not null
+          and ${schema.issue.completedAt} >= ${schema.issue.startedAt}) as cycle_time_p85
+      from issue
+      join workflow_state on workflow_state.id = issue.state_id
+      where ${base} and ${cohort}
+    `),
+    db.execute<{ count: string | number }>(sql`
+      select count(*) as count
+      from issue
+      join workflow_state on workflow_state.id = issue.state_id
+      where ${rowBase} and ${cohort}
+    `),
+  ]);
+
+  const aggRow = aggregate[0] as AggregateRow | undefined;
+  const scopedRow = scopedCountRow as { readonly count?: unknown } | undefined;
+
+  const totalRows = Number(aggRow?.['total'] ?? 0);
+  const scopedRowsCount = Number(scopedRow?.['count'] ?? 0);
+  const withheldCount = Math.max(0, totalRows - scopedRowsCount);
+
   const cursorPredicate = cursor === null ? sql`true` : gt(schema.issue.id, cursor.id);
   const rows = await db.execute<PageRow>(sql`
     select
@@ -1130,30 +1189,33 @@ export async function listAnalyticsDrilldown(
     join workflow_state on workflow_state.id = issue.state_id
     left join project on project.id = issue.project_id
     left join "user" assignee on assignee.id = issue.assignee_id
-    where ${base} and ${cohort} and ${cursorPredicate}
+    where ${rowBase} and ${cohort} and ${cursorPredicate}
     order by issue.id asc
     limit ${limit + 1}
   `);
+
   const page = rows.slice(0, limit);
   const last = page.at(-1);
   const nextCursor =
     rows.length > limit && last !== undefined
       ? encodeCursor(last, cursorResolution(resolved), binding, secret)
       : null;
+
   return {
     predicate: predicateLabel(semanticCohort),
-    total: Number(aggregate?.['total'] ?? 0),
-    totalValue: Number(aggregate?.['total_value'] ?? 0),
+    total: totalRows,
+    totalValue: Number(aggRow?.['total_value'] ?? 0),
+    withheldCount,
     details: {
-      validCycleCount: Number(aggregate?.['valid_cycle_count'] ?? 0),
+      validCycleCount: Number(aggRow?.['valid_cycle_count'] ?? 0),
       cycleTimeP50:
-        aggregate?.['cycle_time_p50'] === null || aggregate?.['cycle_time_p50'] === undefined
+        aggRow?.['cycle_time_p50'] === null || aggRow?.['cycle_time_p50'] === undefined
           ? null
-          : Number(aggregate['cycle_time_p50']),
+          : Number(aggRow['cycle_time_p50']),
       cycleTimeP85:
-        aggregate?.['cycle_time_p85'] === null || aggregate?.['cycle_time_p85'] === undefined
+        aggRow?.['cycle_time_p85'] === null || aggRow?.['cycle_time_p85'] === undefined
           ? null
-          : Number(aggregate['cycle_time_p85']),
+          : Number(aggRow['cycle_time_p85']),
     },
     issues: page.map((row) => ({
       id: row.id,

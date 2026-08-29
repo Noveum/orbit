@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationSettings } from '@orbit/services/notifications';
 import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
+import { resolveSlackDmTarget } from '@orbit/services/slack/dispatch';
 import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
@@ -52,17 +53,10 @@ export async function loadNotificationPreferences(
       scopes.includes('im:write') &&
       scopes.includes('chat:write')
     ) {
-      const [mapping] = await db
-        .select({ id: schema.slackUserMapping.id })
-        .from(schema.slackUserMapping)
-        .where(
-          and(
-            eq(schema.slackUserMapping.integrationId, slack.integrationId),
-            eq(schema.slackUserMapping.userId, userId),
-          ),
-        )
-        .limit(1);
-      slackDm = mapping === undefined ? 'unmapped' : 'available';
+      slackDm =
+        (await resolveSlackDmTarget(db, organizationId, userId)) === null
+          ? 'unmapped'
+          : 'available';
     } else slackDm = 'reauthorize';
   }
 

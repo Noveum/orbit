@@ -1,1 +1,1 @@
-DROP INDEX "notification_delivery_source_unique";
+DROP INDEX IF EXISTS "notification_delivery_source_unique";

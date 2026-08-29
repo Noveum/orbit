@@ -5,9 +5,11 @@ import {
   analyticsDrilldownQuerySchema,
   analyticsQuerySchema,
 } from '@orbit/shared';
+import type { Principal } from '@orbit/shared/policy';
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
 import { createLabel, insertLabelOn } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
+import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
   createWorkspace,
@@ -24,6 +26,48 @@ function query(): AnalyticsQuery {
   return analyticsQuerySchema.parse({
     range: { preset: 'custom', from: '2026-08-01', to: '2026-08-10' },
     compare: 'none',
+  });
+}
+
+function personQuery(personId: string): AnalyticsQuery {
+  return analyticsQuerySchema.parse({
+    lens: 'people',
+    range: { preset: 'custom', from: '2026-08-01', to: '2026-08-10' },
+    compare: 'none',
+    focus: { personId },
+    filter: {
+      kind: 'group',
+      combinator: 'and',
+      children: [
+        {
+          kind: 'condition',
+          property: 'assignee',
+          operator: 'in',
+          values: [personId],
+          negate: false,
+        },
+      ],
+    },
+  });
+}
+
+async function assignmentActivity(
+  issueId: string,
+  from: { readonly id: string; readonly name: string } | null,
+  to: { readonly id: string; readonly name: string } | null,
+  createdAt: string,
+): Promise<void> {
+  await db.insert(schema.issueActivity).values({
+    id: newId(),
+    organizationId: workspace.organizationId,
+    issueId,
+    actorType: 'user',
+    actorId: workspace.adminUser.id,
+    actorName: workspace.adminUser.name,
+    field: 'assigneeId',
+    fromValue: from,
+    toValue: to,
+    createdAt: new Date(createdAt),
   });
 }
 
@@ -218,6 +262,267 @@ describe('listAnalyticsDrilldown', () => {
         { now: new Date('2026-08-14T12:00:00.000Z'), timezone: 'UTC', cursorSecret },
       ),
     ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('rejects a cursor after the reader team scope narrows', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const reader = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId, other.team.id],
+    });
+    for (const title of ['First', 'Second']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    await createIssue(workspace.admin, {
+      teamId: other.team.id,
+      stateId: other.states[0]?.id,
+      title: 'Other team',
+    });
+    const context = { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' };
+    const first = await listAnalyticsDrilldown(
+      reader.principal,
+      { query: query(), cohort: { cohort: 'current' }, limit: 1 },
+      context,
+    );
+    if (first.nextCursor === null) throw new Error('Missing cursor.');
+    const narrowed: Principal = { ...reader.principal, teamIds: [workspace.teamId] };
+
+    await expect(
+      listAnalyticsDrilldown(
+        narrowed,
+        {
+          query: query(),
+          cohort: { cohort: 'current' },
+          cursor: first.nextCursor,
+          limit: 1,
+        },
+        context,
+      ),
+    ).rejects.toThrow('cursor');
+  });
+
+  it('rejects an admin cursor after workspace visibility is demoted to team visibility', async () => {
+    for (const title of ['First', 'Second']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    const context = { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' };
+    const first = await listAnalyticsDrilldown(
+      workspace.admin,
+      { query: query(), cohort: { cohort: 'current' }, limit: 1 },
+      context,
+    );
+    if (first.nextCursor === null) throw new Error('Missing cursor.');
+    const demoted: Principal = {
+      ...workspace.admin,
+      role: 'member',
+      teamIds: [workspace.teamId],
+    };
+
+    await expect(
+      listAnalyticsDrilldown(
+        demoted,
+        {
+          query: query(),
+          cohort: { cohort: 'current' },
+          cursor: first.nextCursor,
+          limit: 1,
+        },
+        context,
+      ),
+    ).rejects.toThrow('cursor');
+  });
+
+  it('keeps a cursor valid when the same reader changes role without changing team visibility', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const reader = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId, other.team.id],
+    });
+    for (const title of ['First', 'Second']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    const context = { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' };
+    const member: Principal = {
+      ...reader.principal,
+      role: 'member',
+      teamIds: [other.team.id, workspace.teamId],
+    };
+    const contributor: Principal = {
+      ...reader.principal,
+      role: 'contributor',
+      teamIds: [workspace.teamId, other.team.id],
+    };
+    const first = await listAnalyticsDrilldown(
+      member,
+      { query: query(), cohort: { cohort: 'current' }, limit: 1 },
+      context,
+    );
+    if (first.nextCursor === null) throw new Error('Missing cursor.');
+
+    const second = await listAnalyticsDrilldown(
+      contributor,
+      {
+        query: query(),
+        cohort: { cohort: 'current' },
+        cursor: first.nextCursor,
+        limit: 1,
+      },
+      context,
+    );
+
+    expect(second.issues[0]?.id).not.toBe(first.issues[0]?.id);
+  });
+
+  it('rejects a cursor presented by a different reader with the same team visibility', async () => {
+    const firstReader = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    const secondReader = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    for (const title of ['First', 'Second']) {
+      await createIssue(workspace.admin, { teamId: workspace.teamId, title });
+    }
+    const context = { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' };
+    const first = await listAnalyticsDrilldown(
+      firstReader.principal,
+      { query: query(), cohort: { cohort: 'current' }, limit: 1 },
+      context,
+    );
+    if (first.nextCursor === null) throw new Error('Missing cursor.');
+
+    await expect(
+      listAnalyticsDrilldown(
+        secondReader.principal,
+        {
+          query: query(),
+          cohort: { cohort: 'current' },
+          cursor: first.nextCursor,
+          limit: 1,
+        },
+        context,
+      ),
+    ).rejects.toThrow('cursor');
+  });
+
+  it('keeps current aggregates workspace wide while scoping rows to reader teams', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const otherState = other.states.find((state) => state.category === 'unstarted');
+    if (otherState === undefined) throw new Error('Missing Operations state.');
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Visible first' });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Visible second' });
+    await createIssue(workspace.admin, {
+      teamId: other.team.id,
+      stateId: otherState.id,
+      title: 'Hidden other team',
+    });
+    const reader = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+
+    const page = await listAnalyticsDrilldown(
+      reader.principal,
+      { query: query(), cohort: { cohort: 'current' } },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(page.total).toBe(3);
+    expect(page.issues.map((entry) => entry.title).sort()).toEqual([
+      'Visible first',
+      'Visible second',
+    ]);
+    expect(page.withheldCount).toBe(1);
+  });
+
+  it('reports historical completion rows within the reader team scope after reassignment', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const otherDone = other.states.find((state) => state.category === 'completed');
+    const workspaceDone = workspace.states.find((state) => state.category === 'completed');
+    if (otherDone === undefined || workspaceDone === undefined) {
+      throw new Error('Missing completed state.');
+    }
+    const currentOwner = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId, other.team.id],
+    });
+    const reader = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+    for (const entry of [
+      { teamId: workspace.teamId, stateId: workspaceDone.id, title: 'Visible completion' },
+      { teamId: other.team.id, stateId: otherDone.id, title: 'Hidden completion' },
+    ]) {
+      const created = await createIssue(workspace.admin, {
+        ...entry,
+        assigneeId: currentOwner.user.id,
+      });
+      await db
+        .update(schema.issue)
+        .set({
+          createdAt: new Date('2026-08-01T00:00:00.000Z'),
+          completedAt: new Date('2026-08-03T00:00:00.000Z'),
+        })
+        .where(eq(schema.issue.id, created.issue.id));
+      await assignmentActivity(
+        created.issue.id,
+        workspace.adminUser,
+        currentOwner.user,
+        '2026-08-04T00:00:00.000Z',
+      );
+    }
+
+    const page = await listAnalyticsDrilldown(
+      reader.principal,
+      {
+        query: personQuery(workspace.adminUser.id),
+        cohort: { cohort: `person-completed:${workspace.adminUser.id}` },
+        limit: 10,
+      },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(page.total).toBe(2);
+    expect(page.issues.map((entry) => entry.title)).toEqual(['Visible completion']);
+    expect(page.withheldCount).toBe(1);
+  });
+
+  it('reports historical assignment rows within the reader team scope after reassignment', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const currentOwner = await addMember(workspace, 'member', {
+      teamIds: [workspace.teamId, other.team.id],
+    });
+    const reader = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+    for (const entry of [
+      { teamId: workspace.teamId, title: 'Visible assignment' },
+      { teamId: other.team.id, stateId: other.states[0]?.id, title: 'Hidden assignment' },
+    ]) {
+      const created = await createIssue(workspace.admin, {
+        ...entry,
+        assigneeId: currentOwner.user.id,
+      });
+      await db
+        .update(schema.issue)
+        .set({ createdAt: new Date('2026-08-01T00:00:00.000Z') })
+        .where(eq(schema.issue.id, created.issue.id));
+      await assignmentActivity(
+        created.issue.id,
+        null,
+        workspace.adminUser,
+        '2026-08-04T09:00:00.000Z',
+      );
+      await assignmentActivity(
+        created.issue.id,
+        workspace.adminUser,
+        currentOwner.user,
+        '2026-08-05T09:00:00.000Z',
+      );
+    }
+
+    const page = await listAnalyticsDrilldown(
+      reader.principal,
+      {
+        query: personQuery(workspace.adminUser.id),
+        cohort: {
+          cohort: `person-assigned:${workspace.adminUser.id}`,
+          bucket: '2026-08-04',
+        },
+        limit: 10,
+      },
+      { now, timezone: 'UTC', cursorSecret: 'analytics-test-secret' },
+    );
+
+    expect(page.total).toBe(2);
+    expect(page.issues.map((entry) => entry.title)).toEqual(['Visible assignment']);
+    expect(page.withheldCount).toBe(1);
   });
 
   it('drills into the workflow state category the overview distribution links to', async () => {

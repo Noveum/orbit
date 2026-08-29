@@ -199,12 +199,13 @@ describe('notifyMany', () => {
       const first = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 86_400_000));
       expect(first).toHaveLength(1);
       const delivery = first[0];
-      if (delivery === undefined) return;
+      if (delivery === undefined) throw new Error('Expected a claimed Slack DM delivery.');
       await markSlackDmDelivery(tx, delivery.id, delivery.claimedAt ?? new Date(0), false);
       const retry = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 31_000));
       expect(retry.map((row) => row.id)).toContain(delivery.id);
       const retriedDelivery = retry[0];
-      if (retriedDelivery === undefined) return;
+      if (retriedDelivery === undefined)
+        throw new Error('Expected the failed Slack DM delivery to be reclaimed.');
       await markSlackDmDelivery(
         tx,
         retriedDelivery.id,
@@ -294,14 +295,16 @@ describe('notifyMany', () => {
       const outcome = await notifyMany(
         tx,
         [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })],
-        { slackEnabled: true },
+        { now: new Date('2026-07-22T11:59:59Z'), slackEnabled: true },
       );
       const first = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:00:00Z'));
       const original = first[0];
-      if (original === undefined || original.claimedAt === null) return;
+      if (original === undefined || original.claimedAt === null)
+        throw new Error('Expected a claimed Slack DM delivery with a claim timestamp.');
       const reclaimed = await claimSlackDmDeliveries(tx, 10, new Date('2026-07-22T12:05:01Z'));
       const replacement = reclaimed[0];
-      if (replacement === undefined || replacement.claimedAt === null) return;
+      if (replacement === undefined || replacement.claimedAt === null)
+        throw new Error('Expected the reclaimed Slack DM delivery with a claim timestamp.');
 
       expect(await markSlackDmDelivery(tx, original.id, original.claimedAt, true)).toBe(false);
       expect(await markSlackDmDelivery(tx, replacement.id, replacement.claimedAt, true)).toBe(true);
@@ -316,7 +319,7 @@ describe('notifyMany', () => {
         slackEnabled: true,
       });
       const [delivery] = await claimSlackDmDeliveries(tx, 10, new Date());
-      if (delivery === undefined) return;
+      if (delivery === undefined) throw new Error('Expected a claimed Slack DM delivery.');
       await markSlackDmUnavailable(
         tx,
         delivery.id,

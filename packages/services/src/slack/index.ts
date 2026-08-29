@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
+  DomainError,
   internal,
   PRIORITY_LABELS,
   type Priority,
@@ -32,7 +33,7 @@ export function verifySlackSignature(
   const expected = Buffer.from(`v0=${digest}`, 'utf8');
   const received = Buffer.from(signature, 'utf8');
   if (expected.length !== received.length) return false;
-  return timingSafeEqual(expected, received);
+  return timingSafeEqual(new Uint8Array(expected), new Uint8Array(received));
 }
 
 export type SlackBlock = Record<string, unknown>;
@@ -237,12 +238,14 @@ export interface SlackMessageRef {
   readonly ts: string;
 }
 
-export class SlackApiError extends Error {
+export class SlackApiError extends DomainError {
   constructor(
     readonly method: string,
-    readonly code: string,
+    readonly slackCode: string,
   ) {
-    super(`Slack ${method} failed: ${code}.`);
+    super('internal', `Slack ${method} failed: ${slackCode}.`, {
+      details: { slackCode },
+    });
     this.name = 'SlackApiError';
   }
 }
@@ -377,7 +380,7 @@ export class SlackClient {
     try {
       body = await this.call('users.lookupByEmail', userResponseSchema, { email });
     } catch (error) {
-      if (error instanceof Error && error.message.includes('users_not_found')) return null;
+      if (error instanceof SlackApiError && error.slackCode === 'users_not_found') return null;
       throw error;
     }
     const user = body.user;

@@ -18,6 +18,7 @@ import {
   type SlackBlock,
   SlackClient,
   type SlackIssue,
+  type SlackMessageRef,
   type SlackUnfurl,
 } from './index.ts';
 
@@ -274,6 +275,37 @@ export interface SlackDmDispatchResult {
   readonly ts: string | null;
 }
 
+export async function resolveSlackDmTarget(
+  database: SlackDatabase,
+  organizationId: string,
+  userId: string,
+): Promise<{
+  readonly context: SlackContext & { readonly token: string };
+  readonly slackUserId: string;
+} | null> {
+  const context = await resolveSlackContext(database, organizationId);
+  if (
+    context === null ||
+    context.token === null ||
+    context.reauthorize ||
+    !context.hasDirectMessageScope
+  )
+    return null;
+  const [mapping] = await database
+    .select({ slackUserId: slackUserMapping.slackUserId })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.userId, userId),
+      ),
+    )
+    .limit(1);
+  return mapping === undefined
+    ? null
+    : { context: { ...context, token: context.token }, slackUserId: mapping.slackUserId };
+}
+
 export class SlackDmDispatchError extends Error {
   readonly #integrationToken: string;
   readonly #integrationVersion: string;
@@ -287,7 +319,7 @@ export class SlackDmDispatchError extends Error {
     this.#integrationToken = context.token ?? '';
     this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
-    this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
+    this.slackCode = cause instanceof SlackApiError ? cause.slackCode : undefined;
     this.cause = cause;
   }
 
@@ -304,36 +336,55 @@ export async function dispatchSlackDmResult(
   database: SlackDatabase,
   input: DispatchSlackDmInput,
 ): Promise<SlackDmDispatchResult> {
-  const context = await resolveSlackContext(database, input.organizationId);
-  if (
-    context === null ||
-    context.token === null ||
-    context.reauthorize ||
-    !context.hasDirectMessageScope
-  )
-    return { delivered: 0, channel: null, ts: null };
-  const [mapping] = await database
-    .select({ slackUserId: slackUserMapping.slackUserId })
-    .from(slackUserMapping)
-    .where(
-      and(
-        eq(slackUserMapping.integrationId, context.integrationId),
-        eq(slackUserMapping.userId, input.userId),
-      ),
-    )
-    .limit(1);
-  if (mapping === undefined) return { delivered: 0, channel: null, ts: null };
+  const target = await resolveSlackDmTarget(database, input.organizationId, input.userId);
+  if (target === null) return { delivered: 0, channel: null, ts: null };
+  const { context } = target;
   const client = new SlackClient({
     token: context.token,
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
   try {
-    const conversation = await client.openConversation(mapping.slackUserId);
-    const message = await client.postMessage({
-      channel: conversation.channel,
-      text: input.text,
-      ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
-    });
+    const [mapping] = await database
+      .select({ id: slackUserMapping.id, channelId: slackUserMapping.slackChannelId })
+      .from(slackUserMapping)
+      .where(
+        and(
+          eq(slackUserMapping.integrationId, context.integrationId),
+          eq(slackUserMapping.userId, input.userId),
+        ),
+      )
+      .limit(1);
+    if (mapping === undefined) return { delivered: 0, channel: null, ts: null };
+    let channel = mapping.channelId;
+    if (channel === null) {
+      const openedChannel = await client.openConversation(target.slackUserId);
+      channel = openedChannel.channel;
+      await database
+        .update(slackUserMapping)
+        .set({ slackChannelId: channel, updatedAt: new Date() })
+        .where(eq(slackUserMapping.id, mapping.id));
+    }
+    let message: SlackMessageRef;
+    try {
+      message = await client.postMessage({
+        channel,
+        text: input.text,
+        ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+      });
+    } catch (error) {
+      if (!(error instanceof SlackApiError) || error.slackCode !== 'channel_not_found') throw error;
+      const reopenedChannel = await client.openConversation(target.slackUserId);
+      channel = reopenedChannel.channel;
+      await database
+        .update(slackUserMapping)
+        .set({ slackChannelId: channel, updatedAt: new Date() })
+        .where(eq(slackUserMapping.id, mapping.id));
+      message = await client.postMessage({
+        channel,
+        text: input.text,
+        ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+      });
+    }
     return { delivered: 1, channel: message.channel, ts: message.ts };
   } catch (error) {
     throw new SlackDmDispatchError(context, error);
@@ -359,25 +410,7 @@ export async function slackDmAvailable(
   organizationId: string,
   userId: string,
 ): Promise<boolean> {
-  const context = await resolveSlackContext(database, organizationId);
-  if (
-    context === null ||
-    context.token === null ||
-    context.reauthorize ||
-    !context.hasDirectMessageScope
-  )
-    return false;
-  const [mapping] = await database
-    .select({ id: slackUserMapping.id })
-    .from(slackUserMapping)
-    .where(
-      and(
-        eq(slackUserMapping.integrationId, context.integrationId),
-        eq(slackUserMapping.userId, userId),
-      ),
-    )
-    .limit(1);
-  return mapping !== undefined;
+  return (await resolveSlackDmTarget(database, organizationId, userId)) !== null;
 }
 
 export async function dispatchSlackMessage(
