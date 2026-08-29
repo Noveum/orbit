@@ -86,16 +86,28 @@ one, but cannot bootstrap a new installation. Local development is unaffected.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in. Redirect URI is `<app>/api/auth/callback/google` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in. Callback is `<app>/api/auth/callback/github` |
 | `ORBIT_PASSWORD_AUTH` | `false` by default. `true` enables email and password |
-| `ALLOWED_EMAIL_DOMAINS` | Comma separated. Empty means no restriction |
+| `ALLOWED_EMAIL_DOMAINS` | Unset by default, which means anyone can sign up. Comma separated to restrict |
 | `ORBIT_DEV_LOGIN` | **Local only.** One-click sign-in as any seeded user |
 
 Email and password is off by default and hashed with `@node-rs/argon2`
 (argon2id) when on. It is rate limited, and it is never a replacement for the
 passwordless methods. Leave it off unless you have a reason.
 
-`ALLOWED_EMAIL_DOMAINS` is enforced both on invite creation and on user
-creation, so it covers every provider rather than just invites. A workspace can
-narrow it further with its own `allowedEmailDomains` setting.
+Signing up is open unless you close it. A new account creates its own workspace
+through the onboarding flow, and a workspace admits nobody else until it invites
+them, so an open instance is still one tenant per workspace.
+
+`ALLOWED_EMAIL_DOMAINS` closes that door. It is enforced both on invite creation
+and on user creation, so it covers every provider rather than just invites, and
+it is checked again on every session so an address that stops qualifying loses
+access. Set it when an instance should only admit one organisation. A workspace
+can narrow it further with its own `allowedEmailDomains` setting. The hosted
+instance at <https://orbit.noveum.ai> leaves it unset.
+
+Signing in is rate limited per IP whatever the method, so an open instance
+cannot be used to send sign-in codes in bulk: 20 code requests an hour, 20 code
+attempts each quarter hour, 5 password sign-ins a minute, and 5 password sign-ups
+an hour. Better-auth applies these in production only.
 
 ```bash
 ALLOWED_EMAIL_DOMAINS=example.com,example.org
@@ -228,3 +240,7 @@ S3_SECRET_ACCESS_KEY=...
 ```
 
 Note what is absent: no `NEXT_PUBLIC_REALTIME_URL`, and no `ORBIT_DEV_LOGIN`.
+
+`ALLOWED_EMAIL_DOMAINS` appears here because this example is a single-company
+deployment. Drop the line to let anyone sign up, which is what the hosted
+instance does.
