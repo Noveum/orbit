@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import * as navigation from 'next/navigation';
 import { mockSession } from '../../tests-support.ts';
@@ -17,9 +17,16 @@ mock.module('next/navigation', () => ({
 
 const { default: HomePage } = await import('../../src/app/page.tsx');
 
+const previousDomains = process.env['ALLOWED_EMAIL_DOMAINS'];
+
+afterAll(() => {
+  process.env['ALLOWED_EMAIL_DOMAINS'] = previousDomains ?? '';
+});
+
 describe('HomePage', () => {
   beforeEach(() => {
     sessionHolder.value = null;
+    process.env['ALLOWED_EMAIL_DOMAINS'] = '';
   });
 
   it('renders the landing hero for a logged-out visitor', async () => {
@@ -38,13 +45,9 @@ describe('HomePage', () => {
 
   it('promises nobody a signup the allowlist would refuse', async () => {
     process.env['ALLOWED_EMAIL_DOMAINS'] = 'noveum.ai';
-    try {
-      render(await HomePage({ searchParams: Promise.resolve({}) }));
-      expect(screen.queryAllByText(/anyone can sign up, free/i).length).toBe(0);
-      expect(screen.queryAllByText(/no invite needed/i).length).toBe(0);
-    } finally {
-      process.env['ALLOWED_EMAIL_DOMAINS'] = '';
-    }
+    render(await HomePage({ searchParams: Promise.resolve({}) }));
+    expect(screen.queryAllByText(/anyone can sign up, free/i).length).toBe(0);
+    expect(screen.queryAllByText(/no invite needed/i).length).toBe(0);
   });
 
   it('redirects a logged-in visitor to their issues', async () => {

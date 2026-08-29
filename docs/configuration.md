@@ -97,18 +97,27 @@ Signing up is open unless you close it. A new account creates its own workspace
 through the onboarding flow, and a workspace admits nobody else until it invites
 them, so an open instance is still one tenant per workspace.
 
-`ALLOWED_EMAIL_DOMAINS` closes that door. It is enforced both on invite creation
-and on user creation, so it covers every provider rather than just invites, and
-it is checked again on every session so an address that stops qualifying loses
-access. Set it when an instance should only admit one organisation. A workspace
-can narrow it further with its own `allowedEmailDomains` setting. The hosted
-instance at <https://orbit.noveum.ai> leaves it unset.
+`ALLOWED_EMAIL_DOMAINS` closes that door. It is enforced on invite creation, on
+user creation and when a sign-in code is requested, so it covers every provider
+rather than just invites, and it is checked again on every session so an address
+that stops qualifying loses access. A refused address is told so, rather than
+being left waiting for a code that will never arrive.
 
-Signing in is rate limited per IP whatever the method: 20 sign-in code requests
-an hour, 5 password sign-ins a minute, and 5 password sign-ups an hour, on top of
-better-auth's own defaults for the paths without a rule of their own. Better-auth
-applies them in production only, and a sign-in code additionally dies after three
-wrong guesses.
+Set it when an instance should only admit one organisation. A workspace can
+narrow it further with its own `allowedEmailDomains` setting. The hosted instance
+at <https://orbit.noveum.ai> leaves it unset.
+
+Signing in is rate limited per IP whatever the method: 10 sign-in code requests
+each ten minutes, 5 password sign-ins a minute, and 5 password sign-ups an hour,
+on top of better-auth's own defaults for the paths without a rule of their own.
+Better-auth applies them in production only, and a sign-in code additionally dies
+after three wrong guesses.
+
+A custom rule replaces better-auth's matching default rather than stacking with
+it, which is why the sign-in code window is ten minutes and not an hour. An
+hourly rule would have to allow a whole hour of sends in a single burst, and a
+per-IP hourly cap tight enough to be worth having would lock out an office that
+shares one address.
 
 Those counters live in better-auth's default in-memory store, which is per
 process. On a serverless host each instance keeps its own, so treat the caps as

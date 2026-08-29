@@ -186,6 +186,31 @@ describe('MCP authorize consent boundary', () => {
   });
 });
 
+describe('sign in code domain refusal', () => {
+  it('refuses a disallowed domain instead of claiming a code is on its way', async () => {
+    await withNativeFetchGlobals(async () => {
+      const previous = process.env['ALLOWED_EMAIL_DOMAINS'];
+      process.env['ALLOWED_EMAIL_DOMAINS'] = 'noveum.ai';
+      try {
+        const request = (email: string) =>
+          authPost(
+            new Request(`${APP_ORIGIN}/api/auth/email-otp/send-verification-otp`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.20' },
+              body: JSON.stringify({ email, type: 'sign-in' }),
+            }),
+          );
+
+        const refused = await request('outsider@gmail.com');
+        expect(refused.status).toBe(403);
+        expect(await refused.json()).toMatchObject({ code: 'EMAIL_DOMAIN_NOT_ALLOWED' });
+      } finally {
+        process.env['ALLOWED_EMAIL_DOMAINS'] = previous ?? '';
+      }
+    });
+  });
+});
+
 describe('sign in code rate limit', () => {
   it('caps sign in code sends by their own rule, not the global one', async () => {
     await withNativeFetchGlobals(async () => {

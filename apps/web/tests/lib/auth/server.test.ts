@@ -52,7 +52,7 @@ describe('open signup rate limits', () => {
 
   it('caps sign in codes even though password auth is off', () => {
     expect(passwordAuthEnabled).toBe(false);
-    expect(rules['/email-otp/send-verification-otp']).toEqual({ window: 3600, max: 20 });
+    expect(rules['/email-otp/send-verification-otp']).toEqual({ window: 600, max: 10 });
   });
 
   it('keeps the password rules for deployments that enable them', () => {

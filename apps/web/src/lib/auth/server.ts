@@ -9,6 +9,7 @@ import {
 import { db, eq, inArray, schema } from '@orbit/db';
 import { inviteEmail, resetPasswordEmail, sendEmail, signInCodeEmail } from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
+import { signInCodeRequestSchema } from '@orbit/shared/validators';
 import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
@@ -98,12 +99,13 @@ export const passwordAuthEnabled: boolean = serverEnv().ORBIT_PASSWORD_AUTH;
 
 const SIGN_IN_ATTEMPTS_PER_MINUTE = 5;
 const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
-const SIGN_IN_CODE_SENDS_PER_HOUR = 20;
+const SIGN_IN_CODES_PER_TEN_MINUTES = 10;
+const SIGN_IN_CODE_PATH = '/email-otp/send-verification-otp';
 
 const AUTH_RATE_LIMIT_RULES = {
   '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
   '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
-  '/email-otp/send-verification-otp': { window: 3600, max: SIGN_IN_CODE_SENDS_PER_HOUR },
+  [SIGN_IN_CODE_PATH]: { window: 600, max: SIGN_IN_CODES_PER_TEN_MINUTES },
 };
 
 async function takenHandles(candidates: readonly string[]): Promise<Set<string>> {
@@ -189,6 +191,13 @@ export const auth = betterAuth({
     },
   },
   hooks: {
+    before: createAuthMiddleware((ctx) => {
+      if (ctx.path === SIGN_IN_CODE_PATH) {
+        const parsed = signInCodeRequestSchema.safeParse(ctx.body);
+        if (parsed.success) assertSignUpAllowed(parsed.data.email);
+      }
+      return Promise.resolve();
+    }),
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === '/passkey/verify-authentication' && verificationSucceeded(ctx)) {
         await touchPasskeyLastUsed(ctx.body);
