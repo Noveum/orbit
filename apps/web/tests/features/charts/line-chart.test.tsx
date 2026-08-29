@@ -5,7 +5,7 @@ import { type ChartSeries, LineChart } from '../../../src/features/charts/line-c
 afterEach(cleanup);
 
 function singlePoint(max: number): ChartSeries {
-  return { id: 'scope', label: 'Scope', tone: 'accent', filled: false, values: [max] };
+  return { id: 'scope', label: 'Scope', tone: 'accent', filled: true, values: [max] };
 }
 
 describe('LineChart with a single point', () => {
@@ -19,13 +19,13 @@ describe('LineChart with a single point', () => {
         max={10}
       />,
     );
-    const circle = container.querySelector('circle');
-    expect(circle).not.toBeNull();
-    expect(Number(circle!.getAttribute('cx'))).toBe(160);
-    const paths = container.querySelectorAll('path');
-    for (const path of paths) {
-      expect(path.getAttribute('d')).not.toBe('');
-    }
+    const dot = screen.getByTestId('chart-line-scope');
+    expect(dot.tagName).toBe('line');
+    expect(Number(dot.getAttribute('x1'))).toBe(160);
+    expect(dot.getAttribute('x2')).toBe(dot.getAttribute('x1'));
+    expect(dot.getAttribute('stroke-linecap')).toBe('round');
+    expect(dot.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+    expect(container.querySelectorAll('path')).toHaveLength(0);
     expect(screen.getByLabelText('Weekly scope')).not.toBeNull();
   });
 
@@ -34,14 +34,12 @@ describe('LineChart with a single point', () => {
       <LineChart
         title="Scope and completed over time"
         description="Weekly scope"
-        series={[
-          { id: 'scope', label: 'Scope', tone: 'accent', filled: false, values: [0, 5, 10] },
-        ]}
+        series={[{ id: 'scope', label: 'Scope', tone: 'accent', filled: true, values: [0, 5, 10] }]}
         labels={['w1', 'w2', 'w3']}
         max={10}
       />,
     );
-    expect(container.querySelector('circle')).toBeNull();
-    expect(container.querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('chart-line-scope').tagName).toBe('path');
+    expect(container.querySelectorAll('path')).toHaveLength(2);
   });
 });

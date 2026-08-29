@@ -40,12 +40,18 @@ const LEGEND_DOT: Record<SeriesTone, string> = {
 function SeriesPath({ series, max }: { readonly series: ChartSeries; readonly max: number }) {
   const ref = useDrawOnMount<SVGPathElement>();
   if (series.values.length === 1) {
+    const x = chartX(0, 1);
+    const y = chartY(series.values[0] ?? 0, max);
     return (
-      <circle
-        cx={chartX(0, 1)}
-        cy={chartY(series.values[0] ?? 0, max)}
-        r={3.5}
-        fill={STROKE[series.tone]}
+      <line
+        x1={x}
+        x2={x}
+        y1={y}
+        y2={y}
+        stroke={STROKE[series.tone]}
+        strokeWidth={7}
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
         data-testid={`chart-line-${series.id}`}
       />
     );
