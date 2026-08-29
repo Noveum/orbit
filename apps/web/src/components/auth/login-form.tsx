@@ -227,6 +227,9 @@ function LoginFooter({
         </button>
       ) : null}
       <p className="text-center text-2xs text-faint">
+        New to Orbit? Signing in creates your account and your first workspace.
+      </p>
+      <p className="text-center text-2xs text-faint">
         {passwordEnabled
           ? 'Passkeys and email codes still work. Sessions expire after 30 days.'
           : 'Orbit never asks for a password. Sessions expire after 30 days.'}

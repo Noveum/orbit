@@ -431,7 +431,8 @@ function Hero() {
           </span>
         </div>
         <p className="landing-rise mt-4 text-xs text-faint" style={{ animationDelay: '250ms' }}>
-          Google, GitHub, passkey, or email code. No password to invent. Or{' '}
+          Anyone can sign up, free. Google, GitHub, passkey, or email code. No password to invent.
+          Or{' '}
           <a href={SELF_HOST_HREF} className="underline" target="_blank" rel="noopener noreferrer">
             run the whole thing yourself
           </a>
@@ -845,8 +846,8 @@ function ClosingCta() {
       <div className="relative mx-auto w-full max-w-6xl 2xl:max-w-7xl px-5 py-28 text-center sm:px-8">
         <h2 className="landing-h2">Ready when you are.</h2>
         <p className="landing-lede mx-auto mt-4 max-w-xl text-muted">
-          Sign in with Google, GitHub, a passkey, or an email code, and bring your team with you. Or
-          clone the repository and run it on your own infrastructure.
+          Sign up with Google, GitHub, a passkey, or an email code, and bring your team with you. No
+          invite needed. Or clone the repository and run it on your own infrastructure.
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <Link href={SIGN_IN_HREF} className={primaryCta}>

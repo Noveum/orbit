@@ -30,6 +30,12 @@ describe('HomePage', () => {
     expect(screen.getAllByRole('link', { name: /sign in/i }).length).toBeGreaterThan(0);
   });
 
+  it('tells a visitor that signing up is open to anyone', async () => {
+    render(await HomePage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByText(/anyone can sign up, free/i)).toBeDefined();
+    expect(screen.getByText(/no invite needed/i)).toBeDefined();
+  });
+
   it('redirects a logged-in visitor to their issues', async () => {
     sessionHolder.value = { user: { id: 'user-1' } };
     await expect(HomePage({ searchParams: Promise.resolve({}) })).rejects.toThrow(

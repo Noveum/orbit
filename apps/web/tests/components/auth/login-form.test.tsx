@@ -71,6 +71,13 @@ describe('LoginForm', () => {
     expect(screen.getByText('Continue with passkey')).toBeDefined();
   });
 
+  it('says signing in creates an account whichever methods are on', () => {
+    renderForm(false);
+    expect(
+      screen.getByText('New to Orbit? Signing in creates your account and your first workspace.'),
+    ).toBeDefined();
+  });
+
   it('hides the forgot password affordance while password auth is off', () => {
     renderForm(false);
     expect(screen.queryByText('Forgot password?')).toBeNull();
