@@ -8,6 +8,7 @@ import { listDevUsers } from '@/lib/api/dev-users.ts';
 import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
+import { signUpIsOpen } from '@/lib/env.ts';
 import { mcpContinueUrl, safeCallback } from './continue-url.ts';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -31,6 +32,7 @@ export default async function LoginPage({
         <LoginForm
           providers={enabledSocialProviders}
           passwordEnabled={passwordAuthEnabled}
+          openSignUp={signUpIsOpen()}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
         {devUsers.length > 0 ? (

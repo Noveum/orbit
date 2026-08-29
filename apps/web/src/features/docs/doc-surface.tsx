@@ -17,6 +17,7 @@ import {
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
+import { AttachmentGallery } from '@/features/attachments/attachment-gallery.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { newDocPath } from '@/lib/docs/paths.ts';
@@ -32,7 +33,6 @@ import {
   useToggleDocFavorite,
   useUpdateDoc,
 } from '@/lib/query/use-docs.ts';
-import { DocAttachments } from './doc-attachments.tsx';
 import { DocComments } from './doc-comments.tsx';
 import { DocEditor } from './doc-editor.tsx';
 import { DocGateway } from './doc-gateway.tsx';
@@ -283,7 +283,7 @@ function LoadedDoc({
           commenting={commenting}
           footer={
             <div className={isHtmlDoc(detail.doc.kind) ? '' : 'mt-10 border-border border-t pt-6'}>
-              <DocAttachments attachments={detail.attachments} />
+              <AttachmentGallery attachments={detail.attachments} />
               <DocBacklinks backlinks={detail.backlinks} />
               <DocComments
                 docId={detail.doc.id}

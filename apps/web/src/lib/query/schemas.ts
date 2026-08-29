@@ -280,6 +280,17 @@ export const issueDeletedSchema = z.object({
   deleted: z.object({ id: z.string(), identifier: z.string() }),
 });
 
+export const attachmentSchema = z.object({
+  id: z.string(),
+  parentType: z.string(),
+  parentId: z.string(),
+  fileName: z.string(),
+  contentType: z.string(),
+  size: z.number(),
+  storageKey: z.string(),
+  status: z.string(),
+});
+
 export const issueDetailSchema = z.object({
   issue: issueSchema,
   descriptionHtml: z.string(),
@@ -288,6 +299,7 @@ export const issueDetailSchema = z.object({
   subIssues: z.array(issueSchema),
   parent: issueSchema.nullable().default(null),
   subscribed: z.boolean(),
+  attachments: z.array(attachmentSchema).default([]),
 });
 
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
@@ -368,17 +380,6 @@ export const docCollectionSchema = z.object({
 });
 
 export type DocCollection = z.infer<typeof docCollectionSchema>;
-
-export const attachmentSchema = z.object({
-  id: z.string(),
-  parentType: z.string(),
-  parentId: z.string(),
-  fileName: z.string(),
-  contentType: z.string(),
-  size: z.number(),
-  storageKey: z.string(),
-  status: z.string(),
-});
 
 export type Attachment = z.infer<typeof attachmentSchema>;
 

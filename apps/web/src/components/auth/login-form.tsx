@@ -17,6 +17,7 @@ export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
   readonly passwordEnabled?: boolean;
+  readonly openSignUp?: boolean;
 }
 
 type Pending =
@@ -209,10 +210,12 @@ function OtpFields({ sent, value, pending, onChange, onResend, onChangeEmail }: 
 function LoginFooter({
   passwordEnabled,
   creatingAccount,
+  openSignUp,
   onToggleAccount,
 }: {
   readonly passwordEnabled: boolean;
   readonly creatingAccount: boolean;
+  readonly openSignUp: boolean;
   readonly onToggleAccount: () => void;
 }) {
   return (
@@ -225,6 +228,11 @@ function LoginFooter({
         >
           {creatingAccount ? 'I already have an account' : 'Create an account with a password'}
         </button>
+      ) : null}
+      {openSignUp && !creatingAccount ? (
+        <p className="text-center text-2xs text-faint">
+          New here? Signing in creates your account, then you set up a workspace.
+        </p>
       ) : null}
       <p className="text-center text-2xs text-faint">
         {passwordEnabled
@@ -239,6 +247,7 @@ export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
   passwordEnabled = false,
+  openSignUp = false,
 }: LoginFormProps) {
   const { toast } = useToast();
   const [email, setEmail] = useState('');
@@ -455,6 +464,7 @@ export function LoginForm({
       <LoginFooter
         passwordEnabled={passwordEnabled}
         creatingAccount={creatingAccount}
+        openSignUp={openSignUp}
         onToggleAccount={() => setCreatingAccount((current) => !current)}
       />
     </div>

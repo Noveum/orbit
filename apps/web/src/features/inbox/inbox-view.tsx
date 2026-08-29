@@ -9,7 +9,6 @@ import {
 } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
-import { relativeTime } from '@orbit/shared/utils';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertTriangle,
@@ -34,6 +33,7 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { CommentBody } from '@/features/comments/comment-thread.tsx';
 import { DocSurface } from '@/features/docs/doc-surface.tsx';
 import { IssueDetailView } from '@/features/issues/issue-detail.tsx';
@@ -343,7 +343,7 @@ function NotificationRow({
             {row.title}
           </span>
           <span className="truncate text-2xs text-faint">
-            {row.actorName} · {relativeTime(new Date(row.createdAt))}
+            {row.actorName} · <RelativeTime at={row.createdAt} />
           </span>
         </span>
       </button>
@@ -417,7 +417,7 @@ function NotificationDetail({
       <div className="flex items-center gap-3 border-border border-b px-5 py-2">
         <p className="min-w-0 flex-1 truncate text-2xs text-faint">
           <span className="text-muted">{item.title}</span> · {item.actorName} ·{' '}
-          {relativeTime(new Date(item.createdAt))}
+          <RelativeTime at={item.createdAt} />
           {item.snoozedUntil === null ? '' : ' · snoozed'}
         </p>
         <span className="flex shrink-0 items-center gap-3">

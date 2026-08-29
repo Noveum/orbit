@@ -1,13 +1,13 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
 import { Book, GitBranch, Link2, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
+import { AttachmentGallery } from '@/features/attachments/attachment-gallery.tsx';
 import { cn } from '@/lib/cn.ts';
 import type { Attachment, Doc } from '@/lib/query/schemas.ts';
-import { DocAttachments } from './doc-attachments.tsx';
 import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import type { DocHeading } from './outline.ts';
@@ -55,7 +55,9 @@ export function DocContextRow({
           Synced from <code className="font-mono">{binding.path}</code>
         </span>
       )}
-      <span className="text-2xs text-faint">Updated {relativeTime(new Date(doc.updatedAt))}</span>
+      <span className="text-2xs text-faint">
+        Updated <RelativeTime at={doc.updatedAt} />
+      </span>
       <span data-testid="doc-stats" className="text-2xs text-faint tabular-nums">
         {wordCount(doc.content).toLocaleString()} words · {readTimeMinutes(doc.content)} min read
       </span>
@@ -136,7 +138,7 @@ export function DocReader({
         </div>
 
         <DocBody html={contentHtml} onHeadings={setHeadings} className="mt-2" />
-        <DocAttachments attachments={attachments} />
+        <AttachmentGallery attachments={attachments} />
 
         <DocBacklinks backlinks={backlinks} />
       </div>

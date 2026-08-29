@@ -55,14 +55,18 @@
     "infra:reset": "docker compose down -v && docker compose up -d",
     "prepare": "lefthook install || true",
     "db:test-lanes-drop": "bun run --filter '@orbit/db' test-lanes-drop",
-    "check-bun-imports": "bun scripts/check-bun-imports.ts"
+    "check-bun-imports": "bun scripts/check-bun-imports.ts",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
     "@orbit/shared": "workspace:*",
     "@types/bun": "1.3.14",
     "lefthook": "2.1.10",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitepress": "1.6.4"
   },
   "overrides": {
     "@codemirror/lang-html": "^6.4.11",

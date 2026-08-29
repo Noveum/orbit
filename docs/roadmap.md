@@ -133,7 +133,7 @@ enforced.
   moves it up more than a reaction does.
 - **Open a feature request.** Describe the workflow that is painful, not the
   widget you want. See
-  [CONTRIBUTING.md](../CONTRIBUTING.md#proposing-features).
+  [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md#proposing-features).
 - **Build it.** Comment first so we can agree the shape, then go. Anything
   marked **help wanted** already has agreement.
 

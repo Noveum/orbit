@@ -22,7 +22,7 @@ gated behind a plan.
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
 | See what is coming | [Roadmap](roadmap.md) |
 | Operate gated Vercel Preview deployments | [Vercel Preview deployment gate](VERCEL_BUILD_GATE.md) |
-| Contribute | [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Contribute | [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) |
 
 ## The five minute version
 
@@ -56,7 +56,7 @@ are two reasonable ways to do something, Orbit picks one and fixes that one.
 
 - [Discussions](https://github.com/Noveum/orbit/discussions) for questions.
 - [Issues](https://github.com/Noveum/orbit/issues) for bugs and concrete work.
-- [SECURITY.md](../SECURITY.md) for anything that should not be public.
+- [SECURITY.md](https://github.com/Noveum/orbit/blob/main/SECURITY.md) for anything that should not be public.
 
 If a page here is wrong or missing something, that is a bug. Please
 [tell us](https://github.com/Noveum/orbit/issues/new?template=documentation.yml).

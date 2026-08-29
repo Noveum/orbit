@@ -1,11 +1,11 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
 import { MonitorSmartphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { messageOf } from '@/lib/api/client.ts';
 import { authClient } from '@/lib/auth/client.ts';
@@ -62,7 +62,7 @@ export function SessionsPanel({ sessions }: SessionsPanelProps) {
               </span>
               <span className="truncate text-2xs text-faint">
                 {session.ipAddress ?? 'Unknown IP'}, last seen{' '}
-                {relativeTime(new Date(session.lastSeenAt))}
+                <RelativeTime at={session.lastSeenAt} />
               </span>
             </span>
             {session.current ? null : (

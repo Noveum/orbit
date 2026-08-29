@@ -1,6 +1,6 @@
 'use client';
 
-import { FileText, LayoutTemplate } from 'lucide-react';
+import { FileCode, FileText, LayoutTemplate } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -13,11 +13,11 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
+import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from '@/features/docs/templates.ts';
 import { newDocPath } from '@/lib/docs/paths.ts';
 import { useDocs } from '@/lib/query/use-docs.ts';
 import { DocImport } from './doc-import.tsx';
 import { DocsHome } from './docs-home.tsx';
-import { DOC_TEMPLATES } from './templates.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 
 export interface DocsEmptyPaneProps {
@@ -31,10 +31,17 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
   const docs = list.data?.docs ?? [];
 
   const newDoc = useCallback(() => router.push(newDocPath()), [router]);
+  const newHtmlPage = useCallback(
+    () => router.push(newDocPath({ templateId: HTML_PAGE_TEMPLATE_ID })),
+    [router],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="docs-empty-pane">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
+      <div
+        className="flex min-h-11 shrink-0 items-center gap-2 overflow-x-auto border-border border-b px-3 py-2"
+        data-testid="docs-toolbar"
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -49,9 +56,14 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         {canWrite ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="secondary" size="sm" data-testid="doc-templates">
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label="Templates"
+                data-testid="doc-templates"
+              >
                 <LayoutTemplate className="size-3.5" aria-hidden="true" />
-                Templates
+                <span className="hidden sm:inline">Templates</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -70,9 +82,21 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
         ) : null}
         {canWrite ? <DocImport collectionId={null} projectId={null} /> : null}
         {canWrite ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label="New HTML page"
+            data-testid="new-html-page"
+            onClick={newHtmlPage}
+          >
+            <FileCode className="size-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">New HTML page</span>
+          </Button>
+        ) : null}
+        {canWrite ? (
           <Button variant="primary" size="sm" data-testid="new-doc" onClick={newDoc}>
             New doc
-            <Kbd keys={['c']} className="ml-1 opacity-70" />
+            <Kbd keys={['c']} className="ml-1 hidden opacity-70 sm:inline-flex" />
           </Button>
         ) : null}
       </div>
@@ -84,9 +108,15 @@ export function DocsEmptyPane({ canWrite }: DocsEmptyPaneProps) {
           className="flex-1"
           action={
             canWrite ? (
-              <Button variant="secondary" size="sm" onClick={newDoc}>
-                New doc
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button variant="secondary" size="sm" onClick={newDoc}>
+                  New doc
+                </Button>
+                <Button variant="secondary" size="sm" onClick={newHtmlPage}>
+                  <FileCode className="size-3.5" aria-hidden="true" />
+                  New HTML page
+                </Button>
+              </div>
             ) : undefined
           }
         />

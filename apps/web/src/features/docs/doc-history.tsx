@@ -1,6 +1,5 @@
 'use client';
 
-import { relativeTime } from '@orbit/shared/utils';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Dialog,
@@ -9,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import type { DocVersion } from '@/lib/query/schemas.ts';
 import { useDocVersions, useRestoreDocVersion } from '@/lib/query/use-docs.ts';
@@ -83,7 +83,7 @@ function VersionList({
           <span className="min-w-0 flex-1">
             <span className="block truncate text-dense text-text">{version.title}</span>
             <span className="block text-2xs text-faint">
-              {relativeTime(new Date(version.lastSavedAt))}
+              <RelativeTime at={version.lastSavedAt} />
               {version.restoredFromId === null ? '' : ' · restored'}
             </span>
           </span>

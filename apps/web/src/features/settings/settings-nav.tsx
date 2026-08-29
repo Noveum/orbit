@@ -37,6 +37,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { href: '/settings/workflow', label: 'Workflow' },
       { href: '/settings/notifications', label: 'Notifications' },
       { href: '/settings/integrations', label: 'Integrations' },
+      { href: '/settings/mcp', label: 'MCP server' },
     ],
   },
 ];
