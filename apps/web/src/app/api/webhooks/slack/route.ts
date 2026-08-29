@@ -75,7 +75,7 @@ async function unfurlLinks(
     .limit(1);
   if (integrationRow === undefined) return;
 
-  const context = await resolveSlackContext(db, integrationRow.organizationId, slackTeamId);
+  const context = await resolveSlackContext(db, integrationRow.organizationId);
   if (context === null || context.token === null) return;
 
   const unfurls = await resolveIssueUnfurls(

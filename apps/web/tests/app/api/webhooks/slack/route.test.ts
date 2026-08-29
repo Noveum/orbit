@@ -10,11 +10,22 @@ process.env['SLACK_SIGNING_SECRET'] = SECRET;
 const unfurled: { channel: string; ts: string; urls: string[] }[] = [];
 const core = await import('@orbit/core');
 const services = await import('@orbit/services');
+const slackCapability = await import('@orbit/shared/constants');
 mock.module('@orbit/core', () => ({ ...core, publishDeltas: () => Promise.resolve(undefined) }));
+mock.module('@orbit/shared/constants', () => ({
+  ...slackCapability,
+  SLACK_INTEGRATION_ENABLED: true,
+}));
 mock.module('@orbit/services', () => ({
   ...services,
+  SlackClient: class {
+    unfurl(input: { channel: string; ts: string; unfurls: Record<string, unknown> }) {
+      unfurled.push({ channel: input.channel, ts: input.ts, urls: Object.keys(input.unfurls) });
+      return Promise.resolve();
+    }
+  },
   resolveIssueUnfurls: () => {
-    return { 'https://app.orbit.ac/ORB/3': { title: 'Dashboard' } };
+    return Promise.resolve({ 'https://app.orbit.ac/ORB/3': { title: 'Dashboard' } });
   },
 }));
 mock.module('@orbit/services/slack/dispatch', () => ({
