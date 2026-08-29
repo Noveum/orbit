@@ -359,6 +359,7 @@ function migrateMovedIssueDetails(
         : movedIssueDetail(current, parsed.data);
     if (next === undefined) continue;
     client.setQueryData(previousKey, next);
+    client.invalidateQueries({ queryKey: previousKey, exact: true }).catch(noop);
     if (migrated === undefined || current !== undefined) migrated = next;
   }
   if (migrated === undefined) return;

@@ -81,6 +81,39 @@ async function waitForKeyboardDragReady(page: Page, identifier: string): Promise
   );
 }
 
+async function reloadAndWaitForTeamSubscription(page: Page, teamId: string): Promise<void> {
+  const subscribed = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const handleWebSocket = (socket: import('@playwright/test').WebSocket) => {
+      socket.on('framereceived', ({ payload }) => {
+        if (settled || typeof payload !== 'string') return;
+        let value: unknown;
+        try {
+          value = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        const result = z
+          .object({ type: z.literal('subscribed'), scopes: z.array(z.string()) })
+          .safeParse(value);
+        if (!(result.success && result.data.scopes.includes(`team:${teamId}`))) return;
+        settled = true;
+        clearTimeout(timeout);
+        page.off('websocket', handleWebSocket);
+        resolve();
+      });
+    };
+    const timeout = setTimeout(() => {
+      settled = true;
+      page.off('websocket', handleWebSocket);
+      reject(new Error(`realtime did not subscribe to team:${teamId}`));
+    }, 15_000);
+    page.on('websocket', handleWebSocket);
+  });
+  await page.reload();
+  await subscribed;
+}
+
 test('a card dragged to another column lands there and stays after a reload', async ({
   browser,
 }) => {
@@ -116,6 +149,7 @@ test('a card dragged to another column lands there and stays after a reload', as
 
   await page.reload();
   await page.waitForSelector('[data-testid^="issue-card-"]');
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 45_000 })
     .toContain(moving);
@@ -199,6 +233,7 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
     .toContain(moving);
   await expect(cardLocator).toBeFocused();
   await page.reload();
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
@@ -273,7 +308,7 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   const todo = await stateIdByName(page, teamId, 'Todo');
   const made = await createIssue(page, teamId, `Keyboard Cancel ${Date.now()}`, todo);
   const moving = made.identifier;
-  await page.reload();
+  await reloadAndWaitForTeamSubscription(page, teamId);
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
   const boardStatus = page.getByTestId('board-drag-status');

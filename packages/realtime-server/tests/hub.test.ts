@@ -2042,7 +2042,9 @@ describe('membership and session revocation', () => {
     const hub = await newHub();
     try {
       const wired = await connect(hub, home.readerUserId, home.organizationId);
+      const unaffected = await connect(hub, away.readerUserId, away.organizationId);
       await subscribe(wired, [`team:${home.teamCore}`]);
+      await subscribe(unaffected, [`team:${away.teamCore}`]);
 
       await publishDeltas([
         action({
@@ -2054,12 +2056,13 @@ describe('membership and session revocation', () => {
           syncId: 60,
         }),
         action({
-          modelId: home.issueOnCore,
-          scopes: [`team:${home.teamCore}`],
+          organizationId: away.organizationId,
+          modelId: away.issueOnCore,
+          scopes: [`team:${away.teamCore}`],
           data: {
-            id: home.issueOnCore,
-            teamId: home.teamCore,
-            title: 'Restricted after malformed removal',
+            id: away.issueOnCore,
+            teamId: away.teamCore,
+            title: 'Delivered after malformed removal',
           },
           syncId: 61,
         }),
@@ -2074,8 +2077,12 @@ describe('membership and session revocation', () => {
         code: ORGANIZATION_FORBIDDEN_CLOSE_CODE,
         reason: 'membership_revoked',
       });
-      expect(JSON.stringify(wired.socket.frames('delta'))).not.toContain(
-        'Restricted after malformed removal',
+      await waitFor(
+        () =>
+          JSON.stringify(unaffected.socket.frames('delta')).includes(
+            'Delivered after malformed removal',
+          ),
+        'the unaffected action after the malformed removal',
       );
     } finally {
       await hub.close();

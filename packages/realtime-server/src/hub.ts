@@ -860,6 +860,13 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
         await revalidateMutableResourceScopes(action, resourceAffected);
         await revalidateAffected(action);
         revalidated = true;
+      } catch (error: unknown) {
+        logger.error('delta action processing failed', {
+          organizationId: action.organizationId,
+          model: action.model,
+          modelId: action.modelId,
+          ...errorFields(error),
+        });
       } finally {
         finishMutableResourceReach(action, resourceAffected);
         finishIssueMoveReach(action, issueMoveAffected);

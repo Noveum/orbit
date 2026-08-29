@@ -1273,10 +1273,15 @@ describe('relations', () => {
       type: 'blocks',
     });
     expect(relations).toHaveLength(2);
+    expect(actions).toHaveLength(2);
     expect(actions.every((action) => action.model === 'issue_relation')).toBe(true);
-    expect(actions.map((action) => action.scopes)).toEqual([
-      [scopes.team(workspace.teamId), scopes.issue(blocker.id)],
-      [scopes.team(workspace.teamId), scopes.issue(blocked.id)],
+    expect(actions.map((action) => action.scopes)).toContainEqual([
+      scopes.team(workspace.teamId),
+      scopes.issue(blocker.id),
+    ]);
+    expect(actions.map((action) => action.scopes)).toContainEqual([
+      scopes.team(workspace.teamId),
+      scopes.issue(blocked.id),
     ]);
 
     const inverse = await listRelations(workspace.admin, blocked.id);

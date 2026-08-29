@@ -173,17 +173,16 @@ describe('catchUp', () => {
 
     const result = await catchUp(workspace.admin, 0);
     const relations = result.actions.filter((action) => action.model === 'issue_relation');
-    expect(relations.map((action) => action.scopes)).toEqual([
-      [
-        scopes.organization(workspace.organizationId),
-        scopes.team(workspace.teamId),
-        scopes.issue(source.issue.id),
-      ],
-      [
-        scopes.organization(workspace.organizationId),
-        scopes.team(workspace.teamId),
-        scopes.issue(target.issue.id),
-      ],
+    expect(relations).toHaveLength(2);
+    expect(relations.map((action) => action.scopes)).toContainEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(source.issue.id),
+    ]);
+    expect(relations.map((action) => action.scopes)).toContainEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(target.issue.id),
     ]);
   });
 

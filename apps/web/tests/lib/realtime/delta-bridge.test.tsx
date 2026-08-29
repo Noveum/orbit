@@ -816,17 +816,21 @@ describe('DeltaBridge ordering', () => {
     const stale = deferred<ReturnType<typeof detailFor>>();
     const fresh = deferred<ReturnType<typeof detailFor>>();
     const requests: string[] = [];
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 40 });
+    let previousRequests = 0;
     const previousObserver = new QueryObserver(client, {
       queryKey: previousKey,
       queryFn: () => {
         requests.push('ENG-3');
-        return stale.promise;
+        previousRequests += 1;
+        return previousRequests === 1
+          ? stale.promise
+          : Promise.resolve({ ...detailFor(arrived, []), descriptionHtml: 'Canonical detail' });
       },
       retry: false,
     });
     const unsubscribePrevious = previousObserver.subscribe(() => undefined);
     await waitFor(() => expect(requests).toEqual(['ENG-3']));
-    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 40 });
 
     act(() =>
       capturedHandler?.([
@@ -855,7 +859,10 @@ describe('DeltaBridge ordering', () => {
       ),
     );
     expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue).toEqual(arrived);
-    expect(requests).toEqual(['ENG-3']);
+    await waitFor(() => expect(requests).toEqual(['ENG-3', 'ENG-3']));
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.descriptionHtml).toBe(
+      'Canonical detail',
+    );
 
     const nextObserver = new QueryObserver(client, {
       queryKey: nextKey,
@@ -866,7 +873,7 @@ describe('DeltaBridge ordering', () => {
       retry: false,
     });
     const unsubscribeNext = nextObserver.subscribe(() => undefined);
-    await waitFor(() => expect(requests).toEqual(['ENG-3', 'DSGN-4']));
+    await waitFor(() => expect(requests).toEqual(['ENG-3', 'ENG-3', 'DSGN-4']));
     fresh.resolve(detailFor(arrived, []));
     await waitFor(() =>
       expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue.syncId).toBe(40),
@@ -879,7 +886,7 @@ describe('DeltaBridge ordering', () => {
       identifier: 'DSGN-4',
       syncId: 40,
     });
-    expect(requests).toEqual(['ENG-3', 'DSGN-4']);
+    expect(requests).toEqual(['ENG-3', 'ENG-3', 'DSGN-4']);
     unsubscribePrevious();
     unsubscribeNext();
   });
