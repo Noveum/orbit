@@ -66,6 +66,41 @@ export const notification = pgTable(
   ],
 );
 
+export const notificationDelivery = pgTable(
+  'notification_delivery',
+  {
+    id: text('id').primaryKey(),
+    notificationId: text('notification_id')
+      .notNull()
+      .references(() => notification.id, { onDelete: 'cascade' }),
+    sourceDeliveryId: text('source_delivery_id'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    providerMessageChannel: text('provider_message_channel'),
+    providerMessageTs: text('provider_message_ts'),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('notification_delivery_unique').on(
+      table.notificationId,
+      table.userId,
+      table.channel,
+    ),
+    index('notification_delivery_source_lookup_idx')
+      .on(table.sourceDeliveryId, table.userId, table.channel)
+      .where(sql`${table.sourceDeliveryId} is not null`),
+    index('notification_delivery_pending_idx').on(table.status, table.availableAt),
+  ],
+);
+
 export const notificationPreference = pgTable(
   'notification_preference',
   {
@@ -133,6 +168,11 @@ export const integration = pgTable(
       table.provider,
       table.externalId,
     ),
+    index('integration_provider_slack_team_idx').on(
+      table.provider,
+      sql`(${table.config} ->> 'slackTeamId')`,
+    ),
+    index('integration_provider_external_idx').on(table.provider, table.externalId),
   ],
 );
 
@@ -504,6 +544,7 @@ export const slackUserMapping = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     slackUserId: text('slack_user_id').notNull(),
     slackDisplayName: text('slack_display_name').notNull().default(''),
+    slackChannelId: text('slack_channel_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

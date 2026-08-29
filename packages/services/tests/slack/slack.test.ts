@@ -5,6 +5,7 @@ import {
   commandParser,
   escapeSlackText,
   issueBlocks,
+  SlackApiError,
   SlackClient,
   type SlackIssue,
   slashCommandSchema,
@@ -107,6 +108,60 @@ describe('buildUnfurl', () => {
     const unfurl = buildUnfurl(issue.url, issue);
     expect(Object.keys(unfurl)).toEqual([issue.url]);
     expect(unfurl[issue.url]?.blocks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('SlackClient', () => {
+  it('opens a direct message conversation', async () => {
+    const requests: { url: string; body: Record<string, unknown> }[] = [];
+    const fetch = Object.assign(
+      (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }), {
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      },
+      { preconnect: () => undefined },
+    );
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      baseUrl: 'https://slack.test/api',
+      fetch,
+    });
+
+    await expect(client.openConversation('U123')).resolves.toEqual({ channel: 'D123' });
+    expect(requests).toEqual([
+      { url: 'https://slack.test/api/conversations.open', body: { users: 'U123' } },
+    ]);
+  });
+
+  it('rejects a successful response without a non-empty conversation id', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true, channel: { id: '' } }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/unexpected payload/);
+  });
+
+  it('preserves Slack errors from a failed conversation response', async () => {
+    const fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'users_not_found' }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof globalThis.fetch;
+    const client = new SlackClient({ token: 'xoxb-test', fetch });
+
+    await expect(client.openConversation('U123')).rejects.toThrow(/users_not_found/);
   });
 });
 
@@ -223,13 +278,23 @@ describe('SlackClient', () => {
   it('lists conversations and maps the cursor', async () => {
     const { impl } = stubFetch(200, {
       ok: true,
-      channels: [{ id: 'C1', name: 'general', is_private: false }],
+      channels: [
+        { id: 'C1', name: 'general', is_private: false, is_member: true },
+        { id: 'C2', name: 'announcements', is_private: false, is_member: false },
+      ],
       response_metadata: { next_cursor: 'abc' },
     });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
     const result = await client.listConversations();
     expect(result.channels).toEqual([
-      { id: 'C1', name: 'general', isPrivate: false, isArchived: false },
+      { id: 'C1', name: 'general', isPrivate: false, isArchived: false, isMember: true },
+      {
+        id: 'C2',
+        name: 'announcements',
+        isPrivate: false,
+        isArchived: false,
+        isMember: false,
+      },
     ]);
     expect(result.nextCursor).toBe('abc');
   });
@@ -254,6 +319,12 @@ describe('SlackClient', () => {
     expect(calls[0]?.init?.body).toContain('ADA@example.com');
   });
 
+  it('treats an unmapped Slack email as unavailable', async () => {
+    const { impl } = stubFetch(200, { ok: false, error: 'users_not_found' });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+    await expect(client.lookupUserByEmail('missing@example.com')).resolves.toBeNull();
+  });
+
   it('returns a null cursor when slack sends an empty one', async () => {
     const { impl } = stubFetch(200, { ok: true, channels: [], response_metadata: {} });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
@@ -268,12 +339,33 @@ describe('SlackClient', () => {
     );
   });
 
-  it('maps rate limiting and http failures to domain errors', async () => {
-    const limited = new SlackClient({ token: 'xoxb-test', fetch: stubFetch(429, {}).impl });
-    await expect(limited.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(DomainError);
-
+  it('maps HTTP failures to domain errors', async () => {
     const broken = new SlackClient({ token: 'xoxb-test', fetch: stubFetch(500, {}).impl });
     await expect(broken.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(/HTTP 500/);
+  });
+
+  it('preserves Slack Retry-After timing on a rate limit', async () => {
+    const impl = asFetchImpl(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '90' },
+        }),
+      ),
+    );
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    let caught: unknown;
+    try {
+      await client.postMessage({ channel: 'C1', text: 'hi' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SlackApiError);
+    if (!(caught instanceof SlackApiError)) throw new Error('Expected a Slack API error.');
+    expect(caught.code).toBe('ratelimited');
+    expect(caught.retryAfterMs).toBe(90_000);
   });
 
   it('rejects a body that is not json', async () => {

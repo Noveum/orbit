@@ -1,12 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import {
-  internal,
-  PRIORITY_LABELS,
-  type Priority,
-  rateLimited,
-  truncate,
-  unauthorized,
-} from '@orbit/shared';
+import { internal, PRIORITY_LABELS, type Priority, truncate, unauthorized } from '@orbit/shared';
 import { z } from 'zod';
 
 export const SLACK_REPLAY_WINDOW_SECONDS = 300;
@@ -176,14 +169,32 @@ const slackResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-const postMessageResponseSchema = slackResponseSchema.extend({
-  ts: z.string().optional(),
-  channel: z.string().optional(),
-});
+const postMessageResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    ts: z.string().min(1),
+    channel: z.string().min(1),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
 
 const viewResponseSchema = slackResponseSchema.extend({
   view: z.object({ id: z.string() }).optional(),
 });
+
+const openConversationResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    channel: z.object({ id: z.string().min(1) }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
 
 const conversationsResponseSchema = slackResponseSchema.extend({
   channels: z
@@ -193,6 +204,7 @@ const conversationsResponseSchema = slackResponseSchema.extend({
         name: z.string(),
         is_private: z.boolean().optional(),
         is_archived: z.boolean().optional(),
+        is_member: z.boolean().optional(),
       }),
     )
     .default([]),
@@ -219,11 +231,26 @@ export interface SlackMessageRef {
   readonly ts: string;
 }
 
+export class SlackApiError extends Error {
+  readonly retryAfterMs: number | undefined;
+
+  constructor(
+    readonly method: string,
+    readonly code: string,
+    retryAfterMs?: number,
+  ) {
+    super(`Slack ${method} failed: ${code}.`);
+    this.name = 'SlackApiError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export interface SlackChannel {
   readonly id: string;
   readonly name: string;
   readonly isPrivate: boolean;
   readonly isArchived: boolean;
+  readonly isMember: boolean;
 }
 
 export interface SlackConversations {
@@ -247,6 +274,7 @@ export interface PostMessageInput {
   readonly channel: string;
   readonly text: string;
   readonly blocks?: SlackBlock[];
+  readonly clientMsgId?: string;
   readonly threadTs?: string;
   readonly unfurlLinks?: boolean;
 }
@@ -274,11 +302,21 @@ export class SlackClient {
     const body = await this.call('chat.postMessage', postMessageResponseSchema, {
       channel: input.channel,
       text: input.text,
+      ...(input.clientMsgId === undefined ? {} : { client_msg_id: input.clientMsgId }),
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
       ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),
     });
-    return { channel: body.channel ?? input.channel, ts: body.ts ?? '' };
+    if (!body.ok) throw internal('Slack chat.postMessage did not return a message identity.');
+    return { channel: body.channel, ts: body.ts };
+  }
+
+  async openConversation(userId: string): Promise<{ channel: string }> {
+    const body = await this.call('conversations.open', openConversationResponseSchema, {
+      users: userId,
+    });
+    if (!body.ok) throw internal('Slack conversations.open did not return a channel.');
+    return { channel: body.channel.id };
   }
 
   async updateMessage(input: UpdateMessageInput): Promise<SlackMessageRef> {
@@ -288,7 +326,8 @@ export class SlackClient {
       text: input.text,
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
     });
-    return { channel: body.channel ?? input.channel, ts: body.ts ?? input.ts };
+    if (!body.ok) throw internal('Slack chat.update did not return a message identity.');
+    return { channel: body.channel, ts: body.ts };
   }
 
   async unfurl(input: {
@@ -327,13 +366,20 @@ export class SlackClient {
         name: channel.name,
         isPrivate: channel.is_private ?? false,
         isArchived: channel.is_archived ?? false,
+        isMember: channel.is_member ?? false,
       })),
       nextCursor: nextCursor.length > 0 ? nextCursor : null,
     };
   }
 
   async lookupUserByEmail(email: string): Promise<SlackUser | null> {
-    const body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    let body: z.infer<typeof userResponseSchema>;
+    try {
+      body = await this.call('users.lookupByEmail', userResponseSchema, { email });
+    } catch (error) {
+      if (error instanceof SlackApiError && error.code === 'users_not_found') return null;
+      throw error;
+    }
     const user = body.user;
     if (user === undefined) return null;
     return {
@@ -357,13 +403,20 @@ export class SlackClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
-    if (response.status === 429) throw rateLimited('Slack is rate limiting Orbit.');
+    if (response.status === 429) {
+      const retryAfterSeconds = Number(response.headers.get('retry-after'));
+      const retryAfterMs =
+        Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+          ? Math.ceil(retryAfterSeconds * 1000)
+          : undefined;
+      throw new SlackApiError(method, 'ratelimited', retryAfterMs);
+    }
     if (!response.ok) throw internal(`Slack ${method} returned HTTP ${response.status}.`);
 
     const parsed = schema.safeParse(await readJson(response, method));
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
-    if (!body.ok) throw internal(`Slack ${method} failed: ${body.error ?? 'unknown_error'}.`);
+    if (!body.ok) throw new SlackApiError(method, body.error ?? 'unknown_error');
     return parsed.data;
   }
 }
