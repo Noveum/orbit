@@ -353,7 +353,7 @@ describe('dragging a card on the My Issues board', () => {
     expect(sortable.length).toBeGreaterThan(0);
   });
 
-  it('carries the issue id on each sortable card, so a drop knows what moved', () => {
+  it('keeps each sortable card a list item around its nested controls', () => {
     workspace = buildWorkspace();
     renderView('me', 'board');
 
@@ -361,6 +361,6 @@ describe('dragging a card on the My Issues board', () => {
     const first = board.querySelector('[aria-roledescription="sortable"]');
 
     expect(first).not.toBeNull();
-    expect(first?.getAttribute('role')).toBe('button');
+    expect(first?.getAttribute('role')).toBe('listitem');
   });
 });

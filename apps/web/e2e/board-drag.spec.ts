@@ -30,15 +30,7 @@ async function dragCardToColumn(page: Page, identifier: string, column: string):
 
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
-  const steps = 12;
-  for (let step = 1; step <= steps; step += 1) {
-    await page.mouse.move(
-      from.x + (to.x + to.width / 2 - from.x) * (step / steps),
-      from.y + (to.y + 120 - from.y) * (step / steps),
-    );
-    await page.waitForTimeout(30);
-  }
-  await page.waitForTimeout(200);
+  await page.mouse.move(to.x + to.width / 2, to.y + 120, { steps: 12 });
   await page.mouse.up();
 }
 
@@ -54,7 +46,8 @@ test('a card dragged to another column lands there and stays after a reload', as
   await page.waitForSelector('[data-testid^="issue-card-"]');
 
   const teamId = await teamIdByKey(page, 'ENG');
-  const made = await createIssue(page, teamId, `Draggable ${Date.now()}`);
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const made = await createIssue(page, teamId, `Draggable ${Date.now()}`, todo);
   const moving = made.identifier;
 
   await page.reload();
@@ -117,12 +110,14 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await page.waitForSelector('[data-testid^="issue-card-"]');
   const teamId = await teamIdByKey(page, 'ENG');
-  const made = await createIssue(page, teamId, `Keyboard Drag ${Date.now()}`);
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const made = await createIssue(page, teamId, `Keyboard Drag ${Date.now()}`, todo);
   const moving = made.identifier;
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
   const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
+  const boardStatus = page.getByTestId('board-drag-status');
 
   await cardLocator.focus();
   await page.keyboard.press('Enter');
@@ -130,9 +125,9 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   await page.keyboard.press('ArrowRight');
   await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
   await page.keyboard.press('Enter');
-  await expect(ariaLive).toContainText(`Successfully dropped ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toContainText(`Moved ${moving} from column Todo`, { timeout: 10000 });
+  await expect(boardStatus).toContainText('to column In Progress');
 
-  await page.waitForTimeout(500);
   await expect
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
@@ -149,7 +144,8 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await page.waitForSelector('[data-testid^="issue-card-"]');
   const teamId = await teamIdByKey(page, 'ENG');
-  const made = await createIssue(page, teamId, `Keyboard Cancel ${Date.now()}`);
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const made = await createIssue(page, teamId, `Keyboard Cancel ${Date.now()}`, todo);
   const moving = made.identifier;
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
@@ -163,9 +159,47 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
   await page.keyboard.press('Escape');
   await expect(ariaLive).toContainText(`Cancelled dragging ${moving}`, { timeout: 10000 });
+  await expect(ariaLive).toContainText('Returned to column Todo');
 
-  await page.waitForTimeout(500);
   await expect.poll(async () => await cardsIn(page, 'Todo'), { timeout: 15_000 }).toContain(moving);
+  await context.close();
+});
+
+test('a failed keyboard move announces rollback and leaves the card in place', async ({
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  const page = await signIn(context, 'alex@orbit.example');
+  await page.goto(`${BASE}/team/eng/board`);
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
+  const teamId = await teamIdByKey(page, 'ENG');
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const made = await createIssue(page, teamId, `Keyboard Rollback ${Date.now()}`, todo);
+  await page.reload();
+  const cardLocator = page.locator(`li:has([data-testid="issue-card-${made.identifier}"])`);
+  const boardStatus = page.getByTestId('board-drag-status');
+  await expect(cardLocator).toBeVisible();
+  await page.route(`**/api/issues/${made.id}/move`, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'TEST_FAILURE', message: 'Move failed.' } }),
+    });
+  });
+
+  await cardLocator.focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+
+  await expect(boardStatus).toContainText(`Failed to move ${made.identifier}`, { timeout: 10_000 });
+  await expect(boardStatus).toContainText('Returned to column Todo');
+  await expect
+    .poll(async () => await cardsIn(page, 'Todo'), { timeout: 15_000 })
+    .toContain(made.identifier);
+  expect(await cardsIn(page, 'In Progress')).not.toContain(made.identifier);
+  expect(await stateIdOf(page, made.identifier)).toBe(todo);
   await context.close();
 });
 
@@ -177,22 +211,49 @@ test('a card can be reordered within the same column via keyboard', async ({ bro
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await page.waitForSelector('[data-testid^="issue-card-"]');
   const teamId = await teamIdByKey(page, 'ENG');
-  await createIssue(page, teamId, `Keyboard Reorder A ${Date.now()}`);
-  const made2 = await createIssue(page, teamId, `Keyboard Reorder B ${Date.now()}`);
-  const moving = made2.identifier;
+  const todo = await stateIdByName(page, teamId, 'Todo');
+  const first = await createIssue(page, teamId, `Keyboard Reorder A ${Date.now()}`, todo);
+  const second = await createIssue(page, teamId, `Keyboard Reorder B ${Date.now()}`, todo);
+  const moving = second.identifier;
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${moving}"])`);
   await expect(cardLocator).toBeVisible();
   const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
+  const boardStatus = page.getByTestId('board-drag-status');
+
+  await expect
+    .poll(async () => {
+      const rows = await cardsIn(page, 'Todo');
+      return rows.indexOf(second.identifier) < rows.indexOf(first.identifier);
+    })
+    .toBe(true);
 
   await cardLocator.focus();
   await page.keyboard.press('Space');
   await expect(ariaLive).toContainText(`Picked up ${moving}`, { timeout: 10000 });
-  await page.keyboard.press('ArrowUp');
-  await expect(ariaLive).toContainText(`Moved ${moving}`, { timeout: 10000 });
+  await page.keyboard.press('ArrowDown');
+  await expect(ariaLive).toContainText(`Moved ${moving} to column Todo, position 2`, {
+    timeout: 10000,
+  });
   await page.keyboard.press('Enter');
-  await expect(ariaLive).toContainText(`Successfully dropped ${moving}`, { timeout: 10000 });
+  await expect(boardStatus).toContainText(`Moved ${moving} from column Todo, position 1`, {
+    timeout: 10000,
+  });
+  await expect(boardStatus).toContainText('to column Todo, position 2');
 
-  await page.waitForTimeout(500);
+  await expect
+    .poll(async () => {
+      const rows = await cardsIn(page, 'Todo');
+      return rows.indexOf(first.identifier) < rows.indexOf(second.identifier);
+    })
+    .toBe(true);
+
+  await page.reload();
+  await expect
+    .poll(async () => {
+      const rows = await cardsIn(page, 'Todo');
+      return rows.indexOf(first.identifier) < rows.indexOf(second.identifier);
+    })
+    .toBe(true);
   await context.close();
 });

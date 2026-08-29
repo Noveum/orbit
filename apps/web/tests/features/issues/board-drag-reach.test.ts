@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { showsEmptyGroups } from '@orbit/shared/filters';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { canDragBoard, columnsReadyFor, planDrop } from '@/features/issues/board.tsx';
+import {
+  canDragBoard,
+  columnsReadyFor,
+  dropPositionFor,
+  planDrop,
+  settledDragStatus,
+} from '@/features/issues/board.tsx';
 import { scrollStep } from '@/features/issues/use-board-autoscroll.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 
@@ -78,6 +84,101 @@ describe('dropping a card when the board is not sorted by hand', () => {
     expect(move?.stateId).toBe('done');
     expect(move?.beforeId).toBe('first');
     expect(move?.afterId).toBe('second');
+  });
+});
+
+describe('reordering a card within its current column', () => {
+  const first = issue('first', { sortOrder: 1024 });
+  const second = issue('second', { sortOrder: 2048 });
+  const third = issue('third', { sortOrder: 3072 });
+  const fourth = issue('fourth', { sortOrder: 4096 });
+  const rows = [first, second, third, fourth];
+  const groups = [group('todo', rows)];
+
+  it('inserts after the card crossed while moving down', () => {
+    const move = planDrop(groups, rows, 'second', 'third', 'state');
+
+    expect(move?.beforeId).toBe('third');
+    expect(move?.afterId).toBe('fourth');
+  });
+
+  it('reports the resulting ordinal after moving down', () => {
+    expect(dropPositionFor(groups, 'second', 'third')).toEqual({
+      column: 'todo',
+      position: 3,
+      total: 4,
+    });
+  });
+
+  it('inserts before the card crossed while moving up', () => {
+    const move = planDrop(groups, rows, 'third', 'second', 'state');
+
+    expect(move?.beforeId).toBe('first');
+    expect(move?.afterId).toBe('second');
+  });
+});
+
+describe('settling keyboard drag feedback', () => {
+  const completed = {
+    session: 1,
+    identifier: 'ENG-1',
+    source: { column: 'Todo', position: 1, total: 2 },
+    destination: { column: 'Todo', position: 2, total: 2 },
+  };
+
+  it('does not publish an older result over a newer active drag', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 2,
+        activeSession: 2,
+        completed,
+        outcome: 'success',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not publish an older result after the newer drag ends', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 2,
+        activeSession: null,
+        completed,
+        outcome: 'success',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not publish a result while its drag is active', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 1,
+        activeSession: 1,
+        completed,
+        outcome: 'success',
+      }),
+    ).toBeNull();
+  });
+
+  it('announces both endpoints and ordinals when the current move succeeds', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 1,
+        activeSession: null,
+        completed,
+        outcome: 'success',
+      }),
+    ).toBe('Moved ENG-1 from column Todo, position 1 of 2, to column Todo, position 2 of 2.');
+  });
+
+  it('announces the source ordinal when the current move fails', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 1,
+        activeSession: null,
+        completed,
+        outcome: 'error',
+      }),
+    ).toBe('Failed to move ENG-1. Returned to column Todo, position 1 of 2.');
   });
 });
 

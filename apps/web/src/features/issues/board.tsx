@@ -76,6 +76,37 @@ export function columnsReadyFor(columnSource: object | undefined, boardPending: 
   return columnSource === undefined || !boardPending;
 }
 
+export interface BoardPosition {
+  readonly column: string;
+  readonly position: number;
+  readonly total: number;
+}
+
+export interface CompletedDrag {
+  readonly session: number;
+  readonly identifier: string;
+  readonly source: BoardPosition;
+  readonly destination: BoardPosition;
+}
+
+export interface SettledDragStatusInput {
+  readonly latestSession: number;
+  readonly activeSession: number | null;
+  readonly completed: CompletedDrag;
+  readonly outcome: 'success' | 'error';
+}
+
+export function settledDragStatus(input: SettledDragStatusInput): string | null {
+  const { latestSession, activeSession, completed, outcome } = input;
+  if (completed.session !== latestSession || activeSession !== null) return null;
+  const source = `column ${completed.source.column}, position ${completed.source.position} of ${completed.source.total}`;
+  if (outcome === 'error') {
+    return `Failed to move ${completed.identifier}. Returned to ${source}.`;
+  }
+  const destination = `column ${completed.destination.column}, position ${completed.destination.position} of ${completed.destination.total}`;
+  return `Moved ${completed.identifier} from ${source}, to ${destination}.`;
+}
+
 export const boardCollision: CollisionDetection = (args) => {
   const under = pointerWithin(args);
   return under.length > 0 ? under : rectIntersection(args);
@@ -142,26 +173,45 @@ function neighboursIn(
   overId: string,
 ): { before: Issue | null; after: Issue | null } {
   const siblings = group.issues.filter((issue) => issue.id !== dragged.id);
-  const overIndex = siblings.findIndex((issue) => issue.id === overId);
-  const insertAt = overIndex === -1 ? siblings.length : overIndex;
+  const insertAt = dropIndexFor(group, dragged.id, overId);
   return {
     before: insertAt === 0 ? null : (siblings[insertAt - 1] ?? null),
     after: siblings[insertAt] ?? null,
   };
 }
 
-function getNewPosition(
+function dropIndexFor(group: IssueGroup, activeId: string, overId: string): number {
+  const activeIndex = group.issues.findIndex((issue) => issue.id === activeId);
+  const targetIndex = group.issues.findIndex((issue) => issue.id === overId);
+  const siblings = group.issues.filter((issue) => issue.id !== activeId);
+  const targetWithoutActive = siblings.findIndex((issue) => issue.id === overId);
+  if (targetWithoutActive === -1) return siblings.length;
+  const movingDown = activeIndex !== -1 && targetIndex !== -1 && activeIndex < targetIndex;
+  return targetWithoutActive + (movingDown ? 1 : 0);
+}
+
+export function dropPositionFor(
   groups: readonly IssueGroup[],
   activeId: string,
   overId: string,
-): { column: string; pos: number; total: number } | null {
+): BoardPosition | null {
   const overGroup = targetGroupFor(groups, overId);
   if (overGroup === undefined) return null;
   const siblings = overGroup.issues.filter((i) => i.id !== activeId);
-  let overIndex = siblings.findIndex((i) => i.id === overId);
-  if (overGroup.id === overId) overIndex = siblings.length;
-  const pos = (overIndex === -1 ? siblings.length : overIndex) + 1;
-  return { column: overGroup.title, pos, total: siblings.length + 1 };
+  const position = dropIndexFor(overGroup, activeId, overId) + 1;
+  return { column: overGroup.title, position, total: siblings.length + 1 };
+}
+
+function currentPositionFor(groups: readonly IssueGroup[], issueId: string): BoardPosition | null {
+  const group = groups.find((entry) => entry.issues.some((issue) => issue.id === issueId));
+  if (group === undefined) return null;
+  const index = group.issues.findIndex((issue) => issue.id === issueId);
+  if (index === -1) return null;
+  return { column: group.title, position: index + 1, total: group.issues.length };
+}
+
+function boardPositionLabel(position: BoardPosition): string {
+  return `column ${position.column}, position ${position.position} of ${position.total}`;
 }
 
 function getAdjacentColumnCard(
@@ -187,11 +237,13 @@ function getDOMIndices(currentFocus: Element): {
   if (currentCol === null) return null;
   const cols = Array.from(document.querySelectorAll('[data-testid^="board-column-"]'));
   const cardsInCol = Array.from(currentCol.querySelectorAll('li[tabindex]'));
+  const cardIndex = cardsInCol.indexOf(currentFocus);
+  if (cardIndex === -1) return null;
   return {
     cols,
     colIndex: cols.indexOf(currentCol),
     cardsInCol,
-    cardIndex: cardsInCol.indexOf(currentFocus),
+    cardIndex,
   };
 }
 
@@ -310,14 +362,30 @@ function SortableCard({
   properties: readonly DisplayProperty[];
   onOpen: (id: string) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: issue.id,
     data: { stateId: issue.stateId },
+    attributes: { role: 'listitem' },
   });
+  const setCardNode = useCallback(
+    (node: HTMLLIElement | null) => {
+      setNodeRef(node);
+      setActivatorNodeRef(node);
+    },
+    [setNodeRef, setActivatorNodeRef],
+  );
 
   return (
     <li
-      ref={setNodeRef}
+      ref={setCardNode}
       style={{
         transform: CSS.Translate.toString(transform),
         transition: transition ?? 'transform 140ms var(--ease-out-orbit)',
@@ -334,6 +402,13 @@ function SortableCard({
       <IssueCardView issue={issue} lookups={lookups} properties={properties} onOpen={onOpen} />
     </li>
   );
+}
+
+interface ActiveDragSession {
+  readonly session: number;
+  readonly issueId: string;
+  readonly source: BoardPosition;
+  readonly overId?: string;
 }
 
 export function Board({
@@ -353,21 +428,30 @@ export function Board({
   const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
   const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [dragStatus, setDragStatus] = useState('');
   const [peekId, setPeekId] = useState<string | null>(null);
+  const [, setRowRevision] = useState(0);
+  const latestSession = useRef(0);
+  const activeSession = useRef<ActiveDragSession | undefined>(undefined);
 
   const columnRows = useRef<Map<string, readonly Issue[]>>(new Map());
-  const publishRows = useCallback((groupId: string, rows: readonly Issue[]) => {
-    columnRows.current.set(groupId, rows);
-  }, []);
-
-  const loadedGroups = useCallback(
-    () =>
-      groups.map((group) => {
-        const rows = columnRows.current.get(group.id);
-        return rows === undefined || rows === group.issues ? group : { ...group, issues: rows };
-      }),
-    [groups],
+  const publishRows = useCallback(
+    (groupId: string, rows: readonly Issue[]) => {
+      if (columnSource === undefined) return;
+      if (columnRows.current.get(groupId) === rows) return;
+      columnRows.current.set(groupId, rows);
+      setRowRevision((revision) => revision + 1);
+    },
+    [columnSource],
   );
+
+  const loadedGroups = useCallback(() => {
+    if (columnSource === undefined) return groups;
+    return groups.map((group) => {
+      const rows = columnRows.current.get(group.id);
+      return rows === undefined || rows === group.issues ? group : { ...group, issues: rows };
+    });
+  }, [groups, columnSource]);
 
   const issuesInPlay = useCallback(
     () => loadedGroups().flatMap((group) => [...group.issues]),
@@ -411,32 +495,70 @@ export function Board({
       activeId !== null &&
       dragged.current !== undefined &&
       liveActiveIssue !== undefined &&
-      dragged.current.updatedAt !== liveActiveIssue.updatedAt
+      dragged.current.syncId !== liveActiveIssue.syncId
     ) {
       dragged.current = liveActiveIssue;
-      const el = document.querySelector('[id^="DndLiveRegion-"][aria-live="assertive"]');
-      if (el !== null) {
-        el.textContent = `Note: ${liveActiveIssue.identifier} was updated in the background.`;
-      }
+      const overId = activeSession.current?.overId;
+      const heldPosition =
+        overId === undefined
+          ? currentPositionFor(loadedGroups(), liveActiveIssue.id)
+          : dropPositionFor(loadedGroups(), liveActiveIssue.id, overId);
+      const location =
+        heldPosition === null
+          ? 'at its current board position'
+          : `in ${boardPositionLabel(heldPosition)}`;
+      setDragStatus(
+        `${liveActiveIssue.identifier} was updated in the background. Still holding it ${location}.`,
+      );
     }
-  }, [activeId, liveActiveIssue]);
+  }, [activeId, liveActiveIssue, loadedGroups]);
 
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
-    dragged.current = issuesInPlay().find((issue) => issue.id === id);
+    const issue = issuesInPlay().find((entry) => entry.id === id);
+    const source = currentPositionFor(loadedGroups(), id);
+    latestSession.current += 1;
+    activeSession.current =
+      issue === undefined || source === null
+        ? undefined
+        : {
+            session: latestSession.current,
+            issueId: issue.id,
+            source,
+          };
+    dragged.current = issue;
+    setDragStatus('');
     setActiveId(id);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const session = activeSession.current;
+    if (session === undefined || session.issueId !== String(event.active.id)) return;
+    if (event.over === null) {
+      activeSession.current = {
+        session: session.session,
+        issueId: session.issueId,
+        source: session.source,
+      };
+      return;
+    }
+    const overId = String(event.over.id);
+    const destination = dropPositionFor(loadedGroups(), session.issueId, overId);
+    activeSession.current =
+      destination === null
+        ? {
+            session: session.session,
+            issueId: session.issueId,
+            source: session.source,
+          }
+        : { ...session, overId };
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const dragId = String(event.active.id);
+    const session = activeSession.current;
+    activeSession.current = undefined;
     setActiveId(null);
-
-    const announce = (msg: string) => {
-      setTimeout(() => {
-        const el = document.querySelector('[id^="DndLiveRegion-"][aria-live="assertive"]');
-        if (el !== null) el.textContent = msg;
-      }, 50);
-    };
 
     if (event.over === null) return;
     const overId = String(event.over.id);
@@ -456,17 +578,41 @@ export function Board({
     const title = issue?.identifier ?? 'item';
 
     if (placement === null) {
-      announce(`Cannot place ${title} here. Returned to original position.`);
+      if (session !== undefined) {
+        setDragStatus(
+          `Cannot place ${title} here. Returned to ${boardPositionLabel(session.source)}.`,
+        );
+      }
       return;
     }
 
-    const info = getNewPosition(loadedGroups(), dragId, overId);
-    const dest = info === null ? 'new position' : `column ${info.column}, position ${info.pos}`;
+    const destination = dropPositionFor(loadedGroups(), dragId, overId);
+    if (session === undefined || destination === null) return;
+    const completed: CompletedDrag = {
+      session: session.session,
+      identifier: title,
+      source: session.source,
+      destination,
+    };
+    const publishResult = (outcome: SettledDragStatusInput['outcome']) => {
+      const status = settledDragStatus({
+        latestSession: latestSession.current,
+        activeSession: activeSession.current?.session ?? null,
+        completed,
+        outcome,
+      });
+      if (status !== null) setDragStatus(status);
+    };
 
     move.mutate(placement, {
-      onSuccess: () => announce(`Successfully dropped ${title} in ${dest}.`),
-      onError: () => announce(`Failed to move ${title}. Returned to original position.`),
+      onSuccess: () => publishResult('success'),
+      onError: () => publishResult('error'),
     });
+  };
+
+  const handleDragCancel = () => {
+    activeSession.current = undefined;
+    setActiveId(null);
   };
 
   const handleBoardKeyDown = (e: React.KeyboardEvent) => {
@@ -491,11 +637,9 @@ export function Board({
         onDragStart({ active }: DragStartEvent) {
           const issue = issuesInPlay().find((i) => i.id === active.id);
           if (issue === undefined) return 'Picked up item.';
-          const group = loadedGroups().find((g) => g.issues.some((r) => r.id === active.id));
-          const groupName = group === undefined ? '' : ` in column ${group.title}`;
-          const siblings = group?.issues ?? [];
-          const pos = siblings.findIndex((i) => i.id === active.id) + 1;
-          return `Picked up ${issue.identifier}: ${issue.title}${groupName}, position ${pos} of ${siblings.length}.`;
+          const source = currentPositionFor(loadedGroups(), String(active.id));
+          const location = source === null ? '' : ` in ${boardPositionLabel(source)}`;
+          return `Picked up ${issue.identifier}: ${issue.title}${location}.`;
         },
         onDragOver({ active, over }: DragOverEvent) {
           if (over === null) return 'Moving item outside of board.';
@@ -518,22 +662,31 @@ export function Board({
 
           if (placement === null) return `Cannot move ${title} here.`;
 
-          const info = getNewPosition(loadedGroups(), dragId, overId);
+          const info = dropPositionFor(loadedGroups(), dragId, overId);
           if (info !== null) {
-            return `Moved ${title} to column ${info.column}, position ${info.pos} of ${info.total}.`;
+            return `Moved ${title} to column ${info.column}, position ${info.position} of ${info.total}.`;
           }
           return `Moved ${title}.`;
         },
         onDragEnd({ active, over }: DragEndEvent) {
           const title = issuesInPlay().find((i) => i.id === active.id)?.identifier ?? 'item';
-          if (over === null) return `Could not drop ${title}. Returned to original position.`;
-          if (active.id === over.id) return `Dropped ${title} in original position.`;
-          return `Dropping ${title}...`;
+          const source = currentPositionFor(loadedGroups(), String(active.id));
+          const sourceLabel =
+            source === null ? 'its original position' : boardPositionLabel(source);
+          if (over === null) return `Could not drop ${title}. Returned to ${sourceLabel}.`;
+          if (active.id === over.id) return `Dropped ${title} in ${sourceLabel}.`;
+          const destination = dropPositionFor(loadedGroups(), String(active.id), String(over.id));
+          if (destination === null) {
+            return `Could not drop ${title}. Returned to ${sourceLabel}.`;
+          }
+          return `Dropping ${title} from ${sourceLabel} to ${boardPositionLabel(destination)}.`;
         },
         onDragCancel({ active }: DragCancelEvent) {
           const issue = issuesInPlay().find((i) => i.id === active.id);
           if (issue === undefined) return 'Cancelled drag.';
-          return `Cancelled dragging ${issue.identifier}. Returned to original position.`;
+          const source = currentPositionFor(loadedGroups(), String(active.id));
+          const location = source === null ? 'its original position' : boardPositionLabel(source);
+          return `Cancelled dragging ${issue.identifier}. Returned to ${location}.`;
         },
       },
       screenReaderInstructions: {
@@ -584,8 +737,9 @@ export function Board({
       collisionDetection={boardCollision}
       accessibility={accessibility}
       onDragStart={onDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveId(null)}
+      onDragCancel={handleDragCancel}
     >
       {columns}
 
@@ -594,6 +748,16 @@ export function Board({
           <IssueCardView issue={activeIssue} lookups={lookups} properties={properties} dragging />
         )}
       </DragOverlay>
+
+      <div
+        data-testid="board-drag-status"
+        className="sr-only"
+        role="status"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        {dragStatus}
+      </div>
 
       {peek}
     </DndContext>

@@ -1,15 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { defaultDisplayOptions, emptyFilterGroup } from '@orbit/shared/filters';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import { boardSearch } from '@/lib/query/issue-search.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
+import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import { seedBoardColumns } from '@/lib/query/use-issues.ts';
+import type { BoardColumnSource } from '../../../src/features/issues/board.tsx';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
 const push = mock();
+const nativeFetch = globalThis.fetch;
+beforeEach(() => {
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: mock(async () => new Response('{}', { status: 200 })),
+  });
+});
+afterEach(() => {
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: nativeFetch,
+  });
+});
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push, replace: mock(), refresh: mock() }),
   usePathname: () => '/team/eng/board',
@@ -94,32 +114,170 @@ const second = issue({
   title: 'Second task',
 });
 
-function renderBoard() {
-  const groups = groupIssues(
-    [issue(), second],
-    'state',
-    { states: [todo], members: [], projects: [], cycles: [], labels: [] },
-    { showEmptyGroups: false, ordering: 'manual' },
-  );
+const ownedColumnSource: BoardColumnSource = {
+  query: { filter: emptyFilterGroup(), orderBy: 'manual' },
+  groupBy: 'state',
+  scope: { teamId: 'team_1' },
+  display: defaultDisplayOptions('board'),
+};
+
+function boardPage(rows: readonly Issue[]): BoardPage {
+  return {
+    groups: [{ id: todo.id, total: rows.length, issues: [...rows], nextCursor: null }],
+    truncated: false,
+  };
+}
+
+function renderBoard(
+  draggable = false,
+  rows: readonly Issue[] = [issue(), second],
+  columnSource?: BoardColumnSource,
+) {
+  const makeGroups = (nextRows: readonly Issue[]) =>
+    groupIssues(
+      nextRows,
+      'state',
+      { states: [todo], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: false, ordering: 'manual' },
+    );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  render(
+  if (columnSource !== undefined) {
+    const page = boardPage(rows);
+    client.setQueryData(
+      queryKeys.boardPage(
+        boardSearch(columnSource.query, columnSource.groupBy, columnSource.scope),
+      ),
+      page,
+    );
+    seedBoardColumns(client, columnSource, page, Date.now());
+  }
+  const board = (nextRows: readonly Issue[]) => (
     <QueryClientProvider client={client}>
       <TooltipProvider>
         <ToastProvider>
           <HotkeyProvider>
-            <Board groups={groups} draggable={false} />
+            <Board
+              groups={makeGroups(nextRows)}
+              draggable={draggable}
+              {...(columnSource === undefined ? {} : { columnSource })}
+            />
           </HotkeyProvider>
         </ToastProvider>
       </TooltipProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const rendered = render(board(rows));
+  return {
+    client,
+    rerenderBoard(nextRows: readonly Issue[]) {
+      rendered.rerender(board(nextRows));
+    },
+  };
 }
+
+describe('Board card keyboard boundaries', () => {
+  it('keeps the draggable wrapper a list item around nested controls', () => {
+    renderBoard(true);
+    const card = screen.getByTestId('issue-card-ENG-1');
+    const item = card.closest('li');
+
+    expect(item?.getAttribute('role')).toBe('listitem');
+    expect(within(card).getByRole('link', { name: 'Domain auto join' })).toBeInTheDocument();
+  });
+
+  it('leaves arrow keys on nested issue links untouched', () => {
+    renderBoard(true);
+    const link = cardLink('ENG-1', 'Domain auto join');
+    link.focus();
+
+    const allowed = fireEvent.keyDown(link, { key: 'ArrowRight', code: 'ArrowRight' });
+
+    expect(allowed).toBe(true);
+    expect(document.activeElement).toBe(link);
+  });
+
+  it('does not start a drag when Enter belongs to a nested issue link', () => {
+    renderBoard(true);
+    const link = cardLink('ENG-1', 'Domain auto join');
+    link.focus();
+
+    const allowed = fireEvent.keyDown(link, { key: 'Enter', code: 'Enter' });
+
+    expect(allowed).toBe(true);
+    expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
+  });
+
+  it('reconciles a background update without replacing the active drag announcement', () => {
+    const rendered = renderBoard(true);
+    const card = screen.getByTestId('issue-card-ENG-1').closest('li');
+    if (card === null) throw new Error('missing draggable card');
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+
+    const dndStatus = document.querySelector<HTMLElement>(
+      '[id^="DndLiveRegion-"][aria-live="assertive"]',
+    );
+    if (dndStatus === null) throw new Error('missing drag status');
+    expect(dndStatus).toHaveTextContent('Picked up ENG-1');
+
+    const updated = issue({
+      syncId: 2,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      title: 'Updated domain auto join',
+    });
+    rendered.rerenderBoard([updated, second]);
+
+    expect(dndStatus).not.toHaveTextContent('updated in the background');
+    expect(screen.getByTestId('board-drag-status')).toHaveTextContent(
+      'ENG-1 was updated in the background. Still holding it in column Todo, position 1 of 2.',
+    );
+  });
+
+  it('reconciles a background update from an owned column query', async () => {
+    const rendered = renderBoard(true, [issue(), second], ownedColumnSource);
+    const card = screen.getByTestId('issue-card-ENG-1').closest('li');
+    if (card === null) throw new Error('missing draggable card');
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    expect(dndStatus()).toHaveTextContent('Picked up ENG-1');
+
+    const updated = issue({
+      syncId: 2,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      title: 'Updated domain auto join',
+    });
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        boardPage([updated, second]),
+        Date.now() + 10_000,
+      );
+      await Promise.resolve();
+    });
+
+    expect(dndStatus()).not.toHaveTextContent('updated in the background');
+    await waitFor(() => {
+      expect(screen.getByTestId('board-drag-status')).toHaveTextContent(
+        'ENG-1 was updated in the background. Still holding it in column Todo, position 1 of 2.',
+      );
+    });
+  });
+});
 
 function cardLink(identifier: string, title: string): HTMLElement {
   const card = screen.getByTestId(`issue-card-${identifier}`);
   return within(card).getByRole('link', { name: title });
+}
+
+function dndStatus(): HTMLElement {
+  const status = document.querySelector<HTMLElement>(
+    '[id^="DndLiveRegion-"][aria-live="assertive"]',
+  );
+  if (status === null) throw new Error('missing drag status');
+  return status;
 }
 
 describe('Board peek', () => {
