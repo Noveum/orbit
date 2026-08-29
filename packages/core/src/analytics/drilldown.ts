@@ -1019,7 +1019,7 @@ function decodeCursor(cursor: string, binding: string, secret: string): CursorVa
     if (
       provided.toString('base64url') !== signature ||
       provided.length !== expected.length ||
-      !timingSafeEqual(provided, expected)
+      !timingSafeEqual(new Uint8Array(provided), new Uint8Array(expected))
     ) {
       throw new Error('invalid');
     }

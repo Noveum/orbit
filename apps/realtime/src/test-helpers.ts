@@ -311,7 +311,7 @@ export function maskedTextFrame(text: string): Buffer {
   } else {
     header.push(0x80 | 126, (payload.length >> 8) & 0xff, payload.length & 0xff);
   }
-  return Buffer.concat([Buffer.from(header), mask, masked]);
+  return Buffer.concat([new Uint8Array(header), new Uint8Array(mask), new Uint8Array(masked)]);
 }
 
 export function createPublisher(): Redis {
