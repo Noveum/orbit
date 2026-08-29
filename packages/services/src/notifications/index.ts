@@ -12,6 +12,7 @@ import {
   actorSchema,
   idSchema,
   isStatusChangeNotification,
+  NOTIFICATION_AUDIENCE,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   SLACK_INTEGRATION_ENABLED,
@@ -474,9 +475,7 @@ function isUrgent(event: ParsedEvent): boolean {
 }
 
 function isPersonalNotification(event: ParsedEvent): boolean {
-  return ['assigned', 'mentioned', 'subscribed', 'commented', 'review_requested'].includes(
-    event.reason,
-  );
+  return NOTIFICATION_AUDIENCE[event.reason] === 'personal';
 }
 
 function toInsert(plan: Plan, now: Date) {

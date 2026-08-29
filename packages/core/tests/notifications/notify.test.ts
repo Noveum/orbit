@@ -162,6 +162,16 @@ describe('deliverPendingSlackDms', () => {
     });
   });
 
+  it('does not finalize a Slack DM when Slack omits its message timestamp', async () => {
+    await seedPendingSlackDm();
+    const dispatch = () => Promise.resolve({ delivered: 1, channel: 'D123', ts: '' });
+
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
+  });
+
   it('keeps a transient provider failure available for retry', async () => {
     await seedPendingSlackDm();
     let calls = 0;

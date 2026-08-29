@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import {
   isPullRequestNotification,
   isStatusChangeNotification,
+  NOTIFICATION_AUDIENCE,
+  NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   PULL_REQUEST_NOTIFICATION_TYPES,
   STATUS_CHANGE_NOTIFICATION_TYPES,
@@ -31,6 +33,12 @@ describe('isStatusChangeNotification', () => {
     for (const type of PULL_REQUEST_NOTIFICATION_TYPES) {
       expect(isStatusChangeNotification(type)).toBe(false);
     }
+  });
+});
+
+describe('NOTIFICATION_AUDIENCE', () => {
+  it('classifies every notification reason', () => {
+    expect(Object.keys(NOTIFICATION_AUDIENCE).sort()).toEqual([...NOTIFICATION_REASONS].sort());
   });
 });
 

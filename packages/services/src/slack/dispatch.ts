@@ -287,7 +287,7 @@ export class SlackDmDispatchError extends Error {
     this.#integrationToken = context.token ?? '';
     this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
-    this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
+    this.slackCode = cause instanceof SlackApiError ? cause.slackCode : undefined;
     this.cause = cause;
   }
 

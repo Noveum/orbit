@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
+  DomainError,
   internal,
   PRIORITY_LABELS,
   type Priority,
@@ -237,12 +238,14 @@ export interface SlackMessageRef {
   readonly ts: string;
 }
 
-export class SlackApiError extends Error {
+export class SlackApiError extends DomainError {
   constructor(
     readonly method: string,
-    readonly code: string,
+    readonly slackCode: string,
   ) {
-    super(`Slack ${method} failed: ${code}.`);
+    super('internal', `Slack ${method} failed: ${slackCode}.`, {
+      details: { slackCode },
+    });
     this.name = 'SlackApiError';
   }
 }
