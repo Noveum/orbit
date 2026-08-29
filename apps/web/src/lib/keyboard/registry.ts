@@ -32,6 +32,23 @@ function shiftSpecificity(entry: HotkeyEntry): number {
   return entry.steps.reduce((total, step) => total + (step.shift ? 1 : 0), 0);
 }
 
+function stepsCollide(a: readonly HotkeyStep[], b: readonly HotkeyStep[]): boolean {
+  if (a.length !== b.length) return false;
+  let shiftA = 0;
+  let shiftB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const stepA = a[i];
+    const stepB = b[i];
+    if (!(stepA && stepB)) return false;
+    if (stepA.key !== stepB.key || stepA.mod !== stepB.mod || stepA.alt !== stepB.alt) {
+      return false;
+    }
+    if (stepA.shift) shiftA++;
+    if (stepB.shift) shiftB++;
+  }
+  return shiftA === shiftB;
+}
+
 function beats(candidate: HotkeyEntry, current: HotkeyEntry): boolean {
   if (candidate.steps.length !== current.steps.length) {
     return candidate.steps.length > current.steps.length;
@@ -61,7 +78,23 @@ export class HotkeyRegistry {
   private snapshot: readonly HotkeyEntry[] = [];
 
   register(input: HotkeyEntryInput): () => void {
-    this.entries.set(input.id, { ...input, steps: parseBinding(input.binding) });
+    const steps = parseBinding(input.binding);
+
+    if (process.env.NODE_ENV !== 'production' && input.advertised) {
+      for (const existing of this.entries.values()) {
+        if (existing.id === input.id) continue;
+        if (
+          existing.advertised &&
+          existing.priority === input.priority &&
+          stepsCollide(existing.steps, steps)
+        ) {
+          console.warn(
+            `Duplicate hotkey collision: "${input.binding}" is advertised by both "${existing.id}" and "${input.id}" at priority ${input.priority}. This will cause silent resolution.`,
+          );
+        }
+      }
+    }
+    this.entries.set(input.id, { ...input, steps });
     this.publish();
     return () => {
       this.entries.delete(input.id);

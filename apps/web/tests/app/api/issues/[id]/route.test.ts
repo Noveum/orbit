@@ -97,6 +97,23 @@ describe('PATCH /api/issues/[id]', () => {
     expect(issueSchema.parse(await response.json()).issue.parentId).toBe(world.first.id);
   });
 
+  it('returns every reviewer after updating the reviewer field', async () => {
+    const first = await addMember(world.workspace, 'member', { name: 'First Reviewer' });
+    const second = await addMember(world.workspace, 'member', { name: 'Second Reviewer' });
+    const response = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${world.second.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ reviewerIds: [first.user.id, second.user.id] }),
+      }),
+      contextFor(world.second.id),
+    );
+
+    expect(response.status).toBe(200);
+    expect(issueEnvelopeSchema.parse(await response.json()).issue.reviewerIds).toEqual(
+      [first.user.id, second.user.id].sort(),
+    );
+  });
+
   it('answers 422 for a due date the client made up, never 500', async () => {
     for (const nonsense of [true, 0, 1_700_000_000_000, 'banana', '+275760-09-13', '10000-01-01']) {
       const response = await issueRoute.PATCH(

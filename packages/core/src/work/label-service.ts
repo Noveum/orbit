@@ -11,6 +11,7 @@ import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from './issue-fields.ts';
+import { reviewerIdsByIssue } from './reviewer-service.ts';
 
 export type LabelRow = typeof schema.label.$inferSelect;
 
@@ -198,7 +199,10 @@ async function detachFromOtherTeams(
       and(eq(schema.issueLabel.labelId, label.id), inArray(schema.issueLabel.issueId, issueIds)),
     );
 
-  const remaining = await labelIdsByIssue(executor, issueIds);
+  const [remaining, reviewers] = await Promise.all([
+    labelIdsByIssue(executor, issueIds),
+    reviewerIdsByIssue(executor, issueIds),
+  ]);
   const rows = await executor
     .update(schema.issue)
     .set({ syncId, updatedAt: new Date() })
@@ -213,7 +217,11 @@ async function detachFromOtherTeams(
       action: 'update',
       model: 'issue',
       modelId: row.id,
-      data: { ...row, labelIds: remaining.get(row.id) ?? [] },
+      data: {
+        ...row,
+        labelIds: remaining.get(row.id) ?? [],
+        reviewerIds: reviewers.get(row.id) ?? [],
+      },
       actor,
     }),
   );

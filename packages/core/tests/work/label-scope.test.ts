@@ -282,6 +282,7 @@ describe('narrowing a label to a team takes it off the issues that team cannot s
       teamId: nova.teamId,
       title: 'Platform work',
       labelIds: [shared.label.id, kept.label.id],
+      reviewerIds: [nova.admin.userId],
     });
     const [before] = await db
       .select()
@@ -293,6 +294,7 @@ describe('narrowing a label to a team takes it off the issues that team cannot s
     const issueAction = result.actions.find((action) => action.model === 'issue');
     expect(issueAction?.modelId).toBe(outside.issue.id);
     expect(issueAction?.data['labelIds']).toEqual([kept.label.id]);
+    expect(issueAction?.data['reviewerIds']).toEqual([nova.admin.userId]);
     expect(issueAction?.scopes).toContain(scopes.team(nova.teamId));
     expect(issueAction?.scopes).not.toContain(scopes.team(designTeamId));
     const [after] = await db

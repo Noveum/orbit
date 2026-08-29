@@ -37,6 +37,22 @@ function frontMatterTitle(block: string): string | null {
 export interface ImportedDoc {
   readonly title: string;
   readonly content: string;
+  readonly kind: 'markdown' | 'html';
+}
+
+const TITLE_TAG = /<title[^>]*>([\s\S]*?)<\/title>/i;
+const HTML_EXTENSION = /\.(html?|xhtml)$/i;
+const MARKDOWN_EXTENSION = /\.(mdx?|markdown)$/i;
+
+export function importKindOf(fileName: string, type = ''): 'markdown' | 'html' {
+  if (HTML_EXTENSION.test(fileName) || type === 'text/html') return 'html';
+  if (MARKDOWN_EXTENSION.test(fileName) || type === 'text/markdown') return 'markdown';
+  return 'markdown';
+}
+
+function titleFromFile(fileName: string, extension: RegExp, fallback: string): string {
+  const fromFile = fileName.replace(extension, '').replace(/[-_]+/g, ' ').trim();
+  return fromFile.length > 0 ? fromFile : fallback;
 }
 
 export function parseMarkdownImport(fileName: string, text: string): ImportedDoc {
@@ -55,11 +71,22 @@ export function parseMarkdownImport(fileName: string, text: string): ImportedDoc
     body = body.replace(FIRST_HEADING, '').trimStart();
   }
 
-  const fromFile = fileName
-    .replace(/\.mdx?$/i, '')
-    .replace(/[-_]+/g, ' ')
-    .trim();
-  const title = fromMatter ?? fromHeading ?? (fromFile.length > 0 ? fromFile : 'Imported document');
+  const title =
+    fromMatter ?? fromHeading ?? titleFromFile(fileName, MARKDOWN_EXTENSION, 'Imported document');
 
-  return { title: title.slice(0, 200), content: body.trim() };
+  return { title: title.slice(0, 200), content: body.trim(), kind: 'markdown' };
+}
+
+export function parseHtmlImport(fileName: string, text: string): ImportedDoc {
+  const body = text.replace(/^﻿/, '').replace(/\r\n/g, '\n');
+  const tagged = TITLE_TAG.exec(body)?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
+  const fromTag = tagged.length > 0 ? tagged : null;
+  const title = fromTag ?? titleFromFile(fileName, HTML_EXTENSION, 'Untitled page');
+  return { title: title.slice(0, 200), content: body.trim(), kind: 'html' };
+}
+
+export function parseDocImport(fileName: string, text: string, type = ''): ImportedDoc {
+  return importKindOf(fileName, type) === 'html'
+    ? parseHtmlImport(fileName, text)
+    : parseMarkdownImport(fileName, text);
 }

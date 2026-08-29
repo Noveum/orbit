@@ -18,6 +18,12 @@ function valueLabel(value: number, unit: string): string {
   return unit === 'days' ? `${formatted}d` : formatted;
 }
 
+function hiddenOutlierLabel(count: number, allHidden: boolean): string {
+  const noun = count === 1 ? 'outlier' : 'outliers';
+  const verb = count === 1 ? 'is' : 'are';
+  return `${allHidden ? 'All ' : ''}${count}${allHidden ? '' : ' additional'} workspace ${noun} ${verb} hidden due to team permissions.`;
+}
+
 export function OverviewLens({
   data,
   query,
@@ -168,26 +174,33 @@ export function OverviewLens({
         ))}
       </div>
 
-      {data.outliers.length === 0 ? null : (
+      {data.outliers.length === 0 && data.outliersWithheldCount === 0 ? null : (
         <AnalyticsCard title="Longest cycle time">
-          <div className="divide-y divide-border">
-            {data.outliers.map((outlier) => (
-              <button
-                className="flex w-full items-center justify-between gap-4 px-2 py-2 text-left hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                key={outlier.issueId}
-                onClick={() => activate(outlier.title, outlier.cohort)}
-                type="button"
-              >
-                <span className="min-w-0 truncate text-sm text-text">
-                  <span className="mr-2 text-faint">{outlier.identifier}</span>
-                  {outlier.title}
-                </span>
-                <span className="shrink-0 text-muted text-xs tabular">
-                  {valueLabel(outlier.cycleTimeDays, 'days')}
-                </span>
-              </button>
-            ))}
-          </div>
+          {data.outliers.length === 0 ? null : (
+            <div className="divide-y divide-border">
+              {data.outliers.map((outlier) => (
+                <button
+                  className="flex w-full items-center justify-between gap-4 px-2 py-2 text-left hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  key={outlier.issueId}
+                  onClick={() => activate(outlier.title, outlier.cohort)}
+                  type="button"
+                >
+                  <span className="min-w-0 truncate text-sm text-text">
+                    <span className="mr-2 text-faint">{outlier.identifier}</span>
+                    {outlier.title}
+                  </span>
+                  <span className="shrink-0 text-muted text-xs tabular">
+                    {valueLabel(outlier.cycleTimeDays, 'days')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {data.outliersWithheldCount === 0 ? null : (
+            <p className="py-3 text-center text-muted text-xs">
+              {hiddenOutlierLabel(data.outliersWithheldCount, data.outliers.length === 0)}
+            </p>
+          )}
         </AnalyticsCard>
       )}
 

@@ -63,6 +63,14 @@ const member: Member = {
   handle: 'aditi',
   role: 'member',
 };
+const reviewer: Member = {
+  id: 'user_3',
+  name: 'Rhea Singh',
+  email: 'rhea@noveum.ai',
+  image: null,
+  handle: 'rhea',
+  role: 'member',
+};
 
 describe('IssueCard', () => {
   it('shows the identifier, title, estimate, label and assignee', async () => {
@@ -88,6 +96,21 @@ describe('IssueCard', () => {
     expect(dragged.className).toContain('shadow-pop');
     expect(dragged.className).toContain('cursor-grabbing');
     expect(dragged.className).not.toContain('rotate-');
+  });
+
+  it('shows reviewer avatars separately from the assignee', () => {
+    render(
+      <IssueCard
+        issue={issue({ reviewerIds: [reviewer.id] })}
+        labels={[]}
+        assignee={member}
+        reviewers={[reviewer]}
+      />,
+    );
+
+    expect(screen.getByTitle(`Reviewers: ${reviewer.name}`)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: reviewer.name })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: member.name })).toBeInTheDocument();
   });
 });
 

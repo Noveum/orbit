@@ -1,22 +1,27 @@
 'use client';
 
+import { isHtmlDoc } from '@orbit/shared/constants';
 import {
   Archive,
   Check,
   Copy,
+  FileCode,
   FolderInput,
   History,
   Indent,
+  LayoutTemplate,
   Lock,
   MoreHorizontal,
   PanelLeft,
   Star,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -25,9 +30,12 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
+import { DOC_TEMPLATES, HTML_PAGE_TEMPLATE_ID } from '@/features/docs/templates.ts';
 import { cn } from '@/lib/cn.ts';
+import { newDocPath } from '@/lib/docs/paths.ts';
 import type { Doc, DocCollection } from '@/lib/query/schemas.ts';
 import { DocExportItems } from './doc-export-menu.tsx';
+import { DocImport } from './doc-import.tsx';
 import { type EditorMode, type ReadingWidth, useDocPreferences } from './use-doc-preferences.ts';
 
 export interface DocHeaderProps {
@@ -190,6 +198,12 @@ export function DocHeader({
   onNewDoc,
   share,
 }: DocHeaderProps) {
+  const router = useRouter();
+  const createPath = {
+    collectionId: doc.collectionId,
+    projectId: doc.projectId,
+  };
+
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
       <Button
@@ -243,6 +257,41 @@ export function DocHeader({
 
       {share}
 
+      {canWrite ? (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="doc-templates"
+                className="hidden sm:inline-flex"
+              >
+                <LayoutTemplate className="size-3.5" aria-hidden="true" />
+                Templates
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Start from a template</DropdownMenuLabel>
+              {DOC_TEMPLATES.map((template) => (
+                <DropdownMenuItem
+                  key={template.id}
+                  data-testid={`doc-template-${template.id}`}
+                  onSelect={() =>
+                    router.push(newDocPath({ ...createPath, templateId: template.id }))
+                  }
+                >
+                  {template.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <span className="hidden sm:inline-flex">
+            <DocImport collectionId={doc.collectionId} projectId={doc.projectId} />
+          </span>
+        </>
+      ) : null}
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -264,6 +313,18 @@ export function DocHeader({
           ) : null}
 
           {canWrite ? (
+            <DropdownMenuItem
+              data-testid="doc-new-html"
+              onSelect={() =>
+                router.push(newDocPath({ ...createPath, templateId: HTML_PAGE_TEMPLATE_ID }))
+              }
+            >
+              <FileCode className="size-3.5" aria-hidden="true" />
+              New HTML page
+            </DropdownMenuItem>
+          ) : null}
+
+          {canWrite ? (
             <>
               <MoveSubmenu
                 doc={doc}
@@ -278,11 +339,15 @@ export function DocHeader({
           ) : null}
 
           <DropdownMenuSeparator />
-          <EditorViewItems />
-          <DropdownMenuSeparator />
-          <ReadingWidthItems />
-          <DropdownMenuSeparator />
-          <DocExportItems title={doc.title} content={doc.content} />
+          {isHtmlDoc(doc.kind) ? null : (
+            <>
+              <EditorViewItems />
+              <DropdownMenuSeparator />
+              <ReadingWidthItems />
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DocExportItems title={doc.title} content={doc.content} kind={doc.kind} />
           <DropdownMenuItem data-testid="doc-history-open" onSelect={onOpenHistory}>
             <History className="size-3.5" aria-hidden="true" />
             Version history

@@ -60,4 +60,12 @@ describe('breadcrumbsFor', () => {
       { label: 'My issues' },
     ]);
   });
+
+  test('an acronym segment keeps its casing instead of titleizing', () => {
+    expect(breadcrumbsFor('/settings/mcp', 'Noveum')).toEqual([
+      { label: 'Noveum', href: '/' },
+      { label: 'Settings', href: '/settings' },
+      { label: 'MCP server' },
+    ]);
+  });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { commentAnchorId, relativeTime } from '@orbit/shared/utils';
+import { commentAnchorId } from '@orbit/shared/utils';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { SmilePlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { proseOverflowClassName, taskListClassName } from '@/features/docs/doc-body.tsx';
 import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
@@ -134,16 +135,26 @@ function NewComment({
   );
 }
 
+type FocusedCommentTarget = Pick<Element, 'scrollIntoView'>;
+
+export function landOnFocusedComment(
+  commentId: string | null,
+  landedCommentId: string | null,
+  targetById: (id: string) => FocusedCommentTarget | null = (id) => document.getElementById(id),
+): string | null {
+  if (commentId === null || landedCommentId === commentId) return landedCommentId;
+  const target = targetById(commentAnchorId(commentId));
+  if (target === null) return landedCommentId;
+  target.scrollIntoView({ block: 'start' });
+  return commentId;
+}
+
 function useFocusedComment(commentId: string | null, readySignature: string): void {
   const landed = useRef<string | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: readySignature is a readiness token, re-run until the comment mounts so a thread opened from the inbox lands on the comment it was opened for
   useEffect(() => {
-    if (commentId === null || landed.current === commentId) return;
-    const target = document.getElementById(commentAnchorId(commentId));
-    if (target === null) return;
-    landed.current = commentId;
-    target.scrollIntoView({ block: 'start' });
+    landed.current = landOnFocusedComment(commentId, landed.current);
   }, [commentId, readySignature]);
 }
 
@@ -271,7 +282,7 @@ function CommentItem({
         <div className="flex items-center gap-2 text-2xs">
           <span className="font-medium text-text">{author?.name ?? 'Unknown'}</span>
           <span className="text-faint">
-            {relativeTime(new Date(entry.comment.createdAt), new Date())}
+            <RelativeTime at={entry.comment.createdAt} />
           </span>
           {entry.comment.editedAt === null ? null : <span className="text-faint">edited</span>}
         </div>

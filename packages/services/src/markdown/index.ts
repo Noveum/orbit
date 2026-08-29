@@ -4,7 +4,7 @@ import { escapeHtml, highlightCode, languageAlias } from './highlight.ts';
 import { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 export { extractIssueIdentifiers, extractMentions } from '@orbit/shared/utils';
-export { highlightCode, languageAlias } from './highlight.ts';
+export { codeLowlight, highlightCode, languageAlias } from './highlight.ts';
 export { decodeEntities, htmlToText, sanitizeHtml } from './sanitize.ts';
 
 export const MERMAID_LANGUAGE = 'mermaid';

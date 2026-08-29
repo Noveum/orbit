@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
-process.env['BETTER_AUTH_SECRET'] = 'disabled-slack-boundary-test-secret';
+const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+process.env['BETTER_AUTH_SECRET'] ??= 'disabled-slack-boundary-test-secret';
 
 const {
   GET: getIntegration,
@@ -31,6 +32,11 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+});
+
+afterAll(() => {
+  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
 });
 
 async function expectUnavailable(response: Response): Promise<void> {

@@ -1,24 +1,7 @@
-import { db, eq, schema } from '@orbit/db';
-import {
-  assertAttachmentVisible,
-  isPubliclyReadable,
-  storageDriver,
-} from '@orbit/services/storage';
-import { notFound } from '@orbit/shared/errors';
-import { z } from 'zod';
+import { storageDriver } from '@orbit/services/storage';
+import { readableAttachment, storageKeyFrom } from '@/lib/api/attachment-access.ts';
 import { dispositionFor } from '@/lib/api/content-disposition.ts';
-import { apiContext, errorResponse } from '@/lib/api/handler.ts';
-
-const storageKeySchema = z
-  .array(
-    z
-      .string()
-      .min(1)
-      .max(200)
-      .regex(/^[A-Za-z0-9._-]+$/, 'A storage key segment may only contain safe characters.'),
-  )
-  .min(1)
-  .max(8);
+import { errorResponse } from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ key: string[] }>;
@@ -27,30 +10,10 @@ interface RouteContext {
 const DOWNLOAD_URL_TTL_SECONDS = 300;
 const PUBLIC_REDIRECT_CACHE_SECONDS = 280;
 
-type AttachmentRecord = typeof schema.attachment.$inferSelect;
-
-async function assertReadable(
-  record: AttachmentRecord | undefined,
-): Promise<{ record: AttachmentRecord; shared: boolean }> {
-  if (record === undefined) throw notFound('That file does not exist.');
-  if (await isPubliclyReadable(db, record)) return { record, shared: true };
-  const { principal } = await apiContext();
-  await assertAttachmentVisible(db, principal, record);
-  return { record, shared: false };
-}
-
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   try {
-    const parsed = storageKeySchema.safeParse((await context.params).key);
-    if (!parsed.success) throw notFound('That file does not exist.');
-    const storageKey = parsed.data.join('/');
-
-    const [found] = await db
-      .select()
-      .from(schema.attachment)
-      .where(eq(schema.attachment.storageKey, storageKey))
-      .limit(1);
-    const { record, shared } = await assertReadable(found);
+    const storageKey = storageKeyFrom((await context.params).key);
+    const { record, shared } = await readableAttachment(storageKey);
 
     const url = await storageDriver().getUrl(storageKey, DOWNLOAD_URL_TTL_SECONDS, {
       contentType: record.contentType,

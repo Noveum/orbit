@@ -670,6 +670,7 @@ export interface SeedDoc {
   readonly collection: string | null;
   readonly author: string;
   readonly content: string;
+  readonly kind?: 'markdown' | 'html';
   readonly project?: string;
   readonly repoBinding?: { readonly repo: string; readonly path: string; readonly branch: string };
 }
@@ -706,5 +707,51 @@ export const SEED_DOCS: readonly SeedDoc[] = [
     author: 'alex',
     content:
       '# Sync engine launch plan\n\nThe sync engine ships when a second browser sees every write without a reload.\n\n## Milestones\n\n| Milestone | Owner | State |\n| --- | --- | --- |\n| Delta contract frozen | Sam | Done |\n| Fan out under load | Robin | In progress |\n| Reconnect and replay | Jordan | Not started |\n\n## Exit checklist\n\n- [x] Deltas batch inside 50ms\n- [x] Scopes filter what a client can read\n- [ ] Reconnect replays the missed window\n- [ ] Presence survives a server restart',
+  },
+  {
+    title: 'Sync health',
+    collection: 'Engineering',
+    author: 'sam',
+    kind: 'html',
+    content: [
+      '<!DOCTYPE html>',
+      '<html lang="en">',
+      '<head>',
+      '<meta charset="utf-8" />',
+      '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+      '<title>Sync health</title>',
+      '<style>',
+      '  :root { color-scheme: light dark; --muted: color-mix(in srgb, CanvasText 55%, Canvas); --line: color-mix(in srgb, CanvasText 12%, Canvas); --ok: #3f9d6a; }',
+      '  * { box-sizing: border-box; }',
+      '  body { margin: 0; font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; background: Canvas; color: CanvasText; }',
+      '  main { max-width: 40rem; margin: 0 auto; padding: 2.5rem 1.5rem; }',
+      '  h1 { font-size: 1.5rem; margin: 0 0 0.35rem; }',
+      '  p { color: var(--muted); margin: 0 0 1.5rem; }',
+      '  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }',
+      '  article { border: 1px solid var(--line); border-radius: 0.75rem; padding: 1rem 1.1rem; }',
+      '  .value { font-size: 1.75rem; font-variant-numeric: tabular-nums; font-weight: 650; }',
+      '  button { margin-top: 1.25rem; border: 0; border-radius: 999px; padding: 0.55rem 1rem; background: var(--ok); color: #fff; font: inherit; cursor: pointer; }',
+      '</style>',
+      '</head>',
+      '<body>',
+      '<main>',
+      '  <h1>Sync health</h1>',
+      '  <p>A self-contained page. Everything lives in this file.</p>',
+      '  <div class="grid">',
+      '    <article><div class="value" id="lag">12 ms</div>Fan-out lag</article>',
+      '    <article><div class="value">99.98%</div>Delivery</article>',
+      '  </div>',
+      '  <button type="button" id="ping">Ping the hub</button>',
+      '</main>',
+      '<script>',
+      '  const lag = document.getElementById("lag");',
+      '  document.getElementById("ping").addEventListener("click", () => {',
+      '    lag.textContent = 8 + Math.round(Math.random() * 14) + " ms";',
+      '  });',
+      '</script>',
+      '</body>',
+      '</html>',
+      '',
+    ].join('\n'),
   },
 ];

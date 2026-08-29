@@ -1,4 +1,4 @@
-import { and, asc, count, db, eq, inArray, isNull, ne, schema } from '@orbit/db';
+import { and, asc, count, db, eq, inArray, isNull, ne, notExists, schema } from '@orbit/db';
 import { OPEN_STATE_CATEGORIES, type OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -11,6 +11,8 @@ import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from '../work/issue-service.ts';
+import { labelIdsByIssue } from '../work/label-service.ts';
+import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import type { MemberRow } from './organization-service.ts';
 
 export interface MemberWithUser {
@@ -25,11 +27,11 @@ function isOrgRole(value: string): value is OrgRole {
   return value === 'admin' || value === 'member' || value === 'contributor' || value === 'guest';
 }
 
-export async function resolvePrincipal(
+export async function findPrincipal(
   userId: string,
   organizationId: string,
   executor: Executor = db,
-): Promise<Principal> {
+): Promise<Principal | null> {
   const [membership] = await executor
     .select({ role: schema.member.role })
     .from(schema.member)
@@ -42,7 +44,7 @@ export async function resolvePrincipal(
       ),
     )
     .limit(1);
-  if (membership === undefined) throw forbidden('You are not a member of this workspace.');
+  if (membership === undefined) return null;
 
   const teams = await executor
     .select({ teamId: schema.teamMember.teamId })
@@ -58,6 +60,16 @@ export async function resolvePrincipal(
     role: isOrgRole(membership.role) ? membership.role : 'guest',
     teamIds: teams.map((row) => row.teamId),
   };
+}
+
+export async function resolvePrincipal(
+  userId: string,
+  organizationId: string,
+  executor: Executor = db,
+): Promise<Principal> {
+  const principal = await findPrincipal(userId, organizationId, executor);
+  if (principal === null) throw forbidden('You are not a member of this workspace.');
+  return principal;
 }
 
 export async function listMembers(principal: Principal): Promise<MemberWithUser[]> {
@@ -132,12 +144,38 @@ export async function updateMemberRole(
           eq(schema.member.organizationId, principal.organizationId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
     if (current.role === 'admin' && parsed.role !== 'admin') {
       const others = await countOtherAdmins(tx, principal.organizationId, memberId);
       if (others === 0) throw conflict('A workspace needs at least one admin.');
+      const [inaccessibleReview] = await tx
+        .select({ issueId: schema.issueReviewer.issueId })
+        .from(schema.issueReviewer)
+        .innerJoin(schema.issue, eq(schema.issue.id, schema.issueReviewer.issueId))
+        .where(
+          and(
+            eq(schema.issue.organizationId, principal.organizationId),
+            eq(schema.issueReviewer.userId, current.userId),
+            notExists(
+              tx
+                .select({ teamId: schema.teamMember.teamId })
+                .from(schema.teamMember)
+                .where(
+                  and(
+                    eq(schema.teamMember.userId, current.userId),
+                    eq(schema.teamMember.teamId, schema.issue.teamId),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .limit(1);
+      if (inaccessibleReview !== undefined) {
+        throw conflict('Remove inaccessible reviewer assignments before changing this role.');
+      }
     }
 
     const syncId = await nextSyncId(tx);
@@ -188,7 +226,8 @@ export async function removeMember(
           eq(schema.member.organizationId, principal.organizationId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
     if (current.role === 'admin') {
@@ -222,6 +261,34 @@ export async function removeMember(
       )
       .returning();
 
+    const organizationIssueIds = tx
+      .select({ id: schema.issue.id })
+      .from(schema.issue)
+      .where(eq(schema.issue.organizationId, principal.organizationId));
+    const removedReviews = await tx
+      .delete(schema.issueReviewer)
+      .where(
+        and(
+          eq(schema.issueReviewer.userId, current.userId),
+          inArray(schema.issueReviewer.issueId, organizationIssueIds),
+        ),
+      )
+      .returning({ issueId: schema.issueReviewer.issueId });
+    const reviewedIssueIds = [...new Set(removedReviews.map((row) => row.issueId))];
+    const reviewed =
+      reviewedIssueIds.length === 0
+        ? []
+        : await tx
+            .update(schema.issue)
+            .set({ updatedAt: new Date(), syncId })
+            .where(
+              and(
+                eq(schema.issue.organizationId, principal.organizationId),
+                inArray(schema.issue.id, reviewedIssueIds),
+              ),
+            )
+            .returning();
+
     await tx
       .delete(schema.teamMember)
       .where(
@@ -240,6 +307,12 @@ export async function removeMember(
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
+    const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
+    const changedIssueIds = [...changedIssues.keys()];
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(tx, changedIssueIds),
+      reviewerIdsByIssue(tx, changedIssueIds),
+    ]);
     const actions: SyncAction[] = [
       buildSyncAction({
         syncId,
@@ -251,7 +324,7 @@ export async function removeMember(
         data: { id: memberId, userId: current.userId },
         actor,
       }),
-      ...reassigned.map((row) =>
+      ...[...changedIssues.values()].map((row) =>
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -259,7 +332,11 @@ export async function removeMember(
           action: 'update',
           model: 'issue',
           modelId: row.id,
-          data: row,
+          data: {
+            ...row,
+            labelIds: labels.get(row.id) ?? [],
+            reviewerIds: reviewers.get(row.id) ?? [],
+          },
           actor,
         }),
       ),

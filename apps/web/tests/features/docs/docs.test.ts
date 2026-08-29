@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { renderMarkdown, renderMarkdownWithHeadingIds, summarize } from '@orbit/services/markdown';
 import { act, renderHook } from '@testing-library/react';
-import { publicDocPath, publicDocUrl } from '@/lib/docs/paths.ts';
+import { newDocPath, publicDocPath, publicDocUrl } from '@/lib/docs/paths.ts';
 import { descendantIds, matchParents } from '../../../src/features/docs/doc-surface.tsx';
 import { docTreeOf } from '../../../src/features/docs/doc-tree.tsx';
 import {
@@ -136,6 +136,25 @@ describe('published doc urls', () => {
     expect(publicDocUrl({ slug: 'a b', publishToken: 't' }, 'https://orbit.test')).toBe(
       'https://orbit.test/d/a%20b-t',
     );
+    expect(publicDocPath({ slug: 'sync-health', publishToken: 'abc123', kind: 'html' })).toBe(
+      '/h/sync-health-abc123',
+    );
+    expect(
+      publicDocUrl({ slug: 'sync', publishToken: 'tok', kind: 'html' }, 'https://orbit.test'),
+    ).toBe('https://orbit.test/h/sync-tok');
+  });
+});
+
+describe('new doc urls', () => {
+  it('carries the folder, project, and template into the create path', () => {
+    expect(newDocPath()).toBe('/docs/new');
+    expect(newDocPath({ templateId: 'html-page' })).toBe('/docs/new?template=html-page');
+    expect(newDocPath({ collectionId: 'col_1', templateId: 'html-page' })).toBe(
+      '/docs/new?collection=col_1&template=html-page',
+    );
+    expect(newDocPath({ projectId: 'proj_1', kind: 'html' })).toBe(
+      '/docs/new?project=proj_1&kind=html',
+    );
   });
 });
 
@@ -168,6 +187,14 @@ describe('published doc seo', () => {
       headline: 'Delta protocol',
       url: 'https://orbit.test/d/delta-protocol-tok',
     });
+  });
+
+  it('keeps a members link out of search, the same way an unlisted link is', () => {
+    const members = publishedDocMetadata({ ...base, visibility: 'members' });
+
+    expect(isIndexable('members')).toBe(false);
+    expect(members.robots).toMatchObject({ index: false, follow: false });
+    expect(publishedDocJsonLd({ ...base, visibility: 'members' })).toBeNull();
   });
 
   it('escapes user fields so a doc title cannot break out of the ld+json script tag', () => {
@@ -207,6 +234,7 @@ describe('doc nesting', () => {
       parentId,
       title: id,
       slug: id,
+      kind: 'markdown' as const,
       content: '',
       sortOrder: 0,
       visibility: 'workspace',
@@ -266,6 +294,7 @@ describe('doc nesting', () => {
 describe('doc templates', () => {
   it('falls back to the blank template for an unknown id', () => {
     expect(templateById('runbook').title).toBe('Runbook');
+    expect(templateById('html-page').kind).toBe('html');
     expect(templateById('nope').id).toBe('blank');
     expect(templateById(null).id).toBe('blank');
   });
@@ -386,6 +415,7 @@ describe('uploadContentType', () => {
       'image/png',
     );
     expect(uploadContentType({ name: 'notes.md', type: '' })).toBe('text/markdown');
+    expect(uploadContentType({ name: 'board.html', type: '' })).toBe('text/html');
   });
 
   it('keeps the type the browser reported when it is supported', () => {

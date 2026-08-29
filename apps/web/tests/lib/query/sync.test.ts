@@ -110,7 +110,7 @@ describe('sync id staleness guard', () => {
 
 describe('applyIssueDelta', () => {
   it('merges a partial update and keeps labels the delta does not carry', () => {
-    const list = [issue()];
+    const list = [issue({ reviewerIds: ['user_reviewer'] })];
     const next = applyIssueDelta(
       list,
       action({ data: { id: 'issue_1', stateId: 'state_doing', syncId: 12 } }),
@@ -118,7 +118,18 @@ describe('applyIssueDelta', () => {
     );
     expect(next[0]?.stateId).toBe('state_doing');
     expect(next[0]?.labelIds).toEqual(['label_1']);
+    expect(next[0]?.reviewerIds).toEqual(['user_reviewer']);
     expect(next[0]?.title).toBe('Ship the board');
+  });
+
+  it('applies reviewer changes carried by an issue delta', () => {
+    const next = applyIssueDelta(
+      [issue({ reviewerIds: ['user_old'] })],
+      action({ data: { id: 'issue_1', reviewerIds: ['user_new'], syncId: 12 } }),
+      TEAM,
+    );
+
+    expect(next[0]?.reviewerIds).toEqual(['user_new']);
   });
 
   it('ignores an out of order syncId', () => {
@@ -438,6 +449,17 @@ describe('belongsInList', () => {
     const unassigned = issue({ id: 'issue_2', assigneeId: null });
     expect(belongsInList('limit=100', unassigned)).toBe(true);
     expect(belongsInList('assigneeId=user_1', unassigned)).toBe(false);
+  });
+
+  it('matches a participant who owns or reviews the issue', () => {
+    expect(belongsInList('participantId=user_1', issue({ assigneeId: 'user_1' }))).toBe(true);
+    expect(
+      belongsInList(
+        'participantId=user_2',
+        issue({ assigneeId: 'user_1', reviewerIds: ['user_2'] }),
+      ),
+    ).toBe(true);
+    expect(belongsInList('participantId=user_3', issue({ reviewerIds: ['user_2'] }))).toBe(false);
   });
 
   it('reads the scope out of a query key', () => {

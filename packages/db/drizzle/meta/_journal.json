@@ -71,6 +71,27 @@
       "when": 1786698447389,
       "tag": "0009_luxuriant_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786887100533,
+      "tag": "0010_cheerful_scalphunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787216581835,
+      "tag": "0011_nebulous_amphibian",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787233740635,
+      "tag": "0012_magenta_shadow_king",
+      "breakpoints": true
     }
   ]
 }

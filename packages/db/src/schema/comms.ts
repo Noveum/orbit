@@ -489,6 +489,31 @@ export const slackChannelSync = pgTable(
   ],
 );
 
+export const slackUserMapping = pgTable(
+  'slack_user_mapping',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    integrationId: text('integration_id')
+      .notNull()
+      .references(() => integration.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    slackUserId: text('slack_user_id').notNull(),
+    slackDisplayName: text('slack_display_name').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('slack_user_mapping_user_unique').on(table.integrationId, table.userId),
+    uniqueIndex('slack_user_mapping_slack_user_unique').on(table.integrationId, table.slackUserId),
+    index('slack_user_mapping_org_idx').on(table.organizationId),
+  ],
+);
+
 export const webhook = pgTable(
   'webhook',
   {

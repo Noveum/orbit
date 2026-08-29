@@ -1,4 +1,4 @@
-import { ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
+import { DOC_KINDS, ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
 import {
   defaultViewState,
   GROUP_BY_FIELDS,
@@ -23,6 +23,7 @@ export const issueSchema = z.object({
   priority: z.number(),
   creatorId: z.string(),
   assigneeId: z.string().nullable(),
+  reviewerIds: z.array(z.string()).optional(),
   projectId: z.string().nullable(),
   milestoneId: z.string().nullable(),
   cycleId: z.string().nullable(),
@@ -279,6 +280,17 @@ export const issueDeletedSchema = z.object({
   deleted: z.object({ id: z.string(), identifier: z.string() }),
 });
 
+export const attachmentSchema = z.object({
+  id: z.string(),
+  parentType: z.string(),
+  parentId: z.string(),
+  fileName: z.string(),
+  contentType: z.string(),
+  size: z.number(),
+  storageKey: z.string(),
+  status: z.string(),
+});
+
 export const issueDetailSchema = z.object({
   issue: issueSchema,
   descriptionHtml: z.string(),
@@ -287,6 +299,7 @@ export const issueDetailSchema = z.object({
   subIssues: z.array(issueSchema),
   parent: issueSchema.nullable().default(null),
   subscribed: z.boolean(),
+  attachments: z.array(attachmentSchema).default([]),
 });
 
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
@@ -309,6 +322,7 @@ export const docSchema = z.object({
   parentId: z.string().nullable(),
   title: z.string(),
   slug: z.string(),
+  kind: z.enum(DOC_KINDS).default('markdown'),
   content: z.string(),
   sortOrder: z.number().default(0),
   visibility: z.string(),
@@ -366,17 +380,6 @@ export const docCollectionSchema = z.object({
 });
 
 export type DocCollection = z.infer<typeof docCollectionSchema>;
-
-export const attachmentSchema = z.object({
-  id: z.string(),
-  parentType: z.string(),
-  parentId: z.string(),
-  fileName: z.string(),
-  contentType: z.string(),
-  size: z.number(),
-  storageKey: z.string(),
-  status: z.string(),
-});
 
 export type Attachment = z.infer<typeof attachmentSchema>;
 

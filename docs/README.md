@@ -21,7 +21,7 @@ gated behind a plan.
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
 | See what is coming | [Roadmap](roadmap.md) |
-| Contribute | [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Contribute | [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) |
 
 ## The five minute version
 
@@ -29,13 +29,13 @@ The canonical quick start is in [Getting started](getting-started.md). Follow
 that page for the full commands and troubleshooting notes.
 ## What Orbit is
 
-- **Issues** with priorities, labels, states, estimates, assignees and
-  relations, as a fast list or a drag and drop board.
+- **Issues** with priorities, labels, states, estimates, assignees, multiple
+  reviewers and relations, as a fast list or a drag-and-drop board.
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
 - **Projects and milestones** that group work across teams.
 - **Docs** with a rich editor, living next to the issues they describe.
-- **Standup** as a Kanban of the whole workspace, filtered to one person with a
-  click.
+- **Standup** as a Kanban of the whole workspace, filtered to work a person
+  owns or reviews with a click.
 - **Analytics**: scope, throughput, churn and distribution by assignee, project,
   label and estimate.
 - **Search, filters and saved views**, shared with the team or kept private.
@@ -55,7 +55,7 @@ are two reasonable ways to do something, Orbit picks one and fixes that one.
 
 - [Discussions](https://github.com/Noveum/orbit/discussions) for questions.
 - [Issues](https://github.com/Noveum/orbit/issues) for bugs and concrete work.
-- [SECURITY.md](../SECURITY.md) for anything that should not be public.
+- [SECURITY.md](https://github.com/Noveum/orbit/blob/main/SECURITY.md) for anything that should not be public.
 
 If a page here is wrong or missing something, that is a bug. Please
 [tell us](https://github.com/Noveum/orbit/issues/new?template=documentation.yml).

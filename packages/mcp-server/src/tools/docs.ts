@@ -20,9 +20,10 @@ import {
   updateDocCollection,
   updateDocComment,
 } from '@orbit/core';
-import { DOC_VISIBILITIES } from '@orbit/shared/constants';
+import { DOC_KINDS, DOC_VISIBILITIES } from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { resolveDocCollectionId, resolveProject } from '../resolve.ts';
 import { defineTool, publish } from './support.ts';
@@ -33,11 +34,14 @@ const collectionRef = z.string().min(1).describe('A collection id, or its name.'
 
 const visibilityRef = z
   .enum(DOC_VISIBILITIES)
-  .describe('Who can reach the document. "workspace" is the usual choice.');
+  .describe(
+    'Who can reach the document. "workspace" is in-app, "members" is a signed-in published URL, "link" and "public" are on the web.',
+  );
 
 interface DocSummary {
   readonly id: string;
   readonly title: string;
+  readonly kind: string;
   readonly visibility: string;
   readonly projectId: string | null;
   readonly collectionId: string | null;
@@ -48,6 +52,7 @@ interface DocSummary {
 function describeDoc(row: {
   id: string;
   title: string;
+  kind: string;
   visibility: string;
   projectId: string | null;
   collectionId: string | null;
@@ -57,6 +62,7 @@ function describeDoc(row: {
   return {
     id: row.id,
     title: row.title,
+    kind: row.kind,
     visibility: row.visibility,
     projectId: row.projectId,
     collectionId: row.collectionId,
@@ -192,7 +198,8 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
     {
       name: 'get_doc',
       title: 'Read a document',
-      description: 'Return a document with its full Markdown body.',
+      description:
+        'Return a document with its full body. A markdown document returns Markdown, an html document returns the whole HTML page. The kind field says which.',
       readOnly: true,
       inputSchema: { doc: docRef },
     },
@@ -209,11 +216,19 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       name: 'create_doc',
       title: 'Create a document',
       description:
-        'Create a document with a Markdown body. File it under a collection, attach it to a project, or nest it under a parent document. A document lives in a collection or in a project, never both.',
+        'Create a document with a Markdown body or a self-contained HTML page. File it under a collection, attach it to a project, or nest it under a parent document. A document lives in a collection or in a project, never both.',
       readOnly: false,
       inputSchema: {
         title: z.string().trim().min(1).max(200).describe('Document title.'),
-        content: z.string().max(500_000).optional().describe('Markdown body.'),
+        content: z
+          .string()
+          .max(DOC_CONTENT_LIMIT)
+          .optional()
+          .describe('Markdown body, or the full HTML page when kind is html.'),
+        kind: z
+          .enum(DOC_KINDS)
+          .optional()
+          .describe('markdown for a normal doc, html for a self-contained HTML page.'),
         project: z.string().min(1).optional().describe('Project name, slug or id.'),
         collection: collectionRef
           .optional()
@@ -236,6 +251,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const saved = await createDoc(principal, {
         title: args.title,
         content: args.content ?? '',
+        ...(args.kind === undefined ? {} : { kind: args.kind }),
         projectId,
         collectionId,
         parentId,
@@ -257,7 +273,11 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       inputSchema: {
         doc: docRef,
         title: z.string().trim().min(1).max(200).optional(),
-        content: z.string().max(500_000).optional().describe('Replaces the whole Markdown body.'),
+        content: z
+          .string()
+          .max(DOC_CONTENT_LIMIT)
+          .optional()
+          .describe('Replaces the whole Markdown body, or the whole HTML page.'),
         project: z
           .string()
           .min(1)

@@ -18,6 +18,7 @@ import {
   listDocVersions,
   listPublicDocs,
   publishedDocToken,
+  resolvePublishedDoc,
   restoreDocVersion,
   setDocAccess,
   shareDoc,
@@ -60,6 +61,21 @@ describe('createDoc', () => {
     expect(actions[0]?.scopes).toContain(scopes.doc(doc.id));
     expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
     expect(actions[0]?.syncId).toBeGreaterThan(0);
+    expect(doc.kind).toBe('markdown');
+  });
+
+  it('stores a self-contained html page as its own kind', async () => {
+    const { doc } = await createDoc(workspace.admin, {
+      title: 'Sync health',
+      kind: 'html',
+      content: '<!DOCTYPE html><html><body>ok</body></html>',
+    });
+    expect(doc.kind).toBe('html');
+    expect(doc.content).toContain('<body>ok</body>');
+
+    const copy = await duplicateDoc(workspace.admin, doc.id);
+    expect(copy.doc.kind).toBe('html');
+    expect(copy.doc.content).toBe(doc.content);
   });
 
   it('never leaks a publish token through the delta payload', async () => {
@@ -407,6 +423,28 @@ describe('visibility modes', () => {
     expect(await getPublishedDoc(second)).not.toBeNull();
     expect(rotated.actions[0]?.action).toBe('update');
     expect(rotated.actions[0]?.data['publishToken']).toBe('redacted');
+  });
+
+  it('mints a members link that only a signed-in workspace member can open', async () => {
+    const doc = await newDoc('Internal brief');
+    const shared = await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    const token = shared.publishToken;
+    if (token === null) throw new Error('expected a token');
+
+    expect(shared.doc.visibility).toBe('members');
+    expect(await getPublishedDoc(token)).toBeNull();
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'sign-in' });
+
+    const member = await addMember(workspace, 'guest', { name: 'Gia Guest' });
+    const opened = await resolvePublishedDoc(token, member.user.id);
+    expect(opened.status).toBe('ok');
+    if (opened.status !== 'ok') return;
+    expect(opened.detail.doc.id).toBe(doc.id);
+    expect((await listDocs(member.principal)).some((row) => row.id === doc.id)).toBe(true);
+
+    const other = await createWorkspace('Elsewhere');
+    expect(await resolvePublishedDoc(token, other.adminUser.id)).toEqual({ status: 'missing' });
+    expect((await listPublicDocs()).some((row) => row.id === doc.id)).toBe(false);
   });
 });
 
@@ -995,6 +1033,25 @@ describe('duplicateDoc', () => {
     expect(copy.publishToken).toBeNull();
     expect(copy.visibility).toBe('workspace');
     expect(await listPublicDocs()).toHaveLength(1);
+  });
+
+  it('drops a members link on duplicate the same way it drops a public one', async () => {
+    const { doc: source } = await createDoc(workspace.admin, {
+      title: 'Internal brief',
+      content: 'Members only.',
+      visibility: 'members',
+    });
+    expect(source.publishToken).not.toBeNull();
+
+    const { doc: copy } = await duplicateDoc(workspace.admin, source.id);
+
+    expect(copy.publishToken).toBeNull();
+    expect(copy.visibility).toBe('workspace');
+    expect(
+      await resolvePublishedDoc(source.publishToken ?? '', workspace.admin.userId),
+    ).toMatchObject({
+      status: 'ok',
+    });
   });
 
   it('lets someone with only read access take their own editable copy', async () => {

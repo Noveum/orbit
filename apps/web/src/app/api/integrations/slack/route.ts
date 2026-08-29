@@ -53,11 +53,13 @@ export async function POST(request: Request): Promise<Response> {
     const input = requestSchema.parse(await readJson(request));
 
     if (input.action === 'install') {
-      const integrationId = await ensureSlackIntegration(db, {
-        organizationId: principal.organizationId,
-        connectedById: principal.userId,
-        botToken: input.botToken,
-      });
+      const integrationId = await db.transaction(async (tx) =>
+        ensureSlackIntegration(tx, {
+          organizationId: principal.organizationId,
+          connectedById: principal.userId,
+          botToken: input.botToken,
+        }),
+      );
       return { integrationId };
     }
 

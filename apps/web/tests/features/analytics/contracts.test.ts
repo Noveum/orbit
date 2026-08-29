@@ -14,6 +14,7 @@ const emptyOverview = {
   projects: [],
   priorities: [],
   outliers: [],
+  outliersWithheldCount: 0,
 };
 
 describe('analytics wire contracts', () => {
@@ -41,6 +42,15 @@ describe('analytics wire contracts', () => {
   it('rejects a payload from a different lens', () => {
     expect(() =>
       analyticsWireResponse('projects', { ...emptyOverview, lens: 'overview' }),
+    ).toThrow();
+  });
+
+  it('requires a nonnegative outlier withheld count', () => {
+    const { outliersWithheldCount: _outliersWithheldCount, ...missingCount } = emptyOverview;
+
+    expect(() => analyticsOverviewResponseSchema.parse(missingCount)).toThrow();
+    expect(() =>
+      analyticsOverviewResponseSchema.parse({ ...emptyOverview, outliersWithheldCount: -1 }),
     ).toThrow();
   });
 });

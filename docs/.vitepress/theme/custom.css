@@ -1,0 +1,33 @@
+:root {
+  --vp-font-family-base:
+    -apple-system, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", arial, sans-serif;
+  --vp-font-family-mono:
+    "SF Mono", ui-monospace, "JetBrains Mono", "Roboto Mono", menlo, consolas, monospace;
+  --vp-c-brand-1: #4d57bd;
+  --vp-c-brand-2: #3f49a8;
+  --vp-c-brand-3: #343d98;
+  --vp-c-bg: #f4f5f7;
+  --vp-c-bg-alt: #ffffff;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-bg-soft: #eef0f3;
+  --vp-c-divider: #d8dbe1;
+  --vp-c-border: #c2c6ce;
+  --vp-c-text-1: #0d0f14;
+  --vp-c-text-2: #343a47;
+  --vp-c-text-3: #4b5060;
+}
+
+.dark {
+  --vp-c-brand-1: #7b83eb;
+  --vp-c-brand-2: #8d95f2;
+  --vp-c-brand-3: #a1a7f5;
+  --vp-c-bg: #060607;
+  --vp-c-bg-alt: #0f1011;
+  --vp-c-bg-elv: #1c1c1f;
+  --vp-c-bg-soft: #141416;
+  --vp-c-divider: #26262a;
+  --vp-c-border: #2c2d32;
+  --vp-c-text-1: #f0f0f2;
+  --vp-c-text-2: #c7cbd1;
+  --vp-c-text-3: #8a8f98;
+}

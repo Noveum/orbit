@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -69,6 +69,14 @@ function buildWorkspace(): WorkspaceData {
     ],
     members: [
       { id: 'me', name: 'Shashank', email: 's@x.co', image: null, handle: 's', role: 'admin' },
+      {
+        id: 'reviewer_2',
+        name: 'Ada Reviewer',
+        email: 'ada@x.co',
+        image: null,
+        handle: 'ada',
+        role: 'member',
+      },
     ],
     labels: [{ id: 'label_bug', teamId: 'team_eng', name: 'Bug', color: '#f00' }],
     projects: [
@@ -388,6 +396,58 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
+  it('creates an issue with multiple reviewers from the new field', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Review the release');
+    await user.click(screen.getByTestId('quick-create-reviewers'));
+    await user.click(await screen.findByText('Shashank'));
+    await user.click(await screen.findByText('Ada Reviewer'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-submit'));
+
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      reviewerIds: ['me', 'reviewer_2'],
+    });
+  });
+
+  it('caps reviewers at fifty while keeping removal available', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = {
+      ...buildWorkspace(),
+      members: Array.from({ length: 51 }, (_value, index) => ({
+        id: `reviewer_${index + 1}`,
+        name: `Reviewer ${index + 1}`,
+        email: `reviewer-${index + 1}@orbit.test`,
+        image: null,
+        handle: `reviewer-${index + 1}`,
+        role: 'member',
+      })),
+    };
+    open();
+
+    const trigger = screen.getByTestId('quick-create-reviewers');
+    await user.click(trigger);
+    const menu = await screen.findByRole('menu');
+    for (let index = 1; index <= 50; index += 1) {
+      await user.click(within(menu).getByText(`Reviewer ${index}`));
+    }
+    await waitFor(() => expect(trigger).toHaveTextContent('50 reviewers'));
+
+    const blocked = within(menu).getByText('Reviewer 51').closest('[role="menuitemcheckbox"]');
+    const removable = within(menu).getByText('Reviewer 1').closest('[role="menuitemcheckbox"]');
+    if (blocked === null || removable === null) throw new Error('missing reviewer option');
+
+    expect(blocked).toHaveAttribute('data-disabled');
+    await user.click(blocked);
+    expect(trigger).toHaveTextContent('50 reviewers');
+
+    await user.click(removable);
+    await waitFor(() => expect(trigger).toHaveTextContent('49 reviewers'));
+  });
+
   it('offers every accessible project from every team', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspaceWithDesign();
@@ -648,6 +708,15 @@ describe('the new issue dialog', () => {
     expect(scroller.className).toContain('overflow-y-auto');
     expect(scroller.contains(submit)).toBe(false);
     expect(screen.getByTestId('quick-create').className).toContain('max-h-');
+  });
+
+  it('holds the description at its natural height so it cannot cover the properties', () => {
+    workspace = buildWorkspace();
+    open();
+
+    expect(screen.getByTestId('quick-create-description').className).toContain('shrink-0');
+    expect(screen.getByTestId('quick-create-properties').className).toContain('shrink-0');
+    expect(screen.getByTestId('quick-create-title').className).toContain('shrink-0');
   });
 
   it('shows no formatting toolbar above the description, the way Linear does not', () => {

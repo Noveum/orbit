@@ -17,10 +17,21 @@ export interface IssueWhereInput {
   readonly advancedFilter?: 'include' | 'omit';
 }
 
+export type IssueVisibilityScope =
+  | { readonly kind: 'workspace' }
+  | { readonly kind: 'teams'; readonly teamIds: readonly string[] };
+
+export function issueVisibilityScope(principal: Principal): IssueVisibilityScope {
+  return principal.role === 'admin'
+    ? { kind: 'workspace' }
+    : { kind: 'teams', teamIds: [...new Set(principal.teamIds)].sort() };
+}
+
 export function visibleTeamFilters(principal: Principal): SQL[] {
-  if (principal.role === 'admin') return [];
-  if (principal.teamIds.length === 0) return [sql`false`];
-  return [inArray(schema.issue.teamId, [...principal.teamIds])];
+  const scope = issueVisibilityScope(principal);
+  if (scope.kind === 'workspace') return [];
+  if (scope.teamIds.length === 0) return [sql`false`];
+  return [inArray(schema.issue.teamId, [...scope.teamIds])];
 }
 
 function visibilityFilters(principal: Principal, visibility: IssueVisibility): SQL[] {
@@ -30,6 +41,21 @@ function visibilityFilters(principal: Principal, visibility: IssueVisibility): S
   }
   assertCan(principal, 'issue:read');
   return visibleTeamFilters(principal);
+}
+
+function participantFilters(participantId: string | undefined): SQL[] {
+  if (participantId === undefined) return [];
+  if (participantId === UNSET_FILTER_VALUE) return [isNull(schema.issue.assigneeId)];
+  return [
+    or(
+      eq(schema.issue.assigneeId, participantId),
+      sql`exists (
+        select 1 from ${schema.issueReviewer}
+        where ${schema.issueReviewer.issueId} = ${schema.issue.id}
+          and ${schema.issueReviewer.userId} = ${participantId}
+      )`,
+    ) ?? sql`false`,
+  ];
 }
 
 function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
@@ -47,6 +73,7 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
         : eq(schema.issue.assigneeId, filter.assigneeId),
     );
   }
+  filters.push(...participantFilters(filter.participantId));
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
   if (filter.stateCategory !== undefined) {

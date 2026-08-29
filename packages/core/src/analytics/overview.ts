@@ -12,6 +12,7 @@ import {
   cohortPredicate,
   priorityLabel,
   resolveOverviewQuery,
+  teamDrilldownBase,
 } from './drilldown.ts';
 import { bucketDates } from './filter.ts';
 import type {
@@ -71,6 +72,7 @@ export interface AnalyticsOverview {
   readonly projects: readonly AnalyticsBucket[];
   readonly priorities: readonly AnalyticsBucket[];
   readonly outliers: readonly FlowOutlier[];
+  readonly outliersWithheldCount: number;
 }
 
 interface CardRow {
@@ -123,6 +125,7 @@ interface OutlierRow {
   readonly identifier: string;
   readonly title: string;
   readonly cycle_time_days: number | string;
+  readonly visible: boolean;
 }
 
 function metric(
@@ -331,13 +334,16 @@ async function outliers(
   resolved: ResolvedAnalyticsQuery,
 ): Promise<readonly OutlierRow[]> {
   const base = baseAnalyticsPredicate(principal, resolved);
+  const visible = teamDrilldownBase(principal, resolved, { cohort: 'cycle-time' });
   const current = cohortPredicate(resolved, { cohort: 'cycle-time' });
+
   return await db.execute<OutlierRow>(sql`
     select issue.id, issue.identifier, issue.title,
-      extract(epoch from (issue.completed_at - issue.started_at)) / 86400 as cycle_time_days
+      extract(epoch from (issue.completed_at - issue.started_at)) / 86400 as cycle_time_days,
+      (${visible}) as visible
     from issue
     join workflow_state on workflow_state.id = issue.state_id
-    where ${base} and ${current} and issue.started_at is not null
+    where ${base} and ${current}
     order by cycle_time_days desc, issue.id asc
     limit 10
   `);
@@ -380,6 +386,7 @@ export async function loadAnalyticsOverview(
   const comparisonCycleP50 = optionalAmount(throughput, 'comparison_cycle_p50');
   const comparisonCycleP85 = optionalAmount(throughput, 'comparison_cycle_p85');
   const unit = resolved.measure;
+  const visibleOutliers = slow.filter((row) => row.visible);
   const cards: AnalyticsOverviewMetric[] = [
     metric({
       id: 'throughput',
@@ -488,12 +495,13 @@ export async function loadAnalyticsOverview(
     priorities: mix
       .filter((row) => row.dimension === 'priority')
       .map((row) => distributionBucket(row, unit)),
-    outliers: slow.map((row) => ({
+    outliers: visibleOutliers.map((row) => ({
       issueId: row.id,
       identifier: row.identifier,
       title: row.title,
       cycleTimeDays: Number(row.cycle_time_days),
       cohort: { cohort: `outlier:${row.id}` },
     })),
+    outliersWithheldCount: slow.length - visibleOutliers.length,
   };
 }

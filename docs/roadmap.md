@@ -13,12 +13,13 @@ hand with.
 
 The core is done and in daily use.
 
-- **Issues** with priorities, labels, states, estimates, assignees and
-  relations, as a list or a drag and drop board.
+- **Issues** with priorities, labels, states, estimates, assignees, multiple
+  reviewers and relations, as a list or a drag-and-drop board.
 - **Sprints and cycles** with scope, points, burndown and carryover.
 - **Projects and milestones** across teams.
 - **Docs** with a rich editor, collections, public share links and comments.
-- **Standup** as a workspace Kanban you filter to one person with a click.
+- **Standup** as a workspace Kanban you filter to work a person owns or reviews
+  with a click.
 - **Analytics**: scope, throughput, churn, and distribution by assignee,
   project, label and estimate.
 - **Search, filters and saved views**, shared or private.
@@ -132,16 +133,17 @@ enforced.
   moves it up more than a reaction does.
 - **Open a feature request.** Describe the workflow that is painful, not the
   widget you want. See
-  [CONTRIBUTING.md](../CONTRIBUTING.md#proposing-features).
+  [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md#proposing-features).
 - **Build it.** Comment first so we can agree the shape, then go. Anything
   marked **help wanted** already has agreement.
 
 ## Releases
 
 Orbit ships continuously from `main`. There are no long lived release branches
-and no backporting, so self-hosted deployments should track `main` or a recent
-tag.
+and no backporting. To make deployments traceable we publish automated dated
+tags and GitHub releases weekly, with manual dispatch available when needed, so
+self-hosted deployments can track `main` or a recent dated tag.
 
 Anything requiring action from someone self-hosting is labelled
 [`breaking change`](https://github.com/Noveum/orbit/labels/breaking%20change)
-and called out in the release notes.
+and called out prominently in the generated release notes.

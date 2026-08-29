@@ -56,6 +56,13 @@ describe('session domain allowlist', () => {
     expect(result).toMatchObject({ data: { userId } });
   });
 
+  it('lets any address start a session once the allowlist is cleared', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = '';
+    const userId = await userWith(`anyone${randomUUID().slice(0, 8)}@gmail.com`);
+    const result = await sessionHook()(userId);
+    expect(result).toMatchObject({ data: { userId } });
+  });
+
   it('does nothing when the user cannot be found', async () => {
     const result = await sessionHook()('ghost');
     expect(result).toMatchObject({ data: { userId: 'ghost' } });

@@ -4,6 +4,7 @@ import {
   getIssue,
   getParentIssue,
   listActivityPage,
+  listIssueAttachments,
   listIssues,
   listSubscribers,
   updateIssue,
@@ -12,7 +13,7 @@ import { db } from '@orbit/db';
 import { renderMarkdown } from '@orbit/services/markdown';
 import { issueRefSchema, paginationSchema } from '@orbit/shared/validators';
 import { handle, publish, readJson, searchParamsOf } from '@/lib/api/handler.ts';
-import { attachLabels } from '@/lib/api/issues.ts';
+import { attachIssueDecorations } from '@/lib/api/issues.ts';
 
 interface RouteContext {
   readonly params: Promise<{ id: string }>;
@@ -26,7 +27,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const query = paginationSchema.parse(searchParamsOf(request));
   return await handle(async (principal) => {
     const row = await getIssue(principal, id);
-    const [issue] = await attachLabels([row]);
+    const [issue] = await attachIssueDecorations([row]);
     const [activityPage, subPage, subscribers, parentRow] = await Promise.all([
       listActivityPage(db, principal, row.id, {
         oldestFirst: true,
@@ -37,7 +38,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       listSubscribers(principal, row.id),
       getParentIssue(principal, row.id),
     ]);
-    const [parent] = parentRow === null ? [null] : await attachLabels([parentRow]);
+    const [parent] = parentRow === null ? [null] : await attachIssueDecorations([parentRow]);
     return {
       issue,
       descriptionHtml: renderMarkdown(row.description),
@@ -46,9 +47,19 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
         summary: describeActivity(entry),
       })),
       activityCursor: activityPage.nextCursor,
-      subIssues: await attachLabels(subPage.issues),
+      subIssues: await attachIssueDecorations(subPage.issues),
       parent: parent ?? null,
       subscribed: subscribers.some((row) => row.userId === principal.userId),
+      attachments: (await listIssueAttachments(principal, row.id)).map((file) => ({
+        id: file.id,
+        parentType: file.parentType,
+        parentId: file.parentId,
+        fileName: file.fileName,
+        contentType: file.contentType,
+        size: file.size,
+        storageKey: file.storageKey,
+        status: 'ready',
+      })),
     };
   });
 }
@@ -59,7 +70,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return await handle(async (principal) => {
     const result = await updateIssue(principal, id, body);
     await publish(result.actions);
-    const [issue] = await attachLabels([result.issue]);
+    const [issue] = await attachIssueDecorations([result.issue]);
     return { issue };
   });
 }

@@ -10,6 +10,7 @@ import {
   LayoutList,
   Moon,
   PanelLeft,
+  Plug,
   RefreshCcw,
   Settings,
   Sun,
@@ -204,10 +205,18 @@ export function buildCommands(context: CommandContext): AppCommand[] {
       run: () => context.navigate('/settings'),
     },
     {
+      id: 'navigate:/settings/mcp',
+      label: 'Go to MCP server',
+      section: 'Navigation',
+      icon: Plug,
+      run: () => context.navigate('/settings/mcp'),
+    },
+    {
       id: 'view:theme',
       label: context.dark ? 'Switch to light theme' : 'Switch to dark theme',
       section: 'View',
       icon: context.dark ? Sun : Moon,
+      binding: 'shift+t',
       run: context.toggleTheme,
     },
     {

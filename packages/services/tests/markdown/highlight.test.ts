@@ -19,6 +19,12 @@ describe('code on the read path', () => {
     expect(html).toContain('class="hljs language-ts"');
   });
 
+  it('colours a fenced html block the same way the editor does', () => {
+    const html = renderMarkdown(['```html', '<div class="ok">x</div>', '```'].join('\n'));
+    expect(html).toContain('class="hljs language-html"');
+    expect(html).toContain('hljs-tag');
+  });
+
   it('survives the sanitizer that every rendered doc passes through', () => {
     const html = renderMarkdownWithHeadingIds(`# Title\n\n${TS_BLOCK}`);
 
@@ -70,6 +76,7 @@ describe('code on the read path', () => {
 
   it('reports a token class for a language it knows and none for one it does not', () => {
     expect(highlightCode('SELECT 1', 'sql')).toContain('hljs-keyword');
+    expect(highlightCode('<div class="ok">x</div>', 'html')).toContain('hljs-tag');
     expect(highlightCode('SELECT 1', 'klingon')).toBe('SELECT 1');
     expect(highlightCode('a < b & c', 'klingon')).toBe('a &lt; b &amp; c');
   });

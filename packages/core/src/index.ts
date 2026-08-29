@@ -1,6 +1,7 @@
 export * from './activity/activity-service.ts';
 export * from './analytics/index.ts';
 export * from './auth/mcp-token.ts';
+export * from './auth/rate-limit-storage.ts';
 export * from './content/attachment-service.ts';
 export * from './content/comment-service.ts';
 export * from './content/doc-access-request-service.ts';
@@ -27,6 +28,7 @@ export * from './work/issue-service.ts';
 export * from './work/label-service.ts';
 export * from './work/milestone-service.ts';
 export * from './work/project-service.ts';
+export * from './work/reviewer-service.ts';
 export * from './work/view-preference-service.ts';
 export * from './work/view-service.ts';
 export * from './work/workflow-state-service.ts';

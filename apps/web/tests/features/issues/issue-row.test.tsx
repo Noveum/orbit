@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from 'bun:test';
 import userEvent from '@testing-library/user-event';
 import type { GroupContext } from '@/features/filters/grouping.ts';
 import { groupIssues } from '@/features/filters/grouping.ts';
-import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
+import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { fireEvent, render, screen } from '@/test/render.tsx';
 import { buildRows } from '../../../src/features/issues/issue-list.tsx';
 import { IssueRow } from '../../../src/features/issues/issue-row.tsx';
@@ -48,6 +48,25 @@ const todo: WorkflowState = {
   color: '#5d6272',
   position: 2,
 };
+const reviewers: readonly Member[] = [
+  {
+    id: 'reviewer_1',
+    name: 'Ada Reviewer',
+    email: 'ada@orbit.test',
+    image: '/ada.png',
+    handle: 'ada',
+    role: 'member',
+  },
+  {
+    id: 'reviewer_2',
+    name: 'Bo Reviewer',
+    email: 'bo@orbit.test',
+    image: '/bo.png',
+    handle: 'bo',
+    role: 'member',
+  },
+];
+
 const done: WorkflowState = {
   id: 'state_done',
   teamId: 'team_1',
@@ -101,20 +120,29 @@ describe('IssueRow', () => {
     expect(onToggleSelected).toHaveBeenCalledTimes(1);
   });
 
-  it('reveals the checkbox on hover and keeps it reachable from the keyboard', async () => {
+  it('reveals the checkbox on hover and preserves the row-local tab order', async () => {
     const user = userEvent.setup();
     render(
-      <IssueRow
-        issue={issue()}
-        state={todo}
-        labels={[]}
-        assignee={undefined}
-        active={false}
-        selected={false}
-        onOpen={mock()}
-        onToggleSelected={mock()}
-        onFocus={mock()}
-      />,
+      <>
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Match Radix focus guard markup */}
+        <span data-radix-focus-guard="" tabIndex={0} />
+      </>,
+    );
+    render(
+      <>
+        <button data-testid="issue-row-focus-start" type="button" />
+        <IssueRow
+          issue={issue()}
+          state={todo}
+          labels={[]}
+          assignee={undefined}
+          active={false}
+          selected={false}
+          onOpen={mock()}
+          onToggleSelected={mock()}
+          onFocus={mock()}
+        />
+      </>,
     );
 
     const checkbox = screen.getByLabelText('Select ENG-7');
@@ -122,6 +150,9 @@ describe('IssueRow', () => {
     expect(checkbox.className).toContain('group-hover:opacity-100');
     expect(checkbox.className).toContain('focus-visible:opacity-100');
 
+    const focusStart = screen.getByTestId('issue-row-focus-start');
+    focusStart.focus();
+    expect(focusStart).toHaveFocus();
     await user.tab();
     expect(checkbox).toHaveFocus();
   });
@@ -172,6 +203,27 @@ describe('IssueRow', () => {
 
     fireEvent.click(link);
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows every reviewer avatar', () => {
+    render(
+      <IssueRow
+        issue={issue({ reviewerIds: reviewers.map((reviewer) => reviewer.id) })}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        reviewers={reviewers}
+        active={false}
+        selected={false}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    expect(screen.getByTitle('Reviewers: Ada Reviewer, Bo Reviewer')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Ada Reviewer' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Bo Reviewer' })).toBeInTheDocument();
   });
 
   it('marks the active row', () => {

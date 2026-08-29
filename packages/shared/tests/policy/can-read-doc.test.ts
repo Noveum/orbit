@@ -37,7 +37,7 @@ describe('canReadDoc', () => {
   });
 
   it('lets anyone in the workspace read an unrestricted doc', () => {
-    for (const visibility of ['workspace', 'link', 'public']) {
+    for (const visibility of ['workspace', 'members', 'link', 'public']) {
       expect(canReadDoc(reader(), doc({ visibility }), [])).toBe(true);
     }
   });

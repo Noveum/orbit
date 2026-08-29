@@ -245,7 +245,7 @@ export async function seedStarterContent(
         action: 'insert',
         model: 'issue',
         modelId: issue.id,
-        data: issue,
+        data: { ...issue, labelIds: [], reviewerIds: [] },
         actor: params.actor,
       }),
     );

@@ -15,6 +15,7 @@ export interface PropertyOption {
   readonly id: string;
   readonly label: string;
   readonly icon?: ReactNode;
+  readonly disabled?: boolean;
 }
 
 interface PropertyMenuBaseProps {
@@ -62,6 +63,7 @@ export function PropertyMenu({
             <DropdownMenuCheckboxItem
               key={option.id}
               checked={selected.includes(option.id)}
+              disabled={option.disabled === true}
               onSelect={(event) => {
                 event.preventDefault();
                 onSelect(option.id);
@@ -73,7 +75,11 @@ export function PropertyMenu({
         ) : (
           <DropdownMenuRadioGroup value={selected[0] ?? ''} onValueChange={onSelect}>
             {options.map((option) => (
-              <DropdownMenuRadioItem key={option.id} value={option.id}>
+              <DropdownMenuRadioItem
+                key={option.id}
+                value={option.id}
+                disabled={option.disabled === true}
+              >
                 <OptionLabel option={option} />
               </DropdownMenuRadioItem>
             ))}

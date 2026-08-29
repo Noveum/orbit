@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 
-const CATCHUP_DIR = new URL('../catchup/', import.meta.url).pathname;
+const CATCHUP_DIR = fileURLToPath(new URL('../catchup/', import.meta.url));
 
 export function catchupPath(named: string): string {
   const file = basename(named);

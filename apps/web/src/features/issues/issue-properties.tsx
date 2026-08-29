@@ -1,6 +1,10 @@
 'use client';
 
-import { DEFAULT_ESTIMATE_SCALE, PRIORITIES } from '@orbit/shared/constants';
+import {
+  DEFAULT_ESTIMATE_SCALE,
+  ISSUE_REVIEWER_MAX_COUNT,
+  PRIORITIES,
+} from '@orbit/shared/constants';
 import { sprintLabel } from '@orbit/shared/utils';
 import { ArrowUpRight, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
@@ -20,6 +24,7 @@ import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
 import { projectsForTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
+import { ReviewerAvatars } from './reviewer-avatars.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
@@ -27,6 +32,7 @@ type MenuKey =
   | 'status'
   | 'priority'
   | 'assignee'
+  | 'reviewers'
   | 'project'
   | 'milestone'
   | 'cycle'
@@ -55,6 +61,11 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const state = workspace.stateById.get(issue.stateId);
   const assignee =
     issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId);
+  const reviewerIds = issue.reviewerIds ?? [];
+  const reviewers = reviewerIds.flatMap((id) => {
+    const reviewer = workspace.memberById.get(id);
+    return reviewer === undefined ? [] : [reviewer];
+  });
   const project = workspace.projects.find((entry) => entry.id === issue.projectId);
   const assignableProjects = projectsForTeam(workspace.projects, issue.teamId, issue.projectId);
   const milestonesQuery = useMilestones(issue.projectId);
@@ -86,6 +97,11 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   });
   useHotkey('a', () => setOpenMenu('assignee'), {
     label: 'Assign issue',
+    section: 'Issues',
+    scope: 'issues',
+  });
+  useHotkey('r', () => setOpenMenu('reviewers'), {
+    label: 'Change reviewers',
     section: 'Issues',
     scope: 'issues',
   });
@@ -193,6 +209,46 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
               )}
             </span>
             {assignee?.name ?? 'Unassigned'}
+          </button>
+        </PropertyMenu>
+      </PropertyRow>
+
+      <PropertyRow label="Reviewers" shortcut="r">
+        <PropertyMenu
+          title="Reviewers"
+          multiple
+          open={openMenu === 'reviewers'}
+          onOpenChange={toggle('reviewers')}
+          options={workspace.members.map((member) => ({
+            id: member.id,
+            label: member.name,
+            icon: <Avatar name={member.name} src={member.image} size="xs" />,
+            disabled:
+              reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT && !reviewerIds.includes(member.id),
+          }))}
+          selected={reviewerIds}
+          onSelect={(reviewerId) => {
+            const removing = reviewerIds.includes(reviewerId);
+            if (!removing && reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT) return;
+            patch({
+              reviewerIds: removing
+                ? reviewerIds.filter((id) => id !== reviewerId)
+                : [...reviewerIds, reviewerId],
+            });
+          }}
+          testId="menu-reviewers"
+        >
+          <button type="button" className={rowClassName} data-testid="property-reviewers">
+            {reviewers.length === 0 ? (
+              'No reviewers'
+            ) : (
+              <>
+                <ReviewerAvatars reviewers={reviewers} />
+                <span className="truncate">
+                  {reviewers.map((reviewer) => reviewer.name).join(', ')}
+                </span>
+              </>
+            )}
           </button>
         </PropertyMenu>
       </PropertyRow>
