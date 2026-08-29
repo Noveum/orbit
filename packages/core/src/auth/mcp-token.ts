@@ -51,7 +51,7 @@ export function unbindMcpCredential(
   const expectedBytes = Buffer.from(expected, 'utf8');
   if (
     providedBytes.length !== expectedBytes.length ||
-    !timingSafeEqual(providedBytes, expectedBytes)
+    !timingSafeEqual(new Uint8Array(providedBytes), new Uint8Array(expectedBytes))
   ) {
     return null;
   }

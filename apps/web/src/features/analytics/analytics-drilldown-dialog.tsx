@@ -100,7 +100,15 @@ export function AnalyticsDrilldownDialog({
       </div>
     );
   } else if (issues.length === 0) {
-    body = <p className="py-12 text-center text-muted text-sm">No matching issues.</p>;
+    body = (
+      <p className="py-12 text-center text-muted text-sm">
+        {firstPage !== undefined &&
+        firstPage.total > 0 &&
+        firstPage.withheldCount === firstPage.total
+          ? 'You do not have permission to view the issues in this cohort.'
+          : 'No matching issues.'}
+      </p>
+    );
   } else {
     body = (
       <ScrollArea className="h-[calc(100dvh-12rem)] sm:h-[min(60vh,36rem)]">
@@ -186,7 +194,11 @@ export function AnalyticsDrilldownDialog({
           <DialogDescription>
             {firstPage === undefined
               ? 'Loading issue evidence.'
-              : `${firstPage.total} matching issues, ${firstPage.totalValue} in the selected measure. Predicate: ${firstPage.predicate}. Data through ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(firstPage.asOf))}.`}
+              : `${firstPage.total} matching issues${
+                  firstPage.withheldCount > 0
+                    ? ` (${firstPage.withheldCount} withheld due to team permissions)`
+                    : ''
+                }, ${firstPage.totalValue} in the selected measure. Predicate: ${firstPage.predicate}. Data through ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(firstPage.asOf))}.`}
           </DialogDescription>
         </DialogHeader>
         {body}
