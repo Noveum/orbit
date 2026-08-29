@@ -60,22 +60,39 @@ async function unfurlLinks(
   if (channel === undefined || ts === undefined || links === undefined || links.length === 0)
     return;
 
-  const [integrationRow] = await db
-    .select({ organizationId: schema.integration.organizationId })
+  const integrationRows = await db
+    .select({
+      organizationId: schema.integration.organizationId,
+      externalId: schema.integration.externalId,
+    })
     .from(schema.integration)
     .where(
       and(
         eq(schema.integration.provider, 'slack'),
         or(
           sql`${schema.integration.config}->>'slackTeamId' = ${slackTeamId}`,
-          eq(schema.integration.externalId, slackTeamId),
+          and(
+            eq(schema.integration.externalId, slackTeamId),
+            sql`not (${schema.integration.config} ? 'slackTeamId')`,
+          ),
         ),
       ),
     )
-    .limit(1);
-  if (integrationRow === undefined) return;
+    .limit(2);
+  const integrationRow = integrationRows[0];
+  if (integrationRow === undefined || integrationRows.length !== 1) {
+    console.warn('[orbit] slack webhook team routing failed', {
+      slackTeamId,
+      reason: integrationRow === undefined ? 'unknown' : 'ambiguous',
+    });
+    return;
+  }
 
-  const context = await resolveSlackContext(db, integrationRow.organizationId);
+  const context = await resolveSlackContext(
+    db,
+    integrationRow.organizationId,
+    integrationRow.externalId,
+  );
   if (context === null || context.token === null) return;
 
   const unfurls = await resolveIssueUnfurls(

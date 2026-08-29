@@ -158,6 +158,7 @@ describe('list and search indexes', () => {
     expect(indexNamesOf(schema.issueReviewer)).toEqual(
       expect.arrayContaining(['issue_reviewer_unique', 'issue_reviewer_user_idx']),
     );
+    expect(indexNamesOf(schema.integration)).toContain('integration_provider_slack_team_idx');
   });
 });
 

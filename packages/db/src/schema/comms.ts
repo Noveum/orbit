@@ -133,6 +133,10 @@ export const integration = pgTable(
       table.provider,
       table.externalId,
     ),
+    index('integration_provider_slack_team_idx').on(
+      table.provider,
+      sql`(${table.config}->>'slackTeamId')`,
+    ),
   ],
 );
 
