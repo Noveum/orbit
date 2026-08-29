@@ -1,3 +1,4 @@
+import { configuredEmailDomains } from '@orbit/core';
 import { landingMetadata, landingStructuredData } from '@/features/landing/landing-meta.ts';
 import { LandingPage } from '@/features/landing/landing-page.tsx';
 
@@ -11,7 +12,7 @@ export default function HomeLandingPage() {
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON-LD built from constants
         dangerouslySetInnerHTML={{ __html: landingStructuredData() }}
       />
-      <LandingPage />
+      <LandingPage openSignUp={configuredEmailDomains().length === 0} />
     </>
   );
 }

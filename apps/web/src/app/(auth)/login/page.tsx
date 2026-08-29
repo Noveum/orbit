@@ -1,3 +1,4 @@
+import { configuredEmailDomains } from '@orbit/core';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
@@ -31,6 +32,7 @@ export default async function LoginPage({
         <LoginForm
           providers={enabledSocialProviders}
           passwordEnabled={passwordAuthEnabled}
+          openSignUp={configuredEmailDomains().length === 0}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />
         {devUsers.length > 0 ? (

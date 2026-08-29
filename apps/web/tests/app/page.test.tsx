@@ -36,6 +36,17 @@ describe('HomePage', () => {
     expect(screen.getByText(/no invite needed/i)).toBeDefined();
   });
 
+  it('promises nobody a signup the allowlist would refuse', async () => {
+    process.env['ALLOWED_EMAIL_DOMAINS'] = 'noveum.ai';
+    try {
+      render(await HomePage({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryAllByText(/anyone can sign up, free/i).length).toBe(0);
+      expect(screen.queryAllByText(/no invite needed/i).length).toBe(0);
+    } finally {
+      process.env['ALLOWED_EMAIL_DOMAINS'] = '';
+    }
+  });
+
   it('redirects a logged-in visitor to their issues', async () => {
     sessionHolder.value = { user: { id: 'user-1' } };
     await expect(HomePage({ searchParams: Promise.resolve({}) })).rejects.toThrow(

@@ -1,3 +1,4 @@
+import { configuredEmailDomains } from '@orbit/core';
 import { redirect } from 'next/navigation';
 import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
 import { landingMetadata, landingStructuredData } from '@/features/landing/landing-meta.ts';
@@ -24,7 +25,7 @@ export default async function HomePage({
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON-LD built from constants
         dangerouslySetInnerHTML={{ __html: landingStructuredData() }}
       />
-      <LandingPage />
+      <LandingPage openSignUp={configuredEmailDomains().length === 0} />
       {errorCode === undefined ? null : <AuthErrorNotice code={errorCode} />}
     </>
   );
