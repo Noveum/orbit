@@ -68,6 +68,7 @@ export const analyticsOverviewResponseSchema = z.object({
       cohort: analyticsDrilldownCohortSchema,
     }),
   ),
+  outliersWithheldCount: z.number().int().nonnegative(),
 });
 
 const sprintSummarySchema = z.object({

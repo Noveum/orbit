@@ -130,4 +130,30 @@ describe('AnalyticsDrilldownDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(trigger).toHaveFocus());
   });
+
+  test('explains when every matching issue is withheld by team permissions', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ...page(null, 'ORB-1'),
+            issues: [],
+            total: 2,
+            totalValue: 2,
+            withheldCount: 2,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    ) as unknown as typeof fetch;
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: 'Completed work' }));
+
+    expect(
+      await screen.findByText('You do not have permission to view the issues in this cohort.'),
+    ).toBeVisible();
+    expect(screen.queryByText('No matching issues.')).not.toBeInTheDocument();
+  });
 });

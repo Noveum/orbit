@@ -14,7 +14,7 @@ import type { AnalyticsDrilldownCohort, AnalyticsQuery } from '@orbit/shared/val
 import { calendarDateSchema, issueFilterSchema } from '@orbit/shared/validators';
 import type { SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { buildIssueWhere } from '../work/issue-query.ts';
+import { buildIssueWhere, issueVisibilityScope } from '../work/issue-query.ts';
 import {
   bucketDates,
   calendarDateLabel,
@@ -953,6 +953,8 @@ function cursorRequestBinding(
 ): string {
   return JSON.stringify({
     organizationId: principal.organizationId,
+    userId: principal.userId,
+    issueVisibility: issueVisibilityScope(principal),
     query: {
       version: query.version,
       lens: query.lens,

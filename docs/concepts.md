@@ -34,7 +34,7 @@ uses it to hide buttons you cannot use, never as the only gate.
 Guests are the useful one to understand: a contractor or a stakeholder can be in
 the workspace, read the board and comment, without being able to change work.
 
-> **Analytics Visibility Rule:** Analytics totals and aggregate charts span the entire workspace for every role (including guests and contributors) to prevent misleading partial dashboards. However, issue-level drilldown rows and outliers strictly follow team membership and permissions; items from unauthorized teams are filtered out and reported as a withheld count.
+> **Analytics Visibility Rule:** Analytics totals and aggregate charts span the entire workspace for every role (including guests and contributors) to prevent misleading partial dashboards. Issue-level drilldown rows follow team membership and report a withheld count. The longest cycle time list ranks the workspace candidates first, then removes rows outside the reader's team scope and reports how many ranked candidates were withheld.
 
 ## Teams
 
