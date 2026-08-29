@@ -1,16 +1,18 @@
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 
 const SECRET = 'a-slack-webhook-secret';
+const originalSigningSecret = process.env['SLACK_SIGNING_SECRET'];
 process.env['SLACK_SIGNING_SECRET'] = SECRET;
 
 const unfurled: { channel: string; ts: string; token: string; urls: string[] }[] = [];
 const core = await import('@orbit/core');
 const services = await import('@orbit/services');
 const slackCapability = await import('@orbit/shared/constants');
+const nextHeaders = await import('next/headers');
 mock.module('@orbit/core', () => ({ ...core, publishDeltas: () => Promise.resolve(undefined) }));
 mock.module('@orbit/shared/constants', () => ({
   ...slackCapability,
@@ -44,8 +46,12 @@ mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers(
 const { POST } = await import('../../../../../src/app/api/webhooks/slack/route.ts');
 
 afterAll(() => {
+  if (originalSigningSecret === undefined) delete process.env['SLACK_SIGNING_SECRET'];
+  else process.env['SLACK_SIGNING_SECRET'] = originalSigningSecret;
   mock.module('@orbit/core', () => core);
   mock.module('@orbit/services', () => services);
+  mock.module('@orbit/shared/constants', () => slackCapability);
+  mock.module('next/headers', () => nextHeaders);
 });
 
 function signedBody(payload: object): Request {
@@ -116,6 +122,19 @@ beforeEach(() => {
   unfurled.length = 0;
 });
 
+let restoreWarning = () => undefined;
+
+function silenceWarnings() {
+  const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+  restoreWarning = () => warning.mockRestore();
+  return warning;
+}
+
+afterEach(() => {
+  restoreWarning();
+  restoreWarning = () => undefined;
+});
+
 describe('slack webhook', () => {
   it('resolves the workspace through config.slackTeamId', async () => {
     await seedSlack();
@@ -138,7 +157,7 @@ describe('slack webhook', () => {
       config: { scopes: ['chat:write'], slackTeamId: 'T0123' },
       externalId: 'T0456',
     });
-    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warning = silenceWarnings();
 
     const res = await POST(linkShared('T0456'));
 
@@ -148,7 +167,6 @@ describe('slack webhook', () => {
       '[orbit] slack webhook team routing failed',
       expect.objectContaining({ slackTeamId: 'T0456', reason: 'unknown' }),
     );
-    warning.mockRestore();
   });
 
   it('uses credentials from the integration row that matched the configured team', async () => {
@@ -180,7 +198,7 @@ describe('slack webhook', () => {
       config: { scopes: [], slackTeamId: 'T0123' },
       token: 'xoxb-second',
     });
-    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warning = silenceWarnings();
 
     const res = await POST(linkShared('T0123'));
 
@@ -190,12 +208,11 @@ describe('slack webhook', () => {
       '[orbit] slack webhook team routing failed',
       expect.objectContaining({ slackTeamId: 'T0123', reason: 'ambiguous' }),
     );
-    warning.mockRestore();
   });
 
   it('does not unfurl for an unknown team', async () => {
     await seedSlack();
-    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warning = silenceWarnings();
     const res = await POST(linkShared('T9999'));
     expect(res.status).toBe(200);
     expect(unfurled).toHaveLength(0);
@@ -203,12 +220,11 @@ describe('slack webhook', () => {
       '[orbit] slack webhook team routing failed',
       expect.objectContaining({ slackTeamId: 'T9999', reason: 'unknown' }),
     );
-    warning.mockRestore();
   });
 
   it('requires a legacy default integration without a team id to reconnect', async () => {
     await seedSlack({ config: { scopes: [] } });
-    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warning = silenceWarnings();
 
     const res = await POST(linkShared('T0123'));
 
@@ -218,7 +234,6 @@ describe('slack webhook', () => {
       '[orbit] slack webhook team routing failed',
       expect.objectContaining({ slackTeamId: 'T0123', reason: 'unknown' }),
     );
-    warning.mockRestore();
   });
 
   it('answers url_verification challenges', async () => {
