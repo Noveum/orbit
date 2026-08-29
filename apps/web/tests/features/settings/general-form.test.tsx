@@ -1,16 +1,20 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as navigation from 'next/navigation';
+import * as toastModule from '@/components/ui/toast.tsx';
 
 const refresh = mock();
 const toast = mock();
 const originalFetch = globalThis.fetch;
 
 mock.module('next/navigation', () => ({
+  ...navigation,
   useRouter: () => ({ refresh }),
 }));
 
 mock.module('@/components/ui/toast.tsx', () => ({
+  ...toastModule,
   useToast: () => ({ toast, dismiss: mock() }),
 }));
 
@@ -70,6 +74,8 @@ beforeEach(() => {
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
+  mock.module('next/navigation', () => navigation);
+  mock.module('@/components/ui/toast.tsx', () => toastModule);
 });
 
 describe('GeneralForm agent instructions', () => {
