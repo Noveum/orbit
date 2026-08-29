@@ -9,10 +9,10 @@ const originalSigningSecret = process.env['SLACK_SIGNING_SECRET'];
 process.env['SLACK_SIGNING_SECRET'] = SECRET;
 
 const unfurled: { channel: string; ts: string; token: string; urls: string[] }[] = [];
-const core = await import('@orbit/core');
-const services = await import('@orbit/services');
-const slackCapability = await import('@orbit/shared/constants');
-const nextHeaders = await import('next/headers');
+const core = { ...(await import('@orbit/core')) };
+const services = { ...(await import('@orbit/services')) };
+const slackCapability = { ...(await import('@orbit/shared/constants')) };
+const nextHeaders = { ...(await import('next/headers')) };
 mock.module('@orbit/core', () => ({ ...core, publishDeltas: () => Promise.resolve(undefined) }));
 mock.module('@orbit/shared/constants', () => ({
   ...slackCapability,
@@ -122,7 +122,7 @@ beforeEach(() => {
   unfurled.length = 0;
 });
 
-let restoreWarning = () => undefined;
+let restoreWarning: () => void = () => undefined;
 
 function silenceWarnings() {
   const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
