@@ -104,10 +104,17 @@ access. Set it when an instance should only admit one organisation. A workspace
 can narrow it further with its own `allowedEmailDomains` setting. The hosted
 instance at <https://orbit.noveum.ai> leaves it unset.
 
-Signing in is rate limited per IP whatever the method, so an open instance
-cannot be used to send sign-in codes in bulk: 20 code requests an hour, 20 code
-attempts each quarter hour, 5 password sign-ins a minute, and 5 password sign-ups
-an hour. Better-auth applies these in production only.
+Signing in is rate limited per IP whatever the method: 20 sign-in code requests
+an hour, 5 password sign-ins a minute, and 5 password sign-ups an hour, on top of
+better-auth's own defaults for the paths without a rule of their own. Better-auth
+applies them in production only, and a sign-in code additionally dies after three
+wrong guesses.
+
+Those counters live in better-auth's default in-memory store, which is per
+process. On a serverless host each instance keeps its own, so treat the caps as
+a brake on casual abuse rather than a fleet-wide guarantee. An instance that
+needs a real ceiling should give better-auth durable storage for them, and should
+watch what its email provider is being asked to send either way.
 
 ```bash
 ALLOWED_EMAIL_DOMAINS=example.com,example.org
