@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
 import type { KeyboardSensorProps, PointerSensorProps, SensorProps } from '@dnd-kit/core';
 import { createBoardSensorController } from '@/features/issues/board-sensors.ts';
 
@@ -37,10 +37,13 @@ function sensorProps<Options extends object>(
   } as unknown as SensorProps<Options>;
 }
 
+const cards: HTMLElement[] = [];
+
 function card(): HTMLElement {
   const node = document.createElement('div');
   node.tabIndex = 0;
   document.body.append(node);
+  cards.push(node);
   return node;
 }
 
@@ -49,7 +52,8 @@ async function settleTimers(): Promise<void> {
 }
 
 afterEach(() => {
-  document.body.replaceChildren();
+  jest.useRealTimers();
+  for (const node of cards.splice(0)) node.remove();
 });
 
 describe('board sensor cancellation', () => {
@@ -132,6 +136,7 @@ describe('board sensor cancellation', () => {
   });
 
   it('cancels a pointer sensor synchronously without resizing the window', () => {
+    jest.useFakeTimers();
     const controller = createBoardSensorController();
     const node = card();
     const onCancel = mock();
@@ -147,5 +152,7 @@ describe('board sensor cancellation', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onResize).not.toHaveBeenCalled();
     window.removeEventListener('resize', onResize);
+    jest.advanceTimersByTime(50);
+    controller.unmount();
   });
 });
