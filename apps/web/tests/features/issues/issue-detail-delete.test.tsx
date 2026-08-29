@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import * as realtimeReact from '@orbit/realtime-client/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -23,6 +24,11 @@ mock.module('next/navigation', () => ({
 }));
 
 const STUBBED = {
+  '@orbit/realtime-client/react': {
+    ...realtimeReact,
+    useDeltaHandler: () => undefined,
+    useScopeSubscription: () => undefined,
+  },
   '@/features/comments/viewer-presence.tsx': { ViewerPresence: () => null },
   '@/features/comments/comment-thread.tsx': { CommentThread: () => null },
   '@/features/pulls/issue-pull-requests.tsx': { IssuePullRequests: () => null },
