@@ -29,9 +29,17 @@ export const organizationUpdateSchema = z
     logo: z.string().url().max(2048).nullable(),
     allowedEmailDomains: z.array(z.string().trim().toLowerCase().min(1).max(255)).max(20),
     agentInstructions: z.string().max(AGENT_INSTRUCTIONS_MAX_LENGTH),
-    expectedSyncId: z.number().int().nonnegative(),
+    expectedAgentInstructions: z.string().max(AGENT_INSTRUCTIONS_MAX_LENGTH),
   })
-  .partial();
+  .partial()
+  .refine(
+    (value) =>
+      value.expectedAgentInstructions === undefined || value.agentInstructions !== undefined,
+    {
+      message: 'An instruction baseline requires an instruction update.',
+      path: ['expectedAgentInstructions'],
+    },
+  );
 
 export const organizationDeleteSchema = z
   .object({

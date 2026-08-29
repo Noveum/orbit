@@ -26,7 +26,6 @@ export interface GeneralFormProps {
   readonly logo: string | null;
   readonly allowedEmailDomains: readonly string[];
   readonly agentInstructions: string;
-  readonly syncId: number;
   readonly canManage: boolean;
 }
 
@@ -35,7 +34,6 @@ export function GeneralForm({
   logo,
   allowedEmailDomains,
   agentInstructions,
-  syncId,
   canManage,
 }: GeneralFormProps) {
   const router = useRouter();
@@ -57,7 +55,6 @@ export function GeneralForm({
   const logoBaseline = useRef(logo ?? '');
   const domainsBaseline = useRef(parseDomains(allowedEmailDomains.join(', ')));
   const instructionsBaseline = useRef(agentInstructions);
-  const syncIdBaseline = useRef(syncId);
 
   useEffect(() => {
     nameBaseline.current = name;
@@ -79,10 +76,9 @@ export function GeneralForm({
   useEffect(() => {
     if (!dirtyFields.current.agentInstructions) {
       instructionsBaseline.current = agentInstructions;
-      syncIdBaseline.current = syncId;
       setInstructions(agentInstructions);
     }
-  }, [agentInstructions, syncId]);
+  }, [agentInstructions]);
 
   const parsedDomains = parseDomains(domains);
 
@@ -96,7 +92,7 @@ export function GeneralForm({
         logo?: string | null;
         allowedEmailDomains?: string[];
         agentInstructions?: string;
-        expectedSyncId?: number;
+        expectedAgentInstructions?: string;
       } = {};
       if (dirtyFields.current.name) body.name = workspaceName;
       if (dirtyFields.current.logo) {
@@ -105,21 +101,17 @@ export function GeneralForm({
       if (dirtyFields.current.allowedEmailDomains) body.allowedEmailDomains = parsedDomains;
       if (dirtyFields.current.agentInstructions) {
         body.agentInstructions = instructions;
-        body.expectedSyncId = syncIdBaseline.current;
+        body.expectedAgentInstructions = instructionsBaseline.current;
       }
 
-      const result = await apiRequest<{ organization: { syncId: number } }>(
-        '/api/organizations/current',
-        {
-          method: 'PATCH',
-          body,
-        },
-      );
+      await apiRequest('/api/organizations/current', {
+        method: 'PATCH',
+        body,
+      });
       nameBaseline.current = workspaceName;
       logoBaseline.current = logoUrl;
       domainsBaseline.current = parsedDomains;
       instructionsBaseline.current = instructions;
-      syncIdBaseline.current = result.organization.syncId;
       dirtyFields.current.name = false;
       dirtyFields.current.logo = false;
       dirtyFields.current.allowedEmailDomains = false;

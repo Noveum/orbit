@@ -25,7 +25,7 @@ export interface OrganizationBootstrap {
   readonly actions: SyncAction[];
 }
 
-type OrganizationUpdate = z.infer<typeof organizationUpdateSchema>;
+type OrganizationUpdate = ReturnType<typeof organizationUpdateSchema.parse>;
 
 function organizationUpdateValues(
   parsed: OrganizationUpdate,
@@ -160,8 +160,8 @@ export async function updateOrganization(
     const values = organizationUpdateValues(parsed);
     const syncId = await nextSyncId(tx);
     const versionCondition =
-      parsed.agentInstructions !== undefined && parsed.expectedSyncId !== undefined
-        ? eq(schema.organization.syncId, parsed.expectedSyncId)
+      parsed.agentInstructions !== undefined && parsed.expectedAgentInstructions !== undefined
+        ? eq(schema.organization.agentInstructions, parsed.expectedAgentInstructions)
         : undefined;
     const [updated] = await tx
       .update(schema.organization)

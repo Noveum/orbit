@@ -83,21 +83,17 @@ describe('updateOrganization', () => {
   });
 
   it('rejects stale workspace agent instructions without overwriting the newer value', async () => {
-    const [initial] = await db
-      .select({ syncId: schema.organization.syncId })
-      .from(schema.organization)
-      .where(eq(schema.organization.id, workspace.organizationId));
-    if (initial === undefined) throw new Error('Expected the workspace');
-
+    const initialInstructions = 'Use the Platform team for bugs.';
+    await updateOrganization(workspace.admin, { agentInstructions: initialInstructions });
     const first = await updateOrganization(workspace.admin, {
       agentInstructions: 'Use ENG for engineering issues.',
-      expectedSyncId: initial.syncId,
+      expectedAgentInstructions: initialInstructions,
     });
 
     await expect(
       updateOrganization(workspace.admin, {
         agentInstructions: 'Use DESIGN for every issue.',
-        expectedSyncId: initial.syncId,
+        expectedAgentInstructions: initialInstructions,
       }),
     ).rejects.toMatchObject({
       code: 'conflict',
@@ -111,12 +107,45 @@ describe('updateOrganization', () => {
     expect(stored?.agentInstructions).toBe(first.organization.agentInstructions);
   });
 
+  it('accepts an instruction update after an unrelated workspace change', async () => {
+    const initialInstructions = 'Use the Platform team for bugs.';
+    await updateOrganization(workspace.admin, { agentInstructions: initialInstructions });
+    await updateOrganization(workspace.admin, { name: 'Nova renamed' });
+
+    const result = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use ENG for engineering issues.',
+      expectedAgentInstructions: initialInstructions,
+    });
+
+    expect(result.organization.agentInstructions).toBe('Use ENG for engineering issues.');
+    expect(result.organization.name).toBe('Nova renamed');
+  });
+
   it('keeps updates without an expected workspace version compatible', async () => {
     const result = await updateOrganization(workspace.admin, {
       agentInstructions: 'Use the current workspace conventions.',
     });
 
     expect(result.organization.agentInstructions).toBe('Use the current workspace conventions.');
+  });
+
+  it('rejects an instruction baseline without changing the workspace', async () => {
+    const [before] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    await expect(
+      updateOrganization(workspace.admin, {
+        expectedAgentInstructions: 'Use the current workspace conventions.',
+      }),
+    ).rejects.toBeInstanceOf(ZodError);
+
+    const [after] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+    expect(after?.syncId).toBe(before?.syncId);
   });
 
   it('rejects workspace agent instructions longer than 4000 characters', async () => {

@@ -23,7 +23,6 @@ function renderForm(agentInstructions = 'Prefer concise issue titles') {
       logo={null}
       allowedEmailDomains={['orbit.test']}
       agentInstructions={agentInstructions}
-      syncId={42}
       canManage
     />,
   );
@@ -37,7 +36,6 @@ function renderTwoForms() {
         logo={null}
         allowedEmailDomains={['orbit.test']}
         agentInstructions="Prefer concise issue titles"
-        syncId={42}
         canManage
       />
       <GeneralForm
@@ -45,7 +43,6 @@ function renderTwoForms() {
         logo={null}
         allowedEmailDomains={['orbit.test']}
         agentInstructions="Prefer concise issue titles"
-        syncId={42}
         canManage
       />
     </>,
@@ -101,7 +98,7 @@ describe('GeneralForm agent instructions', () => {
     expect(init.method).toBe('PATCH');
     expect(JSON.parse(String(init.body))).toMatchObject({
       agentInstructions: 'Use ENG for engineering issues',
-      expectedSyncId: 42,
+      expectedAgentInstructions: 'Prefer concise issue titles',
     });
   });
 
@@ -120,7 +117,7 @@ describe('GeneralForm agent instructions', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({
       agentInstructions: 'a'.repeat(4000),
-      expectedSyncId: 42,
+      expectedAgentInstructions: '',
     });
   });
 
@@ -213,8 +210,12 @@ describe('GeneralForm agent instructions', () => {
 
     const firstRequest = fetchMock.mock.calls[0];
     const secondRequest = fetchMock.mock.calls[1];
-    expect(JSON.parse(String(firstRequest?.[1]?.body))).toMatchObject({ expectedSyncId: 42 });
-    expect(JSON.parse(String(secondRequest?.[1]?.body))).toMatchObject({ expectedSyncId: 42 });
+    expect(JSON.parse(String(firstRequest?.[1]?.body))).toMatchObject({
+      expectedAgentInstructions: 'Prefer concise issue titles',
+    });
+    expect(JSON.parse(String(secondRequest?.[1]?.body))).toMatchObject({
+      expectedAgentInstructions: 'Prefer concise issue titles',
+    });
     expect(screen.getByRole('alert')).toHaveTextContent(
       'Workspace instructions changed since this page was loaded. Refresh and try again.',
     );

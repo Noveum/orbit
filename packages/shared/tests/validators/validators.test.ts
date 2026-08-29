@@ -171,12 +171,18 @@ describe('workspace agent instructions', () => {
     ).toBe(false);
   });
 
-  it('accepts only a nonnegative integer as the expected workspace version', () => {
-    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 0 }).success).toBe(true);
-    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 42 }).success).toBe(true);
-    expect(organizationUpdateSchema.safeParse({ expectedSyncId: -1 }).success).toBe(false);
-    expect(organizationUpdateSchema.safeParse({ expectedSyncId: 1.5 }).success).toBe(false);
-    expect(organizationUpdateSchema.safeParse({ expectedSyncId: '42' }).success).toBe(false);
+  it('accepts an instruction baseline only alongside an instruction update', () => {
+    expect(
+      organizationUpdateSchema.safeParse({
+        agentInstructions: 'Use ENG for engineering issues.',
+        expectedAgentInstructions: 'Use the Platform team for bugs.',
+      }).success,
+    ).toBe(true);
+    expect(
+      organizationUpdateSchema.safeParse({
+        expectedAgentInstructions: 'Use the Platform team for bugs.',
+      }).success,
+    ).toBe(false);
   });
 });
 
