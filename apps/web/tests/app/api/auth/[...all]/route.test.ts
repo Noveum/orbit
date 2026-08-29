@@ -186,6 +186,40 @@ describe('MCP authorize consent boundary', () => {
   });
 });
 
+describe('sign in code rate limit', () => {
+  it('caps sign in code sends by their own rule, not the global one', async () => {
+    await withNativeFetchGlobals(async () => {
+      const context = await auth.$context;
+      const previous = {
+        enabled: context.rateLimit.enabled,
+        max: context.rateLimit.max,
+        window: context.rateLimit.window,
+      };
+      Object.assign(context.rateLimit, { enabled: true, max: 1, window: 60 });
+      try {
+        const post = (path: string, ip: string) =>
+          authPost(
+            new Request(`${APP_ORIGIN}/api/auth/${path}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+              body: JSON.stringify({}),
+            }),
+          );
+
+        expect((await post('mcp/token', '198.51.100.10')).status).not.toBe(429);
+        expect((await post('mcp/token', '198.51.100.10')).status).toBe(429);
+
+        const codes = 'email-otp/send-verification-otp';
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          expect((await post(codes, '198.51.100.11')).status).not.toBe(429);
+        }
+      } finally {
+        Object.assign(context.rateLimit, previous);
+      }
+    });
+  });
+});
+
 describe('MCP authorize PKCE boundary', () => {
   let workspace: Workspace;
   let cookie: string;
