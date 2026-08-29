@@ -52,7 +52,7 @@ export function isStatusChangeNotification(type: string): boolean {
   return (STATUS_CHANGE_NOTIFICATION_TYPES as readonly string[]).includes(type);
 }
 
-export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'push'] as const;
+export const NOTIFICATION_CHANNELS = ['inbox', 'email', 'slack', 'slack_dm', 'push'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
 export const NOTIFICATION_REASONS = [
@@ -70,3 +70,20 @@ export const NOTIFICATION_REASONS = [
   'manual',
 ] as const;
 export type NotificationReason = (typeof NOTIFICATION_REASONS)[number];
+
+export type NotificationAudience = 'personal' | 'broadcast';
+
+export const NOTIFICATION_AUDIENCE_BY_REASON = {
+  assigned: 'personal',
+  mentioned: 'personal',
+  subscribed: 'personal',
+  commented: 'personal',
+  state_changed: 'broadcast',
+  review_requested: 'personal',
+  review_approved: 'broadcast',
+  pull_request_merged: 'broadcast',
+  due_soon: 'broadcast',
+  access_requested: 'personal',
+  access_granted: 'personal',
+  manual: 'broadcast',
+} as const satisfies Record<NotificationReason, NotificationAudience>;

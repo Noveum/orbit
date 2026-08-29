@@ -4,6 +4,7 @@
   "regions": ["hnd1"],
   "crons": [
     { "path": "/api/cron/analytics-snapshots", "schedule": "0 */6 * * *" },
+    { "path": "/api/cron/notifications", "schedule": "* * * * *" },
     { "path": "/api/cron/prune", "schedule": "0 4 * * *" }
   ]
 }

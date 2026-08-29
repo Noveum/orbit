@@ -24,6 +24,8 @@ mock.module('@orbit/core', () => ({
       name: 'Nova',
       logo: null,
       allowedEmailDomains: [],
+      agentInstructions: '',
+      syncId: 42,
     }),
 }));
 

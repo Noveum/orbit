@@ -42,7 +42,7 @@ export function defaultPreferences(): DefaultPreference[] {
       matrix.push({
         channel,
         type,
-        enabled: channel === 'slack' ? SLACK_INTEGRATION_ENABLED : true,
+        enabled: channel === 'slack' || channel === 'slack_dm' ? SLACK_INTEGRATION_ENABLED : true,
       });
     }
   }
