@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { updateOrganization } from '@orbit/core';
+import { db, eq, schema } from '@orbit/db';
 import {
   addMember,
   connect,
@@ -108,6 +110,7 @@ describe('discovery', () => {
     expect(names).toContain('delete_comment');
 
     expect(names).toContain('create_team');
+    expect(names).toContain('get_workspace_instructions');
     expect(names).toContain('add_team_member');
     expect(names).toContain('remove_team_member');
     expect(names).toContain('remove_member');
@@ -127,6 +130,57 @@ describe('discovery', () => {
     expect(payload['role']).toBe('admin');
     const user = payload['user'] as { email: string };
     expect(user.email).toBe(workspace.adminUser.email);
+  });
+
+  it('returns the current workspace instructions to every member with read access', async () => {
+    const instructions = 'Use the Platform team for bugs.';
+    await db
+      .update(schema.organization)
+      .set({ agentInstructions: instructions })
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    expect(await admin.result('get_workspace_instructions')).toEqual({
+      agentInstructions: instructions,
+    });
+    expect(await guest.result('get_workspace_instructions')).toEqual({
+      agentInstructions: instructions,
+    });
+  });
+
+  it('keeps initialization as a snapshot while the refresh tool returns the latest text', async () => {
+    const initial = 'Initial workspace guidance.';
+    const latest = 'Latest workspace guidance.';
+    await updateOrganization(workspace.admin, { agentInstructions: initial });
+    const connected = await connect(
+      await mintToken(workspace.organizationId, workspace.adminUser.id, 'Refresh behavior'),
+    );
+    try {
+      expect(connected.client.getInstructions()).toContain(initial);
+      await updateOrganization(workspace.admin, { agentInstructions: latest });
+      expect(connected.client.getInstructions()).toContain(initial);
+      expect(connected.client.getInstructions()).not.toContain(latest);
+      expect(await connected.result('get_workspace_instructions')).toEqual({
+        agentInstructions: latest,
+      });
+    } finally {
+      await connected.close();
+    }
+  });
+
+  it('delivers exactly four thousand characters without truncation', async () => {
+    const instructions = '界'.repeat(4000);
+    await updateOrganization(workspace.admin, { agentInstructions: instructions });
+    const connected = await connect(
+      await mintToken(workspace.organizationId, workspace.adminUser.id, 'Maximum instructions'),
+    );
+    try {
+      expect(connected.client.getInstructions()).toContain(instructions);
+      expect(await connected.result('get_workspace_instructions')).toEqual({
+        agentInstructions: instructions,
+      });
+    } finally {
+      await connected.close();
+    }
   });
 });
 

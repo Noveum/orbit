@@ -161,6 +161,31 @@ describe('validator hardening from review', () => {
   });
 });
 
+describe('workspace agent instructions', () => {
+  it('accepts up to 4000 characters and rejects longer instructions', () => {
+    expect(
+      organizationUpdateSchema.safeParse({ agentInstructions: 'x'.repeat(4000) }).success,
+    ).toBe(true);
+    expect(
+      organizationUpdateSchema.safeParse({ agentInstructions: 'x'.repeat(4001) }).success,
+    ).toBe(false);
+  });
+
+  it('accepts an instruction baseline only alongside an instruction update', () => {
+    expect(
+      organizationUpdateSchema.safeParse({
+        agentInstructions: 'Use ENG for engineering issues.',
+        expectedAgentInstructions: 'Use the Platform team for bugs.',
+      }).success,
+    ).toBe(true);
+    expect(
+      organizationUpdateSchema.safeParse({
+        expectedAgentInstructions: 'Use the Platform team for bugs.',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('calendar dates', () => {
   const dayOf = (value: unknown): string | null => {
     const parsed = issueUpdateSchema.safeParse({ dueDate: value });

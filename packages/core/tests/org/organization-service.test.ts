@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { STATE_CATEGORIES } from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
+import { ZodError } from 'zod';
 import {
   createOrganization,
   getOrganizationBySlug,
@@ -30,6 +31,7 @@ describe('createOrganization', () => {
     const bootstrap = await createOrganization(user.id, { name: 'Comet', slug: 'comet' });
 
     expect(bootstrap.member.role).toBe('admin');
+    expect(bootstrap.organization.agentInstructions).toBe('');
     expect(bootstrap.team.key).toBe('COMET');
     expect(bootstrap.states).toHaveLength(DEFAULT_WORKFLOW_STATES.length);
     expect(new Set(bootstrap.states.map((state) => state.category))).toEqual(
@@ -72,6 +74,86 @@ describe('updateOrganization', () => {
     expect(actions[0]?.model).toBe('organization');
   });
 
+  it('lets an administrator update workspace agent instructions', async () => {
+    const instructions = 'Use the Platform team for bugs.';
+    const result = await updateOrganization(workspace.admin, { agentInstructions: instructions });
+
+    expect(result.organization.agentInstructions).toBe(instructions);
+    expect(result.actions[0]?.data['agentInstructions']).toBe(instructions);
+  });
+
+  it('rejects stale workspace agent instructions without overwriting the newer value', async () => {
+    const initialInstructions = 'Use the Platform team for bugs.';
+    await updateOrganization(workspace.admin, { agentInstructions: initialInstructions });
+    const first = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use ENG for engineering issues.',
+      expectedAgentInstructions: initialInstructions,
+    });
+
+    await expect(
+      updateOrganization(workspace.admin, {
+        agentInstructions: 'Use DESIGN for every issue.',
+        expectedAgentInstructions: initialInstructions,
+      }),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: { reason: 'stale_workspace_instructions' },
+    });
+
+    const [stored] = await db
+      .select({ agentInstructions: schema.organization.agentInstructions })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+    expect(stored?.agentInstructions).toBe(first.organization.agentInstructions);
+  });
+
+  it('accepts an instruction update after an unrelated workspace change', async () => {
+    const initialInstructions = 'Use the Platform team for bugs.';
+    await updateOrganization(workspace.admin, { agentInstructions: initialInstructions });
+    await updateOrganization(workspace.admin, { name: 'Nova renamed' });
+
+    const result = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use ENG for engineering issues.',
+      expectedAgentInstructions: initialInstructions,
+    });
+
+    expect(result.organization.agentInstructions).toBe('Use ENG for engineering issues.');
+    expect(result.organization.name).toBe('Nova renamed');
+  });
+
+  it('keeps updates without an expected workspace version compatible', async () => {
+    const result = await updateOrganization(workspace.admin, {
+      agentInstructions: 'Use the current workspace conventions.',
+    });
+
+    expect(result.organization.agentInstructions).toBe('Use the current workspace conventions.');
+  });
+
+  it('rejects an instruction baseline without changing the workspace', async () => {
+    const [before] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+
+    await expect(
+      updateOrganization(workspace.admin, {
+        expectedAgentInstructions: 'Use the current workspace conventions.',
+      }),
+    ).rejects.toBeInstanceOf(ZodError);
+
+    const [after] = await db
+      .select({ syncId: schema.organization.syncId })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, workspace.organizationId));
+    expect(after?.syncId).toBe(before?.syncId);
+  });
+
+  it('rejects workspace agent instructions longer than 4000 characters', async () => {
+    await expect(
+      updateOrganization(workspace.admin, { agentInstructions: 'x'.repeat(4001) }),
+    ).rejects.toBeInstanceOf(ZodError);
+  });
+
   it('refuses a non admin', async () => {
     const user = await createUser('Mo Member');
     await db.insert(schema.member).values({
@@ -84,6 +166,13 @@ describe('updateOrganization', () => {
       updateOrganization(
         { userId: user.id, organizationId: workspace.organizationId, role: 'member', teamIds: [] },
         { name: 'Nope' },
+      ),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+
+    await expect(
+      updateOrganization(
+        { userId: user.id, organizationId: workspace.organizationId, role: 'member', teamIds: [] },
+        { agentInstructions: 'Members cannot edit this.' },
       ),
     ).rejects.toMatchObject({ code: 'forbidden' });
   });

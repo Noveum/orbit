@@ -16,6 +16,7 @@ export default async function GeneralSettingsPage() {
         name={organization.name}
         logo={organization.logo}
         allowedEmailDomains={organization.allowedEmailDomains}
+        agentInstructions={organization.agentInstructions}
         canManage={!deletionPending && can(principal, 'org:manage')}
       />
       {can(principal, 'org:delete') ? (
