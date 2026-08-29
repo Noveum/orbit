@@ -1,4 +1,4 @@
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, or, schema, sql } from '@orbit/db';
 import {
   resolveIssueUnfurls,
   resolveSlackContext,
@@ -64,7 +64,13 @@ async function unfurlLinks(
     .select({ organizationId: schema.integration.organizationId })
     .from(schema.integration)
     .where(
-      and(eq(schema.integration.provider, 'slack'), eq(schema.integration.externalId, slackTeamId)),
+      and(
+        eq(schema.integration.provider, 'slack'),
+        or(
+          sql`${schema.integration.config}->>'slackTeamId' = ${slackTeamId}`,
+          eq(schema.integration.externalId, slackTeamId),
+        ),
+      ),
     )
     .limit(1);
   if (integrationRow === undefined) return;
