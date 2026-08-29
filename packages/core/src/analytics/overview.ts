@@ -18,6 +18,7 @@ import { bucketDates } from './filter.ts';
 import type {
   AnalyticsBucket,
   AnalyticsCoverage,
+  AnalyticsDateRange,
   AnalyticsMetricUnit,
   ResolvedAnalyticsQuery,
 } from './types.ts';
@@ -62,9 +63,17 @@ export interface FlowOutlier {
   readonly cohort: AnalyticsDrilldownCohort;
 }
 
+export interface AnalyticsOverviewRange {
+  readonly from: string;
+  readonly to: string;
+  readonly timezone: string;
+}
+
 export interface AnalyticsOverview {
   readonly lens: 'overview';
   readonly asOf: string;
+  readonly resolvedRange: AnalyticsOverviewRange;
+  readonly comparisonRange: AnalyticsOverviewRange | null;
   readonly coverage: AnalyticsCoverage;
   readonly cards: readonly AnalyticsOverviewMetric[];
   readonly delivery: readonly DeliveryPoint[];
@@ -73,6 +82,14 @@ export interface AnalyticsOverview {
   readonly priorities: readonly AnalyticsBucket[];
   readonly outliers: readonly FlowOutlier[];
   readonly outliersWithheldCount: number;
+}
+
+function overviewRange(range: AnalyticsDateRange): AnalyticsOverviewRange {
+  return {
+    from: range.from.toISOString(),
+    to: range.to.toISOString(),
+    timezone: range.timezone,
+  };
 }
 
 interface CardRow {
@@ -470,6 +487,9 @@ export async function loadAnalyticsOverview(
   return {
     lens: 'overview',
     asOf: resolved.asOf.toISOString(),
+    resolvedRange: overviewRange(resolved.resolvedRange),
+    comparisonRange:
+      resolved.comparisonRange === null ? null : overviewRange(resolved.comparisonRange),
     coverage: { kind: 'live', from: null, asOf: resolved.asOf.toISOString() },
     cards,
     delivery: delivery.map((row) => ({
