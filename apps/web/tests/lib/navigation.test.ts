@@ -73,4 +73,22 @@ describe('global commands', () => {
     expect(themeCommand).toBeDefined();
     expect(themeCommand?.binding).toBe('shift+t');
   });
+
+  it('reaches the MCP server page from the palette', () => {
+    const visited: string[] = [];
+    const context: CommandContext = {
+      sections: [],
+      navigate: (href) => visited.push(href),
+      toggleSidebar: () => undefined,
+      toggleTheme: () => undefined,
+      showShortcuts: () => undefined,
+      dark: false,
+    };
+
+    const command = buildCommands(context).find((cmd) => cmd.id === 'navigate:/settings/mcp');
+    command?.run();
+
+    expect(command).toBeDefined();
+    expect(visited).toEqual(['/settings/mcp']);
+  });
 });

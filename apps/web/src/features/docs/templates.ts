@@ -31,6 +31,8 @@ export const HTML_PAGE_STARTER = [
   '',
 ].join('\n');
 
+export const HTML_PAGE_TEMPLATE_ID = 'html-page';
+
 export const DOC_TEMPLATES: readonly DocTemplate[] = [
   {
     id: 'blank',
@@ -116,7 +118,7 @@ export const DOC_TEMPLATES: readonly DocTemplate[] = [
     ].join('\n'),
   },
   {
-    id: 'html-page',
+    id: HTML_PAGE_TEMPLATE_ID,
     name: 'HTML page',
     title: 'Untitled page',
     kind: 'html',

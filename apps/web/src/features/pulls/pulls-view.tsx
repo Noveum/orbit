@@ -2,7 +2,6 @@
 
 import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
 import { scopes } from '@orbit/shared/events';
-import { relativeTime } from '@orbit/shared/utils';
 import {
   CircleCheck,
   CircleX,
@@ -16,6 +15,7 @@ import { useCallback } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { IssueLink } from '@/features/issues/issue-link.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover, tabHover } from '@/lib/interaction.ts';
@@ -237,7 +237,7 @@ export function PullsView({
                         )}
                       </div>
                       <span className="hidden shrink-0 text-2xs text-faint sm:block">
-                        {relativeTime(new Date(pull.updatedAt))}
+                        <RelativeTime at={pull.updatedAt} />
                       </span>
                       {pull.checkStatus === 'success' ? (
                         <CircleCheck

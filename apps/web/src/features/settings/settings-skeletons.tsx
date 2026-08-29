@@ -33,6 +33,32 @@ export function GeneralSettingsSkeleton() {
   );
 }
 
+export function McpSettingsSkeleton() {
+  return (
+    <section className="flex flex-col gap-5" data-testid="settings-mcp-skeleton">
+      <SettingsHeading />
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+          <Skeleton className="h-3 w-full max-w-lg" />
+        </div>
+        <Skeleton className="h-9 w-full rounded-md" />
+        <div className="grid gap-2 sm:grid-cols-2">
+          {['claude', 'chatgpt', 'claude-code', 'cursor', 'vscode', 'other'].map((client) => (
+            <div key={client} className="flex flex-col gap-2 rounded-lg border border-border p-3">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-8 w-40 rounded-md" />
+            </div>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
 const INTEGRATION_CARDS = ['github', 'mcp'];
 
 export function IntegrationsSettingsSkeleton() {

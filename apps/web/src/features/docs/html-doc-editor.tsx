@@ -7,6 +7,9 @@ import { cn } from '@/lib/cn.ts';
 import { tabHover } from '@/lib/interaction.ts';
 import { HtmlCodeEditor } from './editor/html-code-editor.tsx';
 import { HtmlPreview } from './html-preview.tsx';
+import { SplitPane } from './split-pane.tsx';
+
+const SPLIT_STORAGE_KEY = 'orbit:docs:html-split';
 
 const VIEW_OPTIONS = [
   { id: 'split', label: 'Split', Icon: Columns2 },
@@ -86,27 +89,21 @@ export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEdito
           );
         })}
       </div>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {showSource ? (
-          <div
-            className={cn(
-              'min-h-0 min-w-0 flex-1 overflow-hidden',
-              showPreview ? 'border-border border-r' : '',
-            )}
-          >
+      <SplitPane
+        storageKey={SPLIT_STORAGE_KEY}
+        label="Resize source and preview"
+        secondClassName="bg-white"
+        first={
+          showSource ? (
             <HtmlCodeEditor
               value={content}
               onChange={onChange}
               ariaLabel={`HTML source for ${title}`}
             />
-          </div>
-        ) : null}
-        {showPreview ? (
-          <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-white">
-            <HtmlPreview title={title} html={content} />
-          </div>
-        ) : null}
-      </div>
+          ) : null
+        }
+        second={showPreview ? <HtmlPreview title={title} html={content} /> : null}
+      />
       {footer === undefined ? null : <HtmlDocDock>{footer}</HtmlDocDock>}
     </div>
   );

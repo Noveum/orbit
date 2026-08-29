@@ -281,4 +281,4 @@ Adding one means adding it to the right group file, and adding a test in
 `packages/mcp-server/tests/`. A tool that mutates must set `readOnly: false`, or
 it will be handed to read-only tokens.
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md).

@@ -31,6 +31,7 @@ afterEach(() => {
 describe('importing a markdown file', () => {
   it('creates a doc from the file and opens it', async () => {
     render(<DocImport collectionId={null} projectId={null} />);
+    expect(screen.getByRole('button', { name: 'Import' })).toBeDefined();
     pick(fileOf('runbook.md', '# Deploy runbook\n\nHow we ship.'));
 
     await waitFor(() => expect(created).toHaveBeenCalled());
