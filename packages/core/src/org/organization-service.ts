@@ -4,8 +4,8 @@ import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
+import { emailDomain, normalizeDomains, parseDomainList } from '@orbit/shared/utils';
 import { organizationCreateSchema, organizationUpdateSchema } from '@orbit/shared/validators';
-import { z } from 'zod';
 import { newId, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
@@ -214,6 +214,8 @@ export async function listOrganizationsForUser(
   return rows;
 }
 
+export { emailDomain };
+
 export function matchAllowedDomain(
   organization: Pick<OrganizationRow, 'allowedEmailDomains'>,
   email: string,
@@ -224,25 +226,8 @@ export function matchAllowedDomain(
   return allowed.includes(domain) ? domain : null;
 }
 
-const domainListSchema = z
-  .string()
-  .optional()
-  .transform((value) => normalizeDomains((value ?? '').split(',')));
-
-function normalizeDomains(entries: readonly string[]): string[] {
-  return entries
-    .map((entry) => entry.trim().toLowerCase().replace(/^@/, ''))
-    .filter((entry) => entry.length > 0);
-}
-
-export function emailDomain(email: string): string | null {
-  const at = email.lastIndexOf('@');
-  if (at < 0 || at === email.length - 1) return null;
-  return email.slice(at + 1).toLowerCase();
-}
-
 export function configuredEmailDomains(): string[] {
-  return domainListSchema.parse(process.env['ALLOWED_EMAIL_DOMAINS']);
+  return parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS'], 'ALLOWED_EMAIL_DOMAINS');
 }
 
 export function assertEmailDomainAllowed(

@@ -1,3 +1,4 @@
+import { parseDomainList } from '@orbit/shared/utils';
 import { z } from 'zod';
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -85,6 +86,12 @@ let cached: ServerEnv | null = null;
 export function serverEnv(): ServerEnv {
   if (cached === null) cached = serverEnvSchema.parse(process.env);
   return cached;
+}
+
+export function signUpIsOpen(): boolean {
+  return (
+    parseDomainList(process.env['ALLOWED_EMAIL_DOMAINS'], 'ALLOWED_EMAIL_DOMAINS').length === 0
+  );
 }
 
 export interface GithubAppConfig {
