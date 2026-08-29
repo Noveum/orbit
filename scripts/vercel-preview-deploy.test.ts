@@ -490,9 +490,9 @@ describe('event and eligibility reconciliation', () => {
     expect(results).toEqual([
       { kind: 'skipped', pullRequestNumber: 341, reason: 'fork-pull-request' },
     ]);
-    expect(harness.requests.some(({ url }) => url.startsWith('https://api.vercel.com'))).toBe(
-      false,
-    );
+    expect(
+      harness.requests.some(({ url }) => new URL(url).origin === 'https://api.vercel.com'),
+    ).toBe(false);
   });
 
   test('a newer non-green run blocks an older success', async () => {
