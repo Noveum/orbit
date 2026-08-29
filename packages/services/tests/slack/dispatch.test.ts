@@ -877,6 +877,53 @@ describe('dispatchSlackDm', () => {
       expect(error).toMatchObject({ code: 'ratelimited' });
     });
   });
+
+  it('rejects a successful response that carries no usable message identity', async () => {
+    for (const malformed of [
+      { ok: true, channel: 'D123' },
+      { ok: true, channel: 'D123', ts: '' },
+    ]) {
+      await withRollback(async (tx) => {
+        const fixture = await seed(tx);
+        await tx
+          .update(integration)
+          .set({ config: { scopes: ['chat:write', 'im:write'] } })
+          .where(eq(integration.id, fixture.integrationId));
+        await upsertSlackUserMapping(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          userId: fixture.userId,
+          slackUserId: 'U123',
+          slackDisplayName: 'Ada Slack',
+        });
+        const fetch = ((url: string) =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify(
+                url.endsWith('conversations.open')
+                  ? { ok: true, channel: { id: 'D123' } }
+                  : malformed,
+              ),
+              { status: 200 },
+            ),
+          )) as unknown as typeof globalThis.fetch;
+        let error: unknown;
+        let delivered: number | undefined;
+        try {
+          delivered = await dispatchSlackDm(tx, {
+            organizationId: fixture.organizationId,
+            userId: fixture.userId,
+            text: 'Malformed success',
+            fetch,
+          });
+        } catch (caught) {
+          error = caught;
+        }
+        expect(delivered).toBeUndefined();
+        expect(error).toBeDefined();
+      });
+    }
+  });
 });
 
 describe('issueIdentifierFromUrl', () => {

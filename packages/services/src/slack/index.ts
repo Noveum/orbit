@@ -308,6 +308,7 @@ export class SlackClient {
       ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),
     });
+    if (!body.ok) throw internal('Slack chat.postMessage did not return a message identity.');
     return { channel: body.channel, ts: body.ts };
   }
 
@@ -326,7 +327,8 @@ export class SlackClient {
       text: input.text,
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
     });
-    return { channel: body.channel ?? input.channel, ts: body.ts ?? input.ts };
+    if (!body.ok) throw internal('Slack chat.update did not return a message identity.');
+    return { channel: body.channel, ts: body.ts };
   }
 
   async unfurl(input: {
