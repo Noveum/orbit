@@ -41,7 +41,8 @@ export function registerAnalyticsTools(server: McpServer, principal: Principal):
 
       return {
         asOf: overview.asOf,
-        resolvedRange: args.range,
+        resolvedRange: overview.resolvedRange,
+        comparisonRange: overview.comparisonRange,
         metrics: overview.cards.map((card) => ({
           id: card.id,
           metric: card.label,
@@ -49,7 +50,7 @@ export function registerAnalyticsTools(server: McpServer, principal: Principal):
           unit: card.unit,
           comparisonDelta: card.comparisonDelta,
         })),
-        outliersWithheld: overview.outliers?.length ?? 0,
+        outliersWithheldCount: overview.outliers.length + overview.outliersWithheldCount,
       };
     },
   );

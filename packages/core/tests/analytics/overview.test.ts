@@ -80,6 +80,24 @@ beforeEach(async () => {
 });
 
 describe('loadAnalyticsOverview', () => {
+  it('returns the effective resolved and comparison ranges as wire-safe values', async () => {
+    const overview = await loadAnalyticsOverview(workspace.admin, query(), {
+      now,
+      timezone: 'UTC',
+    });
+
+    expect(overview.resolvedRange).toEqual({
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-11T00:00:00.000Z',
+      timezone: 'UTC',
+    });
+    expect(overview.comparisonRange).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-08-01T00:00:00.000Z',
+      timezone: 'UTC',
+    });
+  });
+
   it('groups workflow states by semantic category across teams', async () => {
     const secondTeam = await createTeam(workspace.admin, { name: 'Second team', key: 'SEC' });
     const firstBacklog = stateNamed(workspace, 'Backlog');
