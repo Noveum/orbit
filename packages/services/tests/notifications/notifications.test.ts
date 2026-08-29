@@ -7,7 +7,12 @@ import {
   organization,
   user,
 } from '@orbit/db/schema';
-import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
+import {
+  NOTIFICATION_CHANNELS,
+  NOTIFICATION_TYPES,
+  SLACK_INTEGRATION_ENABLED,
+  syncActionSchema,
+} from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import {
@@ -82,7 +87,7 @@ describe('notifyMany', () => {
     expect(defaultPreferences()).toContainEqual({
       channel: 'slack_dm',
       type: 'mention',
-      enabled: false,
+      enabled: SLACK_INTEGRATION_ENABLED,
     });
   });
 
@@ -210,6 +215,53 @@ describe('notifyMany', () => {
       expect(afterSuccess).toHaveLength(0);
       const rows = await tx.select().from(notificationDelivery);
       expect(rows[0]?.status).toBe('succeeded');
+    });
+  });
+
+  it('claims fresh Slack DM work ahead of a retry backlog', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const backlogClaimAt = new Date(Date.now() + 86_400_000);
+      const backlog = await claimSlackDmDeliveries(tx, 10, backlogClaimAt);
+      expect(backlog).toHaveLength(1);
+      const retried = backlog[0];
+      if (retried === undefined) return;
+      await markSlackDmDelivery(tx, retried.id, retried.claimedAt ?? new Date(0), false);
+
+      await notifyMany(
+        tx,
+        [
+          eventFor(fixture, {
+            userIds: [fixture.graceId],
+            reason: 'mentioned',
+            entityId: 'iss_2',
+          }),
+        ],
+        { slackEnabled: true },
+      );
+      const fresh = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.userId, fixture.graceId));
+      expect(fresh).toHaveLength(1);
+
+      const claimed = await claimSlackDmDeliveries(
+        tx,
+        1,
+        new Date(backlogClaimAt.getTime() + 31_000),
+      );
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.userId).toBe(fixture.graceId);
+      expect(claimed[0]?.attempts).toBe(0);
+      const backlogAfter = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.id, retried.id));
+      expect(backlogAfter[0]?.attempts).toBe(1);
+      expect(backlogAfter[0]?.status).toBe('failed');
     });
   });
 
@@ -762,7 +814,7 @@ describe('defaultPreferences', () => {
     expect(
       matrix
         .filter((entry) => entry.channel === 'slack' || entry.channel === 'slack_dm')
-        .every((entry) => !entry.enabled),
+        .every((entry) => entry.enabled === SLACK_INTEGRATION_ENABLED),
     ).toBe(true);
     expect(
       matrix
