@@ -49,34 +49,51 @@ const WITHHELD: IntegrationSettings = {
   },
 };
 
-export async function loadIntegrationSettings(principal: Principal): Promise<IntegrationSettings> {
+export async function loadIntegrationSettings(
+  principal: Principal,
+  options: { readonly slackEnabled?: boolean } = {},
+): Promise<IntegrationSettings> {
   if (!can(principal, 'integration:manage')) return WITHHELD;
 
   const github = await loadGithubSettings(principal);
-  if (!slackIntegrationEnabled()) return { github };
+  if (!(options.slackEnabled ?? slackIntegrationEnabled())) return { github };
 
-  const [integrations, channels, teams] = await Promise.all([
+  const [slackRows, teams] = await Promise.all([
     db
       .select({
-        provider: schema.integration.provider,
+        id: schema.integration.id,
         credentials: schema.integration.credentials,
       })
       .from(schema.integration)
-      .where(eq(schema.integration.organizationId, principal.organizationId))
-      .orderBy(desc(schema.integration.createdAt)),
-    db
-      .select({
-        channelId: schema.slackChannelSync.channelId,
-        channelName: schema.slackChannelSync.channelName,
-        teamId: schema.slackChannelSync.teamId,
-        enabled: schema.slackChannelSync.enabled,
-      })
-      .from(schema.slackChannelSync)
-      .where(eq(schema.slackChannelSync.organizationId, principal.organizationId)),
+      .where(
+        and(
+          eq(schema.integration.organizationId, principal.organizationId),
+          eq(schema.integration.provider, 'slack'),
+          eq(schema.integration.externalId, 'default'),
+        ),
+      )
+      .limit(1),
     listTeamsForPrincipal(principal),
   ]);
 
-  const slackRow = integrations.find((row) => row.provider === 'slack');
+  const slackRow = slackRows[0];
+  const channels =
+    slackRow === undefined
+      ? []
+      : await db
+          .select({
+            channelId: schema.slackChannelSync.channelId,
+            channelName: schema.slackChannelSync.channelName,
+            teamId: schema.slackChannelSync.teamId,
+            enabled: schema.slackChannelSync.enabled,
+          })
+          .from(schema.slackChannelSync)
+          .where(
+            and(
+              eq(schema.slackChannelSync.organizationId, principal.organizationId),
+              eq(schema.slackChannelSync.integrationId, slackRow.id),
+            ),
+          );
   const slackToken = slackRow === undefined ? null : slackBotTokenFrom(slackRow.credentials);
 
   return {

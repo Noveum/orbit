@@ -165,6 +165,16 @@ describe('list and search indexes', () => {
       ]),
     );
   });
+
+  it('indexes source delivery lookups without indexing rows that have no source', () => {
+    const index = partialIndexOf(
+      schema.notificationDelivery,
+      'notification_delivery_source_lookup_idx',
+    );
+    expect(columnNamesOf(index)).toEqual(['source_delivery_id', 'user_id', 'channel']);
+    expect(index.unique).toBe(false);
+    expect(predicateOf(index)).toBe('"notification_delivery"."source_delivery_id" is not null');
+  });
 });
 
 describe('domain invariants', () => {

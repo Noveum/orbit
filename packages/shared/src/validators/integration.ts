@@ -68,6 +68,7 @@ export const slackUrlVerificationSchema = z.object({
 
 export const slackEventCallbackSchema = z.object({
   type: z.literal('event_callback'),
+  event_id: z.string().min(1).max(255),
   team_id: z.string().min(1).max(64),
   event: z.object({
     type: z.string().min(1).max(64),
