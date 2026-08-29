@@ -97,19 +97,48 @@ repositories to install it on.
 
 ## Slack
 
-Slack integration status:
+Slack delivery infrastructure is present, but the shipped capability remains
+disabled pending a separate launch decision. Slack settings stay hidden, Slack
+routes return not found, inbound events are not processed, and the scheduled DM
+worker remains dormant. Supplying Slack environment variables does not enable
+the capability.
 
-- **Enabled.** `SLACK_INTEGRATION_ENABLED` is `true`. A deployment that turns
-  Slack on must set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and
-  `SLACK_SIGNING_SECRET`, otherwise the integration appears in settings and
-  every install attempt fails.
-- **Required Slack scopes.** A future enabled deployment needs `chat:write` for
-  channel delivery and `im:write` for direct messages. Granted scopes are stored
-  as non-secret integration metadata; the bot token is never exposed to the
-  browser.
-- **Notification routing.** When enabled, team and project notifications use
-  the configured Slack channel, while personal notifications use Slack DMs.
-  This keeps broadcast activity out of individual conversations.
+If the source capability is separately enabled in a future release, create a
+Slack app for the deployment and configure it as follows:
+
+1. Add `<ORBIT_ORIGIN>/api/integrations/slack/callback` as the OAuth redirect
+   URL. Replace `<ORBIT_ORIGIN>` with the public Orbit origin, including its
+   scheme and hostname.
+2. Add these Bot Token Scopes: `channels:read`, `groups:read`, `chat:write`,
+   `links:read`, `links:write`, `im:write`, `users:read`, and
+   `users:read.email`.
+3. Enable Event Subscriptions and set the request URL to
+   `<ORBIT_ORIGIN>/api/webhooks/slack`. Subscribe the bot to the `link_shared`
+   event.
+4. Under Link unfurling, add every Orbit hostname whose issue links the app
+   should unfurl.
+5. Copy the app client ID, client secret, and signing secret into
+   `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET`.
+6. Connect Slack from **Settings**, **Integrations**. Reconnect installations
+   created before the current scope set so Slack can grant the new scopes.
+
+Invite the Orbit bot to each channel before selecting it in Orbit. The channel
+picker lists only channels the bot has joined, which keeps the requested
+`chat:write` permission sufficient without the broader `chat:write.public`
+scope.
+
+Slack integration behavior:
+
+- **Capability boundary.** Slack support is disabled in this release. Enabling
+  it requires an explicit source change and release review. OAuth credentials
+  alone never expose the settings, routes, webhook processing, or worker.
+- **Granted scope storage.** Granted scopes are stored as non-secret
+  integration metadata. The bot token is never exposed to the browser.
+- **Notification routing.** The GitHub webhook broadcast path sends eligible
+  pull request activity to configured team channels. Generic team and project
+  notifications are not yet dispatched to Slack channels. Personal
+  notifications use Slack DMs when the recipient is mapped and has that channel
+  enabled.
 - **Availability states.** Notification settings distinguish available,
   unmapped, reauthorization-required, and unavailable states so a user is not
   offered a DM preference that the current integration cannot satisfy.
@@ -123,16 +152,16 @@ Slack integration status:
   the worker stopped, the retry can produce a duplicate DM because
   `chat.postMessage` does not provide a documented idempotency contract. The
   replacement claim becomes authoritative, and a late worker cannot finalize
-  the superseded attempt.
+  the superseded attempt. The scheduled worker runs every minute, takes small
+  concurrent batches, and stops claiming new work before its runtime deadline.
 - **Current mapping behavior.** OAuth maps only the Orbit user who completes
   **Connect**, by matching their Orbit email with Slack. Other workspace members
   remain unmapped, so they keep their other enabled notification channels and
   cannot enable Slack DMs.
 - **Known mapping gap.** There is currently no administrator mapping screen,
   workspace-wide backfill, or per-user fallback linking flow. Those are separate
-  follow-up work and are not prerequisites for the dark, disabled integration.
-- **Current runtime result.** While the preview boundary is closed, Slack DM
-  settings are unavailable and no Slack messages are sent.
+  follow-up work and are not prerequisites for delivery to users who are
+  already mapped.
 
 ### Note on GitHub sign-in
 
@@ -143,7 +172,8 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 ## Email
 
 Not an integration you connect, but worth listing since it carries invites and
-sign-in codes. Ordinary event notifications are currently in-app only.
+sign-in codes. Event notification email and digests are not currently
+dispatched, and Slack channel delivery remains disabled.
 
 Orbit sends through [Resend](https://resend.com) only.
 

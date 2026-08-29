@@ -94,6 +94,9 @@ export const notificationDelivery = pgTable(
       table.userId,
       table.channel,
     ),
+    index('notification_delivery_source_lookup_idx')
+      .on(table.sourceDeliveryId, table.userId, table.channel)
+      .where(sql`${table.sourceDeliveryId} is not null`),
     index('notification_delivery_pending_idx').on(table.status, table.availableAt),
   ],
 );

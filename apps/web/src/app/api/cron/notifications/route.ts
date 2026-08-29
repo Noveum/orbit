@@ -3,6 +3,8 @@ import { deliverPendingSlackDms } from '@orbit/core';
 import { db } from '@orbit/db';
 import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 
+export const maxDuration = 300;
+
 function presented(request: Request): string {
   const header = request.headers.get('authorization') ?? '';
   return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';

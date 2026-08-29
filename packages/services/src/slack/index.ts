@@ -1,13 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import {
-  DomainError,
-  internal,
-  PRIORITY_LABELS,
-  type Priority,
-  rateLimited,
-  truncate,
-  unauthorized,
-} from '@orbit/shared';
+import { internal, PRIORITY_LABELS, type Priority, truncate, unauthorized } from '@orbit/shared';
 import { z } from 'zod';
 
 export const SLACK_REPLAY_WINDOW_SECONDS = 300;
@@ -212,6 +204,7 @@ const conversationsResponseSchema = slackResponseSchema.extend({
         name: z.string(),
         is_private: z.boolean().optional(),
         is_archived: z.boolean().optional(),
+        is_member: z.boolean().optional(),
       }),
     )
     .default([]),
@@ -238,15 +231,17 @@ export interface SlackMessageRef {
   readonly ts: string;
 }
 
-export class SlackApiError extends DomainError {
+export class SlackApiError extends Error {
+  readonly retryAfterMs: number | undefined;
+
   constructor(
     readonly method: string,
-    readonly slackCode: string,
+    readonly code: string,
+    retryAfterMs?: number,
   ) {
-    super('internal', `Slack ${method} failed: ${slackCode}.`, {
-      details: { slackCode },
-    });
+    super(`Slack ${method} failed: ${code}.`);
     this.name = 'SlackApiError';
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -255,6 +250,7 @@ export interface SlackChannel {
   readonly name: string;
   readonly isPrivate: boolean;
   readonly isArchived: boolean;
+  readonly isMember: boolean;
 }
 
 export interface SlackConversations {
@@ -370,6 +366,7 @@ export class SlackClient {
         name: channel.name,
         isPrivate: channel.is_private ?? false,
         isArchived: channel.is_archived ?? false,
+        isMember: channel.is_member ?? false,
       })),
       nextCursor: nextCursor.length > 0 ? nextCursor : null,
     };
@@ -380,7 +377,7 @@ export class SlackClient {
     try {
       body = await this.call('users.lookupByEmail', userResponseSchema, { email });
     } catch (error) {
-      if (error instanceof SlackApiError && error.slackCode === 'users_not_found') return null;
+      if (error instanceof SlackApiError && error.code === 'users_not_found') return null;
       throw error;
     }
     const user = body.user;
@@ -406,7 +403,14 @@ export class SlackClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
-    if (response.status === 429) throw rateLimited('Slack is rate limiting Orbit.');
+    if (response.status === 429) {
+      const retryAfterSeconds = Number(response.headers.get('retry-after'));
+      const retryAfterMs =
+        Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+          ? Math.ceil(retryAfterSeconds * 1000)
+          : undefined;
+      throw new SlackApiError(method, 'ratelimited', retryAfterMs);
+    }
     if (!response.ok) throw internal(`Slack ${method} returned HTTP ${response.status}.`);
 
     const parsed = schema.safeParse(await readJson(response, method));

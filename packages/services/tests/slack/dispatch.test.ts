@@ -4,6 +4,7 @@ import {
   issue,
   organization,
   slackChannelSync,
+  slackUserMapping,
   team,
   user,
   workflowState,
@@ -21,6 +22,7 @@ import {
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  slackDmAvailable,
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
@@ -89,7 +91,11 @@ async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Pr
 }
 
 async function seed(tx: TestTransaction): Promise<Fixture> {
-  return await seedWorkspace(tx, { name: 'Acme', botToken: 'xoxb-test' });
+  return await seedWorkspace(tx, {
+    name: 'Acme',
+    slackTeamId: 'default',
+    botToken: 'xoxb-test',
+  });
 }
 
 describe('resolveSlackContext', () => {
@@ -168,6 +174,213 @@ describe('ensureSlackIntegration', () => {
       });
     });
   });
+
+  it('clears Slack user and channel bindings when the connected team changes', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'TeamChange',
+        slackTeamId: 'T-old',
+        botToken: 'xoxb-old',
+      });
+      await tx
+        .update(integration)
+        .set({
+          externalId: 'default',
+          config: { scopes: ['chat:write', 'im:write'] },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-old',
+        slackDisplayName: 'Old Slack identity',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-old',
+        channelName: 'old-channel',
+        teamId: fixture.teamA,
+      });
+
+      await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-new',
+        externalId: 'T-new',
+        scopes: ['chat:write', 'im:write'],
+      });
+
+      expect(
+        await tx
+          .select()
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([]);
+      expect(
+        await tx
+          .select()
+          .from(slackChannelSync)
+          .where(eq(slackChannelSync.integrationId, fixture.integrationId)),
+      ).toEqual([]);
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'Do not send this to the old Slack identity',
+        }),
+      ).toBe(0);
+      expect(await resolveSlackTargets(tx, fixture.organizationId, [fixture.teamA])).toEqual([]);
+    });
+  });
+
+  it('consolidates a lone team-keyed legacy integration into the default row', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'LegacyTeamKey',
+        slackTeamId: 'T-legacy',
+        botToken: 'xoxb-old',
+      });
+      const reconnectingUserId = `usr_${randomUUIDv7()}`;
+      await tx.insert(user).values({
+        id: reconnectingUserId,
+        name: 'Grace',
+        email: `${reconnectingUserId}@orbit.local`,
+        handle: reconnectingUserId.toLowerCase(),
+      });
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-legacy',
+        slackDisplayName: 'Legacy Slack identity',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-legacy',
+        channelName: 'legacy-channel',
+        teamId: fixture.teamA,
+      });
+
+      const integrationId = await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: reconnectingUserId,
+        botToken: 'xoxb-new',
+        externalId: 'T-legacy',
+        scopes: ['chat:write'],
+      });
+
+      const rows = await tx
+        .select()
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        id: fixture.integrationId,
+        externalId: 'default',
+        connectedById: reconnectingUserId,
+        credentials: { botToken: 'xoxb-new' },
+        config: { slackTeamId: 'T-legacy', scopes: ['chat:write'] },
+      });
+      expect(integrationId).toBe(fixture.integrationId);
+      expect(
+        await tx
+          .select()
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(slackChannelSync)
+          .where(eq(slackChannelSync.integrationId, fixture.integrationId)),
+      ).toHaveLength(1);
+    });
+  });
+
+  it('fails closed when more than one Slack integration already exists', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'AmbiguousSlack',
+        slackTeamId: 'T-legacy',
+        botToken: 'xoxb-legacy',
+      });
+      await tx.insert(integration).values({
+        id: `int_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: fixture.userId,
+        credentials: { botToken: 'xoxb-default' },
+      });
+
+      await expect(
+        ensureSlackIntegration(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-new',
+          externalId: 'T-new',
+        }),
+      ).rejects.toThrow(/multiple Slack integrations/i);
+
+      const rows = await tx
+        .select({ credentials: integration.credentials })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.credentials)).not.toContainEqual({ botToken: 'xoxb-new' });
+    });
+  });
+
+  it('preserves Slack user and channel bindings for same-team reauthorization', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'SameTeam',
+        slackTeamId: 'T-same',
+        botToken: 'xoxb-old',
+      });
+      await tx
+        .update(integration)
+        .set({ externalId: 'default', config: { slackTeamId: 'T-same' } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-same',
+        slackDisplayName: 'Same Slack identity',
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-same',
+        channelName: 'same-channel',
+        teamId: fixture.teamA,
+      });
+
+      await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-new',
+        externalId: 'T-same',
+      });
+
+      expect(
+        await tx
+          .select()
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(slackChannelSync)
+          .where(eq(slackChannelSync.integrationId, fixture.integrationId)),
+      ).toHaveLength(1);
+    });
+  });
 });
 
 describe('resolveSlackContext stays inside the workspace it was asked about', () => {
@@ -202,12 +415,12 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
     await withRollback(async (tx) => {
       const acme = await seedWorkspace(tx, {
         name: 'Acme',
-        slackTeamId: 'T-acme',
+        slackTeamId: 'default',
         botToken: 'xoxb-acme',
       });
       const globex = await seedWorkspace(tx, {
         name: 'Globex',
-        slackTeamId: 'T-globex',
+        slackTeamId: 'default',
         botToken: 'xoxb-globex',
       });
 
@@ -271,12 +484,12 @@ describe('resolveSlackTargets keeps a channel inside the workspace it belongs to
     await withRollback(async (tx) => {
       const acme = await seedWorkspace(tx, {
         name: 'Acme',
-        slackTeamId: 'T-acme',
+        slackTeamId: 'default',
         botToken: 'xoxb-acme',
       });
       const globex = await seedWorkspace(tx, {
         name: 'Globex',
-        slackTeamId: 'T-globex',
+        slackTeamId: 'default',
         botToken: 'xoxb-globex',
       });
       await connectSlackChannel(tx, {
@@ -596,12 +809,12 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
     await withRollback(async (tx) => {
       const acme = await seedWorkspace(tx, {
         name: 'Acme',
-        slackTeamId: 'T-acme',
+        slackTeamId: 'default',
         botToken: 'xoxb-acme',
       });
       const globex = await seedWorkspace(tx, {
         name: 'Globex',
-        slackTeamId: 'T-globex',
+        slackTeamId: 'default',
         botToken: 'xoxb-globex',
       });
       await connectSlackChannel(tx, {
@@ -637,12 +850,12 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
     await withRollback(async (tx) => {
       const acme = await seedWorkspace(tx, {
         name: 'Acme',
-        slackTeamId: 'T-acme',
+        slackTeamId: 'default',
         botToken: 'xoxb-acme',
       });
       const globex = await seedWorkspace(tx, {
         name: 'Globex',
-        slackTeamId: 'T-globex',
+        slackTeamId: 'default',
         botToken: 'xoxb-globex',
       });
       await connectSlackChannel(tx, {
@@ -676,6 +889,51 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
 });
 
 describe('dispatchSlackMessage', () => {
+  it('uses only the canonical integration token and channels when a legacy row coexists', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'LegacyBroadcast',
+        slackTeamId: 'T-LEGACY',
+        botToken: 'xoxb-legacy',
+      });
+      const canonicalIntegrationId = `int_${randomUUIDv7()}`;
+      await tx.insert(integration).values({
+        id: canonicalIntegrationId,
+        organizationId: fixture.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: fixture.userId,
+        credentials: { botToken: 'xoxb-canonical' },
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-LEGACY',
+        channelName: 'legacy-private',
+        teamId: fixture.teamA,
+      });
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: canonicalIntegrationId,
+        channelId: 'C-CANONICAL',
+        channelName: 'canonical-private',
+        teamId: fixture.teamA,
+      });
+      const log = newLog();
+
+      const delivered = await dispatchSlackMessage(tx, {
+        organizationId: fixture.organizationId,
+        teamIds: [fixture.teamA],
+        text: 'Private workspace update',
+        fetch: fetchStub(log),
+      });
+
+      expect(delivered).toBe(1);
+      expect(log.channels).toEqual(['C-CANONICAL']);
+      expect(log.authorizations).toEqual(['Bearer xoxb-canonical']);
+    });
+  });
+
   it('posts to every resolved channel and counts what it delivered', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -786,6 +1044,94 @@ describe('dispatchSlackMessage', () => {
 });
 
 describe('dispatchSlackDm', () => {
+  it('uses the canonical integration when a legacy Slack row also exists', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'LegacyFirst',
+        slackTeamId: 'T-LEGACY',
+        botToken: 'xoxb-legacy',
+      });
+      const canonicalIntegrationId = `int_${randomUUIDv7()}`;
+      await tx.insert(integration).values({
+        id: canonicalIntegrationId,
+        organizationId: fixture.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: fixture.userId,
+        credentials: { botToken: 'xoxb-canonical' },
+        config: { scopes: ['chat:write', 'im:write'], slackTeamId: 'T-CANONICAL' },
+      });
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: canonicalIntegrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-CANONICAL',
+        slackDisplayName: 'Canonical user',
+      });
+      const calls: { authorization: string; body: Record<string, unknown> }[] = [];
+      const fetch = ((_url: string, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string>;
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        calls.push({ authorization: headers['authorization'] ?? '', body });
+        const response = _url.endsWith('conversations.open')
+          ? { ok: true, channel: { id: 'D-CANONICAL' } }
+          : { ok: true, channel: 'D-CANONICAL', ts: '1.0' };
+        return Promise.resolve(Response.json(response));
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(await slackDmAvailable(tx, fixture.organizationId, fixture.userId)).toBe(true);
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'Private notification',
+          fetch,
+        }),
+      ).toBe(1);
+      expect(calls).toEqual([
+        {
+          authorization: 'Bearer xoxb-canonical',
+          body: { users: 'U-CANONICAL' },
+        },
+        {
+          authorization: 'Bearer xoxb-canonical',
+          body: { channel: 'D-CANONICAL', text: 'Private notification' },
+        },
+      ]);
+    });
+  });
+
+  it('rejects a mapping whose organization does not own the integration', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const other = await seedWorkspace(tx, { name: 'OtherTenant' });
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: other.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-CROSS-TENANT',
+        slackDisplayName: 'Wrong tenant',
+      });
+      const fetch = (() => {
+        throw new Error('Slack must not receive a cross-tenant DM.');
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(await slackDmAvailable(tx, fixture.organizationId, fixture.userId)).toBe(false);
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'Tenant secret',
+          fetch,
+        }),
+      ).toBe(0);
+    });
+  });
+
   it('opens the mapped conversation and posts the message', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -838,6 +1184,98 @@ describe('dispatchSlackDm', () => {
     });
   });
 
+  it('reopens and replaces a stale cached DM channel', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({ config: { scopes: ['chat:write', 'im:write'] } })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U123',
+        slackDisplayName: 'Ada Slack',
+      });
+      await tx
+        .update(slackUserMapping)
+        .set({ slackChannelId: 'D-STALE' })
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      const calls: { method: string; body: Record<string, unknown> }[] = [];
+      let postAttempts = 0;
+      const fetch = ((url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        const method = url.split('/').pop() ?? '';
+        calls.push({ method, body });
+        if (url.endsWith('conversations.open')) {
+          return Promise.resolve(Response.json({ ok: true, channel: { id: 'D-FRESH' } }));
+        }
+        postAttempts += 1;
+        return Promise.resolve(
+          Response.json(
+            postAttempts === 1
+              ? { ok: false, error: 'channel_not_found' }
+              : { ok: true, channel: 'D-FRESH', ts: '2.0' },
+          ),
+        );
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'A private update',
+          fetch,
+        }),
+      ).toBe(1);
+      expect(calls).toEqual([
+        { method: 'chat.postMessage', body: { channel: 'D-STALE', text: 'A private update' } },
+        { method: 'conversations.open', body: { users: 'U123' } },
+        { method: 'chat.postMessage', body: { channel: 'D-FRESH', text: 'A private update' } },
+      ]);
+      const [mapping] = await tx
+        .select({ slackChannelId: slackUserMapping.slackChannelId })
+        .from(slackUserMapping)
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      expect(mapping?.slackChannelId).toBe('D-FRESH');
+    });
+  });
+
+  it('clears a cached DM channel when the mapped Slack identity changes', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-OLD',
+        slackDisplayName: 'Old identity',
+      });
+      await tx
+        .update(slackUserMapping)
+        .set({ slackChannelId: 'D-OLD' })
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-NEW',
+        slackDisplayName: 'New identity',
+      });
+
+      const [mapping] = await tx
+        .select({
+          slackChannelId: slackUserMapping.slackChannelId,
+          slackUserId: slackUserMapping.slackUserId,
+        })
+        .from(slackUserMapping)
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      expect(mapping).toEqual({ slackChannelId: null, slackUserId: 'U-NEW' });
+    });
+  });
+
   it('propagates permanent provider failures for worker classification', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -867,7 +1305,7 @@ describe('dispatchSlackDm', () => {
       } catch (caught) {
         error = caught;
       }
-      expect(error).toMatchObject({ slackCode: 'invalid_auth' });
+      expect(error).toMatchObject({ code: 'invalid_auth' });
     });
   });
 
@@ -900,7 +1338,7 @@ describe('dispatchSlackDm', () => {
       } catch (caught) {
         error = caught;
       }
-      expect(error).toMatchObject({ slackCode: 'ratelimited' });
+      expect(error).toMatchObject({ code: 'ratelimited' });
     });
   });
 

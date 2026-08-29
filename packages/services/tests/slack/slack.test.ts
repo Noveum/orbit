@@ -5,6 +5,7 @@ import {
   commandParser,
   escapeSlackText,
   issueBlocks,
+  SlackApiError,
   SlackClient,
   type SlackIssue,
   slashCommandSchema,
@@ -277,13 +278,23 @@ describe('SlackClient', () => {
   it('lists conversations and maps the cursor', async () => {
     const { impl } = stubFetch(200, {
       ok: true,
-      channels: [{ id: 'C1', name: 'general', is_private: false }],
+      channels: [
+        { id: 'C1', name: 'general', is_private: false, is_member: true },
+        { id: 'C2', name: 'announcements', is_private: false, is_member: false },
+      ],
       response_metadata: { next_cursor: 'abc' },
     });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
     const result = await client.listConversations();
     expect(result.channels).toEqual([
-      { id: 'C1', name: 'general', isPrivate: false, isArchived: false },
+      { id: 'C1', name: 'general', isPrivate: false, isArchived: false, isMember: true },
+      {
+        id: 'C2',
+        name: 'announcements',
+        isPrivate: false,
+        isArchived: false,
+        isMember: false,
+      },
     ]);
     expect(result.nextCursor).toBe('abc');
   });
@@ -328,12 +339,33 @@ describe('SlackClient', () => {
     );
   });
 
-  it('maps rate limiting and http failures to domain errors', async () => {
-    const limited = new SlackClient({ token: 'xoxb-test', fetch: stubFetch(429, {}).impl });
-    await expect(limited.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(DomainError);
-
+  it('maps HTTP failures to domain errors', async () => {
     const broken = new SlackClient({ token: 'xoxb-test', fetch: stubFetch(500, {}).impl });
     await expect(broken.postMessage({ channel: 'C1', text: 'hi' })).rejects.toThrow(/HTTP 500/);
+  });
+
+  it('preserves Slack Retry-After timing on a rate limit', async () => {
+    const impl = asFetchImpl(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '90' },
+        }),
+      ),
+    );
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    let caught: unknown;
+    try {
+      await client.postMessage({ channel: 'C1', text: 'hi' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(SlackApiError);
+    if (!(caught instanceof SlackApiError)) throw new Error('Expected a Slack API error.');
+    expect(caught.code).toBe('ratelimited');
+    expect(caught.retryAfterMs).toBe(90_000);
   });
 
   it('rejects a body that is not json', async () => {

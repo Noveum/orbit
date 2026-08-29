@@ -27,7 +27,10 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   push: 'Push',
 };
 
-const VISIBLE_NOTIFICATION_CHANNELS = NOTIFICATION_CHANNELS.filter(
+const NON_SLACK_NOTIFICATION_CHANNELS = NOTIFICATION_CHANNELS.filter(
+  (channel) => channel !== 'slack' && channel !== 'slack_dm',
+);
+const SLACK_DM_NOTIFICATION_CHANNELS = NOTIFICATION_CHANNELS.filter(
   (channel) => channel !== 'slack',
 );
 
@@ -43,10 +46,12 @@ export interface NotificationMatrixProps {
   readonly quietHoursStart: string;
   readonly quietHoursEnd: string;
   readonly urgentBypassEnabled: boolean;
-  readonly slackDm: 'available' | 'unmapped' | 'reauthorize' | 'unavailable';
+  readonly slackDm: 'available' | 'disabled' | 'unmapped' | 'reauthorize' | 'unavailable';
 }
 
 export function NotificationMatrix(props: NotificationMatrixProps) {
+  const visibleNotificationChannels =
+    props.slackDm === 'disabled' ? NON_SLACK_NOTIFICATION_CHANNELS : SLACK_DM_NOTIFICATION_CHANNELS;
   const [disabled, setDisabled] = useState<ReadonlySet<string>>(() => new Set(props.disabledKeys));
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(props.quietHoursEnabled);
   const [quietHoursStart, setQuietHoursStart] = useState(props.quietHoursStart);
@@ -82,13 +87,13 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
     setError(null);
     setSaved(false);
     try {
-      const preferences = NOTIFICATION_CHANNELS.flatMap((channel) =>
+      const preferences = visibleNotificationChannels.flatMap((channel) =>
         NOTIFICATION_TYPES.flatMap((type) => {
           if (channel === 'slack_dm' && props.slackDm !== 'available') return [];
           return {
             channel,
             type,
-            enabled: channel !== 'slack' && !disabled.has(matrixKey(channel, type)),
+            enabled: !disabled.has(matrixKey(channel, type)),
           };
         }),
       );
@@ -119,7 +124,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
               <th scope="col" className="px-3 py-2 text-left font-medium">
                 Notification
               </th>
-              {VISIBLE_NOTIFICATION_CHANNELS.map((channel) => (
+              {visibleNotificationChannels.map((channel) => (
                 <th key={channel} scope="col" className="px-3 py-2 text-center font-medium">
                   {CHANNEL_LABELS[channel]}
                 </th>
@@ -132,7 +137,7 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
                 <th scope="row" className="px-3 py-1.5 text-left font-normal text-muted">
                   {typeLabel(type)}
                 </th>
-                {VISIBLE_NOTIFICATION_CHANNELS.map((channel) => (
+                {visibleNotificationChannels.map((channel) => (
                   <td key={channel} className="px-3 py-1.5 text-center">
                     <Checkbox
                       className="mx-auto"
@@ -159,7 +164,9 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
           <span className="flex flex-col">
             <span className="font-medium text-dense text-text">Quiet hours</span>
             <span className="text-muted text-xs">
-              Email is held until the window ends, in your local time.
+              {props.slackDm === 'disabled'
+                ? 'Email is held until the window ends, in your local time.'
+                : 'Email and Slack DMs are held until the window ends, in your local time.'}
             </span>
           </span>
           <Switch

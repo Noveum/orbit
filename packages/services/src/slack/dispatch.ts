@@ -8,7 +8,7 @@ import {
   user,
   workflowState,
 } from '@orbit/db/schema';
-import { type Priority, parseIssueIdentifier } from '@orbit/shared';
+import { conflict, type Priority, parseIssueIdentifier } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -102,6 +102,7 @@ export async function upsertSlackUserMapping(
       set: {
         slackUserId: input.slackUserId,
         slackDisplayName: input.slackDisplayName,
+        slackChannelId: sql`case when ${slackUserMapping.slackUserId} = ${input.slackUserId} then ${slackUserMapping.slackChannelId} else null end`,
         updatedAt: new Date(),
       },
     });
@@ -117,47 +118,86 @@ export async function ensureSlackIntegration(
     readonly scopes?: readonly string[];
   },
 ): Promise<string> {
-  const externalId = 'default';
-  const [existing] = await database
-    .select({ config: integration.config })
+  if ('transaction' in database) {
+    return await database.transaction(async (tx) => await persistSlackIntegration(tx, input));
+  }
+  return await persistSlackIntegration(database, input);
+}
+
+async function persistSlackIntegration(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly connectedById: string;
+    readonly botToken: string;
+    readonly externalId?: string;
+    readonly scopes?: readonly string[];
+  },
+): Promise<string> {
+  await database.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`slack-integration:${input.organizationId}`}))`,
+  );
+  const existingRows = await database
+    .select({ id: integration.id, externalId: integration.externalId, config: integration.config })
     .from(integration)
     .where(
-      and(
-        eq(integration.organizationId, input.organizationId),
-        eq(integration.provider, 'slack'),
-        eq(integration.externalId, externalId),
-      ),
+      and(eq(integration.organizationId, input.organizationId), eq(integration.provider, 'slack')),
     )
-    .limit(1)
     .for('update');
-  const { slackReauthorize: _staleReauthorize, ...previousConfig } = existing?.config ?? {};
+  if (existingRows.length > 1) {
+    throw conflict('This workspace has multiple Slack integrations and cannot reconnect safely.');
+  }
+  const existing = existingRows[0];
+  if (existing === undefined) {
+    const [created] = await database
+      .insert(integration)
+      .values({
+        id: randomUUIDv7(),
+        organizationId: input.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: input.connectedById,
+        credentials: { botToken: input.botToken },
+        config: {
+          ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
+          ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
+        },
+      })
+      .returning({ id: integration.id });
+    if (created === undefined) throw new Error('Could not persist the Slack integration.');
+    return created.id;
+  }
+
+  const configuredSlackTeamId = existing.config['slackTeamId'];
+  const legacySlackTeamId = existing.externalId === 'default' ? undefined : existing.externalId;
+  const previousSlackTeamId =
+    typeof configuredSlackTeamId === 'string' ? configuredSlackTeamId : legacySlackTeamId;
+  const slackTeamChanged =
+    input.externalId !== undefined && previousSlackTeamId !== input.externalId;
+  if (slackTeamChanged) {
+    await database.delete(slackUserMapping).where(eq(slackUserMapping.integrationId, existing.id));
+    await database.delete(slackChannelSync).where(eq(slackChannelSync.integrationId, existing.id));
+  }
+  const { slackReauthorize: _staleReauthorize, ...previousConfig } = existing.config;
+  const slackTeamId = input.externalId ?? previousSlackTeamId;
   const config = {
     ...previousConfig,
-    ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
+    ...(slackTeamId === undefined ? {} : { slackTeamId }),
     ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
   };
-  const [row] = await database
-    .insert(integration)
-    .values({
-      id: randomUUIDv7(),
-      organizationId: input.organizationId,
-      provider: 'slack',
-      externalId,
+  const [updated] = await database
+    .update(integration)
+    .set({
+      externalId: 'default',
       connectedById: input.connectedById,
       credentials: { botToken: input.botToken },
       config,
+      updatedAt: new Date(),
     })
-    .onConflictDoUpdate({
-      target: [integration.organizationId, integration.provider, integration.externalId],
-      set: {
-        credentials: { botToken: input.botToken },
-        config,
-        updatedAt: new Date(),
-      },
-    })
+    .where(eq(integration.id, existing.id))
     .returning({ id: integration.id });
-  if (row === undefined) throw new Error('Could not persist the Slack integration.');
-  return row.id;
+  if (updated === undefined) throw new Error('Could not persist the Slack integration.');
+  return updated.id;
 }
 
 export async function connectSlackChannel(
@@ -228,21 +268,22 @@ export async function resolveSlackTargets(
   database: SlackDatabase,
   organizationId: string,
   teamIds: readonly string[],
+  integrationId?: string,
 ): Promise<SlackTarget[]> {
   const scoped =
     teamIds.length === 0
       ? isNull(slackChannelSync.teamId)
       : or(inArray(slackChannelSync.teamId, [...teamIds]), isNull(slackChannelSync.teamId));
+  const filters = [
+    eq(slackChannelSync.organizationId, organizationId),
+    eq(slackChannelSync.enabled, true),
+    scoped,
+  ];
+  if (integrationId !== undefined) filters.push(eq(slackChannelSync.integrationId, integrationId));
   const rows = await database
     .select({ channelId: slackChannelSync.channelId, channelName: slackChannelSync.channelName })
     .from(slackChannelSync)
-    .where(
-      and(
-        eq(slackChannelSync.organizationId, organizationId),
-        eq(slackChannelSync.enabled, true),
-        scoped,
-      ),
-    );
+    .where(and(...filters));
   const seen = new Set<string>();
   const targets: SlackTarget[] = [];
   for (const row of rows) {
@@ -281,9 +322,11 @@ export async function resolveSlackDmTarget(
   userId: string,
 ): Promise<{
   readonly context: SlackContext & { readonly token: string };
+  readonly mappingId: string;
+  readonly slackChannelId: string | null;
   readonly slackUserId: string;
 } | null> {
-  const context = await resolveSlackContext(database, organizationId);
+  const context = await resolveSlackContext(database, organizationId, 'default');
   if (
     context === null ||
     context.token === null ||
@@ -292,18 +335,28 @@ export async function resolveSlackDmTarget(
   )
     return null;
   const [mapping] = await database
-    .select({ slackUserId: slackUserMapping.slackUserId })
+    .select({
+      id: slackUserMapping.id,
+      slackChannelId: slackUserMapping.slackChannelId,
+      slackUserId: slackUserMapping.slackUserId,
+    })
     .from(slackUserMapping)
     .where(
       and(
         eq(slackUserMapping.integrationId, context.integrationId),
+        eq(slackUserMapping.organizationId, organizationId),
         eq(slackUserMapping.userId, userId),
       ),
     )
     .limit(1);
   return mapping === undefined
     ? null
-    : { context: { ...context, token: context.token }, slackUserId: mapping.slackUserId };
+    : {
+        context: { ...context, token: context.token },
+        mappingId: mapping.id,
+        slackChannelId: mapping.slackChannelId,
+        slackUserId: mapping.slackUserId,
+      };
 }
 
 export class SlackDmDispatchError extends Error {
@@ -319,7 +372,7 @@ export class SlackDmDispatchError extends Error {
     this.#integrationToken = context.token ?? '';
     this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
-    this.slackCode = cause instanceof SlackApiError ? cause.slackCode : undefined;
+    this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
     this.cause = cause;
   }
 
@@ -344,25 +397,21 @@ export async function dispatchSlackDmResult(
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
   try {
-    const [mapping] = await database
-      .select({ id: slackUserMapping.id, channelId: slackUserMapping.slackChannelId })
-      .from(slackUserMapping)
-      .where(
-        and(
-          eq(slackUserMapping.integrationId, context.integrationId),
-          eq(slackUserMapping.userId, input.userId),
-        ),
-      )
-      .limit(1);
-    if (mapping === undefined) return { delivered: 0, channel: null, ts: null };
-    let channel = mapping.channelId;
+    let channel = target.slackChannelId;
     if (channel === null) {
       const openedChannel = await client.openConversation(target.slackUserId);
       channel = openedChannel.channel;
       await database
         .update(slackUserMapping)
         .set({ slackChannelId: channel, updatedAt: new Date() })
-        .where(eq(slackUserMapping.id, mapping.id));
+        .where(
+          and(
+            eq(slackUserMapping.id, target.mappingId),
+            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.organizationId, input.organizationId),
+            eq(slackUserMapping.userId, input.userId),
+          ),
+        );
     }
     let message: SlackMessageRef;
     try {
@@ -372,13 +421,20 @@ export async function dispatchSlackDmResult(
         ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
       });
     } catch (error) {
-      if (!(error instanceof SlackApiError) || error.slackCode !== 'channel_not_found') throw error;
+      if (!(error instanceof SlackApiError) || error.code !== 'channel_not_found') throw error;
       const reopenedChannel = await client.openConversation(target.slackUserId);
       channel = reopenedChannel.channel;
       await database
         .update(slackUserMapping)
         .set({ slackChannelId: channel, updatedAt: new Date() })
-        .where(eq(slackUserMapping.id, mapping.id));
+        .where(
+          and(
+            eq(slackUserMapping.id, target.mappingId),
+            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.organizationId, input.organizationId),
+            eq(slackUserMapping.userId, input.userId),
+          ),
+        );
       message = await client.postMessage({
         channel,
         text: input.text,
@@ -417,9 +473,14 @@ export async function dispatchSlackMessage(
   database: SlackDatabase,
   input: DispatchSlackInput,
 ): Promise<number> {
-  const context = await resolveSlackContext(database, input.organizationId);
+  const context = await resolveSlackContext(database, input.organizationId, 'default');
   if (context === null || context.token === null) return 0;
-  const targets = await resolveSlackTargets(database, input.organizationId, input.teamIds);
+  const targets = await resolveSlackTargets(
+    database,
+    input.organizationId,
+    input.teamIds,
+    context.integrationId,
+  );
   if (targets.length === 0) return 0;
 
   const client = new SlackClient({

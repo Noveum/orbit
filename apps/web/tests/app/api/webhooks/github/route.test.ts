@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
@@ -13,17 +13,23 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 
 const SECRET = 'a-github-webhook-secret';
+const existingWebhookSecret = process.env['GITHUB_WEBHOOK_SECRET'];
 process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
 const core = await import('@orbit/core');
 const services = await import('@orbit/services');
 const notifications = await import('@orbit/services/notifications');
+const slackCapability = await import('@/lib/integrations/slack-capability.ts');
+const nextHeaders = await import('next/headers');
 const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(() => Promise.resolve(0));
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
+const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
+  () => slackEnabledForTest,
+);
 notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
@@ -35,10 +41,6 @@ mock.module('@orbit/core', () => ({
 }));
 mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
 mock.module('@orbit/services/notifications', () => ({ ...notifications, notifyMany }));
-mock.module('@/lib/integrations/slack-capability.ts', () => ({
-  slackIntegrationEnabled: () => slackEnabledForTest,
-}));
-
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
 const { POST } = await import('../../../../../src/app/api/webhooks/github/route.ts');
@@ -46,6 +48,11 @@ const { POST } = await import('../../../../../src/app/api/webhooks/github/route.
 afterAll(() => {
   mock.module('@orbit/core', () => core);
   mock.module('@orbit/services', () => services);
+  mock.module('@orbit/services/notifications', () => notifications);
+  mock.module('next/headers', () => nextHeaders);
+  slackCapabilitySpy.mockRestore();
+  if (existingWebhookSecret === undefined) delete process.env['GITHUB_WEBHOOK_SECRET'];
+  else process.env['GITHUB_WEBHOOK_SECRET'] = existingWebhookSecret;
 });
 
 const bodySchema = z.union([
@@ -109,12 +116,16 @@ async function seed(): Promise<void> {
   });
 }
 
-function pullRequestBody(headRef: string, state: 'open' | 'closed' = 'open'): string {
+function pullRequestBody(
+  headRef: string,
+  state: 'open' | 'closed' = 'open',
+  title = 'Rework dashboard',
+): string {
   return JSON.stringify({
     action: state === 'open' ? 'opened' : 'closed',
     pull_request: {
       number: 7,
-      title: 'Rework dashboard',
+      title,
       html_url: 'https://github.com/acme/web/pull/7',
       draft: false,
       merged: false,
@@ -270,6 +281,31 @@ describe('POST /api/webhooks/github', () => {
     );
     expect(broadcast.status).toBe(200);
     expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('escapes external pull request titles in the exact Slack payload', async () => {
+    slackEnabledForTest = true;
+    notifyMany.mockImplementationOnce(async () => ({
+      actions: [],
+      deduped: 0,
+      email: [],
+      notifications: [],
+      slack: [{ userId: 'user-1', notificationId: 'notification-1' }],
+      slackDm: [],
+    }));
+    const title = 'Deploy <!channel> <@U999> <https://evil.example|click>';
+
+    const response = await POST(
+      signed(pullRequestBody('orb-3-dashboard', 'closed', title), 'delivery-escaped-title'),
+    );
+
+    const appUrl = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
+    expect(response.status).toBe(200);
+    expect(dispatchSlackMessage).toHaveBeenCalledWith(db, {
+      organizationId: workspace.organizationId,
+      teamIds: [workspace.teamId],
+      text: `Deploy &lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; was closed: ${new URL('/inbox', `${appUrl}/`).toString()}`,
+    });
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {

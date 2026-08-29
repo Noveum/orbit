@@ -1,5 +1,5 @@
 {
-  "id": "9bff5369-7284-4d56-9b18-6c416ec02bba",
+  "id": "8cb7a875-9756-456d-908f-f97d793396b6",
   "prevId": "daf58c76-dbbd-4ddd-aa39-8afc32bb33de",
   "version": "7",
   "dialect": "postgresql",
@@ -3457,6 +3457,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "source_delivery_id": {
+          "name": "source_delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "user_id": {
           "name": "user_id",
           "type": "text",
@@ -3485,6 +3491,18 @@
         },
         "last_error": {
           "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_message_channel": {
+          "name": "provider_message_channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_message_ts": {
+          "name": "provider_message_ts",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -3540,6 +3558,34 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "notification_delivery_source_lookup_idx": {
+          "name": "notification_delivery_source_lookup_idx",
+          "columns": [
+            {
+              "expression": "source_delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "channel",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"notification_delivery\".\"source_delivery_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3956,6 +4002,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "''"
+        },
+        "slack_channel_id": {
+          "name": "slack_channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",

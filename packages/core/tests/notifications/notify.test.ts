@@ -1,14 +1,34 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { claimSlackDmDeliveries } from '@orbit/services/notifications';
+import { SlackApiError } from '@orbit/services/slack';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { deliverPendingSlackDms } from '../../src/notifications/notify.ts';
 import { resetDatabase } from '../../src/test-support.ts';
+
+const existingAppUrl = process.env['APP_URL'];
+const existingPublicAppUrl = process.env['NEXT_PUBLIC_APP_URL'];
 
 interface Fixture {
   readonly organizationId: string;
   readonly userId: string;
   readonly integrationId: string;
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve: (() => void) | undefined;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve: () => resolve?.() };
+}
+
+async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Timed out waiting for the worker state.');
 }
 
 async function seedPendingSlackDm(): Promise<Fixture> {
@@ -73,9 +93,113 @@ beforeEach(async () => {
   delete process.env['NEXT_PUBLIC_APP_URL'];
 });
 
+afterAll(() => {
+  if (existingAppUrl === undefined) delete process.env['APP_URL'];
+  else process.env['APP_URL'] = existingAppUrl;
+  if (existingPublicAppUrl === undefined) delete process.env['NEXT_PUBLIC_APP_URL'];
+  else process.env['NEXT_PUBLIC_APP_URL'] = existingPublicAppUrl;
+});
+
 describe('deliverPendingSlackDms', () => {
-  it('sends an absolute notification link and records the provider message identity', async () => {
+  it('claims only the deliveries it can start concurrently', async () => {
+    await Promise.all(Array.from({ length: 6 }, () => seedPendingSlackDm()));
+    const gate = deferred();
+    let active = 0;
+    let maxActive = 0;
+    const dispatch = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await gate.promise;
+      active -= 1;
+      return { delivered: 1, channel: 'D123', ts: randomUUIDv7() } as const;
+    };
+    const running = deliverPendingSlackDms(db, 6, globalThis.fetch, dispatch, undefined, {
+      concurrency: 2,
+    });
+
+    try {
+      await waitUntil(async () => active > 0);
+      const rows = await db
+        .select({ status: schema.notificationDelivery.status })
+        .from(schema.notificationDelivery);
+      expect(rows.filter((row) => row.status === 'processing')).toHaveLength(2);
+      expect(rows.filter((row) => row.status === 'pending')).toHaveLength(4);
+      expect(active).toBe(2);
+    } finally {
+      gate.resolve();
+      await running;
+    }
+
+    expect(await running).toBe(6);
+    expect(maxActive).toBe(2);
+  });
+
+  it('lets two workers race while dispatching one provider message', async () => {
     await seedPendingSlackDm();
+    const gate = deferred();
+    let dispatches = 0;
+    const dispatch = async () => {
+      dispatches += 1;
+      await gate.promise;
+      return { delivered: 1, channel: 'D123', ts: '123.456' } as const;
+    };
+
+    const workers = [
+      deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch),
+      deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch),
+    ];
+    await waitUntil(async () => dispatches > 0);
+    gate.resolve();
+    const results = await Promise.all(workers);
+
+    expect(results.sort()).toEqual([0, 1]);
+    expect(dispatches).toBe(1);
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'succeeded', attempts: 1 });
+  });
+
+  it('does not finalize a Slack DM when Slack omits its message timestamp', async () => {
+    await seedPendingSlackDm();
+    const dispatch = () => Promise.resolve({ delivered: 1, channel: 'D123', ts: '' });
+
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
+  });
+
+  it('stops before another claim when its deadline is reached', async () => {
+    await Promise.all(Array.from({ length: 6 }, () => seedPendingSlackDm()));
+    let nowMs = Date.now() + 60_000;
+    const deadlineAt = new Date(nowMs + 100);
+    let dispatches = 0;
+    const dispatch = () => {
+      dispatches += 1;
+      if (dispatches === 2) nowMs = deadlineAt.getTime();
+      return Promise.resolve({ delivered: 1, channel: 'D123', ts: randomUUIDv7() } as const);
+    };
+
+    expect(
+      await deliverPendingSlackDms(db, 6, globalThis.fetch, dispatch, undefined, {
+        concurrency: 2,
+        deadlineAt,
+        now: () => new Date(nowMs),
+      }),
+    ).toBe(2);
+
+    const rows = await db
+      .select({ status: schema.notificationDelivery.status })
+      .from(schema.notificationDelivery);
+    expect(rows.filter((row) => row.status === 'succeeded')).toHaveLength(2);
+    expect(rows.filter((row) => row.status === 'pending')).toHaveLength(4);
+    expect(rows.filter((row) => row.status === 'processing')).toHaveLength(0);
+  });
+
+  it('escapes Slack markup in the title and preserves the notification link', async () => {
+    await seedPendingSlackDm();
+    await db
+      .update(schema.notification)
+      .set({ title: 'Deploy <!channel> <@U123> <https://evil.example|click>' });
     const requests: Record<string, unknown>[] = [];
     const fetch = ((_input: URL | RequestInfo, init?: RequestInit) => {
       requests.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
@@ -94,7 +218,7 @@ describe('deliverPendingSlackDms', () => {
       .from(schema.notification);
     expect(requests[1]).toEqual({
       channel: 'D123',
-      text: 'You were mentioned: https://orbit.example/issue/ORB-1',
+      text: 'Deploy &lt;!channel&gt; &lt;@U123&gt; &lt;https://evil.example|click&gt;: https://orbit.example/issue/ORB-1',
     });
     expect(storedDelivery).toMatchObject({
       status: 'succeeded',
@@ -195,6 +319,70 @@ describe('deliverPendingSlackDms', () => {
     );
     expect(reclaimed).toHaveLength(1);
     expect(reclaimed[0]?.id).toBe(stored.id);
+  });
+
+  it('uses exponential backoff for a repeated transient failure', async () => {
+    await seedPendingSlackDm();
+    await db.update(schema.notificationDelivery).set({ attempts: 2 });
+    const now = new Date(Date.now() + 86_400_000);
+    const dispatch = () => Promise.reject(new SlackApiError('chat.postMessage', 'internal_error'));
+
+    expect(
+      await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch, undefined, {
+        now: () => now,
+        deadlineAt: new Date(now.getTime() + 1_000),
+      }),
+    ).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'failed', attempts: 3 });
+    expect(stored?.availableAt.getTime()).toBe(now.getTime() + 120_000);
+  });
+
+  it('honors a longer provider Retry-After delay', async () => {
+    await seedPendingSlackDm();
+    const now = new Date(Date.now() + 86_400_000);
+    const dispatch = () =>
+      Promise.reject(new SlackApiError('chat.postMessage', 'ratelimited', 90_000));
+
+    expect(
+      await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch, undefined, {
+        now: () => now,
+        deadlineAt: new Date(now.getTime() + 1_000),
+      }),
+    ).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(stored?.availableAt.getTime()).toBe(now.getTime() + 90_000);
+  });
+
+  it('dead-letters a transient failure at the fifth attempt', async () => {
+    await seedPendingSlackDm();
+    await db.update(schema.notificationDelivery).set({ attempts: 4 });
+    const dispatch = () => Promise.reject(new SlackApiError('chat.postMessage', 'internal_error'));
+
+    expect(await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch)).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({ status: 'dead_letter', attempts: 5 });
+    expect(await claimSlackDmDeliveries(db, 1, new Date(Date.now() + 86_400_000))).toEqual([]);
+  });
+
+  it('dead-letters a permanent Slack API failure without retrying', async () => {
+    await seedPendingSlackDm();
+    const dispatch = () =>
+      Promise.reject(new SlackApiError('chat.postMessage', 'channel_not_found'));
+
+    expect(await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch)).toBe(0);
+
+    const [stored] = await db.select().from(schema.notificationDelivery);
+    expect(stored).toMatchObject({
+      status: 'dead_letter',
+      attempts: 1,
+      lastError: 'Slack chat.postMessage failed: channel_not_found.',
+    });
+    expect(await claimSlackDmDeliveries(db, 1, new Date(Date.now() + 86_400_000))).toEqual([]);
   });
 
   it('does not count an attempt when Slack becomes unavailable before dispatch', async () => {

@@ -8,7 +8,7 @@ import {
   markSlackReauthorizationRequired,
   notifyMany,
 } from '@orbit/services/notifications';
-import { SlackApiError } from '@orbit/services/slack';
+import { escapeSlackText, SlackApiError } from '@orbit/services/slack';
 import { dispatchSlackDmResult, SlackDmDispatchError } from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
@@ -22,6 +22,32 @@ type SlackDmFinalizer = (input: {
   readonly sent: boolean;
   readonly providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>>;
 }) => Promise<boolean>;
+
+interface SlackDmWorkerOptions {
+  readonly concurrency?: number;
+  readonly deadlineAt?: Date;
+  readonly now?: () => Date;
+}
+
+const SLACK_DM_CONCURRENCY = 5;
+const SLACK_DM_WORKER_WINDOW_MS = 270_000;
+const PERMANENT_SLACK_DM_ERRORS = new Set([
+  'cannot_dm_bot',
+  'channel_not_found',
+  'invalid_arg_name',
+  'invalid_arguments',
+  'invalid_array_arg',
+  'is_archived',
+  'msg_too_long',
+  'no_text',
+  'not_in_channel',
+  'restricted_action',
+  'restricted_action_read_only_channel',
+  'too_many_attachments',
+  'user_disabled',
+  'user_not_found',
+  'users_not_found',
+]);
 
 export async function notifyRecipients(
   executor: Executor,
@@ -39,83 +65,114 @@ export async function deliverPendingSlackDms(
   fetch: typeof globalThis.fetch = globalThis.fetch,
   dispatch: typeof dispatchSlackDmResult = dispatchSlackDmResult,
   finalize?: SlackDmFinalizer,
+  options: SlackDmWorkerOptions = {},
 ): Promise<number> {
-  const claimed = await claimSlackDmDeliveries(database, limit, new Date(), true);
-  if (claimed.length === 0) return 0;
-  const rows = await database
-    .select()
-    .from(schema.notification)
-    .where(
-      inArray(
-        schema.notification.id,
-        claimed.map((row) => row.notificationId),
-      ),
-    );
-  const byId = new Map(rows.map((row) => [row.id, row]));
+  const now = options.now ?? (() => new Date());
+  const startedAt = now();
+  const deadlineAt =
+    options.deadlineAt ?? new Date(startedAt.getTime() + SLACK_DM_WORKER_WINDOW_MS);
+  const requestedConcurrency = options.concurrency ?? SLACK_DM_CONCURRENCY;
+  const concurrency = Number.isFinite(requestedConcurrency)
+    ? Math.max(1, Math.min(SLACK_DM_CONCURRENCY, Math.floor(requestedConcurrency)))
+    : SLACK_DM_CONCURRENCY;
+  const maximumDeliveries = Math.max(0, Math.floor(limit));
   let delivered = 0;
-  for (const delivery of claimed) {
-    const notification = byId.get(delivery.notificationId);
-    if (notification === undefined) {
-      continue;
-    }
-    let sent = 0;
-    let providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>> | undefined;
-    try {
-      providerMessage = await dispatch(database, {
-        organizationId: notification.organizationId,
-        userId: delivery.userId,
-        text: `${notification.title}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
-        fetch,
-      });
-      sent =
-        providerMessage.channel !== null &&
-        providerMessage.channel.length > 0 &&
-        providerMessage.ts !== null &&
-        providerMessage.ts.length > 0
-          ? 1
-          : 0;
-    } catch (error) {
-      console.error('[orbit] Slack DM retry failed', error);
-      await finalizeSlackDmFailure(database, notification.organizationId, delivery, error);
-      continue;
-    }
-    if (providerMessage.delivered === 0) {
-      await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
-      continue;
-    }
-    const finalizeDelivery: SlackDmFinalizer = async ({
-      deliveryId,
-      notificationId,
-      claimedAt,
-      sent,
-      providerMessage,
-    }) =>
-      await database.transaction(async (tx) => {
-        const updated = await markSlackDmDelivery(
-          tx,
-          deliveryId,
-          claimedAt,
-          sent,
-          undefined,
-          providerMessage,
+  let claimedCount = 0;
+  while (claimedCount < maximumDeliveries && now().getTime() < deadlineAt.getTime()) {
+    const claimLimit = Math.min(concurrency, maximumDeliveries - claimedCount);
+    const claimed = await claimSlackDmDeliveries(database, claimLimit, now(), true);
+    if (claimed.length === 0) break;
+    claimedCount += claimed.length;
+    const rows = await database
+      .select()
+      .from(schema.notification)
+      .where(
+        inArray(
+          schema.notification.id,
+          claimed.map((row) => row.notificationId),
+        ),
+      );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const outcomes = await Promise.all(
+      claimed.map(async (delivery) => {
+        const notification = byId.get(delivery.notificationId);
+        if (notification === undefined) return 0;
+        return await deliverClaimedSlackDm(
+          database,
+          delivery,
+          notification,
+          fetch,
+          dispatch,
+          finalize,
+          now,
         );
-        if (updated && sent) {
-          await markNotificationDelivered(tx, notificationId, 'slack_dm');
-        }
-        return updated;
-      });
-    const finalized = await (finalize ?? finalizeDelivery)({
-      deliveryId: delivery.id,
-      notificationId: notification.id,
-      claimedAt: delivery.claimedAt ?? new Date(0),
-      sent: sent === 1,
-      providerMessage,
-    });
-    if (finalized && sent === 1) {
-      delivered += 1;
-    }
+      }),
+    );
+    delivered += outcomes.reduce((total, outcome) => total + outcome, 0);
   }
   return delivered;
+}
+
+async function deliverClaimedSlackDm(
+  database: Database,
+  delivery: Awaited<ReturnType<typeof claimSlackDmDeliveries>>[number],
+  notification: typeof schema.notification.$inferSelect,
+  fetch: typeof globalThis.fetch,
+  dispatch: typeof dispatchSlackDmResult,
+  finalize?: SlackDmFinalizer,
+  now: () => Date = () => new Date(),
+): Promise<number> {
+  let providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>>;
+  try {
+    providerMessage = await dispatch(database, {
+      organizationId: notification.organizationId,
+      userId: delivery.userId,
+      text: `${escapeSlackText(notification.title)}: ${absoluteNotificationUrl(notification.externalUrl ?? notification.url)}`,
+      fetch,
+    });
+  } catch (error) {
+    console.error('[orbit] Slack DM retry failed', error);
+    await finalizeSlackDmFailure(database, notification.organizationId, delivery, error, now());
+    return 0;
+  }
+  if (providerMessage.delivered === 0) {
+    await markSlackDmUnavailable(database, delivery.id, delivery.claimedAt ?? new Date(0));
+    return 0;
+  }
+  const sent =
+    providerMessage.channel !== null &&
+    providerMessage.channel.length > 0 &&
+    providerMessage.ts !== null &&
+    providerMessage.ts.length > 0;
+  const finalizeDelivery: SlackDmFinalizer = async ({
+    deliveryId,
+    notificationId,
+    claimedAt,
+    sent,
+    providerMessage,
+  }) =>
+    await database.transaction(async (tx) => {
+      const updated = await markSlackDmDelivery(
+        tx,
+        deliveryId,
+        claimedAt,
+        sent,
+        undefined,
+        providerMessage,
+      );
+      if (updated && sent) {
+        await markNotificationDelivered(tx, notificationId, 'slack_dm');
+      }
+      return updated;
+    });
+  const finalized = await (finalize ?? finalizeDelivery)({
+    deliveryId: delivery.id,
+    notificationId: notification.id,
+    claimedAt: delivery.claimedAt ?? new Date(0),
+    sent,
+    providerMessage,
+  });
+  return finalized && sent ? 1 : 0;
 }
 
 function absoluteNotificationUrl(url: string): string {
@@ -137,6 +194,7 @@ async function finalizeSlackDmFailure(
   organizationId: string,
   delivery: Awaited<ReturnType<typeof claimSlackDmDeliveries>>[number],
   error: unknown,
+  now: Date,
 ): Promise<void> {
   const cause = error instanceof SlackDmDispatchError ? error.cause : error;
   let code = '';
@@ -167,6 +225,15 @@ async function finalizeSlackDmFailure(
     delivery.claimedAt ?? new Date(0),
     false,
     cause instanceof Error ? cause.message : 'delivery failed',
+    undefined,
+    {
+      currentAttempts: delivery.attempts,
+      now,
+      permanent: PERMANENT_SLACK_DM_ERRORS.has(code),
+      ...(cause instanceof SlackApiError && cause.retryAfterMs !== undefined
+        ? { retryAfterMs: cause.retryAfterMs }
+        : {}),
+    },
   );
 }
 

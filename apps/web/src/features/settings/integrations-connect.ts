@@ -1,5 +1,5 @@
 import { and, db, eq } from '@orbit/db';
-import { member, user } from '@orbit/db/schema';
+import { integration, member, slackUserMapping, user } from '@orbit/db/schema';
 import { SlackClient } from '@orbit/services/slack';
 import { ensureSlackIntegration, upsertSlackUserMapping } from '@orbit/services/slack/dispatch';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
@@ -14,7 +14,7 @@ const oauthAccessSchema = z.object({
   ok: z.boolean(),
   access_token: z.string().min(1).optional(),
   error: z.string().optional(),
-  team: z.object({ id: z.string(), name: z.string().default('') }).optional(),
+  team: z.object({ id: z.string().trim().min(1), name: z.string().default('') }).optional(),
   authed_user: z.object({ id: z.string().optional() }).optional(),
   scope: z.string().optional(),
 });
@@ -47,7 +47,11 @@ export async function completeSlackInstall(input: {
   if (!parsed.data.ok || parsed.data.access_token === undefined) {
     throw internal(`Slack OAuth exchange failed: ${parsed.data.error ?? 'unknown_error'}.`);
   }
+  if (parsed.data.team === undefined) {
+    throw internal('Slack OAuth exchange returned an unexpected payload.');
+  }
   const accessToken = parsed.data.access_token;
+  const slackTeamId = parsed.data.team.id;
 
   const grantedScopes = (parsed.data.scope ?? '')
     .split(',')
@@ -72,7 +76,7 @@ export async function completeSlackInstall(input: {
       organizationId: input.organizationId,
       connectedById: input.userId,
       botToken: accessToken,
-      ...(parsed.data.team?.id === undefined ? {} : { externalId: parsed.data.team.id }),
+      externalId: slackTeamId,
       scopes: grantedScopes,
     });
   });
@@ -84,21 +88,77 @@ export async function completeSlackInstall(input: {
     .limit(1);
   if (orbitUser === undefined) return;
 
+  let slackUser: Awaited<ReturnType<SlackClient['lookupUserByEmail']>>;
   try {
-    const slackUser = await new SlackClient({ token: accessToken }).lookupUserByEmail(
+    slackUser = await new SlackClient({ token: accessToken }).lookupUserByEmail(
       orbitUser.email.trim().toLowerCase(),
     );
-    if (slackUser === null) return;
-    await upsertSlackUserMapping(db, {
+  } catch (error) {
+    await reconcileSlackUserMapping({
       organizationId: input.organizationId,
       integrationId,
       userId: input.userId,
-      slackUserId: slackUser.id,
-      slackDisplayName: slackUser.displayName,
+      accessToken,
+      slackTeamId,
+      slackUser: null,
     });
-  } catch (error) {
     console.error('Could not map the Slack user after installation.', error);
+    return;
   }
+  await reconcileSlackUserMapping({
+    organizationId: input.organizationId,
+    integrationId,
+    userId: input.userId,
+    accessToken,
+    slackTeamId,
+    slackUser,
+  });
+}
+
+async function reconcileSlackUserMapping(input: {
+  readonly organizationId: string;
+  readonly integrationId: string;
+  readonly userId: string;
+  readonly accessToken: string;
+  readonly slackTeamId: string;
+  readonly slackUser: Awaited<ReturnType<SlackClient['lookupUserByEmail']>>;
+}): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ config: integration.config, credentials: integration.credentials })
+      .from(integration)
+      .where(
+        and(
+          eq(integration.id, input.integrationId),
+          eq(integration.organizationId, input.organizationId),
+          eq(integration.provider, 'slack'),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (current === undefined) return;
+    if (current.credentials['botToken'] !== input.accessToken) return;
+    if (current.config['slackTeamId'] !== input.slackTeamId) return;
+    if (input.slackUser === null) {
+      await tx
+        .delete(slackUserMapping)
+        .where(
+          and(
+            eq(slackUserMapping.organizationId, input.organizationId),
+            eq(slackUserMapping.integrationId, input.integrationId),
+            eq(slackUserMapping.userId, input.userId),
+          ),
+        );
+      return;
+    }
+    await upsertSlackUserMapping(tx, {
+      organizationId: input.organizationId,
+      integrationId: input.integrationId,
+      userId: input.userId,
+      slackUserId: input.slackUser.id,
+      slackDisplayName: input.slackUser.displayName,
+    });
+  });
 }
 
 function organizationRole(role: string | undefined): OrgRole {

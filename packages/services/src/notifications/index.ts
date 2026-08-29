@@ -6,13 +6,14 @@ import {
   notificationDelivery,
   notificationPreference,
   notificationSetting,
+  slackUserMapping,
   user,
 } from '@orbit/db/schema';
 import {
   actorSchema,
   idSchema,
   isStatusChangeNotification,
-  NOTIFICATION_AUDIENCE,
+  NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   SLACK_INTEGRATION_ENABLED,
@@ -23,7 +24,7 @@ import {
   validationFailed,
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
 import {
@@ -39,7 +40,16 @@ export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
-export const MAX_SLACK_DM_ATTEMPTS = 10;
+export const SLACK_DM_MAX_ATTEMPTS = 5;
+const SLACK_DM_RETRY_BASE_MS = 30_000;
+const SLACK_DM_RETRY_MAX_MS = 60 * 60_000;
+
+export interface SlackDmFailureOptions {
+  readonly currentAttempts?: number;
+  readonly now?: Date;
+  readonly permanent?: boolean;
+  readonly retryAfterMs?: number;
+}
 
 export async function markNotificationDelivered(
   database: NotificationDatabase,
@@ -69,42 +79,39 @@ export async function markSlackDmDelivery(
   delivered: boolean,
   error?: string,
   providerMessage?: { channel: string | null; ts: string | null },
+  failure: SlackDmFailureOptions = {},
 ): Promise<boolean> {
-  const [current] = await database
-    .select({ attempts: notificationDelivery.attempts })
-    .from(notificationDelivery)
-    .where(
-      and(
-        eq(notificationDelivery.id, deliveryId),
-        eq(notificationDelivery.status, 'processing'),
-        eq(notificationDelivery.claimedAt, claimedAt),
-      ),
-    )
-    .limit(1);
-  if (current === undefined) return false;
-  const attempts = current.attempts + 1;
-  const terminal = !delivered && attempts >= MAX_SLACK_DM_ATTEMPTS;
-  const retryAt = new Date(Date.now() + Math.min(3_600_000, 30_000 * 2 ** (attempts - 1)));
-  let status: 'succeeded' | 'skipped' | 'failed';
-  if (delivered) status = 'succeeded';
-  else if (terminal) status = 'skipped';
-  else status = 'failed';
-  const failure = terminal
-    ? { lastError: error ?? 'delivery failed' }
-    : { lastError: error ?? 'delivery failed', availableAt: retryAt };
+  const now = failure.now ?? new Date();
+  const nextAttempts = (failure.currentAttempts ?? 0) + 1;
+  const exponentialBackoff = Math.min(
+    SLACK_DM_RETRY_BASE_MS * 2 ** Math.max(0, nextAttempts - 1),
+    SLACK_DM_RETRY_MAX_MS,
+  );
+  const providerBackoff =
+    failure.retryAfterMs !== undefined &&
+    Number.isFinite(failure.retryAfterMs) &&
+    failure.retryAfterMs >= 0
+      ? failure.retryAfterMs
+      : 0;
+  const retryAt = new Date(now.getTime() + Math.max(exponentialBackoff, providerBackoff));
+  const deadLettered = failure.permanent === true || nextAttempts >= SLACK_DM_MAX_ATTEMPTS;
+  const failedStatus = deadLettered ? 'dead_letter' : 'failed';
   const updated = await database
     .update(notificationDelivery)
     .set({
-      status,
+      status: delivered ? 'succeeded' : failedStatus,
       attempts: sql`${notificationDelivery.attempts} + 1`,
       ...(delivered
         ? {
-            deliveredAt: new Date(),
+            deliveredAt: now,
             lastError: null,
             providerMessageChannel: providerMessage?.channel ?? null,
             providerMessageTs: providerMessage?.ts ?? null,
           }
-        : failure),
+        : {
+            lastError: error ?? 'delivery failed',
+            ...(deadLettered ? {} : { availableAt: retryAt }),
+          }),
     })
     .where(
       and(
@@ -202,7 +209,11 @@ export async function claimSlackDmDeliveries(
               AND ${notificationDelivery.claimedAt} < ${staleBefore.toISOString()}
             )
           )
-        ORDER BY ${notificationDelivery.attempts}, ${notificationDelivery.availableAt}, ${notificationDelivery.createdAt}
+        ORDER BY
+          CASE WHEN ${notificationDelivery.status} = 'processing' THEN 1 ELSE 0 END,
+          ${notificationDelivery.attempts},
+          ${notificationDelivery.availableAt},
+          ${notificationDelivery.createdAt}
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       )`,
@@ -279,6 +290,14 @@ interface Plan {
   readonly slackDmAt: Date | null;
 }
 
+const slackDmEligibilitySchema = z.object({
+  credentials: z.object({ botToken: z.string().min(1) }),
+  config: z.object({
+    scopes: z.array(z.string()),
+    slackReauthorize: z.boolean().optional(),
+  }),
+});
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: notification planning coordinates dedupe, preferences, persistence, and delivery scheduling
 export async function notifyMany(
   database: NotificationDatabase,
@@ -299,6 +318,9 @@ export async function notifyMany(
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
+  const slackDmEligibleRecipients = slackFeatureEnabled
+    ? await loadSlackDmEligibleRecipients(database, parsed, recipientIds)
+    : new Map<string, ReadonlySet<string>>();
   const disabled = disabledPreferenceIndex(
     await database
       .select({
@@ -308,7 +330,12 @@ export async function notifyMany(
         enabled: notificationPreference.enabled,
       })
       .from(notificationPreference)
-      .where(inArray(notificationPreference.userId, recipientIds)),
+      .where(
+        and(
+          inArray(notificationPreference.userId, recipientIds),
+          ne(notificationPreference.channel, 'slack'),
+        ),
+      ),
   );
   const seen = await loadRecentKeys(database, recipientIds, now);
   const sourceDeliveryKeys =
@@ -351,6 +378,7 @@ export async function notifyMany(
         disabled,
         now,
         slackFeatureEnabled,
+        slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
       );
       if (plan !== null) {
         seen.add(key);
@@ -405,6 +433,7 @@ function planFor(
   disabled: ReadonlySet<string>,
   now: Date,
   slackFeatureEnabled: boolean,
+  slackDmEligible: boolean,
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
@@ -416,6 +445,7 @@ function planFor(
   const slackDmEnabled =
     slackFeatureEnabled &&
     personal &&
+    slackDmEligible &&
     isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
   if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
   const quietHours: QuietHours = {
@@ -441,6 +471,52 @@ function planFor(
     emailDeferred: deferred,
     slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
   };
+}
+
+async function loadSlackDmEligibleRecipients(
+  database: NotificationDatabase,
+  events: readonly ParsedEvent[],
+  recipientIds: readonly string[],
+): Promise<Map<string, ReadonlySet<string>>> {
+  const organizationIds = unique(
+    events.filter(isPersonalNotification).map((event) => event.organizationId),
+  );
+  if (organizationIds.length === 0) return new Map();
+  const rows = await database
+    .select({
+      organizationId: integration.organizationId,
+      userId: slackUserMapping.userId,
+      credentials: integration.credentials,
+      config: integration.config,
+    })
+    .from(integration)
+    .innerJoin(
+      slackUserMapping,
+      and(
+        eq(slackUserMapping.integrationId, integration.id),
+        eq(slackUserMapping.organizationId, integration.organizationId),
+      ),
+    )
+    .where(
+      and(
+        inArray(integration.organizationId, organizationIds),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, 'default'),
+        inArray(slackUserMapping.userId, [...recipientIds]),
+      ),
+    );
+  const eligible = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const parsed = slackDmEligibilitySchema.safeParse(row);
+    if (!parsed.success) continue;
+    if (parsed.data.config.slackReauthorize === true) continue;
+    const scopes = parsed.data.config.scopes;
+    if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;
+    const recipients = eligible.get(row.organizationId) ?? new Set<string>();
+    recipients.add(row.userId);
+    eligible.set(row.organizationId, recipients);
+  }
+  return eligible;
 }
 
 function slackDmSendAt(
@@ -469,7 +545,7 @@ function isUrgent(event: ParsedEvent): boolean {
 }
 
 function isPersonalNotification(event: ParsedEvent): boolean {
-  return NOTIFICATION_AUDIENCE[event.reason] === 'personal';
+  return NOTIFICATION_AUDIENCE_BY_REASON[event.reason] === 'personal';
 }
 
 function toInsert(plan: Plan, now: Date) {

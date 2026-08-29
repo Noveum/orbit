@@ -3,6 +3,7 @@ import {
   applyGithubEvent,
   applyGithubInstallationEvent,
   dispatchSlackMessage,
+  escapeSlackText,
   findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
@@ -143,7 +144,7 @@ export async function POST(request: Request): Promise<Response> {
       await dispatchSlackMessage(db, {
         organizationId: outcome.organizationId,
         teamIds: outcome.teamIds,
-        text: `${outcome.slackText}: ${absoluteUrl('/inbox')}`,
+        text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
       });
     }
 
