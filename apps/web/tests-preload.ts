@@ -14,7 +14,10 @@ export const nativeFetchGlobals = {
   Response: globalThis.Response,
 };
 
-GlobalRegistrator.register({ url: 'http://localhost:3000' });
+GlobalRegistrator.register({
+  url: 'http://localhost:3000',
+  settings: { navigation: { disableChildFrameNavigation: true } },
+});
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

@@ -113,6 +113,7 @@ const detail: IssueDetail = {
   activity: [],
   activityCursor: null,
   subIssues: [],
+  attachments: [],
   parent: null,
   subscribed: false,
 };
