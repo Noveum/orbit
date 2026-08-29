@@ -138,11 +138,13 @@ describe('slack webhook', () => {
   });
 
   it('rejects unsigned requests', async () => {
-    const res = await fetch('https://app.orbit.ac/api/webhooks/slack', {
-      method: 'POST',
-      body: JSON.stringify({ type: 'url_verification', challenge: 'x' }),
-      headers: { 'content-type': 'application/json' },
-    });
+    const res = await POST(
+      new Request('https://app.orbit.ac/api/webhooks/slack', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url_verification', challenge: 'x' }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
     expect(res.status).toBe(401);
   });
 });
