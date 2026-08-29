@@ -6,6 +6,7 @@ import {
   CHART_HEIGHT,
   CHART_PADDING,
   CHART_WIDTH,
+  chartX,
   chartY,
   linePath,
 } from './geometry.ts';
@@ -38,6 +39,23 @@ const LEGEND_DOT: Record<SeriesTone, string> = {
 
 function SeriesPath({ series, max }: { readonly series: ChartSeries; readonly max: number }) {
   const ref = useDrawOnMount<SVGPathElement>();
+  if (series.values.length === 1) {
+    const x = chartX(0, 1);
+    const y = chartY(series.values[0] ?? 0, max);
+    return (
+      <line
+        x1={x}
+        x2={x}
+        y1={y}
+        y2={y}
+        stroke={STROKE[series.tone]}
+        strokeWidth={7}
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+        data-testid={`chart-line-${series.id}`}
+      />
+    );
+  }
   return (
     <path
       ref={ref}
@@ -109,7 +127,7 @@ export function LineChart({ title, description, series, labels, max, className }
           />
         ))}
         {series
-          .filter((entry) => entry.filled === true)
+          .filter((entry) => entry.filled === true && entry.values.length > 1)
           .map((entry) => (
             <path
               key={`${entry.id}-fill`}
