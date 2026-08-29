@@ -15,6 +15,7 @@ import { mockMembership, mockSession } from './tests-support.ts';
 const storageModule = await import('@orbit/services/storage');
 
 const uploads: string[] = [];
+const objects = new Map<string, Uint8Array>();
 
 const fakeDriver = {
   name: 's3',
@@ -30,6 +31,7 @@ const fakeDriver = {
     });
   },
   put: () => Promise.resolve(),
+  get: (key: string) => Promise.resolve(objects.get(key) ?? null),
   getUrl: () => Promise.reject(new Error('unused')),
   delete: () => Promise.resolve(),
   stat: () => Promise.resolve(null),
@@ -63,6 +65,18 @@ export function uploadsRegistered(): readonly string[] {
 
 export function forgetUploads(): void {
   uploads.length = 0;
+}
+
+export function storeObject(key: string, body: string): void {
+  storeObjectBytes(key, new TextEncoder().encode(body));
+}
+
+export function storeObjectBytes(key: string, body: Uint8Array): void {
+  objects.set(key, body);
+}
+
+export function forgetObjects(): void {
+  objects.clear();
 }
 
 export const ISSUES_BASE = 'http://localhost:3000/api/issues';

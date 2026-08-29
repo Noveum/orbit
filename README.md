@@ -23,7 +23,7 @@ at the end of the month.
 [![Bun](https://img.shields.io/badge/built%20with-Bun-000000?logo=bun)](https://bun.sh)
 [![Sponsored by Noveum AI](https://img.shields.io/badge/sponsored%20by-Noveum%20AI-5a63c8)](https://noveum.ai)
 
-[**Live demo**](https://orbit.noveum.ai) · [**Documentation**](docs/README.md) · [**Quick start**](#quick-start) · [**Self-host**](docs/self-hosting.md) · [**Contribute**](CONTRIBUTING.md) · [**Roadmap**](docs/roadmap.md)
+[**Live demo**](https://orbit.noveum.ai) · [**Documentation**](https://noveum.github.io/orbit/) · [**Quick start**](#quick-start) · [**Self-host**](docs/self-hosting.md) · [**Contribute**](CONTRIBUTING.md) · [**Roadmap**](docs/roadmap.md)
 
 </div>
 

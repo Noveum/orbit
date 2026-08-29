@@ -4,6 +4,7 @@ import { landingMetadata, landingStructuredData } from '@/features/landing/landi
 import { LandingPage } from '@/features/landing/landing-page.tsx';
 import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { getSession } from '@/lib/auth/session.ts';
+import { signUpIsOpen } from '@/lib/env.ts';
 
 export const metadata = landingMetadata('/');
 
@@ -24,7 +25,7 @@ export default async function HomePage({
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static JSON-LD built from constants
         dangerouslySetInnerHTML={{ __html: landingStructuredData() }}
       />
-      <LandingPage />
+      <LandingPage openSignUp={signUpIsOpen()} />
       {errorCode === undefined ? null : <AuthErrorNotice code={errorCode} />}
     </>
   );

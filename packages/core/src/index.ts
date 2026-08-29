@@ -1,6 +1,7 @@
 export * from './activity/activity-service.ts';
 export * from './analytics/index.ts';
 export * from './auth/mcp-token.ts';
+export * from './auth/rate-limit-storage.ts';
 export * from './content/attachment-service.ts';
 export * from './content/comment-service.ts';
 export * from './content/doc-access-request-service.ts';

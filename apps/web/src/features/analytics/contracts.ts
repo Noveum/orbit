@@ -68,6 +68,7 @@ export const analyticsOverviewResponseSchema = z.object({
       cohort: analyticsDrilldownCohortSchema,
     }),
   ),
+  outliersWithheldCount: z.number().int().nonnegative(),
 });
 
 const sprintSummarySchema = z.object({
@@ -402,6 +403,7 @@ export const analyticsDrilldownResponseSchema = z.object({
   predicate: z.string(),
   total: z.number().int().nonnegative(),
   totalValue: numberSchema,
+  withheldCount: z.number().int().nonnegative(),
   details: z.object({
     validCycleCount: z.number().int().nonnegative(),
     cycleTimeP50: numberSchema.nullable(),

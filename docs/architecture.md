@@ -241,4 +241,4 @@ before moving a card feels broken, even at 50ms.
 
 - [Concepts](concepts.md) for the domain vocabulary.
 - [Testing](testing.md) for how this is verified.
-- [CONTRIBUTING.md](../CONTRIBUTING.md) for the rules the code is held to.
+- [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) for the rules the code is held to.

@@ -32,7 +32,7 @@ export function verifySlackSignature(
   const expected = Buffer.from(`v0=${digest}`, 'utf8');
   const received = Buffer.from(signature, 'utf8');
   if (expected.length !== received.length) return false;
-  return timingSafeEqual(expected, received);
+  return timingSafeEqual(new Uint8Array(expected), new Uint8Array(received));
 }
 
 export type SlackBlock = Record<string, unknown>;
