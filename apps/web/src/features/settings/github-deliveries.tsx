@@ -1,5 +1,5 @@
-import { relativeTime } from '@orbit/shared/utils';
 import { Badge } from '@/components/ui/badge.tsx';
+import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import type { GithubDeliveryView } from './integrations-data.ts';
 
 const REASON_COPY: Record<string, string> = {
@@ -67,7 +67,9 @@ export function GithubDeliveries({
             <span data-numeric className="text-muted">
               {delivery.event}
             </span>
-            <span className="text-faint">{relativeTime(new Date(delivery.receivedAt))}</span>
+            <span className="text-faint">
+              <RelativeTime at={delivery.receivedAt} />
+            </span>
             {delivery.reason === null ? null : (
               <span className="text-muted">{deliveryReasonCopy(delivery.reason)}</span>
             )}

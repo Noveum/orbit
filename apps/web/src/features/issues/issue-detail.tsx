@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
+import { AttachmentGallery } from '@/features/attachments/attachment-gallery.tsx';
 import { CommentThread } from '@/features/comments/comment-thread.tsx';
 import { ViewerPresence } from '@/features/comments/viewer-presence.tsx';
 import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
@@ -327,6 +328,7 @@ export function IssueDetailView({
 
           {detail.isPlaceholderData ? null : (
             <>
+              <AttachmentGallery attachments={detail.data.attachments} />
               <SubIssues issue={issue} subIssues={detail.data.subIssues} />
               <IssueRelations issue={issue} />
             </>

@@ -3,11 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import type { IntegrationSettings } from '../../../src/features/settings/integrations-data.ts';
-import {
-  IntegrationsPanel,
-  type McpConnection,
-} from '../../../src/features/settings/integrations-panel.tsx';
+import type { IntegrationSettings } from '@/features/settings/integrations-data.ts';
+import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
+import type { McpConnection } from '@/features/settings/mcp-panel.tsx';
 
 const refresh = mock();
 

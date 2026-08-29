@@ -154,4 +154,4 @@ useHotkey('shift+z', duplicateIssue, {
 ```
 
 Set `advertised: false` for something that should work but not be listed. See
-`apps/web/src/lib/keyboard/` and [CONTRIBUTING.md](../CONTRIBUTING.md).
+`apps/web/src/lib/keyboard/` and [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md).
