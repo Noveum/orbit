@@ -158,6 +158,12 @@ describe('list and search indexes', () => {
     expect(indexNamesOf(schema.issueReviewer)).toEqual(
       expect.arrayContaining(['issue_reviewer_unique', 'issue_reviewer_user_idx']),
     );
+    expect(indexNamesOf(schema.integration)).toEqual(
+      expect.arrayContaining([
+        'integration_provider_slack_team_idx',
+        'integration_provider_external_idx',
+      ]),
+    );
   });
 
   it('indexes source delivery lookups without indexing rows that have no source', () => {

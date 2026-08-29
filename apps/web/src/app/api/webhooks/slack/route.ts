@@ -186,7 +186,13 @@ async function unfurlLinks(
     )
     .limit(2);
   const integrationRow = integrationRows[0];
-  if (integrationRows.length !== 1 || integrationRow === undefined) return null;
+  if (integrationRows.length !== 1 || integrationRow === undefined) {
+    console.warn('[orbit] slack webhook team routing failed', {
+      slackTeamId,
+      reason: integrationRow === undefined ? 'unknown' : 'ambiguous',
+    });
+    return null;
+  }
 
   const context = await resolveSlackContext(
     db,

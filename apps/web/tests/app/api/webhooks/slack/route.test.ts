@@ -16,6 +16,7 @@ const { ensureSlackIntegration } = await import('@orbit/services');
 const { randomUUIDv7 } = await import('@orbit/shared/utils');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
+const warningSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
 const { POST } = await import('@/app/api/webhooks/slack/route.ts');
 
 interface ProviderRequest {
@@ -113,6 +114,7 @@ beforeEach(async () => {
   providerRequests.length = 0;
   providerErrorCode = null;
   providerResponder = null;
+  warningSpy.mockClear();
   globalThis.fetch = providerFetch;
   workspace = await seedWorkspace('PrimarySlack', 'T-OAUTH', 'xoxb-primary', 'Primary issue');
 });
@@ -120,6 +122,7 @@ beforeEach(async () => {
 afterAll(() => {
   globalThis.fetch = realFetch;
   slackCapabilitySpy.mockRestore();
+  warningSpy.mockRestore();
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   if (existingSigningSecret === undefined) delete process.env['SLACK_SIGNING_SECRET'];
@@ -178,6 +181,10 @@ describe('POST /api/webhooks/slack', () => {
 
     expect(response.status).toBe(200);
     expect(providerRequests).toEqual([]);
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[orbit] slack webhook team routing failed',
+      expect.objectContaining({ slackTeamId: 'T-UNKNOWN', reason: 'unknown' }),
+    );
   });
 
   it('fails closed when two Orbit workspaces use the same Slack team id', async () => {
@@ -193,6 +200,10 @@ describe('POST /api/webhooks/slack', () => {
 
     expect(response.status).toBe(200);
     expect(providerRequests).toEqual([]);
+    expect(warningSpy).toHaveBeenCalledWith(
+      '[orbit] slack webhook team routing failed',
+      expect.objectContaining({ slackTeamId: 'T-OAUTH', reason: 'ambiguous' }),
+    );
   });
 
   it('deduplicates a replayed Slack event id before another unfurl', async () => {

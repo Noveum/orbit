@@ -1,0 +1,2 @@
+CREATE INDEX "integration_provider_slack_team_idx" ON "integration" USING btree ("provider",("config"->>'slackTeamId'));--> statement-breakpoint
+CREATE INDEX "integration_provider_external_idx" ON "integration" USING btree ("provider","external_id");
