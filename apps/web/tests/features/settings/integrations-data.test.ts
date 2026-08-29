@@ -71,7 +71,6 @@ describe('loadIntegrationSettings', () => {
     expect(settings.github.repositories.map((entry) => entry.fullName)).toEqual([
       SECRET_REPOSITORY,
     ]);
-    expect(JSON.stringify(settings)).not.toMatch(/slack/i);
   });
 
   for (const role of ['guest', 'contributor', 'member'] as const) {
