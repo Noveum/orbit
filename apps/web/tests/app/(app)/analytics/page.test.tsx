@@ -35,6 +35,7 @@ const payload = {
   projects: [],
   priorities: [],
   outliers: [],
+  outliersWithheldCount: 0,
 };
 const insightsPayload = {
   kind: 'bars' as const,

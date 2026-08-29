@@ -325,7 +325,9 @@ function sanitizeInDom(html: string): string {
 export function sanitizeHtml(html: string): string {
   if (html.length === 0) return '';
   if (typeof HTMLRewriter === 'undefined') return sanitizeInDom(html);
-  return bunSanitizer().transform(html);
+  const sanitized: unknown = bunSanitizer().transform(html);
+  if (typeof sanitized !== 'string') throw new TypeError('Expected sanitized HTML text');
+  return sanitized;
 }
 
 const VOID_TEXT_TAGS = new Set(['br', 'hr', 'img', 'input']);

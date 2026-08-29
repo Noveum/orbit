@@ -12,11 +12,11 @@ export function estimateLabel(points: number | null): string {
 }
 
 function fillFraction(points: number): number {
-  const steps = DEFAULT_ESTIMATE_SCALE.length - 1;
+  const scale: readonly number[] = DEFAULT_ESTIMATE_SCALE;
+  const steps = scale.length - 1;
   if (steps <= 0) return points > 0 ? 1 : 0;
-  const exact = DEFAULT_ESTIMATE_SCALE.findIndex((entry) => entry === points);
-  const rank =
-    exact === -1 ? DEFAULT_ESTIMATE_SCALE.filter((entry) => entry <= points).length - 1 : exact;
+  const exact = scale.indexOf(points);
+  const rank = exact === -1 ? scale.filter((entry) => entry <= points).length - 1 : exact;
   return Math.min(Math.max(rank, 0) / steps, 1);
 }
 

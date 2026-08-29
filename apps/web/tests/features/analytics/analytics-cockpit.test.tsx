@@ -42,6 +42,7 @@ const overview: AnalyticsOverviewResponse = {
   projects: [],
   priorities: [],
   outliers: [],
+  outliersWithheldCount: 0,
 };
 
 const projectId = '00000000-0000-7000-8000-000000000001';
