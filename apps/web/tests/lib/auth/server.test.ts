@@ -6,7 +6,6 @@ describe('password authentication', () => {
     expect(process.env['ORBIT_PASSWORD_AUTH']).toBeUndefined();
     expect(passwordAuthEnabled).toBe(false);
     expect(auth.options.emailAndPassword?.enabled).toBe(false);
-    expect(auth.options.rateLimit).toBeUndefined();
   });
 
   it('keeps the passwordless methods available', () => {
@@ -36,6 +35,21 @@ describe('password authentication', () => {
     expect(hash.startsWith('$argon2id$')).toBe(true);
     expect(await Bun.password.verify('a-very-long-password', hash)).toBe(true);
     expect(await Bun.password.verify('wrong', hash)).toBe(false);
+  });
+});
+
+describe('open signup rate limits', () => {
+  const rules = auth.options.rateLimit?.customRules ?? {};
+
+  it('caps sign in codes even though password auth is off', () => {
+    expect(passwordAuthEnabled).toBe(false);
+    expect(rules['/email-otp/send-verification-otp']).toEqual({ window: 3600, max: 20 });
+    expect(rules['/sign-in/email-otp']).toEqual({ window: 900, max: 20 });
+  });
+
+  it('keeps the password rules for deployments that enable them', () => {
+    expect(rules['/sign-in/email']).toEqual({ window: 60, max: 5 });
+    expect(rules['/sign-up/email']).toEqual({ window: 3600, max: 5 });
   });
 });
 

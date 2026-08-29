@@ -98,6 +98,8 @@ export const passwordAuthEnabled: boolean = serverEnv().ORBIT_PASSWORD_AUTH;
 
 const SIGN_IN_ATTEMPTS_PER_MINUTE = 5;
 const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
+const SIGN_IN_CODE_SENDS_PER_HOUR = 20;
+const SIGN_IN_CODE_ATTEMPTS_PER_QUARTER_HOUR = 20;
 
 async function takenHandles(candidates: readonly string[]): Promise<Set<string>> {
   const rows = await db
@@ -140,13 +142,13 @@ function emailAndPassword() {
 }
 
 function rateLimit() {
-  if (!passwordAuthEnabled) return {};
   return {
     rateLimit: {
-      enabled: true,
       customRules: {
         '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
         '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
+        '/email-otp/send-verification-otp': { window: 3600, max: SIGN_IN_CODE_SENDS_PER_HOUR },
+        '/sign-in/email-otp': { window: 900, max: SIGN_IN_CODE_ATTEMPTS_PER_QUARTER_HOUR },
       },
     },
   };
