@@ -178,6 +178,7 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
   const made = await createIssue(page, teamId, `Keyboard Rollback ${Date.now()}`, todo);
   await page.reload();
   const cardLocator = page.locator(`li:has([data-testid="issue-card-${made.identifier}"])`);
+  const ariaLive = page.locator('[id^="DndLiveRegion-"][aria-live="assertive"]');
   const boardStatus = page.getByTestId('board-drag-status');
   await expect(cardLocator).toBeVisible();
   await page.route(`**/api/issues/${made.id}/move`, async (route) => {
@@ -190,7 +191,9 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
 
   await cardLocator.focus();
   await page.keyboard.press('Enter');
+  await expect(ariaLive).toContainText(`Picked up ${made.identifier}`, { timeout: 10_000 });
   await page.keyboard.press('ArrowRight');
+  await expect(ariaLive).toContainText(`Moved ${made.identifier}`, { timeout: 10_000 });
   await page.keyboard.press('Enter');
 
   await expect(boardStatus).toContainText(`Failed to move ${made.identifier}`, { timeout: 10_000 });
