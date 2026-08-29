@@ -231,7 +231,7 @@ function LoginFooter({
       ) : null}
       {openSignUp && !creatingAccount ? (
         <p className="text-center text-2xs text-faint">
-          New here? Signing in creates your account and your first workspace.
+          New here? Signing in creates your account, then you set up a workspace.
         </p>
       ) : null}
       <p className="text-center text-2xs text-faint">

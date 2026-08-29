@@ -51,7 +51,7 @@ function renderForm(passwordEnabled: boolean, openSignUp = false) {
   render(<LoginForm providers={[]} passwordEnabled={passwordEnabled} openSignUp={openSignUp} />);
 }
 
-const SIGN_UP_NOTE = 'New here? Signing in creates your account and your first workspace.';
+const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
   it('renders no password field while password auth is off', () => {
