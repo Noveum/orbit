@@ -1275,7 +1275,12 @@ function candidateIdentityFailure(
   if (candidate.expectedHeadSha !== null && candidate.expectedHeadSha !== pullRequest.head.sha) {
     return 'stale-event';
   }
-  if (!isSameRepositoryPullRequest(pullRequest)) return 'fork-pull-request';
+  if (
+    !isSameRepositoryPullRequest(pullRequest) ||
+    pullRequest.user.login.toLowerCase() === 'dependabot[bot]'
+  ) {
+    return 'fork-pull-request';
+  }
   if (pullRequest.base.ref !== 'main') return 'base-mismatch';
   return null;
 }

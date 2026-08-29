@@ -45,6 +45,7 @@ function pullRequest(overrides: Record<string, unknown> = {}) {
     state: 'open',
     draft: false,
     labels: [],
+    user: { login: 'maintainer' },
     head: { sha: SHA, ref: 'feature/preview', repo: repository },
     base: { ref: 'main', repo: repository },
     ...overrides,
@@ -477,6 +478,21 @@ describe('event and eligibility reconciliation', () => {
       { kind: 'skipped', pullRequestNumber: 341, reason: 'fork-pull-request' },
     ]);
     expect(harness.requests.some(({ method }) => method === 'POST')).toBe(false);
+  });
+
+  test('a Dependabot workflow run cannot deploy a same-repository pull request', async () => {
+    const harness = createHarness({
+      pullRequest: pullRequest({ user: { login: 'dependabot[bot]' } }),
+    });
+
+    const results = await reconcileVercelPreviews(harness.runtime);
+
+    expect(results).toEqual([
+      { kind: 'skipped', pullRequestNumber: 341, reason: 'fork-pull-request' },
+    ]);
+    expect(harness.requests.some(({ url }) => url.startsWith('https://api.vercel.com'))).toBe(
+      false,
+    );
   });
 
   test('a newer non-green run blocks an older success', async () => {

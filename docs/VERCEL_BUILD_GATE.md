@@ -18,10 +18,10 @@ The controller evaluates the current pull request from GitHub on every event.
 | Draft | neither managed label | ineligible |
 | Draft | `no-preview`, with or without `preview` | ineligible |
 | Closed | any labels | ineligible |
-| Fork | any state or labels | never eligible for an automatic Preview |
+| Fork or Dependabot | any state or labels | never eligible for an automatic Preview |
 
 An eligible pull request must also target `main`, come from the same repository,
-and change at least one web-impacting path:
+not be authored by Dependabot, and change at least one web-impacting path:
 
 - `apps/web/**`
 - `packages/**`
@@ -53,7 +53,10 @@ scripts are disabled. The only operational command is
 `bun scripts/vercel-preview-deploy.ts`, and `VERCEL_TOKEN` exists only on that
 step.
 
-Only the trusted GitHub controller is isolated from pull request code. The
+Only the trusted GitHub controller is isolated from pull request code. A
+successful `workflow_run` can receive Actions secrets even when Dependabot's
+source CI run could not, so the controller treats a Dependabot pull request as
+fork-equivalent before any Vercel request. The
 API-created Vercel Preview still builds same-repository pull request code with
 the project Preview environment scope. Git Fork Protection must remain enabled,
 and forks are rejected by the controller, but maintainers must still treat the
@@ -194,4 +197,5 @@ Run this procedure only after the workflow exists on `main`:
 6. Open a ready same-repository pull request with only a docs change, let its
    exact-head CI succeed, and confirm it receives no automatic Preview.
 7. Open a ready fork pull request with a web-impacting change, let its exact-head
-   CI succeed, and confirm it receives no automatic Preview.
+   CI succeed, and confirm it receives no automatic Preview. Repeat with a
+   Dependabot pull request if dependency updates are enabled.

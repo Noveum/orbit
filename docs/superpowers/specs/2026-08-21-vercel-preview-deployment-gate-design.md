@@ -19,7 +19,7 @@ Vercel automatically deploys `main`, but does not automatically deploy feature b
 trusted GitHub Actions workflow creates a Preview deployment only when all of these conditions are
 true for the current pull request head:
 
-- The pull request comes from the Orbit repository rather than a fork.
+- The pull request comes from the Orbit repository rather than a fork or Dependabot.
 - The pull request is ready for review, or carries the managed `preview` label.
 - The pull request does not carry the managed `no-preview` label.
 - The `CI` workflow completed successfully for the exact head SHA.
@@ -197,8 +197,11 @@ mistaken for an unsafe retry.
 
 ## Fork policy
 
-The token-backed workflow never creates a deployment for a fork. This preserves the security
-boundary Vercel documents for Git Fork Protection: unreviewed fork code must not automatically
+The token-backed workflow never creates a deployment for a fork or a Dependabot pull request.
+GitHub treats Dependabot workflows as fork-equivalent and withholds Actions secrets from the source
+run, while a later `workflow_run` can receive those secrets. The controller therefore validates the
+live pull request author and rejects Dependabot before any Vercel request. This preserves the
+security boundary Vercel documents for Git Fork Protection: unreviewed code must not automatically
 receive Preview environment variables or OIDC authority.
 
 Fork previews remain a manual maintainer decision. A maintainer can use Vercel's explicit Git

@@ -30,6 +30,7 @@ const pullRequest = {
   state: 'open' as const,
   draft: false,
   labels: [{ name: 'preview' }],
+  user: { login: 'maintainer' },
   head: {
     sha: SHA,
     ref: 'feature/preview',
@@ -107,7 +108,10 @@ const environment = {
 
 describe('Vercel Preview GitHub schemas', () => {
   test('accept a complete open pull request', () => {
-    expect(githubPreviewPullRequestSchema.parse(pullRequest).head.sha).toBe(SHA);
+    const parsed = githubPreviewPullRequestSchema.parse(pullRequest);
+
+    expect(parsed.head.sha).toBe(SHA);
+    expect(parsed.user.login).toBe('maintainer');
   });
 
   test('accept a Git reference with an immutable object SHA', () => {
@@ -290,6 +294,12 @@ describe('Vercel Preview GitHub schemas', () => {
   test('reject a pull request without draft state', () => {
     const { draft: _draft, ...withoutDraft } = pullRequest;
     expect(() => githubPreviewPullRequestSchema.parse(withoutDraft)).toThrow();
+  });
+
+  test('reject a pull request without an author identity', () => {
+    const { user: _user, ...withoutUser } = pullRequest;
+
+    expect(githubPreviewPullRequestSchema.safeParse(withoutUser).success).toBe(false);
   });
 
   test('reject an unknown Vercel ready state', () => {

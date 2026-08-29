@@ -60,6 +60,7 @@ export const githubPreviewPullRequestSchema = z.object({
   state: z.enum(['open', 'closed']),
   draft: z.boolean(),
   labels: z.array(z.object({ name: boundedString(100) })).max(100),
+  user: z.object({ login: boundedString(100) }).passthrough(),
   head: z.object({
     sha: gitShaSchema,
     ref: boundedString(255),

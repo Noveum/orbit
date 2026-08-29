@@ -27,6 +27,7 @@ const readyPullRequest: GithubPreviewPullRequest = {
   state: 'open',
   draft: false,
   labels: [],
+  user: { login: 'maintainer' },
   head: { sha: SHA, ref: 'feature/preview', repo: repository },
   base: { ref: 'main', repo: repository },
 };
