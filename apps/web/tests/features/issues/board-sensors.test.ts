@@ -16,6 +16,7 @@ function sensorProps<Options extends object>(
   node: HTMLElement,
   options: Options,
   onCancel: () => void,
+  onAbort: () => void = mock(),
 ): SensorProps<Options> {
   return {
     active: 'issue_1',
@@ -28,7 +29,7 @@ function sensorProps<Options extends object>(
     event,
     context: { current: {} },
     options,
-    onAbort: mock(),
+    onAbort,
     onPending: mock(),
     onStart: mock(),
     onCancel,
@@ -111,6 +112,29 @@ describe('board sensor cancellation', () => {
     second.cancel();
     await settleTimers();
     expect(secondCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('tears down a keyboard sensor without publishing cancellation callbacks', async () => {
+    const controller = createBoardSensorController();
+    const node = card();
+    const onCancel = mock();
+    const onAbort = mock();
+    controller.mount();
+    new controller.Keyboard(
+      sensorProps(
+        activationEvent('keyboard', node),
+        node,
+        {},
+        onCancel,
+        onAbort,
+      ) as KeyboardSensorProps,
+    );
+
+    controller.unmount();
+    await settleTimers();
+
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onAbort).not.toHaveBeenCalled();
   });
 
   it('does not emit Escape while cancelling a keyboard sensor', async () => {

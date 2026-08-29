@@ -15,6 +15,11 @@ import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  recordIssueDeletions,
+  recordIssueListRevisions,
+  recordIssueRevisions,
+} from '@/lib/query/issue-cache-generation.ts';
+import {
   ALL_SCOPE,
   ASSIGNED_SCOPE,
   BOARD_ROOT,
@@ -115,24 +120,56 @@ function membershipOf(key: QueryKey): IssueBelongs | null {
   return (issue: Issue) => issue.teamId === scope && belongsInList(search, issue);
 }
 
+function issueActionMayAffectQuery(action: SyncAction, key: QueryKey): boolean {
+  const teamId = new URLSearchParams(searchOf(key)).get('teamId');
+  return teamId === null || action.scopes.includes(scopes.team(teamId));
+}
+
+function restartEmptyOverlappingQuery(
+  client: QueryClient,
+  key: QueryKey,
+  overlapsFetch: boolean,
+): QueryKey[] {
+  if (!overlapsFetch) return [];
+  client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+  return [key];
+}
+
 function patchIssueCaches(client: QueryClient, action: SyncAction): void {
+  const revisedKeys: QueryKey[] = [];
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUES_ROOT] })) {
     const belongs = membershipOf(query.queryKey);
     if (belongs === null) continue;
+    const overlapsFetch =
+      query.state.fetchStatus === 'fetching' && issueActionMayAffectQuery(action, query.queryKey);
+    if (overlapsFetch) {
+      client.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
+    }
     const current = query.state.data as IssuePages | undefined;
-    if (current === undefined) continue;
+    if (current === undefined) {
+      revisedKeys.push(...restartEmptyOverlappingQuery(client, query.queryKey, overlapsFetch));
+      continue;
+    }
     const search = searchOf(query.queryKey);
     const next = applyIssueDeltaToPages(current, action, belongs, search);
     if (next !== current) client.setQueryData(query.queryKey, next);
-    if (awaitsServerRefresh(flattenIssuePages(current), action, belongs, search)) {
-      client.invalidateQueries({ queryKey: query.queryKey }).catch(() => undefined);
+    const refreshFromServer = awaitsServerRefresh(
+      flattenIssuePages(current),
+      action,
+      belongs,
+      search,
+    );
+    if (next !== current || refreshFromServer || overlapsFetch) revisedKeys.push(query.queryKey);
+    if (refreshFromServer || overlapsFetch) {
+      client.invalidateQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
     }
   }
 
+  recordIssueListRevisions(client, revisedKeys);
   patchIssueDetailCaches(client, action);
 }
 
-function forgetDeletedIssue(client: QueryClient, issueId: string): void {
+function patchDeletedIssueDetails(client: QueryClient, issueId: string): void {
   for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
     const current = query.state.data as IssueDetail | undefined;
     if (current === undefined) continue;
@@ -140,9 +177,57 @@ function forgetDeletedIssue(client: QueryClient, issueId: string): void {
       client.resetQueries({ queryKey: query.queryKey, exact: true });
       continue;
     }
-    const trimmed = withoutSubIssue(current, issueId);
+    const parentRemoved = current.issue.parentId === issueId || current.parent?.id === issueId;
+    const orphaned = parentRemoved
+      ? {
+          ...current,
+          issue:
+            current.issue.parentId === issueId
+              ? { ...current.issue, parentId: null }
+              : current.issue,
+          parent: null,
+        }
+      : current;
+    const trimmed = withoutSubIssue(orphaned, issueId);
     if (trimmed !== current) client.setQueryData(query.queryKey, trimmed);
   }
+}
+
+function forgetDeletedIssue(client: QueryClient, issueId: string): void {
+  const fetchingKeys = client
+    .getQueryCache()
+    .findAll({ queryKey: [ISSUE_ROOT] })
+    .flatMap((query) => (query.state.fetchStatus === 'fetching' ? [query.queryKey] : []));
+  const cancellations = fetchingKeys.map((key) =>
+    client.cancelQueries({ queryKey: key, exact: true }),
+  );
+  patchDeletedIssueDetails(client, issueId);
+  Promise.all(cancellations)
+    .then(() => {
+      patchDeletedIssueDetails(client, issueId);
+      for (const key of fetchingKeys) {
+        client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+      }
+    })
+    .catch(() => undefined);
+}
+
+function patchIssueDetailUpdates(client: QueryClient, action: SyncAction): void {
+  for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
+    const current = query.state.data as IssueDetail | undefined;
+    if (current === undefined) continue;
+    const next = applyIssueDetailDelta(current, action);
+    if (next !== current) client.setQueryData(query.queryKey, next);
+  }
+}
+
+function cachedIssueIdentifier(client: QueryClient, issueId: string): string | undefined {
+  for (const [, pages] of client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })) {
+    const issue =
+      pages === undefined ? undefined : flattenIssuePages(pages).find((row) => row.id === issueId);
+    if (issue !== undefined) return issue.identifier;
+  }
+  return undefined;
 }
 
 function patchIssueDetailCaches(client: QueryClient, action: SyncAction): void {
@@ -150,12 +235,33 @@ function patchIssueDetailCaches(client: QueryClient, action: SyncAction): void {
     forgetDeletedIssue(client, action.modelId);
     return;
   }
-  for (const query of client.getQueryCache().findAll({ queryKey: [ISSUE_ROOT] })) {
-    const current = query.state.data as IssueDetail | undefined;
-    if (current === undefined) continue;
-    const next = applyIssueDetailDelta(current, action);
-    if (next !== current) client.setQueryData(query.queryKey, next);
-  }
+  const identifier = cachedIssueIdentifier(client, action.modelId);
+  const fetchingKeys = client
+    .getQueryCache()
+    .findAll({ queryKey: [ISSUE_ROOT] })
+    .flatMap((query) => {
+      const current = query.state.data as IssueDetail | undefined;
+      if (query.state.fetchStatus !== 'fetching') return [];
+      if (current?.issue.id === action.modelId) return [query.queryKey];
+      const queryIdentifier = query.queryKey[1];
+      return current === undefined &&
+        typeof queryIdentifier === 'string' &&
+        (identifier === undefined || queryIdentifier === identifier)
+        ? [query.queryKey]
+        : [];
+    });
+  const cancellations = fetchingKeys.map((key) =>
+    client.cancelQueries({ queryKey: key, exact: true }),
+  );
+  patchIssueDetailUpdates(client, action);
+  Promise.all(cancellations)
+    .then(() => {
+      patchIssueDetailUpdates(client, action);
+      for (const key of fetchingKeys) {
+        client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+      }
+    })
+    .catch(() => undefined);
 }
 
 function patchCommentCaches(
@@ -211,6 +317,8 @@ function routeAction(
 ): void {
   if (action.model === 'issue') {
     patchIssueCaches(client, action);
+    if (action.action === 'delete') recordIssueDeletions(client, [action.modelId]);
+    else recordIssueRevisions(client, [action.modelId]);
     roots.counts = true;
     roots.milestones = true;
     roots.boards = true;

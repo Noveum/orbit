@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'bun:test';
-import { showsEmptyGroups } from '@orbit/shared/filters';
+import { defaultDisplayOptions, showsEmptyGroups } from '@orbit/shared/filters';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import {
+  boardFocusRemountMayQueue,
+  boardFocusRequestMayRun,
+  boardPositionsAreIncomplete,
   canDragBoard,
   columnsReadyFor,
+  completedDragResult,
   dragSourceSnapshotFor,
   dragTargetSnapshotFor,
   dropPositionFor,
+  focusRemainsBoardOwned,
   moveResultWasSuperseded,
   planDrop,
+  registeredBoardPosition,
   sameBoardSource,
   settledDragStatus,
 } from '@/features/issues/board.tsx';
@@ -133,8 +139,8 @@ describe('settling keyboard drag feedback', () => {
   const completed = {
     session: 1,
     identifier: 'ENG-1',
-    source: { column: 'Todo', position: 1, total: 2 },
-    destination: { column: 'Todo', position: 2, total: 2 },
+    source: { groupId: 'todo', column: 'Todo', position: 1, total: 2 },
+    destination: { groupId: 'todo', column: 'Todo', position: 2, total: 2 },
   };
 
   it('does not publish an older result over a newer active drag', () => {
@@ -144,6 +150,7 @@ describe('settling keyboard drag feedback', () => {
         activeSession: 2,
         completed,
         outcome: 'success',
+        settledPosition: { column: 'Todo', position: 2, total: 2 },
       }),
     ).toBeNull();
   });
@@ -155,6 +162,7 @@ describe('settling keyboard drag feedback', () => {
         activeSession: null,
         completed,
         outcome: 'success',
+        settledPosition: { column: 'Todo', position: 2, total: 2 },
       }),
     ).toBeNull();
   });
@@ -166,30 +174,45 @@ describe('settling keyboard drag feedback', () => {
         activeSession: 1,
         completed,
         outcome: 'success',
+        settledPosition: { column: 'Todo', position: 2, total: 2 },
       }),
     ).toBeNull();
   });
 
-  it('does not repeat planned ordinals after the current move succeeds', () => {
+  it('announces the authoritative position after the current move succeeds', () => {
     expect(
       settledDragStatus({
         latestSession: 1,
         activeSession: null,
         completed,
         outcome: 'success',
+        settledPosition: { column: 'Todo', position: 2, total: 2 },
       }),
-    ).toBe('Moved ENG-1 from column Todo to column Todo.');
+    ).toBe('Moved ENG-1 from column Todo, position 1 of 2 to column Todo, position 2 of 2.');
   });
 
-  it('does not claim a planned source ordinal after the current move fails', () => {
+  it('announces the authoritative restored position after the current move fails', () => {
     expect(
       settledDragStatus({
         latestSession: 1,
         activeSession: null,
         completed,
         outcome: 'error',
+        settledPosition: { column: 'Todo', position: 1, total: 2 },
       }),
-    ).toBe('Failed to move ENG-1. Returned to column Todo.');
+    ).toBe('Failed to move ENG-1. Returned to column Todo, position 1 of 2.');
+  });
+
+  it('uses safe column-only feedback when the settled card is filtered out', () => {
+    expect(
+      settledDragStatus({
+        latestSession: 1,
+        activeSession: null,
+        completed,
+        outcome: 'success',
+        settledPosition: null,
+      }),
+    ).toBe('Moved ENG-1 from column Todo, position 1 of 2 to column Todo.');
   });
 
   it('suppresses a planned endpoint when a newer cache head already won', () => {
@@ -203,13 +226,121 @@ describe('settling keyboard drag feedback', () => {
     expect(moveResultWasSuperseded({ kind: 'found', issue: response }, response, 'success')).toBe(
       false,
     );
+    expect(
+      completedDragResult({
+        latestSession: 1,
+        activeSession: null,
+        completed,
+        outcome: 'success',
+        settledPosition: { column: 'Todo', position: 2, total: 2 },
+        superseded: true,
+      }),
+    ).toEqual({
+      status: 'ENG-1 changed again while the move finished. Showing the latest version.',
+      focusGroupId: null,
+    });
   });
 
   it('accepts a successful move that intentionally exits every filtered list', () => {
     const response = issue('held', { stateId: 'done', syncId: 2 });
 
-    expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'success')).toBe(false);
+    expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'success', false)).toBe(false);
+    expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'success', true)).toBe(true);
     expect(moveResultWasSuperseded({ kind: 'missing' }, response, 'error')).toBe(true);
+  });
+
+  it('announces deletion and returns the outcome focus fallback', () => {
+    for (const outcome of ['success', 'error'] as const) {
+      expect(
+        completedDragResult({
+          latestSession: 1,
+          activeSession: null,
+          completed,
+          outcome,
+          settledPosition: null,
+          superseded: true,
+          deleted: true,
+        }),
+      ).toEqual({
+        status: 'ENG-1 was deleted while the move finished.',
+        focusGroupId: 'todo',
+      });
+    }
+  });
+
+  it('never derives a complete total from a windowed destination', () => {
+    const column = document.createElement('ul');
+    const cards = Array.from({ length: 15 }, () => {
+      const card = document.createElement('li');
+      card.tabIndex = 0;
+      column.append(card);
+      return card;
+    });
+    const sentinel = document.createElement('li');
+    sentinel.setAttribute('aria-hidden', 'true');
+    column.append(sentinel);
+    const held = cards[13];
+    if (held === undefined) throw new Error('missing held card');
+
+    expect(
+      registeredBoardPosition(
+        'held',
+        { groupId: 'done', column: 'Done', position: 14, total: 15 },
+        new Map([['held', held]]),
+        new Map([['done', column]]),
+      ),
+    ).toEqual({ column: 'Done', position: 14 });
+  });
+
+  it('does not reclaim focus from another control after settlement', () => {
+    const card = document.createElement('li');
+    const column = document.createElement('ul');
+    const alternateColumn = document.createElement('ul');
+    const otherControl = document.createElement('button');
+
+    expect(
+      focusRemainsBoardOwned(document.body, document.body, card, column, alternateColumn),
+    ).toBe(true);
+    expect(focusRemainsBoardOwned(card, document.body, card, column, alternateColumn)).toBe(true);
+    expect(focusRemainsBoardOwned(column, document.body, card, column, alternateColumn)).toBe(true);
+    expect(
+      focusRemainsBoardOwned(alternateColumn, document.body, card, column, alternateColumn),
+    ).toBe(true);
+    expect(focusRemainsBoardOwned(otherControl, document.body, card, column, alternateColumn)).toBe(
+      false,
+    );
+  });
+
+  it('rechecks focus ownership when queued restoration executes', () => {
+    expect(boardFocusRequestMayRun(1, 1, 1, 1, false, true)).toBe(true);
+    expect(boardFocusRequestMayRun(1, 1, 1, 1, false, false)).toBe(false);
+  });
+
+  it('queues a focused node remount before rechecking dynamic ownership', () => {
+    const previous = document.createElement('li');
+    const replacement = document.createElement('li');
+    const column = document.createElement('ul');
+    const otherControl = document.createElement('button');
+    previous.tabIndex = 0;
+    document.body.append(previous, column, otherControl);
+    previous.focus();
+    const cards = new Map<string, HTMLLIElement>([['held', previous]]);
+    const focusAllowed = () =>
+      focusRemainsBoardOwned(document.activeElement, document.body, cards.get('held'), column);
+    cards.delete('held');
+
+    expect(focusAllowed()).toBe(false);
+    expect(boardFocusRemountMayQueue(previous, document.body, previous, 1, 1, 1, 1, false)).toBe(
+      true,
+    );
+
+    previous.remove();
+    cards.set('held', replacement);
+    expect(focusAllowed()).toBe(true);
+    otherControl.focus();
+    expect(focusAllowed()).toBe(false);
+    column.remove();
+    otherControl.remove();
   });
 });
 
@@ -411,5 +542,23 @@ describe('who may drag a card', () => {
 
   it('never offers drag for a grouping that cannot be regrouped', () => {
     expect(canDragBoard('admin', 'label')).toBe(false);
+  });
+});
+
+describe('when board positions are incomplete', () => {
+  it('treats display-hidden rows like query-filtered rows', () => {
+    expect(
+      boardPositionsAreIncomplete(false, {
+        ...defaultDisplayOptions('board'),
+        showSubIssues: false,
+      }),
+    ).toBe(true);
+    expect(
+      boardPositionsAreIncomplete(false, {
+        ...defaultDisplayOptions('board'),
+        showCompleted: 'week',
+      }),
+    ).toBe(true);
+    expect(boardPositionsAreIncomplete(false, defaultDisplayOptions('board'))).toBe(false);
   });
 });

@@ -1,9 +1,14 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
+import { act, render, waitFor } from '@testing-library/react';
 import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
+import {
+  issueDeletionGeneration,
+  issueListRevisionGeneration,
+  issueRevisionGeneration,
+} from '@/lib/query/issue-cache-generation.ts';
 import {
   BOARD_ROOT,
   BOOTSTRAP_ROOT,
@@ -39,6 +44,20 @@ mock.module('@orbit/realtime-client/react', () => ({
 const { DeltaBridge } = await import('../../../src/lib/realtime/delta-bridge.tsx');
 
 const TEAM = 'team_eng';
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (resolvePromise === undefined) throw new Error('deferred promise did not initialize');
+  return { promise, resolve: resolvePromise };
+}
 
 function issue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -152,9 +171,13 @@ function trackInvalidations(client: QueryClient): unknown[][] {
 describe('DeltaBridge origin suppression', () => {
   it('applies a delta that originated in another tab of the same user', () => {
     const client = mount();
+    const generation = issueRevisionGeneration(client, 'issue_1');
+    const listGeneration = issueListRevisionGeneration(client, queryKeys.issues(TEAM));
     expect(capturedHandler).not.toBeNull();
     act(() => capturedHandler?.([renameAction('other-tab-client-id', 'Renamed elsewhere')]));
     expect(titleIn(client)).toBe('Renamed elsewhere');
+    expect(issueRevisionGeneration(client, 'issue_1')).toBe(generation + 1);
+    expect(issueListRevisionGeneration(client, queryKeys.issues(TEAM))).toBe(listGeneration + 1);
   });
 
   it('skips a delta that this tab originated', () => {
@@ -168,6 +191,85 @@ describe('DeltaBridge origin suppression', () => {
     const { originClientId: _ignored, ...withoutOrigin } = renameAction('unused', 'From the MCP');
     act(() => capturedHandler?.([withoutOrigin]));
     expect(titleIn(client)).toBe('From the MCP');
+  });
+
+  it('marks an overlapping list fetch when a missing row is deleted', async () => {
+    const client = mount();
+    const key = queryKeys.issues(TEAM);
+    const pending = deferred<IssuePages>();
+    const request = client.fetchQuery({ queryKey: key, queryFn: () => pending.promise });
+    const generation = issueListRevisionGeneration(client, key);
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          modelId: 'issue_2',
+          data: { id: 'issue_2', teamId: TEAM },
+        }),
+      ]),
+    );
+
+    expect(issueListRevisionGeneration(client, key)).toBe(generation + 1);
+    const current = client.getQueryData<IssuePages>(key);
+    if (current === undefined) throw new Error('missing issue pages');
+    pending.resolve(current);
+    await request;
+  });
+
+  it('cancels a stale list fetch before applying a realtime deletion', async () => {
+    const client = mount();
+    const key = queryKeys.issues(TEAM);
+    const pending = deferred<IssuePages>();
+    const request = client
+      .fetchQuery({ queryKey: key, queryFn: () => pending.promise })
+      .catch(() => undefined);
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          modelId: 'issue_1',
+          data: { id: 'issue_1', teamId: TEAM },
+        }),
+      ]),
+    );
+    expect(client.getQueryData<IssuePages>(key)?.pages[0]?.issues).toEqual([]);
+
+    pending.resolve({
+      pages: [{ issues: [issue()], nextCursor: null }],
+      pageParams: [null],
+    });
+    await request;
+
+    expect(client.getQueryData<IssuePages>(key)?.pages[0]?.issues).toEqual([]);
+  });
+
+  it('does not mark an overlapping team list for another team action', async () => {
+    const client = mount();
+    const key = queryKeys.issues(TEAM, `teamId=${TEAM}`);
+    const pages: IssuePages = {
+      pages: [{ issues: [issue()], nextCursor: null }],
+      pageParams: [null],
+    };
+    client.setQueryData(key, pages);
+    const pending = deferred<IssuePages>();
+    const request = client.fetchQuery({ queryKey: key, queryFn: () => pending.promise });
+    const generation = issueListRevisionGeneration(client, key);
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          scopes: ['team:team_other'],
+          modelId: 'issue_2',
+          data: { ...issue({ id: 'issue_2', teamId: 'team_other' }), syncId: 11 },
+        }),
+      ]),
+    );
+
+    expect(issueListRevisionGeneration(client, key)).toBe(generation);
+    pending.resolve(pages);
+    await request;
   });
 });
 
@@ -214,6 +316,75 @@ describe('DeltaBridge ordering', () => {
       ]),
     );
     expect(titleIn(client)).toBe('Newest');
+  });
+
+  it('cancels a stale detail fetch before applying a newer realtime update', async () => {
+    const client = mount();
+    const key = queryKeys.issue('ENG-3');
+    client.setQueryData(key, detailFor(issue(), []));
+    const pendingDetail = deferred<ReturnType<typeof detailFor>>();
+    const refetch = client
+      .fetchQuery({ queryKey: key, queryFn: () => pendingDetail.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe('fetching'));
+
+    act(() =>
+      capturedHandler?.([
+        action({ syncId: 40, data: { id: 'issue_1', title: 'Newest detail', syncId: 40 } }),
+      ]),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(key)?.issue).toMatchObject({
+      title: 'Newest detail',
+      syncId: 40,
+    });
+
+    pendingDetail.resolve(detailFor(issue({ title: 'Stale response', syncId: 11 }), []));
+    await refetch;
+    await Promise.resolve();
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(key)?.issue).toMatchObject({
+      title: 'Newest detail',
+      syncId: 40,
+    });
+  });
+
+  it('restarts an initial detail fetch when its issue updates in realtime', async () => {
+    const client = mount();
+    const key = queryKeys.issue('ENG-3');
+    const staleDetail = deferred<ReturnType<typeof detailFor>>();
+    const freshDetail = deferred<ReturnType<typeof detailFor>>();
+    let requests = 0;
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      queryFn: () => {
+        requests += 1;
+        return requests === 1 ? staleDetail.promise : freshDetail.promise;
+      },
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await waitFor(() => expect(requests).toBe(1));
+
+    act(() =>
+      capturedHandler?.([
+        action({ syncId: 40, data: { id: 'issue_1', title: 'Newest detail', syncId: 40 } }),
+      ]),
+    );
+    await waitFor(() => expect(requests).toBe(2));
+    freshDetail.resolve(detailFor(issue({ title: 'Newest detail', syncId: 40 }), []));
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(key)?.issue.syncId).toBe(40),
+    );
+
+    staleDetail.resolve(detailFor(issue({ title: 'Stale response', syncId: 11 }), []));
+    await staleDetail.promise;
+    await Promise.resolve();
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(key)?.issue).toMatchObject({
+      title: 'Newest detail',
+      syncId: 40,
+    });
+    unsubscribe();
   });
 
   it('keeps a delta for another team out of this team list', () => {
@@ -522,6 +693,7 @@ function detailFor(row: Issue, subIssues: readonly Issue[]) {
     activity: [],
     activityCursor: null,
     subIssues,
+    parent: null,
     subscribed: false,
   };
 }
@@ -535,10 +707,12 @@ describe('DeltaBridge deletions', () => {
   it('drops the row from a list somebody else is looking at', () => {
     const client = mount();
     expect(idsIn(client)).toEqual(['issue_1']);
+    const generation = issueDeletionGeneration(client, 'issue_1');
 
     act(() => capturedHandler?.([deleteAction('issue_1', 'ENG-3')]));
 
     expect(idsIn(client)).toEqual([]);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(generation + 1);
   });
 
   it('forgets the open detail for the issue that was deleted', () => {
@@ -562,6 +736,47 @@ describe('DeltaBridge deletions', () => {
     );
     expect(parent?.subIssues).toEqual([]);
     expect(parent?.issue.id).toBe('issue_1');
+  });
+
+  it('orphans a cached child detail when its parent is deleted', () => {
+    const client = mount();
+    const parent = issue();
+    const child = issue({ id: 'issue_child', identifier: 'ENG-4', parentId: parent.id });
+    client.setQueryData(queryKeys.issue(child.identifier), {
+      ...detailFor(child, []),
+      parent,
+    });
+
+    act(() => capturedHandler?.([deleteAction(parent.id, parent.identifier)]));
+
+    const detail = client.getQueryData<ReturnType<typeof detailFor>>(
+      queryKeys.issue(child.identifier),
+    );
+    expect(detail?.issue.parentId).toBeNull();
+    expect(detail?.parent).toBeNull();
+  });
+
+  it('cancels a pending parent detail before a deleted child can reappear', async () => {
+    const client = mount();
+    const parent = issue();
+    const child = issue({ id: 'issue_child', identifier: 'ENG-4', parentId: parent.id });
+    const key = queryKeys.issue(parent.identifier);
+    client.setQueryData(key, detailFor(parent, []));
+    const pendingDetail = deferred<ReturnType<typeof detailFor>>();
+    const refetch = client
+      .fetchQuery({ queryKey: key, queryFn: () => pendingDetail.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe('fetching'));
+
+    act(() => capturedHandler?.([deleteAction(child.id, child.identifier)]));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    pendingDetail.resolve(detailFor(parent, [child]));
+    await refetch;
+    await Promise.resolve();
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(key)?.subIssues).toEqual([]);
   });
 
   it('frees a cached child when the parent delete is followed by its own update', () => {

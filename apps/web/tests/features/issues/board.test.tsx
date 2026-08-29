@@ -1,21 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { defaultDisplayOptions, emptyFilterGroup } from '@orbit/shared/filters';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
+import type { BoardColumnSource } from '@/features/issues/board.tsx';
+import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { boardSearch } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { seedBoardColumns } from '@/lib/query/use-issues.ts';
-import type { BoardColumnSource } from '../../../src/features/issues/board.tsx';
-import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
-import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 
 const push = mock();
 const nativeFetch = globalThis.fetch;
+const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+const nativeRequestAnimationFrame = window.requestAnimationFrame;
+const nativeCancelAnimationFrame = window.cancelAnimationFrame;
 beforeEach(() => {
   Object.defineProperty(globalThis, 'fetch', {
     configurable: true,
@@ -29,6 +40,9 @@ afterEach(() => {
     writable: true,
     value: nativeFetch,
   });
+  HTMLElement.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
+  window.requestAnimationFrame = nativeRequestAnimationFrame;
+  window.cancelAnimationFrame = nativeCancelAnimationFrame;
 });
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push, replace: mock(), refresh: mock() }),
@@ -91,6 +105,38 @@ function issue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
+function deferredResponse(): {
+  readonly promise: Promise<Response>;
+  readonly resolve: (response: Response) => void;
+} {
+  let resolvePromise: ((response: Response) => void) | undefined;
+  const promise = new Promise<Response>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (resolvePromise === undefined) throw new Error('deferred response did not initialize');
+  return { promise, resolve: resolvePromise };
+}
+
+function deferredSignal(): {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+} {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  if (resolvePromise === undefined) throw new Error('deferred signal did not initialize');
+  return { promise, resolve: resolvePromise };
+}
+
+function installBoardTestRects(): void {
+  HTMLElement.prototype.getBoundingClientRect = function getBoardTestRect() {
+    const inDoing = this.closest('[data-testid="board-column-In Progress"]') !== null;
+    const card = this.matches('li');
+    return new DOMRect(inDoing ? 320 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+  };
+}
+
 const workspace: WorkspaceData = {
   ready: true,
   userId: 'user_1',
@@ -111,12 +157,77 @@ const workspace: WorkspaceData = {
   openQuickCreate: () => undefined,
 };
 
-mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspace,
 }));
 
-const { Board } = await import('../../../src/features/issues/board.tsx');
+const { Board, boardVisibilityConfig, useBoardVisibilityHold } = await import(
+  '@/features/issues/board.tsx'
+);
+
+describe('Board visibility during drag settlement', () => {
+  it('does not remount a board for cosmetic card property changes', () => {
+    const config = {
+      filter: emptyFilterGroup(),
+      groupBy: 'state' as const,
+      subGroupBy: 'none' as const,
+      orderBy: 'manual' as const,
+      display: defaultDisplayOptions('board'),
+    };
+    const before = JSON.stringify(boardVisibilityConfig(config));
+    const cosmetic = JSON.stringify(
+      boardVisibilityConfig({
+        ...config,
+        display: { ...config.display, properties: ['priority'] },
+      }),
+    );
+    const membership = JSON.stringify(
+      boardVisibilityConfig({
+        ...config,
+        display: { ...config.display, showSubIssues: !config.display.showSubIssues },
+      }),
+    );
+
+    expect(cosmetic).toBe(before);
+    expect(membership).not.toBe(before);
+  });
+
+  it('keeps an emptied board mounted without retaining unrelated empty states', () => {
+    const view = renderHook(({ contextKey, empty }) => useBoardVisibilityHold(contextKey, empty), {
+      initialProps: { contextKey: 'first', empty: false },
+    });
+    const startActivity = () => {
+      let end: (() => void) | undefined;
+      act(() => {
+        end = view.result.current.start();
+      });
+      if (end === undefined) throw new Error('visibility activity did not start');
+      return end;
+    };
+
+    const firstEnd = startActivity();
+    act(() => view.rerender({ contextKey: 'first', empty: true }));
+    expect(view.result.current.held).toBe(true);
+
+    const secondEnd = startActivity();
+    act(() => firstEnd());
+    expect(view.result.current.held).toBe(true);
+    act(() => secondEnd());
+    expect(view.result.current.held).toBe(true);
+
+    act(() => view.rerender({ contextKey: 'first', empty: false }));
+    expect(view.result.current.held).toBe(false);
+    act(() => view.rerender({ contextKey: 'first', empty: true }));
+    expect(view.result.current.held).toBe(false);
+
+    const staleEnd = startActivity();
+    act(() => view.rerender({ contextKey: 'second', empty: true }));
+    expect(view.result.current.held).toBe(false);
+    act(() => staleEnd());
+    expect(view.result.current.held).toBe(false);
+  });
+});
 
 const second = issue({
   id: 'issue_2',
@@ -158,13 +269,15 @@ function renderBoard(
   draggable = false,
   rows: readonly Issue[] = [issue(), second],
   columnSource?: BoardColumnSource,
+  showEmptyGroups = false,
+  onVisibilityActivityStart?: () => () => void,
 ) {
   const makeGroups = (nextRows: readonly Issue[]) =>
     groupIssues(
       nextRows,
       'state',
       { states: [todo, doing], members: [], projects: [], cycles: [], labels: [] },
-      { showEmptyGroups: false, ordering: 'manual' },
+      { showEmptyGroups, ordering: 'manual' },
     );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -188,6 +301,7 @@ function renderBoard(
               groups={makeGroups(nextRows)}
               draggable={nextDraggable}
               {...(columnSource === undefined ? {} : { columnSource })}
+              {...(onVisibilityActivityStart === undefined ? {} : { onVisibilityActivityStart })}
             />
           </HotkeyProvider>
         </ToastProvider>
@@ -197,6 +311,8 @@ function renderBoard(
   const rendered = render(board(rows, draggable));
   return {
     client,
+    container: rendered.container,
+    unmount: rendered.unmount,
     rerenderBoard(nextRows: readonly Issue[], nextDraggable = draggable) {
       rendered.rerender(board(nextRows, nextDraggable));
     },
@@ -237,6 +353,241 @@ describe('Board card keyboard boundaries', () => {
     expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(1);
   });
 
+  it('keeps the drag overlay clone out of accessibility and tab navigation', async () => {
+    renderBoard(true);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => {
+      expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2);
+    });
+
+    expect(screen.getAllByRole('link', { name: 'Domain auto join' })).toHaveLength(1);
+    fireEvent.keyDown(card, { key: 'Escape', code: 'Escape' });
+  });
+
+  it('ends an active visibility activity when the board unmounts', async () => {
+    const end = mock();
+    const start = mock(() => end);
+    const rendered = renderBoard(true, [issue()], undefined, false, start);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+
+    rendered.unmount();
+
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends an accepted pending visibility activity when the board unmounts', async () => {
+    installBoardTestRects();
+    const pending = deferredResponse();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? pending.promise
+        : Promise.resolve(Response.json({ issues: [], nextCursor: null })),
+    ) as unknown as typeof fetch;
+    const end = mock();
+    const start = mock(() => end);
+    const rendered = renderBoard(true, [issue()], undefined, true, start);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2));
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+      await settleKeyboardSensor();
+    });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('column In Progress'));
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('Dropping ENG-1'));
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(end).not.toHaveBeenCalled();
+
+    rendered.unmount();
+    expect(end).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({
+          issue: issue({ stateId: doing.id, syncId: 2 }),
+          rebalanced: [],
+        }),
+      );
+      await pending.promise;
+      await Promise.resolve();
+    });
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('promotes a keyboard drop fallback to the optimistic card after a delayed handoff', async () => {
+    installBoardTestRects();
+    const cancellation = deferredSignal();
+    const pending = deferredResponse();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? pending.promise
+        : Promise.resolve(Response.json({ issues: [], nextCursor: null })),
+    ) as unknown as typeof fetch;
+    const rendered = renderBoard(true, [issue()], ownedColumnSource, true);
+    const cancelQueries = rendered.client.cancelQueries.bind(rendered.client);
+    rendered.client.cancelQueries = mock(
+      async (...args: Parameters<typeof rendered.client.cancelQueries>) => {
+        await cancellation.promise;
+        await cancelQueries(...args);
+      },
+    );
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+      await settleKeyboardSensor();
+    });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('column In Progress'));
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    const destination = screen.getByRole('list', { name: 'In Progress issues' });
+    await waitFor(() => expect(document.activeElement === destination).toBe(true));
+
+    await act(async () => {
+      cancellation.resolve();
+      await cancellation.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(
+        within(destination).getByRole('listitem', { name: 'ENG-1: Domain auto join' }),
+      ).toBeInTheDocument();
+    });
+    const optimistic = within(destination).getByRole('listitem', {
+      name: 'ENG-1: Domain auto join',
+    });
+    expect(optimistic).toHaveAttribute('aria-disabled', 'true');
+    await waitFor(() => expect(document.activeElement === optimistic).toBe(true));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({
+          issue: issue({ stateId: doing.id, syncId: 2 }),
+          rebalanced: [],
+        }),
+      );
+      await pending.promise;
+      await Promise.resolve();
+    });
+  });
+
+  it('does not promote a keyboard drop fallback after focus leaves the board position', async () => {
+    installBoardTestRects();
+    const cancellation = deferredSignal();
+    const pending = deferredResponse();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? pending.promise
+        : Promise.resolve(Response.json({ issues: [], nextCursor: null })),
+    ) as unknown as typeof fetch;
+    const rendered = renderBoard(true, [issue()], ownedColumnSource, true);
+    const cancelQueries = rendered.client.cancelQueries.bind(rendered.client);
+    rendered.client.cancelQueries = mock(
+      async (...args: Parameters<typeof rendered.client.cancelQueries>) => {
+        await cancellation.promise;
+        await cancelQueries(...args);
+      },
+    );
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+      await settleKeyboardSensor();
+    });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('column In Progress'));
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    const destination = screen.getByRole('list', { name: 'In Progress issues' });
+    await waitFor(() => expect(document.activeElement === destination).toBe(true));
+    const alternate = screen.getByRole('button', { name: 'Create an issue in Todo' });
+    alternate.focus();
+
+    await act(async () => {
+      cancellation.resolve();
+      await cancellation.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        within(destination).getByRole('listitem', { name: 'ENG-1: Domain auto join' }),
+      ).toBeInTheDocument(),
+    );
+    expect(document.activeElement).toBe(alternate);
+
+    await act(async () => {
+      pending.resolve(
+        Response.json({
+          issue: issue({ stateId: doing.id, syncId: 2 }),
+          rebalanced: [],
+        }),
+      );
+      await pending.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(document.activeElement === alternate).toBe(true));
+  });
+
+  it('cancels a queued settlement frame when the board unmounts', async () => {
+    installBoardTestRects();
+    const pending = deferredResponse();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? pending.promise
+        : Promise.resolve(Response.json({ issues: [], nextCursor: null })),
+    ) as unknown as typeof fetch;
+    const end = mock();
+    const rendered = renderBoard(true, [issue()], undefined, true, () => end);
+    const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    card.focus();
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2));
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+      await settleKeyboardSensor();
+    });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('column In Progress'));
+    fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(dndStatus()).toHaveTextContent('Dropping ENG-1'));
+
+    let frame: FrameRequestCallback | undefined;
+    const requestFrame = mock((callback: FrameRequestCallback) => {
+      frame = callback;
+      return 700;
+    });
+    const cancelFrame = mock();
+    window.requestAnimationFrame = requestFrame;
+    window.cancelAnimationFrame = cancelFrame;
+    await act(async () => {
+      pending.resolve(
+        Response.json({
+          issue: issue({ stateId: doing.id, syncId: 2 }),
+          rebalanced: [],
+        }),
+      );
+      await pending.promise;
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(1));
+    expect(end).not.toHaveBeenCalled();
+
+    rendered.unmount();
+    expect(cancelFrame).toHaveBeenCalledWith(700);
+    expect(end).toHaveBeenCalledTimes(1);
+    act(() => frame?.(0));
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
   it('moves card focus with all four arrow keys before a drag starts', () => {
     renderBoard(true, [issue(), second, third]);
     const firstItem = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
@@ -252,6 +603,53 @@ describe('Board card keyboard boundaries', () => {
     expect(document.activeElement).toBe(thirdItem);
     fireEvent.keyDown(thirdItem, { key: 'ArrowLeft', code: 'ArrowLeft' });
     expect(document.activeElement).toBe(firstItem);
+  });
+
+  it('moves from a focused column fallback to a card on the same board', () => {
+    renderBoard(true, [issue(), second, third]);
+    const todoColumn = screen.getByTestId('board-column-Todo').querySelector('ul');
+    const doingColumn = screen.getByTestId('board-column-In Progress').querySelector('ul');
+    if (todoColumn === null || doingColumn === null) throw new Error('missing board column list');
+    const firstItem = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    const thirdItem = screen.getByRole('listitem', { name: 'ENG-3: Third task' });
+
+    todoColumn.focus();
+    fireEvent.keyDown(todoColumn, { key: 'ArrowDown', code: 'ArrowDown' });
+    expect(document.activeElement === firstItem).toBe(true);
+
+    doingColumn.focus();
+    fireEvent.keyDown(doingColumn, { key: 'ArrowLeft', code: 'ArrowLeft' });
+    expect(document.activeElement === firstItem).toBe(true);
+    expect(document.activeElement === thirdItem).toBe(false);
+  });
+
+  it('moves from a card into an empty adjacent column fallback', () => {
+    renderBoard(true, [issue()], undefined, true);
+    const firstItem = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+    const doingColumn = screen.getByTestId('board-column-In Progress').querySelector('ul');
+    if (doingColumn === null) throw new Error('missing empty board column list');
+
+    firstItem.focus();
+    fireEvent.keyDown(firstItem, { key: 'ArrowRight', code: 'ArrowRight' });
+    expect(document.activeElement).toBe(doingColumn);
+
+    fireEvent.keyDown(doingColumn, { key: 'ArrowLeft', code: 'ArrowLeft' });
+    expect(document.activeElement).toBe(firstItem);
+  });
+
+  it('does not move focus into another board', () => {
+    const firstBoard = renderBoard(true, [issue(), second, third]);
+    renderBoard(true, [
+      issue({ id: 'issue_4', number: 4, identifier: 'ENG-4', title: 'Another board task' }),
+    ]);
+    const firstDoingCard = within(firstBoard.container).getByRole('listitem', {
+      name: 'ENG-3: Third task',
+    });
+
+    firstDoingCard.focus();
+    fireEvent.keyDown(firstDoingCard, { key: 'ArrowRight', code: 'ArrowRight' });
+
+    expect(document.activeElement === firstDoingCard).toBe(true);
   });
 
   it('clears an active keyboard session when dragging becomes unavailable', async () => {
@@ -525,7 +923,7 @@ describe('Board card keyboard boundaries', () => {
     });
 
     await waitFor(() => {
-      expect(dndStatus()).toHaveTextContent(
+      expect(dndStatus().textContent).toBe(
         'ENG-1 moved in the background to column In Progress, position 1. Drag cancelled.',
       );
     });
@@ -562,10 +960,35 @@ describe('Board card keyboard boundaries', () => {
     });
 
     await waitFor(() => {
-      expect(dndStatus()).toHaveTextContent(
+      expect(dndStatus().textContent).toBe(
         'ENG-1 moved in the background to column In Progress, position 1. Drag cancelled.',
       );
     });
+    const movedCard = within(screen.getByTestId('board-column-In Progress')).getByRole('listitem', {
+      name: 'ENG-1: Regrouped domain auto join',
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(movedCard);
+    });
+
+    await act(async () => {
+      seedBoardColumns(
+        rendered.client,
+        ownedColumnSource,
+        {
+          groups: [{ id: todo.id, total: 1, issues: [second], nextCursor: null }],
+          truncated: false,
+        },
+        Date.now() + 20_000,
+      );
+      await Promise.resolve();
+    });
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+    expect(document.activeElement).toBe(movedCard);
   });
 
   it('uses a fresh parent regroup to cancel while the owned column mirror catches up', async () => {

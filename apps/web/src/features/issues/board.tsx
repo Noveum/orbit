@@ -25,16 +25,19 @@ import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
-import { useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { UNGROUPED_ID } from '@/features/filters/grouping.ts';
+import type { ViewConfig } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
+import { issueDeletionGeneration } from '@/lib/query/issue-cache-generation.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import type {
   AuthoritativeCachedIssue,
+  IssueMoveSettlement,
   IssueQuery,
   IssueRegrouping,
   MoveInput,
@@ -72,6 +75,8 @@ export interface BoardProps {
   readonly onLoadMore?: (() => void) | undefined;
   readonly columnSource?: BoardColumnSource | undefined;
   readonly groupBy?: GroupByField;
+  readonly filtered?: boolean;
+  readonly onVisibilityActivityStart?: () => () => void;
 }
 
 const EMPTY_QUERY: IssueQuery = { filter: emptyFilterGroup(), orderBy: 'manual' };
@@ -109,8 +114,8 @@ export interface BoardTarget extends BoardDestination {
 export interface CompletedDrag {
   readonly session: number;
   readonly identifier: string;
-  readonly source: BoardPosition;
-  readonly destination: BoardDestination;
+  readonly source: BoardSource;
+  readonly destination: BoardTarget;
 }
 
 export interface SettledDragStatusInput {
@@ -118,26 +123,105 @@ export interface SettledDragStatusInput {
   readonly activeSession: number | null;
   readonly completed: CompletedDrag;
   readonly outcome: 'success' | 'error';
+  readonly settledPosition: BoardPosition | null;
+}
+
+export interface CompletedDragResult extends SettledDragStatusInput {
+  readonly superseded: boolean;
+  readonly deleted?: boolean;
+}
+
+export interface CompletedDragResultOutput {
+  readonly status: string | null;
+  readonly focusGroupId: string | null;
+}
+
+interface CurrentCompletedDragResultInput {
+  readonly queryClient: QueryClient;
+  readonly dragId: string;
+  readonly deletionGeneration: number;
+  readonly settlement: IssueMoveSettlement | undefined;
+  readonly outcome: SettledDragStatusInput['outcome'];
+  readonly settled: Issue | undefined;
+  readonly completed: CompletedDrag;
+  readonly filtered: boolean;
+  readonly latestSession: number;
+  readonly activeSession: number | null;
+  readonly cardNodes: ReadonlyMap<string, HTMLLIElement>;
+  readonly columnNodes: ReadonlyMap<string, HTMLUListElement>;
 }
 
 export function settledDragStatus(input: SettledDragStatusInput): string | null {
-  const { latestSession, activeSession, completed, outcome } = input;
+  const { latestSession, activeSession, completed, outcome, settledPosition } = input;
   if (completed.session !== latestSession || activeSession !== null) return null;
-  const source = `column ${completed.source.column}`;
   if (outcome === 'error') {
-    return `Failed to move ${completed.identifier}. Returned to ${source}.`;
+    const returned = settledPosition ?? { column: completed.source.column };
+    return `Failed to move ${completed.identifier}. Returned to ${boardPositionLabel(returned)}.`;
   }
-  const destination = `column ${completed.destination.column}`;
-  return `Moved ${completed.identifier} from ${source} to ${destination}.`;
+  const destination = settledPosition ?? { column: completed.destination.column };
+  return `Moved ${completed.identifier} from ${boardPositionLabel(completed.source)} to ${boardPositionLabel(destination)}.`;
+}
+
+export function completedDragResult(input: CompletedDragResult): CompletedDragResultOutput {
+  const status = settledDragStatus(input);
+  if (status === null) return { status: null, focusGroupId: null };
+  if (input.deleted === true) {
+    return {
+      status: `${input.completed.identifier} was deleted while the move finished.`,
+      focusGroupId:
+        input.outcome === 'success'
+          ? input.completed.destination.groupId
+          : input.completed.source.groupId,
+    };
+  }
+  if (input.superseded) {
+    return {
+      status: `${input.completed.identifier} changed again while the move finished. Showing the latest version.`,
+      focusGroupId: null,
+    };
+  }
+  return {
+    status,
+    focusGroupId:
+      input.outcome === 'success'
+        ? input.completed.destination.groupId
+        : input.completed.source.groupId,
+  };
+}
+
+function currentCompletedDragResult(
+  input: CurrentCompletedDragResultInput,
+): CompletedDragResultOutput {
+  const endpoint =
+    input.outcome === 'success' ? input.completed.destination : input.completed.source;
+  const deleted =
+    input.settlement?.issueWasDeletedDuringSettlement === true ||
+    issueDeletionGeneration(input.queryClient, input.dragId) !== input.deletionGeneration;
+  const settledPosition = input.filtered
+    ? null
+    : registeredBoardPosition(input.dragId, endpoint, input.cardNodes, input.columnNodes);
+  const cached = authoritativeCachedIssue(input.queryClient, input.dragId);
+  return completedDragResult({
+    latestSession: input.latestSession,
+    activeSession: input.activeSession,
+    completed: input.completed,
+    outcome: input.outcome,
+    settledPosition,
+    superseded: moveResultWasSuperseded(cached, input.settled, input.outcome, deleted),
+    deleted,
+  });
 }
 
 export function moveResultWasSuperseded(
   cached: AuthoritativeCachedIssue,
   settled: Issue | undefined,
   outcome: SettledDragStatusInput['outcome'],
+  issueWasDeletedDuringSettlement = false,
 ): boolean {
   if (settled === undefined) return true;
-  if (cached.kind === 'missing') return outcome !== 'success';
+  if (cached.kind === 'missing') {
+    return outcome !== 'success' || issueWasDeletedDuringSettlement;
+  }
   if (cached.kind !== 'found') return true;
   const current = cached.issue;
   return (
@@ -148,6 +232,21 @@ export function moveResultWasSuperseded(
     current.assigneeId !== settled.assigneeId ||
     current.priority !== settled.priority ||
     current.sortOrder !== settled.sortOrder
+  );
+}
+
+export function focusRemainsBoardOwned(
+  focused: Element | null,
+  body: HTMLElement,
+  ownedCard: Element | undefined,
+  ownedColumn: Element | undefined,
+  alternateOwnedColumn?: Element | undefined,
+): boolean {
+  return (
+    focused === body ||
+    focused === ownedCard ||
+    focused === ownedColumn ||
+    focused === alternateOwnedColumn
   );
 }
 
@@ -182,6 +281,83 @@ export function canRegroup(groupBy: GroupByField): boolean {
 
 export function canDragBoard(role: OrgRole, groupBy: GroupByField): boolean {
   return canRegroup(groupBy) && permissionsFor(role).includes('issue:update');
+}
+
+export function boardPositionsAreIncomplete(
+  filtered: boolean,
+  display: DisplayOptions | undefined,
+): boolean {
+  return filtered || (display !== undefined && displayFiltersHideRows(display));
+}
+
+export function boardVisibilityConfig(config: ViewConfig) {
+  return {
+    filter: config.filter,
+    groupBy: config.groupBy,
+    subGroupBy: config.subGroupBy,
+    orderBy: config.orderBy,
+    display: {
+      showSubIssues: config.display.showSubIssues,
+      showEmptyGroups: config.display.showEmptyGroups,
+      showCompleted: config.display.showCompleted,
+    },
+  };
+}
+
+interface BoardVisibilityActivity {
+  readonly generation: number;
+  readonly count: number;
+  readonly latched: boolean;
+}
+
+export function useBoardVisibilityHold(contextKey: string, empty: boolean) {
+  const context = useRef({ key: contextKey, generation: 0 });
+  if (context.current.key !== contextKey) {
+    context.current = { key: contextKey, generation: context.current.generation + 1 };
+  }
+  const generation = context.current.generation;
+  const latestEmpty = useRef(empty);
+  latestEmpty.current = empty;
+  const [activity, setActivity] = useState<BoardVisibilityActivity>({
+    generation,
+    count: 0,
+    latched: false,
+  });
+  useLayoutEffect(() => {
+    if (empty) return;
+    setActivity((current) =>
+      current.generation === generation && current.latched
+        ? { ...current, latched: false }
+        : current,
+    );
+  }, [empty, generation]);
+  const start = useCallback(() => {
+    let ended = false;
+    setActivity((current) => ({
+      generation,
+      count: current.generation === generation ? current.count + 1 : 1,
+      latched: current.generation === generation && current.latched,
+    }));
+    return () => {
+      if (ended) return;
+      ended = true;
+      setActivity((current) => {
+        if (current.generation !== generation || current.count === 0) return current;
+        const count = current.count - 1;
+        return {
+          generation,
+          count,
+          latched: current.latched || (count === 0 && latestEmpty.current),
+        };
+      });
+    };
+  }, [generation]);
+  const current = activity.generation === generation ? activity : undefined;
+  return {
+    key: `${generation}:${contextKey}`,
+    held: current !== undefined && (current.count > 0 || current.latched),
+    start,
+  };
 }
 
 export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegrouping | null {
@@ -356,6 +532,28 @@ function boardPositionLabel(position: BoardDestination): string {
   return `column ${position.column}, position ${position.position}${total}`;
 }
 
+export function registeredBoardPosition(
+  issueId: string,
+  target: BoardSource | BoardTarget,
+  cardNodes: ReadonlyMap<string, HTMLLIElement>,
+  columnNodes: ReadonlyMap<string, HTMLUListElement>,
+): BoardPosition | null {
+  const card = cardNodes.get(issueId);
+  const column = columnNodes.get(target.groupId);
+  if (card === undefined || column === undefined || !column.contains(card)) return null;
+  const cards = Array.from(column.querySelectorAll('li[tabindex]'));
+  const index = cards.indexOf(card);
+  if (index === -1) return null;
+  const incomplete = Array.from(column.children).some((child) =>
+    child.matches('li[aria-hidden="true"]'),
+  );
+  return {
+    column: target.column,
+    position: index + 1,
+    ...(incomplete ? {} : { total: cards.length }),
+  };
+}
+
 function getAdjacentColumnCard(
   columns: Element[],
   targetColIndex: number,
@@ -364,23 +562,28 @@ function getAdjacentColumnCard(
   const col = columns[targetColIndex];
   if (col === undefined) return null;
   const cards = Array.from(col.querySelectorAll('li[tabindex]'));
-  if (cards.length === 0) return null;
+  if (cards.length === 0) return col.querySelector('ul');
   const safeIndex = Math.max(0, Math.min(currentCardIndex, cards.length - 1));
   return (cards[safeIndex] ?? null) as HTMLElement | null;
 }
 
-function getDOMIndices(currentFocus: Element): {
+function getDOMIndices(
+  currentFocus: Element,
+  board: HTMLElement,
+): {
   cols: Element[];
   colIndex: number;
   cardsInCol: Element[];
   cardIndex: number;
 } | null {
+  if (!board.contains(currentFocus)) return null;
   const currentCol = currentFocus.closest('[data-testid^="board-column-"]');
-  if (currentCol === null) return null;
-  const cols = Array.from(document.querySelectorAll('[data-testid^="board-column-"]'));
+  if (currentCol === null || !board.contains(currentCol)) return null;
+  const cols = Array.from(board.querySelectorAll('[data-testid^="board-column-"]'));
   const cardsInCol = Array.from(currentCol.querySelectorAll('li[tabindex]'));
   const cardIndex = cardsInCol.indexOf(currentFocus);
-  if (cardIndex === -1) return null;
+  const columnNode = currentCol.querySelector('ul');
+  if (cardIndex === -1 && currentFocus !== columnNode) return null;
   return {
     cols,
     colIndex: cols.indexOf(currentCol),
@@ -397,7 +600,10 @@ function getNextCardTarget(
   cardIndex: number,
 ): HTMLElement | null {
   if (key === 'ArrowDown') return (cardsInCol[cardIndex + 1] ?? null) as HTMLElement | null;
-  if (key === 'ArrowUp') return (cardsInCol[cardIndex - 1] ?? null) as HTMLElement | null;
+  if (key === 'ArrowUp') {
+    const targetIndex = cardIndex === -1 ? cardsInCol.length - 1 : cardIndex - 1;
+    return (cardsInCol[targetIndex] ?? null) as HTMLElement | null;
+  }
   if (key === 'ArrowRight') return getAdjacentColumnCard(cols, colIndex + 1, cardIndex);
   if (key === 'ArrowLeft') return getAdjacentColumnCard(cols, colIndex - 1, cardIndex);
   return null;
@@ -575,7 +781,7 @@ function SortableCard({
   properties: readonly DisplayProperty[];
   disabled: boolean;
   onOpen: (id: string) => void;
-  onNode: (id: string, node: HTMLLIElement | null) => void;
+  onNode: (id: string, node: HTMLLIElement | null, previousNode: HTMLLIElement | null) => void;
 }) {
   const {
     attributes,
@@ -591,11 +797,14 @@ function SortableCard({
     disabled,
     attributes: { role: 'listitem' },
   });
+  const registeredNode = useRef<HTMLLIElement | null>(null);
   const setCardNode = useCallback(
     (node: HTMLLIElement | null) => {
+      const previousNode = registeredNode.current;
+      registeredNode.current = node;
       setNodeRef(node);
       setActivatorNodeRef(node);
-      onNode(issue.id, node);
+      onNode(issue.id, node, previousNode);
     },
     [issue.id, onNode, setNodeRef, setActivatorNodeRef],
   );
@@ -627,7 +836,28 @@ interface ActiveDragSession {
   readonly issueId: string;
   readonly source: BoardSource;
   readonly keyboard: boolean;
+  readonly departedSource: boolean;
+  readonly endVisibilityActivity: () => void;
   readonly target?: DragTargetSnapshot;
+}
+
+interface PendingDragSettlement {
+  readonly endVisibilityActivity: () => void;
+  readonly frameId?: number;
+}
+
+interface BoardLifecycle {
+  readonly generation: number;
+  readonly mounted: boolean;
+}
+
+function dragSourceReturnStatus(
+  session: ActiveDragSession,
+  title: string,
+  current: string,
+): string {
+  if (!session.departedSource && session.target === undefined) return current;
+  return `Moved ${title} to ${boardPositionLabel(session.source)}.`;
 }
 
 interface DragDelta {
@@ -645,7 +875,34 @@ interface BoardFocusOwnership {
   readonly request: number;
   readonly target: BoardFocusTarget;
   readonly expectedSession?: number;
+  readonly focusAllowed?: () => boolean;
   readonly node: HTMLElement;
+}
+
+function boardFocusArrivalMayQueue(
+  focused: Element | null,
+  body: HTMLElement,
+  arrivingCard: Element,
+  fallbackColumn: Element | undefined,
+  ownership: BoardFocusOwnership,
+  latestRequest: number,
+  latestSession: number,
+  active: boolean,
+): boolean {
+  return (
+    fallbackColumn !== undefined &&
+    ownership.node === fallbackColumn &&
+    fallbackColumn.contains(arrivingCard) &&
+    (focused === ownership.node || focused === body) &&
+    boardFocusRequestMayRun(
+      ownership.request,
+      latestRequest,
+      ownership.expectedSession,
+      latestSession,
+      active,
+      ownership.focusAllowed?.() !== false,
+    )
+  );
 }
 
 function registeredBoardFocusNode(
@@ -667,7 +924,26 @@ function registeredBoardFocusNode(
   return card ?? fallback;
 }
 
-function boardFocusRequestIsCurrent(
+export function boardFocusRequestMayRun(
+  request: number,
+  latestRequest: number,
+  expectedSession: number | undefined,
+  latestSession: number,
+  active: boolean,
+  focusAllowed = true,
+): boolean {
+  return (
+    request === latestRequest &&
+    (expectedSession === undefined || expectedSession === latestSession) &&
+    !active &&
+    focusAllowed
+  );
+}
+
+export function boardFocusRemountMayQueue(
+  focused: Element | null,
+  body: HTMLElement,
+  previous: Element,
   request: number,
   latestRequest: number,
   expectedSession: number | undefined,
@@ -675,9 +951,8 @@ function boardFocusRequestIsCurrent(
   active: boolean,
 ): boolean {
   return (
-    request === latestRequest &&
-    (expectedSession === undefined || expectedSession === latestSession) &&
-    !active
+    (focused === previous || focused === body) &&
+    boardFocusRequestMayRun(request, latestRequest, expectedSession, latestSession, active)
   );
 }
 
@@ -739,10 +1014,13 @@ export function Board({
   columnSource,
   groupBy = 'state',
   resolveState,
+  filtered = false,
+  onVisibilityActivityStart,
 }: BoardProps) {
   const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
   const queryClient = useQueryClient();
   const move = useMoveIssue();
+  const positionsIncomplete = boardPositionsAreIncomplete(filtered, columnSource?.display);
   const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
   const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -756,17 +1034,57 @@ export function Board({
   const latestFocusRequest = useRef(0);
   const boardFocusOwnership = useRef<BoardFocusOwnership | undefined>(undefined);
   const activeSession = useRef<ActiveDragSession | undefined>(undefined);
+  const pendingSettlements = useRef<Map<number, PendingDragSettlement>>(new Map());
+  const lifecycle = useRef<BoardLifecycle>({ generation: 0, mounted: false });
   const columnRows = useRef<Map<string, readonly Issue[]>>(new Map());
   const dragDelta = useRef<DragDelta>({ x: 0, y: 0 });
   const suppressedOverDelta = useRef<DragDelta | undefined>(undefined);
   const pendingIssueIds = useRef<Set<string>>(new Set());
   const cardNodes = useRef<Map<string, HTMLLIElement>>(new Map());
   const columnNodes = useRef<Map<string, HTMLUListElement>>(new Map());
+  const boardNode = useRef<HTMLDivElement | null>(null);
   const dragged = useRef<Issue | undefined>(undefined);
   const sensorController = useMemo(() => createBoardSensorController(), []);
+  const groupShells = useRef<readonly IssueGroup[]>([]);
+  if (groups.length > 0) {
+    groupShells.current = groups.map((group) => ({
+      ...group,
+      issues: [],
+      subGroups: [],
+      total: 0,
+    }));
+  }
+  const renderedGroups = groups.length > 0 ? groups : groupShells.current;
+
+  const releasePendingSettlement = useCallback((session: number, cancelFrame: boolean) => {
+    const pending = pendingSettlements.current.get(session);
+    if (pending === undefined) return;
+    pendingSettlements.current.delete(session);
+    if (cancelFrame && pending.frameId !== undefined) {
+      window.cancelAnimationFrame(pending.frameId);
+    }
+    pending.endVisibilityActivity();
+  }, []);
+
+  useLayoutEffect(() => {
+    const generation = lifecycle.current.generation + 1;
+    lifecycle.current = { generation, mounted: true };
+    return () => {
+      lifecycle.current = { generation: generation + 1, mounted: false };
+      latestSession.current += 1;
+      latestFocusRequest.current += 1;
+      boardFocusOwnership.current = undefined;
+      activeSession.current?.endVisibilityActivity();
+      activeSession.current = undefined;
+      for (const session of [...pendingSettlements.current.keys()]) {
+        releasePendingSettlement(session, true);
+      }
+    };
+  }, [releasePendingSettlement]);
 
   useLayoutEffect(() => {
     if (!draggable) {
+      activeSession.current?.endVisibilityActivity();
       activeSession.current = undefined;
       dragged.current = undefined;
       suppressedOverDelta.current = undefined;
@@ -778,7 +1096,10 @@ export function Board({
       return;
     }
     sensorController.mount();
-    return () => sensorController.unmount();
+    return () => {
+      activeSession.current?.endVisibilityActivity();
+      sensorController.unmount();
+    };
   }, [draggable, sensorController]);
 
   const setIssuePending = useCallback((issueId: string, pending: boolean) => {
@@ -787,54 +1108,67 @@ export function Board({
     setPendingIds(new Set(pendingIssueIds.current));
   }, []);
 
-  const scheduleBoardFocus = useCallback((target: BoardFocusTarget, expectedSession?: number) => {
-    const request = latestFocusRequest.current + 1;
-    latestFocusRequest.current = request;
-    boardFocusOwnership.current = undefined;
-    window.requestAnimationFrame(() => {
-      if (
-        !boardFocusRequestIsCurrent(
+  const scheduleBoardFocus = useCallback(
+    (target: BoardFocusTarget, expectedSession?: number, focusAllowed?: () => boolean) => {
+      const request = latestFocusRequest.current + 1;
+      const lifecycleGeneration = lifecycle.current.generation;
+      latestFocusRequest.current = request;
+      boardFocusOwnership.current = undefined;
+      window.requestAnimationFrame(() => {
+        if (
+          !lifecycle.current.mounted ||
+          lifecycle.current.generation !== lifecycleGeneration ||
+          !boardFocusRequestMayRun(
+            request,
+            latestFocusRequest.current,
+            expectedSession,
+            latestSession.current,
+            activeSession.current !== undefined,
+            focusAllowed?.() !== false,
+          )
+        ) {
+          return;
+        }
+        const node = registeredBoardFocusNode(target, cardNodes.current, columnNodes.current);
+        if (node === undefined || !node.isConnected) return;
+        const ownership: BoardFocusOwnership = {
           request,
-          latestFocusRequest.current,
-          expectedSession,
-          latestSession.current,
-          activeSession.current !== undefined,
-        )
-      ) {
-        return;
-      }
-      const node = registeredBoardFocusNode(target, cardNodes.current, columnNodes.current);
-      if (node === undefined || !node.isConnected) return;
-      const ownership: BoardFocusOwnership = {
-        request,
-        target,
-        node,
-        ...(expectedSession === undefined ? {} : { expectedSession }),
-      };
-      boardFocusOwnership.current = ownership;
-      node.addEventListener(
-        'blur',
-        (event) => {
-          if (event.relatedTarget !== null) {
-            if (boardFocusOwnership.current === ownership) {
-              boardFocusOwnership.current = undefined;
+          target,
+          node,
+          ...(expectedSession === undefined ? {} : { expectedSession }),
+          ...(focusAllowed === undefined ? {} : { focusAllowed }),
+        };
+        boardFocusOwnership.current = ownership;
+        node.addEventListener(
+          'blur',
+          (event) => {
+            if (event.relatedTarget !== null) {
+              if (boardFocusOwnership.current === ownership) {
+                boardFocusOwnership.current = undefined;
+              }
+              return;
             }
-            return;
-          }
-          window.requestAnimationFrame(() => {
-            if (node.isConnected && boardFocusOwnership.current === ownership) {
-              boardFocusOwnership.current = undefined;
-            }
-          });
-        },
-        { once: true },
-      );
-      node.focus();
-      if (document.activeElement !== node && boardFocusOwnership.current === ownership) {
-        boardFocusOwnership.current = undefined;
-      }
-    });
-  }, []);
+            window.requestAnimationFrame(() => {
+              if (
+                lifecycle.current.mounted &&
+                lifecycle.current.generation === lifecycleGeneration &&
+                node.isConnected &&
+                boardFocusOwnership.current === ownership
+              ) {
+                boardFocusOwnership.current = undefined;
+              }
+            });
+          },
+          { once: true },
+        );
+        node.focus();
+        if (document.activeElement !== node && boardFocusOwnership.current === ownership) {
+          boardFocusOwnership.current = undefined;
+        }
+      });
+    },
+    [],
+  );
 
   const registerColumnNode = useCallback(
     (groupId: string, node: HTMLUListElement | null) => {
@@ -850,8 +1184,10 @@ export function Board({
         ownership === undefined ||
         ownership.node !== previous ||
         ownership.target.fallbackGroupId !== groupId ||
-        (document.activeElement !== previous && document.activeElement !== document.body) ||
-        !boardFocusRequestIsCurrent(
+        !boardFocusRemountMayQueue(
+          document.activeElement,
+          document.body,
+          previous,
           ownership.request,
           latestFocusRequest.current,
           ownership.expectedSession,
@@ -864,18 +1200,39 @@ export function Board({
       scheduleBoardFocus(
         { ...ownership.target, requireIssueInFallback: true },
         ownership.expectedSession,
+        ownership.focusAllowed,
       );
     },
     [scheduleBoardFocus],
   );
 
   const registerCardNode = useCallback(
-    (issueId: string, node: HTMLLIElement | null) => {
+    (issueId: string, node: HTMLLIElement | null, previousNode: HTMLLIElement | null) => {
       if (node !== null) {
         cardNodes.current.set(issueId, node);
+        const ownership = boardFocusOwnership.current;
+        if (
+          ownership !== undefined &&
+          ownership.target.issueId === issueId &&
+          boardFocusArrivalMayQueue(
+            document.activeElement,
+            document.body,
+            node,
+            ownership.target.fallbackGroupId === undefined
+              ? undefined
+              : columnNodes.current.get(ownership.target.fallbackGroupId),
+            ownership,
+            latestFocusRequest.current,
+            latestSession.current,
+            activeSession.current !== undefined,
+          )
+        ) {
+          scheduleBoardFocus(ownership.target, ownership.expectedSession, ownership.focusAllowed);
+        }
         return;
       }
-      const previous = cardNodes.current.get(issueId);
+      if (previousNode === null || cardNodes.current.get(issueId) !== previousNode) return;
+      const previous = previousNode;
       cardNodes.current.delete(issueId);
       const ownership = boardFocusOwnership.current;
       if (
@@ -884,8 +1241,10 @@ export function Board({
         ownership.node !== previous ||
         ownership.target.issueId !== issueId ||
         ownership.target.fallbackGroupId === undefined ||
-        (document.activeElement !== previous && document.activeElement !== document.body) ||
-        !boardFocusRequestIsCurrent(
+        !boardFocusRemountMayQueue(
+          document.activeElement,
+          document.body,
+          previous,
           ownership.request,
           latestFocusRequest.current,
           ownership.expectedSession,
@@ -902,6 +1261,7 @@ export function Board({
           requireIssueInFallback: true,
         },
         ownership.expectedSession,
+        ownership.focusAllowed,
       );
     },
     [scheduleBoardFocus],
@@ -919,6 +1279,7 @@ export function Board({
   const cancelActiveDrag = useCallback(
     (status: string, focusTarget?: BoardFocusTarget) => {
       const session = activeSession.current;
+      session?.endVisibilityActivity();
       activeSession.current = undefined;
       dragged.current = undefined;
       suppressedOverDelta.current = undefined;
@@ -928,9 +1289,12 @@ export function Board({
       setActiveId(null);
       const keyboardTarget =
         session?.keyboard === true
-          ? { issueId: session.issueId, fallbackGroupId: session.source.groupId }
+          ? (focusTarget ?? {
+              issueId: session.issueId,
+              fallbackGroupId: session.source.groupId,
+            })
           : undefined;
-      resetDndSensor(status, focusTarget ?? keyboardTarget);
+      resetDndSensor(status, keyboardTarget);
     },
     [resetDndSensor],
   );
@@ -1054,6 +1418,8 @@ export function Board({
       issueId: session.issueId,
       source: sourceState.source,
       keyboard: session.keyboard,
+      departedSource: session.departedSource,
+      endVisibilityActivity: session.endVisibilityActivity,
       ...(targetState?.kind === 'found' ? { target: targetState.target } : {}),
     };
   }, [
@@ -1085,6 +1451,8 @@ export function Board({
             issueId: issue.id,
             source,
             keyboard: event.activatorEvent.type === 'keydown',
+            departedSource: false,
+            endVisibilityActivity: onVisibilityActivityStart?.() ?? (() => undefined),
           };
     dragged.current = issue;
     setActiveId(id);
@@ -1114,6 +1482,8 @@ export function Board({
         issueId: session.issueId,
         source: session.source,
         keyboard: session.keyboard,
+        departedSource: true,
+        endVisibilityActivity: session.endVisibilityActivity,
       };
       setDragStatus(`Moving ${title} outside of the board.`);
       return;
@@ -1125,7 +1495,10 @@ export function Board({
         issueId: session.issueId,
         source: session.source,
         keyboard: session.keyboard,
+        departedSource: session.departedSource,
+        endVisibilityActivity: session.endVisibilityActivity,
       };
+      setDragStatus((current) => dragSourceReturnStatus(session, title, current));
       return;
     }
     const heldIssue = currentIssues.find((issue) => issue.id === session.issueId);
@@ -1146,11 +1519,13 @@ export function Board({
         issueId: session.issueId,
         source: session.source,
         keyboard: session.keyboard,
+        departedSource: true,
+        endVisibilityActivity: session.endVisibilityActivity,
       };
       setDragStatus(`Cannot move ${title} here.`);
       return;
     }
-    activeSession.current = { ...session, target: targetState.target };
+    activeSession.current = { ...session, departedSource: true, target: targetState.target };
     setDragStatus(`Moved ${title} to ${boardPositionLabel(targetState.target.destination)}.`);
   };
 
@@ -1162,6 +1537,7 @@ export function Board({
     const title = heldIssue?.identifier ?? 'item';
 
     if (session === undefined || session.session !== latestSession.current) {
+      session?.endVisibilityActivity();
       activeSession.current = undefined;
       suppressedOverDelta.current = undefined;
       setActiveId(null);
@@ -1198,6 +1574,7 @@ export function Board({
         scheduleBoardFocus({ issueId: session.issueId, fallbackGroupId: session.source.groupId });
       }
       setDragStatus(`${title} is no longer visible. Drag cancelled.`);
+      session.endVisibilityActivity();
       return;
     }
     if (sourceState.kind === 'pending' || sourceState.kind === 'ambiguous') {
@@ -1206,17 +1583,21 @@ export function Board({
         scheduleBoardFocus({ issueId: session.issueId, fallbackGroupId: session.source.groupId });
       }
       setDragStatus(`${sourceState.issue.identifier}'s position changed. Drag cancelled.`);
+      session.endVisibilityActivity();
       return;
     }
     if (sourceState.kind === 'moved') {
       latestSession.current += 1;
-      scheduleBoardFocus({
-        issueId: sourceState.issue.id,
-        fallbackGroupId: sourceState.source.groupId,
-      });
+      if (session.keyboard) {
+        scheduleBoardFocus({
+          issueId: sourceState.issue.id,
+          fallbackGroupId: sourceState.source.groupId,
+        });
+      }
       setDragStatus(
         `${sourceState.issue.identifier} moved in the background to ${boardPositionLabel(sourceState.source)}. Drag cancelled.`,
       );
+      session.endVisibilityActivity();
       return;
     }
     const currentTitle = sourceState.issue.identifier;
@@ -1230,6 +1611,7 @@ export function Board({
       setDragStatus(
         `Could not drop ${currentTitle}. Returned to ${boardPositionLabel(session.source)}.`,
       );
+      session.endVisibilityActivity();
       return;
     }
     if (target.kind === 'source') {
@@ -1240,6 +1622,7 @@ export function Board({
         );
       }
       setDragStatus(`Dropped ${currentTitle} in ${boardPositionLabel(session.source)}.`);
+      session.endVisibilityActivity();
       return;
     }
     if (
@@ -1248,13 +1631,16 @@ export function Board({
       !sameBoardSource(session.target.destination, currentTarget.target.destination)
     ) {
       latestSession.current += 1;
-      scheduleBoardFocus({
-        issueId: sourceState.issue.id,
-        fallbackGroupId: sourceState.source.groupId,
-      });
+      if (session.keyboard) {
+        scheduleBoardFocus({
+          issueId: sourceState.issue.id,
+          fallbackGroupId: sourceState.source.groupId,
+        });
+      }
       setDragStatus(
         `${currentTitle}'s drop target changed in the background. Drag cancelled at ${boardPositionLabel(sourceState.source)}.`,
       );
+      session.endVisibilityActivity();
       return;
     }
     const placement = currentTarget.target.placement;
@@ -1266,32 +1652,30 @@ export function Board({
       source: session.source,
       destination,
     };
-    const publishResult = (
-      outcome: SettledDragStatusInput['outcome'],
-      settled: Issue | undefined,
-    ) => {
-      const cached = authoritativeCachedIssue(queryClient, dragId);
-      const status = settledDragStatus({
-        latestSession: latestSession.current,
-        activeSession: activeSession.current?.session ?? null,
-        completed,
-        outcome,
-      });
-      if (status === null) return;
-      if (moveResultWasSuperseded(cached, settled, outcome)) {
-        setDragStatus(
-          `${currentTitle} changed again while the move finished. Showing the latest version.`,
+    const lifecycleGeneration = lifecycle.current.generation;
+    pendingSettlements.current.set(completed.session, {
+      endVisibilityActivity: session.endVisibilityActivity,
+    });
+    const restoreCompletedKeyboardFocus = (preferredGroupId: string, alternateGroupId: string) => {
+      const preferredColumn = columnNodes.current.get(preferredGroupId);
+      const alternateColumn = columnNodes.current.get(alternateGroupId);
+      let fallbackGroupId: string | null = null;
+      if (preferredColumn !== undefined) fallbackGroupId = preferredGroupId;
+      else if (alternateColumn !== undefined) fallbackGroupId = alternateGroupId;
+      if (fallbackGroupId === null) return;
+      const focusIsOwned = () =>
+        focusRemainsBoardOwned(
+          document.activeElement,
+          document.body,
+          cardNodes.current.get(dragId),
+          preferredColumn,
+          alternateColumn,
         );
-        return;
-      }
-      setDragStatus(status);
-    };
-
-    const restoreCompletedKeyboardFocus = (fallbackGroupId: string) => {
       if (
         session.keyboard &&
         latestSession.current === completed.session &&
-        activeSession.current === undefined
+        activeSession.current === undefined &&
+        focusIsOwned()
       ) {
         scheduleBoardFocus(
           {
@@ -1300,28 +1684,84 @@ export function Board({
             requireIssueInFallback: true,
           },
           completed.session,
+          focusIsOwned,
         );
       }
     };
+    const publishResult = (
+      outcome: SettledDragStatusInput['outcome'],
+      settled: Issue | undefined,
+      settlement?: IssueMoveSettlement,
+    ) => {
+      if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
+        releasePendingSettlement(completed.session, true);
+        return;
+      }
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: settlement keeps every terminal outcome explicit
+      const frameId = window.requestAnimationFrame(() => {
+        if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
+          releasePendingSettlement(completed.session, false);
+          return;
+        }
+        const result = currentCompletedDragResult({
+          queryClient,
+          dragId,
+          deletionGeneration,
+          settlement,
+          outcome,
+          settled,
+          completed,
+          filtered: positionsIncomplete,
+          latestSession: latestSession.current,
+          activeSession: activeSession.current?.session ?? null,
+          cardNodes: cardNodes.current,
+          columnNodes: columnNodes.current,
+        });
+        if (result.status !== null) {
+          setDragStatus(result.status);
+        }
+        if (result.status !== null && result.focusGroupId !== null) {
+          const alternateGroupId =
+            outcome === 'success' ? session.source.groupId : destination.groupId;
+          restoreCompletedKeyboardFocus(result.focusGroupId, alternateGroupId);
+        }
+        releasePendingSettlement(completed.session, false);
+      });
+      const pending = pendingSettlements.current.get(completed.session);
+      if (pending === undefined) {
+        window.cancelAnimationFrame(frameId);
+        return;
+      }
+      pendingSettlements.current.set(completed.session, { ...pending, frameId });
+    };
+    const deletionGeneration = issueDeletionGeneration(queryClient, dragId);
     setIssuePending(dragId, true);
     setDragStatus(
       `Dropping ${currentTitle} from ${boardPositionLabel(session.source)} to ${boardPositionLabel(destination)}.`,
     );
-    move
-      .mutateAsync(placement)
+    const pendingMove = move.mutateAsync(placement);
+    restoreCompletedKeyboardFocus(destination.groupId, session.source.groupId);
+    pendingMove
       .then(
-        (moved) => {
+        (settlement) => {
+          if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
+            releasePendingSettlement(completed.session, true);
+            return;
+          }
           publishResult(
             'success',
-            moved.find((issue) => issue.id === dragId),
+            settlement.issues.find((issue) => issue.id === dragId),
+            settlement,
           );
           setIssuePending(dragId, false);
-          restoreCompletedKeyboardFocus(destination.groupId);
         },
         () => {
+          if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
+            releasePendingSettlement(completed.session, true);
+            return;
+          }
           publishResult('error', placement.issue);
           setIssuePending(dragId, false);
-          restoreCompletedKeyboardFocus(session.source.groupId);
         },
       )
       .catch(() => undefined);
@@ -1346,6 +1786,7 @@ export function Board({
         `Cancelled dragging ${issue.identifier}. Returned to ${boardPositionLabel(session.source)}.`,
       );
     }
+    session?.endVisibilityActivity();
   };
 
   const handleBoardKeyDown = (e: React.KeyboardEvent) => {
@@ -1353,8 +1794,9 @@ export function Board({
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
 
     const currentFocus = document.activeElement;
-    if (currentFocus === null) return;
-    const dom = getDOMIndices(currentFocus);
+    const board = boardNode.current;
+    if (currentFocus === null || board === null) return;
+    const dom = getDOMIndices(currentFocus, board);
     if (dom === null) return;
 
     e.preventDefault();
@@ -1383,8 +1825,12 @@ export function Board({
 
   const columns = (
     // biome-ignore lint/a11y/noStaticElementInteractions: event delegation for focus management
-    <div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3" onKeyDown={handleBoardKeyDown}>
-      {groups.map((group) => (
+    <div
+      ref={boardNode}
+      className="flex h-full min-h-0 gap-3 overflow-x-auto p-3"
+      onKeyDown={handleBoardKeyDown}
+    >
+      {renderedGroups.map((group) => (
         <BoardColumn
           key={group.id}
           group={group}
@@ -1433,7 +1879,9 @@ export function Board({
 
       <DragOverlay dropAnimation={null}>
         {activeIssue === undefined ? null : (
-          <IssueCardView issue={activeIssue} lookups={lookups} properties={properties} dragging />
+          <div aria-hidden="true" inert className="pointer-events-none">
+            <IssueCardView issue={activeIssue} lookups={lookups} properties={properties} dragging />
+          </div>
         )}
       </DragOverlay>
 
@@ -1464,7 +1912,11 @@ interface BoardColumnProps {
   readonly columnsReady: boolean;
   readonly pendingIssueIds: ReadonlySet<string>;
   readonly onCreate: () => void;
-  readonly onCardNode: (id: string, node: HTMLLIElement | null) => void;
+  readonly onCardNode: (
+    id: string,
+    node: HTMLLIElement | null,
+    previousNode: HTMLLIElement | null,
+  ) => void;
   readonly onColumnNode: (id: string, node: HTMLUListElement | null) => void;
   readonly onOpen: (id: string) => void;
   readonly onRows: (groupId: string, issues: readonly Issue[]) => void;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { emptyFilterGroup } from '@orbit/shared/filters';
 import { QueryClient } from '@tanstack/react-query';
+import {
+  issueCacheRevisionGeneration,
+  recordIssueRevisions,
+} from '@/lib/query/issue-cache-generation.ts';
 import { groupColumnSearch, type IssueQuery } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue } from '@/lib/query/schemas.ts';
@@ -62,5 +66,32 @@ describe('seedBoardColumns', () => {
     seedBoardColumns(client, column, boardPage(['ENG-1']), fetchedAt);
 
     expect(identifiersIn(client)).toEqual(['ENG-7']);
+  });
+
+  it('keeps data written in the same millisecond the board fetch started', () => {
+    const client = new QueryClient();
+    const fetchedAt = Date.now();
+    client.setQueryData<IssuePages>(
+      columnKey(),
+      {
+        pages: [{ issues: [issue('ENG-7')], nextCursor: null }],
+        pageParams: [null],
+      },
+      { updatedAt: fetchedAt },
+    );
+
+    seedBoardColumns(client, column, boardPage(['ENG-1']), fetchedAt);
+
+    expect(identifiersIn(client)).toEqual(['ENG-7']);
+  });
+
+  it('does not seed a stale board page after an issue changed in flight', () => {
+    const client = new QueryClient();
+    const revision = issueCacheRevisionGeneration(client);
+    recordIssueRevisions(client, ['issue-1']);
+
+    seedBoardColumns(client, column, boardPage(['ENG-1']), Date.now(), revision);
+
+    expect(identifiersIn(client)).toEqual([]);
   });
 });

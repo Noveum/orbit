@@ -18,7 +18,12 @@ import {
 } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
-import { Board, canDragBoard } from '@/features/issues/board.tsx';
+import {
+  Board,
+  boardVisibilityConfig,
+  canDragBoard,
+  useBoardVisibilityHold,
+} from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { LoadFailed } from '@/features/issues/load-failed.tsx';
@@ -97,6 +102,10 @@ function SavedViewBody({ view }: { view: View }) {
     scopeToTeam: false,
     scope: scope.query,
   });
+  const boardVisibility = useBoardVisibilityHold(
+    JSON.stringify([view.id, layout, boardVisibilityConfig(config), scope.query, workspace.role]),
+    model.shownCount === 0,
+  );
 
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
   const canDrag = canDragBoard(workspace.role, config.groupBy);
@@ -150,6 +159,7 @@ function SavedViewBody({ view }: { view: View }) {
       />
 
       <SavedViewContent
+        boardVisibilityKey={boardVisibility.key}
         resolveState={resolveState}
         columnSource={columnSource}
         canDrag={canDrag}
@@ -158,6 +168,9 @@ function SavedViewBody({ view }: { view: View }) {
         config={config}
         layout={layout}
         empty={model.shownCount === 0}
+        filtered={model.filtered}
+        keepBoardMounted={boardVisibility.held}
+        onVisibilityActivityStart={boardVisibility.start}
         loading={issues.isPending}
         failed={issues.isError}
         onRetry={() => {
@@ -186,6 +199,7 @@ function SavedViewBody({ view }: { view: View }) {
 }
 
 interface SavedViewContentProps {
+  readonly boardVisibilityKey: string;
   readonly resolveState: StateResolver;
   readonly columnSource: BoardColumnSource | undefined;
   readonly canDrag: boolean;
@@ -194,6 +208,9 @@ interface SavedViewContentProps {
   readonly config: ViewConfig;
   readonly layout: ViewLayoutMode;
   readonly empty: boolean;
+  readonly filtered: boolean;
+  readonly keepBoardMounted: boolean;
+  readonly onVisibilityActivityStart: () => () => void;
   readonly loading: boolean;
   readonly failed: boolean;
   readonly onRetry: () => void;
@@ -203,6 +220,7 @@ interface SavedViewContentProps {
 }
 
 function SavedViewContent({
+  boardVisibilityKey,
   resolveState,
   columnSource,
   canDrag,
@@ -211,6 +229,9 @@ function SavedViewContent({
   config,
   layout,
   empty,
+  filtered,
+  keepBoardMounted,
+  onVisibilityActivityStart,
   loading,
   failed,
   onRetry,
@@ -222,12 +243,12 @@ function SavedViewContent({
 
   if (failed) return <LoadFailed subject="this view" onRetry={onRetry} testId="retry-saved-view" />;
 
-  if (empty) {
-    const filtered = conditionsOf(config.filter).length > 0;
+  if (empty && !(layout === 'board' && keepBoardMounted)) {
+    const queryFiltered = conditionsOf(config.filter).length > 0;
     return (
       <EmptyState
         icon={
-          filtered ? (
+          queryFiltered ? (
             <SearchX strokeWidth={1.75} aria-hidden="true" />
           ) : (
             <Columns3 strokeWidth={1.75} aria-hidden="true" />
@@ -235,7 +256,7 @@ function SavedViewContent({
         }
         title="No issues match this view"
         description={
-          filtered
+          queryFiltered
             ? 'Loosen a filter to widen the search, then save the change.'
             : 'Press C to create the first one.'
         }
@@ -248,6 +269,7 @@ function SavedViewContent({
     return (
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="saved-view-board">
         <Board
+          key={boardVisibilityKey}
           groups={groups}
           draggable={canDrag}
           reorderable={config.orderBy === 'manual'}
@@ -258,6 +280,8 @@ function SavedViewContent({
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}
           columnSource={columnSource}
+          filtered={filtered}
+          onVisibilityActivityStart={onVisibilityActivityStart}
         />
       </div>
     );

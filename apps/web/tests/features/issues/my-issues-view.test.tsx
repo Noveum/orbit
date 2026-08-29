@@ -295,6 +295,34 @@ describe('MyIssuesView', () => {
     expect(screen.getByTestId('layout-board')).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('preserves list scroll when display configuration changes', async () => {
+    const realFetch = globalThis.fetch;
+    let stored = { page: 'my_issues', scope: '', layout: 'list', display: {} };
+    globalThis.fetch = mock((_input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT' && typeof init.body === 'string') {
+        stored = { ...stored, ...(JSON.parse(init.body) as { display: object }) };
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ preferences: [stored] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    renderView('me', 'list');
+    const list = screen.getByTestId('my-issues-list');
+    list.scrollTop = 137;
+
+    await user.click(screen.getByTestId('display-menu-trigger'));
+    await user.click(screen.getByTestId('toggle-sub-issues'));
+
+    expect(screen.getByTestId('my-issues-list')).toBe(list);
+    expect(list.scrollTop).toBe(137);
+    globalThis.fetch = realFetch;
+  });
+
   it('switches what is rendered when the control is used', async () => {
     const realFetch = globalThis.fetch;
     let stored = { page: 'my_issues', scope: '', layout: 'list', display: {} };
@@ -362,5 +390,13 @@ describe('dragging a card on the My Issues board', () => {
 
     expect(first).not.toBeNull();
     expect(first?.getAttribute('role')).toBe('listitem');
+  });
+
+  it('does not expose drag affordances to a guest who cannot update issues', () => {
+    workspace = { ...buildWorkspace(), role: 'guest' };
+    renderView('me', 'board');
+
+    const board = screen.getByTestId('my-issues-board');
+    expect(board.querySelectorAll('[aria-roledescription="sortable"]')).toHaveLength(0);
   });
 });

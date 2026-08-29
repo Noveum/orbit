@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render as renderRaw, screen } from '@testing-library/react';
+import { fireEvent, render as renderRaw, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
@@ -111,6 +111,26 @@ describe('IssueCard', () => {
     expect(screen.getByTitle(`Reviewers: ${reviewer.name}`)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: reviewer.name })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: member.name })).toBeInTheDocument();
+  });
+
+  it('keeps pointer presses on property controls out of a parent drag listener', () => {
+    const parentPointerDown = mock();
+    render(
+      <div onPointerDown={parentPointerDown}>
+        <IssueCard issue={issue()} labels={[]} assignee={member} state={state} />
+      </div>,
+    );
+
+    const priority = screen.getByRole('button', { name: 'Priority: Urgent' });
+    const status = screen.getByRole('button', { name: 'Status: In progress' });
+    const assignee = screen.getByRole('button', { name: 'Change assignee' });
+    fireEvent.pointerDown(priority, { button: 1 });
+    fireEvent.pointerDown(status, { button: 1 });
+    fireEvent.pointerDown(assignee, { button: 1 });
+
+    expect(parentPointerDown).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByRole('link', { name: issue().title }), { button: 1 });
+    expect(parentPointerDown).toHaveBeenCalledTimes(1);
   });
 });
 
