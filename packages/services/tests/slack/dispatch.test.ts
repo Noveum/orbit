@@ -841,7 +841,7 @@ describe('dispatchSlackDm', () => {
       } catch (caught) {
         error = caught;
       }
-      expect(error).toMatchObject({ code: 'invalid_auth' });
+      expect(error).toMatchObject({ slackCode: 'invalid_auth' });
     });
   });
 
@@ -874,7 +874,7 @@ describe('dispatchSlackDm', () => {
       } catch (caught) {
         error = caught;
       }
-      expect(error).toMatchObject({ code: 'ratelimited' });
+      expect(error).toMatchObject({ slackCode: 'ratelimited' });
     });
   });
 

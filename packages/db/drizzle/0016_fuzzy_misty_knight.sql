@@ -1,1 +1,1 @@
-@packages/db/drizzle/0016_fuzzy_misty_knight.sql
+DROP INDEX IF EXISTS "notification_delivery_source_unique";
