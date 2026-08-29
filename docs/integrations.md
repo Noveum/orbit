@@ -99,8 +99,10 @@ repositories to install it on.
 
 Slack integration status:
 
-- **Disabled by default.** `SLACK_INTEGRATION_ENABLED` remains hardcoded to
-  `false` because Slack is still behind the open-source preview boundary.
+- **Enabled.** `SLACK_INTEGRATION_ENABLED` is `true`. A deployment that turns
+  Slack on must set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and
+  `SLACK_SIGNING_SECRET`, otherwise the integration appears in settings and
+  every install attempt fails.
 - **Required Slack scopes.** A future enabled deployment needs `chat:write` for
   channel delivery and `im:write` for direct messages. Granted scopes are stored
   as non-secret integration metadata; the bot token is never exposed to the
