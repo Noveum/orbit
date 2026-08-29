@@ -24,7 +24,10 @@ import { seedBoardColumns } from '@/lib/query/use-issues.ts';
 
 const push = mock();
 const nativeFetch = globalThis.fetch;
-const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+const nativeGetBoundingClientRect = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'getBoundingClientRect',
+);
 const nativeRequestAnimationFrame = window.requestAnimationFrame;
 const nativeCancelAnimationFrame = window.cancelAnimationFrame;
 beforeEach(() => {
@@ -40,7 +43,15 @@ afterEach(() => {
     writable: true,
     value: nativeFetch,
   });
-  HTMLElement.prototype.getBoundingClientRect = nativeGetBoundingClientRect;
+  if (nativeGetBoundingClientRect === undefined) {
+    Reflect.deleteProperty(HTMLElement.prototype, 'getBoundingClientRect');
+  } else {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      'getBoundingClientRect',
+      nativeGetBoundingClientRect,
+    );
+  }
   window.requestAnimationFrame = nativeRequestAnimationFrame;
   window.cancelAnimationFrame = nativeCancelAnimationFrame;
 });
