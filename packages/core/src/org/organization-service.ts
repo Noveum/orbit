@@ -25,6 +25,23 @@ export interface OrganizationBootstrap {
   readonly actions: SyncAction[];
 }
 
+type OrganizationUpdate = ReturnType<typeof organizationUpdateSchema.parse>;
+
+function organizationUpdateValues(
+  parsed: OrganizationUpdate,
+): Partial<typeof schema.organization.$inferInsert> {
+  return {
+    ...(parsed.name === undefined ? {} : { name: parsed.name }),
+    ...(parsed.logo === undefined ? {} : { logo: parsed.logo }),
+    ...(parsed.allowedEmailDomains === undefined
+      ? {}
+      : { allowedEmailDomains: parsed.allowedEmailDomains }),
+    ...(parsed.agentInstructions === undefined
+      ? {}
+      : { agentInstructions: parsed.agentInstructions }),
+  };
+}
+
 export async function createOrganization(
   userId: string,
   input: unknown,
@@ -140,19 +157,34 @@ export async function updateOrganization(
   const parsed = organizationUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const values: Partial<typeof schema.organization.$inferInsert> = {};
-    if (parsed.name !== undefined) values.name = parsed.name;
-    if (parsed.logo !== undefined) values.logo = parsed.logo;
-    if (parsed.allowedEmailDomains !== undefined) {
-      values.allowedEmailDomains = parsed.allowedEmailDomains;
-    }
-
+    const values = organizationUpdateValues(parsed);
     const syncId = await nextSyncId(tx);
+    const versionCondition =
+      parsed.agentInstructions !== undefined && parsed.expectedAgentInstructions !== undefined
+        ? eq(schema.organization.agentInstructions, parsed.expectedAgentInstructions)
+        : undefined;
     const [updated] = await tx
       .update(schema.organization)
       .set({ ...values, syncId })
-      .where(eq(schema.organization.id, principal.organizationId))
+      .where(
+        versionCondition === undefined
+          ? eq(schema.organization.id, principal.organizationId)
+          : and(eq(schema.organization.id, principal.organizationId), versionCondition),
+      )
       .returning();
+    if (updated === undefined && versionCondition !== undefined) {
+      const [existing] = await tx
+        .select({ id: schema.organization.id })
+        .from(schema.organization)
+        .where(eq(schema.organization.id, principal.organizationId))
+        .limit(1);
+      if (existing !== undefined) {
+        throw conflict(
+          'Workspace instructions changed since this page was loaded. Refresh and try again.',
+          { details: { reason: 'stale_workspace_instructions' } },
+        );
+      }
+    }
     const organization = requireRow(updated, 'That workspace does not exist.');
 
     const [actorRow] = await tx

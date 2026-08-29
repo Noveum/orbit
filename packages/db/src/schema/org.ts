@@ -25,6 +25,7 @@ export const organization = pgTable('organization', {
   syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
+  agentInstructions: text('agent_instructions').notNull().default(''),
 });
 
 export const member = pgTable(
