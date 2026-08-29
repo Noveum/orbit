@@ -231,17 +231,11 @@ export async function seedStarterContent(
       .returning();
     if (issue === undefined) continue;
     await captureCreatedCycleMembership(executor, { issue, occurredAt: now });
-    const issueScopes = [
-      scopes.organization(params.organizationId),
-      scopes.team(params.team.id),
-      scopes.issue(issue.id),
-    ];
-    if (issue.projectId !== null) issueScopes.push(scopes.project(issue.projectId));
     actions.push(
       buildSyncAction({
         syncId: params.syncId,
         organizationId: params.organizationId,
-        scopes: issueScopes,
+        scopes: [scopes.team(params.team.id), scopes.issue(issue.id)],
         action: 'insert',
         model: 'issue',
         modelId: issue.id,

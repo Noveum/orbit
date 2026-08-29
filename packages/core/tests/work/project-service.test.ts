@@ -6,6 +6,7 @@ import {
   replaceGithubRepositories,
 } from '@orbit/services/github';
 import { scopes } from '@orbit/shared/events';
+import postgres from 'postgres';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -50,6 +51,34 @@ async function newIssue(
 }
 
 let workspace: Workspace;
+
+function databaseUrl(): string {
+  const url = process.env['DATABASE_URL'];
+  if (url === undefined || url.length === 0) throw new Error('DATABASE_URL is required.');
+  return url;
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await client<{ waiting: number }[]>`
+      select count(*)::int as waiting
+      from pg_stat_activity
+      where datname = current_database()
+        and pid <> pg_backend_pid()
+        and wait_event_type = 'Lock'
+    `;
+    if ((rows[0]?.waiting ?? 0) > 0) return;
+    await pause(10);
+  }
+  throw new Error('The project mutation did not wait for the project row lock.');
+}
 
 beforeEach(async () => {
   await resetDatabase();
@@ -99,6 +128,49 @@ describe('updateProject', () => {
     const teams = await listProjectTeams(workspace.admin, project.id);
     expect(teams).toHaveLength(1);
   });
+
+  it('computes retired reach after a queued team change commits', async () => {
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const project = await newProject();
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`select id from project where id = ${project.id} for update`;
+    await client`
+      update project_team
+      set team_id = ${other.team.id}
+      where project_id = ${project.id}
+    `;
+    const updating = updateProject(workspace.admin, project.id, {
+      summary: 'Back with engineering',
+      teamIds: [workspace.teamId],
+    });
+    const outcome = updating.then(
+      (value) => ({ status: 'fulfilled' as const, value }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('fulfilled');
+      expect(
+        result.status === 'fulfilled'
+          ? result.value.actions.some((action) =>
+              action.scopes.includes(scopes.team(other.team.id)),
+            )
+          : false,
+      ).toBe(true);
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+  });
 });
 
 describe('project teams', () => {
@@ -110,6 +182,59 @@ describe('project teams', () => {
     const actions = await addProjectTeam(workspace.admin, project.id, workspace.teamId);
     expect(actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
     expect(await listProjectTeams(workspace.admin, project.id)).toHaveLength(1);
+  });
+
+  it('takes the project row lock before adding a team', async () => {
+    const project = await newProject();
+    const other = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`select id from project where id = ${project.id} for no key update`;
+    const adding = addProjectTeam(workspace.admin, project.id, other.team.id);
+    const outcome = adding.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      expect((await outcome).status).toBe('fulfilled');
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+  });
+
+  it('takes the project row lock before removing a team', async () => {
+    const project = await newProject();
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`select id from project where id = ${project.id} for no key update`;
+    const removing = removeProjectTeam(workspace.admin, project.id, workspace.teamId);
+    const outcome = removing.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      expect((await outcome).status).toBe('fulfilled');
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
   });
 });
 

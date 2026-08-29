@@ -73,12 +73,12 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
         syncAction({
           organizationId,
           scopes: [scopes.team(teamId)],
-          modelId: 'issue_after_reconnect',
+          modelId: 'label_after_reconnect',
           syncId: 900,
         }),
       ),
     );
-    await waitUntil(() => received.some((action) => action.modelId === 'issue_after_reconnect'));
+    await waitUntil(() => received.some((action) => action.modelId === 'label_after_reconnect'));
 
     expect(statuses).toContain('reconnecting');
     expect(statuses.at(-1)).toBe('open');

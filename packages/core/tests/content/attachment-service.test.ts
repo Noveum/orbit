@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import type { StorageDriver, StoredObject } from '@orbit/services/storage';
 import type { Principal } from '@orbit/shared/policy';
 import postgres from 'postgres';
@@ -13,7 +13,7 @@ import {
   registerUpload,
 } from '../../src/content/attachment-service.ts';
 import { createComment } from '../../src/content/comment-service.ts';
-import { createDoc } from '../../src/content/doc-service.ts';
+import { createDoc, deleteDoc } from '../../src/content/doc-service.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -23,6 +23,7 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { createIssue } from '../../src/work/issue-service.ts';
+import { createProject } from '../../src/work/project-service.ts';
 
 let nova: Workspace;
 let orion: Workspace;
@@ -83,8 +84,12 @@ function pause(ms: number): Promise<void> {
   });
 }
 
-async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise<void> {
+async function waitForDatabaseLockCount(
+  client: ReturnType<typeof postgres>,
+  expected: number,
+): Promise<void> {
   const deadline = Date.now() + 5_000;
+  let waiting = 0;
   while (Date.now() < deadline) {
     const rows = await client<{ waiting: number }[]>`
       select count(*)::int as waiting
@@ -93,10 +98,35 @@ async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise
         and pid <> pg_backend_pid()
         and wait_event_type = 'Lock'
     `;
-    if ((rows[0]?.waiting ?? 0) > 0) return;
+    waiting = rows[0]?.waiting ?? 0;
+    if (waiting >= expected) return;
     await pause(10);
   }
-  throw new Error('The upload did not wait for the organization row lock.');
+  throw new Error(`Expected ${expected} database lock waiters, found ${waiting}.`);
+}
+
+async function waitForDatabaseLock(client: ReturnType<typeof postgres>): Promise<void> {
+  await waitForDatabaseLockCount(client, 1);
+}
+
+async function pauseDocDeletionAfterAttachmentCleanup(): Promise<{
+  readonly client: ReturnType<typeof postgres>;
+  readonly deletion: ReturnType<typeof deleteDoc>;
+}> {
+  const favoriteId = newId();
+  await db.insert(schema.favorite).values({
+    id: favoriteId,
+    organizationId: nova.organizationId,
+    userId: nova.admin.userId,
+    entityType: 'doc',
+    entityId: docId,
+  });
+  const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+  await client.unsafe('begin');
+  await client`select id from favorite where id = ${favoriteId} for update`;
+  const deletion = deleteDoc(nova.admin, docId);
+  await waitForDatabaseLock(client);
+  return { client, deletion };
 }
 
 beforeEach(async () => {
@@ -113,7 +143,7 @@ beforeEach(async () => {
 
 async function register(
   principal: Principal,
-  parentType: 'issue' | 'doc' | 'user',
+  parentType: 'issue' | 'doc' | 'project' | 'user',
   parentId: string,
 ): Promise<AttachmentRecord> {
   const [row] = await db
@@ -210,7 +240,7 @@ describe('markAttachmentReady', () => {
     expect(row).toEqual({ status: 'ready', size: 4_096 });
   });
 
-  it('publishes an issue upload on the issue scope only', async () => {
+  it('publishes an issue upload on its current team and issue scopes', async () => {
     const record = await register(nova.admin, 'issue', issueId);
 
     const completed = await markAttachmentReady(nova.admin, record, 10);
@@ -219,7 +249,7 @@ describe('markAttachmentReady', () => {
     expect(action?.model).toBe('attachment');
     expect(action?.action).toBe('update');
     expect(action?.organizationId).toBe(nova.organizationId);
-    expect(action?.scopes).toEqual([`issue:${issueId}`]);
+    expect(action?.scopes).toEqual([`team:${nova.teamId}`, `issue:${issueId}`]);
   });
 
   it('publishes a doc upload on the doc scope, so a reader without the doc never sees it', async () => {
@@ -245,6 +275,76 @@ describe('markAttachmentReady', () => {
 
     expect(completed.attachment.syncId).toBeGreaterThan(record.syncId);
     expect(completed.actions[0]?.syncId).toBe(completed.attachment.syncId);
+  });
+});
+
+describe('doc deletion attachment serialization', () => {
+  it('prevents a concurrent upload from leaving an attachment row or stored object', async () => {
+    const storage = fakeStorage();
+    const paused = await pauseDocDeletionAfterAttachmentCleanup();
+    const uploadClient = postgres(databaseUrl(), {
+      max: 1,
+      idle_timeout: 5,
+      onnotice: () => undefined,
+    });
+    const attachmentId = newId();
+    const storageKey = `uploads/${newId()}.pdf`;
+    const uploading = uploadClient.begin(async (sql) => {
+      const parents = await sql<{ id: string }[]>`
+        select id from doc where id = ${docId} for update nowait
+      `;
+      if (parents[0] === undefined) throw new Error('The doc was deleted before the upload began.');
+      await storage.driver.put(storageKey, new Uint8Array(6), 'application/pdf');
+      await sql`
+        insert into attachment (
+          id,
+          organization_id,
+          parent_type,
+          parent_id,
+          file_name,
+          content_type,
+          size,
+          storage_key,
+          status,
+          uploaded_by_id
+        ) values (
+          ${attachmentId},
+          ${nova.organizationId},
+          'doc',
+          ${docId},
+          'roadmap.pdf',
+          'application/pdf',
+          6,
+          ${storageKey},
+          'ready',
+          ${nova.admin.userId}
+        )
+      `;
+    });
+    const outcome = uploading.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+    let deletionReleased = false;
+
+    try {
+      expect((await outcome).status).toBe('rejected');
+      await paused.client.unsafe('commit');
+      deletionReleased = true;
+      await paused.deletion;
+    } finally {
+      if (!deletionReleased) await paused.client.unsafe('rollback').catch(() => undefined);
+      await paused.deletion.catch(() => undefined);
+      await outcome;
+      await Promise.all([paused.client.end(), uploadClient.end()]);
+    }
+
+    expect(storage.puts).toHaveLength(0);
+    const rows = await db
+      .select({ id: schema.attachment.id })
+      .from(schema.attachment)
+      .where(eq(schema.attachment.id, attachmentId));
+    expect(rows).toHaveLength(0);
   });
 });
 
@@ -293,7 +393,54 @@ describe('registerUpload', () => {
     expect(registered.attachment.status).toBe('pending');
     expect(registered.attachment.uploadExpiresAt?.toISOString()).toBe(registered.upload.expiresAt);
     expect(registered.upload.method).toBe('PUT');
-    expect(registered.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
+    expect(registered.actions[0]?.scopes).toEqual([`team:${nova.teamId}`, `issue:${issueId}`]);
+  });
+
+  it('publishes a team-owned project upload to its project and owning team', async () => {
+    const { project } = await createProject(nova.admin, {
+      name: 'Team launch',
+      teamIds: [nova.teamId],
+    });
+    const storage = fakeStorage();
+
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'project',
+        parentId: project.id,
+      },
+      storage.driver,
+    );
+
+    expect(registered.actions[0]?.scopes).toEqual([`project:${project.id}`, `team:${nova.teamId}`]);
+  });
+
+  it('publishes a teamless project upload to its workspace and project', async () => {
+    const { project } = await createProject(nova.admin, {
+      name: 'Workspace launch',
+      teamIds: [],
+    });
+    const storage = fakeStorage();
+
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'project',
+        parentId: project.id,
+      },
+      storage.driver,
+    );
+
+    expect(registered.actions[0]?.scopes).toEqual([
+      `org:${nova.organizationId}`,
+      `project:${project.id}`,
+    ]);
   });
 
   it('refuses a comment on an issue in a team the caller cannot see', async () => {
@@ -360,6 +507,62 @@ describe('registerUpload', () => {
       await client.end();
     }
   });
+
+  it('rejects registration when a committed doc access change owns the parent lock first', async () => {
+    const { principal } = await addMember(nova, 'member');
+    let targetCreated = false;
+    const storage = fakeStorage({ onCreateTarget: () => (targetCreated = true) });
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`update doc set visibility = 'private' where id = ${docId}`;
+    const registering = registerUpload(
+      principal,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'doc',
+        parentId: docId,
+      },
+      storage.driver,
+    );
+    const outcome = registering.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('rejected');
+      expect(result.status === 'rejected' ? result.reason : undefined).toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+
+    expect(targetCreated).toBe(false);
+    const rows = await db
+      .select({ id: schema.attachment.id })
+      .from(schema.attachment)
+      .where(
+        and(
+          eq(schema.attachment.parentType, 'doc'),
+          eq(schema.attachment.parentId, docId),
+          eq(schema.attachment.uploadedById, principal.userId),
+        ),
+      );
+    expect(rows).toHaveLength(0);
+  });
 });
 
 describe('finishUpload', () => {
@@ -403,6 +606,211 @@ describe('finishUpload', () => {
     expect(
       await errorOf(() => finishUpload(principal, registered.attachment.id, storage.driver)),
     ).toEqual({ code: 'not_found', status: 404 });
+  });
+
+  it('refuses completion after the issue moves beyond the uploader reach', async () => {
+    const { principal } = await addMember(nova, 'member');
+    const { team } = await createTeam(nova.admin, { name: 'Private', key: 'PRIV' });
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      principal,
+      {
+        fileName: 'trace.log',
+        contentType: 'text/plain',
+        size: 64,
+        parentType: 'issue',
+        parentId: issueId,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(registered.attachment.storageKey, new Uint8Array(40), 'text/plain');
+    await db.update(schema.issue).set({ teamId: team.id }).where(eq(schema.issue.id, issueId));
+
+    expect(
+      await errorOf(() => finishUpload(principal, registered.attachment.id, storage.driver)),
+    ).toEqual({ code: 'not_found', status: 404 });
+    const [stored] = await db
+      .select({ status: schema.attachment.status })
+      .from(schema.attachment)
+      .where(eq(schema.attachment.id, registered.attachment.id));
+    expect(stored?.status).toBe('pending');
+  });
+
+  it('rejects completion when a committed doc access change owns the parent lock first', async () => {
+    const { principal } = await addMember(nova, 'member');
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      principal,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'doc',
+        parentId: docId,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(
+      registered.attachment.storageKey,
+      new Uint8Array(40),
+      'application/pdf',
+    );
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`update doc set visibility = 'private' where id = ${docId}`;
+    const finishing = finishUpload(principal, registered.attachment.id, storage.driver);
+    const outcome = finishing.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('rejected');
+      expect(result.status === 'rejected' ? result.reason : undefined).toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+
+    const [stored] = await db
+      .select({ status: schema.attachment.status })
+      .from(schema.attachment)
+      .where(eq(schema.attachment.id, registered.attachment.id));
+    expect(stored?.status).toBe('pending');
+  });
+
+  it('waits for the doc parent before locking the attachment row', async () => {
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      nova.admin,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'doc',
+        parentId: docId,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(
+      registered.attachment.storageKey,
+      new Uint8Array(40),
+      'application/pdf',
+    );
+    const parentClient = postgres(databaseUrl(), {
+      max: 1,
+      idle_timeout: 5,
+      onnotice: () => undefined,
+    });
+    const attachmentClient = postgres(databaseUrl(), {
+      max: 1,
+      idle_timeout: 5,
+      onnotice: () => undefined,
+    });
+    await parentClient.unsafe('begin');
+    await parentClient`select id from doc where id = ${docId} for update`;
+    const finishing = finishUpload(nova.admin, registered.attachment.id, storage.driver);
+    await waitForDatabaseLockCount(parentClient, 1);
+    await attachmentClient.unsafe('begin');
+    let parentReleased = false;
+    let attachmentReleased = false;
+
+    try {
+      const lockResult = await attachmentClient`
+        select id from attachment
+        where id = ${registered.attachment.id}
+        for update nowait
+      `.then(
+        () => 'acquired' as const,
+        () => 'blocked' as const,
+      );
+      expect(lockResult).toBe('acquired');
+      await attachmentClient.unsafe('rollback');
+      attachmentReleased = true;
+      await parentClient.unsafe('commit');
+      parentReleased = true;
+      expect((await finishing).attachment.status).toBe('ready');
+    } finally {
+      if (!parentReleased) await parentClient.unsafe('commit').catch(() => undefined);
+      await finishing.catch(() => undefined);
+      if (!attachmentReleased) await attachmentClient.unsafe('rollback').catch(() => undefined);
+      await Promise.all([parentClient.end(), attachmentClient.end()]);
+    }
+  });
+
+  it('rejects completion when a committed project access change owns the parent lock first', async () => {
+    const { principal } = await addMember(nova, 'member');
+    const { team } = await createTeam(nova.admin, { name: 'Private', key: 'PRIV' });
+    const { project } = await createProject(nova.admin, {
+      name: 'Launch',
+      teamIds: [nova.teamId],
+    });
+    const storage = fakeStorage();
+    const registered = await registerUpload(
+      principal,
+      {
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        size: 64,
+        parentType: 'project',
+        parentId: project.id,
+      },
+      storage.driver,
+    );
+    await storage.driver.put(
+      registered.attachment.storageKey,
+      new Uint8Array(40),
+      'application/pdf',
+    );
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`select id from project where id = ${project.id} for update`;
+    await client`
+      update project_team
+      set team_id = ${team.id}
+      where project_id = ${project.id}
+    `;
+    const finishing = finishUpload(principal, registered.attachment.id, storage.driver);
+    const outcome = finishing.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('rejected');
+      expect(result.status === 'rejected' ? result.reason : undefined).toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+
+    const [stored] = await db
+      .select({ status: schema.attachment.status })
+      .from(schema.attachment)
+      .where(eq(schema.attachment.id, registered.attachment.id));
+    expect(stored?.status).toBe('pending');
   });
 });
 
@@ -451,7 +859,7 @@ describe('attachFile', () => {
     expect(stored.attachment.status).toBe('ready');
     expect(stored.attachment.uploadExpiresAt).toBeNull();
     expect(stored.url).toBe(`/api/files/${stored.attachment.storageKey}`);
-    expect(stored.actions[0]?.scopes).toEqual([`issue:${issueId}`]);
+    expect(stored.actions[0]?.scopes).toEqual([`team:${nova.teamId}`, `issue:${issueId}`]);
   });
 
   it('refuses a workspace the caller does not belong to', async () => {
@@ -545,5 +953,103 @@ describe('attachFile', () => {
 
     expect(storage.puts).toHaveLength(1);
     expect(storage.deletes).toEqual([storage.puts[0]?.key ?? 'no key was stored']);
+  });
+
+  it('rejects inline storage when a committed doc access change owns the parent lock first', async () => {
+    const { principal } = await addMember(nova, 'member');
+    const storage = fakeStorage();
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`update doc set visibility = 'private' where id = ${docId}`;
+    const attaching = attachFile(
+      principal,
+      {
+        parentType: 'doc',
+        parentId: docId,
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        content: Buffer.from('launch').toString('base64'),
+      },
+      storage.driver,
+    );
+    const outcome = attaching.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('rejected');
+      expect(result.status === 'rejected' ? result.reason : undefined).toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+
+    expect(storage.puts).toHaveLength(0);
+  });
+
+  it('rejects inline storage when a committed project access change owns the parent lock first', async () => {
+    const { principal } = await addMember(nova, 'member');
+    const { team } = await createTeam(nova.admin, { name: 'Private', key: 'PRIV' });
+    const { project } = await createProject(nova.admin, {
+      name: 'Launch',
+      teamIds: [nova.teamId],
+    });
+    const storage = fakeStorage();
+    const client = postgres(databaseUrl(), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+    await client.unsafe('begin');
+    await client`select id from project where id = ${project.id} for update`;
+    await client`
+      update project_team
+      set team_id = ${team.id}
+      where project_id = ${project.id}
+    `;
+    const attaching = attachFile(
+      principal,
+      {
+        parentType: 'project',
+        parentId: project.id,
+        fileName: 'roadmap.pdf',
+        contentType: 'application/pdf',
+        content: Buffer.from('launch').toString('base64'),
+      },
+      storage.driver,
+    );
+    const outcome = attaching.then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason }),
+    );
+
+    try {
+      const first = await Promise.race([
+        outcome.then(() => 'settled' as const),
+        waitForDatabaseLock(client).then(() => 'locked' as const),
+      ]);
+      expect(first).toBe('locked');
+      await client.unsafe('commit');
+      const result = await outcome;
+      expect(result.status).toBe('rejected');
+      expect(result.status === 'rejected' ? result.reason : undefined).toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    } finally {
+      await client.unsafe('rollback').catch(() => undefined);
+      await outcome;
+      await client.end();
+    }
+
+    expect(storage.puts).toHaveLength(0);
   });
 });

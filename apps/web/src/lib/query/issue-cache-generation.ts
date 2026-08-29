@@ -4,6 +4,9 @@ const deletionGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const revisionGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const listRevisionGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const cacheRevisionGenerations = new WeakMap<QueryClient, number>();
+const cacheResetGenerations = new WeakMap<QueryClient, number>();
+const syncWatermarks = new WeakMap<QueryClient, Map<string, number>>();
+const survivalSyncWatermarks = new WeakMap<QueryClient, Map<string, number>>();
 
 function incrementGenerations(
   generationsByClient: WeakMap<QueryClient, Map<string, number>>,
@@ -30,6 +33,18 @@ export function issueRevisionGeneration(client: QueryClient, issueId: string): n
 
 export function issueCacheRevisionGeneration(client: QueryClient): number {
   return cacheRevisionGenerations.get(client) ?? 0;
+}
+
+export function issueCacheResetGeneration(client: QueryClient): number {
+  return cacheResetGenerations.get(client) ?? 0;
+}
+
+export function issueSyncWatermark(client: QueryClient, issueId: string): number {
+  return syncWatermarks.get(client)?.get(issueId) ?? Number.NEGATIVE_INFINITY;
+}
+
+export function issueSurvivalSyncWatermark(client: QueryClient, issueId: string): number {
+  return survivalSyncWatermarks.get(client)?.get(issueId) ?? Number.NEGATIVE_INFINITY;
 }
 
 function issueListRevisionKey(queryKey: QueryKey): string {
@@ -65,4 +80,35 @@ export function recordIssueRevisions(client: QueryClient, issueIds: readonly str
 export function recordIssueDeletions(client: QueryClient, issueIds: readonly string[]): void {
   incrementGenerations(deletionGenerations, client, issueIds);
   recordIssueRevisions(client, issueIds);
+}
+
+export function recordIssueSyncWatermark(
+  client: QueryClient,
+  issueId: string,
+  syncId: number,
+): void {
+  let watermarks = syncWatermarks.get(client);
+  if (watermarks === undefined) {
+    watermarks = new Map();
+    syncWatermarks.set(client, watermarks);
+  }
+  watermarks.set(issueId, Math.max(watermarks.get(issueId) ?? Number.NEGATIVE_INFINITY, syncId));
+}
+
+export function recordIssueSurvivalSyncWatermark(
+  client: QueryClient,
+  issueId: string,
+  syncId: number,
+): void {
+  let watermarks = survivalSyncWatermarks.get(client);
+  if (watermarks === undefined) {
+    watermarks = new Map();
+    survivalSyncWatermarks.set(client, watermarks);
+  }
+  watermarks.set(issueId, Math.max(watermarks.get(issueId) ?? Number.NEGATIVE_INFINITY, syncId));
+}
+
+export function recordIssueCacheReset(client: QueryClient): void {
+  cacheRevisionGenerations.set(client, issueCacheRevisionGeneration(client) + 1);
+  cacheResetGenerations.set(client, issueCacheResetGeneration(client) + 1);
 }

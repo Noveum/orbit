@@ -81,7 +81,7 @@ describe('ticket organization', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_wrong_workspace',
+        modelId: 'label_wrong_workspace',
         syncId: 41,
       }),
     );
@@ -89,19 +89,19 @@ describe('ticket organization', () => {
       syncAction({
         organizationId: orgB,
         scopes: [scopes.team(teamB)],
-        modelId: 'issue_right_workspace',
+        modelId: 'label_right_workspace',
         syncId: 42,
       }),
     );
 
     const delta = await client.waitFor('delta');
-    expect(delta.actions.map((action) => action.modelId)).toEqual(['issue_right_workspace']);
+    expect(delta.actions.map((action) => action.modelId)).toEqual(['label_right_workspace']);
 
     await delay(SETTLE_MS);
     const delivered = client.messages
       .filter((message) => message.type === 'delta')
       .flatMap((message) => message.actions.map((action) => action.modelId));
-    expect(delivered).not.toContain('issue_wrong_workspace');
+    expect(delivered).not.toContain('label_wrong_workspace');
 
     client.close();
   });

@@ -5,6 +5,7 @@ import { act, render, waitFor } from '@testing-library/react';
 import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import {
+  issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
   issueRevisionGeneration,
@@ -16,7 +17,9 @@ import {
   DOCS_HOME_ROOT,
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
+  ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
+  ISSUES_ROOT,
   MILESTONES_ROOT,
   queryKeys,
   VIEWS_ROOT,
@@ -271,6 +274,283 @@ describe('DeltaBridge origin suppression', () => {
     pending.resolve(pages);
     await request;
   });
+
+  it('cancels a stale source-team fetch when an issue moves to another team', async () => {
+    const client = mount();
+    const key = queryKeys.issues(TEAM, `teamId=${TEAM}`);
+    const pages: IssuePages = {
+      pages: [{ issues: [issue()], nextCursor: null }],
+      pageParams: [null],
+    };
+    client.setQueryData(key, pages);
+    const pending = deferred<IssuePages>();
+    const request = client
+      .fetchQuery({ queryKey: key, queryFn: () => pending.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe('fetching'));
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          scopes: ['team:team_design'],
+          data: {
+            ...issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 }),
+            teamChanged: true,
+          },
+          syncId: 30,
+        }),
+      ]),
+    );
+    expect(client.getQueryData<IssuePages>(key)?.pages[0]?.issues).toEqual([]);
+
+    pending.resolve(pages);
+    await request;
+    await Promise.resolve();
+
+    expect(client.getQueryData<IssuePages>(key)?.pages[0]?.issues).toEqual([]);
+  });
+
+  it('applies paired departure and arrival actions without clearing the surviving detail', () => {
+    const client = mount();
+    const sourceKey = queryKeys.issues(TEAM, `teamId=${TEAM}`);
+    const destinationKey = queryKeys.issues('team_design', 'teamId=team_design');
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(sourceKey, {
+      pages: [{ issues: [issue()], nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(destinationKey, {
+      pages: [{ issues: [], nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const deletionGeneration = issueDeletionGeneration(client, 'issue_1');
+    const revisionGeneration = issueRevisionGeneration(client, 'issue_1');
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          scopes: [`team:${TEAM}`],
+          syncId: 30,
+        }),
+        action({
+          data: { ...arrived, teamChanged: true },
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(client.getQueryData<IssuePages>(sourceKey)?.pages[0]?.issues).toEqual([]);
+    expect(client.getQueryData<IssuePages>(destinationKey)?.pages[0]?.issues).toEqual([arrived]);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(arrived);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration);
+    expect(issueRevisionGeneration(client, 'issue_1')).toBe(revisionGeneration + 1);
+  });
+
+  it('preserves a same-sync move when arrival precedes departure', async () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    const canonicalKey = queryKeys.issue('DSGN-4');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const deletionGeneration = issueDeletionGeneration(client, 'issue_1');
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          data: { ...arrived, teamChanged: true },
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(arrived),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(canonicalKey)?.issue).toEqual(arrived);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration);
+  });
+
+  it('preserves a same-sync move whose departure arrives in a later frame', async () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const deletionGeneration = issueDeletionGeneration(client, 'issue_1');
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          data: { ...arrived, teamChanged: true },
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+      ]),
+    );
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(arrived),
+    );
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(arrived);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration);
+  });
+
+  it('applies an equal-sync departure only to a lagging list', () => {
+    const client = mount();
+    const sourceKey = queryKeys.issues(TEAM, `teamId=${TEAM}`);
+    const destinationKey = queryKeys.issues('team_design', 'teamId=team_design');
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+    client.setQueryData(sourceKey, {
+      pages: [{ issues: [issue()], nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(destinationKey, {
+      pages: [{ issues: [arrived], nextCursor: null }],
+      pageParams: [null],
+    });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          scopes: [`team:${TEAM}`],
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(client.getQueryData<IssuePages>(sourceKey)?.pages[0]?.issues).toEqual([]);
+    expect(client.getQueryData<IssuePages>(destinationKey)?.pages[0]?.issues).toEqual([arrived]);
+  });
+
+  it('clears an issue detail when only its source-team departure arrives', () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const deletionGeneration = issueDeletionGeneration(client, 'issue_1');
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          scopes: [`team:${TEAM}`],
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration + 1);
+  });
+
+  it('clears a detail when a later departure is the final action in the batch', () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          data: { ...arrived, teamChanged: true },
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: 'team_design',
+            identifier: 'DSGN-4',
+            departure: true,
+            syncId: 31,
+          },
+          scopes: ['team:team_design'],
+          syncId: 31,
+        }),
+      ]),
+    );
+
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+  });
+
+  it('keeps a detail when a later ordinary update is the final action in the batch', () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const newest = issue({ title: 'Newest after move', syncId: 31 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+        action({ data: newest, syncId: 31 }),
+      ]),
+    );
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(newest);
+  });
 });
 
 describe('DeltaBridge analytics freshness', () => {
@@ -291,10 +571,73 @@ describe('DeltaBridge analytics freshness', () => {
   it('invalidates aggregates for this tab before suppressing its row echo', () => {
     const client = mount();
     const seen = trackInvalidations(client);
+    const generation = issueRevisionGeneration(client, 'issue_1');
     act(() => capturedHandler?.([renameAction(clientId(), 'Own update')]));
 
     expect(seen).toContainEqual([ANALYTICS_ROOT]);
+    expect(seen).toContainEqual([ISSUE_SUMMARY_ROOT]);
+    expect(seen).toContainEqual([ISSUE_FACETS_ROOT]);
+    expect(seen).toContainEqual([BOARD_ROOT]);
+    expect(seen).toContainEqual([MILESTONES_ROOT]);
+    expect(seen).toContainEqual([ISSUES_ROOT]);
+    expect(seen).toContainEqual([ISSUE_ROOT]);
+    expect(issueRevisionGeneration(client, 'issue_1')).toBe(generation + 1);
     expect(titleIn(client)).toBe('Ship the board');
+  });
+
+  it('records an own delete echo without replaying the deleted row', () => {
+    const client = mount();
+    const seen = trackInvalidations(client);
+    const generation = issueDeletionGeneration(client, 'issue_1');
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          originClientId: clientId(),
+          data: { id: 'issue_1', teamId: TEAM, identifier: 'ENG-3', syncId: 11 },
+        }),
+      ]),
+    );
+
+    expect(idsIn(client)).toEqual(['issue_1']);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(generation + 1);
+    expect(seen).toContainEqual([ISSUES_ROOT]);
+    expect(seen).toContainEqual([ISSUE_ROOT]);
+  });
+
+  it('records an own move arrival without treating its departure as deletion', () => {
+    const client = mount();
+    const deletionGeneration = issueDeletionGeneration(client, 'issue_1');
+    const revisionGeneration = issueRevisionGeneration(client, 'issue_1');
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          originClientId: clientId(),
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+        action({
+          originClientId: clientId(),
+          data: arrived,
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    expect(idsIn(client)).toEqual(['issue_1']);
+    expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration);
+    expect(issueRevisionGeneration(client, 'issue_1')).toBe(revisionGeneration + 2);
   });
 
   it('does not invalidate analytics for unrelated comment activity', () => {
@@ -307,6 +650,31 @@ describe('DeltaBridge analytics freshness', () => {
 });
 
 describe('DeltaBridge ordering', () => {
+  it('applies an equal-sync action to lagging list and detail caches', () => {
+    const client = mount();
+    const currentKey = queryKeys.issues(TEAM, 'orderBy=updated');
+    const laggingKey = queryKeys.issues(TEAM, 'orderBy=manual');
+    const canonical = issue({ title: 'Canonical', syncId: 50 });
+    const lagging = issue({ title: 'Lagging', syncId: 40 });
+    client.setQueryData(currentKey, {
+      pages: [{ issues: [canonical], nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(laggingKey, {
+      pages: [{ issues: [lagging], nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(queryKeys.issue('ENG-3'), detailFor(lagging, []));
+
+    act(() => capturedHandler?.([action({ syncId: 50, data: canonical })]));
+
+    expect(client.getQueryData<IssuePages>(laggingKey)?.pages[0]?.issues[0]).toEqual(canonical);
+    expect(
+      client.getQueryData<ReturnType<typeof detailFor>>(queryKeys.issue('ENG-3'))?.issue,
+    ).toEqual(canonical);
+    expect(client.getQueryData<IssuePages>(currentKey)?.pages[0]?.issues[0]).toEqual(canonical);
+  });
+
   it('ignores a delta whose sync id is not newer than the cached row', () => {
     const client = mount();
     act(() =>
@@ -316,6 +684,29 @@ describe('DeltaBridge ordering', () => {
       ]),
     );
     expect(titleIn(client)).toBe('Newest');
+  });
+
+  it('does not resurrect a deleted issue from a delayed full update', () => {
+    const client = mount();
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          syncId: 50,
+          data: { id: 'issue_1', teamId: TEAM, identifier: 'ENG-3', syncId: 50 },
+        }),
+      ]),
+    );
+    expect(idsIn(client)).toEqual([]);
+
+    act(() =>
+      capturedHandler?.([
+        action({ syncId: 40, data: issue({ title: 'Delayed full row', syncId: 40 }) }),
+      ]),
+    );
+
+    expect(idsIn(client)).toEqual([]);
   });
 
   it('cancels a stale detail fetch before applying a newer realtime update', async () => {
@@ -384,6 +775,397 @@ describe('DeltaBridge ordering', () => {
       title: 'Newest detail',
       syncId: 40,
     });
+    unsubscribe();
+  });
+
+  it('cancels only the initial detail fetch named by an issue update', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const matchingKey = queryKeys.issue('ENG-3');
+    const unrelatedKey = queryKeys.issue('ENG-99');
+    const matching = deferred<ReturnType<typeof detailFor>>();
+    const unrelated = deferred<ReturnType<typeof detailFor>>();
+    const matchingRequest = client
+      .fetchQuery({ queryKey: matchingKey, queryFn: () => matching.promise })
+      .catch(() => undefined);
+    const unrelatedRequest = client
+      .fetchQuery({ queryKey: unrelatedKey, queryFn: () => unrelated.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(matchingKey)?.fetchStatus).toBe('fetching'));
+    await waitFor(() => expect(client.getQueryState(unrelatedKey)?.fetchStatus).toBe('fetching'));
+
+    act(() =>
+      capturedHandler?.([
+        action({ data: issue({ title: 'Newest detail', syncId: 40 }), syncId: 40 }),
+      ]),
+    );
+
+    await waitFor(() => expect(client.getQueryState(matchingKey)?.fetchStatus).toBe('idle'));
+    expect(client.getQueryState(unrelatedKey)?.fetchStatus).toBe('fetching');
+
+    matching.resolve(detailFor(issue({ title: 'Stale response', syncId: 11 }), []));
+    unrelated.resolve(detailFor(issue({ identifier: 'ENG-99' }), []));
+    await Promise.all([matchingRequest, unrelatedRequest]);
+  });
+
+  it('moves a coalesced active detail fetch to the final identifier', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const previousKey = queryKeys.issue('ENG-3');
+    const nextKey = queryKeys.issue('DSGN-4');
+    const stale = deferred<ReturnType<typeof detailFor>>();
+    const fresh = deferred<ReturnType<typeof detailFor>>();
+    const requests: string[] = [];
+    const previousObserver = new QueryObserver(client, {
+      queryKey: previousKey,
+      queryFn: () => {
+        requests.push('ENG-3');
+        return stale.promise;
+      },
+      retry: false,
+    });
+    const unsubscribePrevious = previousObserver.subscribe(() => undefined);
+    await waitFor(() => expect(requests).toEqual(['ENG-3']));
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 40 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+        action({
+          data: arrived,
+          scopes: ['team:team_design'],
+          syncId: 40,
+        }),
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toEqual(
+        arrived,
+      ),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue).toEqual(arrived);
+    expect(requests).toEqual(['ENG-3']);
+
+    const nextObserver = new QueryObserver(client, {
+      queryKey: nextKey,
+      queryFn: () => {
+        requests.push('DSGN-4');
+        return fresh.promise;
+      },
+      retry: false,
+    });
+    const unsubscribeNext = nextObserver.subscribe(() => undefined);
+    await waitFor(() => expect(requests).toEqual(['ENG-3', 'DSGN-4']));
+    fresh.resolve(detailFor(arrived, []));
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue.syncId).toBe(40),
+    );
+    stale.resolve(detailFor(issue({ title: 'Stale response', syncId: 11 }), []));
+    await stale.promise;
+    await Promise.resolve();
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toMatchObject({
+      identifier: 'DSGN-4',
+      syncId: 40,
+    });
+    expect(requests).toEqual(['ENG-3', 'DSGN-4']);
+    unsubscribePrevious();
+    unsubscribeNext();
+  });
+
+  it('migrates a moved detail when canceling its old request rejects', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const previousKey = queryKeys.issue('ENG-3');
+    const nextKey = queryKeys.issue('DSGN-4');
+    client.setQueryData(previousKey, detailFor(issue(), []));
+    const pending = deferred<ReturnType<typeof detailFor>>();
+    const request = client
+      .fetchQuery({ queryKey: previousKey, queryFn: () => pending.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(previousKey)?.fetchStatus).toBe('fetching'));
+    const originalCancel = client.cancelQueries.bind(client);
+    client.cancelQueries = (filters, options) =>
+      filters?.queryKey?.[0] === ISSUE_ROOT
+        ? Promise.reject(new Error('cancel failed'))
+        : originalCancel(filters, options);
+    const invalidated: unknown[][] = [];
+    const originalInvalidate = client.invalidateQueries.bind(client);
+    client.invalidateQueries = (filters, options) => {
+      if (filters?.queryKey !== undefined) invalidated.push([...filters.queryKey]);
+      return originalInvalidate(filters, options);
+    };
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    try {
+      act(() =>
+        capturedHandler?.([
+          action({
+            action: 'delete',
+            data: {
+              id: 'issue_1',
+              teamId: TEAM,
+              identifier: 'ENG-3',
+              departure: true,
+              syncId: 30,
+            },
+            syncId: 30,
+          }),
+          action({ data: arrived, scopes: ['team:team_design'], syncId: 30 }),
+        ]),
+      );
+
+      await waitFor(() =>
+        expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue).toEqual(arrived),
+      );
+      expect(invalidated).toContainEqual([...nextKey]);
+    } finally {
+      client.cancelQueries = originalCancel;
+      client.invalidateQueries = originalInvalidate;
+      pending.resolve(detailFor(issue(), []));
+      await request;
+    }
+  });
+
+  it('migrates an equal-sync detail without an issue list cache', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const previousKey = queryKeys.issue('ENG-3');
+    const nextKey = queryKeys.issue('DSGN-4');
+    const previous = issue({ syncId: 30 });
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+    client.setQueryData(previousKey, detailFor(previous, []));
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+        action({ data: arrived, scopes: ['team:team_design'], syncId: 30 }),
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toEqual(
+        arrived,
+      ),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue).toEqual(arrived);
+  });
+
+  it('migrates an empty old detail when same-sync arrival precedes departure', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const previousKey = queryKeys.issue('ENG-3');
+    const nextKey = queryKeys.issue('DSGN-4');
+    const pending = deferred<ReturnType<typeof detailFor>>();
+    const request = client
+      .fetchQuery({ queryKey: previousKey, queryFn: () => pending.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(previousKey)?.fetchStatus).toBe('fetching'));
+    const arrived = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 });
+
+    act(() =>
+      capturedHandler?.([
+        action({ data: arrived, scopes: ['team:team_design'], syncId: 30 }),
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toEqual(
+        arrived,
+      ),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(nextKey)?.issue).toEqual(arrived);
+    pending.resolve(detailFor(issue(), []));
+    await request;
+  });
+
+  it('migrates empty old detail keys across two coalesced team moves', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const firstKey = queryKeys.issue('ENG-3');
+    const middleKey = queryKeys.issue('DSGN-4');
+    const finalKey = queryKeys.issue('PROD-2');
+    const firstPending = deferred<ReturnType<typeof detailFor>>();
+    const middlePending = deferred<ReturnType<typeof detailFor>>();
+    const firstRequest = client
+      .fetchQuery({ queryKey: firstKey, queryFn: () => firstPending.promise })
+      .catch(() => undefined);
+    const middleRequest = client
+      .fetchQuery({ queryKey: middleKey, queryFn: () => middlePending.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(firstKey)?.fetchStatus).toBe('fetching'));
+    await waitFor(() => expect(client.getQueryState(middleKey)?.fetchStatus).toBe('fetching'));
+    const arrived = issue({ teamId: 'team_product', identifier: 'PROD-2', syncId: 31 });
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: TEAM,
+            identifier: 'ENG-3',
+            departure: true,
+            syncId: 30,
+          },
+          syncId: 30,
+        }),
+        action({
+          data: issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 30 }),
+          scopes: ['team:team_design'],
+          syncId: 30,
+        }),
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: 'team_design',
+            identifier: 'DSGN-4',
+            departure: true,
+            syncId: 31,
+          },
+          scopes: ['team:team_design'],
+          syncId: 31,
+        }),
+        action({ data: arrived, scopes: ['team:team_product'], syncId: 31 }),
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(firstKey)?.issue).toEqual(arrived),
+    );
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(middleKey)?.issue).toEqual(arrived);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(finalKey)?.issue).toEqual(arrived);
+    firstPending.resolve(detailFor(issue(), []));
+    middlePending.resolve(detailFor(issue({ identifier: 'DSGN-4' }), []));
+    await Promise.all([firstRequest, middleRequest]);
+  });
+
+  it('keeps a newer no-list detail fetch ahead of a delayed move pair', async () => {
+    const client = mount();
+    client.removeQueries({ queryKey: queryKeys.issues(TEAM), exact: true });
+    const canonical = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 50 });
+    const canonicalKey = queryKeys.issue('DSGN-4');
+    client.setQueryData(canonicalKey, detailFor(canonical, []));
+    const pending = deferred<ReturnType<typeof detailFor>>();
+    const request = client
+      .fetchQuery({ queryKey: canonicalKey, queryFn: () => pending.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(canonicalKey)?.fetchStatus).toBe('fetching'));
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          action: 'delete',
+          data: {
+            id: 'issue_1',
+            teamId: 'team_design',
+            identifier: 'DSGN-4',
+            departure: true,
+            syncId: 40,
+          },
+          scopes: ['team:team_design'],
+          syncId: 40,
+        }),
+        action({
+          data: issue({ teamId: 'team_product', identifier: 'PROD-2', syncId: 40 }),
+          scopes: ['team:team_product'],
+          syncId: 40,
+        }),
+      ]),
+    );
+    await Promise.resolve();
+
+    expect(client.getQueryState(canonicalKey)?.fetchStatus).toBe('fetching');
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(canonicalKey)?.issue).toEqual(
+      canonical,
+    );
+    expect(client.getQueryData(queryKeys.issue('PROD-2'))).toBeUndefined();
+
+    pending.resolve(detailFor(canonical, []));
+    await request;
+  });
+
+  it('keeps a newer canonical detail fetch ahead of a delayed full move action', async () => {
+    const client = mount();
+    const canonical = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 50 });
+    client.setQueryData(queryKeys.issues(TEAM), {
+      pages: [{ issues: [canonical], nextCursor: null }],
+      pageParams: [null],
+    });
+    const canonicalKey = queryKeys.issue('DSGN-4');
+    const fresh = deferred<ReturnType<typeof detailFor>>();
+    let requests = 0;
+    const observer = new QueryObserver(client, {
+      queryKey: canonicalKey,
+      queryFn: () => {
+        requests += 1;
+        return fresh.promise;
+      },
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await waitFor(() => expect(requests).toBe(1));
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          data: {
+            ...issue({ teamId: 'team_product', identifier: 'PROD-2', syncId: 40 }),
+            teamChanged: true,
+          },
+          scopes: ['team:team_product'],
+          syncId: 40,
+        }),
+      ]),
+    );
+    await Promise.resolve();
+
+    expect(client.getQueryState(canonicalKey)?.fetchStatus).toBe('fetching');
+    expect(client.getQueryData(queryKeys.issue('PROD-2'))).toBeUndefined();
+    expect(client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues).toEqual([
+      canonical,
+    ]);
+    expect(requests).toBe(1);
+
+    fresh.resolve(detailFor(canonical, []));
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(canonicalKey)?.issue).toEqual(
+        canonical,
+      ),
+    );
     unsubscribe();
   });
 
@@ -566,8 +1348,271 @@ describe('DeltaBridge doc comments', () => {
 });
 
 describe('DeltaBridge reconnect backfill', () => {
-  it('refetches caches instead of replaying current rows when no watermark exists', async () => {
+  it('advances the issue cache revision before resetting reconnect caches', async () => {
     const client = mount();
+    const revision = issueCacheRevisionGeneration(client);
+
+    act(() => capturedResume?.(0));
+
+    await waitFor(() => expect(issueCacheRevisionGeneration(client)).toBe(revision + 1));
+  });
+
+  it('clears cached board pages before reconnect catch up', async () => {
+    const client = mount();
+    const boardKey = [BOARD_ROOT, 'state'] as const;
+    client.setQueryData(boardKey, { groups: [{ id: 'todo' }] });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(client.getQueryData(boardKey)).toBeUndefined());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('fences a board request that started before reconnect reset', async () => {
+    const client = mount();
+    observed.length = 0;
+    const boardKey = [BOARD_ROOT, 'state'] as const;
+    const stale = deferred<{ version: string }>();
+    const fresh = deferred<{ version: string }>();
+    let boardRequests = 0;
+    client.setQueryData(boardKey, { version: 'cached' });
+    const observer = new QueryObserver(client, {
+      queryKey: boardKey,
+      queryFn: () => {
+        boardRequests += 1;
+        return boardRequests === 1 ? stale.promise : fresh.promise;
+      },
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const firstRequest = observer.refetch().catch(() => undefined);
+    await waitFor(() => expect(boardRequests).toBe(1));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL) =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(boardRequests).toBe(2));
+      stale.resolve({ version: 'stale' });
+      await stale.promise;
+      await Promise.resolve();
+      expect(client.getQueryData<{ version: string }>(boardKey)?.version).not.toBe('stale');
+
+      fresh.resolve({ version: 'fresh' });
+      await waitFor(() =>
+        expect(client.getQueryData<{ version: string }>(boardKey)?.version).toBe('fresh'),
+      );
+      await waitFor(() => expect(observed).toEqual([42]));
+      await firstRequest;
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+  });
+
+  it('recovers an old-identifier detail by stable id without a watermark', async () => {
+    const client = mount();
+    const previousKey = queryKeys.issue('ENG-3');
+    const canonicalKey = queryKeys.issue('DSGN-4');
+    const canonical = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 40 });
+    client.setQueryData(previousKey, detailFor(issue(), []));
+    const observer = new QueryObserver(client, {
+      queryKey: previousKey,
+      queryFn: () => Promise.reject(new Error('old identifier unavailable')),
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = String(input);
+      requested.push(url);
+      return Promise.resolve(Response.json(detailFor(canonical, [])));
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(0));
+      await waitFor(() =>
+        expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toEqual(
+          canonical,
+        ),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(requested).toContain('/api/issues/issue_1');
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(canonicalKey)?.issue).toEqual(
+      canonical,
+    );
+  });
+
+  it('recovers an old-identifier detail by stable id alongside catch up', async () => {
+    const client = mount();
+    const previousKey = queryKeys.issue('ENG-3');
+    const canonicalKey = queryKeys.issue('DSGN-4');
+    const canonical = issue({ teamId: 'team_design', identifier: 'DSGN-4', syncId: 40 });
+    client.setQueryData(previousKey, detailFor(issue(), []));
+    const observer = new QueryObserver(client, {
+      queryKey: previousKey,
+      queryFn: () => Promise.reject(new Error('old identifier unavailable')),
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = String(input);
+      requested.push(url);
+      return Promise.resolve(
+        url.startsWith('/api/sync')
+          ? Response.json({ syncId: 42, truncated: false, actions: [] })
+          : Response.json(detailFor(canonical, [])),
+      );
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() =>
+        expect(client.getQueryData<ReturnType<typeof detailFor>>(previousKey)?.issue).toEqual(
+          canonical,
+        ),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(requested.sort()).toEqual(['/api/issues/issue_1', '/api/sync?since=17']);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(canonicalKey)?.issue).toEqual(
+      canonical,
+    );
+  });
+
+  it('does not recover an inactive detail during reconnect', async () => {
+    const client = mount();
+    observed.length = 0;
+    client.setQueryData(queryKeys.issue('ENG-3'), detailFor(issue(), []));
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(Response.json({ syncId: 42, truncated: false, actions: [] }));
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observed).toContain(42));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requested).toEqual(['/api/sync?since=17']);
+  });
+
+  it('aborts and ignores an older reconnect after a newer resume starts', async () => {
+    mount();
+    observed.length = 0;
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const signals: (AbortSignal | null | undefined)[] = [];
+    let requests = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal);
+      requests += 1;
+      return requests === 1 ? first.promise : second.promise;
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(requests).toBe(1));
+      act(() => capturedResume?.(18));
+      await waitFor(() => expect(requests).toBe(2));
+      expect(signals[0]?.aborted).toBe(true);
+
+      second.resolve(Response.json({ syncId: 42, truncated: false, actions: [] }));
+      await waitFor(() => expect(observed).toEqual([42]));
+      first.resolve(Response.json({ syncId: 41, truncated: false, actions: [] }));
+      await first.promise;
+      await Promise.resolve();
+
+      expect(observed).toEqual([42]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('aborts an in-flight reconnect when the bridge unmounts', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const response = deferred<Response>();
+    const signals: (AbortSignal | null | undefined)[] = [];
+    observed.length = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return response.promise;
+    }) as typeof fetch;
+    const mounted = render(
+      <QueryClientProvider client={client}>
+        <DeltaBridge organizationId="org_1" teamIds={[TEAM]} />
+      </QueryClientProvider>,
+    );
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(signals).toHaveLength(1));
+      mounted.unmount();
+      expect(signals[0]?.aborted).toBe(true);
+      response.resolve(Response.json({ syncId: 42, truncated: false, actions: [] }));
+      await response.promise;
+      await Promise.resolve();
+      expect(observed).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('clears issue caches before refreshing all queries when no watermark exists', async () => {
+    const client = mount();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const failedRefetches: string[] = [];
+    const listObserver = new QueryObserver(client, {
+      queryKey: listKey,
+      queryFn: () => {
+        failedRefetches.push('list');
+        return Promise.reject(new Error('list unavailable'));
+      },
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const detailObserver = new QueryObserver(client, {
+      queryKey: detailKey,
+      queryFn: () => {
+        failedRefetches.push('detail');
+        return Promise.reject(new Error('detail unavailable'));
+      },
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribeList = listObserver.subscribe(() => undefined);
+    const unsubscribeDetail = detailObserver.subscribe(() => undefined);
     const invalidations: (unknown[] | null)[] = [];
     const originalInvalidate = client.invalidateQueries.bind(client);
     client.invalidateQueries = (filters?: Parameters<typeof originalInvalidate>[0]) => {
@@ -582,20 +1627,23 @@ describe('DeltaBridge reconnect backfill', () => {
     }) as typeof fetch;
 
     try {
-      await act(async () => {
-        capturedResume?.(0);
-        await Promise.resolve();
-      });
+      act(() => capturedResume?.(0));
+      await waitFor(() => expect(invalidations).toEqual([null]));
     } finally {
       globalThis.fetch = originalFetch;
     }
 
-    expect(requested).toEqual([]);
-    expect(invalidations).toEqual([null]);
+    expect(requested).toEqual(['/api/issues/issue_1']);
+    expect(client.getQueryData(listKey)).toBeUndefined();
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+    expect(failedRefetches.sort()).toEqual(['detail', 'list']);
+    unsubscribeList();
+    unsubscribeDetail();
   });
 
-  it('replays the catch up endpoint instead of refetching the visible list', async () => {
+  it('clears issue caches before applying reconnect catch up', async () => {
     const client = mount();
+    client.setQueryData(queryKeys.issue('ENG-3'), detailFor(issue(), []));
     const seen = trackInvalidations(client);
     observed.length = 0;
     const requested: string[] = [];
@@ -626,7 +1674,8 @@ describe('DeltaBridge reconnect backfill', () => {
     }
 
     expect(requested).toEqual(['/api/sync?since=17']);
-    expect(titleIn(client)).toBe('Caught up');
+    expect(client.getQueryData(queryKeys.issues(TEAM))).toBeUndefined();
+    expect(client.getQueryData(queryKeys.issue('ENG-3'))).toBeUndefined();
     expect(observed).toContain(42);
     expect(seen).toEqual([
       [ANALYTICS_ROOT],
@@ -636,6 +1685,70 @@ describe('DeltaBridge reconnect backfill', () => {
       [MILESTONES_ROOT],
       [BOOTSTRAP_ROOT],
     ]);
+  });
+
+  it('clears issue caches even when reconnect catch up fails', async () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.reject(new Error('catch up unavailable'));
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(requested).toContain('/api/sync?since=17'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(client.getQueryData(queryKeys.issues(TEAM))).toBeUndefined();
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+    expect(requested).toEqual(['/api/sync?since=17']);
+  });
+
+  it('continues reconnect catch up when an active cache reset rejects', async () => {
+    const client = mount();
+    observed.length = 0;
+    const requested: string[] = [];
+    const originalReset = client.resetQueries.bind(client);
+    client.resetQueries = (filters, options) => {
+      const reset = originalReset(filters, options);
+      if (filters?.queryKey?.[0] !== ISSUES_ROOT) return reset;
+      return reset.then(() => Promise.reject(new Error('list reset failed')));
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(Response.json({ syncId: 42, truncated: false, actions: [] }));
+    }) as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(requested).toEqual(['/api/sync?since=17']));
+      await waitFor(() => expect(observed).toEqual([42]));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('invalidates nonissue caches when reconnect catch up fails', async () => {
+    const client = mount();
+    const viewKey = [VIEWS_ROOT, 'mine'] as const;
+    client.setQueryData(viewKey, { id: 'view_1' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.reject(new Error('catch up unavailable'))) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(client.getQueryState(viewKey)?.isInvalidated).toBe(true));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('refreshes bootstrap when catch up only contains this tab own echo', async () => {
@@ -722,6 +1835,24 @@ describe('DeltaBridge deletions', () => {
     act(() => capturedHandler?.([deleteAction('issue_1', 'ENG-3')]));
 
     expect(client.getQueryData(queryKeys.issue('ENG-3'))).toBeUndefined();
+  });
+
+  it('handles a rejected detail reset while forgetting a realtime deletion', async () => {
+    const client = mount();
+    const detailKey = queryKeys.issue('ENG-3');
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const originalReset = client.resetQueries.bind(client);
+    client.resetQueries = (filters, options) =>
+      originalReset(filters, options).then(() => Promise.reject(new Error('detail reset failed')));
+
+    try {
+      act(() => capturedHandler?.([deleteAction('issue_1', 'ENG-3')]));
+      await Promise.resolve();
+
+      expect(client.getQueryData(detailKey)).toBeUndefined();
+    } finally {
+      client.resetQueries = originalReset;
+    }
   });
 
   it('takes a deleted child out of the sub issue list its parent still shows', () => {

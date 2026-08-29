@@ -13,6 +13,7 @@ import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
+  issueCacheResetGeneration,
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
@@ -631,6 +632,13 @@ function refreshCounts(client: QueryClient): void {
   staleBoardPages(client);
 }
 
+async function invalidateIssueCaches(client: QueryClient): Promise<void> {
+  await Promise.allSettled([
+    client.invalidateQueries({ queryKey: [ISSUES_ROOT] }),
+    client.invalidateQueries({ queryKey: [ISSUE_ROOT] }),
+  ]);
+}
+
 function resortTeamIssueLists(client: QueryClient, teamId: string): void {
   eachIssueList(client, { queryKey: queryKeys.issueTeam(teamId) }, (issues, search) =>
     sortForSearch(search, issues),
@@ -650,10 +658,12 @@ export function useUpdateIssue() {
       return result.issue;
     },
     onMutate: async (input) => {
-      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
-      const previousDetail = client.getQueryData<IssueDetail>(
-        queryKeys.issue(input.issue.identifier),
-      );
+      const detailKey = queryKeys.issue(input.issue.identifier);
+      await Promise.allSettled([
+        client.cancelQueries({ queryKey: [ISSUES_ROOT] }),
+        client.cancelQueries({ queryKey: detailKey, exact: true }),
+      ]);
+      const previousDetail = client.getQueryData<IssueDetail>(detailKey);
 
       const { reviewerIds, ...patch } = input.patch;
       const optimistic: Issue = {
@@ -664,8 +674,9 @@ export function useUpdateIssue() {
           input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
       };
       placeIssue(client, optimistic, false);
+      let optimisticDetail: IssueDetail | undefined;
       if (previousDetail !== undefined) {
-        client.setQueryData(queryKeys.issue(input.issue.identifier), {
+        optimisticDetail = client.setQueryData<IssueDetail>(detailKey, {
           ...previousDetail,
           issue: {
             ...optimistic,
@@ -673,12 +684,31 @@ export function useUpdateIssue() {
           },
         });
       }
-      return { previousDetail, identifier: input.issue.identifier };
+      return {
+        previousDetail,
+        optimisticDetail,
+        identifier: input.issue.identifier,
+        resetGeneration: issueCacheResetGeneration(client),
+        issueRevision: issueRevisionGeneration(client, input.issue.id),
+      };
     },
     onError: (error, input, context) => {
-      placeIssue(client, input.issue);
-      if (context?.previousDetail !== undefined && context.identifier !== undefined) {
-        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+      const currentDetail =
+        context === undefined
+          ? undefined
+          : client.getQueryData<IssueDetail>(queryKeys.issue(context.identifier));
+      const canRestore =
+        context !== undefined &&
+        issueCacheResetGeneration(client) === context.resetGeneration &&
+        issueRevisionGeneration(client, input.issue.id) === context.issueRevision &&
+        currentDetail === context.optimisticDetail;
+      if (canRestore) {
+        placeIssue(client, input.issue);
+        if (context.previousDetail !== undefined) {
+          client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+        }
+      } else {
+        invalidateIssueCaches(client).catch(() => undefined);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
@@ -686,7 +716,9 @@ export function useUpdateIssue() {
       placeIssue(client, issue);
       refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
-        current === undefined ? current : { ...current, issue },
+        current === undefined || current.issue.syncId > issue.syncId
+          ? current
+          : { ...current, issue },
       );
     },
     onSettled: (_issue, _error, input) => {
@@ -725,6 +757,7 @@ interface MoveMutationContext {
   readonly lists: readonly MoveListSnapshot[];
   readonly deletionGeneration: number;
   readonly issueRevision: number;
+  readonly resetGeneration: number;
 }
 
 export interface IssueMoveSettlement {
@@ -765,6 +798,65 @@ function restoreFailedMoveAfterUnavailableRefresh(
   }
 }
 
+function failedMoveRollbackFenced(
+  client: QueryClient,
+  input: MoveInput,
+  context: MoveMutationContext | undefined,
+): boolean {
+  return (
+    context !== undefined &&
+    (issueCacheResetGeneration(client) !== context.resetGeneration ||
+      issueRevisionGeneration(client, input.issue.id) !== context.issueRevision)
+  );
+}
+
+async function rollbackFailedMove(
+  client: QueryClient,
+  input: MoveInput,
+  context: MoveMutationContext | undefined,
+): Promise<void> {
+  const lists = context?.lists ?? [];
+  const refreshKeys: QueryKey[] = [];
+  const expected = new Set(
+    lists.flatMap((snapshot) =>
+      snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
+    ),
+  );
+  const current = client
+    .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
+    .flatMap(([, pages]) => {
+      const found = issueFromPages(pages, input.issue.id);
+      return found === undefined ? [] : [found];
+    });
+  const hasOptimistic = current.some((issue) => expected.has(issueFingerprint(issue)));
+  const intervening = current.some((issue) => !expected.has(issueFingerprint(issue)));
+
+  for (const snapshot of lists) {
+    const pages = client.getQueryData<IssuePages>(snapshot.key);
+    const found = issueFromPages(pages, input.issue.id);
+    const stillOptimistic =
+      found === undefined
+        ? snapshot.optimistic === undefined
+        : snapshot.optimistic !== undefined &&
+          issueFingerprint(found) === issueFingerprint(snapshot.optimistic);
+    if (hasOptimistic && !intervening && stillOptimistic) {
+      client.setQueryData<IssuePages>(snapshot.key, (pages) => {
+        if (pages === undefined) return pages;
+        const found = issueFromPages(pages, input.issue.id);
+        if (found !== undefined && !expected.has(issueFingerprint(found))) return pages;
+        return restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, snapshot.before);
+      });
+      continue;
+    }
+    if (intervening && !stillOptimistic) continue;
+    refreshKeys.push(snapshot.key);
+  }
+  await refreshIssueListsUntilStable(client, refreshKeys, [input.issue.id], true, false);
+  if (context !== undefined) {
+    restoreFailedMoveAfterUnavailableRefresh(client, input, context, refreshKeys);
+  }
+}
+
 export function useMoveIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -786,7 +878,7 @@ export function useMoveIssue() {
     },
     onMutate: async (input) => {
       moveDeletionGenerations.set(input, issueDeletionGeneration(client, input.issue.id));
-      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       const before = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
@@ -804,55 +896,13 @@ export function useMoveIssue() {
         deletionGeneration:
           moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
+        resetGeneration: issueCacheResetGeneration(client),
       };
     },
     onError: async (error, input, context) => {
-      const lists = context?.lists ?? [];
-      const refreshKeys: QueryKey[] = [];
-      const expected = new Set(
-        lists.flatMap((snapshot) =>
-          snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
-        ),
-      );
-      const current = client
-        .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
-        .flatMap(([, pages]) => {
-          const found = issueFromPages(pages, input.issue.id);
-          return found === undefined ? [] : [found];
-        });
-      const hasOptimistic = current.some((issue) => expected.has(issueFingerprint(issue)));
-      const intervening = current.some((issue) => !expected.has(issueFingerprint(issue)));
-
-      for (const snapshot of lists) {
-        const pages = client.getQueryData<IssuePages>(snapshot.key);
-        const found = issueFromPages(pages, input.issue.id);
-        const stillOptimistic =
-          found === undefined
-            ? snapshot.optimistic === undefined
-            : snapshot.optimistic !== undefined &&
-              issueFingerprint(found) === issueFingerprint(snapshot.optimistic);
-        if (hasOptimistic && !intervening && stillOptimistic) {
-          client.setQueryData<IssuePages>(snapshot.key, (pages) => {
-            if (pages === undefined) return pages;
-            const found = issueFromPages(pages, input.issue.id);
-            if (found !== undefined && !expected.has(issueFingerprint(found))) return pages;
-            return restoreIssueInPages(
-              pages,
-              searchOf(snapshot.key),
-              input.issue.id,
-              snapshot.before,
-            );
-          });
-          continue;
-        }
-        if (intervening && !stillOptimistic) continue;
-        refreshKeys.push(snapshot.key);
-      }
       toast({ title: 'Could not move that issue', description: messageOf(error), tone: 'danger' });
-      await refreshIssueListsUntilStable(client, refreshKeys, [input.issue.id], true, false);
-      if (context !== undefined) {
-        restoreFailedMoveAfterUnavailableRefresh(client, input, context, refreshKeys);
-      }
+      if (failedMoveRollbackFenced(client, input, context)) await invalidateIssueCaches(client);
+      else await rollbackFailedMove(client, input, context);
     },
     onSuccess: async (settlement, input) => {
       const confirmedDeletedIds = settlement.issues
@@ -928,6 +978,7 @@ interface DeleteListSnapshot {
 interface DeleteMutationContext {
   readonly lists: readonly DeleteListSnapshot[];
   readonly issueRevisions: ReadonlyMap<string, number>;
+  readonly resetGeneration: number;
 }
 
 function dropFromIssueLists(client: QueryClient, removed: ReadonlySet<string>): void {
@@ -953,13 +1004,13 @@ async function dropFromIssueDetails(
     .getQueryCache()
     .findAll({ queryKey: [ISSUE_ROOT] })
     .flatMap((query) => (query.state.fetchStatus === 'fetching' ? [query.queryKey] : []));
-  await Promise.all(
+  await Promise.allSettled(
     fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;
     if (removed.has(detail.issue.id)) {
-      client.resetQueries({ queryKey: key, exact: true });
+      client.resetQueries({ queryKey: key, exact: true }).catch(() => undefined);
       continue;
     }
     let next = orphanRemovedParent(detail, removed);
@@ -1098,7 +1149,7 @@ export function useDeleteIssues() {
   return useMutation({
     mutationFn: deleteEach,
     onMutate: async (issues) => {
-      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       const before = client.getQueriesData<IssuePages>({
         queryKey: [ISSUES_ROOT],
       });
@@ -1114,6 +1165,7 @@ export function useDeleteIssues() {
         issueRevisions: new Map(
           [...changedIds].map((issueId) => [issueId, issueRevisionGeneration(client, issueId)]),
         ),
+        resetGeneration: issueCacheResetGeneration(client),
       };
     },
     onError: async (error, _issues, context) => {
@@ -1121,9 +1173,12 @@ export function useDeleteIssues() {
       if (partiallyDeleted) {
         recordIssueDeletions(client, error.gone);
         recordIssueListRevisions(client, issueListKeys(client));
-        await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+        await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       }
-      if (context !== undefined) restoreIssueLists(client, context);
+      const resetChanged =
+        context !== undefined && issueCacheResetGeneration(client) !== context.resetGeneration;
+      if (context !== undefined && !resetChanged) restoreIssueLists(client, context);
+      if (resetChanged) await invalidateIssueCaches(client);
       if (partiallyDeleted) {
         dropFromIssueLists(client, new Set(error.gone));
         await dropFromIssueDetails(client, new Set(error.gone));
@@ -1137,7 +1192,7 @@ export function useDeleteIssues() {
         issues.map((issue) => issue.id),
       );
       recordIssueListRevisions(client, issueListKeys(client));
-      await client.cancelQueries({ queryKey: [ISSUES_ROOT] });
+      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       dropFromIssueLists(client, removed);
       await dropFromIssueDetails(client, removed);
     },

@@ -128,6 +128,7 @@ function issueAction(
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
   decorations: { readonly labelIds: readonly string[]; readonly reviewerIds: readonly string[] },
+  teamChanged = false,
 ): SyncAction {
   return buildSyncAction({
     syncId,
@@ -140,6 +141,26 @@ function issueAction(
       ...row,
       labelIds: [...decorations.labelIds],
       reviewerIds: [...decorations.reviewerIds],
+      ...(teamChanged ? { teamChanged: true } : {}),
+    },
+    actor,
+  });
+}
+
+function issueDepartureAction(row: IssueRow, syncId: number, actor: Actor): SyncAction {
+  return buildSyncAction({
+    syncId,
+    organizationId: row.organizationId,
+    scopes: [scopes.team(row.teamId), scopes.issue(row.id)],
+    action: 'delete',
+    model: 'issue',
+    modelId: row.id,
+    data: {
+      id: row.id,
+      teamId: row.teamId,
+      identifier: row.identifier,
+      departure: true,
+      syncId,
     },
     actor,
   });
@@ -1446,6 +1467,16 @@ export async function moveIssue(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
 
+    if (changingTeam) {
+      await tx.insert(schema.issueIdentifierAlias).values({
+        id: newId(),
+        organizationId: principal.organizationId,
+        identifier: current.identifier,
+        issueId: current.id,
+        syncId,
+      });
+    }
+
     const landing = await landingOrder(tx, parsed, teamId, state.id, syncId);
     const rebalanced = landing.rebalanced;
 
@@ -1502,11 +1533,19 @@ export async function moveIssue(
       issue,
       rebalanced,
       actions: [
+        ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
         ...affected.map((row) =>
-          issueAction(row, syncId, actor, 'update', {
-            labelIds: decorations.labels.get(row.id) ?? [],
-            reviewerIds: decorations.reviewers.get(row.id) ?? [],
-          }),
+          issueAction(
+            row,
+            syncId,
+            actor,
+            'update',
+            {
+              labelIds: decorations.labels.get(row.id) ?? [],
+              reviewerIds: decorations.reviewers.get(row.id) ?? [],
+            },
+            changingTeam && row.id === issue.id,
+          ),
         ),
         ...notifications,
       ],
@@ -2190,15 +2229,35 @@ export async function getIssueFacets(
 export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {
   assertCan(principal, 'issue:read');
   const parsed = parseIssueIdentifier(idOrIdentifier);
-  const match =
-    parsed === null
-      ? eq(schema.issue.id, idOrIdentifier)
-      : eq(schema.issue.identifier, issueIdentifier(parsed.prefix, parsed.number));
-  const [row] = await db
+  const identifier = parsed === null ? null : issueIdentifier(parsed.prefix, parsed.number);
+  const [direct] = await db
     .select()
     .from(schema.issue)
-    .where(and(eq(schema.issue.organizationId, principal.organizationId), match))
+    .where(
+      and(
+        eq(schema.issue.organizationId, principal.organizationId),
+        identifier === null
+          ? eq(schema.issue.id, idOrIdentifier)
+          : eq(schema.issue.identifier, identifier),
+      ),
+    )
     .limit(1);
+  const [aliased] =
+    direct !== undefined || identifier === null
+      ? []
+      : await db
+          .select(getTableColumns(schema.issue))
+          .from(schema.issueIdentifierAlias)
+          .innerJoin(schema.issue, eq(schema.issue.id, schema.issueIdentifierAlias.issueId))
+          .where(
+            and(
+              eq(schema.issueIdentifierAlias.organizationId, principal.organizationId),
+              eq(schema.issueIdentifierAlias.identifier, identifier),
+              eq(schema.issue.organizationId, principal.organizationId),
+            ),
+          )
+          .limit(1);
+  const row = direct ?? aliased;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
   return issue;
@@ -2214,6 +2273,15 @@ export async function listIssueLabels(
     .select({ labelId: schema.issueLabel.labelId })
     .from(schema.issueLabel)
     .where(eq(schema.issueLabel.issueId, issueId));
+}
+
+function relationScopes(
+  row: Pick<IssueRelationRow, 'issueId'>,
+  source: Pick<IssueRow, 'id' | 'teamId'>,
+  target: Pick<IssueRow, 'id' | 'teamId'>,
+): string[] {
+  const owner = row.issueId === source.id ? source : target;
+  return [scopes.team(owner.teamId), scopes.issue(owner.id)];
 }
 
 export async function setRelation(
@@ -2276,7 +2344,7 @@ export async function setRelation(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [scopes.issue(row.issueId), scopes.issue(row.relatedIssueId)],
+          scopes: relationScopes(row, source, target),
           action: 'insert',
           model: 'issue_relation',
           modelId: row.id,
@@ -2297,8 +2365,8 @@ export async function removeRelation(
   const parsed = issueRelationSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    await loadIssue(tx, principal, issueId);
-    await loadIssue(tx, principal, parsed.relatedIssueId);
+    const source = await loadIssue(tx, principal, issueId);
+    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
 
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -2330,7 +2398,7 @@ export async function removeRelation(
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
-        scopes: [scopes.issue(row.issueId), scopes.issue(row.relatedIssueId)],
+        scopes: relationScopes(row, source, target),
         action: 'delete',
         model: 'issue_relation',
         modelId: row.id,
@@ -2434,7 +2502,7 @@ export async function subscribe(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
+          scopes: [scopes.user(principal.userId)],
           action: 'insert',
           model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,
@@ -2469,7 +2537,7 @@ export async function unsubscribe(
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
-          scopes: [scopes.issue(issueId), scopes.user(principal.userId)],
+          scopes: [scopes.user(principal.userId)],
           action: 'delete',
           model: 'issue_subscription',
           modelId: `${issueId}:${principal.userId}`,

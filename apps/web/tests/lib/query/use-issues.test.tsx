@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
+  recordIssueCacheReset,
   recordIssueDeletions,
   recordIssueListRevisions,
   recordIssueRevisions,
@@ -27,8 +28,9 @@ const {
   useDeleteIssues,
   useIssues,
   useMoveIssue,
+  useUpdateIssue,
 } = await import('@/lib/query/use-issues.ts');
-const { queryKeys } = await import('@/lib/query/keys.ts');
+const { ISSUE_ROOT, ISSUES_ROOT, queryKeys } = await import('@/lib/query/keys.ts');
 
 const TEAM = 'team_eng';
 const originalFetch = globalThis.fetch;
@@ -177,6 +179,204 @@ describe('useIssues', () => {
 });
 
 describe('issue mutations patch the cache without a refetch drain', () => {
+  it('does not roll back an update across an issue cache reset', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Optimistic title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() => expect(cachedIssue(client)?.title).toBe('Optimistic title'));
+
+    const authoritative = issue({ title: 'After reconnect', syncId: 3 });
+    act(() => {
+      recordIssueCacheReset(client);
+      client.setQueryData(listKey, issuePages([authoritative]));
+      client.setQueryData(detailKey, detailFor(authoritative, []));
+    });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The update failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)).toEqual(authoritative);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(
+      authoritative,
+    );
+    await waitFor(() => expect(update.result.current.isError).toBe(true));
+  });
+
+  it('does not roll back an update after its committed echo arrives', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Committed title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() => expect(cachedIssue(client)?.title).toBe('Committed title'));
+    act(() => recordIssueRevisions(client, ['issue_1']));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'network_error', message: 'The response was lost.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)?.title).toBe('Committed title');
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue.title).toBe(
+      'Committed title',
+    );
+    await waitFor(() => expect(update.result.current.isError).toBe(true));
+  });
+
+  it('does not restore an old detail over a newer detail fetch', async () => {
+    const pendingUpdate = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH'
+        ? pendingUpdate.promise
+        : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Optimistic title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() =>
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue.title).toBe(
+        'Optimistic title',
+      ),
+    );
+
+    const fetched = detailFor(issue({ title: 'Fetched title', syncId: 3 }), []);
+    await client.fetchQuery({ queryKey: detailKey, queryFn: () => Promise.resolve(fetched) });
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)).toEqual(fetched);
+
+    await act(async () => {
+      pendingUpdate.resolve(
+        Response.json(
+          { error: { code: 'network_error', message: 'The response was lost.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)).toEqual(fetched);
+    expect(cachedIssue(client)?.title).toBe('Optimistic title');
+    await waitFor(() => expect(update.result.current.isError).toBe(true));
+  });
+
+  it('does not let an older update response replace a newer detail', async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    let requests = 0;
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'PATCH') return Promise.resolve(Response.json(page([], null)));
+      requests += 1;
+      return requests === 1 ? first.promise : second.promise;
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const firstUpdate = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+    const secondUpdate = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let firstResult: Promise<Issue> | undefined;
+    await act(async () => {
+      firstResult = firstUpdate.result.current.mutateAsync({
+        issue: issue(),
+        patch: { title: 'First optimistic title' },
+      });
+      await Promise.resolve();
+    });
+    if (firstResult === undefined) throw new Error('missing first update promise');
+    await waitFor(() => expect(requests).toBe(1));
+
+    let secondResult: Promise<Issue> | undefined;
+    await act(async () => {
+      secondResult = secondUpdate.result.current.mutateAsync({
+        issue: issue({ title: 'First optimistic title' }),
+        patch: { title: 'Second optimistic title' },
+      });
+      await Promise.resolve();
+    });
+    if (secondResult === undefined) throw new Error('missing second update promise');
+    await waitFor(() => expect(requests).toBe(2));
+
+    const newer = issue({ title: 'Second confirmed title', syncId: 3 });
+    await act(async () => {
+      second.resolve(Response.json({ issue: newer }));
+      await secondResult;
+    });
+    const older = issue({ title: 'First confirmed title', syncId: 2 });
+    await act(async () => {
+      first.resolve(Response.json({ issue: older }));
+      await firstResult;
+    });
+    await waitFor(() => expect(firstUpdate.result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(secondUpdate.result.current.isSuccess).toBe(true));
+
+    expect(cachedIssue(client)).toEqual(newer);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(newer);
+  });
+
   it('sends one write and converges the cached row with zero list refetches', async () => {
     const log = stubFetch((_url, init) => {
       if (init?.method === 'POST') {
@@ -205,6 +405,49 @@ describe('issue mutations patch the cache without a refetch drain', () => {
 
     expect(log.methods.filter((method) => method === 'POST')).toHaveLength(1);
     expect(log.methods.filter((method) => method === 'GET')).toHaveLength(1);
+  });
+
+  it('continues a move when list cancellation rejects after canceling', async () => {
+    const log = stubFetch((_url, init) =>
+      init?.method === 'POST'
+        ? { issue: issue({ stateId: 'state_doing', syncId: 2 }), rebalanced: [] }
+        : page([], null),
+    );
+    const client = newClient();
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([issue()]));
+    const originalCancel = client.cancelQueries.bind(client);
+    client.cancelQueries = (filters, options) => {
+      const cancellation = originalCancel(filters, options);
+      if (filters?.queryKey?.[0] !== ISSUES_ROOT) return cancellation;
+      return cancellation.then(() => Promise.reject(new Error('list cancellation failed')));
+    };
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    try {
+      const settlement = { status: 'pending' as 'pending' | 'success' | 'error' };
+      await act(async () => {
+        settlement.status = await move.result.current
+          .mutateAsync({
+            issue: issue(),
+            stateId: 'state_doing',
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          })
+          .then(
+            () => 'success' as const,
+            () => 'error' as const,
+          );
+      });
+
+      await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+      expect(settlement.status).toBe('success');
+      expect(cachedIssue(client)?.stateId).toBe('state_doing');
+      expect(log.methods.filter((method) => method === 'POST')).toHaveLength(1);
+    } finally {
+      client.cancelQueries = originalCancel;
+    }
   });
 
   it('waits for filtered lists to converge before a successful move settles', async () => {
@@ -606,6 +849,97 @@ describe('issue mutations patch the cache without a refetch drain', () => {
 
     await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
     expect(listRequests).toBeLessThanOrEqual(5);
+  });
+
+  it('does not roll back a move after its committed echo arrives', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST' ? pending.promise : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const key = queryKeys.issues(TEAM);
+    client.setQueryData(key, issuePages([issue()]));
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(cachedIssue(client)?.stateId).toBe('state_doing'));
+    act(() => recordIssueRevisions(client, ['issue_1']));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'network_error', message: 'The response was lost.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)?.stateId).toBe('state_doing');
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
+  });
+
+  it('does not roll back a move across an issue cache reset', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST' ? pending.promise : Promise.reject(new Error('list unavailable')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const key = queryKeys.issues(TEAM);
+    client.setQueryData(key, issuePages([issue()]));
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(cachedIssue(client)?.stateId).toBe('state_doing'));
+    act(() => recordIssueCacheReset(client));
+    await client.resetQueries({ queryKey: key, exact: true });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)).toBeUndefined();
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
   });
 
   it('does not let a failed move roll back a newer cached issue', async () => {
@@ -1530,6 +1864,109 @@ describe('deleting an issue', () => {
     await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
   });
 
+  it('commits a successful delete when list cancellation rejects after canceling', async () => {
+    const log = stubDeletes(false);
+    const client = newClient();
+    const removed = issue({ id: 'issue_child', identifier: 'ENG-2' });
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([removed]));
+    client.setQueryData(queryKeys.issue(removed.identifier), detailFor(removed, []));
+    const originalCancel = client.cancelQueries.bind(client);
+    client.cancelQueries = (filters, options) => {
+      const cancellation = originalCancel(filters, options);
+      if (filters?.queryKey?.[0] !== ISSUES_ROOT) return cancellation;
+      return cancellation.then(() => Promise.reject(new Error('list cancellation failed')));
+    };
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    try {
+      const settlement = { status: 'pending' as 'pending' | 'success' | 'error' };
+      await act(async () => {
+        settlement.status = await remove.result.current.mutateAsync([removed]).then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      });
+
+      await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+      expect(settlement.status).toBe('success');
+      expect(cachedIssue(client, removed.id)).toBeUndefined();
+      expect(client.getQueryData(queryKeys.issue(removed.identifier))).toBeUndefined();
+      expect(log.methods.filter((method) => method === 'DELETE')).toHaveLength(1);
+    } finally {
+      client.cancelQueries = originalCancel;
+    }
+  });
+
+  it('purges details when detail cancellation rejects after canceling', async () => {
+    stubDeletes(false);
+    const client = newClient();
+    const parent = issue({ id: 'issue_parent', identifier: 'ENG-1' });
+    const child = issue({ id: 'issue_child', identifier: 'ENG-2', parentId: parent.id });
+    const parentKey = queryKeys.issue(parent.identifier);
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([parent, child]));
+    client.setQueryData(parentKey, detailFor(parent, [child]));
+    const pendingDetail = deferred<ReturnType<typeof detailFor>>();
+    const refetch = client
+      .fetchQuery({ queryKey: parentKey, queryFn: () => pendingDetail.promise })
+      .catch(() => undefined);
+    await waitFor(() => expect(client.getQueryState(parentKey)?.fetchStatus).toBe('fetching'));
+    const originalCancel = client.cancelQueries.bind(client);
+    client.cancelQueries = (filters, options) => {
+      const cancellation = originalCancel(filters, options);
+      if (filters?.queryKey?.[0] !== ISSUE_ROOT) return cancellation;
+      return cancellation.then(() => Promise.reject(new Error('detail cancellation failed')));
+    };
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    try {
+      const settlement = { status: 'pending' as 'pending' | 'success' | 'error' };
+      await act(async () => {
+        settlement.status = await remove.result.current.mutateAsync([child]).then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      });
+
+      await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+      expect(settlement.status).toBe('success');
+      expect(client.getQueryData<ReturnType<typeof detailFor>>(parentKey)?.subIssues).toEqual([]);
+    } finally {
+      client.cancelQueries = originalCancel;
+      pendingDetail.resolve(detailFor(parent, []));
+      await refetch;
+    }
+  });
+
+  it('handles a rejected detail reset after a successful delete', async () => {
+    stubDeletes(false);
+    const client = newClient();
+    const removed = issue({ id: 'issue_child', identifier: 'ENG-2' });
+    const detailKey = queryKeys.issue(removed.identifier);
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([removed]));
+    client.setQueryData(detailKey, detailFor(removed, []));
+    const originalReset = client.resetQueries.bind(client);
+    client.resetQueries = (filters, options) =>
+      originalReset(filters, options).then(() => Promise.reject(new Error('detail reset failed')));
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    try {
+      const settlement = { status: 'pending' as 'pending' | 'success' | 'error' };
+      await act(async () => {
+        settlement.status = await remove.result.current.mutateAsync([removed]).then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(remove.result.current.isSuccess).toBe(true));
+      expect(settlement.status).toBe('success');
+      expect(client.getQueryData(detailKey)).toBeUndefined();
+    } finally {
+      client.resetQueries = originalReset;
+    }
+  });
+
   it('puts every list back exactly as it was when the server refuses', async () => {
     stubDeletes(true);
     const client = newClient();
@@ -1542,6 +1979,79 @@ describe('deleting an issue', () => {
     await waitFor(() => expect(remove.result.current.isError).toBe(true));
     expect(team.result.current.data?.map((row) => row.id)).toEqual(before ?? []);
     expect(mine.result.current.data?.map((row) => row.id)).toEqual(['issue_parent', 'issue_child']);
+  });
+
+  it('does not restore a delete after its committed echo arrives', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'DELETE' ? pending.promise : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const key = queryKeys.issues(TEAM);
+    client.setQueryData(key, issuePages([issue()]));
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = remove.result.current.mutateAsync([issue()]).then(
+        () => 'success' as const,
+        () => 'error' as const,
+      );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing delete promise');
+    await waitFor(() => expect(cachedIssue(client)).toBeUndefined());
+    act(() => recordIssueDeletions(client, ['issue_1']));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'network_error', message: 'The response was lost.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)).toBeUndefined();
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
+  });
+
+  it('does not restore a delete across an issue cache reset', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'DELETE' ? pending.promise : Promise.resolve(Response.json(page([], null))),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const key = queryKeys.issues(TEAM);
+    client.setQueryData(key, issuePages([issue()]));
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = remove.result.current.mutateAsync([issue()]).then(
+        () => 'success' as const,
+        () => 'error' as const,
+      );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing delete promise');
+    await waitFor(() => expect(cachedIssue(client)).toBeUndefined());
+    act(() => recordIssueCacheReset(client));
+    await client.resetQueries({ queryKey: key, exact: true });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The delete failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)).toBeUndefined();
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
   });
 
   it('restores a refused delete without overwriting a realtime sibling update', async () => {
@@ -1594,6 +2104,7 @@ describe('deleting an issue', () => {
       );
       await result?.catch(() => undefined);
     });
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
 
     expect(issueFromPagesForTest(client.getQueryData<IssuePages>(key), removed.id)).toEqual(
       removed,
@@ -1658,6 +2169,7 @@ describe('deleting an issue', () => {
       );
       await result?.catch(() => undefined);
     });
+    await waitFor(() => expect(remove.result.current.isError).toBe(true));
 
     const restored = client.getQueryData<IssuePages>(key);
     expect(restored === undefined ? [] : flattenIssuePages(restored).map((row) => row.id)).toEqual([
@@ -1862,6 +2374,62 @@ describe('deleting an issue', () => {
 
     await waitFor(() => expect(remove.result.current.isError).toBe(true));
     expect(team.result.current.data?.map((row) => row.id)).toEqual(['issue_child']);
+  });
+
+  it('finishes partial-delete recovery when list cancellation rejects after canceling', async () => {
+    let deletes = 0;
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'DELETE') return Promise.resolve(Response.json(page([], null)));
+      deletes += 1;
+      if (deletes === 1) {
+        return Promise.resolve(
+          Response.json({ deleted: { id: 'issue_parent', identifier: 'ENG-1' } }),
+        );
+      }
+      return Promise.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'Your role cannot issue delete.' } },
+          { status: 403 },
+        ),
+      );
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const parent = issue({ id: 'issue_parent', identifier: 'ENG-1' });
+    const child = issue({ id: 'issue_child', identifier: 'ENG-2', parentId: parent.id });
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([parent, child]));
+    client.setQueryData(queryKeys.issue(parent.identifier), detailFor(parent, [child]));
+    client.setQueryData(queryKeys.issue(child.identifier), {
+      ...detailFor(child, []),
+      parent,
+    });
+    const originalCancel = client.cancelQueries.bind(client);
+    let listCancellations = 0;
+    client.cancelQueries = (filters, options) => {
+      const cancellation = originalCancel(filters, options);
+      if (filters?.queryKey?.[0] !== ISSUES_ROOT) return cancellation;
+      listCancellations += 1;
+      return listCancellations === 1
+        ? cancellation
+        : cancellation.then(() => Promise.reject(new Error('list cancellation failed')));
+    };
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    try {
+      await act(async () => {
+        await remove.result.current.mutateAsync([parent, child]).catch(() => undefined);
+      });
+
+      await waitFor(() => expect(remove.result.current.isError).toBe(true));
+      expect(cachedIssue(client, parent.id)).toBeUndefined();
+      expect(cachedIssue(client, child.id)).toMatchObject({ id: child.id, parentId: null });
+      expect(client.getQueryData(queryKeys.issue(parent.identifier))).toBeUndefined();
+      expect(
+        client.getQueryData<ReturnType<typeof detailFor>>(queryKeys.issue(child.identifier)),
+      ).toMatchObject({ issue: { parentId: null }, parent: null });
+      expect(toasts.map((toast) => toast.title)).toContain('Could not delete');
+    } finally {
+      client.cancelQueries = originalCancel;
+    }
   });
 
   it('sends one delete per selected issue when the bar deletes in bulk', async () => {

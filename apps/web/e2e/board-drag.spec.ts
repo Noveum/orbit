@@ -198,6 +198,11 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
   await expect(cardLocator).toBeFocused();
+  await page.reload();
+  await expect
+    .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
+    .toContain(moving);
+  await expect.poll(async () => await cardsIn(page, 'Todo')).not.toContain(moving);
   await context.close();
 });
 
@@ -368,6 +373,7 @@ test('a failed keyboard move announces rollback and leaves the card in place', a
     await sourceCard.focus();
     await page.keyboard.press('Enter');
     await expect(boardStatus).toContainText(`Picked up ${made.identifier}`, { timeout: 10_000 });
+    await waitForKeyboardDragReady(page, made.identifier);
     await page.keyboard.press('ArrowRight');
     await expect(boardStatus).toContainText(`Moved ${made.identifier}`, { timeout: 10_000 });
     await page.keyboard.press('Enter');

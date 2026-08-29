@@ -143,13 +143,13 @@ describe('fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_fanout',
+        modelId: 'label_fanout',
         syncId: 10,
       }),
     );
 
     const delta = await subscribed.waitFor('delta');
-    expect(delta.actions.map((action) => action.modelId)).toEqual(['issue_fanout']);
+    expect(delta.actions.map((action) => action.modelId)).toEqual(['label_fanout']);
     await delay(BATCH_WINDOW_MS * 3);
     expect(other.messages.some((message) => message.type === 'delta')).toBe(false);
 
@@ -167,7 +167,7 @@ describe('fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.organization(orgB)],
-        modelId: 'issue_cross_org',
+        modelId: 'label_cross_org',
         syncId: 11,
       }),
     );
@@ -183,7 +183,7 @@ describe('fan-out', () => {
     client.send({ type: 'subscribe', scopes: [scopes.team(teamA)] });
     await client.waitFor('subscribed');
 
-    const targets = ['issue_a', 'issue_b', 'issue_c', 'issue_a', 'issue_d'];
+    const targets = ['label_a', 'label_b', 'label_c', 'label_a', 'label_d'];
     let syncId = 100;
     for (const modelId of targets) {
       syncId += 1;
@@ -198,10 +198,10 @@ describe('fan-out', () => {
     const deltas = client.messages.filter((message) => message.type === 'delta');
     expect(deltas).toHaveLength(1);
     expect(delta.actions.map((action) => action.modelId)).toEqual([
-      'issue_b',
-      'issue_c',
-      'issue_a',
-      'issue_d',
+      'label_b',
+      'label_c',
+      'label_a',
+      'label_d',
     ]);
     expect(delta.actions.map((action) => action.syncId)).toEqual([102, 103, 104, 105]);
     client.close();
@@ -223,7 +223,7 @@ describe('multi tab and multi tenant fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_two_tabs',
+        modelId: 'label_two_tabs',
         syncId: 400,
       }),
     );
@@ -236,7 +236,7 @@ describe('multi tab and multi tenant fan-out', () => {
       const actions = tab.messages
         .filter((message) => message.type === 'delta')
         .flatMap((message) => message.actions)
-        .filter((action) => action.modelId === 'issue_two_tabs');
+        .filter((action) => action.modelId === 'label_two_tabs');
       expect(actions).toHaveLength(1);
     }
 
@@ -260,7 +260,7 @@ describe('multi tab and multi tenant fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.organization(orgA), scopes.team(teamA)],
-        modelId: 'issue_tenant_a',
+        modelId: 'label_tenant_a',
         syncId: 410,
       }),
     );
@@ -268,7 +268,7 @@ describe('multi tab and multi tenant fan-out', () => {
       syncAction({
         organizationId: orgB,
         scopes: [scopes.organization(orgB)],
-        modelId: 'issue_tenant_b',
+        modelId: 'label_tenant_b',
         syncId: 411,
       }),
     );
@@ -284,10 +284,10 @@ describe('multi tab and multi tenant fan-out', () => {
       .filter((message) => message.type === 'delta')
       .flatMap((message) => message.actions.map((action) => action.modelId));
 
-    expect(insideIds).toContain('issue_tenant_a');
-    expect(insideIds).not.toContain('issue_tenant_b');
-    expect(outsideIds).toContain('issue_tenant_b');
-    expect(outsideIds).not.toContain('issue_tenant_a');
+    expect(insideIds).toContain('label_tenant_a');
+    expect(insideIds).not.toContain('label_tenant_b');
+    expect(outsideIds).toContain('label_tenant_b');
+    expect(outsideIds).not.toContain('label_tenant_a');
 
     inside.close();
     outside.close();
@@ -303,7 +303,7 @@ describe('multi tab and multi tenant fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_already_seen',
+        modelId: 'label_already_seen',
         syncId: 500,
       }),
     );
@@ -311,14 +311,14 @@ describe('multi tab and multi tenant fan-out', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_after_watermark',
+        modelId: 'label_after_watermark',
         syncId: 501,
       }),
     );
 
     const delta = await client.waitFor('delta');
     await delay(BATCH_WINDOW_MS * 3);
-    expect(delta.actions.map((action) => action.modelId)).toEqual(['issue_after_watermark']);
+    expect(delta.actions.map((action) => action.modelId)).toEqual(['label_after_watermark']);
     client.close();
   });
 });
@@ -378,6 +378,7 @@ describe('authorization', () => {
   });
 
   it('never carries a team issue to somebody who only holds the organization scope', async () => {
+    const issueId = await createIssue(orgA, teamB, bob.userId);
     const listener = await connectClient(server.port, alice);
     await listener.waitFor('ready');
     listener.send({ type: 'subscribe', scopes: [scopes.organization(orgA)] });
@@ -386,8 +387,10 @@ describe('authorization', () => {
     await publish(
       syncAction({
         organizationId: orgA,
-        scopes: [scopes.team(teamB), scopes.issue('issue_secret')],
-        modelId: 'issue_secret',
+        scopes: [scopes.team(teamB), scopes.issue(issueId)],
+        model: 'issue',
+        modelId: issueId,
+        data: { id: issueId, teamId: teamB },
         syncId: 9100,
       }),
     );
@@ -441,7 +444,7 @@ describe('authorization', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_refused',
+        modelId: 'label_refused',
         syncId: 200,
       }),
     );
@@ -472,7 +475,7 @@ describe('protocol', () => {
       syncAction({
         organizationId: orgA,
         scopes: [scopes.team(teamA)],
-        modelId: 'issue_after_unsubscribe',
+        modelId: 'label_after_unsubscribe',
         syncId: 300,
       }),
     );

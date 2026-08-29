@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
+import { scopes } from '@orbit/shared/events';
 import { createOrganization } from '../../src/org/organization-service.ts';
 import { createUser, resetDatabase } from '../../src/test-support.ts';
 
@@ -52,6 +53,11 @@ describe('workspace seeding on create', () => {
     expect(models.has('issue')).toBe(true);
     expect(models.has('doc')).toBe(true);
     expect(models.has('project')).toBe(true);
+    const issueActions = bootstrap.actions.filter((action) => action.model === 'issue');
+    expect(issueActions).toHaveLength(issues.length);
+    for (const action of issueActions) {
+      expect(action.scopes).toEqual([scopes.team(bootstrap.team.id), scopes.issue(action.modelId)]);
+    }
   });
 
   it('leaves the workspace empty when seeding is not requested', async () => {

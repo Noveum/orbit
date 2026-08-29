@@ -666,6 +666,7 @@ describe('moveIssue', () => {
 
   it('reallocates the identifier when moved to another team', async () => {
     const issue = await newIssue('Transferred');
+    const sourceOnly = await addMember(workspace, 'member', { name: 'Source reader' });
     const { team, states } = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
     const target = states.find((state) => state.category === 'unstarted');
     if (target === undefined) throw new Error('missing target state');
@@ -680,7 +681,76 @@ describe('moveIssue', () => {
     expect(moved.issue.teamId).toBe(team.id);
     expect(moved.issue.identifier).toBe('DSGN-1');
     expect(moved.issue.number).toBe(1);
-    expect(moved.actions[0]?.scopes).toContain(scopes.team(team.id));
+    expect(moved.actions[0]).toMatchObject({
+      action: 'delete',
+      modelId: issue.id,
+      scopes: [scopes.team(workspace.teamId), scopes.issue(issue.id)],
+      data: {
+        id: issue.id,
+        teamId: workspace.teamId,
+        identifier: issue.identifier,
+        departure: true,
+      },
+    });
+    expect(moved.actions[0]?.data).not.toHaveProperty('title');
+    expect(moved.actions[1]?.scopes).toContain(scopes.team(team.id));
+    expect(moved.actions[1]?.scopes).not.toContain(scopes.team(workspace.teamId));
+    expect(moved.actions[1]?.data).toMatchObject({ teamChanged: true });
+    expect(moved.actions[1]?.data).not.toHaveProperty('previousTeamId');
+    expect(moved.actions[1]?.data).not.toHaveProperty('previousIdentifier');
+    const [alias] = await db
+      .select()
+      .from(schema.issueIdentifierAlias)
+      .where(eq(schema.issueIdentifierAlias.identifier, issue.identifier));
+    expect(alias).toMatchObject({
+      organizationId: workspace.organizationId,
+      identifier: issue.identifier,
+      issueId: issue.id,
+      syncId: moved.issue.syncId,
+    });
+    expect(await getIssue(workspace.admin, issue.identifier)).toMatchObject({
+      id: issue.id,
+      identifier: moved.issue.identifier,
+    });
+    await expect(getIssue(sourceOnly.principal, issue.identifier)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+
+  it('keeps every previous identifier resolving across repeated team moves', async () => {
+    const issue = await newIssue('Frequently transferred');
+    const design = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const product = await createTeam(workspace.admin, { name: 'Product', key: 'PROD' });
+    const designState = design.states.find((state) => state.category === 'unstarted');
+    const productState = product.states.find((state) => state.category === 'unstarted');
+    if (designState === undefined || productState === undefined) throw new Error('missing state');
+
+    const firstMove = await moveIssue(workspace.admin, issue.id, {
+      teamId: design.team.id,
+      stateId: designState.id,
+      beforeId: null,
+      afterId: null,
+    });
+    const secondMove = await moveIssue(workspace.admin, issue.id, {
+      teamId: product.team.id,
+      stateId: productState.id,
+      beforeId: null,
+      afterId: null,
+    });
+
+    const aliases = await db
+      .select({ identifier: schema.issueIdentifierAlias.identifier })
+      .from(schema.issueIdentifierAlias)
+      .where(eq(schema.issueIdentifierAlias.issueId, issue.id));
+    expect(aliases.map((row) => row.identifier).sort()).toEqual(
+      [issue.identifier, firstMove.issue.identifier].sort(),
+    );
+    expect((await getIssue(workspace.admin, issue.identifier)).identifier).toBe(
+      secondMove.issue.identifier,
+    );
+    expect((await getIssue(workspace.admin, firstMove.issue.identifier)).identifier).toBe(
+      secondMove.issue.identifier,
+    );
   });
 
   it('requires every reviewer to access the destination team', async () => {
@@ -710,7 +780,10 @@ describe('moveIssue', () => {
     const moved = await moveIssue(workspace.admin, issue.id, move);
 
     expect(moved.issue.teamId).toBe(team.id);
-    expect(moved.actions[0]?.data['reviewerIds']).toEqual(reviewerIds);
+    const issueUpdate = moved.actions.find(
+      (action) => action.modelId === issue.id && action.action === 'update',
+    );
+    expect(issueUpdate?.data['reviewerIds']).toEqual(reviewerIds);
   });
 
   it('moves an issue into a sprint without touching its status', async () => {
@@ -819,6 +892,10 @@ describe('moveIssue', () => {
       afterId: null,
     });
     expect(moved.issue.projectId).toBe(project.id);
+    const arrival = moved.actions.find(
+      (action) => action.modelId === issue.id && action.action === 'update',
+    );
+    expect(arrival?.scopes).not.toContain(scopes.project(project.id));
   });
 
   it('applies state timestamps when moving across columns', async () => {
@@ -1197,6 +1274,10 @@ describe('relations', () => {
     });
     expect(relations).toHaveLength(2);
     expect(actions.every((action) => action.model === 'issue_relation')).toBe(true);
+    expect(actions.map((action) => action.scopes)).toEqual([
+      [scopes.team(workspace.teamId), scopes.issue(blocker.id)],
+      [scopes.team(workspace.teamId), scopes.issue(blocked.id)],
+    ]);
 
     const inverse = await listRelations(workspace.admin, blocked.id);
     expect(inverse[0]?.type).toBe('blocked_by');
@@ -1310,12 +1391,13 @@ describe('subscriptions', () => {
     const { principal } = await addMember(workspace, 'member');
 
     const added = await subscribe(principal, issue.id);
-    expect(added.actions[0]?.scopes).toContain(scopes.user(principal.userId));
+    expect(added.actions[0]?.scopes).toEqual([scopes.user(principal.userId)]);
     expect((await listSubscribers(workspace.admin, issue.id)).map((row) => row.userId)).toContain(
       principal.userId,
     );
 
-    await unsubscribe(principal, issue.id);
+    const removed = await unsubscribe(principal, issue.id);
+    expect(removed.actions[0]?.scopes).toEqual([scopes.user(principal.userId)]);
     expect(
       (await listSubscribers(workspace.admin, issue.id)).map((row) => row.userId),
     ).not.toContain(principal.userId);
