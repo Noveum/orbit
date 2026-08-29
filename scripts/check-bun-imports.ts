@@ -93,8 +93,8 @@ export function describe(entry: BunImport): string {
 }
 
 function trackedFiles(): string[] {
-  return new TextDecoder()
-    .decode(Bun.spawnSync(['git', 'ls-files', '-z']).stdout)
+  return Bun.spawnSync(['git', 'ls-files', '-z'])
+    .stdout.toString('utf8')
     .split('\0')
     .filter((entry) => entry.length > 0);
 }

@@ -16,6 +16,7 @@ const response = {
   projects: [],
   priorities: [],
   outliers: [],
+  outliersWithheldCount: 0,
 };
 
 const calls: Array<{ readonly path: string; readonly signal: AbortSignal | null }> = [];

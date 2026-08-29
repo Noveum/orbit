@@ -82,7 +82,9 @@ async function main(): Promise<void> {
   for (const file of files) {
     const data = await readFile(file).catch(() => null);
     if (data === null) continue;
-    for (const entry of controlBytes(data)) problems.push(describe(file, entry));
+    for (const entry of controlBytes(new Uint8Array(data))) {
+      problems.push(describe(file, entry));
+    }
   }
 
   if (problems.length > 0) {
