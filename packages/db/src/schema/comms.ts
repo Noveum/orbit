@@ -536,6 +536,7 @@ export const slackUserMapping = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     slackUserId: text('slack_user_id').notNull(),
     slackDisplayName: text('slack_display_name').notNull().default(''),
+    slackChannelId: text('slack_channel_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

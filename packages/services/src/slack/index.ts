@@ -380,7 +380,7 @@ export class SlackClient {
     try {
       body = await this.call('users.lookupByEmail', userResponseSchema, { email });
     } catch (error) {
-      if (error instanceof Error && error.message.includes('users_not_found')) return null;
+      if (error instanceof SlackApiError && error.slackCode === 'users_not_found') return null;
       throw error;
     }
     const user = body.user;

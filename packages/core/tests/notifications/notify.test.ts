@@ -267,9 +267,7 @@ describe('deliverPendingSlackDms', () => {
           .where(eq(schema.integration.id, fixture.integrationId));
         return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }));
       }
-      return calls === 3
-        ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
-        : new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' }));
+      return new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' }));
     }) as unknown as typeof globalThis.fetch;
 
     expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
@@ -291,12 +289,7 @@ describe('deliverPendingSlackDms', () => {
       .where(eq(schema.notificationDelivery.id, failedDelivery.id));
 
     expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(1);
-    expect(authorization).toEqual([
-      'Bearer xoxb-old',
-      'Bearer xoxb-old',
-      'Bearer xoxb-refreshed',
-      'Bearer xoxb-refreshed',
-    ]);
+    expect(authorization).toEqual(['Bearer xoxb-old', 'Bearer xoxb-old', 'Bearer xoxb-refreshed']);
   });
 
   it('does not mark a same-token refreshed Slack integration for reauthorization', async () => {

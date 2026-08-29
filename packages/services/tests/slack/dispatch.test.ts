@@ -114,6 +114,21 @@ describe('resolveSlackContext', () => {
       expect(context?.hasDirectMessageScope).toBe(true);
     });
   });
+
+  it('requires both Slack direct-message scopes', async () => {
+    for (const scopes of [['im:write'], ['chat:write']] as const) {
+      await withRollback(async (tx) => {
+        const fixture = await seed(tx);
+        await tx
+          .update(integration)
+          .set({ config: { scopes: [...scopes] } })
+          .where(eq(integration.id, fixture.integrationId));
+
+        const context = await resolveSlackContext(tx, fixture.organizationId);
+        expect(context?.hasDirectMessageScope).toBe(false);
+      });
+    }
+  });
 });
 
 describe('ensureSlackIntegration', () => {
@@ -809,6 +824,17 @@ describe('dispatchSlackDm', () => {
           body: { channel: 'D123', text: 'You were mentioned' },
         },
       ]);
+
+      expect(
+        await dispatchSlackDm(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          text: 'A second mention',
+          fetch,
+        }),
+      ).toBe(1);
+      expect(calls.filter((call) => call.method === 'conversations.open')).toHaveLength(1);
+      expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(2);
     });
   });
 

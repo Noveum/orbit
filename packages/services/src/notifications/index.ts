@@ -23,7 +23,7 @@ import {
   validationFailed,
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
 import {
@@ -39,6 +39,7 @@ export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
+export const MAX_SLACK_DM_ATTEMPTS = 10;
 
 export async function markNotificationDelivered(
   database: NotificationDatabase,
@@ -69,11 +70,32 @@ export async function markSlackDmDelivery(
   error?: string,
   providerMessage?: { channel: string | null; ts: string | null },
 ): Promise<boolean> {
-  const retryAt = new Date(Date.now() + 30_000);
+  const [current] = await database
+    .select({ attempts: notificationDelivery.attempts })
+    .from(notificationDelivery)
+    .where(
+      and(
+        eq(notificationDelivery.id, deliveryId),
+        eq(notificationDelivery.status, 'processing'),
+        eq(notificationDelivery.claimedAt, claimedAt),
+      ),
+    )
+    .limit(1);
+  if (current === undefined) return false;
+  const attempts = current.attempts + 1;
+  const terminal = !delivered && attempts >= MAX_SLACK_DM_ATTEMPTS;
+  const retryAt = new Date(Date.now() + Math.min(3_600_000, 30_000 * 2 ** (attempts - 1)));
+  let status: 'succeeded' | 'skipped' | 'failed';
+  if (delivered) status = 'succeeded';
+  else if (terminal) status = 'skipped';
+  else status = 'failed';
+  const failure = terminal
+    ? { lastError: error ?? 'delivery failed' }
+    : { lastError: error ?? 'delivery failed', availableAt: retryAt };
   const updated = await database
     .update(notificationDelivery)
     .set({
-      status: delivered ? 'succeeded' : 'failed',
+      status,
       attempts: sql`${notificationDelivery.attempts} + 1`,
       ...(delivered
         ? {
@@ -82,7 +104,7 @@ export async function markSlackDmDelivery(
             providerMessageChannel: providerMessage?.channel ?? null,
             providerMessageTs: providerMessage?.ts ?? null,
           }
-        : { lastError: error ?? 'delivery failed', availableAt: retryAt }),
+        : failure),
     })
     .where(
       and(
@@ -164,56 +186,28 @@ export async function claimSlackDmDeliveries(
     return await database.transaction((tx) => claimSlackDmDeliveries(tx, limit, now));
   }
   const staleBefore = new Date(now.getTime() - 5 * 60_000);
-  const candidates = await database
-    .select()
-    .from(notificationDelivery)
+  return await database
+    .update(notificationDelivery)
+    .set({ status: 'processing', claimedAt: now })
     .where(
-      and(
-        eq(notificationDelivery.channel, 'slack_dm'),
-        or(
-          eq(notificationDelivery.status, 'pending'),
-          eq(notificationDelivery.status, 'failed'),
-          and(
-            eq(notificationDelivery.status, 'processing'),
-            lt(notificationDelivery.claimedAt, staleBefore),
-          ),
-        ),
-        lte(notificationDelivery.availableAt, now),
-      ),
+      sql`${notificationDelivery.id} IN (
+        SELECT ${notificationDelivery.id}
+        FROM ${notificationDelivery}
+        WHERE ${notificationDelivery.channel} = 'slack_dm'
+          AND ${notificationDelivery.availableAt} <= ${now.toISOString()}
+          AND (
+            ${notificationDelivery.status} IN ('pending', 'failed')
+            OR (
+              ${notificationDelivery.status} = 'processing'
+              AND ${notificationDelivery.claimedAt} < ${staleBefore.toISOString()}
+            )
+          )
+        ORDER BY ${notificationDelivery.attempts}, ${notificationDelivery.availableAt}, ${notificationDelivery.createdAt}
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )`,
     )
-    .orderBy(
-      asc(notificationDelivery.attempts),
-      asc(notificationDelivery.availableAt),
-      asc(notificationDelivery.createdAt),
-    )
-    .limit(limit);
-  if (candidates.length === 0) return [];
-  const claimed: (typeof notificationDelivery.$inferSelect)[] = [];
-  for (const candidate of candidates) {
-    const staleProcessing =
-      candidate.claimedAt === null
-        ? sql`false`
-        : and(
-            eq(notificationDelivery.status, 'processing'),
-            eq(notificationDelivery.claimedAt, candidate.claimedAt),
-          );
-    const [row] = await database
-      .update(notificationDelivery)
-      .set({ status: 'processing', claimedAt: now })
-      .where(
-        and(
-          eq(notificationDelivery.id, candidate.id),
-          or(
-            eq(notificationDelivery.status, 'pending'),
-            eq(notificationDelivery.status, 'failed'),
-            staleProcessing,
-          ),
-        ),
-      )
-      .returning();
-    if (row !== undefined) claimed.push(row);
-  }
-  return claimed;
+    .returning();
 }
 
 export const DEDUPE_WINDOW_MS = 60_000;
