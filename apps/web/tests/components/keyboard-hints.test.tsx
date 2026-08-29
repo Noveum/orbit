@@ -20,6 +20,9 @@ import type { Issue } from '@/lib/query/schemas.ts';
 import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
 import { render } from '@/test/render.tsx';
+import { restoreModulesAfterThisFile } from '../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),

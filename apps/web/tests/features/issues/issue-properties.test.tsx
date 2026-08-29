@@ -12,6 +12,9 @@ import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 const patches: Record<string, unknown>[] = [];
 
