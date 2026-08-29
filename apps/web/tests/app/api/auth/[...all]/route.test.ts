@@ -186,6 +186,65 @@ describe('MCP authorize consent boundary', () => {
   });
 });
 
+describe('sign in code domain refusal', () => {
+  it('refuses a disallowed domain instead of claiming a code is on its way', async () => {
+    await withNativeFetchGlobals(async () => {
+      const previous = process.env['ALLOWED_EMAIL_DOMAINS'];
+      process.env['ALLOWED_EMAIL_DOMAINS'] = 'noveum.ai';
+      try {
+        const request = (email: string) =>
+          authPost(
+            new Request(`${APP_ORIGIN}/api/auth/email-otp/send-verification-otp`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.20' },
+              body: JSON.stringify({ email, type: 'sign-in' }),
+            }),
+          );
+
+        const refused = await request('outsider@gmail.com');
+        expect(refused.status).toBe(403);
+        expect(await refused.json()).toMatchObject({ code: 'EMAIL_DOMAIN_NOT_ALLOWED' });
+      } finally {
+        process.env['ALLOWED_EMAIL_DOMAINS'] = previous ?? '';
+      }
+    });
+  });
+});
+
+describe('sign in code rate limit', () => {
+  it('caps sign in code sends by their own rule, not the global one', async () => {
+    await withNativeFetchGlobals(async () => {
+      const context = await auth.$context;
+      const previous = {
+        enabled: context.rateLimit.enabled,
+        max: context.rateLimit.max,
+        window: context.rateLimit.window,
+      };
+      Object.assign(context.rateLimit, { enabled: true, max: 1, window: 60 });
+      try {
+        const post = (path: string, ip: string) =>
+          authPost(
+            new Request(`${APP_ORIGIN}/api/auth/${path}`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+              body: JSON.stringify({}),
+            }),
+          );
+
+        expect((await post('mcp/token', '198.51.100.10')).status).not.toBe(429);
+        expect((await post('mcp/token', '198.51.100.10')).status).toBe(429);
+
+        const codes = 'email-otp/send-verification-otp';
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          expect((await post(codes, '198.51.100.11')).status).not.toBe(429);
+        }
+      } finally {
+        Object.assign(context.rateLimit, previous);
+      }
+    });
+  });
+});
+
 describe('MCP authorize PKCE boundary', () => {
   let workspace: Workspace;
   let cookie: string;

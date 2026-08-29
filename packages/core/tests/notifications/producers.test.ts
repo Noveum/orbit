@@ -324,7 +324,7 @@ describe('docs', () => {
 
 describe('preferences', () => {
   it('writes nothing when the recipient turned every channel off for that type', async () => {
-    for (const channel of ['inbox', 'email', 'slack', 'push']) {
+    for (const channel of ['inbox', 'email', 'slack', 'slack_dm', 'push']) {
       await db.insert(schema.notificationPreference).values({
         id: `${channel}-${grace.user.id}`,
         userId: grace.user.id,

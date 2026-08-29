@@ -25,7 +25,8 @@ export async function GET(request: Request): Promise<Response> {
     } while (cursor !== undefined && issues.length < EXPORT_LIMIT);
 
     const page = first;
-    const truncated = page !== undefined && page.total > issues.length;
+    const visibleTotal = page === undefined ? 0 : page.total - page.withheldCount;
+    const truncated = page !== undefined && visibleTotal > issues.length;
     const metadata: ReadonlyArray<ReadonlyArray<string | number>> =
       page === undefined
         ? []
@@ -44,7 +45,9 @@ export async function GET(request: Request): Promise<Response> {
             ['From', page.from],
             ['To', page.to],
             ['Data through', page.asOf],
-            ['Matching issues', page.total],
+            ['Total workspace issues in cohort', page.total],
+            ['Issues withheld due to permissions', page.withheldCount],
+            ['Visible exported issues', issues.length],
             [],
           ];
     const rows = issues.map((issue) => [

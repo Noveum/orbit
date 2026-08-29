@@ -40,7 +40,7 @@ export function verifyRealtimeTicket(
   const provided = Buffer.from(ticket.slice(separator + 1), 'base64url');
   const expected = digest(body, secret);
   if (provided.length !== expected.length) return null;
-  if (!timingSafeEqual(provided, expected)) return null;
+  if (!timingSafeEqual(new Uint8Array(provided), new Uint8Array(expected))) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));

@@ -31,16 +31,25 @@ export async function GET(): Promise<Response> {
   if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
-    const channels = await db
-      .select({
-        channelId: schema.slackChannelSync.channelId,
-        channelName: schema.slackChannelSync.channelName,
-        teamId: schema.slackChannelSync.teamId,
-        enabled: schema.slackChannelSync.enabled,
-      })
-      .from(schema.slackChannelSync)
-      .where(eq(schema.slackChannelSync.organizationId, principal.organizationId));
-    const context = await resolveSlackContext(db, principal.organizationId);
+    assertCan(principal, 'integration:manage');
+    const context = await resolveSlackContext(db, principal.organizationId, 'default');
+    const channels =
+      context === null
+        ? []
+        : await db
+            .select({
+              channelId: schema.slackChannelSync.channelId,
+              channelName: schema.slackChannelSync.channelName,
+              teamId: schema.slackChannelSync.teamId,
+              enabled: schema.slackChannelSync.enabled,
+            })
+            .from(schema.slackChannelSync)
+            .where(
+              and(
+                eq(schema.slackChannelSync.organizationId, principal.organizationId),
+                eq(schema.slackChannelSync.integrationId, context.integrationId),
+              ),
+            );
     return { connected: context !== null, hasToken: context?.token != null, channels };
   });
 }
@@ -89,6 +98,7 @@ async function slackIntegrationId(organizationId: string): Promise<string> {
       and(
         eq(schema.integration.organizationId, organizationId),
         eq(schema.integration.provider, 'slack'),
+        eq(schema.integration.externalId, 'default'),
       ),
     )
     .limit(1);
@@ -101,11 +111,11 @@ export async function PATCH(): Promise<Response> {
   return await handleRoute(async () => {
     const { principal } = await apiContext();
     assertCan(principal, 'integration:manage');
-    const context = await resolveSlackContext(db, principal.organizationId);
+    const context = await resolveSlackContext(db, principal.organizationId, 'default');
     if (context === null || context.token === null) {
       throw validationFailed('Connect Slack before listing channels.');
     }
     const conversations = await new SlackClient({ token: context.token }).listConversations();
-    return { channels: conversations.channels };
+    return { channels: conversations.channels.filter((channel) => channel.isMember) };
   });
 }

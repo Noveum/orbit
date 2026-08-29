@@ -49,17 +49,18 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint snapshot and operational pruning routes. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects the scheduled sprint snapshot and operational pruning routes. It also protects the dormant Slack notification worker route. Use a long random value in every deployed environment |
 
 Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
-routes. Without the secret, both routes refuse to run. The analytics route runs
-every six hours so every sprint-local calendar day is observed across timezone and
-daylight-saving changes. It records one row per active sprint and local day, then
-publishes the returned realtime actions. Sprint completion also records a final
-snapshot in the same transaction before unfinished work rolls into the next sprint.
-New and updated sprint timezones must be valid IANA names. A legacy sprint with an
-invalid stored timezone uses UTC explicitly so it cannot block other snapshots or
-prevent the sprint from closing.
+routes. Without the secret, all three routes refuse to run. The Slack notification
+worker remains dormant while the shipped Slack capability is disabled. The
+analytics route runs every six hours so every sprint-local
+calendar day is observed across timezone and daylight-saving changes. It records
+one row per active sprint and local day, then publishes the returned realtime
+actions. Sprint completion also records a final snapshot in the same transaction
+before unfinished work rolls into the next sprint. New and updated sprint timezones
+must be valid IANA names. A legacy sprint with an invalid stored timezone uses UTC
+explicitly so it cannot block other snapshots or prevent the sprint from closing.
 
 ## Realtime
 
@@ -86,16 +87,48 @@ one, but cannot bootstrap a new installation. Local development is unaffected.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in. Redirect URI is `<app>/api/auth/callback/google` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in. Callback is `<app>/api/auth/callback/github` |
 | `ORBIT_PASSWORD_AUTH` | `false` by default. `true` enables email and password |
-| `ALLOWED_EMAIL_DOMAINS` | Comma separated. Empty means no restriction |
+| `ALLOWED_EMAIL_DOMAINS` | Unset by default, which means anyone can sign up. Comma separated to restrict |
 | `ORBIT_DEV_LOGIN` | **Local only.** One-click sign-in as any seeded user |
 
 Email and password is off by default and hashed with `@node-rs/argon2`
 (argon2id) when on. It is rate limited, and it is never a replacement for the
 passwordless methods. Leave it off unless you have a reason.
 
-`ALLOWED_EMAIL_DOMAINS` is enforced both on invite creation and on user
-creation, so it covers every provider rather than just invites. A workspace can
-narrow it further with its own `allowedEmailDomains` setting.
+Signing up is open unless you close it. A new account creates its own workspace
+through the onboarding flow, and a workspace admits nobody else until it invites
+them, so an open instance is still one tenant per workspace.
+
+`ALLOWED_EMAIL_DOMAINS` closes that door. It is enforced on invite creation, on
+user creation and when a sign-in code is requested, so it covers every provider
+rather than just invites, and it is checked again on every session so an address
+that stops qualifying loses access. A refused address is told so, rather than
+being left waiting for a code that will never arrive.
+
+Set it when an instance should only admit one organisation. A value that is set
+but names no domain, such as a bare `@`, is refused rather than read as no
+restriction, so a typo cannot quietly open an instance you meant to close.
+
+A workspace can narrow it further with its own `allowedEmailDomains` setting. The
+hosted instance at <https://orbit.noveum.ai> leaves it unset.
+
+Authentication is rate limited per IP whatever the method: 10 sign-in code requests
+each ten minutes, 5 password sign-ins a minute, and 5 password sign-ups an hour,
+on top of better-auth's own defaults for the paths without a rule of their own.
+Better-auth applies them in production only, and a sign-in code additionally dies
+after three wrong guesses.
+
+A custom rule replaces better-auth's matching default rather than stacking with
+it, which is why the sign-in code window is ten minutes and not an hour. An
+hourly rule would have to allow a whole hour of sends in a single burst, and a
+per-IP hourly cap tight enough to be worth having would lock out an office that
+shares one address.
+
+In production those counters live in Redis, on the `REDIS_URL` the app already
+needs, so the caps hold across every serverless instance rather than resetting
+with each one. If Redis cannot be reached the check lets the request through
+rather than locking everybody out, which means an outage costs you the ceiling
+and not sign-in. Outside production better-auth keeps its own in-process store,
+which is all a single development server needs.
 
 ```bash
 ALLOWED_EMAIL_DOMAINS=example.com,example.org
@@ -163,9 +196,13 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Reserved for the disabled Slack OAuth integration |
+| `SLACK_SIGNING_SECRET` | Reserved for verification when Slack is separately enabled |
 
-All optional. Orbit hides the GitHub affordance when it is not configured rather
-than showing a button that fails. See [Integrations](integrations.md).
+All are optional. Orbit hides the GitHub affordance when it is not configured.
+Slack stays hidden and its routes stay unavailable even when its reserved values
+are present because launch is controlled by a source capability, not environment
+configuration. See [Integrations](integrations.md).
 
 ## MCP
 
@@ -228,3 +265,7 @@ S3_SECRET_ACCESS_KEY=...
 ```
 
 Note what is absent: no `NEXT_PUBLIC_REALTIME_URL`, and no `ORBIT_DEV_LOGIN`.
+
+`ALLOWED_EMAIL_DOMAINS` appears here because this example is a single-company
+deployment. Drop the line to let anyone sign up, which is what the hosted
+instance does.

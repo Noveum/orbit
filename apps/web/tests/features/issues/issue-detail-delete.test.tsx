@@ -27,6 +27,7 @@ const STUBBED = {
   '@/features/comments/comment-thread.tsx': { CommentThread: () => null },
   '@/features/pulls/issue-pull-requests.tsx': { IssuePullRequests: () => null },
   '@/features/issues/issue-properties.tsx': { IssueProperties: () => null },
+  '@/features/issues/issue-relations.tsx': { IssueRelations: () => null },
   '@/features/docs/editor/rich-text-editor.tsx': { RichTextEditor: () => null },
   '@/lib/query/use-comments.ts': { useComments: () => ({ data: [] }) },
 } as const;

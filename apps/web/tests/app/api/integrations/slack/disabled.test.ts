@@ -1,7 +1,13 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'disabled-slack-boundary-test-secret';
+const slackCapability = await import('@/lib/integrations/slack-capability.ts');
+let slackEnabledForTest = false;
+const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
+  () => slackEnabledForTest,
+);
 
 const {
   GET: getIntegration,
@@ -37,6 +43,7 @@ afterEach(() => {
 afterAll(() => {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  slackCapabilitySpy.mockRestore();
 });
 
 async function expectUnavailable(response: Response): Promise<void> {
@@ -57,6 +64,12 @@ function requestWithUnreadableBody(url: string): {
 }
 
 describe('disabled Slack boundary', () => {
+  it('keeps the shipped integration surface unavailable', async () => {
+    slackEnabledForTest = SLACK_INTEGRATION_ENABLED;
+
+    await expectUnavailable(await startOAuth());
+  });
+
   it('denies the integration read, mutation, and legacy channel APIs', async () => {
     const { request, readBody } = requestWithUnreadableBody(`${BASE}/api/integrations/slack`);
     await expectUnavailable(await getIntegration());

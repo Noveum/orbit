@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import {
   isPullRequestNotification,
   isStatusChangeNotification,
+  NOTIFICATION_AUDIENCE_BY_REASON,
+  NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
   PULL_REQUEST_NOTIFICATION_TYPES,
   STATUS_CHANGE_NOTIFICATION_TYPES,
@@ -54,5 +56,13 @@ describe('STATUS_CHANGE_NOTIFICATION_TYPES', () => {
     expect(status.length).toBe(STATUS_CHANGE_NOTIFICATION_TYPES.length);
     expect(activity.length).toBe(NOTIFICATION_TYPES.length - status.length);
     expect(activity.length).toBeGreaterThan(0);
+  });
+});
+
+describe('NOTIFICATION_AUDIENCE_BY_REASON', () => {
+  it('classifies every notification reason', () => {
+    expect(Object.keys(NOTIFICATION_AUDIENCE_BY_REASON).sort()).toEqual(
+      [...NOTIFICATION_REASONS].sort(),
+    );
   });
 });

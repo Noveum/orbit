@@ -17,7 +17,7 @@ export async function GET(request: Request): Promise<Response> {
     assertCan(principal, 'integration:manage');
     const { cursor } = querySchema.parse(searchParamsOf(request));
 
-    const context = await resolveSlackContext(db, principal.organizationId);
+    const context = await resolveSlackContext(db, principal.organizationId, 'default');
     if (context === null || context.token === null) {
       return { channels: [], nextCursor: null };
     }
@@ -26,10 +26,12 @@ export async function GET(request: Request): Promise<Response> {
       cursor === undefined ? {} : { cursor },
     );
     return {
-      channels: conversations.channels.map((channel) => ({
-        channelId: channel.id,
-        channelName: channel.name,
-      })),
+      channels: conversations.channels
+        .filter((channel) => channel.isMember)
+        .map((channel) => ({
+          channelId: channel.id,
+          channelName: channel.name,
+        })),
       nextCursor: conversations.nextCursor,
     };
   });

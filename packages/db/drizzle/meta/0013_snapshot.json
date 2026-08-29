@@ -1,5 +1,5 @@
 {
-  "id": "981cd235-c41c-472c-92fb-dac54ba848c0",
+  "id": "07fc3d8b-e99c-4b30-9548-15d6fc5d9453",
   "prevId": "daf58c76-dbbd-4ddd-aa39-8afc32bb33de",
   "version": "7",
   "dialect": "postgresql",
@@ -2995,6 +2995,48 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integration_provider_slack_team_idx": {
+          "name": "integration_provider_slack_team_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "(\"config\" ->> 'slackTeamId')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integration_provider_external_idx": {
+          "name": "integration_provider_external_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -7460,13 +7502,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "agent_instructions": {
-          "name": "agent_instructions",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
         }
       },
       "indexes": {},

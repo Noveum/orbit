@@ -9,6 +9,7 @@ import { db, eq, schema } from '@orbit/db';
 import { bindGithubInstallation, replaceGithubRepositories } from '@orbit/services';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import { loadGithubSettings } from '../../../src/features/settings/github-data.ts';
 import {
   loadGithubDeliveries,
@@ -71,7 +72,57 @@ describe('loadIntegrationSettings', () => {
     expect(settings.github.repositories.map((entry) => entry.fullName)).toEqual([
       SECRET_REPOSITORY,
     ]);
+    expect(settings.slack).toBeUndefined();
     expect(JSON.stringify(settings)).not.toMatch(/slack/i);
+  });
+
+  it('loads only the canonical Slack integration and its channels when enabled', async () => {
+    const canonicalIntegrationId = `int_${randomUUIDv7()}`;
+    const legacyIntegrationId = `int_${randomUUIDv7()}`;
+    await db.insert(schema.integration).values([
+      {
+        id: canonicalIntegrationId,
+        organizationId: workspace.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: workspace.adminUser.id,
+        credentials: { botToken: 'xoxb-canonical' },
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+      {
+        id: legacyIntegrationId,
+        organizationId: workspace.organizationId,
+        provider: 'slack',
+        externalId: 'T-LEGACY',
+        connectedById: workspace.adminUser.id,
+        credentials: {},
+        createdAt: new Date('2026-02-01T00:00:00Z'),
+      },
+    ]);
+    await db.insert(schema.slackChannelSync).values([
+      {
+        id: `slc_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        integrationId: canonicalIntegrationId,
+        teamId: workspace.teamId,
+        channelId: 'C-CANONICAL',
+        channelName: 'canonical-private',
+      },
+      {
+        id: `slc_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        integrationId: legacyIntegrationId,
+        teamId: workspace.teamId,
+        channelId: 'C-LEGACY',
+        channelName: 'legacy-private',
+      },
+    ]);
+
+    const settings = await loadIntegrationSettings(workspace.admin, { slackEnabled: true });
+
+    expect(settings.slack?.slackConnected).toBe(true);
+    expect(settings.slack?.slackHasToken).toBe(true);
+    expect(settings.slack?.channels.map((channel) => channel.channelId)).toEqual(['C-CANONICAL']);
   });
 
   for (const role of ['guest', 'contributor', 'member'] as const) {

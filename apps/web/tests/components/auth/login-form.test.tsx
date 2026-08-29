@@ -47,9 +47,11 @@ afterAll(() => {
   Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
 });
 
-function renderForm(passwordEnabled: boolean) {
-  render(<LoginForm providers={[]} passwordEnabled={passwordEnabled} />);
+function renderForm(passwordEnabled: boolean, openSignUp = false) {
+  render(<LoginForm providers={[]} passwordEnabled={passwordEnabled} openSignUp={openSignUp} />);
 }
+
+const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
   it('renders no password field while password auth is off', () => {
@@ -69,6 +71,25 @@ describe('LoginForm', () => {
     expect(screen.getByText('Create an account with a password')).toBeDefined();
     expect(screen.getByText('Email me a code')).toBeDefined();
     expect(screen.getByText('Continue with passkey')).toBeDefined();
+  });
+
+  it('says signing in creates an account when signup is open', () => {
+    renderForm(false, true);
+    expect(screen.getByText(SIGN_UP_NOTE)).toBeDefined();
+  });
+
+  it('stays quiet about signing up on a domain restricted instance', () => {
+    renderForm(false, false);
+    expect(screen.queryAllByText(SIGN_UP_NOTE).length).toBe(0);
+  });
+
+  it('drops the note once the user is explicitly creating an account', async () => {
+    const user = userEvent.setup();
+    renderForm(true, true);
+    expect(screen.getByText(SIGN_UP_NOTE)).toBeDefined();
+
+    await user.click(screen.getByText('Create an account with a password'));
+    expect(screen.queryAllByText(SIGN_UP_NOTE).length).toBe(0);
   });
 
   it('hides the forgot password affordance while password auth is off', () => {

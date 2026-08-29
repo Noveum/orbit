@@ -80,6 +80,24 @@ beforeEach(async () => {
 });
 
 describe('loadAnalyticsOverview', () => {
+  it('returns the effective resolved and comparison ranges as wire-safe values', async () => {
+    const overview = await loadAnalyticsOverview(workspace.admin, query(), {
+      now,
+      timezone: 'UTC',
+    });
+
+    expect(overview.resolvedRange).toEqual({
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-11T00:00:00.000Z',
+      timezone: 'UTC',
+    });
+    expect(overview.comparisonRange).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-08-01T00:00:00.000Z',
+      timezone: 'UTC',
+    });
+  });
+
   it('groups workflow states by semantic category across teams', async () => {
     const secondTeam = await createTeam(workspace.admin, { name: 'Second team', key: 'SEC' });
     const firstBacklog = stateNamed(workspace, 'Backlog');
@@ -571,8 +589,68 @@ describe('loadAnalyticsOverview', () => {
         },
         { now, timezone: 'UTC' },
       );
-      expect(rows.issues.map((entry) => entry.title)).toEqual(['Other team issue']);
-      expect(Object.keys(rows.issues[0] ?? {}).includes('organizationId')).toBe(false);
+      expect(rows.issues.map((entry) => entry.title)).toEqual([]);
+      expect(rows.withheldCount).toBe(1);
     }
+  });
+
+  it('ranks workspace outliers before filtering rows to the reader team scope', async () => {
+    const { team, states } = await createTeam(workspace.admin, {
+      name: 'Operations',
+      key: 'OPS',
+    });
+    const operationsDone = states.find((state) => state.category === 'completed');
+    const engineeringDone = stateNamed(workspace, 'Done');
+    if (operationsDone === undefined) throw new Error('Missing Operations completed state.');
+
+    for (let index = 0; index < 9; index += 1) {
+      await issue(
+        workspace.admin,
+        {
+          teamId: team.id,
+          title: `Hidden workspace outlier ${index + 1}`,
+          stateId: operationsDone.id,
+        },
+        {
+          createdAt: new Date('2026-07-01T00:00:00.000Z'),
+          startedAt: new Date(`2026-07-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`),
+          completedAt: new Date('2026-08-08T00:00:00.000Z'),
+        },
+      );
+    }
+    await issue(
+      workspace.admin,
+      { title: 'Visible workspace outlier', stateId: engineeringDone.id },
+      {
+        createdAt: new Date('2026-07-20T00:00:00.000Z'),
+        startedAt: new Date('2026-07-29T00:00:00.000Z'),
+        completedAt: new Date('2026-08-08T00:00:00.000Z'),
+      },
+    );
+    await issue(
+      workspace.admin,
+      { title: 'Visible outside workspace top ten', stateId: engineeringDone.id },
+      {
+        createdAt: new Date('2026-08-01T00:00:00.000Z'),
+        startedAt: new Date('2026-08-07T00:00:00.000Z'),
+        completedAt: new Date('2026-08-08T00:00:00.000Z'),
+      },
+    );
+    const guest = await addMember(workspace, 'guest', { teamIds: [workspace.teamId] });
+
+    const [adminOverview, guestOverview] = await Promise.all([
+      loadAnalyticsOverview(workspace.admin, query(), { now, timezone: 'UTC' }),
+      loadAnalyticsOverview(guest.principal, query(), { now, timezone: 'UTC' }),
+    ]);
+
+    expect(adminOverview.outliers).toHaveLength(10);
+    expect(adminOverview.outliers.map((entry) => entry.title)).not.toContain(
+      'Visible outside workspace top ten',
+    );
+    expect(adminOverview.outliersWithheldCount).toBe(0);
+    expect(guestOverview.outliers.map((entry) => entry.title)).toEqual([
+      'Visible workspace outlier',
+    ]);
+    expect(guestOverview.outliersWithheldCount).toBe(9);
   });
 });
