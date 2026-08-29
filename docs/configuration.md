@@ -119,11 +119,12 @@ hourly rule would have to allow a whole hour of sends in a single burst, and a
 per-IP hourly cap tight enough to be worth having would lock out an office that
 shares one address.
 
-Those counters live in better-auth's default in-memory store, which is per
-process. On a serverless host each instance keeps its own, so treat the caps as
-a brake on casual abuse rather than a fleet-wide guarantee. An instance that
-needs a real ceiling should give better-auth durable storage for them, and should
-watch what its email provider is being asked to send either way.
+In production those counters live in Redis, on the `REDIS_URL` the app already
+needs, so the caps hold across every serverless instance rather than resetting
+with each one. If Redis cannot be reached the check lets the request through
+rather than locking everybody out, which means an outage costs you the ceiling
+and not sign-in. Outside production better-auth keeps its own in-process store,
+which is all a single development server needs.
 
 ```bash
 ALLOWED_EMAIL_DOMAINS=example.com,example.org

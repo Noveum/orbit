@@ -5,6 +5,7 @@ import {
   ingestExternalAvatar,
   isExternalImageUrl,
   publishSessionRevoked,
+  redisRateLimitStorage,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
 import { inviteEmail, resetPasswordEmail, sendEmail, signInCodeEmail } from '@orbit/services/email';
@@ -102,6 +103,15 @@ const SIGN_UP_ATTEMPTS_PER_HOUR = 5;
 const SIGN_IN_CODES_PER_TEN_MINUTES = 10;
 const SIGN_IN_CODE_PATH = '/email-otp/send-verification-otp';
 
+function authRateLimit() {
+  const customStorage =
+    process.env['NODE_ENV'] === 'production' ? redisRateLimitStorage() : undefined;
+  return {
+    customRules: AUTH_RATE_LIMIT_RULES,
+    ...(customStorage === undefined ? {} : { customStorage }),
+  };
+}
+
 const AUTH_RATE_LIMIT_RULES = {
   '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
   '/sign-up/email': { window: 3600, max: SIGN_UP_ATTEMPTS_PER_HOUR },
@@ -175,7 +185,7 @@ export const auth = betterAuth({
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
-  rateLimit: { customRules: AUTH_RATE_LIMIT_RULES },
+  rateLimit: authRateLimit(),
   socialProviders: socialProviders(),
   account: {
     accountLinking: { enabled: true, allowUnlinkingAll: true, allowDifferentEmails: true },
