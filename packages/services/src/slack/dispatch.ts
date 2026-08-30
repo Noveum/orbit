@@ -14,7 +14,7 @@ import { conflict, type Priority, parseIssueIdentifier } from '@orbit/shared';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { assertCan } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
 import { decryptSlackBotToken, encryptSlackBotToken } from './credentials.ts';
 import {
   buildUnfurl,
@@ -30,6 +30,10 @@ import {
 export type SlackDatabase = Database | Transaction;
 
 const SLACK_TEAM_CLAIMED = 'That Slack workspace is already connected to another Orbit workspace.';
+
+export function slackCredentialVersionExpression(): SQL<string> {
+  return sql<string>`coalesce(${integration.config} ->> 'credentialVersion', extract(epoch from ${integration.updatedAt})::text)`;
+}
 
 export interface SlackContext {
   readonly integrationId: string;
@@ -57,7 +61,7 @@ export async function resolveSlackContext(
       credentials: integration.credentials,
       config: integration.config,
       updatedAt: integration.updatedAt,
-      integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
+      integrationVersion: slackCredentialVersionExpression(),
     })
     .from(integration)
     .where(and(...filters))
@@ -303,6 +307,7 @@ async function persistSlackIntegration(
   }
   await assertSlackTeamUnclaimed(database, input.organizationId, input.externalId);
   const existing = existingRows[0];
+  const credentialVersion = randomUUIDv7();
   if (existing === undefined) {
     const integrationId = randomUUIDv7();
     const [created] = await database
@@ -321,16 +326,14 @@ async function persistSlackIntegration(
           }),
         },
         config: {
+          credentialVersion,
           ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
           ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
         },
       })
-      .returning({
-        id: integration.id,
-        integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
-      });
+      .returning({ id: integration.id });
     if (created === undefined) throw new Error('Could not persist the Slack integration.');
-    return created;
+    return { id: created.id, integrationVersion: credentialVersion };
   }
 
   const configuredSlackTeamId = existing.config['slackTeamId'];
@@ -347,6 +350,7 @@ async function persistSlackIntegration(
   const slackTeamId = input.externalId ?? previousSlackTeamId;
   const config = {
     ...previousConfig,
+    credentialVersion,
     ...(slackTeamId === undefined ? {} : { slackTeamId }),
     ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
   };
@@ -366,12 +370,9 @@ async function persistSlackIntegration(
       updatedAt: new Date(),
     })
     .where(eq(integration.id, existing.id))
-    .returning({
-      id: integration.id,
-      integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
-    });
+    .returning({ id: integration.id });
   if (updated === undefined) throw new Error('Could not persist the Slack integration.');
-  return updated;
+  return { id: updated.id, integrationVersion: credentialVersion };
 }
 
 async function assertSlackTeamUnclaimed(

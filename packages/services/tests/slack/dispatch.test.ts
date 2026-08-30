@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, setSystemTime } from 'bun:test';
 import {
   integration,
   issue,
@@ -20,6 +20,7 @@ import {
   dispatchSlackDm,
   dispatchSlackMessage,
   ensureSlackIntegration,
+  ensureSlackIntegrationWithVersion,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
@@ -154,6 +155,52 @@ describe('resolveSlackContext', () => {
 });
 
 describe('ensureSlackIntegration', () => {
+  it('uses distinct credential versions for reconnects in the same millisecond', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'SameMillisecond',
+        slackTeamId: 'T-same-millisecond',
+        botToken: 'xoxb-old',
+      });
+      const fixedTime = new Date('2026-08-30T12:00:00.000Z');
+      setSystemTime(fixedTime);
+      try {
+        const older = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-older',
+          externalId: 'T-same-millisecond',
+        });
+        const newer = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-newer',
+          externalId: 'T-same-millisecond',
+        });
+
+        expect(older.integrationVersion).not.toBe(newer.integrationVersion);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            older.integrationVersion,
+          ),
+        ).toBe(false);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            newer.integrationVersion,
+          ),
+        ).toBe(true);
+      } finally {
+        setSystemTime();
+      }
+    });
+  });
+
   it('reuses a legacy default integration when reconnecting with a team id', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, { name: 'Legacy', botToken: 'xoxb-old' });

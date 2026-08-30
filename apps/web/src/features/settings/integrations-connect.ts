@@ -1,9 +1,10 @@
-import { and, db, eq, sql } from '@orbit/db';
+import { and, db, eq } from '@orbit/db';
 import { integration, slackUserMapping, user } from '@orbit/db/schema';
 import { SlackClient } from '@orbit/services/slack';
 import {
   assertSlackIntegrationManager,
   ensureSlackIntegrationWithVersion,
+  slackCredentialVersionExpression,
   upsertSlackUserMapping,
 } from '@orbit/services/slack/dispatch';
 import { internal } from '@orbit/shared/errors';
@@ -124,7 +125,7 @@ async function reconcileSlackUserMapping(input: {
     const [current] = await tx
       .select({
         config: integration.config,
-        integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
+        integrationVersion: slackCredentialVersionExpression(),
       })
       .from(integration)
       .where(

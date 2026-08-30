@@ -69,6 +69,60 @@ describe('Slack bot token credentials', () => {
     }
   });
 
+  it('fails opaquely for malformed encrypted credential fields', () => {
+    const envelope = encryptSlackBotToken({
+      organizationId: 'org_noveum',
+      integrationId: 'int_slack',
+      token: 'xoxb-test-only',
+    });
+
+    for (const botToken of [
+      { ...envelope, iv: '*' },
+      { ...envelope, tag: '*' },
+      { ...envelope, ciphertext: '*' },
+    ]) {
+      let failure: unknown;
+      try {
+        decryptSlackBotToken(
+          { botToken },
+          { organizationId: 'org_noveum', integrationId: 'int_slack' },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code: 'internal' });
+      expect(String(failure)).not.toContain('xoxb-test-only');
+    }
+  });
+
+  it('fails opaquely when encrypted credential fields are tampered with', () => {
+    const envelope = encryptSlackBotToken({
+      organizationId: 'org_noveum',
+      integrationId: 'int_slack',
+      token: 'xoxb-test-only',
+    });
+    const alter = (value: string): string =>
+      `${value.startsWith('A') ? 'B' : 'A'}${value.slice(1)}`;
+
+    for (const botToken of [
+      { ...envelope, iv: alter(envelope.iv) },
+      { ...envelope, tag: alter(envelope.tag) },
+      { ...envelope, ciphertext: alter(envelope.ciphertext) },
+    ]) {
+      let failure: unknown;
+      try {
+        decryptSlackBotToken(
+          { botToken },
+          { organizationId: 'org_noveum', integrationId: 'int_slack' },
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code: 'internal' });
+      expect(String(failure)).not.toContain('xoxb-test-only');
+    }
+  });
+
   it('reads a legacy plaintext bot token without rewriting it', () => {
     const credentials = { botToken: 'xoxb-legacy' };
     expect(

@@ -1,3 +1,4 @@
+import { isDomainError } from '@orbit/shared/errors';
 import { z } from 'zod';
 import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
@@ -13,8 +14,19 @@ const callbackSchema = z.object({
   state: z.string().min(1),
 });
 
-function settingsRedirect(status: 'connected' | 'error'): Response {
+type SlackCallbackStatus = 'connected' | 'error' | 'denied' | 'claimed';
+
+function settingsRedirect(status: SlackCallbackStatus): Response {
   return Response.redirect(absoluteUrl(`/settings/integrations?slack=${status}`), 302);
+}
+
+function statusForFailure(error: unknown): SlackCallbackStatus {
+  if (!isDomainError(error)) return 'error';
+  if (error.code === 'forbidden') return 'denied';
+  if (error.code === 'conflict' && error.details?.['reason'] === 'slack_team_claimed') {
+    return 'claimed';
+  }
+  return 'error';
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -41,6 +53,6 @@ export async function GET(request: Request): Promise<Response> {
     return settingsRedirect('connected');
   } catch (error) {
     console.error('Could not complete the Slack installation.', error);
-    return settingsRedirect('error');
+    return settingsRedirect(statusForFailure(error));
   }
 }

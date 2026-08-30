@@ -5,8 +5,8 @@ import {
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
-import { and, db, eq, schema } from '@orbit/db';
-import { slackDmAvailable } from '@orbit/services';
+import { and, db, eq, schema, sql } from '@orbit/db';
+import { ensureSlackIntegration, slackDmAvailable } from '@orbit/services';
 import { decryptSlackBotToken, hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { completeSlackInstall } from '../../../src/features/settings/integrations-connect.ts';
 
@@ -447,5 +447,65 @@ describe.serial('completeSlackInstall', () => {
       .from(schema.integration)
       .where(eq(schema.integration.organizationId, workspace.organizationId));
     expect(integrations).toEqual([]);
+  });
+
+  it('translates a concurrent cross-workspace team claim collision', async () => {
+    const other = await createWorkspace('slack-concurrent-owner');
+    await db.execute(
+      sql.raw(`
+        create or replace function orbit_test_delay_slack_team_claim()
+        returns trigger language plpgsql as $function$
+        begin
+          if new.provider = 'slack' then
+            perform pg_sleep(0.25);
+          end if;
+          return new;
+        end
+        $function$
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        create trigger orbit_test_delay_slack_team_claim
+        before insert on integration
+        for each row execute function orbit_test_delay_slack_team_claim()
+      `),
+    );
+
+    try {
+      const results = await Promise.allSettled([
+        ensureSlackIntegration(db, {
+          organizationId: workspace.organizationId,
+          connectedById: workspace.adminUser.id,
+          botToken: 'xoxb-concurrent-one',
+          externalId: 'T-CONCURRENT-CLAIM',
+        }),
+        ensureSlackIntegration(db, {
+          organizationId: other.organizationId,
+          connectedById: other.adminUser.id,
+          botToken: 'xoxb-concurrent-two',
+          externalId: 'T-CONCURRENT-CLAIM',
+        }),
+      ]);
+      const fulfilled = results.filter((result) => result.status === 'fulfilled');
+      const rejected = results.filter((result) => result.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.reason).toMatchObject({
+        code: 'conflict',
+        details: { reason: 'slack_team_claimed' },
+      });
+      const claimed = await db
+        .select({ organizationId: schema.integration.organizationId })
+        .from(schema.integration)
+        .where(eq(schema.integration.provider, 'slack'));
+      expect(claimed).toHaveLength(1);
+    } finally {
+      await db.execute(
+        sql.raw('drop trigger if exists orbit_test_delay_slack_team_claim on integration'),
+      );
+      await db.execute(sql.raw('drop function if exists orbit_test_delay_slack_team_claim()'));
+    }
   });
 });

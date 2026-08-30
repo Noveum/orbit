@@ -28,6 +28,7 @@ import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
 import { hasSlackBotToken } from '../slack/credentials.ts';
+import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -171,9 +172,7 @@ export async function markSlackReauthorizationRequired(
         ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
         ...(expectedIntegrationVersion === undefined
           ? []
-          : [
-              sql`extract(epoch from ${integration.updatedAt})::text = ${expectedIntegrationVersion}`,
-            ]),
+          : [sql`${slackCredentialVersionExpression()} = ${expectedIntegrationVersion}`]),
       ),
     )
     .returning({ id: integration.id });
