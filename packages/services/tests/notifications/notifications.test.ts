@@ -101,7 +101,14 @@ async function seedSlackDmConnection(
     provider: 'slack',
     externalId: 'default',
     connectedById: fixture.actorId,
-    credentials: options.credentials ?? { botToken: 'xoxb-test' },
+    credentials: options.credentials ?? {
+      botToken: {
+        version: 1,
+        iv: 'AAAAAAAAAAAAAAAA',
+        ciphertext: 'AA',
+        tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+      },
+    },
     config: options.config ?? { scopes: ['chat:write', 'im:write'] },
   });
   if (options.mapped === false) return;

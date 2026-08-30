@@ -46,10 +46,6 @@ export const githubMisroutedInstallSchema = z.object({
 
 export const gitLinksQuerySchema = z.object({ issueId: idSchema });
 
-export const slackInstallSchema = z.object({
-  botToken: z.string().trim().min(1).max(255),
-});
-
 export const slackConnectChannelSchema = z.object({
   channelId: z.string().trim().min(1).max(64),
   channelName: z.string().trim().min(1).max(255),

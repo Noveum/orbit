@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it } from 'bun:test';
 import {
   integration,
   issue,
+  member,
   organization,
   slackChannelSync,
   slackUserMapping,
@@ -12,6 +13,7 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { markSlackReauthorizationRequired } from '../../src/notifications/index.ts';
+import { decryptSlackBotToken } from '../../src/slack/credentials.ts';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
@@ -26,6 +28,14 @@ import {
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+
+const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-dispatch-test-secret';
+
+afterAll(() => {
+  if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
+});
 
 interface Fixture {
   readonly organizationId: string;
@@ -55,6 +65,12 @@ async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Pr
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await tx.insert(member).values({
+    id: `mem_${suffix}`,
+    organizationId,
+    userId,
+    role: 'admin',
   });
 
   const teamA = `team_a_${suffix}`;
@@ -167,11 +183,17 @@ describe('ensureSlackIntegration', () => {
       if (legacy === undefined) throw new Error('Expected the existing integration row.');
       expect(integrationId).toBe(legacy.id);
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({
+      expect(rows[0]).toMatchObject({
         externalId: 'default',
         config: { slackTeamId: 'T0123', scopes: ['im:write'] },
-        credentials: { botToken: 'xoxb-new' },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
     });
   });
 
@@ -249,6 +271,12 @@ describe('ensureSlackIntegration', () => {
         email: `${reconnectingUserId}@orbit.local`,
         handle: reconnectingUserId.toLowerCase(),
       });
+      await tx.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        userId: reconnectingUserId,
+        role: 'admin',
+      });
       await upsertSlackUserMapping(tx, {
         organizationId: fixture.organizationId,
         integrationId: fixture.integrationId,
@@ -281,9 +309,15 @@ describe('ensureSlackIntegration', () => {
         id: fixture.integrationId,
         externalId: 'default',
         connectedById: reconnectingUserId,
-        credentials: { botToken: 'xoxb-new' },
         config: { slackTeamId: 'T-legacy', scopes: ['chat:write'] },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
       expect(integrationId).toBe(fixture.integrationId);
       expect(
         await tx
@@ -391,16 +425,21 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         slackTeamId: 'T-acme',
         botToken: 'xoxb-acme',
       });
+      const stale = await resolveSlackContext(tx, fixture.organizationId);
+      if (stale === null) throw new Error('Expected a Slack context.');
       await tx
         .update(integration)
-        .set({ credentials: { botToken: 'xoxb-refreshed' }, updatedAt: new Date() })
+        .set({
+          credentials: { botToken: 'xoxb-refreshed' },
+          updatedAt: new Date(stale.updatedAt.getTime() + 1_000),
+        })
         .where(eq(integration.id, fixture.integrationId));
       expect(
         await markSlackReauthorizationRequired(
           tx,
           fixture.organizationId,
           fixture.integrationId,
-          'xoxb-acme',
+          stale.integrationVersion,
         ),
       ).toBe(false);
       const [after] = await tx

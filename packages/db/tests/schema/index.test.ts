@@ -166,6 +166,13 @@ describe('list and search indexes', () => {
     );
   });
 
+  it('gives each Slack team to only one Orbit workspace', () => {
+    const slackTeam = partialIndexOf(schema.integration, 'integration_provider_slack_team_idx');
+    expect(slackTeam.unique).toBe(true);
+    expect(predicateOf(slackTeam)).toContain(`provider" = 'slack'`);
+    expect(predicateOf(slackTeam)).toContain('coalesce');
+  });
+
   it('indexes source delivery lookups without indexing rows that have no source', () => {
     const index = partialIndexOf(
       schema.notificationDelivery,

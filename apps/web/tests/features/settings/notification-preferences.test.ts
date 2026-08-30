@@ -27,7 +27,14 @@ async function seedSlackConnection(
     provider: 'slack',
     externalId: options.externalId ?? 'default',
     connectedById: workspace.admin.userId,
-    credentials: options.credentials ?? { botToken: 'xoxb-test' },
+    credentials: options.credentials ?? {
+      botToken: {
+        version: 1,
+        iv: 'AAAAAAAAAAAAAAAA',
+        ciphertext: 'AA',
+        tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+      },
+    },
     config: options.config ?? { scopes: ['chat:write', 'im:write'] },
   });
   if (options.mapped ?? true) {

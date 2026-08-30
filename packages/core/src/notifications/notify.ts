@@ -211,7 +211,6 @@ async function finalizeSlackDmFailure(
       database,
       organizationId,
       error instanceof SlackDmDispatchError ? error.integrationId : undefined,
-      error instanceof SlackDmDispatchError ? error.tokenUsed() : undefined,
       error instanceof SlackDmDispatchError ? error.integrationVersion() : undefined,
     );
     if (reauthorizationMarked) {

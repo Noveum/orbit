@@ -27,6 +27,7 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
+import { hasSlackBotToken } from '../slack/credentials.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -155,7 +156,6 @@ export async function markSlackReauthorizationRequired(
   database: NotificationDatabase,
   organizationId: string,
   integrationId?: string,
-  expectedBotToken?: string,
   expectedIntegrationVersion?: string,
 ): Promise<boolean> {
   const updated = await database
@@ -169,9 +169,6 @@ export async function markSlackReauthorizationRequired(
         eq(integration.organizationId, organizationId),
         eq(integration.provider, 'slack'),
         ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
-        ...(expectedBotToken === undefined
-          ? []
-          : [sql`${integration.credentials}->>'botToken' = ${expectedBotToken}`]),
         ...(expectedIntegrationVersion === undefined
           ? []
           : [
@@ -301,7 +298,6 @@ interface Plan {
 }
 
 const slackDmEligibilitySchema = z.object({
-  credentials: z.object({ botToken: z.string().min(1) }),
   config: z.object({
     scopes: z.array(z.string()),
     slackReauthorize: z.boolean().optional(),
@@ -518,7 +514,7 @@ async function loadSlackDmEligibleRecipients(
   const eligible = new Map<string, Set<string>>();
   for (const row of rows) {
     const parsed = slackDmEligibilitySchema.safeParse(row);
-    if (!parsed.success) continue;
+    if (!(parsed.success && hasSlackBotToken(row.credentials))) continue;
     if (parsed.data.config.slackReauthorize === true) continue;
     const scopes = parsed.data.config.scopes;
     if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;

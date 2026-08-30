@@ -1,5 +1,5 @@
 import { db } from '@orbit/db';
-import { resolveSlackContext, SlackClient } from '@orbit/services';
+import { listSlackConversations } from '@orbit/services';
 import { assertCan } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { apiContext, handleRoute, searchParamsOf } from '@/lib/api/handler.ts';
@@ -20,14 +20,10 @@ export async function GET(request: Request): Promise<Response> {
     assertCan(principal, 'integration:manage');
     const { cursor } = querySchema.parse(searchParamsOf(request));
 
-    const context = await resolveSlackContext(db, principal.organizationId, 'default');
-    if (context === null || context.token === null) {
-      return { channels: [], nextCursor: null };
-    }
-
-    const conversations = await new SlackClient({ token: context.token }).listConversations(
-      cursor === undefined ? {} : { cursor },
-    );
+    const conversations = await listSlackConversations(db, {
+      organizationId: principal.organizationId,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
     return {
       channels: conversations.channels
         .filter((channel) => channel.isMember)

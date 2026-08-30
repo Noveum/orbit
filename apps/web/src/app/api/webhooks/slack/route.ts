@@ -1,10 +1,5 @@
 import { and, db, eq, lt, or, schema, sql } from '@orbit/db';
-import {
-  resolveIssueUnfurls,
-  resolveSlackContext,
-  SlackClient,
-  verifySlackSignature,
-} from '@orbit/services';
+import { resolveIssueUnfurls, sendSlackUnfurls, verifySlackSignature } from '@orbit/services';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { slackEventSchema } from '@orbit/shared/validators';
 import {
@@ -196,13 +191,6 @@ async function unfurlLinks(
   }
   if (!slackIntegrationEnabledForOrganization(integrationRow.organizationId)) return null;
 
-  const context = await resolveSlackContext(
-    db,
-    integrationRow.organizationId,
-    integrationRow.externalId,
-  );
-  if (context === null || context.token === null) return integrationRow.organizationId;
-
   const unfurls = await resolveIssueUnfurls(
     db,
     integrationRow.organizationId,
@@ -210,6 +198,12 @@ async function unfurlLinks(
   );
   if (Object.keys(unfurls).length === 0) return integrationRow.organizationId;
 
-  await new SlackClient({ token: context.token }).unfurl({ channel, ts, unfurls });
+  await sendSlackUnfurls(db, {
+    organizationId: integrationRow.organizationId,
+    externalId: integrationRow.externalId,
+    channel,
+    ts,
+    unfurls,
+  });
   return integrationRow.organizationId;
 }

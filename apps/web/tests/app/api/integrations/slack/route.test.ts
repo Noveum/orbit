@@ -4,13 +4,14 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-settings-route-test-secret';
 
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
 
 const { addMember, createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
-const { db, schema } = await import('@orbit/db');
+const { db, eq, schema } = await import('@orbit/db');
 const { connectSlackChannel, ensureSlackIntegration } = await import('@orbit/services');
 const { mockSession } = await import('../../../../../tests-support.ts');
 
@@ -48,7 +49,7 @@ let workspace: Workspace;
 
 mockSession(() => session);
 
-const { GET, PATCH } = await import('../../../../../src/app/api/integrations/slack/route.ts');
+const { GET, PATCH, POST } = await import('../../../../../src/app/api/integrations/slack/route.ts');
 
 function signIn(user: Workspace['adminUser']): void {
   session = { user, session: { activeOrganizationId: workspace.organizationId } };
@@ -57,6 +58,7 @@ function signIn(user: Workspace['adminUser']): void {
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('SlackSettings');
+  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
   const integrationId = await ensureSlackIntegration(db, {
     organizationId: workspace.organizationId,
     connectedById: workspace.adminUser.id,
@@ -79,6 +81,9 @@ beforeEach(() => {
 afterAll(() => {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  if (existingSlackOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
   slackCapabilitySpy.mockRestore();
 });
 
@@ -100,6 +105,24 @@ describe('GET /api/integrations/slack', () => {
         },
       ],
     });
+  });
+
+  it('rejects raw bot-token installation', async () => {
+    const response = await POST(
+      new Request('https://orbit.test/api/integrations/slack', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'install', botToken: 'xoxb-raw-token' }),
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.text()).not.toContain('xoxb-raw-token');
+    const [saved] = await db
+      .select({ credentials: schema.integration.credentials })
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
+    expect(JSON.stringify(saved?.credentials)).not.toContain('xoxb-raw-token');
   });
 
   it('offers only joined channels through the legacy channel listing', async () => {

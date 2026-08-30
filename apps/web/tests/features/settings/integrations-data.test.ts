@@ -94,7 +94,14 @@ describe('loadIntegrationSettings', () => {
         provider: 'slack',
         externalId: 'default',
         connectedById: workspace.adminUser.id,
-        credentials: { botToken: 'xoxb-canonical' },
+        credentials: {
+          botToken: {
+            version: 1,
+            iv: 'AAAAAAAAAAAAAAAA',
+            ciphertext: 'AA',
+            tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+          },
+        },
         createdAt: new Date('2026-01-01T00:00:00Z'),
       },
       {

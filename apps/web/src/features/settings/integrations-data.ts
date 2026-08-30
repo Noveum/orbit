@@ -1,4 +1,5 @@
 import { and, db, desc, eq, schema } from '@orbit/db';
+import { hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
@@ -30,12 +31,6 @@ export interface SlackIntegrationSettings {
 export interface IntegrationSettings {
   readonly github: GithubSettingsView;
   readonly slack?: SlackIntegrationSettings;
-}
-
-function slackBotTokenFrom(credentials: unknown): string | null {
-  if (typeof credentials !== 'object' || credentials === null) return null;
-  const token = (credentials as Record<string, unknown>)['botToken'];
-  return typeof token === 'string' && token.length > 0 ? token : null;
 }
 
 const WITHHELD: IntegrationSettings = {
@@ -91,13 +86,11 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
               eq(schema.slackChannelSync.integrationId, slackRow.id),
             ),
           );
-  const slackToken = slackRow === undefined ? null : slackBotTokenFrom(slackRow.credentials);
-
   return {
     github,
     slack: {
       slackConnected: slackRow !== undefined,
-      slackHasToken: slackToken !== null,
+      slackHasToken: slackRow !== undefined && hasSlackBotToken(slackRow.credentials),
       slackConnectEnabled: slackConnectReady(),
       channels,
       teams,

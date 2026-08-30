@@ -1,0 +1,2 @@
+DROP INDEX "integration_provider_slack_team_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "integration_provider_slack_team_idx" ON "integration" USING btree (coalesce("config" ->> 'slackTeamId', nullif("external_id", 'default'))) WHERE "integration"."provider" = 'slack' and coalesce("integration"."config" ->> 'slackTeamId', nullif("integration"."external_id", 'default')) is not null;
