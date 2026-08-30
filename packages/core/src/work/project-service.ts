@@ -597,6 +597,47 @@ export async function listProjectUpdates(
     .limit(limit);
 }
 
+export interface WorkspaceProjectUpdateRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly projectSlug: string;
+  readonly authorId: string;
+  readonly health: string;
+  readonly body: string;
+  readonly createdAt: Date;
+}
+
+export async function listWorkspaceProjectUpdates(
+  principal: Principal,
+  limit = 50,
+): Promise<WorkspaceProjectUpdateRow[]> {
+  assertCan(principal, 'project:read');
+  return await db
+    .select({
+      id: schema.projectUpdate.id,
+      projectId: schema.projectUpdate.projectId,
+      projectName: schema.project.name,
+      projectSlug: schema.project.slug,
+      authorId: schema.projectUpdate.authorId,
+      health: schema.projectUpdate.health,
+      body: schema.projectUpdate.body,
+      createdAt: schema.projectUpdate.createdAt,
+    })
+    .from(schema.projectUpdate)
+    .innerJoin(schema.project, eq(schema.project.id, schema.projectUpdate.projectId))
+    .where(
+      and(
+        eq(schema.projectUpdate.organizationId, principal.organizationId),
+        eq(schema.project.organizationId, principal.organizationId),
+        isNull(schema.project.archivedAt),
+        visibleProjectFilter(principal),
+      ),
+    )
+    .orderBy(desc(schema.projectUpdate.createdAt))
+    .limit(limit);
+}
+
 export interface MilestoneProgress {
   readonly milestoneId: string;
   readonly name: string;

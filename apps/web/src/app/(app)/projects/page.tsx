@@ -6,10 +6,11 @@ import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
-import { listProjectSummaries } from '@/features/projects/data.ts';
+import { listProjectSummaries, listWorkspaceProjectUpdateViews } from '@/features/projects/data.ts';
 import { formatDay } from '@/features/projects/dates.ts';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { NewProjectDialog } from '@/features/projects/new-project-dialog.tsx';
+import { ProjectUpdatesFeed } from '@/features/projects/project-feed.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
@@ -20,11 +21,19 @@ function formatDate(value: string | null): string {
   return formatDay(value, { withYear: false, missing: 'No target' });
 }
 
-export default async function ProjectsPage() {
+interface ProjectsPageProps {
+  readonly searchParams?: Promise<{ view?: string }>;
+}
+
+export default async function ProjectsPage({ searchParams }: ProjectsPageProps) {
   const { principal } = await pageContext();
-  const [projects, teams] = await Promise.all([
+  const { view } = (await searchParams) ?? {};
+  const isFeed = view === 'feed' || view === 'updates';
+
+  const [projects, teams, updates] = await Promise.all([
     listProjectSummaries(principal),
     listTeams(principal),
+    isFeed ? listWorkspaceProjectUpdateViews(principal) : Promise.resolve([]),
   ]);
   const canManage = can(principal, 'project:manage');
   const teamOptions = teams.map((team) => ({ id: team.id, key: team.key, name: team.name }));
@@ -55,78 +64,109 @@ export default async function ProjectsPage() {
             {projects.length} active {projects.length === 1 ? 'project' : 'projects'}.
           </p>
         </div>
-        <NewProjectDialog teams={teamOptions} canManage={canManage} />
+        <div className="flex flex-wrap items-center gap-3">
+          <nav
+            className="flex items-center gap-1 rounded-lg border border-border bg-surface p-0.5"
+            aria-label="Project views"
+          >
+            <Link
+              href="/projects"
+              aria-current={isFeed ? undefined : 'page'}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-2xs font-medium transition-colors',
+                isFeed ? 'text-faint hover:text-muted' : 'bg-surface-2 text-text shadow-xs',
+              )}
+            >
+              Projects
+            </Link>
+            <Link
+              href="/projects?view=feed"
+              aria-current={isFeed ? 'page' : undefined}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-2xs font-medium transition-colors',
+                isFeed ? 'bg-surface-2 text-text shadow-xs' : 'text-faint hover:text-muted',
+              )}
+            >
+              Updates
+            </Link>
+          </nav>
+          <NewProjectDialog teams={teamOptions} canManage={canManage} />
+        </div>
       </header>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="row-stack w-full border-collapse md:min-w-[52rem] text-dense">
-          <thead>
-            <tr className="border-border border-b text-2xs text-faint uppercase">
-              <th scope="col" className="px-3 py-2 text-left font-medium">
-                Project
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium">
-                Health
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium">
-                Lead
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium">
-                Target
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                Issues
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-medium">
-                Progress
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {projects.map((project) => (
-              <tr
-                key={project.id}
-                className={cn('border-border border-b last:border-b-0', rowHover)}
-              >
-                <td className="px-3 py-2">
-                  <Link
-                    href={`/projects/${project.slug}`}
-                    className="flex flex-col gap-0.5 rounded-sm text-text hover:text-accent"
-                  >
-                    <span className="font-medium">{project.name}</span>
-                    <span className="text-faint text-2xs">
-                      {STATUS_LABELS[project.status]}
-                      {project.summary.length === 0 ? '' : ` · ${project.summary}`}
-                    </span>
-                  </Link>
-                </td>
-                <td data-label="Health" className="px-3 py-2">
-                  <HealthChip health={project.health} />
-                </td>
-                <td data-label="Lead" className="px-3 py-2">
-                  {project.lead === null ? (
-                    <span className="text-faint text-xs">Unassigned</span>
-                  ) : (
-                    <span className="flex items-center gap-1.5 text-muted">
-                      <Avatar name={project.lead.name} src={project.lead.image} size="xs" />
-                      {project.lead.name}
-                    </span>
-                  )}
-                </td>
-                <td data-label="Target" className="px-3 py-2 text-muted tabular">
-                  {formatDate(project.targetDate)}
-                </td>
-                <td data-label="Issues" className="px-3 py-2 text-right text-muted tabular">
-                  {project.issueCount}
-                </td>
-                <td data-label="Progress" className="px-3 py-2">
-                  <Donut completed={project.completedCount} scope={project.issueCount} />
-                </td>
+      {isFeed ? (
+        <ProjectUpdatesFeed updates={updates} />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="row-stack w-full border-collapse md:min-w-[52rem] text-dense">
+            <thead>
+              <tr className="border-border border-b text-2xs text-faint uppercase">
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Project
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Health
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Lead
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Target
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  Issues
+                </th>
+                <th scope="col" className="px-3 py-2 text-left font-medium">
+                  Progress
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {projects.map((project) => (
+                <tr
+                  key={project.id}
+                  className={cn('border-border border-b last:border-b-0', rowHover)}
+                >
+                  <td className="px-3 py-2">
+                    <Link
+                      href={`/projects/${project.slug}`}
+                      className="flex flex-col gap-0.5 rounded-sm text-text hover:text-accent"
+                    >
+                      <span className="font-medium">{project.name}</span>
+                      <span className="text-faint text-2xs">
+                        {STATUS_LABELS[project.status]}
+                        {project.summary.length === 0 ? '' : ` · ${project.summary}`}
+                      </span>
+                    </Link>
+                  </td>
+                  <td data-label="Health" className="px-3 py-2">
+                    <HealthChip health={project.health} />
+                  </td>
+                  <td data-label="Lead" className="px-3 py-2">
+                    {project.lead === null ? (
+                      <span className="text-faint text-xs">Unassigned</span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-muted">
+                        <Avatar name={project.lead.name} src={project.lead.image} size="xs" />
+                        {project.lead.name}
+                      </span>
+                    )}
+                  </td>
+                  <td data-label="Target" className="px-3 py-2 text-muted tabular">
+                    {formatDate(project.targetDate)}
+                  </td>
+                  <td data-label="Issues" className="px-3 py-2 text-right text-muted tabular">
+                    {project.issueCount}
+                  </td>
+                  <td data-label="Progress" className="px-3 py-2">
+                    <Donut completed={project.completedCount} scope={project.issueCount} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

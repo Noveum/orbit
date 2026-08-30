@@ -2,6 +2,7 @@ import {
   listMilestones,
   listProjects,
   listProjectUpdates,
+  listWorkspaceProjectUpdates,
   type ProjectProgress,
   projectProgress,
   projectProgressSeries,
@@ -201,4 +202,34 @@ export async function findProjectDetail(
     if (error instanceof DomainError && MISSING_CODES.has(error.code)) return null;
     throw error;
   }
+}
+
+export interface WorkspaceProjectUpdateView {
+  readonly id: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly projectSlug: string;
+  readonly health: ProjectHealth;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly author: PersonRef | null;
+}
+
+export async function listWorkspaceProjectUpdateViews(
+  principal: Principal,
+  limit = 50,
+): Promise<WorkspaceProjectUpdateView[]> {
+  const updates = await listWorkspaceProjectUpdates(principal, limit);
+  const people = await loadPeople(updates.map((update) => update.authorId));
+
+  return updates.map((update) => ({
+    id: update.id,
+    projectId: update.projectId,
+    projectName: update.projectName,
+    projectSlug: update.projectSlug,
+    health: toHealth(update.health),
+    body: renderPlainText(update.body),
+    createdAt: update.createdAt.toISOString(),
+    author: people.get(update.authorId) ?? null,
+  }));
 }

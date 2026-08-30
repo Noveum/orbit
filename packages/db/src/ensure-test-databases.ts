@@ -83,7 +83,7 @@ console.log(`\n${TEST_DATABASES.length} test databases ready. Applying the schem
 
 for (const name of TEST_DATABASES) {
   const url = databaseUrl(connectionString, name);
-  const push = Bun.spawn(['bunx', 'drizzle-kit', 'push', '--force'], {
+  const push = Bun.spawn([process.execPath, 'x', 'drizzle-kit', 'push', '--force'], {
     env: { ...process.env, DATABASE_URL: url },
     stdout: 'pipe',
     stderr: 'pipe',
