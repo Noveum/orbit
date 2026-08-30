@@ -79,10 +79,11 @@ follow-up work.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
   required exact-head review at its highest confidence level with no unresolved
   review threads, and pass an independent diff review before merge.
-- The historical public Preview boundary still keeps Slack unavailable to
-  self-hosters and public distribution. A separate internal canary is now
-  limited by one exact server-side Orbit organization ID; it is not a supported
-  public integration or a change to the Preview release boundary.
+- The historical public Preview boundary still leaves Slack unsupported,
+  unqualified, and undistributed for self-hosting and public use. A separate
+  internal canary is now limited by one exact server-side Orbit organization ID;
+  it is not a supported public integration or a change to the Preview release
+  boundary.
 
 ### Known verification warnings
 

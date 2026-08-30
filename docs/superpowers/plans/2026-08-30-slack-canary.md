@@ -291,10 +291,18 @@ Document `SLACK_ENABLED_ORGANIZATION_ID`, the production redirect URL, the eight
 Run:
 
 ```bash
-bun test packages/services/tests/slack apps/web/tests/app/api/integrations/slack apps/web/tests/app/api/webhooks/slack/route.test.ts apps/web/tests/features/settings/integrations-connect-slack.test.ts apps/web/tests/features/settings/integrations-data.test.ts apps/web/tests/features/settings/integrations-panel.test.tsx
+cd packages/services
+bun test tests/slack/credentials.test.ts tests/slack/slack.test.ts
+
+cd ../../apps/web
+bun test tests/features/settings/integrations-panel.test.tsx
 ```
 
-Expected: PASS.
+These commands run the non-database Slack suites from their package roots, so
+the web test preload applies. The Slack API, webhook, OAuth, and
+`integrations-data` suites are database-backed; run them from `apps/web` only
+after the test database is prepared. Do not report those database-backed suites
+as passed when PostgreSQL is unavailable.
 
 - [ ] **Step 3: Run repository verification**
 
@@ -317,7 +325,7 @@ rg -n "Co-Authored-[B]y|Generated wit[h]" .env.example apps packages docs/superp
 
 Expected: no output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs
