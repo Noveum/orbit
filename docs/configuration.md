@@ -207,8 +207,9 @@ Slack requires all three Slack OAuth and webhook variables plus a non-blank,
 exact `SLACK_ENABLED_ORGANIZATION_ID`. With the organization value absent or
 blank, Slack stays dark. The shared compile-time Slack flag remains false
 globally, so the environment value enables no other organization. For Noveum
-Production, the controlled target is `org_orbit_demo`; a self-hoster must set
-its own exact Orbit organization ID instead.
+Production, the controlled target is
+`9970aaa7-ba5c-4fcc-b980-d16880ea6c41`; a self-hoster must set its own exact
+Orbit organization ID instead.
 
 Do not configure `SLACK_APP_ID`, `SLACK_BOT_TOKEN`, or `SLACK_APP_TOKEN`.
 Orbit does not use them. See [Integrations](integrations.md#slack-canary) for

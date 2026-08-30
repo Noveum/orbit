@@ -105,7 +105,8 @@ ID. An unset, blank, or different value keeps Slack dark: the settings card is
 hidden, Slack routes return not found, inbound events do not process, and the
 scheduled Slack DM worker has no eligible organization.
 
-For Noveum Production, the confirmed canary target is `org_orbit_demo`.
+For Noveum Production, the confirmed canary target is
+`9970aaa7-ba5c-4fcc-b980-d16880ea6c41`.
 Self-hosters must use their own exact Orbit organization ID, never this value.
 The Slack app remains undistributed. Do not enable public distribution, Socket
 Mode, slash commands, or interactive issue mutations for this canary.
@@ -149,7 +150,7 @@ when unfurl domains change.
    unfurling disabled in Slack.
 2. In Vercel Production, set `SLACK_ENABLED_ORGANIZATION_ID` to the one exact
    canary organization ID, then redeploy. For the Noveum canary that ID is
-   `org_orbit_demo`.
+   `9970aaa7-ba5c-4fcc-b980-d16880ea6c41`.
 3. As an Orbit administrator, complete OAuth from **Settings**,
    **Integrations**.
 4. Invite the Orbit bot to, or have it join, one controlled Slack channel.
