@@ -173,6 +173,37 @@ describe('list and search indexes', () => {
     expect(predicateOf(slackTeam)).toContain('coalesce');
   });
 
+  it('rejects duplicate legacy Slack team claims before adding uniqueness', async () => {
+    const migration = (
+      await readFile(new URL('../../drizzle/0016_secure_slack_team.sql', import.meta.url), 'utf8')
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    const guardStart = migration.indexOf('DO $$');
+    const oldIndexDrop = migration.indexOf('DROP INDEX "integration_provider_slack_team_idx"');
+    const uniqueIndexCreation = migration.indexOf(
+      'CREATE UNIQUE INDEX "integration_provider_slack_team_idx"',
+    );
+    const effectiveSlackTeam =
+      `coalesce("integration"."config" ->> 'slackTeamId', ` +
+      `nullif("integration"."external_id", 'default'))`;
+
+    expect(guardStart).toBeGreaterThanOrEqual(0);
+    expect(oldIndexDrop).toBeGreaterThan(guardStart);
+    expect(uniqueIndexCreation).toBeGreaterThan(oldIndexDrop);
+
+    const guard = migration.slice(guardStart, oldIndexDrop);
+    expect(guard).toContain(
+      `WHERE "integration"."provider" = 'slack' AND ${effectiveSlackTeam} IS NOT NULL ` +
+        `GROUP BY ${effectiveSlackTeam} HAVING count(*) > 1`,
+    );
+    expect(guard).toContain(
+      "RAISE EXCEPTION 'Duplicate legacy Slack team claims block unique ownership. " +
+        'Keep one integration for each Slack workspace, disconnect the others, then rerun the ' +
+        "migration.';",
+    );
+  });
+
   it('indexes source delivery lookups without indexing rows that have no source', () => {
     const index = partialIndexOf(
       schema.notificationDelivery,
