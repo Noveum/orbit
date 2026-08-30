@@ -296,6 +296,8 @@ bun test tests/slack/credentials.test.ts tests/slack/slack.test.ts
 
 cd ../../apps/web
 bun test tests/features/settings/integrations-panel.test.tsx
+
+cd ../..
 ```
 
 These commands run the non-database Slack suites from their package roots, so

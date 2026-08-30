@@ -141,11 +141,12 @@ when unfurl domains change.
 
 ### Launch order
 
-1. Make the first hardened dark Vercel Production deployment with
-   `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` already
-   configured. Mark `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET` Sensitive
-   in Vercel, then leave `SLACK_ENABLED_ORGANIZATION_ID` absent. Leave Event
-   Subscriptions and Link unfurling disabled in Slack.
+1. Apply the database migration, then make the first hardened dark Vercel
+   Production deployment with `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and
+   `SLACK_SIGNING_SECRET` already configured. Mark `SLACK_CLIENT_SECRET` and
+   `SLACK_SIGNING_SECRET` Sensitive in Vercel, then leave
+   `SLACK_ENABLED_ORGANIZATION_ID` absent. Leave Event Subscriptions and Link
+   unfurling disabled in Slack.
 2. In Vercel Production, set `SLACK_ENABLED_ORGANIZATION_ID` to the one exact
    canary organization ID, then redeploy. For the Noveum canary that ID is
    `org_orbit_demo`.
