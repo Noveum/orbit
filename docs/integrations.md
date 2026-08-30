@@ -95,43 +95,89 @@ complete.
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.
 
-## Slack
+## Slack canary
 
-Slack delivery infrastructure is present, but the shipped capability remains
-disabled pending a separate launch decision. Slack settings stay hidden, Slack
-routes return not found, inbound events are not processed, and the scheduled DM
-worker remains dormant. Supplying Slack environment variables does not enable
-the capability.
+Slack is an internal, single-organization canary, not a publicly distributed
+or self-hosting-ready integration. The shared compile-time Slack flag remains
+false. The server enables the canary only when
+`SLACK_ENABLED_ORGANIZATION_ID` exactly matches the current Orbit organization
+ID. An unset, blank, or different value keeps Slack dark: the settings card is
+hidden, Slack routes return not found, inbound events do not process, and the
+scheduled Slack DM worker has no eligible organization.
 
-If the source capability is separately enabled in a future release, create a
-Slack app for the deployment and configure it as follows:
+For Noveum Production, the confirmed canary target is `org_orbit_demo`.
+Self-hosters must use their own exact Orbit organization ID, never this value.
+The Slack app remains undistributed. Do not enable public distribution, Socket
+Mode, slash commands, or interactive issue mutations for this canary.
 
-1. Add `<ORBIT_ORIGIN>/api/integrations/slack/callback` as the OAuth redirect
-   URL. Replace `<ORBIT_ORIGIN>` with the public Orbit origin, including its
-   scheme and hostname.
-2. Add these Bot Token Scopes: `channels:read`, `groups:read`, `chat:write`,
-   `links:read`, `links:write`, `im:write`, `users:read`, and
-   `users:read.email`.
-3. Enable Event Subscriptions and set the request URL to
-   `<ORBIT_ORIGIN>/api/webhooks/slack`. Subscribe the bot to the `link_shared`
-   event.
-4. Under Link unfurling, add every Orbit hostname whose issue links the app
-   should unfurl.
-5. Copy the app client ID, client secret, and signing secret into
-   `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET`.
-6. Connect Slack from **Settings**, **Integrations**. Reconnect installations
-   created before the current scope set so Slack can grant the new scopes.
+### Set up the Slack app
 
-Invite the Orbit bot to each channel before selecting it in Orbit. The channel
-picker lists only channels the bot has joined, which keeps the requested
-`chat:write` permission sufficient without the broader `chat:write.public`
-scope.
+Configure the app with this exact OAuth redirect URL:
+
+```text
+https://orbit.noveum.ai/api/integrations/slack/callback
+```
+
+Request exactly these eight Bot Token Scopes:
+
+- `channels:read`
+- `groups:read`
+- `chat:write`
+- `links:read`
+- `links:write`
+- `im:write`
+- `users:read`
+- `users:read.email`
+
+The webhook request URL is:
+
+```text
+https://orbit.noveum.ai/api/webhooks/slack
+```
+
+When the event stage is reached, subscribe the bot to `link_shared` and add
+only `orbit.noveum.ai` under Link unfurling. Slack requires an app reinstall
+when unfurl domains change.
+
+### Launch order
+
+1. Deploy the hardened code and database migration with
+   `SLACK_ENABLED_ORGANIZATION_ID` unset. Leave Event Subscriptions and Link
+   unfurling disabled in Slack.
+2. In Vercel Production, set `SLACK_ENABLED_ORGANIZATION_ID` to the one exact
+   canary organization ID, then redeploy. For the Noveum canary that ID is
+   `org_orbit_demo`.
+3. As an Orbit administrator, complete OAuth from **Settings**,
+   **Integrations**.
+4. Invite the Orbit bot to, or have it join, one controlled Slack channel.
+   Select that channel in Orbit and map it to an Orbit team or to the explicit
+   workspace-wide scope. Run an outbound notification smoke test.
+5. Enable Event Subscriptions and add the `orbit.noveum.ai` unfurl domain in
+   Slack. Reinstall the app if the domain setting changed, then test a mapped
+   Orbit issue link in that controlled channel.
+
+Do not reverse this order. Event subscriptions and unfurl domains must remain
+off until the hardened dark deployment, allowlist redeploy, OAuth connection,
+bot invitation, channel mapping, and outbound smoke test are complete.
+
+### Channel and credential behavior
+
+The bot must be invited or joined before a channel can be mapped. Orbit fetches
+the channel's canonical metadata from Slack and does not trust client-supplied
+channel details. An unmapped channel does not unfurl. A team mapping limits
+unfurls to issues in that exact Orbit team. A null team mapping is an explicit
+workspace-wide scope, not an implicit fallback.
+
+OAuth stores the bot token encrypted at rest. Rotating `BETTER_AUTH_SECRET`
+makes existing encrypted Slack credentials unusable, so reconnect Slack as an
+Orbit administrator after the rotation. The token is not shown in settings or
+route responses.
 
 Slack integration behavior:
 
-- **Capability boundary.** Slack support is disabled in this release. Enabling
-  it requires an explicit source change and release review. OAuth credentials
-  alone never expose the settings, routes, webhook processing, or worker.
+- **Capability boundary.** OAuth credentials alone do not enable Slack. The
+  server-side exact-organization allowlist is required in addition to the
+  configuration described above; all other organizations remain dark.
 - **Granted scope storage.** Granted scopes are stored as non-secret
   integration metadata. The bot token is never exposed to the browser.
 - **Notification routing.** The GitHub webhook broadcast path sends eligible
@@ -173,7 +219,8 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 
 Not an integration you connect, but worth listing since it carries invites and
 sign-in codes. Event notification email and digests are not currently
-dispatched, and Slack channel delivery remains disabled.
+dispatched. Slack channel delivery is limited to the controlled canary mappings
+described above.
 
 Orbit sends through [Resend](https://resend.com) only.
 
@@ -218,6 +265,21 @@ Check `NEXT_PUBLIC_APP_URL` too, since the redirect is built from it.
 **Webhooks arrive but nothing happens.** The signature is not verifying. Confirm
 `GITHUB_WEBHOOK_SECRET` matches what the GitHub App has. The integrations page
 shows recent deliveries and their responses, which is the fastest place to look.
+
+**Slack says the workspace is already claimed.** That Slack team is bound to a
+different Orbit organization. Disconnect Slack from its current Orbit workspace
+first, then reconnect from the intended organization. Do not try to bypass the
+ownership check or copy credentials between workspaces.
+
+**Slack reports missing permissions, says it needs authorization, or it stopped
+working after a `BETTER_AUTH_SECRET` rotation.** Reconnect Slack as an Orbit
+administrator. This replaces the encrypted OAuth credential and renews the
+granted scope. Do not attempt to recover or paste a stored token.
+
+**A channel cannot be mapped, or mapped links do not unfurl.** Invite or join
+the Orbit bot to that exact Slack channel, then map it again. Confirm that the
+mapping is enabled and that the channel has the intended exact team scope or
+explicit workspace-wide scope. Unmapped channels deliberately do not unfurl.
 
 **Pull requests do not link to issues.** The branch name has to contain the
 issue identifier. Use the branch name Orbit generates, or include `ENG-42` in

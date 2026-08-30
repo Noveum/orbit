@@ -103,7 +103,7 @@ bun run typecheck
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .env.example apps/web packages/core packages/services
@@ -282,7 +282,7 @@ git commit -m "feat(slack): authorize mapped channel unfurls"
 **Interfaces:**
 - Consumes: the rollout variable, OAuth flow, encryption behavior, channel policy, and webhook behavior from Tasks 1 through 3.
 
-- [ ] **Step 1: Update operator documentation**
+- [x] **Step 1: Update operator documentation**
 
 Document `SLACK_ENABLED_ORGANIZATION_ID`, the production redirect URL, the eight bot scopes already requested by Orbit, the webhook URL, `link_shared`, `orbit.noveum.ai`, bot invitation and mapping, reconnect behavior after `BETTER_AUTH_SECRET` rotation, and the launch order with the rollout unset during the first deploy.
 
@@ -307,12 +307,12 @@ bun run verify
 
 Expected: lint, comment policy, byte policy, Bun import policy, dependency policy, type checks, and tests all pass.
 
-- [ ] **Step 4: Check forbidden artifacts**
+- [x] **Step 4: Check forbidden artifacts**
 
 Run:
 
 ```bash
-rg -n "Co-Authored-By|Generated with" .env.example apps packages docs/superpowers/specs/2026-08-30-slack-canary-design.md docs/superpowers/plans/2026-08-30-slack-canary.md docs/integrations.md docs/configuration.md docs/open-source-readiness.md
+rg -n "Co-Authored-[B]y|Generated wit[h]" .env.example apps packages docs/superpowers/specs/2026-08-30-slack-canary-design.md docs/superpowers/plans/2026-08-30-slack-canary.md docs/integrations.md docs/configuration.md docs/open-source-readiness.md
 ```
 
 Expected: no output.

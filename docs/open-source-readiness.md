@@ -79,8 +79,10 @@ follow-up work.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
   required exact-head review at its highest confidence level with no unresolved
   review threads, and pass an independent diff review before merge.
-- Slack remains disabled and deferred. Requalification is tracked only as
-  future work and is not part of the active merge sequence.
+- The historical public Preview boundary still keeps Slack unavailable to
+  self-hosters and public distribution. A separate internal canary is now
+  limited by one exact server-side Orbit organization ID; it is not a supported
+  public integration or a change to the Preview release boundary.
 
 ### Known verification warnings
 
@@ -241,13 +243,17 @@ follow-up work.
 
 ## Deferred P2 work
 
-- [ ] **SEC-012: Slack metadata authorization.** **Status: deferred with
-  INT-002.** It is not a release blocker while Slack is disabled. When Slack
-  work resumes, require server-side integration management permission and
-  denial tests.
-- [ ] **INT-002: Slack requalification.** **Status: deferred.** Slack stays
-  disabled and absent from supported claims until OAuth, events, permissions,
-  delivery, and end-to-end behavior are repaired in a separate project.
+- [ ] **SEC-012: Slack metadata authorization.** **Status: canary controls
+  implemented; deferred for public self-hosting with INT-002.** The internal
+  canary requires server-side integration-management authority, exact
+  organization gating, canonical channel metadata, and denial coverage. Public
+  support still needs a broader review and release decision.
+- [ ] **INT-002: Slack requalification.** **Status: internal canary only.**
+  OAuth, encrypted credentials, team ownership, mapped-channel unfurls, and
+  event handling are controlled for one Noveum organization. Slack remains
+  undistributed and absent from supported self-hosting claims until public
+  OAuth, events, permissions, delivery, and end-to-end behavior are separately
+  qualified.
 - [ ] **MCP-002: OIDC signing metadata alignment.** **Status: upstream
   follow-up.** Better Auth metadata advertises RS256 while its current ephemeral
   ID token is emitted with HS256. Track the upstream correction and add
