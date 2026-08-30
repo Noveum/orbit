@@ -682,7 +682,7 @@ describe('deleteProject and watched repositories', () => {
 });
 
 describe('listWorkspaceProjectUpdates', () => {
-  it('lists updates across visible projects ordered newest first', async () => {
+  it('lists the most recent update for each visible project ordered newest first', async () => {
     const { project: alpha } = await createProject(workspace.admin, {
       name: 'Alpha',
       teamIds: [workspace.teamId],
@@ -707,13 +707,13 @@ describe('listWorkspaceProjectUpdates', () => {
 
     const updates = await listWorkspaceProjectUpdates(workspace.admin, 10);
 
-    expect(updates).toHaveLength(3);
+    expect(updates).toHaveLength(2);
     expect(updates[0]?.body).toBe('Alpha update 2');
     expect(updates[0]?.projectName).toBe('Alpha');
     expect(updates[0]?.health).toBe('off_track');
     expect(updates[1]?.body).toBe('Beta update 1');
     expect(updates[1]?.projectName).toBe('Beta');
-    expect(updates[2]?.body).toBe('Alpha update 1');
+    expect(updates[1]?.health).toBe('at_risk');
   });
 
   it('hides updates for projects belonging to other teams that the member cannot see', async () => {

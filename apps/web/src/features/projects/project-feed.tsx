@@ -3,14 +3,11 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { WorkspaceProjectUpdateView } from './data.ts';
+import { formatDay } from './dates.ts';
 import { HealthChip } from './health-chip.tsx';
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDay(value, { withYear: true, missing: 'No date' });
 }
 
 export function ProjectUpdatesFeed({

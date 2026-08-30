@@ -613,7 +613,8 @@ export async function listWorkspaceProjectUpdates(
   limit = 50,
 ): Promise<WorkspaceProjectUpdateRow[]> {
   assertCan(principal, 'project:read');
-  return await db
+
+  const ranked = db
     .select({
       id: schema.projectUpdate.id,
       projectId: schema.projectUpdate.projectId,
@@ -623,6 +624,10 @@ export async function listWorkspaceProjectUpdates(
       health: schema.projectUpdate.health,
       body: schema.projectUpdate.body,
       createdAt: schema.projectUpdate.createdAt,
+      rowNumber:
+        sql<number>`row_number() over (partition by ${schema.projectUpdate.projectId} order by ${schema.projectUpdate.createdAt} desc)`.as(
+          'rn',
+        ),
     })
     .from(schema.projectUpdate)
     .innerJoin(schema.project, eq(schema.project.id, schema.projectUpdate.projectId))
@@ -634,7 +639,22 @@ export async function listWorkspaceProjectUpdates(
         visibleProjectFilter(principal),
       ),
     )
-    .orderBy(desc(schema.projectUpdate.createdAt))
+    .as('ranked_project_updates');
+
+  return await db
+    .select({
+      id: ranked.id,
+      projectId: ranked.projectId,
+      projectName: ranked.projectName,
+      projectSlug: ranked.projectSlug,
+      authorId: ranked.authorId,
+      health: ranked.health,
+      body: ranked.body,
+      createdAt: ranked.createdAt,
+    })
+    .from(ranked)
+    .where(eq(ranked.rowNumber, 1))
+    .orderBy(desc(ranked.createdAt))
     .limit(limit);
 }
 
