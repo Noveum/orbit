@@ -1,5 +1,6 @@
 'use client';
 
+import type { OrgRole } from '@orbit/shared/constants';
 import {
   conditionsOf,
   dropLastCondition,
@@ -26,7 +27,7 @@ import { columnParamFor } from '@/lib/query/issue-search.ts';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useIssues } from '@/lib/query/use-issues.ts';
 import { useViews } from '@/lib/query/use-views.ts';
-import { Board, canRegroup } from './board.tsx';
+import { Board, boardVisibilityConfig, canDragBoard, useBoardVisibilityHold } from './board.tsx';
 import { IssueList } from './issue-list.tsx';
 import { ListSkeleton } from './list-skeleton.tsx';
 import { useIssueViewModel } from './use-issue-view-model.ts';
@@ -59,6 +60,10 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
 
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
   const model = useIssueViewModel({ teamId, config, issues: rows });
+  const boardVisibility = useBoardVisibilityHold(
+    JSON.stringify([teamId, layout, boardVisibilityConfig(config), workspace.role]),
+    model.shownCount === 0,
+  );
 
   const other = layout === 'board' ? 'issues' : 'board';
   useHotkey(
@@ -121,11 +126,14 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
       />
 
       <TeamContent
+        boardVisibilityKey={boardVisibility.key}
         teamId={teamId}
+        role={workspace.role}
         states={model.states}
         groups={model.groups}
         config={config}
         layout={layout}
+        filtered={model.filtered}
         empty={model.shownCount === 0}
         loading={issues.isPending}
         failed={issues.isError}
@@ -138,6 +146,8 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
           issues.fetchNextPage().catch(() => undefined);
         }}
         onClearLastFilter={() => setConfig({ ...config, filter: dropLastCondition(config.filter) })}
+        keepBoardMounted={boardVisibility.held}
+        onVisibilityActivityStart={boardVisibility.start}
       />
 
       <HiddenFooter
@@ -166,11 +176,14 @@ function isDirty(config: ViewConfig, layout: ViewLayoutMode, view: View): boolea
 }
 
 interface TeamContentProps {
+  readonly boardVisibilityKey: string;
   readonly teamId: string;
+  readonly role: OrgRole;
   readonly states: readonly WorkflowState[];
   readonly groups: readonly IssueGroup[];
   readonly config: ViewConfig;
   readonly layout: ViewLayoutMode;
+  readonly filtered: boolean;
   readonly empty: boolean;
   readonly loading: boolean;
   readonly failed: boolean;
@@ -179,14 +192,19 @@ interface TeamContentProps {
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
   readonly onClearLastFilter: () => void;
+  readonly keepBoardMounted: boolean;
+  readonly onVisibilityActivityStart: () => () => void;
 }
 
 function TeamContent({
+  boardVisibilityKey,
   teamId,
+  role,
   states,
   groups,
   config,
   layout,
+  filtered,
   empty,
   loading,
   failed,
@@ -195,13 +213,17 @@ function TeamContent({
   loadingMore,
   onLoadMore,
   onClearLastFilter,
+  keepBoardMounted,
+  onVisibilityActivityStart,
 }: TeamContentProps) {
   if (loading) return <ListSkeleton layout={layout} />;
 
   if (failed)
     return <LoadFailed subject="these issues" onRetry={onRetry} testId="retry-team-issues" />;
 
-  if (empty && conditionsOf(config.filter).length > 0) {
+  const showEmptyState = empty && !(layout === 'board' && keepBoardMounted);
+
+  if (showEmptyState && conditionsOf(config.filter).length > 0) {
     return (
       <EmptyState
         icon={<SearchX strokeWidth={1.75} aria-hidden="true" />}
@@ -217,7 +239,7 @@ function TeamContent({
     );
   }
 
-  if (empty) {
+  if (showEmptyState) {
     return (
       <EmptyState
         icon={<Columns3 strokeWidth={1.75} aria-hidden="true" />}
@@ -231,14 +253,17 @@ function TeamContent({
   if (layout === 'board') {
     return (
       <Board
+        key={boardVisibilityKey}
         groups={groups}
-        draggable={canRegroup(config.groupBy)}
+        draggable={canDragBoard(role, config.groupBy)}
         reorderable={config.orderBy === 'manual'}
         groupBy={config.groupBy}
         properties={config.display.properties}
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        filtered={filtered}
+        onVisibilityActivityStart={onVisibilityActivityStart}
         columnSource={
           columnParamFor(config.groupBy) === null
             ? undefined

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, schema } from '@orbit/db';
-import { SYNC_MODELS } from '@orbit/shared/events';
+import { SYNC_MODELS, scopes } from '@orbit/shared/events';
 import { createComment, toggleReaction } from '../../src/content/comment-service.ts';
 import { createDoc, createDocCollection, setDocAccess } from '../../src/content/doc-service.ts';
 import { newId } from '../../src/internal.ts';
@@ -14,7 +14,8 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue, subscribe, updateIssue } from '../../src/work/issue-service.ts';
+import { createIssue, setRelation, subscribe, updateIssue } from '../../src/work/issue-service.ts';
+import { createProject } from '../../src/work/project-service.ts';
 import { createView } from '../../src/work/view-service.ts';
 
 function teamKey(): string {
@@ -91,6 +92,26 @@ describe('catchUp', () => {
     expect(action?.data['reviewerIds']).toEqual([reviewer.user.id]);
   });
 
+  it('does not widen an issue replay through its project scope', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Scoped project',
+      teamIds: [workspace.teamId],
+    });
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      projectId: project.id,
+      title: 'Scoped issue',
+    });
+
+    const result = await catchUp(workspace.admin, 0);
+    const action = result.actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === created.issue.id,
+    );
+    expect(action?.scopes).toContain(scopes.team(workspace.teamId));
+    expect(action?.scopes).toContain(scopes.issue(created.issue.id));
+    expect(action?.scopes).not.toContain(scopes.project(project.id));
+  });
+
   it('never returns a row from another organization', async () => {
     const other = await createWorkspace('Rival');
     await createIssue(other.admin, { teamId: other.teamId, title: 'Rival roadmap' });
@@ -132,6 +153,134 @@ describe('catchUp', () => {
     expect(models.has('doc_collection')).toBe(true);
     expect(models.has('issue_subscription')).toBe(true);
     expect(modelIds(result.actions, 'doc_collection')).toEqual([collection.collection.id]);
+    const subscription = result.actions.find((action) => action.model === 'issue_subscription');
+    expect(subscription?.scopes).toEqual([scopes.user(workspace.admin.userId)]);
+  });
+
+  it('replays mirrored relations only to each owning issue team and scope', async () => {
+    const source = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Source',
+    });
+    const target = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Target',
+    });
+    await setRelation(workspace.admin, source.issue.id, {
+      relatedIssueId: target.issue.id,
+      type: 'blocks',
+    });
+
+    const result = await catchUp(workspace.admin, 0);
+    const relations = result.actions.filter((action) => action.model === 'issue_relation');
+    expect(relations).toHaveLength(2);
+    expect(relations.map((action) => action.scopes)).toContainEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(source.issue.id),
+    ]);
+    expect(relations.map((action) => action.scopes)).toContainEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(target.issue.id),
+    ]);
+  });
+
+  it('resolves every attachment parent to its authoritative replay scope', async () => {
+    const issue = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Attached issue',
+    });
+    const comment = await createComment(workspace.admin, issue.issue.id, {
+      body: 'Attached comment',
+    });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Attached project',
+      teamIds: [workspace.teamId],
+    });
+    const ids = {
+      issue: newId(),
+      comment: newId(),
+      project: newId(),
+      missing: newId(),
+    };
+    await db.insert(schema.attachment).values([
+      {
+        id: ids.issue,
+        organizationId: workspace.organizationId,
+        parentType: 'issue',
+        parentId: issue.issue.id,
+        fileName: 'issue.txt',
+        contentType: 'text/plain',
+        size: 1,
+        storageKey: `uploads/${ids.issue}`,
+        status: 'ready',
+        uploadedById: workspace.admin.userId,
+        syncId: 800_001,
+      },
+      {
+        id: ids.comment,
+        organizationId: workspace.organizationId,
+        parentType: 'comment',
+        parentId: comment.comment.id,
+        fileName: 'comment.txt',
+        contentType: 'text/plain',
+        size: 1,
+        storageKey: `uploads/${ids.comment}`,
+        status: 'ready',
+        uploadedById: workspace.admin.userId,
+        syncId: 800_002,
+      },
+      {
+        id: ids.project,
+        organizationId: workspace.organizationId,
+        parentType: 'project',
+        parentId: project.id,
+        fileName: 'project.txt',
+        contentType: 'text/plain',
+        size: 1,
+        storageKey: `uploads/${ids.project}`,
+        status: 'ready',
+        uploadedById: workspace.admin.userId,
+        syncId: 800_003,
+      },
+      {
+        id: ids.missing,
+        organizationId: workspace.organizationId,
+        parentType: 'issue',
+        parentId: 'issue_missing',
+        fileName: 'missing.txt',
+        contentType: 'text/plain',
+        size: 1,
+        storageKey: `uploads/${ids.missing}`,
+        status: 'ready',
+        uploadedById: workspace.admin.userId,
+        syncId: 800_004,
+      },
+    ]);
+
+    const result = await catchUp(workspace.admin, 0);
+    const byId = new Map(
+      result.actions
+        .filter((action) => action.model === 'attachment')
+        .map((action) => [action.modelId, action]),
+    );
+    expect(byId.get(ids.issue)?.scopes).toEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(issue.issue.id),
+    ]);
+    expect(byId.get(ids.comment)?.scopes).toEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.team(workspace.teamId),
+      scopes.issue(issue.issue.id),
+    ]);
+    expect(byId.get(ids.project)?.scopes).toEqual([
+      scopes.organization(workspace.organizationId),
+      scopes.project(project.id),
+      scopes.team(workspace.teamId),
+    ]);
+    expect(byId.has(ids.missing)).toBe(false);
   });
 
   it('marks the page truncated when there is more than the caller asked for', async () => {

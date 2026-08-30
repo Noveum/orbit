@@ -19,7 +19,7 @@ import { type Executor, newId, requireRow } from '../internal.ts';
 import { lockOrganization } from '../org/organization-lock.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { getProject } from '../work/project-service.ts';
+import { getProject, projectReachScopes, projectTeamIds } from '../work/project-service.ts';
 import { loadReadableDoc } from './doc-service.ts';
 
 export type AttachmentRecord = typeof schema.attachment.$inferSelect;
@@ -38,21 +38,121 @@ export async function resolveAttachmentScopes(
   row: Pick<AttachmentRecord, 'parentType' | 'parentId' | 'uploadedById'>,
   organizationId: string,
 ): Promise<string[]> {
-  if (row.parentType !== 'comment') return attachmentScopes(row);
-  const [comment] = await executor
-    .select({ issueId: schema.comment.issueId })
-    .from(schema.comment)
-    .where(
-      and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
-    )
-    .limit(1);
-  if (comment === undefined) return [scopes.user(row.uploadedById)];
-  return [scopes.issue(comment.issueId)];
+  if (row.parentType === 'issue') {
+    const [issue] = await executor
+      .select({ id: schema.issue.id, teamId: schema.issue.teamId })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.id, row.parentId), eq(schema.issue.organizationId, organizationId)),
+      )
+      .limit(1);
+    if (issue === undefined) return [scopes.user(row.uploadedById)];
+    return [scopes.team(issue.teamId), scopes.issue(issue.id)];
+  }
+  if (row.parentType === 'comment') {
+    const [comment] = await executor
+      .select({ issueId: schema.comment.issueId, teamId: schema.issue.teamId })
+      .from(schema.comment)
+      .innerJoin(schema.issue, eq(schema.issue.id, schema.comment.issueId))
+      .where(
+        and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
+      )
+      .limit(1);
+    if (comment === undefined) return [scopes.user(row.uploadedById)];
+    return [scopes.team(comment.teamId), scopes.issue(comment.issueId)];
+  }
+  if (row.parentType === 'project') {
+    const [project] = await executor
+      .select({ id: schema.project.id, organizationId: schema.project.organizationId })
+      .from(schema.project)
+      .where(
+        and(eq(schema.project.id, row.parentId), eq(schema.project.organizationId, organizationId)),
+      )
+      .limit(1);
+    if (project === undefined) return [scopes.user(row.uploadedById)];
+    return projectReachScopes(
+      project.organizationId,
+      project.id,
+      await projectTeamIds(executor, project.id),
+    );
+  }
+  return attachmentScopes(row);
 }
 
 export interface CompletedAttachment {
   readonly attachment: AttachmentRecord;
   readonly actions: SyncAction[];
+}
+
+type UploadParentType = Parameters<typeof assertUploadParent>[2];
+
+function isUploadParentType(value: string): value is UploadParentType {
+  return value === 'issue' || value === 'comment' || value === 'doc' || value === 'project';
+}
+
+async function lockAttachmentParent(
+  tx: Transaction,
+  row: Pick<AttachmentRecord, 'parentType' | 'parentId'>,
+  organizationId: string,
+): Promise<void> {
+  if (row.parentType === 'issue') {
+    await tx
+      .select({ id: schema.issue.id })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.id, row.parentId), eq(schema.issue.organizationId, organizationId)),
+      )
+      .for('update')
+      .limit(1);
+    return;
+  }
+  if (row.parentType === 'comment') {
+    const [comment] = await tx
+      .select({ issueId: schema.comment.issueId })
+      .from(schema.comment)
+      .where(
+        and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
+      )
+      .limit(1);
+    if (comment === undefined) return;
+    await tx
+      .select({ id: schema.issue.id })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.id, comment.issueId), eq(schema.issue.organizationId, organizationId)),
+      )
+      .for('update')
+      .limit(1);
+    const [lockedComment] = await tx
+      .select({ deletedAt: schema.comment.deletedAt })
+      .from(schema.comment)
+      .where(
+        and(eq(schema.comment.id, row.parentId), eq(schema.comment.organizationId, organizationId)),
+      )
+      .for('update')
+      .limit(1);
+    if (lockedComment?.deletedAt !== null) throw notFound('That comment does not exist.');
+    return;
+  }
+  if (row.parentType === 'doc') {
+    await tx
+      .select({ id: schema.doc.id })
+      .from(schema.doc)
+      .where(and(eq(schema.doc.id, row.parentId), eq(schema.doc.organizationId, organizationId)))
+      .for('update')
+      .limit(1);
+    return;
+  }
+  if (row.parentType === 'project') {
+    await tx
+      .select({ id: schema.project.id })
+      .from(schema.project)
+      .where(
+        and(eq(schema.project.id, row.parentId), eq(schema.project.organizationId, organizationId)),
+      )
+      .for('update')
+      .limit(1);
+  }
 }
 
 export async function findAttachmentForOrganization(
@@ -79,11 +179,48 @@ export async function markAttachmentReady(
   storedSize: number,
 ): Promise<CompletedAttachment> {
   return await db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select()
+      .from(schema.attachment)
+      .where(
+        and(
+          eq(schema.attachment.id, record.id),
+          eq(schema.attachment.organizationId, principal.organizationId),
+          eq(schema.attachment.uploadedById, principal.userId),
+        ),
+      )
+      .limit(1);
+    if (candidate === undefined) throw notFound('That upload was not registered.');
+    if (isUploadParentType(candidate.parentType)) {
+      await lockAttachmentParent(tx, candidate, principal.organizationId);
+    }
+    const [current] = await tx
+      .select()
+      .from(schema.attachment)
+      .where(
+        and(
+          eq(schema.attachment.id, record.id),
+          eq(schema.attachment.organizationId, principal.organizationId),
+          eq(schema.attachment.uploadedById, principal.userId),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    if (
+      current === undefined ||
+      current.parentType !== candidate.parentType ||
+      current.parentId !== candidate.parentId
+    ) {
+      throw notFound('That upload was not registered.');
+    }
+    if (isUploadParentType(current.parentType)) {
+      await assertUploadParent(tx, principal, current.parentType, current.parentId);
+    }
     const syncId = await nextSyncId(tx);
     const [updated] = await tx
       .update(schema.attachment)
       .set({ status: 'ready', size: storedSize, syncId })
-      .where(eq(schema.attachment.id, record.id))
+      .where(eq(schema.attachment.id, current.id))
       .returning();
     if (updated === undefined) throw notFound('That upload was not registered.');
 
@@ -184,6 +321,7 @@ export async function registerUpload(
   return await db.transaction(async (tx) => {
     const organization = await lockOrganization(tx, principal.organizationId);
     assertOrganizationAcceptsFiles(organization);
+    await lockAttachmentParent(tx, parsed, principal.organizationId);
     await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
     const store = driver ?? storageDriver();
     const target = await store.createUploadTarget(key, upload.contentType, upload.size);
@@ -241,6 +379,7 @@ export async function attachFile(
     return await db.transaction(async (tx) => {
       const organization = await lockOrganization(tx, principal.organizationId);
       assertOrganizationAcceptsFiles(organization);
+      await lockAttachmentParent(tx, parsed, principal.organizationId);
       await assertUploadParent(tx, principal, parsed.parentType, parsed.parentId);
       store ??= storageDriver();
       await store.put(key, bytes, upload.contentType);

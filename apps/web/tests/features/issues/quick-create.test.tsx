@@ -5,6 +5,9 @@ import { useState } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 const created = mock((_input: Record<string, unknown>) => undefined);
 const patched = mock((_input: Record<string, unknown>) => undefined);

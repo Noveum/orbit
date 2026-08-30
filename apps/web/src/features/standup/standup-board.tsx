@@ -1,6 +1,7 @@
 'use client';
 
-import type { DisplayProperty } from '@orbit/shared/filters';
+import type { OrgRole } from '@orbit/shared/constants';
+import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { SearchX } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
@@ -11,7 +12,13 @@ import { type IssueGroup, mergedStateResolver } from '@/features/filters/groupin
 import { HiddenFooter } from '@/features/filters/hidden-footer.tsx';
 import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
-import { Board, type StateResolver } from '@/features/issues/board.tsx';
+import {
+  Board,
+  boardVisibilityConfig,
+  canDragBoard,
+  type StateResolver,
+  useBoardVisibilityHold,
+} from '@/features/issues/board.tsx';
 import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
@@ -26,6 +33,14 @@ const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
 export const PERSON_PARAM = 'person';
 
 const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM];
+
+export function standupBoardOptions(role: OrgRole, groupBy: GroupByField, orderBy: IssueOrdering) {
+  return {
+    draggable: canDragBoard(role, groupBy),
+    groupBy,
+    reorderable: orderBy === 'manual',
+  };
+}
 
 export function StandupBoard() {
   const workspace = useWorkspace();
@@ -85,6 +100,10 @@ export function StandupBoard() {
     scopeToTeam: false,
     scope,
   });
+  const boardVisibility = useBoardVisibilityHold(
+    JSON.stringify([selectedId, boardVisibilityConfig(config), workspace.role]),
+    model.shownCount === 0,
+  );
 
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
 
@@ -104,6 +123,7 @@ export function StandupBoard() {
   }
 
   const empty = model.groups.every((group) => group.issues.length === 0);
+  const boardOptions = standupBoardOptions(workspace.role, config.groupBy, config.orderBy);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="standup-board">
@@ -134,6 +154,7 @@ export function StandupBoard() {
       />
 
       <StandupBody
+        key={boardVisibility.key}
         loading={active.isPending}
         failed={active.isError}
         onRetry={() => {
@@ -141,6 +162,8 @@ export function StandupBoard() {
         }}
         empty={empty}
         groups={model.groups}
+        filtered={model.filtered}
+        {...boardOptions}
         properties={config.display.properties}
         hasMore={hasNextPage}
         loadingMore={isFetchingNextPage}
@@ -148,6 +171,8 @@ export function StandupBoard() {
         onLoadMore={() => {
           fetchNextPage().catch(() => undefined);
         }}
+        keepBoardMounted={boardVisibility.held}
+        onVisibilityActivityStart={boardVisibility.start}
       />
 
       <HiddenFooter
@@ -171,11 +196,17 @@ interface StandupBodyProps {
   readonly onRetry: () => void;
   readonly empty: boolean;
   readonly groups: readonly IssueGroup[];
+  readonly filtered: boolean;
+  readonly draggable: boolean;
+  readonly groupBy: GroupByField;
+  readonly reorderable: boolean;
   readonly properties: readonly DisplayProperty[];
   readonly hasMore: boolean;
   readonly loadingMore: boolean;
   readonly resolveState: StateResolver;
   readonly onLoadMore: () => void;
+  readonly keepBoardMounted: boolean;
+  readonly onVisibilityActivityStart: () => () => void;
 }
 
 function StandupBody({
@@ -184,11 +215,17 @@ function StandupBody({
   onRetry,
   empty,
   groups,
+  filtered,
+  draggable,
+  groupBy,
+  reorderable,
   properties,
   hasMore,
   loadingMore,
   resolveState,
   onLoadMore,
+  keepBoardMounted,
+  onVisibilityActivityStart,
 }: StandupBodyProps) {
   if (loading) {
     return (
@@ -204,7 +241,7 @@ function StandupBody({
     return <LoadFailed subject="the standup board" onRetry={onRetry} testId="retry-standup" />;
   }
 
-  if (empty) {
+  if (empty && !keepBoardMounted) {
     return (
       <EmptyState
         icon={<SearchX strokeWidth={1.75} aria-hidden="true" />}
@@ -219,11 +256,16 @@ function StandupBody({
     <div className="min-h-0 flex-1" data-testid="standup-kanban">
       <Board
         groups={groups}
+        filtered={filtered}
+        draggable={draggable}
+        groupBy={groupBy}
+        reorderable={reorderable}
         properties={properties}
         hasMore={hasMore}
         loadingMore={loadingMore}
         resolveState={resolveState}
         onLoadMore={onLoadMore}
+        onVisibilityActivityStart={onVisibilityActivityStart}
       />
     </div>
   );

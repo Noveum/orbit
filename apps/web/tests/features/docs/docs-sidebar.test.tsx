@@ -9,6 +9,9 @@ import * as docsQuery from '@/lib/query/use-docs.ts';
 import * as issuesQuery from '@/lib/query/use-issues.ts';
 import { render } from '@/test/render.tsx';
 import { DocsShell } from '../../../src/features/docs/docs-shell.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 const push = mock();
 

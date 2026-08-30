@@ -92,6 +92,93 @@ describe('Connection', () => {
     expect(message.actions.at(-1).data.title).toBe('newest');
   });
 
+  it('keeps the final move departure before the coalesced arrival', () => {
+    const { socket, connection } = build();
+    connection.queueDelta({
+      ...action('issue_a', 30, 'first arrival'),
+      data: { teamChanged: true, title: 'first arrival' },
+    });
+    connection.queueDelta({
+      ...action('issue_a', 31, 'departure'),
+      action: 'delete',
+      data: { departure: true },
+    });
+    connection.queueDelta({
+      ...action('issue_a', 31, 'final arrival'),
+      data: { teamChanged: true, title: 'final arrival' },
+    });
+    connection.flushDeltas();
+
+    const message = JSON.parse(socket.sent[0] ?? '{}');
+    expect(message.actions).toHaveLength(2);
+    expect(message.actions.map((entry: SyncAction) => entry.action)).toEqual(['delete', 'update']);
+    expect(message.actions[1]?.data).toEqual({ teamChanged: true, title: 'final arrival' });
+  });
+
+  it('keeps every departure identifier across consecutive moves', () => {
+    const { socket, connection } = build();
+    connection.queueDelta({
+      ...action('issue_a', 30, 'departure from A'),
+      action: 'delete',
+      data: { departure: true, identifier: 'A-1' },
+    });
+    connection.queueDelta({
+      ...action('issue_a', 30, 'arrival in B'),
+      data: { teamChanged: true, identifier: 'B-1' },
+    });
+    connection.queueDelta({
+      ...action('issue_a', 31, 'departure from B'),
+      action: 'delete',
+      data: { departure: true, identifier: 'B-1' },
+    });
+    connection.queueDelta({
+      ...action('issue_a', 31, 'arrival in C'),
+      data: { teamChanged: true, identifier: 'C-1' },
+    });
+    connection.flushDeltas();
+
+    const message = JSON.parse(socket.sent[0] ?? '{}');
+    expect(message.actions).toHaveLength(3);
+    expect(message.actions.map((entry: SyncAction) => entry.data['identifier'])).toEqual([
+      'A-1',
+      'B-1',
+      'C-1',
+    ]);
+    expect(message.actions.map((entry: SyncAction) => entry.action)).toEqual([
+      'delete',
+      'delete',
+      'update',
+    ]);
+  });
+
+  it('does not flush pending deltas while delivery is suspended', () => {
+    const { socket, connection } = build();
+    connection.queueDelta(action('issue_a', 40, 'restricted'));
+    connection.suspendDeltaFlush();
+
+    connection.flushDeltas();
+
+    expect(socket.sent).toHaveLength(0);
+    connection.resumeDeltaFlush(() => true);
+    connection.flushDeltas();
+    expect(socket.sent).toHaveLength(1);
+  });
+
+  it('waits for every overlapping delivery suspension before flushing', () => {
+    const { socket, connection } = build();
+    connection.queueDelta(action('issue_a', 41, 'restricted'));
+    connection.suspendDeltaFlush();
+    connection.suspendDeltaFlush();
+
+    connection.resumeDeltaFlush(() => true);
+    connection.flushDeltas();
+    expect(socket.sent).toHaveLength(0);
+
+    connection.resumeDeltaFlush(() => true);
+    connection.flushDeltas();
+    expect(socket.sent).toHaveLength(1);
+  });
+
   it('drops a connection whose outbound buffer exceeds the threshold', () => {
     const { socket, connection } = build({ maxBufferedBytes: 16 });
     socket.buffered = 17;

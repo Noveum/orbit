@@ -12,7 +12,12 @@ import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { BoardColumnSource, StateResolver } from '@/features/issues/board.tsx';
-import { Board, canDragBoard } from '@/features/issues/board.tsx';
+import {
+  Board,
+  boardVisibilityConfig,
+  canDragBoard,
+  useBoardVisibilityHold,
+} from '@/features/issues/board.tsx';
 import { IssueList } from '@/features/issues/issue-list.tsx';
 import { ListSkeleton } from '@/features/issues/list-skeleton.tsx';
 import { LoadFailed } from '@/features/issues/load-failed.tsx';
@@ -58,6 +63,10 @@ export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps)
     scopeToTeam: false,
     scope,
   });
+  const boardVisibility = useBoardVisibilityHold(
+    JSON.stringify([cycleId, layout, boardVisibilityConfig(config), workspace.role]),
+    model.shownCount === 0,
+  );
 
   return (
     <section className="flex min-h-0 flex-col gap-3" data-testid="sprint-issues">
@@ -74,6 +83,7 @@ export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps)
       />
 
       <SprintIssueBody
+        boardVisibilityKey={boardVisibility.key}
         model={model}
         layout={layout}
         groupBy={config.groupBy}
@@ -94,12 +104,15 @@ export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps)
         onClearLastFilter={() => setConfig({ ...config, filter: dropLastCondition(config.filter) })}
         filtered={conditionsOf(config.filter).length > 0}
         properties={config.display.properties}
+        keepBoardMounted={boardVisibility.held}
+        onVisibilityActivityStart={boardVisibility.start}
       />
     </section>
   );
 }
 
 interface BodyProps {
+  readonly boardVisibilityKey: string;
   readonly model: IssueViewModel;
   readonly columnSource: BoardColumnSource | undefined;
   readonly canDrag: boolean;
@@ -116,9 +129,12 @@ interface BodyProps {
   readonly onClearLastFilter: () => void;
   readonly filtered: boolean;
   readonly properties: readonly DisplayProperty[];
+  readonly keepBoardMounted: boolean;
+  readonly onVisibilityActivityStart: () => () => void;
 }
 
 function SprintIssueBody({
+  boardVisibilityKey,
   model,
   columnSource,
   canDrag,
@@ -135,6 +151,8 @@ function SprintIssueBody({
   onClearLastFilter,
   filtered,
   properties,
+  keepBoardMounted,
+  onVisibilityActivityStart,
 }: BodyProps) {
   if (loading) return <ListSkeleton layout={layout} />;
 
@@ -142,7 +160,7 @@ function SprintIssueBody({
     return <LoadFailed subject="this sprint" onRetry={onRetry} testId="retry-sprint-issues" />;
   }
 
-  if (model.shownCount === 0) {
+  if (model.shownCount === 0 && !(layout === 'board' && keepBoardMounted)) {
     return (
       <EmptyState
         icon={
@@ -173,6 +191,7 @@ function SprintIssueBody({
   if (layout === 'board') {
     return (
       <Board
+        key={boardVisibilityKey}
         groups={model.groups}
         draggable={canDrag}
         reorderable={orderBy === 'manual'}
@@ -183,6 +202,8 @@ function SprintIssueBody({
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
         columnSource={columnSource}
+        filtered={model.filtered}
+        onVisibilityActivityStart={onVisibilityActivityStart}
       />
     );
   }

@@ -9,7 +9,7 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const GUARDED = [SESSION_MODULE, PRINCIPAL_MODULE] as const;
 
-const MUST_BE_RESTORED = ['@/lib/query/use-issue-search.ts'] as const;
+const MUST_BE_RESTORED = ['@/lib/query/use-issue-search.ts', '@/lib/query/use-issues.ts'] as const;
 
 interface Candidate {
   readonly label: string;
@@ -67,8 +67,7 @@ function specifiersHandedToTheHelper(source: string): Set<string> {
 }
 
 function putsItBack(source: string, specifier: string): boolean {
-  if (specifiersHandedToTheHelper(source).has(specifier)) return true;
-  return timesStubbed(source, specifier) >= 2 && /afterAll\s*\(/.test(source);
+  return specifiersHandedToTheHelper(source).has(specifier);
 }
 
 async function directMocksIn(candidate: Candidate): Promise<string[]> {

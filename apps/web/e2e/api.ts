@@ -43,11 +43,12 @@ export async function createIssue(
   page: Page,
   teamId: string,
   title: string,
+  stateId?: string,
 ): Promise<{ id: string; identifier: string }> {
   const body = await json(page, '/api/issues', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ teamId, title }),
+    body: JSON.stringify({ teamId, title, ...(stateId === undefined ? {} : { stateId }) }),
   });
   return issueEnvelopeSchema.parse(body).issue;
 }

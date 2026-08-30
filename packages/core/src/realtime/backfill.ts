@@ -38,6 +38,11 @@ type AttachmentParent = {
   readonly parentId: string;
 };
 
+interface AttachmentReach {
+  readonly issueId: string | null;
+  readonly teamIds: readonly string[];
+}
+
 function withoutBody<T extends { content: string }>(row: T): Omit<T, 'content'> {
   const { content: _body, ...rest } = row;
   return rest;
@@ -60,68 +65,128 @@ async function readableDocIds(
 async function issueTeamsById(
   executor: Executor,
   issueIds: readonly string[],
+  organizationId: string,
 ): Promise<Map<string, string>> {
   const ids = [...new Set(issueIds)];
   if (ids.length === 0) return new Map();
   const rows = await executor
     .select({ id: schema.issue.id, teamId: schema.issue.teamId })
     .from(schema.issue)
-    .where(inArray(schema.issue.id, ids));
+    .where(and(inArray(schema.issue.id, ids), eq(schema.issue.organizationId, organizationId)));
   return new Map(rows.map((row) => [row.id, row.teamId]));
 }
 
-async function commentTeamsById(
+async function commentIssueReachById(
   executor: Executor,
   commentIds: readonly string[],
-): Promise<Map<string, string>> {
+  organizationId: string,
+): Promise<Map<string, { readonly issueId: string; readonly teamId: string }>> {
   const ids = [...new Set(commentIds)];
   if (ids.length === 0) return new Map();
   const rows = await executor
-    .select({ id: schema.comment.id, teamId: schema.issue.teamId })
+    .select({ id: schema.comment.id, issueId: schema.issue.id, teamId: schema.issue.teamId })
     .from(schema.comment)
     .innerJoin(schema.issue, eq(schema.issue.id, schema.comment.issueId))
-    .where(inArray(schema.comment.id, ids));
-  return new Map(rows.map((row) => [row.id, row.teamId]));
+    .where(
+      and(
+        inArray(schema.comment.id, ids),
+        eq(schema.comment.organizationId, organizationId),
+        eq(schema.issue.organizationId, organizationId),
+      ),
+    );
+  return new Map(
+    rows.map((row) => [row.id, { issueId: row.issueId, teamId: row.teamId }] as const),
+  );
 }
 
-async function teamsByAttachmentParent(
+async function attachmentReachByParent(
   executor: Executor,
   rows: readonly AttachmentParent[],
-): Promise<Map<string, string[]>> {
+  organizationId: string,
+): Promise<Map<string, AttachmentReach>> {
   const of = (type: string) => rows.filter((row) => row.parentType === type);
   const issueParents = of('issue');
   const commentParents = of('comment');
   const projectParents = of('project');
 
-  const [issueTeams, commentTeams, projectTeams] = await Promise.all([
+  const [issueTeams, commentIssueReach, projectTeams] = await Promise.all([
     issueTeamsById(
       executor,
       issueParents.map((row) => row.parentId),
+      organizationId,
     ),
-    commentTeamsById(
+    commentIssueReachById(
       executor,
       commentParents.map((row) => row.parentId),
+      organizationId,
     ),
     teamsByProject(
       executor,
       projectParents.map((row) => row.parentId),
     ),
   ]);
+  const projectIds = [...new Set(projectParents.map((row) => row.parentId))];
+  const existingProjects =
+    projectIds.length === 0
+      ? new Set<string>()
+      : new Set(
+          (
+            await executor
+              .select({ id: schema.project.id })
+              .from(schema.project)
+              .where(
+                and(
+                  inArray(schema.project.id, projectIds),
+                  eq(schema.project.organizationId, organizationId),
+                ),
+              )
+          ).map((row) => row.id),
+        );
 
-  const byAttachment = new Map<string, string[]>();
+  const byAttachment = new Map<string, AttachmentReach>();
   for (const row of issueParents) {
     const teamId = issueTeams.get(row.parentId);
-    if (teamId !== undefined) byAttachment.set(row.id, [teamId]);
+    if (teamId !== undefined) {
+      byAttachment.set(row.id, { issueId: row.parentId, teamIds: [teamId] });
+    }
   }
   for (const row of commentParents) {
-    const teamId = commentTeams.get(row.parentId);
-    if (teamId !== undefined) byAttachment.set(row.id, [teamId]);
+    const reach = commentIssueReach.get(row.parentId);
+    if (reach !== undefined) {
+      byAttachment.set(row.id, { issueId: reach.issueId, teamIds: [reach.teamId] });
+    }
   }
   for (const row of projectParents) {
+    if (!existingProjects.has(row.parentId)) continue;
     const found = projectTeams.get(row.parentId) ?? [];
-    if (found.length > 0) byAttachment.set(row.id, found);
+    byAttachment.set(row.id, { issueId: null, teamIds: found });
   }
   return byAttachment;
+}
+
+function attachmentBackfillScopes(
+  row: typeof schema.attachment.$inferSelect,
+  reach: AttachmentReach | undefined,
+  principal: Principal,
+): string[] | null {
+  const organizationScope = scopes.organization(row.organizationId);
+  if (row.parentType === 'doc') return [organizationScope, scopes.doc(row.parentId)];
+  if (row.parentType === 'project') {
+    if (reach === undefined) return null;
+    return [
+      organizationScope,
+      scopes.project(row.parentId),
+      ...(reach?.teamIds ?? []).map(scopes.team),
+    ];
+  }
+  if (row.parentType === 'issue' || row.parentType === 'comment') {
+    if (reach?.issueId === null || reach?.issueId === undefined || reach.teamIds.length === 0) {
+      return null;
+    }
+    return [organizationScope, ...reach.teamIds.map(scopes.team), scopes.issue(reach.issueId)];
+  }
+  if (row.uploadedById !== principal.userId) return null;
+  return [organizationScope, scopes.user(row.uploadedById)];
 }
 
 async function teamsByProject(
@@ -386,15 +451,11 @@ const LOADERS: Record<SyncModel, Loader> = {
     return rows.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
-      scopes:
-        row.projectId === null
-          ? [scopes.organization(row.organizationId), scopes.team(row.teamId), scopes.issue(row.id)]
-          : [
-              scopes.organization(row.organizationId),
-              scopes.team(row.teamId),
-              scopes.issue(row.id),
-              scopes.project(row.projectId),
-            ],
+      scopes: [
+        scopes.organization(row.organizationId),
+        scopes.team(row.teamId),
+        scopes.issue(row.id),
+      ],
       data: {
         ...row,
         labelIds: labels.get(row.id) ?? [],
@@ -424,7 +485,6 @@ const LOADERS: Record<SyncModel, Loader> = {
         scopes.organization(row.organizationId),
         scopes.team(teamId),
         scopes.issue(row.issueId),
-        scopes.issue(row.relatedIssueId),
       ],
       data: row,
     })),
@@ -447,7 +507,7 @@ const LOADERS: Record<SyncModel, Loader> = {
     ).map(({ row }) => ({
       modelId: `${row.issueId}:${row.userId}`,
       syncId: row.syncId,
-      scopes: [scopes.issue(row.issueId), scopes.user(row.userId)],
+      scopes: [scopes.user(row.userId)],
       data: row,
     })),
 
@@ -539,7 +599,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       )
       .orderBy(asc(schema.attachment.syncId))
       .limit(limit);
-    const teams = await teamsByAttachmentParent(executor, rows);
+    const reach = await attachmentReachByParent(executor, rows, principal.organizationId);
     const readableDocs = await readableDocIds(
       executor,
       principal,
@@ -547,19 +607,11 @@ const LOADERS: Record<SyncModel, Loader> = {
     );
     return rows
       .filter((row) => row.parentType !== 'doc' || readableDocs.has(row.parentId))
-      .map((row) => ({
-        modelId: row.id,
-        syncId: row.syncId,
-        scopes:
-          row.parentType === 'doc'
-            ? [scopes.organization(row.organizationId), scopes.doc(row.parentId)]
-            : [
-                scopes.organization(row.organizationId),
-                scopes.issue(row.parentId),
-                ...(teams.get(row.id) ?? []).map(scopes.team),
-              ],
-        data: row,
-      }));
+      .flatMap((row) => {
+        const rowScopes = attachmentBackfillScopes(row, reach.get(row.id), principal);
+        if (rowScopes === null) return [];
+        return [{ modelId: row.id, syncId: row.syncId, scopes: rowScopes, data: row }];
+      });
   },
 
   doc: async (executor, principal, since, limit) =>

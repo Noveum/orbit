@@ -550,10 +550,12 @@ describe('notifyMany', () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await seedSlackDmConnection(tx, fixture);
+      const now = new Date('2026-07-22T12:00:00Z');
       await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        now,
         slackEnabled: true,
       });
-      const [delivery] = await claimSlackDmDeliveries(tx, 10, new Date());
+      const [delivery] = await claimSlackDmDeliveries(tx, 10, now);
       if (delivery === undefined) throw new Error('Expected an unavailable Slack DM claim.');
       await markSlackDmUnavailable(
         tx,
@@ -561,7 +563,7 @@ describe('notifyMany', () => {
         delivery.claimedAt ?? new Date(0),
         'missing_scope',
       );
-      expect(await claimSlackDmDeliveries(tx, 10, new Date())).toHaveLength(0);
+      expect(await claimSlackDmDeliveries(tx, 10, now)).toHaveLength(0);
       const [stored] = await tx
         .select({ status: notificationDelivery.status, lastError: notificationDelivery.lastError })
         .from(notificationDelivery)

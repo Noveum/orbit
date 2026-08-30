@@ -4,6 +4,9 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Issue, Member } from '@/lib/query/schemas.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 const member: Member = {
   id: 'user_2',

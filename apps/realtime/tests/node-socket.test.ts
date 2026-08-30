@@ -104,11 +104,11 @@ describe('the hub over a node websocket', () => {
 
     await publisher.publish(
       DELTA_CHANNEL,
-      JSON.stringify([syncAction({ organizationId, scopes: [scope], modelId: 'issue_node' })]),
+      JSON.stringify([syncAction({ organizationId, scopes: [scope], modelId: 'label_node' })]),
     );
 
     const delta = await client.waitFor('delta');
-    expect(delta.actions[0]?.modelId).toBe('issue_node');
+    expect(delta.actions[0]?.modelId).toBe('label_node');
     client.close();
   });
 

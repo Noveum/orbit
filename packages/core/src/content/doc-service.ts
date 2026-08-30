@@ -1430,6 +1430,13 @@ export async function deleteDoc(principal: Principal, docId: string): Promise<De
   assertCan(principal, 'doc:write');
 
   return await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ id: schema.doc.id })
+      .from(schema.doc)
+      .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
+      .for('update')
+      .limit(1);
+    requireRow(locked, 'That doc does not exist.');
     const current = await loadReadableDoc(tx, principal, docId);
     if (principal.role !== 'admin' && current.authorId !== principal.userId) {
       throw forbidden('Only the author or an admin can delete a doc for good.');

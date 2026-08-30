@@ -353,7 +353,8 @@ describe('carrying an issue to another team drops the labels that team cannot us
     expect(moved.issue.teamId).toBe(nova.teamId);
     expect(await labelIdsOn(issue.issue.id)).toEqual([shared.label.id]);
     const action = moved.actions.find(
-      (entry) => entry.model === 'issue' && entry.modelId === issue.issue.id,
+      (entry) =>
+        entry.model === 'issue' && entry.modelId === issue.issue.id && entry.action === 'update',
     );
     expect(action?.data['labelIds']).toEqual([shared.label.id]);
     expect(action?.scopes).toContain(scopes.team(nova.teamId));

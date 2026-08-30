@@ -27,7 +27,9 @@ mock.module('../../../src/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => workspace,
 }));
 
-const { StandupBoard } = await import('../../../src/features/standup/standup-board.tsx');
+const { StandupBoard, standupBoardOptions } = await import(
+  '../../../src/features/standup/standup-board.tsx'
+);
 
 const todo: WorkflowState = {
   id: 'state_todo',
@@ -435,5 +437,23 @@ describe('StandupBoard', () => {
     expect(screen.getByTestId('filter-bar')).toBeTruthy();
     expect(screen.getByTestId('add-filter')).toBeTruthy();
     expect(screen.queryByTestId('save-view')).toBeNull();
+  });
+
+  it('regroups by the chosen field without assigning manual positions in a sorted view', () => {
+    expect(standupBoardOptions('member', 'assignee', 'updated')).toEqual({
+      draggable: true,
+      groupBy: 'assignee',
+      reorderable: false,
+    });
+    expect(standupBoardOptions('member', 'project', 'manual')).toEqual({
+      draggable: true,
+      groupBy: 'project',
+      reorderable: true,
+    });
+  });
+
+  it('removes drag affordances from guests and non-regroupable boards', () => {
+    expect(standupBoardOptions('guest', 'state', 'manual').draggable).toBe(false);
+    expect(standupBoardOptions('member', 'label', 'manual').draggable).toBe(false);
   });
 });
