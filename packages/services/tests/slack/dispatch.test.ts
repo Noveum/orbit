@@ -1517,4 +1517,73 @@ describe('resolveIssueUnfurls', () => {
       expect(JSON.stringify(unfurls[url])).toContain('In Progress');
     });
   });
+
+  it('limits a team mapping to issues in that exact team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_scope_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_scope_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 43,
+        identifier: 'ENG-43',
+        title: 'Team A only',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-43';
+
+      expect(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamB)).toEqual(
+        {},
+      );
+      expect(
+        Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamA)),
+      ).toEqual([url]);
+    });
+  });
+
+  it('treats an omitted team scope as workspace-wide within the organization', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const other = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_workspace_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Workspace scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_workspace_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 44,
+        identifier: 'ENG-44',
+        title: 'Workspace issue',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-44';
+
+      expect(Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url]))).toEqual([
+        url,
+      ]);
+      expect(await resolveIssueUnfurls(tx, other.organizationId, [url])).toEqual({});
+    });
+  });
 });

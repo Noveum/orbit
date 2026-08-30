@@ -10,7 +10,7 @@ import {
   user,
   workflowState,
 } from '@orbit/db/schema';
-import { conflict, type Priority, parseIssueIdentifier } from '@orbit/shared';
+import { conflict, type Priority, parseIssueIdentifier, validationFailed } from '@orbit/shared';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { assertCan } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
@@ -453,6 +453,36 @@ export async function connectSlackChannel(
     });
 }
 
+export async function connectCanonicalSlackChannel(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly channelId: string;
+    readonly teamId: string | null;
+    readonly fetch?: typeof globalThis.fetch;
+  },
+): Promise<string> {
+  const context = await resolveSlackContext(database, input.organizationId, 'default');
+  if (context === null || context.token === null) {
+    throw validationFailed('Connect Slack before mapping a channel.');
+  }
+  const channel = await new SlackClient({
+    token: context.token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+  }).conversation(input.channelId);
+  if (!channel.isMember) {
+    throw validationFailed('Invite Orbit to the Slack channel before mapping it.');
+  }
+  await connectSlackChannel(database, {
+    organizationId: input.organizationId,
+    integrationId: context.integrationId,
+    channelId: channel.id,
+    channelName: channel.name,
+    teamId: input.teamId,
+  });
+  return channel.id;
+}
+
 export async function disconnectSlackChannel(
   database: SlackDatabase,
   input: { readonly integrationId: string; readonly channelId: string },
@@ -719,7 +749,10 @@ export async function loadSlackIssue(
   organizationId: string,
   identifier: string,
   url: string,
+  teamId?: string,
 ): Promise<SlackIssue | null> {
+  const filters = [eq(issue.organizationId, organizationId), eq(issue.identifier, identifier)];
+  if (teamId !== undefined) filters.push(eq(issue.teamId, teamId));
   const [row] = await database
     .select({
       identifier: issue.identifier,
@@ -734,7 +767,7 @@ export async function loadSlackIssue(
     .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
     .innerJoin(team, eq(team.id, issue.teamId))
     .leftJoin(user, eq(user.id, issue.assigneeId))
-    .where(and(eq(issue.organizationId, organizationId), eq(issue.identifier, identifier)))
+    .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
   return {
@@ -753,12 +786,13 @@ export async function resolveIssueUnfurls(
   database: SlackDatabase,
   organizationId: string,
   urls: readonly string[],
+  teamId?: string,
 ): Promise<SlackUnfurl> {
   const unfurls: SlackUnfurl = {};
   for (const url of urls) {
     const identifier = issueIdentifierFromUrl(url);
     if (identifier === null) continue;
-    const issueForUnfurl = await loadSlackIssue(database, organizationId, identifier, url);
+    const issueForUnfurl = await loadSlackIssue(database, organizationId, identifier, url, teamId);
     if (issueForUnfurl === null) continue;
     Object.assign(unfurls, buildUnfurl(url, issueForUnfurl));
   }

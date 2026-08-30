@@ -1,6 +1,6 @@
 import { and, db, eq, schema } from '@orbit/db';
 import {
-  connectSlackChannel,
+  connectCanonicalSlackChannel,
   disconnectSlackChannel,
   listSlackConversations,
 } from '@orbit/services';
@@ -74,19 +74,17 @@ export async function POST(request: Request): Promise<Response> {
     assertCan(principal, 'integration:manage');
     const input = requestSchema.parse(await readJson(request));
 
-    const integrationId = await slackIntegrationId(principal.organizationId);
     if (input.action === 'connect') {
       if (input.teamId !== null) await assertTeamInWorkspace(principal, input.teamId);
-      await connectSlackChannel(db, {
+      const channelId = await connectCanonicalSlackChannel(db, {
         organizationId: principal.organizationId,
-        integrationId,
         channelId: input.channelId,
-        channelName: input.channelName,
         teamId: input.teamId,
       });
-      return { connected: input.channelId };
+      return { connected: channelId };
     }
 
+    const integrationId = await slackIntegrationId(principal.organizationId);
     const removed = await disconnectSlackChannel(db, { integrationId, channelId: input.channelId });
     return { removed };
   });

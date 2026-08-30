@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import type { Workspace } from '@orbit/core/test-support';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -7,11 +7,8 @@ const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-settings-route-test-secret';
 
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
-
 const { addMember, createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
-const { db, eq, schema } = await import('@orbit/db');
+const { and, db, eq, schema } = await import('@orbit/db');
 const { connectSlackChannel, ensureSlackIntegration } = await import('@orbit/services');
 const { mockSession } = await import('../../../../../tests-support.ts');
 
@@ -84,7 +81,6 @@ afterAll(() => {
   if (existingSlackOrganizationId === undefined)
     delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
   else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
-  slackCapabilitySpy.mockRestore();
 });
 
 describe('GET /api/integrations/slack', () => {
@@ -156,6 +152,150 @@ describe('GET /api/integrations/slack', () => {
       ]);
     } finally {
       globalThis.fetch = realFetch;
+    }
+  });
+
+  it('persists Slack canonical channel metadata from the organization integration', async () => {
+    const realFetch = globalThis.fetch;
+    const authorizations: (string | null)[] = [];
+    globalThis.fetch = Object.assign(
+      (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+        const request = new Request(...args);
+        authorizations.push(request.headers.get('authorization'));
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            channel: {
+              id: 'C-CANONICAL',
+              name: 'canonical-name',
+              is_private: false,
+              is_archived: false,
+              is_member: true,
+            },
+          }),
+        );
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            action: 'connect',
+            integrationId: 'int_client_controlled',
+            channelId: 'C-REQUESTED',
+            channelName: 'client-controlled-name',
+            teamId: null,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ connected: 'C-CANONICAL' });
+      expect(authorizations).toEqual(['Bearer xoxb-workspace-secret']);
+      const [mapping] = await db
+        .select({
+          channelId: schema.slackChannelSync.channelId,
+          channelName: schema.slackChannelSync.channelName,
+        })
+        .from(schema.slackChannelSync)
+        .where(eq(schema.slackChannelSync.channelId, 'C-CANONICAL'));
+      expect(mapping).toEqual({ channelId: 'C-CANONICAL', channelName: 'canonical-name' });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('rejects a channel the bot has not joined without persisting it', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async () =>
+        Response.json({
+          ok: true,
+          channel: {
+            id: 'C-NOT-JOINED',
+            name: 'not-joined',
+            is_private: false,
+            is_archived: false,
+            is_member: false,
+          },
+        }),
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-NOT-JOINED', teamId: null }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      const mappings = await db
+        .select({ id: schema.slackChannelSync.id })
+        .from(schema.slackChannelSync)
+        .where(eq(schema.slackChannelSync.channelId, 'C-NOT-JOINED'));
+      expect(mappings).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('does not borrow a Slack token from another organization', async () => {
+    const other = await createWorkspace('OtherSlackSettings');
+    await ensureSlackIntegration(db, {
+      organizationId: other.organizationId,
+      connectedById: other.adminUser.id,
+      botToken: 'xoxb-other-secret',
+      externalId: 'T-OTHER-SETTINGS',
+    });
+    const [current] = await db
+      .select({ id: schema.integration.id, credentials: schema.integration.credentials })
+      .from(schema.integration)
+      .where(
+        and(
+          eq(schema.integration.organizationId, workspace.organizationId),
+          eq(schema.integration.provider, 'slack'),
+          eq(schema.integration.externalId, 'default'),
+        ),
+      );
+    if (current === undefined) throw new Error('The Slack integration fixture is missing.');
+    await db
+      .update(schema.integration)
+      .set({ credentials: {} })
+      .where(eq(schema.integration.id, current.id));
+    const realFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = Object.assign(
+      (): Promise<Response> => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: false, error: 'unexpected_call' }));
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-NO-TOKEN', teamId: null }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(providerCalls).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db
+        .update(schema.integration)
+        .set({ credentials: current.credentials })
+        .where(eq(schema.integration.id, current.id));
     }
   });
 

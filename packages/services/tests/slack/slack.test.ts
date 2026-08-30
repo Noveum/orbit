@@ -75,7 +75,7 @@ const issue: SlackIssue = {
 };
 
 describe('issueBlocks', () => {
-  it('renders identifier, title, status, priority, assignee and buttons', () => {
+  it('renders linked read-only issue details without actions', () => {
     const blocks = issueBlocks(issue);
     const json = JSON.stringify(blocks);
     expect(json).toContain('https://orbit.local/issue/ORB-42');
@@ -84,9 +84,10 @@ describe('issueBlocks', () => {
     expect(json).toContain('Urgent');
     expect(json).toContain('Ada');
     expect(json).toContain('Core');
-    expect(json).toContain('orbit_assign_self');
-    expect(json).toContain('orbit_mark_done');
-    expect(blocks.at(-1)?.['type']).toBe('actions');
+    expect(json).not.toContain('orbit_open_issue');
+    expect(json).not.toContain('orbit_assign_self');
+    expect(json).not.toContain('orbit_mark_done');
+    expect(blocks.some((block) => block['type'] === 'actions')).toBe(false);
   });
 
   it('escapes slack control characters in user content', () => {
@@ -297,6 +298,40 @@ describe('SlackClient', () => {
       },
     ]);
     expect(result.nextCursor).toBe('abc');
+  });
+
+  it('loads canonical channel metadata and membership', async () => {
+    const { impl, calls } = stubFetch(200, {
+      ok: true,
+      channel: {
+        id: 'C-CANONICAL',
+        name: 'canonical-name',
+        is_private: true,
+        is_archived: false,
+        is_member: true,
+      },
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.conversation('C-REQUESTED')).resolves.toEqual({
+      id: 'C-CANONICAL',
+      name: 'canonical-name',
+      isPrivate: true,
+      isArchived: false,
+      isMember: true,
+    });
+    expect(calls[0]?.url).toBe('https://slack.com/api/conversations.info');
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ channel: 'C-REQUESTED' }));
+  });
+
+  it('rejects incomplete canonical channel metadata', async () => {
+    const { impl } = stubFetch(200, {
+      ok: true,
+      channel: { id: 'C-CANONICAL', name: 'canonical-name' },
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.conversation('C-REQUESTED')).rejects.toThrow(/unexpected payload/);
   });
 
   it('looks up a Slack user by email', async () => {

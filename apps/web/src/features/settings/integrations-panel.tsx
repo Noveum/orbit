@@ -216,12 +216,9 @@ function ChannelPicker({
       allowWorkspace
       submitLabel="Connect"
       onSubmit={async (item, teamId) => {
-        const channel = byId.get(item.id);
-        if (channel === undefined) return;
         await onCall('/api/integrations/slack', 'POST', {
           action: 'connect',
-          channelId: channel.channelId,
-          channelName: channel.channelName,
+          channelId: item.id,
           teamId,
         });
       }}
