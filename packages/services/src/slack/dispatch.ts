@@ -30,6 +30,8 @@ import {
 export type SlackDatabase = Database | Transaction;
 
 const SLACK_TEAM_CLAIMED = 'That Slack workspace is already connected to another Orbit workspace.';
+const SLACK_CHANNEL_UNAVAILABLE = 'Invite Orbit to the Slack channel before mapping it.';
+const SLACK_CHANNEL_ACCESS_ERRORS = new Set(['channel_not_found', 'not_in_channel']);
 
 export function slackCredentialVersionExpression(): SQL<string> {
   return sql<string>`coalesce(${integration.config} ->> 'credentialVersion', extract(epoch from ${integration.updatedAt})::text)`;
@@ -466,20 +468,58 @@ export async function connectCanonicalSlackChannel(
   if (context === null || context.token === null) {
     throw validationFailed('Connect Slack before mapping a channel.');
   }
-  const channel = await new SlackClient({
-    token: context.token,
-    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
-  }).conversation(input.channelId);
-  if (!channel.isMember) {
-    throw validationFailed('Invite Orbit to the Slack channel before mapping it.');
+  let channel: Awaited<ReturnType<SlackClient['conversation']>>;
+  try {
+    channel = await new SlackClient({
+      token: context.token,
+      ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+    }).conversation(input.channelId);
+  } catch (error) {
+    if (error instanceof SlackApiError && SLACK_CHANNEL_ACCESS_ERRORS.has(error.code)) {
+      throw validationFailed(SLACK_CHANNEL_UNAVAILABLE);
+    }
+    throw error;
   }
-  await connectSlackChannel(database, {
-    organizationId: input.organizationId,
-    integrationId: context.integrationId,
-    channelId: channel.id,
-    channelName: channel.name,
-    teamId: input.teamId,
-  });
+  if (!channel.isMember) {
+    throw validationFailed(SLACK_CHANNEL_UNAVAILABLE);
+  }
+  const persist = async (transaction: SlackDatabase): Promise<void> => {
+    const [current] = await transaction
+      .select({
+        id: integration.id,
+        integrationVersion: slackCredentialVersionExpression(),
+      })
+      .from(integration)
+      .where(
+        and(
+          eq(integration.id, context.integrationId),
+          eq(integration.organizationId, input.organizationId),
+          eq(integration.provider, 'slack'),
+          eq(integration.externalId, 'default'),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (
+      current === undefined ||
+      current.id !== context.integrationId ||
+      current.integrationVersion !== context.integrationVersion
+    ) {
+      throw conflict('Slack was reconnected while the channel was being verified. Try again.');
+    }
+    await connectSlackChannel(transaction, {
+      organizationId: input.organizationId,
+      integrationId: context.integrationId,
+      channelId: channel.id,
+      channelName: channel.name,
+      teamId: input.teamId,
+    });
+  };
+  if ('transaction' in database) {
+    await database.transaction(async (transaction) => await persist(transaction));
+  } else {
+    await persist(database);
+  }
   return channel.id;
 }
 

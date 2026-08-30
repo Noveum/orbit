@@ -386,9 +386,43 @@ describe('POST /api/webhooks/slack', () => {
     expect(replacement.status).toBe(200);
     expect(scheduledTasks).toHaveLength(2);
 
-    await scheduledTasks[1]?.();
-    providerErrorCode = 'internal_error';
+    let releaseReplacement: ((response: Response) => void) | undefined;
+    let signalReplacementStarted: (() => void) | undefined;
+    const replacementResponse = new Promise<Response>((resolve) => {
+      releaseReplacement = resolve;
+    });
+    const replacementStarted = new Promise<void>((resolve) => {
+      signalReplacementStarted = resolve;
+    });
+    let providerCalls = 0;
+    providerResponder = async () => {
+      providerCalls += 1;
+      if (providerCalls !== 1) return Response.json({ ok: true });
+      signalReplacementStarted?.();
+      return await replacementResponse;
+    };
+    const replacementProcessing = scheduledTasks[1]?.();
+    await replacementStarted;
+    const [replacementClaim] = await db
+      .select({
+        status: schema.webhookDelivery.status,
+        claimedAt: schema.webhookDelivery.claimedAt,
+      })
+      .from(schema.webhookDelivery);
+    expect(replacementClaim?.status).toBe('processing');
+
     await scheduledTasks[0]?.();
+
+    const [afterStaleWorker] = await db
+      .select({
+        status: schema.webhookDelivery.status,
+        claimedAt: schema.webhookDelivery.claimedAt,
+      })
+      .from(schema.webhookDelivery);
+    expect(afterStaleWorker).toEqual(replacementClaim);
+
+    releaseReplacement?.(Response.json({ ok: true }));
+    await replacementProcessing;
 
     const [delivery] = await db
       .select({ status: schema.webhookDelivery.status })

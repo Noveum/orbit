@@ -217,6 +217,13 @@ const userResponseSchema = slackResponseSchema.extend({
     .optional(),
 });
 
+type SuccessfulSlackResponse<T extends z.ZodTypeAny> =
+  z.infer<T> extends infer ResponseBody
+    ? ResponseBody extends { ok: false }
+      ? never
+      : ResponseBody
+    : never;
+
 export interface SlackMessageRef {
   readonly channel: string;
   readonly ts: string;
@@ -367,7 +374,6 @@ export class SlackClient {
     const body = await this.call('conversations.info', conversationResponseSchema, {
       channel: channelId,
     });
-    if (!body.ok) throw internal('Slack conversations.info did not return a channel.');
     return {
       id: body.channel.id,
       name: body.channel.name,
@@ -398,7 +404,7 @@ export class SlackClient {
     method: string,
     schema: T,
     payload: Record<string, unknown>,
-  ): Promise<z.infer<T>> {
+  ): Promise<SuccessfulSlackResponse<T>> {
     const response = await this.fetchImpl(`${this.baseUrl}/${method}`, {
       method: 'POST',
       headers: {
@@ -422,7 +428,7 @@ export class SlackClient {
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
     if (!body.ok) throw new SlackApiError(method, body.error ?? 'unknown_error');
-    return parsed.data;
+    return parsed.data as SuccessfulSlackResponse<T>;
   }
 }
 

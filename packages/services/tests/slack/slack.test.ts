@@ -334,6 +334,19 @@ describe('SlackClient', () => {
     await expect(client.conversation('C-REQUESTED')).rejects.toThrow(/unexpected payload/);
   });
 
+  it('preserves an inaccessible channel as a Slack provider error', async () => {
+    const { impl } = stubFetch(200, { ok: false, error: 'channel_not_found' });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    try {
+      await client.conversation('C-INACCESSIBLE');
+      throw new Error('Expected an inaccessible Slack channel to fail.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SlackApiError);
+      expect((error as SlackApiError).code).toBe('channel_not_found');
+    }
+  });
+
   it('looks up a Slack user by email', async () => {
     const { impl, calls } = stubFetch(200, {
       ok: true,

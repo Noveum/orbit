@@ -100,3 +100,49 @@ The webhook keeps signature verification, body parsing, URL verification, and th
 - Confirmed the Task 2 unique Slack team ownership behavior is preserved and duplicate-team fixtures were removed.
 - Confirmed no Socket Mode, slash command, public distribution, or interactivity behavior was added.
 - Confirmed no shipped code comments, em dash characters, or attribution were added.
+
+## Review Remediation
+
+### Findings Addressed
+
+- Channel verification now records the credential version used for `conversations.info`, then opens a transaction, locks and reloads the same canonical integration row, and verifies its organization, provider, `default` identity, integration ID, and exact credential version before writing the mapping in that transaction. A reconnect during provider verification returns a safe conflict and writes no mapping.
+- `channel_not_found` and `not_in_channel` from `conversations.info` now produce the same safe validation failure as `is_member: false`. Other Slack and transport errors retain their existing behavior. The client call return type now reflects that parsed `{ ok: false }` responses have already thrown `SlackApiError`, removing the unreachable conversation branch.
+- The stale-worker test now holds the replacement provider request open, runs the stale worker while the replacement delivery is still processing, verifies status and `claimedAt` are unchanged, then completes the replacement and verifies the delivery becomes processed.
+
+### Remediation Tests Written First
+
+The reconnect race regression begins channel mapping with the original encrypted token, waits until Slack verification is in flight, reconnects the same canonical row with a new workspace and credential version, releases the old provider response, and asserts HTTP 409 with no mapping saved.
+
+The access-error regression returns Slack `{ ok: false, error: "channel_not_found" }` and expects the same 422 validation payload as an unjoined channel, with no mapping. The Slack client unit regression also verifies that the provider response is parsed into `SlackApiError` with the original safe code.
+
+The strengthened stale-worker regression keeps the replacement provider request unresolved while the old worker finishes. It asserts the replacement row remains processing with the replacement `claimedAt` until the replacement worker completes.
+
+The DB-backed red attempt used both changed route suites in one command:
+
+```sh
+DATABASE_URL=postgres://orbit:orbit@localhost:5434/orbit_test_web DATABASE_PREPARED_STATEMENTS=false bun test tests/app/api/integrations/slack/route.test.ts tests/app/api/webhooks/slack/route.test.ts
+```
+
+Both suites were blocked before assertions by `ECONNREFUSED` during `select current_database() as name`. No repeated DB attempt was made.
+
+### Remediation Green Evidence
+
+```sh
+bun test packages/services/tests/slack/slack.test.ts
+```
+
+Result: 36 passed, 0 failed, 72 expectations.
+
+```sh
+bun run typecheck
+```
+
+Result: every workspace package exited with code 0.
+
+### Remediation Self Review
+
+- The provider request remains outside the database transaction, while only the short lock, credential-version check, and mapping write are atomic.
+- A reconnect committed before the lock causes an exact version mismatch and no mapping write.
+- A reconnect arriving after the lock waits, then its existing team-change cleanup runs after the mapping transaction commits.
+- Token decryption remains inside the Slack service and no token or provider payload enters errors or logs.
+- Exact organization rollout checks, unique Slack team ownership, mapped-channel issue scope, prompt callback acknowledgement, and claim-aware finalization remain unchanged.

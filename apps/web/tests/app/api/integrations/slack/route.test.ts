@@ -236,6 +236,12 @@ describe('GET /api/integrations/slack', () => {
       );
 
       expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'validation_failed',
+          message: 'Invite Orbit to the Slack channel before mapping it.',
+        },
+      });
       const mappings = await db
         .select({ id: schema.slackChannelSync.id })
         .from(schema.slackChannelSync)
@@ -243,6 +249,111 @@ describe('GET /api/integrations/slack', () => {
       expect(mappings).toEqual([]);
     } finally {
       globalThis.fetch = realFetch;
+    }
+  });
+
+  it('rejects an inaccessible Slack channel with the joined-channel validation response', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      () => Promise.resolve(Response.json({ ok: false, error: 'channel_not_found' })),
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-INACCESSIBLE', teamId: null }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'validation_failed',
+          message: 'Invite Orbit to the Slack channel before mapping it.',
+        },
+      });
+      const mappings = await db
+        .select({ id: schema.slackChannelSync.id })
+        .from(schema.slackChannelSync)
+        .where(eq(schema.slackChannelSync.channelId, 'C-INACCESSIBLE'));
+      expect(mappings).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('does not save a channel verified with credentials replaced by a reconnect', async () => {
+    const realFetch = globalThis.fetch;
+    let releaseProvider: ((response: Response) => void) | undefined;
+    let signalProviderStarted: (() => void) | undefined;
+    const providerResponse = new Promise<Response>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    globalThis.fetch = Object.assign(
+      (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+        const request = new Request(...args);
+        expect(request.headers.get('authorization')).toBe('Bearer xoxb-workspace-secret');
+        signalProviderStarted?.();
+        return providerResponse;
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const mapping = POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-RACE', teamId: null }),
+        }),
+      );
+      await providerStarted;
+      await ensureSlackIntegration(db, {
+        organizationId: workspace.organizationId,
+        connectedById: workspace.adminUser.id,
+        botToken: 'xoxb-reconnected-secret',
+        externalId: 'T-RECONNECTED',
+      });
+      releaseProvider?.(
+        Response.json({
+          ok: true,
+          channel: {
+            id: 'C-RACE',
+            name: 'verified-before-reconnect',
+            is_private: false,
+            is_archived: false,
+            is_member: true,
+          },
+        }),
+      );
+
+      expect((await mapping).status).toBe(409);
+      const mappings = await db
+        .select({ id: schema.slackChannelSync.id })
+        .from(schema.slackChannelSync)
+        .where(eq(schema.slackChannelSync.channelId, 'C-RACE'));
+      expect(mappings).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      const integrationId = await ensureSlackIntegration(db, {
+        organizationId: workspace.organizationId,
+        connectedById: workspace.adminUser.id,
+        botToken: 'xoxb-workspace-secret',
+        externalId: 'T-WORKSPACE',
+      });
+      await connectSlackChannel(db, {
+        organizationId: workspace.organizationId,
+        integrationId,
+        channelId: 'C-PRIVATE',
+        channelName: 'private-roadmap',
+        teamId: workspace.teamId,
+      });
     }
   });
 
