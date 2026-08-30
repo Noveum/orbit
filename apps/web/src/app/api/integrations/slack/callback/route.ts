@@ -3,8 +3,9 @@ import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 import {
-  slackIntegrationEnabled,
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 
 const callbackSchema = z.object({
@@ -17,13 +18,14 @@ function settingsRedirect(status: 'connected' | 'error'): Response {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   const params = Object.fromEntries(new URL(request.url).searchParams.entries());
   const parsed = callbackSchema.safeParse(params);
   if (!parsed.success) return settingsRedirect('error');
 
   const state = await consumeOAuthState(parsed.data.state, integrationStateSecret(), 'slack');
   if (state === null) return settingsRedirect('error');
+  if (!slackIntegrationEnabledForOrganization(state.org)) return slackIntegrationUnavailable();
 
   const config = slackAppConfig();
   try {

@@ -16,8 +16,9 @@ import {
 import { z } from 'zod';
 import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
 import {
-  slackIntegrationEnabled,
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 import { assertTeamInWorkspace } from '@/lib/workspace.ts';
 
@@ -28,9 +29,11 @@ const requestSchema = z.discriminatedUnion('action', [
 ]);
 
 export async function GET(): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
+    if (!slackIntegrationEnabledForOrganization(principal.organizationId))
+      return slackIntegrationUnavailable();
     assertCan(principal, 'integration:manage');
     const context = await resolveSlackContext(db, principal.organizationId, 'default');
     const channels =
@@ -55,9 +58,11 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
+    if (!slackIntegrationEnabledForOrganization(principal.organizationId))
+      return slackIntegrationUnavailable();
     assertCan(principal, 'integration:manage');
     const input = requestSchema.parse(await readJson(request));
 
@@ -107,9 +112,11 @@ async function slackIntegrationId(organizationId: string): Promise<string> {
 }
 
 export async function PATCH(): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
+    if (!slackIntegrationEnabledForOrganization(principal.organizationId))
+      return slackIntegrationUnavailable();
     assertCan(principal, 'integration:manage');
     const context = await resolveSlackContext(db, principal.organizationId, 'default');
     if (context === null || context.token === null) {

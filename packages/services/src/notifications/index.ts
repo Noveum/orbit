@@ -188,11 +188,18 @@ export async function claimSlackDmDeliveries(
   limit = 100,
   now = new Date(),
   atomic = false,
+  organizationId?: string,
 ): Promise<(typeof notificationDelivery.$inferSelect)[]> {
   if (atomic && 'transaction' in database) {
-    return await database.transaction((tx) => claimSlackDmDeliveries(tx, limit, now));
+    return await database.transaction((tx) =>
+      claimSlackDmDeliveries(tx, limit, now, false, organizationId),
+    );
   }
   const staleBefore = new Date(now.getTime() - 5 * 60_000);
+  const organizationFilter =
+    organizationId === undefined
+      ? sql``
+      : sql`AND ${notification.organizationId} = ${organizationId}`;
   return await database
     .update(notificationDelivery)
     .set({ status: 'processing', claimedAt: now })
@@ -200,8 +207,11 @@ export async function claimSlackDmDeliveries(
       sql`${notificationDelivery.id} IN (
         SELECT ${notificationDelivery.id}
         FROM ${notificationDelivery}
+        INNER JOIN ${notification}
+          ON ${notification.id} = ${notificationDelivery.notificationId}
         WHERE ${notificationDelivery.channel} = 'slack_dm'
           AND ${notificationDelivery.availableAt} <= ${now.toISOString()}
+          ${organizationFilter}
           AND (
             ${notificationDelivery.status} IN ('pending', 'failed')
             OR (

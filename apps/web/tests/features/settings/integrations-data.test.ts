@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
   addMember,
   createWorkspace,
@@ -20,6 +20,13 @@ const INSTALLATION_ID = '151887625';
 const SECRET_REPOSITORY = 'Noveum/unannounced-acquisition';
 
 let workspace: Workspace;
+const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+
+afterAll(() => {
+  if (previousEnabledOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
+});
 
 async function seedPrivateCatalogue(): Promise<void> {
   await db.transaction(async (tx) => {
@@ -59,6 +66,7 @@ async function principalWithRole(role: OrgRole): Promise<Principal> {
 }
 
 beforeEach(async () => {
+  delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
   await seedPrivateCatalogue();
@@ -118,7 +126,9 @@ describe('loadIntegrationSettings', () => {
       },
     ]);
 
-    const settings = await loadIntegrationSettings(workspace.admin, { slackEnabled: true });
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+
+    const settings = await loadIntegrationSettings(workspace.admin);
 
     expect(settings.slack?.slackConnected).toBe(true);
     expect(settings.slack?.slackHasToken).toBe(true);

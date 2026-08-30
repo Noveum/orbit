@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
-import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
+import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 export const CLOCK_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -41,7 +41,7 @@ export async function loadNotificationPreferences(
     .where(eq(schema.notificationSetting.userId, userId))
     .limit(1);
 
-  const slackEnabled = slackIntegrationEnabled();
+  const slackEnabled = slackIntegrationEnabledForOrganization(organizationId);
   const [slack] = slackEnabled
     ? await db
         .select({

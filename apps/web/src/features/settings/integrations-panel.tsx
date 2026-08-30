@@ -5,7 +5,6 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
-import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 import { GithubPanel } from './github-panel.tsx';
 import { IntegrationCard } from './integration-card.tsx';
 import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
@@ -66,9 +65,9 @@ export function IntegrationsPanel({
           >
             <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
           </IntegrationCard>
-          {slackIntegrationEnabled() && settings.slack !== undefined ? (
+          {settings.slack === undefined ? null : (
             <SlackSection settings={settings.slack} canManage={canManage} onCall={call} />
-          ) : null}
+          )}
         </>
       ) : (
         <WorkspaceIntegrationsWithheld />

@@ -51,6 +51,17 @@ const CONNECTED: IntegrationSettings = {
   },
 };
 
+const CONNECTED_WITH_SLACK: IntegrationSettings = {
+  ...CONNECTED,
+  slack: {
+    slackConnected: false,
+    slackHasToken: false,
+    slackConnectEnabled: true,
+    channels: [],
+    teams: [],
+  },
+};
+
 const EMPTY: IntegrationSettings = {
   github: {
     connected: false,
@@ -110,7 +121,17 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
-  it('does not render the disabled Slack integration', () => {
+  it('renders Slack when the server includes Slack settings', () => {
+    renderPanel(CONNECTED_WITH_SLACK, true);
+
+    expect(screen.getByText('Slack')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Add to Slack' })).toHaveAttribute(
+      'href',
+      '/api/integrations/slack/start',
+    );
+  });
+
+  it('does not render Slack when the server withholds Slack settings', () => {
     renderPanel(CONNECTED, true);
 
     expect(screen.queryByText(/slack/i)).toBeNull();

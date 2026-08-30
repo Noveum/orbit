@@ -23,7 +23,7 @@ type SlackDmFinalizer = (input: {
   readonly providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>>;
 }) => Promise<boolean>;
 
-interface SlackDmWorkerOptions {
+export interface SlackDmWorkerOptions {
   readonly concurrency?: number;
   readonly deadlineAt?: Date;
   readonly now?: () => Date;
@@ -65,7 +65,7 @@ export async function deliverPendingSlackDms(
   fetch: typeof globalThis.fetch = globalThis.fetch,
   dispatch: typeof dispatchSlackDmResult = dispatchSlackDmResult,
   finalize?: SlackDmFinalizer,
-  options: SlackDmWorkerOptions = {},
+  options: SlackDmWorkerOptions & { readonly organizationId?: string } = {},
 ): Promise<number> {
   const now = options.now ?? (() => new Date());
   const startedAt = now();
@@ -80,7 +80,13 @@ export async function deliverPendingSlackDms(
   let claimedCount = 0;
   while (claimedCount < maximumDeliveries && now().getTime() < deadlineAt.getTime()) {
     const claimLimit = Math.min(concurrency, maximumDeliveries - claimedCount);
-    const claimed = await claimSlackDmDeliveries(database, claimLimit, now(), true);
+    const claimed = await claimSlackDmDeliveries(
+      database,
+      claimLimit,
+      now(),
+      true,
+      options.organizationId,
+    );
     if (claimed.length === 0) break;
     claimedCount += claimed.length;
     const rows = await database

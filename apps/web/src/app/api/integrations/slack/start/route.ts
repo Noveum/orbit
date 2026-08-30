@@ -5,17 +5,20 @@ import { absoluteUrl, slackAppConfig, slackConnectReady } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { issueOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 import {
-  slackIntegrationEnabled,
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 
 const SLACK_BOT_SCOPES =
   'channels:read,groups:read,chat:write,links:read,links:write,im:write,users:read,users:read.email';
 
 export async function GET(): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   return await handleRoute(async () => {
     const { principal } = await apiContext();
+    if (!slackIntegrationEnabledForOrganization(principal.organizationId))
+      return slackIntegrationUnavailable();
     assertCan(principal, 'integration:manage');
     if (!slackConnectReady()) throw validationFailed('The Slack app is not configured yet.');
 

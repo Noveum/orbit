@@ -1,13 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'disabled-slack-boundary-test-secret';
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
-let slackEnabledForTest = false;
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
-  () => slackEnabledForTest,
-);
+const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 
 const {
   GET: getIntegration,
@@ -32,6 +28,7 @@ const providerFetch = mock(() => {
 });
 
 beforeEach(() => {
+  delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
   providerFetch.mockClear();
   globalThis.fetch = providerFetch as unknown as typeof fetch;
 });
@@ -43,7 +40,9 @@ afterEach(() => {
 afterAll(() => {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-  slackCapabilitySpy.mockRestore();
+  if (previousEnabledOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
 });
 
 async function expectUnavailable(response: Response): Promise<void> {
@@ -65,7 +64,7 @@ function requestWithUnreadableBody(url: string): {
 
 describe('disabled Slack boundary', () => {
   it('keeps the shipped integration surface unavailable', async () => {
-    slackEnabledForTest = SLACK_INTEGRATION_ENABLED;
+    expect(SLACK_INTEGRATION_ENABLED).toBe(false);
 
     await expectUnavailable(await startOAuth());
   });

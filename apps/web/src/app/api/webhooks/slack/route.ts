@@ -8,8 +8,9 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { slackEventSchema } from '@orbit/shared/validators';
 import {
-  slackIntegrationEnabled,
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-slack-signature';
@@ -18,7 +19,7 @@ export const maxDuration = 60;
 const SLACK_EVENT_CLAIM_TIMEOUT_MS = (maxDuration + 15) * 1000;
 
 export async function POST(request: Request): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   const signingSecret = process.env['SLACK_SIGNING_SECRET'] ?? '';
   const raw = await request.text();
   const signature = request.headers.get(SIGNATURE_HEADER) ?? '';
@@ -193,6 +194,7 @@ async function unfurlLinks(
     });
     return null;
   }
+  if (!slackIntegrationEnabledForOrganization(integrationRow.organizationId)) return null;
 
   const context = await resolveSlackContext(
     db,
