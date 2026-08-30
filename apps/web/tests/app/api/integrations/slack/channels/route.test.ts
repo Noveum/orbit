@@ -1,12 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { Workspace } from '@orbit/core/test-support';
 import { z } from 'zod';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-channels-route-test-secret';
-
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
 
 const { createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
 const { db } = await import('@orbit/db');
@@ -48,6 +46,7 @@ const { GET } = await import('@/app/api/integrations/slack/channels/route.ts');
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('SlackChannels');
+  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
   await ensureSlackIntegration(db, {
     organizationId: workspace.organizationId,
     connectedById: workspace.adminUser.id,
@@ -65,7 +64,9 @@ afterAll(() => {
   globalThis.fetch = realFetch;
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-  slackCapabilitySpy.mockRestore();
+  if (existingSlackOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
 });
 
 describe('GET /api/integrations/slack/channels', () => {

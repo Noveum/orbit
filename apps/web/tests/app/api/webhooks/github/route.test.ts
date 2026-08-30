@@ -24,6 +24,7 @@ const services = await import('@orbit/services');
 const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
+const realDispatchSlackMessage = services.dispatchSlackMessage;
 const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(
   (
@@ -34,9 +35,10 @@ const dispatchSlackMessage = mock(
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
-  () => slackEnabledForTest,
-);
+const slackCapabilitySpy = spyOn(
+  slackCapability,
+  'slackIntegrationEnabledForOrganization',
+).mockImplementation(() => slackEnabledForTest);
 notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
@@ -326,6 +328,7 @@ describe('POST /api/webhooks/github', () => {
   });
 
   it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
+    slackEnabledForTest = true;
     process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
     process.env['BETTER_AUTH_SECRET'] = 'github-slack-old-key';
     const integrationId = await services.ensureSlackIntegration(db, {
@@ -351,7 +354,7 @@ describe('POST /api/webhooks/github', () => {
       slack: [{ userId: workspace.adminUser.id, notificationId: 'notification-old-key' }],
       slackDm: [],
     }));
-    dispatchSlackMessage.mockImplementationOnce(services.dispatchSlackMessage);
+    dispatchSlackMessage.mockImplementationOnce(realDispatchSlackMessage);
 
     const response = await POST(
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
