@@ -357,6 +357,184 @@ describe('GET /api/integrations/slack', () => {
     }
   });
 
+  it('does not save a channel after the requesting administrator is demoted', async () => {
+    const realFetch = globalThis.fetch;
+    let releaseProvider: ((response: Response) => void) | undefined;
+    let signalProviderStarted: (() => void) | undefined;
+    const providerResponse = new Promise<Response>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    globalThis.fetch = Object.assign(
+      (): Promise<Response> => {
+        signalProviderStarted?.();
+        return providerResponse;
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const mapping = POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-DEMOTED', teamId: null }),
+        }),
+      );
+      await providerStarted;
+      await db
+        .update(schema.member)
+        .set({ role: 'guest' })
+        .where(
+          and(
+            eq(schema.member.organizationId, workspace.organizationId),
+            eq(schema.member.userId, workspace.adminUser.id),
+          ),
+        );
+      releaseProvider?.(
+        Response.json({
+          ok: true,
+          channel: { id: 'C-DEMOTED', name: 'demoted', is_member: true },
+        }),
+      );
+
+      expect((await mapping).status).toBe(403);
+      expect(
+        await db
+          .select({ id: schema.slackChannelSync.id })
+          .from(schema.slackChannelSync)
+          .where(eq(schema.slackChannelSync.channelId, 'C-DEMOTED')),
+      ).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db
+        .update(schema.member)
+        .set({ role: 'admin' })
+        .where(
+          and(
+            eq(schema.member.organizationId, workspace.organizationId),
+            eq(schema.member.userId, workspace.adminUser.id),
+          ),
+        );
+    }
+  });
+
+  it('does not save a channel after the requesting administrator is removed', async () => {
+    const realFetch = globalThis.fetch;
+    let releaseProvider: ((response: Response) => void) | undefined;
+    let signalProviderStarted: (() => void) | undefined;
+    const providerResponse = new Promise<Response>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    globalThis.fetch = Object.assign(
+      (): Promise<Response> => {
+        signalProviderStarted?.();
+        return providerResponse;
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const mapping = POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-REMOVED', teamId: null }),
+        }),
+      );
+      await providerStarted;
+      await db
+        .delete(schema.member)
+        .where(
+          and(
+            eq(schema.member.organizationId, workspace.organizationId),
+            eq(schema.member.userId, workspace.adminUser.id),
+          ),
+        );
+      releaseProvider?.(
+        Response.json({
+          ok: true,
+          channel: { id: 'C-REMOVED', name: 'removed', is_member: true },
+        }),
+      );
+
+      expect((await mapping).status).toBe(403);
+      expect(
+        await db
+          .select({ id: schema.slackChannelSync.id })
+          .from(schema.slackChannelSync)
+          .where(eq(schema.slackChannelSync.channelId, 'C-REMOVED')),
+      ).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db.insert(schema.member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        userId: workspace.adminUser.id,
+        role: 'admin',
+      });
+    }
+  });
+
+  it('does not save a channel after workspace deletion begins', async () => {
+    const realFetch = globalThis.fetch;
+    let releaseProvider: ((response: Response) => void) | undefined;
+    let signalProviderStarted: (() => void) | undefined;
+    const providerResponse = new Promise<Response>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    globalThis.fetch = Object.assign(
+      (): Promise<Response> => {
+        signalProviderStarted?.();
+        return providerResponse;
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const mapping = POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'connect', channelId: 'C-DELETING', teamId: null }),
+        }),
+      );
+      await providerStarted;
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(schema.organization.id, workspace.organizationId));
+      releaseProvider?.(
+        Response.json({
+          ok: true,
+          channel: { id: 'C-DELETING', name: 'deleting', is_member: true },
+        }),
+      );
+
+      expect((await mapping).status).toBe(409);
+      expect(
+        await db
+          .select({ id: schema.slackChannelSync.id })
+          .from(schema.slackChannelSync)
+          .where(eq(schema.slackChannelSync.channelId, 'C-DELETING')),
+      ).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: null })
+        .where(eq(schema.organization.id, workspace.organizationId));
+    }
+  });
+
   it('does not borrow a Slack token from another organization', async () => {
     const other = await createWorkspace('OtherSlackSettings');
     await ensureSlackIntegration(db, {

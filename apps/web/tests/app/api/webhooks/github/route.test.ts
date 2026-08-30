@@ -14,6 +14,8 @@ import { z } from 'zod';
 
 const SECRET = 'a-github-webhook-secret';
 const existingWebhookSecret = process.env['GITHUB_WEBHOOK_SECRET'];
+const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
@@ -23,7 +25,12 @@ const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
 const realNotifyMany = notifications.notifyMany;
-const dispatchSlackMessage = mock(() => Promise.resolve(0));
+const dispatchSlackMessage = mock(
+  (
+    _database: Parameters<typeof services.dispatchSlackMessage>[0],
+    _input: Parameters<typeof services.dispatchSlackMessage>[1],
+  ) => Promise.resolve(0),
+);
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
@@ -45,6 +52,14 @@ mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers(
 
 const { POST } = await import('../../../../../src/app/api/webhooks/github/route.ts');
 
+function restoreSlackEnvironment(): void {
+  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  if (existingSlackOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+}
+
 afterAll(() => {
   mock.module('@orbit/core', () => core);
   mock.module('@orbit/services', () => services);
@@ -53,6 +68,7 @@ afterAll(() => {
   slackCapabilitySpy.mockRestore();
   if (existingWebhookSecret === undefined) delete process.env['GITHUB_WEBHOOK_SECRET'];
   else process.env['GITHUB_WEBHOOK_SECRET'] = existingWebhookSecret;
+  restoreSlackEnvironment();
 });
 
 const bodySchema = z.union([
@@ -184,6 +200,7 @@ async function linkCount(): Promise<number> {
 }
 
 beforeEach(async () => {
+  restoreSlackEnvironment();
   published.length = 0;
   dispatchSlackMessage.mockClear();
   deliverPendingSlackDms.mockClear();
@@ -306,6 +323,43 @@ describe('POST /api/webhooks/github', () => {
       teamIds: [workspace.teamId],
       text: `Deploy &lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; was closed: ${new URL('/inbox', `${appUrl}/`).toString()}`,
     });
+  });
+
+  it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+    process.env['BETTER_AUTH_SECRET'] = 'github-slack-old-key';
+    const integrationId = await services.ensureSlackIntegration(db, {
+      organizationId: workspace.organizationId,
+      connectedById: workspace.adminUser.id,
+      botToken: 'xoxb-encrypted',
+      externalId: 'T-OLD-KEY',
+      scopes: ['chat:write'],
+    });
+    await services.connectSlackChannel(db, {
+      organizationId: workspace.organizationId,
+      integrationId,
+      channelId: 'C-OLD-KEY',
+      channelName: 'old-key',
+      teamId: workspace.teamId,
+    });
+    process.env['BETTER_AUTH_SECRET'] = 'github-slack-rotated-key';
+    notifyMany.mockImplementationOnce(async () => ({
+      actions: [],
+      deduped: 0,
+      email: [],
+      notifications: [],
+      slack: [{ userId: workspace.adminUser.id, notificationId: 'notification-old-key' }],
+      slackDm: [],
+    }));
+    dispatchSlackMessage.mockImplementationOnce(services.dispatchSlackMessage);
+
+    const response = await POST(
+      signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await deliveryRow('delivery-old-slack-key'))?.status).toBe('processed');
+    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {

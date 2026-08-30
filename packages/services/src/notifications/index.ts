@@ -315,7 +315,12 @@ export async function notifyMany(
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
-  const slackFeatureEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
+  const slackFeatureEnabledByOrganization = new Map(
+    parsed.map((event) => [
+      event.organizationId,
+      resolveSlackFeatureEnabled(options.slackEnabled, event.organizationId),
+    ]),
+  );
   const recipientIds = unique(
     parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
@@ -323,9 +328,13 @@ export async function notifyMany(
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
-  const slackDmEligibleRecipients = slackFeatureEnabled
-    ? await loadSlackDmEligibleRecipients(database, parsed, recipientIds)
-    : new Map<string, ReadonlySet<string>>();
+  const slackEnabledEvents = parsed.filter(
+    (event) => slackFeatureEnabledByOrganization.get(event.organizationId) === true,
+  );
+  const slackDmEligibleRecipients =
+    slackEnabledEvents.length > 0
+      ? await loadSlackDmEligibleRecipients(database, slackEnabledEvents, recipientIds)
+      : new Map<string, ReadonlySet<string>>();
   const disabled = disabledPreferenceIndex(
     await database
       .select({
@@ -382,7 +391,7 @@ export async function notifyMany(
         settings.get(userId) ?? DEFAULT_SETTINGS,
         disabled,
         now,
-        slackFeatureEnabled,
+        slackFeatureEnabledByOrganization.get(event.organizationId) === true,
         slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
       );
       if (plan !== null) {
@@ -427,8 +436,11 @@ function slackDeliveryRows(
   });
 }
 
-function resolveSlackFeatureEnabled(value: boolean | undefined): boolean {
-  return value ?? SLACK_INTEGRATION_ENABLED;
+function resolveSlackFeatureEnabled(value: boolean | undefined, organizationId: string): boolean {
+  if (value !== undefined) return value;
+  if (SLACK_INTEGRATION_ENABLED) return true;
+  const enabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID']?.trim() ?? '';
+  return enabledOrganizationId.length > 0 && enabledOrganizationId === organizationId;
 }
 
 function planFor(

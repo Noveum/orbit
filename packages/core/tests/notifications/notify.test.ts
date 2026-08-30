@@ -1,14 +1,18 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
+import type { NotificationEvent } from '@orbit/services/notifications';
 import { claimSlackDmDeliveries } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
+import { encryptSlackBotToken } from '@orbit/services/slack/credentials';
 import type { dispatchSlackDmResult } from '@orbit/services/slack/dispatch';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { deliverPendingSlackDms } from '../../src/notifications/notify.ts';
+import { deliverPendingSlackDms, notifyRecipients } from '../../src/notifications/notify.ts';
 import { resetDatabase } from '../../src/test-support.ts';
 
 const existingAppUrl = process.env['APP_URL'];
 const existingPublicAppUrl = process.env['NEXT_PUBLIC_APP_URL'];
+const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 
 interface Fixture {
   readonly organizationId: string;
@@ -99,6 +103,44 @@ afterAll(() => {
   else process.env['APP_URL'] = existingAppUrl;
   if (existingPublicAppUrl === undefined) delete process.env['NEXT_PUBLIC_APP_URL'];
   else process.env['NEXT_PUBLIC_APP_URL'] = existingPublicAppUrl;
+  if (existingSlackOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+});
+
+describe('notifyRecipients Slack canary', () => {
+  it('enqueues personal Slack delivery only for the exact rollout organization', async () => {
+    const allowed = await seedPendingSlackDm();
+    const blocked = await seedPendingSlackDm();
+    await db.delete(schema.notificationDelivery);
+    await db.delete(schema.notification);
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = allowed.organizationId;
+    const event = (fixture: Fixture): NotificationEvent => ({
+      organizationId: fixture.organizationId,
+      type: 'mention',
+      reason: 'mentioned',
+      actor: { type: 'user', id: `actor_${fixture.userId}`, name: 'Grace' },
+      entityType: 'issue',
+      entityId: `issue_${fixture.userId}`,
+      userIds: [fixture.userId],
+      title: 'You were mentioned',
+      body: 'Please take a look',
+      url: '/issue/ORB-1',
+    });
+
+    await notifyRecipients(db, [event(allowed), event(blocked)]);
+
+    const deliveries = await db
+      .select({ organizationId: schema.notification.organizationId })
+      .from(schema.notificationDelivery)
+      .innerJoin(
+        schema.notification,
+        eq(schema.notification.id, schema.notificationDelivery.notificationId),
+      );
+    expect(deliveries).toEqual([{ organizationId: allowed.organizationId }]);
+  });
 });
 
 describe('deliverPendingSlackDms', () => {
@@ -459,6 +501,41 @@ describe('deliverPendingSlackDms', () => {
       .from(schema.notificationDelivery);
     expect(storedDelivery).toEqual({ status: 'skipped', attempts: 1, lastError: 'token_revoked' });
     expect(storedIntegration?.config['slackReauthorize']).toBe(true);
+  });
+
+  it('requires reauthorization without retrying when stored credentials use an old key', async () => {
+    process.env['BETTER_AUTH_SECRET'] = 'slack-old-key';
+    const fixture = await seedPendingSlackDm();
+    const envelope = encryptSlackBotToken({
+      organizationId: fixture.organizationId,
+      integrationId: fixture.integrationId,
+      token: 'xoxb-encrypted',
+    });
+    await db
+      .update(schema.integration)
+      .set({ credentials: { botToken: envelope } })
+      .where(eq(schema.integration.id, fixture.integrationId));
+    process.env['BETTER_AUTH_SECRET'] = 'slack-rotated-key';
+    let providerCalls = 0;
+    const fetch = (() => {
+      providerCalls += 1;
+      return Promise.resolve(Response.json({ ok: true }));
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 1, fetch)).toBe(0);
+
+    const [storedIntegration] = await db
+      .select({ config: schema.integration.config })
+      .from(schema.integration)
+      .where(eq(schema.integration.id, fixture.integrationId));
+    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
+    expect(providerCalls).toBe(0);
+    expect(storedIntegration?.config['slackReauthorize']).toBe(true);
+    expect(storedDelivery).toMatchObject({
+      status: 'skipped',
+      attempts: 1,
+      lastError: 'credential_unavailable',
+    });
   });
 
   it('retries a permanent failure after a concurrent token refresh', async () => {

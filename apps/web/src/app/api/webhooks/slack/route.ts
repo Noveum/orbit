@@ -1,5 +1,10 @@
 import { and, db, eq, lt, or, schema, sql } from '@orbit/db';
-import { resolveIssueUnfurls, sendSlackUnfurls, verifySlackSignature } from '@orbit/services';
+import {
+  resolveIssueUnfurls,
+  sendSlackUnfurls,
+  slackCredentialVersionExpression,
+  verifySlackSignature,
+} from '@orbit/services';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { slackEventSchema } from '@orbit/shared/validators';
 import {
@@ -163,7 +168,7 @@ async function unfurlLinks(
     .select({
       integrationId: schema.integration.id,
       organizationId: schema.integration.organizationId,
-      externalId: schema.integration.externalId,
+      integrationVersion: slackCredentialVersionExpression(),
     })
     .from(schema.integration)
     .where(
@@ -211,7 +216,9 @@ async function unfurlLinks(
 
   await sendSlackUnfurls(db, {
     organizationId: integrationRow.organizationId,
-    externalId: integrationRow.externalId,
+    integrationId: integrationRow.integrationId,
+    slackTeamId,
+    integrationVersion: integrationRow.integrationVersion,
     channel,
     ts,
     unfurls,

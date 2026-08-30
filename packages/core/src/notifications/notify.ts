@@ -137,7 +137,7 @@ async function deliverClaimedSlackDm(
       fetch,
     });
   } catch (error) {
-    console.error('[orbit] Slack DM retry failed', error);
+    console.error('[orbit] Slack DM delivery failed');
     await finalizeSlackDmFailure(database, notification.organizationId, delivery, error, now());
     return 0;
   }
@@ -206,7 +206,15 @@ async function finalizeSlackDmFailure(
   let code = '';
   if (error instanceof SlackDmDispatchError) code = error.slackCode ?? '';
   else if (cause instanceof SlackApiError) code = cause.code;
-  if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
+  if (
+    [
+      'invalid_auth',
+      'account_inactive',
+      'credential_unavailable',
+      'missing_scope',
+      'token_revoked',
+    ].includes(code)
+  ) {
     const reauthorizationMarked = await markSlackReauthorizationRequired(
       database,
       organizationId,

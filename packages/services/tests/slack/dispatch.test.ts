@@ -13,7 +13,7 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { markSlackReauthorizationRequired } from '../../src/notifications/index.ts';
-import { decryptSlackBotToken } from '../../src/slack/credentials.ts';
+import { decryptSlackBotToken, encryptSlackBotToken } from '../../src/slack/credentials.ts';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
@@ -25,6 +25,7 @@ import {
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  sendSlackUnfurls,
   slackDmAvailable,
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
@@ -975,6 +976,42 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
 });
 
 describe('dispatchSlackMessage', () => {
+  it('skips an optional Slack send when stored credentials use an old key', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-old-key';
+      const envelope = encryptSlackBotToken({
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        token: 'xoxb-encrypted',
+      });
+      await tx
+        .update(integration)
+        .set({ credentials: { botToken: envelope } })
+        .where(eq(integration.id, fixture.integrationId));
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-rotated-key';
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      try {
+        expect(
+          await dispatchSlackMessage(tx, {
+            organizationId: fixture.organizationId,
+            teamIds: [fixture.teamA],
+            text: 'Optional broadcast',
+            fetch,
+          }),
+        ).toBe(0);
+        expect(providerCalls).toBe(0);
+      } finally {
+        process.env['BETTER_AUTH_SECRET'] = originalAuthSecret ?? 'slack-dispatch-test-secret';
+      }
+    });
+  });
+
   it('uses only the canonical integration token and channels when a legacy row coexists', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, {
@@ -1125,6 +1162,49 @@ describe('dispatchSlackMessage', () => {
 
       expect(delivered).toBe(0);
       expect(log.channels).toHaveLength(0);
+    });
+  });
+});
+
+describe('sendSlackUnfurls', () => {
+  it('does not use reconnected workspace credentials for a stale routed event', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'BoundUnfurl',
+        slackTeamId: 'T-A',
+        botToken: 'xoxb-team-a',
+      });
+      await tx
+        .update(integration)
+        .set({ externalId: 'default', config: { slackTeamId: 'T-A' } })
+        .where(eq(integration.id, fixture.integrationId));
+      const observed = await resolveSlackContext(tx, fixture.organizationId, 'default');
+      if (observed === null) throw new Error('Expected a routed Slack integration.');
+      await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-team-b',
+        externalId: 'T-B',
+      });
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(
+        await sendSlackUnfurls(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          slackTeamId: 'T-A',
+          integrationVersion: observed.integrationVersion,
+          channel: 'C-LINKS',
+          ts: '1.0',
+          unfurls: { 'https://orbit.local/issue/ORB-1': { blocks: [] } },
+          fetch,
+        }),
+      ).toBe(false);
+      expect(providerCalls).toBe(0);
     });
   });
 });

@@ -78,6 +78,7 @@ export async function POST(request: Request): Promise<Response> {
       if (input.teamId !== null) await assertTeamInWorkspace(principal, input.teamId);
       const channelId = await connectCanonicalSlackChannel(db, {
         organizationId: principal.organizationId,
+        userId: principal.userId,
         channelId: input.channelId,
         teamId: input.teamId,
       });

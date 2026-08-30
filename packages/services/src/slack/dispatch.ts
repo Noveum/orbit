@@ -15,7 +15,11 @@ import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { assertCan } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
-import { decryptSlackBotToken, encryptSlackBotToken } from './credentials.ts';
+import {
+  decryptSlackBotToken,
+  encryptSlackBotToken,
+  SlackCredentialUnavailableError,
+} from './credentials.ts';
 import {
   buildUnfurl,
   SlackApiError,
@@ -41,10 +45,19 @@ export interface SlackContext {
   readonly integrationId: string;
   readonly integrationVersion: string;
   readonly token: string | null;
+  readonly credentialUnavailable?: boolean;
   readonly scopes: string[];
   readonly hasDirectMessageScope: boolean;
   readonly reauthorize: boolean;
   readonly updatedAt: Date;
+}
+
+interface SlackContextRow {
+  readonly id: string;
+  readonly credentials: unknown;
+  readonly config: Record<string, unknown>;
+  readonly updatedAt: Date;
+  readonly integrationVersion: string;
 }
 
 export async function resolveSlackContext(
@@ -69,10 +82,21 @@ export async function resolveSlackContext(
     .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
-  const token = decryptSlackBotToken(row.credentials, {
-    organizationId,
-    integrationId: row.id,
-  });
+  return slackContextFromRow(row, organizationId);
+}
+
+function slackContextFromRow(row: SlackContextRow, organizationId: string): SlackContext {
+  let token: string | null = null;
+  let credentialUnavailable = false;
+  try {
+    token = decryptSlackBotToken(row.credentials, {
+      organizationId,
+      integrationId: row.id,
+    });
+  } catch (error) {
+    if (!(error instanceof SlackCredentialUnavailableError)) throw error;
+    credentialUnavailable = true;
+  }
   const configuredScopes = row.config['scopes'];
   const scopes = Array.isArray(configuredScopes)
     ? configuredScopes.filter((scope): scope is string => typeof scope === 'string')
@@ -82,6 +106,7 @@ export async function resolveSlackContext(
     integrationId: row.id,
     integrationVersion: row.integrationVersion,
     token,
+    ...(credentialUnavailable ? { credentialUnavailable: true } : {}),
     scopes,
     hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
     reauthorize,
@@ -112,15 +137,47 @@ export async function sendSlackUnfurls(
   database: SlackDatabase,
   input: {
     readonly organizationId: string;
-    readonly externalId: string;
+    readonly integrationId: string;
+    readonly slackTeamId: string;
+    readonly integrationVersion: string;
     readonly channel: string;
     readonly ts: string;
     readonly unfurls: SlackUnfurl;
+    readonly fetch?: typeof globalThis.fetch;
   },
 ): Promise<boolean> {
-  const context = await resolveSlackContext(database, input.organizationId, input.externalId);
-  if (context === null || context.token === null) return false;
-  await new SlackClient({ token: context.token }).unfurl({
+  const [current] = await database
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+      updatedAt: integration.updatedAt,
+      integrationVersion: slackCredentialVersionExpression(),
+    })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.id, input.integrationId),
+        eq(integration.organizationId, input.organizationId),
+        eq(integration.provider, 'slack'),
+        eq(slackCredentialVersionExpression(), input.integrationVersion),
+        or(
+          sql`${integration.config} ->> 'slackTeamId' = ${input.slackTeamId}`,
+          and(
+            eq(integration.externalId, input.slackTeamId),
+            sql`not (${integration.config} ? 'slackTeamId')`,
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  if (current === undefined) return false;
+  const context = slackContextFromRow(current, input.organizationId);
+  if (context.token === null) return false;
+  await new SlackClient({
+    token: context.token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+  }).unfurl({
     channel: input.channel,
     ts: input.ts,
     unfurls: input.unfurls,
@@ -459,6 +516,7 @@ export async function connectCanonicalSlackChannel(
   database: SlackDatabase,
   input: {
     readonly organizationId: string;
+    readonly userId: string;
     readonly channelId: string;
     readonly teamId: string | null;
     readonly fetch?: typeof globalThis.fetch;
@@ -483,7 +541,11 @@ export async function connectCanonicalSlackChannel(
   if (!channel.isMember) {
     throw validationFailed(SLACK_CHANNEL_UNAVAILABLE);
   }
-  const persist = async (transaction: SlackDatabase): Promise<void> => {
+  const persist = async (transaction: Transaction): Promise<void> => {
+    await assertSlackIntegrationManagerForUpdate(transaction, {
+      organizationId: input.organizationId,
+      userId: input.userId,
+    });
     const [current] = await transaction
       .select({
         id: integration.id,
@@ -607,6 +669,15 @@ export async function resolveSlackDmTarget(
   readonly slackUserId: string;
 } | null> {
   const context = await resolveSlackContext(database, organizationId, 'default');
+  return await resolveSlackDmTargetWithContext(database, organizationId, userId, context);
+}
+
+async function resolveSlackDmTargetWithContext(
+  database: SlackDatabase,
+  organizationId: string,
+  userId: string,
+  context: SlackContext | null,
+): ReturnType<typeof resolveSlackDmTarget> {
   if (
     context === null ||
     context.token === null ||
@@ -651,6 +722,9 @@ export class SlackDmDispatchError extends Error {
     this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
     this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
+    if (cause instanceof SlackCredentialUnavailableError) {
+      this.slackCode = 'credential_unavailable';
+    }
     this.cause = cause;
   }
 
@@ -663,11 +737,20 @@ export async function dispatchSlackDmResult(
   database: SlackDatabase,
   input: DispatchSlackDmInput,
 ): Promise<SlackDmDispatchResult> {
-  const target = await resolveSlackDmTarget(database, input.organizationId, input.userId);
+  const observedContext = await resolveSlackContext(database, input.organizationId, 'default');
+  if (observedContext?.credentialUnavailable === true) {
+    throw new SlackDmDispatchError(observedContext, new SlackCredentialUnavailableError());
+  }
+  const target = await resolveSlackDmTargetWithContext(
+    database,
+    input.organizationId,
+    input.userId,
+    observedContext,
+  );
   if (target === null) return { delivered: 0, channel: null, ts: null };
-  const { context } = target;
+  const { context: targetContext } = target;
   const client = new SlackClient({
-    token: context.token,
+    token: targetContext.token,
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
   try {
@@ -681,7 +764,7 @@ export async function dispatchSlackDmResult(
         .where(
           and(
             eq(slackUserMapping.id, target.mappingId),
-            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.integrationId, targetContext.integrationId),
             eq(slackUserMapping.organizationId, input.organizationId),
             eq(slackUserMapping.userId, input.userId),
           ),
@@ -704,7 +787,7 @@ export async function dispatchSlackDmResult(
         .where(
           and(
             eq(slackUserMapping.id, target.mappingId),
-            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.integrationId, targetContext.integrationId),
             eq(slackUserMapping.organizationId, input.organizationId),
             eq(slackUserMapping.userId, input.userId),
           ),
@@ -717,7 +800,7 @@ export async function dispatchSlackDmResult(
     }
     return { delivered: 1, channel: message.channel, ts: message.ts };
   } catch (error) {
-    throw new SlackDmDispatchError(context, error);
+    throw new SlackDmDispatchError(targetContext, error);
   }
 }
 

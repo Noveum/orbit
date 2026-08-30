@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
-import { internal, isDomainError } from '@orbit/shared/errors';
+import { DomainError, isDomainError } from '@orbit/shared/errors';
 import { z } from 'zod';
 
 const ALGORITHM = 'aes-256-gcm';
@@ -26,8 +26,19 @@ interface SlackCredentialIdentity {
   readonly integrationId: string;
 }
 
-function credentialError(cause?: unknown) {
-  return internal('Slack credentials could not be processed.', cause);
+export class SlackCredentialUnavailableError extends DomainError {
+  constructor(cause?: unknown) {
+    super(
+      'internal',
+      'Slack credentials could not be processed.',
+      cause === undefined ? {} : { cause },
+    );
+    this.name = 'SlackCredentialUnavailableError';
+  }
+}
+
+function credentialError(cause?: unknown): SlackCredentialUnavailableError {
+  return new SlackCredentialUnavailableError(cause);
 }
 
 function encryptionKey(): Uint8Array<ArrayBuffer> {
