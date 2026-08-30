@@ -124,7 +124,10 @@ function normalizeSqlCaseAndIdentifiers(value: string): string {
 function normalizeSql(value: string): string {
   return normalizeSqlCaseAndIdentifiers(value)
     .replace(/\b[a-z_][a-z0-9_]*\./g, '')
-    .replace(/::[a-z ]+(?:\[\])?/g, '')
+    .replace(
+      /::[a-z_][a-z0-9_]*(?:\s+(?:with(?:out)?\s+time\s+zone|precision|varying))?(?:\[\])?/g,
+      '',
+    )
     .replace(/[()]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
