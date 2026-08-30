@@ -123,7 +123,7 @@ git commit -m "feat(slack): scope canary to one workspace"
 - Modify: `apps/web/src/app/api/integrations/slack/route.ts`
 - Modify: `packages/shared/src/validators/integration.ts`
 - Modify: `packages/db/src/schema/comms.ts`
-- Create: `packages/db/drizzle/0016_*.sql`
+- Create: `packages/db/drizzle/0016_secure_slack_team.sql`
 - Modify: `packages/db/drizzle/meta/_journal.json`
 - Create: `packages/db/drizzle/meta/0016_snapshot.json`
 - Test: `packages/services/tests/slack/credentials.test.ts`
@@ -175,7 +175,7 @@ Generate the integration ID before encryption. Replace direct credential reads i
 
 - [ ] **Step 4: Harden OAuth and team ownership**
 
-Remove `slackInstallSchema` and the `install` union branch. Check current integration-manager authority and workspace availability before the provider exchange and again under locks before persistence. Change the Slack team expression index to unique and generate migration `0016` with `bun run db:generate`. Convert a claimed-team collision into a conflict response.
+Remove `slackInstallSchema` and the `install` union branch. Check current integration-manager authority and workspace availability before the provider exchange and again under locks before persistence. Change the Slack team expression index to unique and generate migration `0016_secure_slack_team.sql` with `bun run db:generate --name secure_slack_team`. Convert a claimed-team collision into a conflict response.
 
 - [ ] **Step 5: Run focused tests and type checks**
 
@@ -221,9 +221,12 @@ git commit -m "feat(slack): protect OAuth credentials"
 Test that channel connection rejects a channel the bot has not joined, persists Slack's canonical name instead of client metadata, unmapped channels never call `chat.unfurl`, team mappings hide other teams' issues, workspace-wide mappings permit all teams, the response resolves before a deferred provider call, duplicate and in-progress deliveries return 200, and issue blocks contain no Assign to me or Mark done buttons.
 
 ```ts
+const response = await POST(signedLinkShared('T-OAUTH'));
 expect(response.status).toBe(200);
-expect(providerPending()).toBe(true);
+expect(scheduled).toHaveLength(1);
 expect(providerRequests).toEqual([]);
+await scheduled[0]?.();
+expect(providerRequests).toHaveLength(1);
 expect(JSON.stringify(issueBlocks(issue))).not.toContain('orbit_assign_self');
 expect(JSON.stringify(issueBlocks(issue))).not.toContain('orbit_mark_done');
 ```
