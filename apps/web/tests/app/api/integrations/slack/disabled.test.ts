@@ -1,9 +1,31 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
+import type { Principal } from '@orbit/shared/policy';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'disabled-slack-boundary-test-secret';
 const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const session = {
+  user: { id: 'user_disallowed', name: 'Disallowed Admin', email: 'admin@orbit.test' },
+  session: { activeOrganizationId: 'org_other' },
+};
+
+const { mockMembership, mockSession } = await import('../../../../../tests-support.ts');
+const disallowedPrincipal: Principal = {
+  userId: 'user_disallowed',
+  organizationId: 'org_other',
+  role: 'admin',
+  teamIds: [],
+};
+
+mockSession(() => session);
+mockMembership(() => ({
+  principal: disallowedPrincipal,
+  memberId: 'member_disallowed',
+  organizationName: 'Other',
+  organizationSlug: 'other',
+  deletionRequestedAt: null,
+}));
 
 const {
   GET: getIntegration,
@@ -76,6 +98,15 @@ describe('disabled Slack boundary', () => {
     expect(readBody).not.toHaveBeenCalled();
     await expectUnavailable(await listLegacyChannels());
     expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('denies a configured rollout to a different authenticated organization before parsing its body', async () => {
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = 'org_noveum';
+    const { request, readBody } = requestWithUnreadableBody(`${BASE}/api/integrations/slack`);
+
+    await expectUnavailable(await mutateIntegration(request));
+
+    expect(readBody).not.toHaveBeenCalled();
   });
 
   it('denies OAuth start and callback before reading auth state', async () => {

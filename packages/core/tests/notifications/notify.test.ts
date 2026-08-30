@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { claimSlackDmDeliveries } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
+import type { dispatchSlackDmResult } from '@orbit/services/slack/dispatch';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { deliverPendingSlackDms } from '../../src/notifications/notify.ts';
 import { resetDatabase } from '../../src/test-support.ts';
@@ -101,6 +102,32 @@ afterAll(() => {
 });
 
 describe('deliverPendingSlackDms', () => {
+  it('leaves another organization pending when the worker is scoped to one organization', async () => {
+    const allowed = await seedPendingSlackDm();
+    const blocked = await seedPendingSlackDm();
+    const dispatchedOrganizations: string[] = [];
+    const dispatch: typeof dispatchSlackDmResult = (_database, input) => {
+      dispatchedOrganizations.push(input.organizationId);
+      return Promise.resolve({ delivered: 1, channel: 'D123', ts: '123.456' });
+    };
+
+    expect(
+      await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch, undefined, {
+        organizationId: allowed.organizationId,
+      }),
+    ).toBe(1);
+    expect(dispatchedOrganizations).toEqual([allowed.organizationId]);
+
+    const rows = await db
+      .select({
+        status: schema.notificationDelivery.status,
+        userId: schema.notificationDelivery.userId,
+      })
+      .from(schema.notificationDelivery);
+    expect(rows.find((row) => row.userId === allowed.userId)?.status).toBe('succeeded');
+    expect(rows.find((row) => row.userId === blocked.userId)?.status).toBe('pending');
+  });
+
   it('claims only the deliveries it can start concurrently', async () => {
     await Promise.all(Array.from({ length: 6 }, () => seedPendingSlackDm()));
     const gate = deferred();
