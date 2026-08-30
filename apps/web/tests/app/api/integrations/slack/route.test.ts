@@ -396,7 +396,13 @@ describe('GET /api/integrations/slack', () => {
       releaseProvider?.(
         Response.json({
           ok: true,
-          channel: { id: 'C-DEMOTED', name: 'demoted', is_member: true },
+          channel: {
+            id: 'C-DEMOTED',
+            name: 'demoted',
+            is_private: false,
+            is_archived: false,
+            is_member: true,
+          },
         }),
       );
 
@@ -459,7 +465,13 @@ describe('GET /api/integrations/slack', () => {
       releaseProvider?.(
         Response.json({
           ok: true,
-          channel: { id: 'C-REMOVED', name: 'removed', is_member: true },
+          channel: {
+            id: 'C-REMOVED',
+            name: 'removed',
+            is_private: false,
+            is_archived: false,
+            is_member: true,
+          },
         }),
       );
 
@@ -515,7 +527,13 @@ describe('GET /api/integrations/slack', () => {
       releaseProvider?.(
         Response.json({
           ok: true,
-          channel: { id: 'C-DELETING', name: 'deleting', is_member: true },
+          channel: {
+            id: 'C-DELETING',
+            name: 'deleting',
+            is_private: false,
+            is_archived: false,
+            is_member: true,
+          },
         }),
       );
 

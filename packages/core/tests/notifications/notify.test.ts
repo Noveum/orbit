@@ -93,6 +93,11 @@ async function seedPendingSlackDm(): Promise<Fixture> {
 }
 
 beforeEach(async () => {
+  if (existingSlackOrganizationId === undefined)
+    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   await resetDatabase();
   process.env['APP_URL'] = 'https://orbit.example';
   delete process.env['NEXT_PUBLIC_APP_URL'];
