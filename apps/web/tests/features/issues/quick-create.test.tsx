@@ -985,5 +985,33 @@ describe('the property chips on the new issue dialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
     expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
+
+    await user.type(screen.getByTestId('quick-create-title'), ' more text');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
+  });
+
+  it('resets dismissed suggestions when the dialog reopens', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    mockDuplicates = [
+      {
+        id: 'iss_99',
+        identifier: 'ENG-99',
+        title: 'Existing duplicate bug',
+        state: { id: 'st_1', name: 'Todo', category: 'unstarted', color: '#888' },
+        similarity: 0.9,
+      },
+    ];
+    const harness = open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate found');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
+    expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
+
+    harness.rerender(dialog(undefined, 'team_eng'));
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate again');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
   });
 });
