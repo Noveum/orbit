@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
   addMember,
   createWorkspace,
@@ -20,6 +20,16 @@ const INSTALLATION_ID = '151887625';
 const SECRET_REPOSITORY = 'Noveum/unannounced-acquisition';
 
 let workspace: Workspace;
+const previousAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-integrations-data-test-secret';
+
+afterAll(() => {
+  if (previousAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = previousAuthSecret;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
+});
 
 async function seedPrivateCatalogue(): Promise<void> {
   await db.transaction(async (tx) => {
@@ -59,6 +69,7 @@ async function principalWithRole(role: OrgRole): Promise<Principal> {
 }
 
 beforeEach(async () => {
+  delete process.env['SLACK_ENABLED'];
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
   await seedPrivateCatalogue();
@@ -86,7 +97,14 @@ describe('loadIntegrationSettings', () => {
         provider: 'slack',
         externalId: 'default',
         connectedById: workspace.adminUser.id,
-        credentials: { botToken: 'xoxb-canonical' },
+        credentials: {
+          botToken: {
+            version: 1,
+            iv: 'AAAAAAAAAAAAAAAA',
+            ciphertext: 'AA',
+            tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+          },
+        },
         createdAt: new Date('2026-01-01T00:00:00Z'),
       },
       {
@@ -118,7 +136,9 @@ describe('loadIntegrationSettings', () => {
       },
     ]);
 
-    const settings = await loadIntegrationSettings(workspace.admin, { slackEnabled: true });
+    process.env['SLACK_ENABLED'] = 'true';
+
+    const settings = await loadIntegrationSettings(workspace.admin);
 
     expect(settings.slack?.slackConnected).toBe(true);
     expect(settings.slack?.slackHasToken).toBe(true);

@@ -49,11 +49,12 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint snapshot and operational pruning routes. It also protects the dormant Slack notification worker route. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects the scheduled sprint snapshot, operational pruning, and Slack notification worker routes. Use a long random value in every deployed environment |
 
 Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
 routes. Without the secret, all three routes refuse to run. The Slack notification
-worker remains dormant while the shipped Slack capability is disabled. The
+worker processes eligible deliveries across every organization only when
+`SLACK_ENABLED=true`; with the flag false or unset, it has no eligible work. The
 analytics route runs every six hours so every sprint-local
 calendar day is observed across timezone and daylight-saving changes. It records
 one row per active sprint and local day, then publishes the returned realtime
@@ -196,13 +197,23 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Reserved for the disabled Slack OAuth integration |
-| `SLACK_SIGNING_SECRET` | Reserved for verification when Slack is separately enabled |
+| `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
+| `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Mark it Sensitive in Vercel |
+| `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Mark it Sensitive in Vercel |
+| `SLACK_ENABLED` | Global server-side Slack gate. `true` enables Slack for every current and future Orbit organization. False or unset keeps Slack dark |
 
 All are optional. Orbit hides the GitHub affordance when it is not configured.
-Slack stays hidden and its routes stay unavailable even when its reserved values
-are present because launch is controlled by a source capability, not environment
-configuration. See [Integrations](integrations.md).
+Slack requires all three Slack OAuth and webhook variables. Keep
+`SLACK_ENABLED=false` or leave it unset while preparing a deployment. Setting
+it to `true` is a global release action: the Slack settings surface, routes,
+webhook processing, and notification worker become available to every current
+and future Orbit organization. It does not connect an organization
+automatically. An authorized manager must complete a separate OAuth connection
+for each organization.
+
+Do not configure `SLACK_APP_ID`, `SLACK_BOT_TOKEN`, or `SLACK_APP_TOKEN`.
+Orbit does not use them. See [Integrations](integrations.md#slack) for the safe
+launch sequence and Slack-side configuration.
 
 ## MCP
 

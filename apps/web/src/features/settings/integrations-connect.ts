@@ -1,11 +1,15 @@
 import { and, db, eq } from '@orbit/db';
-import { integration, member, slackUserMapping, user } from '@orbit/db/schema';
+import { integration, slackUserMapping, user } from '@orbit/db/schema';
 import { SlackClient } from '@orbit/services/slack';
-import { ensureSlackIntegration, upsertSlackUserMapping } from '@orbit/services/slack/dispatch';
-import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import {
+  assertSlackIntegrationManager,
+  ensureSlackIntegrationWithVersion,
+  slackCredentialVersionExpression,
+  upsertSlackUserMapping,
+} from '@orbit/services/slack/dispatch';
 import { internal } from '@orbit/shared/errors';
-import { assertCan } from '@orbit/shared/policy';
 import { z } from 'zod';
+import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 const SLACK_OAUTH_ACCESS_URL = 'https://slack.com/api/oauth.v2.access';
 const SLACK_REQUEST_TIMEOUT_MS = 10_000;
@@ -28,6 +32,13 @@ export async function completeSlackInstall(input: {
   readonly clientSecret: string;
   readonly fetch?: typeof globalThis.fetch;
 }): Promise<void> {
+  if (!slackIntegrationEnabledForOrganization(input.organizationId)) {
+    throw internal('Slack installation is unavailable.');
+  }
+  await assertSlackIntegrationManager(db, {
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const response = await fetchImpl(SLACK_OAUTH_ACCESS_URL, {
     method: 'POST',
@@ -57,22 +68,8 @@ export async function completeSlackInstall(input: {
     .split(',')
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0);
-  const integrationId = await db.transaction(async (tx) => {
-    const [membership] = await tx
-      .select({ role: member.role })
-      .from(member)
-      .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
-      .limit(1);
-    assertCan(
-      {
-        organizationId: input.organizationId,
-        userId: input.userId,
-        role: organizationRole(membership?.role),
-        teamIds: [],
-      },
-      'integration:manage',
-    );
-    return await ensureSlackIntegration(tx, {
+  const connected = await db.transaction(async (tx) => {
+    return await ensureSlackIntegrationWithVersion(tx, {
       organizationId: input.organizationId,
       connectedById: input.userId,
       botToken: accessToken,
@@ -80,6 +77,7 @@ export async function completeSlackInstall(input: {
       scopes: grantedScopes,
     });
   });
+  const integrationId = connected.id;
 
   const [orbitUser] = await db
     .select({ email: user.email })
@@ -97,8 +95,8 @@ export async function completeSlackInstall(input: {
     await reconcileSlackUserMapping({
       organizationId: input.organizationId,
       integrationId,
+      integrationVersion: connected.integrationVersion,
       userId: input.userId,
-      accessToken,
       slackTeamId,
       slackUser: null,
     });
@@ -108,8 +106,8 @@ export async function completeSlackInstall(input: {
   await reconcileSlackUserMapping({
     organizationId: input.organizationId,
     integrationId,
+    integrationVersion: connected.integrationVersion,
     userId: input.userId,
-    accessToken,
     slackTeamId,
     slackUser,
   });
@@ -118,14 +116,17 @@ export async function completeSlackInstall(input: {
 async function reconcileSlackUserMapping(input: {
   readonly organizationId: string;
   readonly integrationId: string;
+  readonly integrationVersion: string;
   readonly userId: string;
-  readonly accessToken: string;
   readonly slackTeamId: string;
   readonly slackUser: Awaited<ReturnType<SlackClient['lookupUserByEmail']>>;
 }): Promise<void> {
   await db.transaction(async (tx) => {
     const [current] = await tx
-      .select({ config: integration.config, credentials: integration.credentials })
+      .select({
+        config: integration.config,
+        integrationVersion: slackCredentialVersionExpression(),
+      })
       .from(integration)
       .where(
         and(
@@ -137,7 +138,7 @@ async function reconcileSlackUserMapping(input: {
       .limit(1)
       .for('update');
     if (current === undefined) return;
-    if (current.credentials['botToken'] !== input.accessToken) return;
+    if (current.integrationVersion !== input.integrationVersion) return;
     if (current.config['slackTeamId'] !== input.slackTeamId) return;
     if (input.slackUser === null) {
       await tx
@@ -159,8 +160,4 @@ async function reconcileSlackUserMapping(input: {
       slackDisplayName: input.slackUser.displayName,
     });
   });
-}
-
-function organizationRole(role: string | undefined): OrgRole {
-  return ORG_ROLES.find((candidate) => candidate === role) ?? 'guest';
 }

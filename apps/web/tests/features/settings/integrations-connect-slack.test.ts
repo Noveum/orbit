@@ -5,11 +5,14 @@ import {
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
-import { and, db, eq, schema } from '@orbit/db';
-import { slackDmAvailable } from '@orbit/services';
+import { and, db, eq, schema, sql } from '@orbit/db';
+import { ensureSlackIntegration, slackDmAvailable } from '@orbit/services';
+import { decryptSlackBotToken, hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { completeSlackInstall } from '../../../src/features/settings/integrations-connect.ts';
 
 const originalFetch = globalThis.fetch;
+const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const originalSlackEnabled = process.env['SLACK_ENABLED'];
 let workspace: Workspace;
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -76,12 +79,18 @@ async function mapConnectingUser(): Promise<void> {
 
 describe.serial('completeSlackInstall', () => {
   beforeEach(async () => {
+    process.env['BETTER_AUTH_SECRET'] = 'slack-oauth-install-test-secret';
     await resetDatabase();
     workspace = await createWorkspace('slack-test');
+    process.env['SLACK_ENABLED'] = 'true';
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+    else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
+    if (originalSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+    else process.env['SLACK_ENABLED'] = originalSlackEnabled;
   });
 
   it('persists the granted scopes and maps the connecting user', async () => {
@@ -111,9 +120,16 @@ describe.serial('completeSlackInstall', () => {
 
     expect(savedIntegration).toMatchObject({
       externalId: 'default',
-      credentials: { botToken: 'xoxb-test' },
       config: { scopes: ['chat:write', 'im:write', 'users:read.email'], slackTeamId: 'T0123' },
     });
+    expect(hasSlackBotToken(savedIntegration?.credentials)).toBe(true);
+    expect(JSON.stringify(savedIntegration?.credentials)).not.toContain('xoxb-test');
+    expect(
+      decryptSlackBotToken(savedIntegration?.credentials, {
+        organizationId: workspace.organizationId,
+        integrationId: savedIntegration?.id ?? '',
+      }),
+    ).toBe('xoxb-test');
     expect(mapping).toMatchObject({
       integrationId: savedIntegration?.id,
       userId: workspace.adminUser.id,
@@ -205,10 +221,13 @@ describe.serial('completeSlackInstall', () => {
       .from(schema.slackUserMapping)
       .where(eq(schema.slackUserMapping.organizationId, workspace.organizationId));
     expect(rejected).toBe(true);
-    expect(savedIntegration).toMatchObject({
-      credentials: { botToken: 'xoxb-test' },
-      config: { slackTeamId: 'T0123' },
-    });
+    expect(savedIntegration).toMatchObject({ config: { slackTeamId: 'T0123' } });
+    expect(
+      decryptSlackBotToken(savedIntegration?.credentials, {
+        organizationId: workspace.organizationId,
+        integrationId: savedIntegration?.id ?? '',
+      }),
+    ).toBe('xoxb-test');
     expect(mappings).toHaveLength(1);
     expect(mappings[0]).toMatchObject({ slackUserId: 'U0123' });
   });
@@ -237,9 +256,15 @@ describe.serial('completeSlackInstall', () => {
     expect(integrations[0]).toMatchObject({
       id: legacy?.id,
       externalId: 'default',
-      credentials: { botToken: 'xoxb-test' },
       config: { scopes: ['chat:write', 'im:write', 'users:read.email'], slackTeamId: 'T0123' },
     });
+    expect(JSON.stringify(integrations[0]?.credentials)).not.toContain('xoxb-test');
+    expect(
+      decryptSlackBotToken(integrations[0]?.credentials, {
+        organizationId: workspace.organizationId,
+        integrationId: integrations[0]?.id ?? '',
+      }),
+    ).toBe('xoxb-test');
   });
 
   it('does not persist a stale team mapping from a concurrent OAuth install', async () => {
@@ -304,9 +329,14 @@ describe.serial('completeSlackInstall', () => {
     expect(integrations[0]).toMatchObject({
       externalId: 'default',
       connectedById: newerAdmin.user.id,
-      credentials: { botToken: 'xoxb-new-team' },
       config: { slackTeamId: 'T-new' },
     });
+    expect(
+      decryptSlackBotToken(integrations[0]?.credentials, {
+        organizationId: workspace.organizationId,
+        integrationId: integrations[0]?.id ?? '',
+      }),
+    ).toBe('xoxb-new-team');
     expect(mappings).toHaveLength(1);
     expect(mappings[0]).toMatchObject({
       userId: newerAdmin.user.id,
@@ -325,18 +355,154 @@ describe.serial('completeSlackInstall', () => {
         ),
       );
 
+    let providerCalls = 0;
+    const provider = (() => {
+      providerCalls += 1;
+      return Promise.resolve(Response.json({ ok: false, error: 'must_not_exchange' }));
+    }) as unknown as typeof globalThis.fetch;
     let rejected = false;
     try {
-      await complete();
+      await complete(provider);
     } catch {
       rejected = true;
     }
     expect(rejected).toBe(true);
+    expect(providerCalls).toBe(0);
 
     const integrations = await db
       .select()
       .from(schema.integration)
       .where(eq(schema.integration.organizationId, workspace.organizationId));
     expect(integrations).toHaveLength(0);
+  });
+
+  it('rechecks installation authority after the provider exchange', async () => {
+    const provider = (async () => {
+      await db
+        .update(schema.member)
+        .set({ role: 'member' })
+        .where(
+          and(
+            eq(schema.member.organizationId, workspace.organizationId),
+            eq(schema.member.userId, workspace.adminUser.id),
+          ),
+        );
+      return Response.json({
+        ok: true,
+        access_token: 'xoxb-authority-changed',
+        team: { id: 'T-AUTHORITY', name: 'Authority' },
+        scope: 'chat:write,im:write',
+      });
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(complete(provider)).rejects.toMatchObject({ code: 'forbidden' });
+    const integrations = await db
+      .select()
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
+    expect(integrations).toEqual([]);
+  });
+
+  it('rejects a deleting workspace before the provider exchange', async () => {
+    await db
+      .update(schema.organization)
+      .set({ deletionRequestedAt: new Date() })
+      .where(eq(schema.organization.id, workspace.organizationId));
+    let providerCalls = 0;
+    const provider = (() => {
+      providerCalls += 1;
+      return Promise.resolve(Response.json({ ok: false, error: 'must_not_exchange' }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(complete(provider)).rejects.toMatchObject({
+      code: 'conflict',
+      details: { reason: 'workspace_unavailable' },
+    });
+    expect(providerCalls).toBe(0);
+  });
+
+  it('rejects a Slack team claimed by another Orbit workspace', async () => {
+    const other = await createWorkspace('slack-team-owner');
+    globalThis.fetch = (async () =>
+      Response.json({ ok: false, error: 'users_not_found' })) as unknown as typeof globalThis.fetch;
+    await completeSlackInstall({
+      organizationId: other.organizationId,
+      userId: other.adminUser.id,
+      code: 'owner-code',
+      redirectUri: 'https://orbit.test/api/integrations/slack/callback',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      fetch: teamOAuthFetch('T-CLAIMED', 'xoxb-owner'),
+    });
+
+    await expect(complete(teamOAuthFetch('T-CLAIMED', 'xoxb-contender'))).rejects.toMatchObject({
+      code: 'conflict',
+      details: { reason: 'slack_team_claimed' },
+    });
+    const integrations = await db
+      .select()
+      .from(schema.integration)
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
+    expect(integrations).toEqual([]);
+  });
+
+  it('translates a concurrent cross-workspace team claim collision', async () => {
+    const other = await createWorkspace('slack-concurrent-owner');
+    await db.execute(
+      sql.raw(`
+        create or replace function orbit_test_delay_slack_team_claim()
+        returns trigger language plpgsql as $function$
+        begin
+          if new.provider = 'slack' then
+            perform pg_sleep(0.25);
+          end if;
+          return new;
+        end
+        $function$
+      `),
+    );
+    await db.execute(
+      sql.raw(`
+        create trigger orbit_test_delay_slack_team_claim
+        before insert on integration
+        for each row execute function orbit_test_delay_slack_team_claim()
+      `),
+    );
+
+    try {
+      const results = await Promise.allSettled([
+        ensureSlackIntegration(db, {
+          organizationId: workspace.organizationId,
+          connectedById: workspace.adminUser.id,
+          botToken: 'xoxb-concurrent-one',
+          externalId: 'T-CONCURRENT-CLAIM',
+        }),
+        ensureSlackIntegration(db, {
+          organizationId: other.organizationId,
+          connectedById: other.adminUser.id,
+          botToken: 'xoxb-concurrent-two',
+          externalId: 'T-CONCURRENT-CLAIM',
+        }),
+      ]);
+      const fulfilled = results.filter((result) => result.status === 'fulfilled');
+      const rejected = results.filter((result) => result.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.reason).toMatchObject({
+        code: 'conflict',
+        details: { reason: 'slack_team_claimed' },
+      });
+      const claimed = await db
+        .select({ organizationId: schema.integration.organizationId })
+        .from(schema.integration)
+        .where(eq(schema.integration.provider, 'slack'));
+      expect(claimed).toHaveLength(1);
+    } finally {
+      await db.execute(
+        sql.raw('drop trigger if exists orbit_test_delay_slack_team_claim on integration'),
+      );
+      await db.execute(sql.raw('drop function if exists orbit_test_delay_slack_team_claim()'));
+    }
   });
 });

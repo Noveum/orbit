@@ -1,7 +1,8 @@
 import { and, db, desc, eq, schema } from '@orbit/db';
+import { hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
-import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
+import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 import { listTeamsForPrincipal } from '@/lib/workspace.ts';
 import { loadGithubSettings } from './github-data.ts';
 import type { GithubSettingsView } from './github-view.ts';
@@ -32,12 +33,6 @@ export interface IntegrationSettings {
   readonly slack?: SlackIntegrationSettings;
 }
 
-function slackBotTokenFrom(credentials: unknown): string | null {
-  if (typeof credentials !== 'object' || credentials === null) return null;
-  const token = (credentials as Record<string, unknown>)['botToken'];
-  return typeof token === 'string' && token.length > 0 ? token : null;
-}
-
 const WITHHELD: IntegrationSettings = {
   github: {
     connected: false,
@@ -49,14 +44,11 @@ const WITHHELD: IntegrationSettings = {
   },
 };
 
-export async function loadIntegrationSettings(
-  principal: Principal,
-  options: { readonly slackEnabled?: boolean } = {},
-): Promise<IntegrationSettings> {
+export async function loadIntegrationSettings(principal: Principal): Promise<IntegrationSettings> {
   if (!can(principal, 'integration:manage')) return WITHHELD;
 
   const github = await loadGithubSettings(principal);
-  if (!(options.slackEnabled ?? slackIntegrationEnabled())) return { github };
+  if (!slackIntegrationEnabledForOrganization(principal.organizationId)) return { github };
 
   const [slackRows, teams] = await Promise.all([
     db
@@ -94,13 +86,11 @@ export async function loadIntegrationSettings(
               eq(schema.slackChannelSync.integrationId, slackRow.id),
             ),
           );
-  const slackToken = slackRow === undefined ? null : slackBotTokenFrom(slackRow.credentials);
-
   return {
     github,
     slack: {
       slackConnected: slackRow !== undefined,
-      slackHasToken: slackToken !== null,
+      slackHasToken: slackRow !== undefined && hasSlackBotToken(slackRow.credentials),
       slackConnectEnabled: slackConnectReady(),
       channels,
       teams,

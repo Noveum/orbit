@@ -1,19 +1,14 @@
-import { afterAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
-let slackEnabledForTest = true;
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
-  () => slackEnabledForTest,
-);
 const { loadNotificationPreferences, saveNotificationPreferences } = await import(
   '../../../src/features/settings/notification-preferences.ts'
 );
 
 let workspace: Workspace;
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
 async function seedSlackConnection(
   options: {
@@ -31,7 +26,14 @@ async function seedSlackConnection(
     provider: 'slack',
     externalId: options.externalId ?? 'default',
     connectedById: workspace.admin.userId,
-    credentials: options.credentials ?? { botToken: 'xoxb-test' },
+    credentials: options.credentials ?? {
+      botToken: {
+        version: 1,
+        iv: 'AAAAAAAAAAAAAAAA',
+        ciphertext: 'AA',
+        tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+      },
+    },
     config: options.config ?? { scopes: ['chat:write', 'im:write'] },
   });
   if (options.mapped ?? true) {
@@ -48,18 +50,19 @@ async function seedSlackConnection(
 }
 
 beforeEach(async () => {
-  slackEnabledForTest = true;
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
+  process.env['SLACK_ENABLED'] = 'true';
 });
 
 afterAll(() => {
-  slackCapabilitySpy.mockRestore();
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
 });
 
 describe('notification preferences', () => {
-  it('keeps Slack DM disabled while the integration capability is dark', async () => {
-    slackEnabledForTest = SLACK_INTEGRATION_ENABLED;
+  it('keeps Slack DM disabled while the global integration capability is off', async () => {
+    process.env['SLACK_ENABLED'] = 'false';
     await seedSlackConnection();
     await db.insert(schema.notificationPreference).values({
       id: randomUUIDv7(),
@@ -113,6 +116,17 @@ describe('notification preferences', () => {
       .from(schema.notificationPreference)
       .where(eq(schema.notificationPreference.userId, workspace.admin.userId));
     expect(rows).toEqual([{ channel: 'inbox' }]);
+  });
+
+  it('reports an eligible mapped default connection as available', async () => {
+    await seedSlackConnection();
+
+    const state = await loadNotificationPreferences(
+      workspace.admin.userId,
+      workspace.organizationId,
+    );
+
+    expect(state.slackDm).toBe('available');
   });
 
   it('requires reauthorization when the default Slack connection has no bot token', async () => {

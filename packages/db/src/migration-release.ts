@@ -18,7 +18,7 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
-const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883]);
+const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883, 1788083189965]);
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>

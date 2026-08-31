@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, setSystemTime } from 'bun:test';
 import {
   integration,
   issue,
+  member,
   organization,
   slackChannelSync,
   slackUserMapping,
@@ -12,20 +13,31 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
 import { markSlackReauthorizationRequired } from '../../src/notifications/index.ts';
+import { decryptSlackBotToken, encryptSlackBotToken } from '../../src/slack/credentials.ts';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
   dispatchSlackDm,
   dispatchSlackMessage,
   ensureSlackIntegration,
+  ensureSlackIntegrationWithVersion,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  sendSlackUnfurls,
   slackDmAvailable,
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+
+const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-dispatch-test-secret';
+
+afterAll(() => {
+  if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
+});
 
 interface Fixture {
   readonly organizationId: string;
@@ -55,6 +67,12 @@ async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Pr
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await tx.insert(member).values({
+    id: `mem_${suffix}`,
+    organizationId,
+    userId,
+    role: 'admin',
   });
 
   const teamA = `team_a_${suffix}`;
@@ -138,6 +156,52 @@ describe('resolveSlackContext', () => {
 });
 
 describe('ensureSlackIntegration', () => {
+  it('uses distinct credential versions for reconnects in the same millisecond', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'SameMillisecond',
+        slackTeamId: 'T-same-millisecond',
+        botToken: 'xoxb-old',
+      });
+      const fixedTime = new Date('2026-08-30T12:00:00.000Z');
+      setSystemTime(fixedTime);
+      try {
+        const older = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-older',
+          externalId: 'T-same-millisecond',
+        });
+        const newer = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-newer',
+          externalId: 'T-same-millisecond',
+        });
+
+        expect(older.integrationVersion).not.toBe(newer.integrationVersion);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            older.integrationVersion,
+          ),
+        ).toBe(false);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            newer.integrationVersion,
+          ),
+        ).toBe(true);
+      } finally {
+        setSystemTime();
+      }
+    });
+  });
+
   it('reuses a legacy default integration when reconnecting with a team id', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, { name: 'Legacy', botToken: 'xoxb-old' });
@@ -167,11 +231,17 @@ describe('ensureSlackIntegration', () => {
       if (legacy === undefined) throw new Error('Expected the existing integration row.');
       expect(integrationId).toBe(legacy.id);
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({
+      expect(rows[0]).toMatchObject({
         externalId: 'default',
         config: { slackTeamId: 'T0123', scopes: ['im:write'] },
-        credentials: { botToken: 'xoxb-new' },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
     });
   });
 
@@ -249,6 +319,12 @@ describe('ensureSlackIntegration', () => {
         email: `${reconnectingUserId}@orbit.local`,
         handle: reconnectingUserId.toLowerCase(),
       });
+      await tx.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        userId: reconnectingUserId,
+        role: 'admin',
+      });
       await upsertSlackUserMapping(tx, {
         organizationId: fixture.organizationId,
         integrationId: fixture.integrationId,
@@ -281,9 +357,15 @@ describe('ensureSlackIntegration', () => {
         id: fixture.integrationId,
         externalId: 'default',
         connectedById: reconnectingUserId,
-        credentials: { botToken: 'xoxb-new' },
         config: { slackTeamId: 'T-legacy', scopes: ['chat:write'] },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
       expect(integrationId).toBe(fixture.integrationId);
       expect(
         await tx
@@ -391,16 +473,21 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         slackTeamId: 'T-acme',
         botToken: 'xoxb-acme',
       });
+      const stale = await resolveSlackContext(tx, fixture.organizationId);
+      if (stale === null) throw new Error('Expected a Slack context.');
       await tx
         .update(integration)
-        .set({ credentials: { botToken: 'xoxb-refreshed' }, updatedAt: new Date() })
+        .set({
+          credentials: { botToken: 'xoxb-refreshed' },
+          updatedAt: new Date(stale.updatedAt.getTime() + 1_000),
+        })
         .where(eq(integration.id, fixture.integrationId));
       expect(
         await markSlackReauthorizationRequired(
           tx,
           fixture.organizationId,
           fixture.integrationId,
-          'xoxb-acme',
+          stale.integrationVersion,
         ),
       ).toBe(false);
       const [after] = await tx
@@ -889,6 +976,49 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
 });
 
 describe('dispatchSlackMessage', () => {
+  it('skips an optional Slack send when stored credentials use an old key', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-rotated-key',
+        channelName: 'rotated-key',
+        teamId: fixture.teamA,
+      });
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-old-key';
+      const envelope = encryptSlackBotToken({
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        token: 'xoxb-encrypted',
+      });
+      await tx
+        .update(integration)
+        .set({ credentials: { botToken: envelope } })
+        .where(eq(integration.id, fixture.integrationId));
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-rotated-key';
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      try {
+        expect(
+          await dispatchSlackMessage(tx, {
+            organizationId: fixture.organizationId,
+            teamIds: [fixture.teamA],
+            text: 'Optional broadcast',
+            fetch,
+          }),
+        ).toBe(0);
+        expect(providerCalls).toBe(0);
+      } finally {
+        process.env['BETTER_AUTH_SECRET'] = originalAuthSecret ?? 'slack-dispatch-test-secret';
+      }
+    });
+  });
+
   it('uses only the canonical integration token and channels when a legacy row coexists', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, {
@@ -1039,6 +1169,49 @@ describe('dispatchSlackMessage', () => {
 
       expect(delivered).toBe(0);
       expect(log.channels).toHaveLength(0);
+    });
+  });
+});
+
+describe('sendSlackUnfurls', () => {
+  it('does not use reconnected workspace credentials for a stale routed event', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'BoundUnfurl',
+        slackTeamId: 'T-A',
+        botToken: 'xoxb-team-a',
+      });
+      await tx
+        .update(integration)
+        .set({ externalId: 'default', config: { slackTeamId: 'T-A' } })
+        .where(eq(integration.id, fixture.integrationId));
+      const observed = await resolveSlackContext(tx, fixture.organizationId, 'default');
+      if (observed === null) throw new Error('Expected a routed Slack integration.');
+      await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-team-b',
+        externalId: 'T-B',
+      });
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(
+        await sendSlackUnfurls(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          slackTeamId: 'T-A',
+          integrationVersion: observed.integrationVersion,
+          channel: 'C-LINKS',
+          ts: '1.0',
+          unfurls: { 'https://orbit.local/issue/ORB-1': { blocks: [] } },
+          fetch,
+        }),
+      ).toBe(false);
+      expect(providerCalls).toBe(0);
     });
   });
 });
@@ -1429,6 +1602,75 @@ describe('resolveIssueUnfurls', () => {
       expect(Object.keys(unfurls)).toEqual([url]);
       expect(JSON.stringify(unfurls[url])).toContain('ENG-42');
       expect(JSON.stringify(unfurls[url])).toContain('In Progress');
+    });
+  });
+
+  it('limits a team mapping to issues in that exact team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_scope_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_scope_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 43,
+        identifier: 'ENG-43',
+        title: 'Team A only',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-43';
+
+      expect(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamB)).toEqual(
+        {},
+      );
+      expect(
+        Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamA)),
+      ).toEqual([url]);
+    });
+  });
+
+  it('treats an omitted team scope as workspace-wide within the organization', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const other = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_workspace_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Workspace scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_workspace_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 44,
+        identifier: 'ENG-44',
+        title: 'Workspace issue',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-44';
+
+      expect(Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url]))).toEqual([
+        url,
+      ]);
+      expect(await resolveIssueUnfurls(tx, other.organizationId, [url])).toEqual({});
     });
   });
 });

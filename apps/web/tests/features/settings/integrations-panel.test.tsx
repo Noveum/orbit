@@ -51,6 +51,28 @@ const CONNECTED: IntegrationSettings = {
   },
 };
 
+const CONNECTED_WITH_SLACK: IntegrationSettings = {
+  ...CONNECTED,
+  slack: {
+    slackConnected: false,
+    slackHasToken: false,
+    slackConnectEnabled: true,
+    channels: [],
+    teams: [],
+  },
+};
+
+const CONNECTED_WITH_SLACK_TOKEN: IntegrationSettings = {
+  ...CONNECTED,
+  slack: {
+    slackConnected: true,
+    slackHasToken: true,
+    slackConnectEnabled: true,
+    channels: [],
+    teams: [{ id: 'team-engineering', name: 'Engineering', key: 'ENG' }],
+  },
+};
+
 const EMPTY: IntegrationSettings = {
   github: {
     connected: false,
@@ -101,7 +123,13 @@ beforeEach(() => {
       method: init?.method ?? 'GET',
       body: init?.body === undefined ? undefined : JSON.parse(init.body),
     };
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    const payload = url.startsWith('/api/integrations/slack/channels')
+      ? {
+          channels: [{ channelId: 'C-CANONICAL', channelName: 'canonical-name' }],
+          nextCursor: null,
+        }
+      : {};
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) });
   }) as unknown as typeof fetch;
 });
 
@@ -110,11 +138,44 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
-  it('does not render the disabled Slack integration', () => {
+  it('renders Slack when the server includes Slack settings', () => {
+    renderPanel(CONNECTED_WITH_SLACK, true);
+
+    expect(screen.getByText('Slack')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Add to Slack' })).toHaveAttribute(
+      'href',
+      '/api/integrations/slack/start',
+    );
+  });
+
+  it('does not render Slack when the server withholds Slack settings', () => {
     renderPanel(CONNECTED, true);
 
     expect(screen.queryByText(/slack/i)).toBeNull();
     expect(document.querySelector('a[href*="slack"]')).toBeNull();
+  });
+
+  it('connects a Slack channel with its id and Orbit team only', async () => {
+    const user = userEvent.setup();
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true);
+
+    await user.click(screen.getByRole('button', { name: 'Connect a channel' }));
+    await user.click(await screen.findByRole('button', { name: '#canonical-name' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Team' }), 'team-engineering');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => {
+      expect(lastRequest?.method).toBe('POST');
+    });
+    expect(lastRequest).toEqual({
+      url: '/api/integrations/slack',
+      method: 'POST',
+      body: {
+        action: 'connect',
+        channelId: 'C-CANONICAL',
+        teamId: 'team-engineering',
+      },
+    });
   });
 
   it('offers GitHub connect as the primary path when nothing is connected', () => {

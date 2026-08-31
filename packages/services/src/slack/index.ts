@@ -81,32 +81,6 @@ export function issueBlocks(issue: SlackIssue): SlackBlock[] {
     });
   }
 
-  blocks.push({
-    type: 'actions',
-    block_id: `orbit_issue_${issue.identifier}`,
-    elements: [
-      {
-        type: 'button',
-        action_id: 'orbit_open_issue',
-        text: { type: 'plain_text', text: 'Open in Orbit' },
-        url: issue.url,
-      },
-      {
-        type: 'button',
-        action_id: 'orbit_assign_self',
-        value: issue.identifier,
-        text: { type: 'plain_text', text: 'Assign to me' },
-      },
-      {
-        type: 'button',
-        action_id: 'orbit_mark_done',
-        style: 'primary',
-        value: issue.identifier,
-        text: { type: 'plain_text', text: 'Mark done' },
-      },
-    ],
-  });
-
   return blocks;
 }
 
@@ -211,6 +185,23 @@ const conversationsResponseSchema = slackResponseSchema.extend({
   response_metadata: z.object({ next_cursor: z.string().default('') }).optional(),
 });
 
+const conversationResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    channel: z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      is_private: z.boolean(),
+      is_archived: z.boolean(),
+      is_member: z.boolean(),
+    }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
+
 const userResponseSchema = slackResponseSchema.extend({
   user: z
     .object({
@@ -225,6 +216,13 @@ const userResponseSchema = slackResponseSchema.extend({
     })
     .optional(),
 });
+
+type SuccessfulSlackResponse<T extends z.ZodTypeAny> =
+  z.infer<T> extends infer ResponseBody
+    ? ResponseBody extends { ok: false }
+      ? never
+      : ResponseBody
+    : never;
 
 export interface SlackMessageRef {
   readonly channel: string;
@@ -372,6 +370,19 @@ export class SlackClient {
     };
   }
 
+  async conversation(channelId: string): Promise<SlackChannel> {
+    const body = await this.call('conversations.info', conversationResponseSchema, {
+      channel: channelId,
+    });
+    return {
+      id: body.channel.id,
+      name: body.channel.name,
+      isPrivate: body.channel.is_private,
+      isArchived: body.channel.is_archived,
+      isMember: body.channel.is_member,
+    };
+  }
+
   async lookupUserByEmail(email: string): Promise<SlackUser | null> {
     let body: z.infer<typeof userResponseSchema>;
     try {
@@ -393,7 +404,7 @@ export class SlackClient {
     method: string,
     schema: T,
     payload: Record<string, unknown>,
-  ): Promise<z.infer<T>> {
+  ): Promise<SuccessfulSlackResponse<T>> {
     const response = await this.fetchImpl(`${this.baseUrl}/${method}`, {
       method: 'POST',
       headers: {
@@ -417,7 +428,7 @@ export class SlackClient {
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
     if (!body.ok) throw new SlackApiError(method, body.error ?? 'unknown_error');
-    return parsed.data;
+    return parsed.data as SuccessfulSlackResponse<T>;
   }
 }
 
