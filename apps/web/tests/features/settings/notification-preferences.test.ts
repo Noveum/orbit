@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 
 const { loadNotificationPreferences, saveNotificationPreferences } = await import(
@@ -9,7 +8,7 @@ const { loadNotificationPreferences, saveNotificationPreferences } = await impor
 );
 
 let workspace: Workspace;
-const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
 async function seedSlackConnection(
   options: {
@@ -53,19 +52,17 @@ async function seedSlackConnection(
 beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
-  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+  process.env['SLACK_ENABLED'] = 'true';
 });
 
 afterAll(() => {
-  if (previousEnabledOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
 });
 
 describe('notification preferences', () => {
-  it('keeps Slack DM disabled while the integration capability is dark', async () => {
-    expect(SLACK_INTEGRATION_ENABLED).toBe(false);
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  it('keeps Slack DM disabled while the global integration capability is off', async () => {
+    process.env['SLACK_ENABLED'] = 'false';
     await seedSlackConnection();
     await db.insert(schema.notificationPreference).values({
       id: randomUUIDv7(),

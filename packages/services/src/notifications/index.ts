@@ -16,7 +16,6 @@ import {
   NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
-  SLACK_INTEGRATION_ENABLED,
   type SyncAction,
   scopes,
   syncActionSchema,
@@ -29,6 +28,7 @@ import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
 import { hasSlackBotToken } from '../slack/credentials.ts';
 import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
+import { slackFeatureEnabled } from '../slack/feature.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -221,7 +221,7 @@ export async function claimSlackDmDeliveries(
           ${notificationDelivery.availableAt},
           ${notificationDelivery.createdAt}
         LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF ${notificationDelivery} SKIP LOCKED
       )`,
     )
     .returning();
@@ -315,12 +315,7 @@ export async function notifyMany(
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
-  const slackFeatureEnabledByOrganization = new Map(
-    parsed.map((event) => [
-      event.organizationId,
-      resolveSlackFeatureEnabled(options.slackEnabled, event.organizationId),
-    ]),
-  );
+  const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
   const recipientIds = unique(
     parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
@@ -328,9 +323,7 @@ export async function notifyMany(
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
-  const slackEnabledEvents = parsed.filter(
-    (event) => slackFeatureEnabledByOrganization.get(event.organizationId) === true,
-  );
+  const slackEnabledEvents = slackEnabled ? parsed : [];
   const slackDmEligibleRecipients =
     slackEnabledEvents.length > 0
       ? await loadSlackDmEligibleRecipients(database, slackEnabledEvents, recipientIds)
@@ -391,7 +384,7 @@ export async function notifyMany(
         settings.get(userId) ?? DEFAULT_SETTINGS,
         disabled,
         now,
-        slackFeatureEnabledByOrganization.get(event.organizationId) === true,
+        slackEnabled,
         slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
       );
       if (plan !== null) {
@@ -436,11 +429,8 @@ function slackDeliveryRows(
   });
 }
 
-function resolveSlackFeatureEnabled(value: boolean | undefined, organizationId: string): boolean {
-  if (value !== undefined) return value;
-  if (SLACK_INTEGRATION_ENABLED) return true;
-  const enabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID']?.trim() ?? '';
-  return enabledOrganizationId.length > 0 && enabledOrganizationId === organizationId;
+function resolveSlackFeatureEnabled(value: boolean | undefined): boolean {
+  return value ?? slackFeatureEnabled();
 }
 
 function planFor(

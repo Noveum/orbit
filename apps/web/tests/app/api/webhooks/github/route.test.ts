@@ -15,7 +15,7 @@ import { z } from 'zod';
 const SECRET = 'a-github-webhook-secret';
 const existingWebhookSecret = process.env['GITHUB_WEBHOOK_SECRET'];
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
-const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
@@ -57,9 +57,8 @@ const { POST } = await import('../../../../../src/app/api/webhooks/github/route.
 function restoreSlackEnvironment(): void {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-  if (existingSlackOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
 }
 
 afterAll(() => {
@@ -329,7 +328,7 @@ describe('POST /api/webhooks/github', () => {
 
   it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
     slackEnabledForTest = true;
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+    process.env['SLACK_ENABLED'] = 'true';
     process.env['BETTER_AUTH_SECRET'] = 'github-slack-old-key';
     const integrationId = await services.ensureSlackIntegration(db, {
       organizationId: workspace.organizationId,

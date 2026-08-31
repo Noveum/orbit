@@ -6,7 +6,7 @@ import { z } from 'zod';
 const SIGNING_SECRET = 'slack-link-shared-route-secret';
 const ISSUE_URL = 'https://orbit.local/issue/ORB-42';
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
-const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 const existingSigningSecret = process.env['SLACK_SIGNING_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-webhook-route-test-secret';
 process.env['SLACK_SIGNING_SECRET'] = SIGNING_SECRET;
@@ -176,7 +176,7 @@ beforeEach(async () => {
   errorSpy.mockClear();
   globalThis.fetch = providerFetch;
   workspace = await seedWorkspace('PrimarySlack', 'T-OAUTH', 'xoxb-primary', 'Primary issue');
-  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+  process.env['SLACK_ENABLED'] = 'true';
 });
 
 afterAll(() => {
@@ -187,9 +187,8 @@ afterAll(() => {
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   if (existingSigningSecret === undefined) delete process.env['SLACK_SIGNING_SECRET'];
   else process.env['SLACK_SIGNING_SECRET'] = existingSigningSecret;
-  if (existingSlackOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
 });
 
 describe('POST /api/webhooks/slack', () => {

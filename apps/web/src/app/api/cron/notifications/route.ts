@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { deliverPendingSlackDms } from '@orbit/core';
 import { db } from '@orbit/db';
-import { slackEnabledOrganizationId } from '@/lib/integrations/slack-capability.ts';
+import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 
 export const maxDuration = 300;
 
@@ -26,10 +26,6 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const organizationId = slackEnabledOrganizationId();
-  const delivered =
-    organizationId === null
-      ? 0
-      : await deliverPendingSlackDms(db, 100, undefined, undefined, undefined, { organizationId });
+  const delivered = slackIntegrationEnabled() ? await deliverPendingSlackDms(db, 100) : 0;
   return Response.json({ delivered });
 }

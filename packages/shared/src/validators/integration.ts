@@ -56,6 +56,11 @@ export const slackDisconnectChannelSchema = z.object({
   channelId: z.string().trim().min(1).max(64),
 });
 
+export const slackCallbackSchema = z.object({
+  code: z.string().trim().min(1).max(255),
+  state: z.string().trim().min(1).max(2048),
+});
+
 export const slackUrlVerificationSchema = z.object({
   type: z.literal('url_verification'),
   challenge: z.string().min(1).max(1024),

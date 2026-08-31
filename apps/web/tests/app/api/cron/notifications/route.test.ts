@@ -1,12 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import { z } from 'zod';
 
 const SECRET = 'a-notifications-cron-secret-that-is-long-enough';
 const previousSecret = process.env['CRON_SECRET'];
 const core = await import('@orbit/core');
 const deliverPendingSlackDms = mock(() => Promise.resolve(3));
-const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
 mock.module('@orbit/core', () => ({ ...core, deliverPendingSlackDms }));
 
@@ -15,9 +14,8 @@ const { GET, maxDuration } = await import('../../../../../src/app/api/cron/notif
 afterAll(() => {
   if (previousSecret === undefined) delete process.env['CRON_SECRET'];
   else process.env['CRON_SECRET'] = previousSecret;
-  if (previousEnabledOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
   mock.module('@orbit/core', () => core);
 });
 
@@ -29,42 +27,22 @@ function request(authorization?: string): Request {
 
 beforeEach(() => {
   process.env['CRON_SECRET'] = SECRET;
-  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = 'org_noveum';
+  process.env['SLACK_ENABLED'] = 'true';
   deliverPendingSlackDms.mockClear();
   deliverPendingSlackDms.mockImplementation(() => Promise.resolve(3));
 });
 
 describe('GET /api/cron/notifications', () => {
-  it('runs the durable Slack DM worker only for the configured organization', async () => {
+  it('runs the durable Slack DM worker across every organization', async () => {
     const response = await GET(request(`Bearer ${SECRET}`));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ delivered: 3 });
-    expect(deliverPendingSlackDms).toHaveBeenCalledWith(
-      expect.anything(),
-      100,
-      undefined,
-      undefined,
-      undefined,
-      {
-        organizationId: 'org_noveum',
-      },
-    );
+    expect(deliverPendingSlackDms).toHaveBeenCalledWith(expect.anything(), 100);
   });
 
   it('does not run Slack delivery when the integration is disabled', async () => {
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-
-    const response = await GET(request(`Bearer ${SECRET}`));
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ delivered: 0 });
-    expect(deliverPendingSlackDms).not.toHaveBeenCalled();
-  });
-
-  it('keeps the worker dormant under the shipped capability', async () => {
-    expect(SLACK_INTEGRATION_ENABLED).toBe(false);
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+    process.env['SLACK_ENABLED'] = 'false';
 
     const response = await GET(request(`Bearer ${SECRET}`));
 

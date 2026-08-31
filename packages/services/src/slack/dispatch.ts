@@ -338,7 +338,7 @@ async function writeSlackIntegration(
 }
 
 async function persistSlackIntegration(
-  database: SlackDatabase,
+  database: Transaction,
   input: {
     readonly organizationId: string;
     readonly connectedById: string;
@@ -347,7 +347,7 @@ async function persistSlackIntegration(
     readonly scopes?: readonly string[];
   },
 ): Promise<SlackIntegrationWrite> {
-  await assertSlackIntegrationManagerForUpdate(database as Transaction, {
+  await assertSlackIntegrationManagerForUpdate(database, {
     organizationId: input.organizationId,
     userId: input.connectedById,
   });

@@ -53,9 +53,9 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
 routes. Without the secret, all three routes refuse to run. The Slack notification
-worker only processes the exact organization selected by the Slack canary
-allowlist; with that value unset or blank, it has no eligible work. The analytics
-route runs every six hours so every sprint-local
+worker processes eligible deliveries across every organization only when
+`SLACK_ENABLED=true`; with the flag false or unset, it has no eligible work. The
+analytics route runs every six hours so every sprint-local
 calendar day is observed across timezone and daylight-saving changes. It records
 one row per active sprint and local day, then publishes the returned realtime
 actions. Sprint completion also records a final snapshot in the same transaction
@@ -200,20 +200,20 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
 | `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Mark it Sensitive in Vercel |
 | `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Mark it Sensitive in Vercel |
-| `SLACK_ENABLED_ORGANIZATION_ID` | Server-side exact Orbit organization ID for the single-organization Slack canary. Add only after the first hardened dark deployment |
+| `SLACK_ENABLED` | Global server-side Slack gate. `true` enables Slack for every current and future Orbit organization. False or unset keeps Slack dark |
 
 All are optional. Orbit hides the GitHub affordance when it is not configured.
-Slack requires all three Slack OAuth and webhook variables plus a non-blank,
-exact `SLACK_ENABLED_ORGANIZATION_ID`. With the organization value absent or
-blank, Slack stays dark. The shared compile-time Slack flag remains false
-globally, so the environment value enables no other organization. For Noveum
-Production, the controlled target is
-`9970aaa7-ba5c-4fcc-b980-d16880ea6c41`; a self-hoster must set its own exact
-Orbit organization ID instead.
+Slack requires all three Slack OAuth and webhook variables. Keep
+`SLACK_ENABLED=false` or leave it unset while preparing a deployment. Setting
+it to `true` is a global release action: the Slack settings surface, routes,
+webhook processing, and notification worker become available to every current
+and future Orbit organization. It does not connect an organization
+automatically. An authorized manager must complete a separate OAuth connection
+for each organization.
 
 Do not configure `SLACK_APP_ID`, `SLACK_BOT_TOKEN`, or `SLACK_APP_TOKEN`.
-Orbit does not use them. See [Integrations](integrations.md#slack-canary) for
-the controlled launch sequence and Slack-side configuration.
+Orbit does not use them. See [Integrations](integrations.md#slack) for the safe
+launch sequence and Slack-side configuration.
 
 ## MCP
 

@@ -1,20 +1,15 @@
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
+import { slackFeatureEnabled } from '@orbit/services/slack/feature';
 
 export function slackIntegrationEnabled(): boolean {
-  return SLACK_INTEGRATION_ENABLED;
+  return slackFeatureEnabled();
 }
 
-export function slackEnabledOrganizationId(): string | null {
-  const value = process.env['SLACK_ENABLED_ORGANIZATION_ID']?.trim() ?? '';
-  return value.length === 0 ? null : value;
-}
-
-export function slackIntegrationEnabledForOrganization(organizationId: string): boolean {
-  return slackEnabledOrganizationId() === organizationId;
+export function slackIntegrationEnabledForOrganization(_organizationId: string): boolean {
+  return slackFeatureEnabled();
 }
 
 export function slackRolloutConfigured(): boolean {
-  return slackEnabledOrganizationId() !== null;
+  return slackFeatureEnabled();
 }
 
 export function slackIntegrationUnavailable(): Response {

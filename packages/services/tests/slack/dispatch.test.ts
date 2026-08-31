@@ -979,6 +979,13 @@ describe('dispatchSlackMessage', () => {
   it('skips an optional Slack send when stored credentials use an old key', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-rotated-key',
+        channelName: 'rotated-key',
+        teamId: fixture.teamA,
+      });
       process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-old-key';
       const envelope = encryptSlackBotToken({
         organizationId: fixture.organizationId,

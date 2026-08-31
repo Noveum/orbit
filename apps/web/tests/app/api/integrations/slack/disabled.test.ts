@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'disabled-slack-boundary-test-secret';
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
 const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 const session = {
   user: { id: 'user_disallowed', name: 'Disallowed Admin', email: 'admin@orbit.test' },
@@ -50,6 +50,7 @@ const providerFetch = mock(() => {
 });
 
 beforeEach(() => {
+  delete process.env['SLACK_ENABLED'];
   delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
   providerFetch.mockClear();
   globalThis.fetch = providerFetch as unknown as typeof fetch;
@@ -62,6 +63,8 @@ afterEach(() => {
 afterAll(() => {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
   if (previousEnabledOrganizationId === undefined)
     delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
   else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
@@ -85,9 +88,7 @@ function requestWithUnreadableBody(url: string): {
 }
 
 describe('disabled Slack boundary', () => {
-  it('keeps the shipped integration surface unavailable', async () => {
-    expect(SLACK_INTEGRATION_ENABLED).toBe(false);
-
+  it('keeps the integration surface unavailable when the global flag is off', async () => {
     await expectUnavailable(await startOAuth());
   });
 
@@ -100,8 +101,8 @@ describe('disabled Slack boundary', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('denies a configured rollout to a different authenticated organization before parsing its body', async () => {
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = 'org_noveum';
+  it('does not let the legacy organization variable bypass the global flag', async () => {
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = session.session.activeOrganizationId;
     const { request, readBody } = requestWithUnreadableBody(`${BASE}/api/integrations/slack`);
 
     await expectUnavailable(await mutateIntegration(request));

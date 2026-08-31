@@ -20,12 +20,15 @@ const INSTALLATION_ID = '151887625';
 const SECRET_REPOSITORY = 'Noveum/unannounced-acquisition';
 
 let workspace: Workspace;
-const previousEnabledOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const previousAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-integrations-data-test-secret';
 
 afterAll(() => {
-  if (previousEnabledOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = previousEnabledOrganizationId;
+  if (previousAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = previousAuthSecret;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
 });
 
 async function seedPrivateCatalogue(): Promise<void> {
@@ -66,7 +69,7 @@ async function principalWithRole(role: OrgRole): Promise<Principal> {
 }
 
 beforeEach(async () => {
-  delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+  delete process.env['SLACK_ENABLED'];
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
   await seedPrivateCatalogue();
@@ -133,7 +136,7 @@ describe('loadIntegrationSettings', () => {
       },
     ]);
 
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+    process.env['SLACK_ENABLED'] = 'true';
 
     const settings = await loadIntegrationSettings(workspace.admin);
 

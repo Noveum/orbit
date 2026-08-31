@@ -79,11 +79,13 @@ follow-up work.
 - A branch must contain current `main`, pass hosted CI on the exact head, finish
   required exact-head review at its highest confidence level with no unresolved
   review threads, and pass an independent diff review before merge.
-- The historical public Preview boundary still leaves Slack unsupported,
-  unqualified, and undistributed for self-hosting and public use. A separate
-  internal canary is now limited by one exact server-side Orbit organization ID;
-  it is not a supported public integration or a change to the Preview release
-  boundary.
+- The historical public Preview boundary still leaves Slack unsupported until
+  its operational release gates and live provider qualification are complete.
+  The implementation uses one global server-side flag: when enabled, Slack is
+  available to every current and future Orbit organization while each OAuth
+  connection, credential, channel mapping, notification, and unfurl remains
+  tenant scoped. This implementation is not evidence that a deployment has
+  activated public distribution or completed a live end-to-end test.
 
 ### Known verification warnings
 
@@ -244,17 +246,19 @@ follow-up work.
 
 ## Deferred P2 work
 
-- [ ] **SEC-012: Slack metadata authorization.** **Status: canary controls
-  implemented; deferred for public self-hosting with INT-002.** The internal
-  canary requires server-side integration-management authority, exact
-  organization gating, canonical channel metadata, and denial coverage. Public
-  support still needs a broader review and release decision.
-- [ ] **INT-002: Slack requalification.** **Status: internal canary only.**
-  OAuth, encrypted credentials, team ownership, mapped-channel unfurls, and
-  event handling are controlled for one Noveum organization. Slack remains
-  undistributed and absent from supported self-hosting claims until public
-  OAuth, events, permissions, delivery, and end-to-end behavior are separately
-  qualified.
+- [ ] **SEC-012: Slack metadata authorization.** **Status: controls implemented;
+  live qualification remains with INT-002.** Slack requires server-side
+  integration-management authority, OAuth state bound to the initiating user
+  and organization, canonical joined-channel metadata, unique Slack workspace
+  ownership, tenant-scoped delivery, and denial coverage. The global feature
+  gate does not replace or weaken those boundaries.
+- [ ] **INT-002: Slack requalification.** **Status: global rollout implementation
+  prepared; activation not yet claimed.** OAuth, encrypted credentials, Slack
+  workspace ownership, mapped-channel unfurls, event handling, and notification
+  delivery are implemented for independently connected Orbit organizations.
+  Credential rotation, the database migration, Slack provider configuration,
+  public distribution, and live multi-organization end-to-end verification
+  remain operational release gates before supported availability is claimed.
 - [ ] **MCP-002: OIDC signing metadata alignment.** **Status: upstream
   follow-up.** Better Auth metadata advertises RS256 while its current ephemeral
   ID token is emitted with HS256. Track the upstream correction and add

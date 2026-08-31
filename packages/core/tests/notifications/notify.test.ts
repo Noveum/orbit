@@ -11,7 +11,8 @@ import { resetDatabase } from '../../src/test-support.ts';
 
 const existingAppUrl = process.env['APP_URL'];
 const existingPublicAppUrl = process.env['NEXT_PUBLIC_APP_URL'];
-const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
+const existingLegacySlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 
 interface Fixture {
@@ -93,9 +94,13 @@ async function seedPendingSlackDm(): Promise<Fixture> {
 }
 
 beforeEach(async () => {
-  if (existingSlackOrganizationId === undefined)
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
+  if (existingLegacySlackOrganizationId === undefined) {
     delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  } else {
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingLegacySlackOrganizationId;
+  }
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   await resetDatabase();
@@ -108,20 +113,24 @@ afterAll(() => {
   else process.env['APP_URL'] = existingAppUrl;
   if (existingPublicAppUrl === undefined) delete process.env['NEXT_PUBLIC_APP_URL'];
   else process.env['NEXT_PUBLIC_APP_URL'] = existingPublicAppUrl;
-  if (existingSlackOrganizationId === undefined)
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
+  if (existingLegacySlackOrganizationId === undefined) {
     delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  } else {
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingLegacySlackOrganizationId;
+  }
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
 });
 
-describe('notifyRecipients Slack canary', () => {
-  it('enqueues personal Slack delivery only for the exact rollout organization', async () => {
-    const allowed = await seedPendingSlackDm();
-    const blocked = await seedPendingSlackDm();
+describe('notifyRecipients global Slack rollout', () => {
+  it('enqueues personal Slack delivery for every eligible organization', async () => {
+    const first = await seedPendingSlackDm();
+    const second = await seedPendingSlackDm();
     await db.delete(schema.notificationDelivery);
     await db.delete(schema.notification);
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = allowed.organizationId;
+    process.env['SLACK_ENABLED'] = 'true';
     const event = (fixture: Fixture): NotificationEvent => ({
       organizationId: fixture.organizationId,
       type: 'mention',
@@ -135,7 +144,7 @@ describe('notifyRecipients Slack canary', () => {
       url: '/issue/ORB-1',
     });
 
-    await notifyRecipients(db, [event(allowed), event(blocked)]);
+    await notifyRecipients(db, [event(first), event(second)]);
 
     const deliveries = await db
       .select({ organizationId: schema.notification.organizationId })
@@ -144,11 +153,53 @@ describe('notifyRecipients Slack canary', () => {
         schema.notification,
         eq(schema.notification.id, schema.notificationDelivery.notificationId),
       );
-    expect(deliveries).toEqual([{ organizationId: allowed.organizationId }]);
+    expect(deliveries.map((delivery) => delivery.organizationId).sort()).toEqual(
+      [first.organizationId, second.organizationId].sort(),
+    );
+  });
+
+  it('stays off when only the retired organization variable is set', async () => {
+    const fixture = await seedPendingSlackDm();
+    await db.delete(schema.notificationDelivery);
+    await db.delete(schema.notification);
+    process.env['SLACK_ENABLED'] = 'false';
+    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = fixture.organizationId;
+
+    await notifyRecipients(db, [
+      {
+        organizationId: fixture.organizationId,
+        type: 'mention',
+        reason: 'mentioned',
+        actor: { type: 'user', id: `actor_${fixture.userId}`, name: 'Grace' },
+        entityType: 'issue',
+        entityId: `issue_${fixture.userId}`,
+        userIds: [fixture.userId],
+        title: 'You were mentioned',
+        body: 'Please take a look',
+        url: '/issue/ORB-1',
+      },
+    ]);
+
+    expect(await db.select().from(schema.notificationDelivery)).toEqual([]);
   });
 });
 
 describe('deliverPendingSlackDms', () => {
+  it('delivers pending messages across every organization without a filter', async () => {
+    const first = await seedPendingSlackDm();
+    const second = await seedPendingSlackDm();
+    const dispatchedOrganizations: string[] = [];
+    const dispatch: typeof dispatchSlackDmResult = (_database, input) => {
+      dispatchedOrganizations.push(input.organizationId);
+      return Promise.resolve({ delivered: 1, channel: 'D123', ts: '123.456' });
+    };
+
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(2);
+    expect(dispatchedOrganizations.sort()).toEqual(
+      [first.organizationId, second.organizationId].sort(),
+    );
+  });
+
   it('leaves another organization pending when the worker is scoped to one organization', async () => {
     const allowed = await seedPendingSlackDm();
     const blocked = await seedPendingSlackDm();

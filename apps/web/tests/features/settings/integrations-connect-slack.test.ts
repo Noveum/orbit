@@ -12,7 +12,7 @@ import { completeSlackInstall } from '../../../src/features/settings/integration
 
 const originalFetch = globalThis.fetch;
 const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
-const originalSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const originalSlackEnabled = process.env['SLACK_ENABLED'];
 let workspace: Workspace;
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -82,16 +82,15 @@ describe.serial('completeSlackInstall', () => {
     process.env['BETTER_AUTH_SECRET'] = 'slack-oauth-install-test-secret';
     await resetDatabase();
     workspace = await createWorkspace('slack-test');
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+    process.env['SLACK_ENABLED'] = 'true';
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
     else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
-    if (originalSlackOrganizationId === undefined)
-      delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-    else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = originalSlackOrganizationId;
+    if (originalSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+    else process.env['SLACK_ENABLED'] = originalSlackEnabled;
   });
 
   it('persists the granted scopes and maps the connecting user', async () => {
@@ -426,7 +425,6 @@ describe.serial('completeSlackInstall', () => {
     const other = await createWorkspace('slack-team-owner');
     globalThis.fetch = (async () =>
       Response.json({ ok: false, error: 'users_not_found' })) as unknown as typeof globalThis.fetch;
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = other.organizationId;
     await completeSlackInstall({
       organizationId: other.organizationId,
       userId: other.adminUser.id,
@@ -436,7 +434,6 @@ describe.serial('completeSlackInstall', () => {
       clientSecret: 'client-secret',
       fetch: teamOAuthFetch('T-CLAIMED', 'xoxb-owner'),
     });
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
 
     await expect(complete(teamOAuthFetch('T-CLAIMED', 'xoxb-contender'))).rejects.toMatchObject({
       code: 'conflict',

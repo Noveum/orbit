@@ -3,7 +3,7 @@ import type { Workspace } from '@orbit/core/test-support';
 import { z } from 'zod';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
-const existingSlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-channels-route-test-secret';
 
 const { createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
@@ -46,7 +46,7 @@ const { GET } = await import('@/app/api/integrations/slack/channels/route.ts');
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('SlackChannels');
-  process.env['SLACK_ENABLED_ORGANIZATION_ID'] = workspace.organizationId;
+  process.env['SLACK_ENABLED'] = 'true';
   await ensureSlackIntegration(db, {
     organizationId: workspace.organizationId,
     connectedById: workspace.adminUser.id,
@@ -64,9 +64,8 @@ afterAll(() => {
   globalThis.fetch = realFetch;
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-  if (existingSlackOrganizationId === undefined)
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  else process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingSlackOrganizationId;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
 });
 
 describe('GET /api/integrations/slack/channels', () => {
