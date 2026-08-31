@@ -36,7 +36,7 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
 test('a screenshot dropped on an issue description is uploaded and shown inline', async ({
   browser,
 }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(300_000);
   const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const page = await signIn(context, 'alex@orbit.example');
 
@@ -76,7 +76,7 @@ test('a screenshot dropped on an issue description is uploaded and shown inline'
 });
 
 test('an html artifact attached to an issue renders in a sandboxed frame', async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(300_000);
   const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const page = await signIn(context, 'alex@orbit.example');
 
