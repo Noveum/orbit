@@ -35,14 +35,17 @@ export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggest
             <a
               href={`/issues/${issue.identifier}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="group flex min-w-0 items-center gap-1.5 truncate font-medium text-text hover:text-accent"
             >
               <span className="shrink-0 text-faint group-hover:text-accent/80">
                 {issue.identifier}
               </span>
               <span className="truncate">{issue.title}</span>
-              <ExternalLink className="size-2.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+              <ExternalLink
+                className="size-2.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                aria-hidden="true"
+              />
             </a>
             <div className="flex shrink-0 items-center gap-1 text-faint">
               <StateGlyph category={issue.state.category} color={issue.state.color} />

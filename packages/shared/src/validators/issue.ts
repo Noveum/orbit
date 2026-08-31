@@ -137,7 +137,7 @@ export const issueRefSchema = z.string().trim().min(1).max(128);
 
 export const duplicateIssueQuerySchema = z.object({
   teamId: idSchema,
-  title: z.string().trim().min(3).max(256),
+  title: z.string().trim().min(1).max(256),
   limit: z.coerce
     .number()
     .int()

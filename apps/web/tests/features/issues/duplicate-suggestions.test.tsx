@@ -52,6 +52,7 @@ describe('DuplicateSuggestions', () => {
 
     const link = screen.getByRole('link', { name: /Safari passkey failure/i });
     expect(link).toHaveAttribute('href', '/issues/ENG-10');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   it('calls onDismiss when the close button is clicked', async () => {
