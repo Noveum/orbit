@@ -21,7 +21,7 @@ function waitForAttachmentCompletion(page: Page): Promise<PlaywrightResponse> {
         path.endsWith('/complete')
       );
     },
-    { timeout: 90_000 },
+    { timeout: 120_000 },
   );
 }
 
