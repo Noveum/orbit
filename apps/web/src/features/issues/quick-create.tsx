@@ -378,7 +378,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               submit();
             }
           }}
-          className="flex min-h-0 flex-1 flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3 pt-1.5"
         >
           <div
             className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1"
@@ -399,7 +399,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
                   event.preventDefault();
               }}
-              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none"
+              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
             />
             {!dismissedDuplicates && duplicates.length > 0 ? (
               <DuplicateSuggestions
