@@ -18,7 +18,7 @@ jobs:
     name: Lint, comments, types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -70,7 +70,7 @@ jobs:
       GITHUB_APP_CLIENT_ID: Iv1.ci
       GITHUB_APP_CLIENT_SECRET: ci-github-app-client-secret
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -116,7 +116,7 @@ jobs:
     env:
       DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit_from_migrations
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -142,7 +142,7 @@ jobs:
       NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
       ORBIT_PASSWORD_AUTH: "true"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -266,7 +266,7 @@ jobs:
       S3_ACCESS_KEY_ID: orbitminio
       S3_SECRET_ACCESS_KEY: orbitminio
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
