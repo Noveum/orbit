@@ -371,7 +371,7 @@ export class SlackClient {
   }
 
   async conversation(channelId: string): Promise<SlackChannel> {
-    const body = await this.call('conversations.info', conversationResponseSchema, {
+    const body = await this.callQuery('conversations.info', conversationResponseSchema, {
       channel: channelId,
     });
     return {
@@ -400,12 +400,12 @@ export class SlackClient {
     };
   }
 
-  private async call<T extends z.ZodTypeAny>(
+  private call<T extends z.ZodTypeAny>(
     method: string,
     schema: T,
     payload: Record<string, unknown>,
   ): Promise<SuccessfulSlackResponse<T>> {
-    const response = await this.fetchImpl(`${this.baseUrl}/${method}`, {
+    return this.request(method, schema, `${this.baseUrl}/${method}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.token}`,
@@ -414,6 +414,29 @@ export class SlackClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
+  }
+
+  private callQuery<T extends z.ZodTypeAny>(
+    method: string,
+    schema: T,
+    payload: Record<string, string>,
+  ): Promise<SuccessfulSlackResponse<T>> {
+    const url = new URL(`${this.baseUrl}/${method}`);
+    for (const [key, value] of Object.entries(payload)) url.searchParams.set(key, value);
+    return this.request(method, schema, url, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
+    });
+  }
+
+  private async request<T extends z.ZodTypeAny>(
+    method: string,
+    schema: T,
+    input: string | URL,
+    init: RequestInit,
+  ): Promise<SuccessfulSlackResponse<T>> {
+    const response = await this.fetchImpl(input, init);
     if (response.status === 429) {
       const retryAfterSeconds = Number(response.headers.get('retry-after'));
       const retryAfterMs =

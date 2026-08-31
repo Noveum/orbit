@@ -320,8 +320,9 @@ describe('SlackClient', () => {
       isArchived: false,
       isMember: true,
     });
-    expect(calls[0]?.url).toBe('https://slack.com/api/conversations.info');
-    expect(calls[0]?.init?.body).toBe(JSON.stringify({ channel: 'C-REQUESTED' }));
+    expect(calls[0]?.url).toBe('https://slack.com/api/conversations.info?channel=C-REQUESTED');
+    expect(calls[0]?.init?.method).toBe('GET');
+    expect(calls[0]?.init?.body).toBeUndefined();
   });
 
   it('rejects incomplete canonical channel metadata', async () => {
