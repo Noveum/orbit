@@ -489,3 +489,22 @@ export const viewPreferencesSchema = z.object({
 });
 
 export type ViewPreferences = z.infer<typeof viewPreferencesSchema>;
+
+export const duplicateIssueMatchSchema = z.object({
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  state: z.object({
+    id: z.string(),
+    name: z.string(),
+    category: z.string(),
+    color: z.string(),
+  }),
+  similarity: z.number(),
+});
+
+export type DuplicateIssueMatch = z.infer<typeof duplicateIssueMatchSchema>;
+
+export const duplicateIssueListSchema = z.object({
+  duplicates: z.array(duplicateIssueMatchSchema),
+});

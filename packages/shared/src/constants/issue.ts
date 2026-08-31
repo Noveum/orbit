@@ -1,5 +1,7 @@
 export const ISSUE_DESCRIPTION_MAX_LENGTH = 500_000;
 export const ISSUE_REVIEWER_MAX_COUNT = 50;
+export const DUPLICATE_SUGGESTIONS_MAX_COUNT = 4;
+export const DUPLICATE_SIMILARITY_THRESHOLD = 0.2;
 
 export const PRIORITIES = [0, 1, 2, 3, 4] as const;
 export type Priority = (typeof PRIORITIES)[number];
