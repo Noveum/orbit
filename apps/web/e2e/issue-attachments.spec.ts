@@ -1,9 +1,29 @@
-import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import {
+  type BrowserContext,
+  expect,
+  type Page,
+  type Response as PlaywrightResponse,
+  test,
+} from '@playwright/test';
 import { createIssue, descriptionOf, teamIdByKey } from './api.ts';
 import { BASE } from './base-url.ts';
 
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+function waitForAttachmentCompletion(page: Page): Promise<PlaywrightResponse> {
+  return page.waitForResponse(
+    (response) => {
+      const path = new URL(response.url()).pathname;
+      return (
+        response.request().method() === 'POST' &&
+        path.startsWith('/api/attachments/') &&
+        path.endsWith('/complete')
+      );
+    },
+    { timeout: 90_000 },
+  );
+}
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
@@ -16,7 +36,7 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
 test('a screenshot dropped on an issue description is uploaded and shown inline', async ({
   browser,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const page = await signIn(context, 'alex@orbit.example');
 
@@ -35,9 +55,11 @@ test('a screenshot dropped on an issue description is uploaded and shown inline'
     data.items.add(new File([binary], 'screenshot.png', { type: 'image/png' }));
     return data;
   }, PNG_BASE64);
+  const completion = waitForAttachmentCompletion(page);
   await editor.dispatchEvent('drop', { dataTransfer: transfer });
 
-  await expect(editor.locator('img')).toBeVisible({ timeout: 30_000 });
+  expect((await completion).ok()).toBe(true);
+  await expect(editor.locator('img')).toBeVisible();
   const src = await editor.locator('img').first().getAttribute('src');
   expect(src ?? '').toContain('/api/files/');
 
@@ -54,7 +76,7 @@ test('a screenshot dropped on an issue description is uploaded and shown inline'
 });
 
 test('an html artifact attached to an issue renders in a sandboxed frame', async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const page = await signIn(context, 'alex@orbit.example');
 
@@ -75,8 +97,10 @@ test('an html artifact attached to an issue renders in a sandboxed frame', async
     );
     return data;
   });
+  const completion = waitForAttachmentCompletion(page);
   await editor.dispatchEvent('drop', { dataTransfer: transfer });
 
+  expect((await completion).ok()).toBe(true);
   await expect
     .poll(async () => await descriptionOf(page, made.identifier), { timeout: 30_000 })
     .toContain('/api/files/');
