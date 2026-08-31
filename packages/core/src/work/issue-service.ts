@@ -2612,7 +2612,7 @@ export async function findDuplicateIssues(
         eq(schema.issue.teamId, query.teamId),
         isNull(schema.issue.archivedAt),
         ...visibleTeamFilters(principal),
-        sql`similarity(${schema.issue.title}, ${term}) >= ${DUPLICATE_SIMILARITY_THRESHOLD}`,
+        sql`(${schema.issue.title} % ${term} or similarity(${schema.issue.title}, ${term}) >= ${DUPLICATE_SIMILARITY_THRESHOLD})`,
       ),
     )
     .orderBy(desc(similarityExpr), desc(schema.issue.createdAt), desc(schema.issue.id))

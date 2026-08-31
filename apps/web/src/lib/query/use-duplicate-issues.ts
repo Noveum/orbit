@@ -5,13 +5,19 @@ import { apiFetch } from './fetcher.ts';
 import { queryKeys } from './keys.ts';
 import type { DuplicateIssueMatch } from './schemas.ts';
 import { duplicateIssueListSchema } from './schemas.ts';
-import { useSearchTerm } from './search-tuning.ts';
+import { SEARCH_DEBOUNCE_MS, useDebounced } from './search-tuning.ts';
+
+export const DUPLICATE_SEARCH_MIN_LENGTH = 3;
 
 export function useDuplicateIssues(
   teamId: string | null,
   title: string,
 ): { duplicates: readonly DuplicateIssueMatch[]; loading: boolean } {
-  const { settled, enabled, answers, behind } = useSearchTerm(title);
+  const typed = title.trim();
+  const settled = useDebounced(typed, SEARCH_DEBOUNCE_MS);
+  const enabled = settled.length >= DUPLICATE_SEARCH_MIN_LENGTH;
+  const answers = enabled && settled === typed;
+  const behind = typed.length >= DUPLICATE_SEARCH_MIN_LENGTH && !answers;
   const active = teamId !== null && enabled;
 
   const query = useQuery({

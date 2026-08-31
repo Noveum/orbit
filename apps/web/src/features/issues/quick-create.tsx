@@ -399,7 +399,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
                 if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
                   event.preventDefault();
               }}
-              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none"
             />
             {!dismissedDuplicates && duplicates.length > 0 ? (
               <DuplicateSuggestions
