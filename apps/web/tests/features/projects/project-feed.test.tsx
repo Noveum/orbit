@@ -50,6 +50,14 @@ describe('ProjectUpdatesFeed', () => {
     expect(screen.getByText('Alex Rivera')).toBeInTheDocument();
     expect(screen.getByText('Sam Chen')).toBeInTheDocument();
 
+    const firstTime = screen.getByText('30 Aug 2026');
+    expect(firstTime).toBeInTheDocument();
+    expect(firstTime).toHaveAttribute('dateTime', '2026-08-30T10:00:00.000Z');
+
+    const secondTime = screen.getByText('29 Aug 2026');
+    expect(secondTime).toBeInTheDocument();
+    expect(secondTime).toHaveAttribute('dateTime', '2026-08-29T15:30:00.000Z');
+
     const link = screen.getByRole('link', { name: 'Realtime Sync' });
     expect(link).toHaveAttribute('href', '/projects/realtime-sync');
   });

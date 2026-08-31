@@ -217,9 +217,8 @@ export interface WorkspaceProjectUpdateView {
 
 export async function listWorkspaceProjectUpdateViews(
   principal: Principal,
-  limit = 50,
 ): Promise<WorkspaceProjectUpdateView[]> {
-  const updates = await listWorkspaceProjectUpdates(principal, limit);
+  const updates = await listWorkspaceProjectUpdates(principal);
   const people = await loadPeople(updates.map((update) => update.authorId));
 
   return updates.map((update) => ({

@@ -610,7 +610,6 @@ export interface WorkspaceProjectUpdateRow {
 
 export async function listWorkspaceProjectUpdates(
   principal: Principal,
-  limit = 50,
 ): Promise<WorkspaceProjectUpdateRow[]> {
   assertCan(principal, 'project:read');
 
@@ -625,7 +624,7 @@ export async function listWorkspaceProjectUpdates(
       body: schema.projectUpdate.body,
       createdAt: schema.projectUpdate.createdAt,
       rowNumber:
-        sql<number>`row_number() over (partition by ${schema.projectUpdate.projectId} order by ${schema.projectUpdate.createdAt} desc)`.as(
+        sql<number>`row_number() over (partition by ${schema.projectUpdate.projectId} order by ${schema.projectUpdate.createdAt} desc, ${schema.projectUpdate.id} desc)`.as(
           'rn',
         ),
     })
@@ -654,8 +653,7 @@ export async function listWorkspaceProjectUpdates(
     })
     .from(ranked)
     .where(eq(ranked.rowNumber, 1))
-    .orderBy(desc(ranked.createdAt))
-    .limit(limit);
+    .orderBy(desc(ranked.createdAt), desc(ranked.id));
 }
 
 export interface MilestoneProgress {

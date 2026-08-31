@@ -705,7 +705,7 @@ describe('listWorkspaceProjectUpdates', () => {
       body: 'Alpha update 2',
     });
 
-    const updates = await listWorkspaceProjectUpdates(workspace.admin, 10);
+    const updates = await listWorkspaceProjectUpdates(workspace.admin);
 
     expect(updates).toHaveLength(2);
     expect(updates[0]?.body).toBe('Alpha update 2');

@@ -173,8 +173,8 @@ captures a health category, markdown notes, the author, and a timestamp:
 - **No update** (`no_update`): The initial state before a lead posts the first update.
 
 The workspace feed on the Projects page surfaces the latest update from every
-project in a single stream, giving leads and stakeholders visibility without
-having to inspect each project individually.
+visible project in a single stream, giving leads and stakeholders visibility
+across the workspace without having to inspect each project individually.
 
 The difference from sprints in one line: a sprint is a period of time, a project
 is a body of work. An issue is usually in both.
